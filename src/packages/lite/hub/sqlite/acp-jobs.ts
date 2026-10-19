@@ -1087,6 +1087,14 @@ export function setAcpJobState({
   mirrorAcpJobSession(getAcpJobByOpId(op_id));
 }
 
+/** How a job ended, for the paths that end it without running it. */
+export function recordAcpJobOutcome(op_id: string, outcome: TurnOutcome): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(`UPDATE ${TABLE} SET outcome_json = ? WHERE op_id = ?`)
+    .run(JSON.stringify(outcome), op_id);
+}
+
 export function listAcpJobsWithRecoveryIntent(limit = 100): AcpJobRow[] {
   ensureInit();
   return getAcpDatabase()

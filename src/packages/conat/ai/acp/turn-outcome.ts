@@ -43,14 +43,15 @@ export type TurnOutcome = {
   | {
       state: "failed";
       failure: TurnFailure;
-      /** Any tool ran before it ended, so it may have changed something. */
-      tool_ran: boolean;
+      /** Any tool ran before it ended, so it may have changed something.
+       * Absent when the host lost track of the turn (a restart, a stop). */
+      tool_ran?: boolean;
     }
   | {
       state: "canceled";
       /** person: someone in the recipient's project stopped or canceled it. */
       by: "person" | "sender" | "superseded" | "system";
-      tool_ran: boolean;
+      tool_ran?: boolean;
     }
   | {
       state: "never-started";
@@ -207,6 +208,9 @@ function validFailure(value: unknown): value is TurnFailure {
   return true;
 }
 
+const optionalBoolean = (value: unknown) =>
+  value === undefined || typeof value === "boolean";
+
 /** A stored or received outcome, if it is one; undefined otherwise. */
 export function parseTurnOutcome(value: unknown): TurnOutcome | undefined {
   let data = value;
@@ -224,14 +228,13 @@ export function parseTurnOutcome(value: unknown): TurnOutcome | undefined {
     case "completed":
       return outcome as TurnOutcome;
     case "failed":
-      return validFailure(outcome.failure) &&
-        typeof outcome.tool_ran === "boolean"
+      return validFailure(outcome.failure) && optionalBoolean(outcome.tool_ran)
         ? (outcome as TurnOutcome)
         : undefined;
     case "canceled":
       return ["person", "sender", "superseded", "system"].includes(
         outcome.by,
-      ) && typeof outcome.tool_ran === "boolean"
+      ) && optionalBoolean(outcome.tool_ran)
         ? (outcome as TurnOutcome)
         : undefined;
     case "never-started":

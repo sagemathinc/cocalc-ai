@@ -15,6 +15,7 @@
 import {
   turnFailureFromText,
   type TurnFailure,
+  type TurnOutcome,
 } from "@cocalc/conat/ai/acp/turn-outcome";
 import { requireUuid } from "./protocol";
 import { validateAgentEndpoint, validateAgentRpcSource } from "./rpc";
@@ -24,13 +25,22 @@ export type AgentRpcExecution = NonNullable<
   AcpChatContext["agent_rpc_execution"]
 >;
 
-/** What kind of error ended the turn; always safe to tell the sender. */
+/** How the turn ended without a reply; always safe to tell the sender. */
 export type AgentRpcTurnFailureKind =
   | "refused"
   | "limit"
   | "sign-in"
   | "timeout"
-  | "error";
+  | "error"
+  | "project-stopped"
+  | "host-lost"
+  /** Someone in the recipient's project canceled the message before it ran. */
+  | "canceled"
+  /** Someone in the recipient's project stopped the turn while it ran. */
+  | "stopped"
+  /** A newer message in the recipient's conversation came first, so the
+   * interrupted turn is not resumed. */
+  | "superseded";
 
 export interface AgentRpcTurnFailureReport {
   version: 1;
@@ -45,6 +55,10 @@ export interface AgentRpcTurnFailureReport {
   kind: AgentRpcTurnFailureKind;
   /** The error, one line and short. */
   detail?: string;
+  /** For a limit: when it resets (ms), if known. */
+  resets_at?: number;
+  /** Whether the recipient ran any tool before the turn ended, if known. */
+  tool_ran?: boolean;
 }
 
 /** What A's host is asked to deliver; labels are the account's own names. */
@@ -71,20 +85,42 @@ const KIND_TEXT: Record<AgentRpcTurnFailureKind, string> = {
   "sign-in": "its sign-in or credentials need attention",
   timeout: "it timed out",
   error: "an error",
+  "project-stopped": "its project was stopped",
+  "host-lost": "its runtime was lost (for example, its host restarted)",
+  canceled: "someone in its project canceled your message before it ran",
+  stopped: "someone in its project stopped the turn",
+  superseded:
+    "it was cut off, and a newer message in its conversation came first, so it is not resumed",
 };
 
 /** The report's kind for a turn's typed failure (turn-outcome.ts). */
 export function agentRpcReportKind(
   failure: TurnFailure,
 ): AgentRpcTurnFailureKind {
-  switch (failure.kind) {
-    case "limit":
-    case "sign-in":
-    case "refused":
-    case "timeout":
-      return failure.kind;
-    default:
-      return "error";
+  return failure.kind;
+}
+
+/** The report's kind for a turn that ended without success, if any. */
+export function agentRpcReportKindOf(
+  outcome: TurnOutcome,
+): AgentRpcTurnFailureKind | undefined {
+  switch (outcome.state) {
+    case "completed":
+      return undefined;
+    case "failed":
+      return agentRpcReportKind(outcome.failure);
+    case "canceled":
+      return outcome.by === "superseded"
+        ? "superseded"
+        : outcome.by === "person"
+          ? "stopped"
+          : "error";
+    case "never-started":
+      return outcome.reason === "canceled"
+        ? "canceled"
+        : outcome.reason === "project-stopped" || outcome.reason === "host-lost"
+          ? outcome.reason
+          : "error";
   }
 }
 
@@ -101,16 +137,50 @@ export function agentRpcReportDetail(error: string): string {
     : line;
 }
 
+function inAbout(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${Math.max(1, minutes)} minutes`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+}
+
 /** The message A receives. */
 export function agentRpcReportText(
-  report: Pick<AgentRpcTurnFailureReport, "kind" | "detail">,
+  report: Pick<
+    AgentRpcTurnFailureReport,
+    "kind" | "detail" | "resets_at" | "tool_ran"
+  >,
   targetLabel: string,
+  now = Date.now(),
 ): string {
-  return [
-    `[Delivery report] ${targetLabel}'s turn ended with an error before it replied to your message: ${KIND_TEXT[report.kind]}.`,
-    ...(report.detail ? [`Error: ${report.detail}`] : []),
-    `This report is from CoCalc, not from ${targetLabel}. ${targetLabel} did not act on your message; you can send it again, rephrase it, or do without.`,
-  ].join("\n");
+  const B = targetLabel;
+  const failure = !["canceled", "stopped", "superseded"].includes(report.kind);
+  const lines = [
+    failure
+      ? `[Delivery report] ${B}'s turn ended before it replied to your message: ${KIND_TEXT[report.kind] ?? "an error"}.`
+      : `[Delivery report] ${B} did not reply to your message: ${KIND_TEXT[report.kind]}.`,
+  ];
+  if (report.resets_at) {
+    const at = new Date(report.resets_at).toISOString();
+    lines.push(
+      report.resets_at > now
+        ? `The limit resets at ${at} (in about ${inAbout(report.resets_at - now)}).`
+        : `The limit was due to reset at ${at}.`,
+    );
+  }
+  if (report.detail && failure) lines.push(`Error: ${report.detail}`);
+  if (report.tool_ran === true)
+    lines.push(
+      `${B} had already started working on it (it ran tools), so check what it did before you send it again.`,
+    );
+  else if (report.tool_ran === false || report.kind === "canceled")
+    lines.push(
+      `${B} had not started working on it, so it is safe to send it again.`,
+    );
+  lines.push(
+    `This report is from CoCalc, not from ${B}. You can send it again${report.resets_at ? " after the reset" : ""}, send it to another agent, rephrase it, or do without.`,
+  );
+  return lines.join("\n");
 }
 
 function onlyFields(value: object, fields: string[], name: string) {
@@ -191,6 +261,8 @@ export function validateAgentRpcTurnFailureReport(
       "turn_started_at",
       "kind",
       "detail",
+      "resets_at",
+      "tool_ran",
     ],
     "delivery report",
   );
@@ -218,4 +290,11 @@ export function validateAgentRpcTurnFailureReport(
       /[\r\n]/.test(report.detail))
   )
     throw new Error("invalid detail");
+  if (
+    report.resets_at !== undefined &&
+    (!Number.isSafeInteger(report.resets_at) || report.resets_at <= 0)
+  )
+    throw new Error("invalid resets_at");
+  if (report.tool_ran !== undefined && typeof report.tool_ran !== "boolean")
+    throw new Error("invalid tool_ran");
 }
