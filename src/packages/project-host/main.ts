@@ -118,6 +118,7 @@ import { isProjectHostDevGcpReverseTunnelEnabled } from "./master-conat-server";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
 import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-node";
+import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
@@ -234,6 +235,7 @@ import {
 } from "./content-origin";
 import {
   hasProjectContentReadAccess,
+  observeProjectContentEpoch,
   projectContentEpoch,
 } from "./content-origin-access";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
@@ -471,6 +473,8 @@ export async function main(
       frameAncestors: () => [...approvedBrowserOrigins()],
       hasReadAccess: hasProjectContentReadAccess,
       currentEpoch: projectContentEpoch,
+      observeEpoch: observeProjectContentEpoch,
+      accountRevokedBeforeMs: getAccountRevokedBeforeMs,
       realPathWithinDir: projectRealPathWithinDir,
       serveFile: async ({ req, res, project_id, account_id }) => {
         await ensureFileDownloadReadServer({ client: conatClient, project_id });

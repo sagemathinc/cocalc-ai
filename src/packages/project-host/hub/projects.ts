@@ -3837,10 +3837,12 @@ export async function updateProjectUsers({
   project_id,
   users,
   runtime_lifecycle_revision,
+  content_epoch,
 }: {
   project_id: string;
   users?: any;
   runtime_lifecycle_revision?: number;
+  content_epoch?: number;
 }) {
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
@@ -3851,7 +3853,11 @@ export async function updateProjectUsers({
     fn: async () => {
       // Store collaborator map in the generic sqlite row mirror used by conat auth.
       // This is separate from the concrete projects SQL table schema.
-      upsertProject({ project_id, users });
+      upsertProject({
+        project_id,
+        users,
+        ...(content_epoch == null ? {} : { content_epoch }),
+      });
       clearProjectHostConatAuthCaches();
     },
   });

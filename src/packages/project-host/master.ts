@@ -1680,11 +1680,13 @@ export async function startMasterRegistration({
       project_id,
       users,
       runtime_lifecycle_revision,
+      content_epoch,
     }) {
       await updateProjectUsers({
         project_id,
         users,
         runtime_lifecycle_revision,
+        content_epoch,
       });
     },
     async dropComputer({ computer_id }) {

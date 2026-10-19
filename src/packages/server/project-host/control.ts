@@ -1669,6 +1669,25 @@ export async function updateAuthorizedKeysOnHost(
   }
 }
 
+// The project's content-origin revocation counter, or undefined on a schema
+// without it (then the host keeps what it has).
+export async function loadProjectContentEpoch(
+  project_id: string,
+): Promise<number | undefined> {
+  try {
+    const { rows } = await pool().query(
+      "SELECT COALESCE(content_epoch, 0)::bigint AS content_epoch FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    if (!rows[0]) return undefined;
+    const epoch = Number(rows[0].content_epoch);
+    return Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : undefined;
+  } catch (err) {
+    if ((err as { code?: string })?.code === "42703") return undefined;
+    throw err;
+  }
+}
+
 export async function syncProjectUsersOnHost({
   project_id,
   expected_host_id,
@@ -1698,10 +1717,12 @@ export async function syncProjectUsersOnHost({
     );
   }
   try {
+    const content_epoch = await loadProjectContentEpoch(project_id);
     await client.updateProjectUsers({
       project_id,
       users: meta.users ?? {},
       runtime_lifecycle_revision: Number(meta.runtime_lifecycle_revision ?? 0),
+      ...(content_epoch == null ? {} : { content_epoch }),
     });
   } catch (err) {
     log.warn("syncProjectUsersOnHost failed", {

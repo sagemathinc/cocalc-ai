@@ -36,6 +36,7 @@ import { set_local_storage } from "@cocalc/frontend/misc/local-storage";
 import { CONTENT_FRAME_SANDBOX, IFrameHTML } from "./iframe-html";
 import {
   errorRetryDelayMs,
+  notifyContentLinksRevoked,
   refreshDelayMs,
 } from "@cocalc/frontend/project/use-project-content-url";
 
@@ -157,6 +158,27 @@ describe("IFrameHTML on a site with a content origin", () => {
     });
     expect(issueMock).toHaveBeenCalledTimes(2);
     expect(frame().getAttribute("src")).toBe(`${second}?param=7`);
+  });
+
+  it("switches to a new link at once after \"Revoke content links\" in this browser", async () => {
+    const second = CONTENT_URL.replace("/cap/", "/cap2/");
+    issueMock
+      .mockResolvedValueOnce({ url: CONTENT_URL, expires_at: Date.now() + 24 * 3600_000 })
+      .mockResolvedValue({ url: second, expires_at: Date.now() + 24 * 3600_000 });
+    const project_id = freshProject();
+    renderFrame(project_id);
+    const src = () =>
+      screen.getByTitle("Rendered preview of /home/user/a.html").getAttribute("src");
+    await waitFor(() => expect(src()).toBe(`${CONTENT_URL}?param=7`));
+    await act(async () => {
+      notifyContentLinksRevoked(freshProject()); // another project: nothing
+    });
+    expect(issueMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      notifyContentLinksRevoked(project_id);
+    });
+    await waitFor(() => expect(src()).toBe(`${second}?param=7`));
+    expect(issueMock).toHaveBeenCalledTimes(2);
   });
 
   it("keeps showing a still-valid link when a refresh fails", async () => {

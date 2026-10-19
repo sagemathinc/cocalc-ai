@@ -77,6 +77,8 @@ let epoch: number;
 let errors: unknown[];
 let realPathWithinDir: (opts: { project_id: string; path: string; dir: string }) => Promise<boolean>;
 let realChecks: { project_id: string; path: string; dir: string }[];
+let observed: { project_id: string; epoch: number }[];
+let revokedBefore: Record<string, number>;
 
 beforeEach(async () => {
   served = [];
@@ -85,6 +87,8 @@ beforeEach(async () => {
   epoch = 0;
   realChecks = [];
   realPathWithinDir = async () => true;
+  observed = [];
+  revokedBefore = {};
   const handler = createContentOriginHandler({
     domain,
     host_id: hostId,
@@ -93,6 +97,8 @@ beforeEach(async () => {
     hasReadAccess: ({ account_id, project_id }) =>
       account_id === member && (project_id === projectA || project_id === projectB),
     currentEpoch: () => epoch,
+    observeEpoch: (opts) => observed.push(opts),
+    accountRevokedBeforeMs: (account_id) => revokedBefore[account_id],
     realPathWithinDir: async (opts) => {
       realChecks.push(opts);
       return await realPathWithinDir(opts);
@@ -253,6 +259,35 @@ describe("content origin request handling", () => {
     expect(served).toEqual([]);
   });
 
+  it("accepts a newer (hub-signed) epoch and records it, so older links die here too", async () => {
+    epoch = 2;
+    const r = await get(hostA, `/_c/${cap({ epoch: 3 })}/files/page.html`);
+    expect(r.status).toBe(200);
+    expect(observed).toEqual([{ project_id: projectA, epoch: 3 }]);
+    expect((await get(hostA, `/_c/${cap({ epoch: 2 })}/files/page.html`)).status).toBe(200);
+    expect(observed).toHaveLength(1);
+    // A newer epoch from a non-member's capability is not recorded.
+    expect(
+      (await get(hostA, `/_c/${cap({ epoch: 4, account_id: outsider })}/files/page.html`))
+        .status,
+    ).toBe(403);
+    expect(observed).toHaveLength(1);
+  });
+
+  it("refuses links issued before the account's sessions were revoked", async () => {
+    const issued = cap();
+    const { iat } = JSON.parse(
+      Buffer.from(issued.split(".")[1], "base64url").toString(),
+    );
+    revokedBefore[member] = iat * 1000;
+    expect((await get(hostA, `/_c/${issued}/files/page.html`)).status).toBe(403);
+    revokedBefore[member] = iat * 1000 - 1;
+    expect((await get(hostA, `/_c/${issued}/files/page.html`)).status).toBe(200);
+    // Only that account is affected.
+    revokedBefore = { [outsider]: Date.now() + 60_000 };
+    expect((await get(hostA, `/_c/${issued}/files/page.html`)).status).toBe(200);
+  });
+
   it("refuses service workers, writes, malformed capabilities and dot segments", async () => {
     const c = cap();
     expect(
@@ -297,6 +332,7 @@ describe("content origin request handling", () => {
         frameAncestors: () => [],
         hasReadAccess: () => true,
         currentEpoch: () => 0,
+        accountRevokedBeforeMs: () => undefined,
         realPathWithinDir: async () => true,
         serveFile: async ({ res }) => {
           res.writeHead(200, headers as any);
@@ -344,6 +380,7 @@ describe("content origin request handling", () => {
       frameAncestors: () => [],
       hasReadAccess: () => true,
       currentEpoch: () => 1, // stale: refused before serving
+      accountRevokedBeforeMs: () => undefined,
       realPathWithinDir: async () => true,
       serveFile: async () => {},
     });

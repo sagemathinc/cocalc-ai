@@ -855,6 +855,8 @@ export interface HostControlApi {
     project_id: string;
     users?: any;
     runtime_lifecycle_revision?: number;
+    // Content-origin revocation counter (trust-free step 6).
+    content_epoch?: number;
   }) => Promise<void>;
   /**
    * A paired computer was revoked: refuse it from now on (its socket closes

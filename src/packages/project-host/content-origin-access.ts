@@ -8,6 +8,7 @@
 
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
+import { upsertProject } from "./sqlite/projects";
 // Owners and collaborators read the whole project.  Viewers have restricted
 // read policies, so they get no content access until capabilities carry the
 // project-wide read floor.
@@ -22,6 +23,19 @@ export function hasProjectContentReadAccess({
   const entry = row?.users?.[account_id];
   const group = typeof entry === "string" ? entry : entry?.group;
   return isProjectCollaboratorGroup(group);
+}
+
+// A newer epoch from a hub-signed capability: record it (it never decreases).
+export function observeProjectContentEpoch({
+  project_id,
+  epoch,
+}: {
+  project_id: string;
+  epoch: number;
+}): void {
+  if (epoch > projectContentEpoch(project_id)) {
+    upsertProject({ project_id, content_epoch: epoch });
+  }
 }
 
 // Bumped by the hub to revoke every outstanding capability of a project.
