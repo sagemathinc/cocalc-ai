@@ -147,8 +147,11 @@ EOF
 
   For example ``Owner: `@ops0` on alpha.cocalc.ai, project ops (c3337130)``.
   Keep the agent name in backticks: a bare `@name` mentions an unrelated
-  GitHub user. In a CoCalc runtime your name is in `cocalc agent whoami` and
-  the site is the host of `$COCALC_SITE_URL`.
+  GitHub user. In a CoCalc runtime use the name peers route to:
+  `data.as_seen_by_peers.name` from `cocalc agent whoami --json` (not
+  `identity.name`, which can differ, e.g. "review - 1" vs "review"); if there
+  is no `as_seen_by_peers` (no Agent Network), use `identity.name`. The site
+  is the host of `$COCALC_SITE_URL`.
 - Outside a CoCalc runtime (no agent identity or site), name what you are and
   where you run instead, e.g. ``Owner: `claude-code` on <machine>, for
   <GitHub handle>``; site and project are optional then.
