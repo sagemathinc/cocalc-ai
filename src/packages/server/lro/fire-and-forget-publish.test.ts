@@ -6,8 +6,9 @@
 // LRO progress publishes are fire-and-forget, so nothing awaits them. A
 // publish that times out (e.g. while a course collect floods the persist
 // server) then rejects with nobody listening, and the hub logs it as an
-// unhandled rejection. Every discarded `publishLro...(...)`, whether `void`
-// or a bare statement, must end in `.catch(`.
+// unhandled rejection. Every `publishLro...(...)` whose promise is thrown
+// away (`void`, a bare statement, a branch of && or ?: that is) must end
+// in `.catch(`.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -30,61 +31,82 @@ function sources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// The calls of a method chain `f(...).a(...).b(...)`, outermost first, down
-// to the root call `f(...)`.
-function callChain(expr: ts.Expression): ts.CallExpression[] {
-  const calls: ts.CallExpression[] = [];
-  let e = expr;
+const PASS_THROUGH = new Set([
+  ts.SyntaxKind.AmpersandAmpersandToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.QuestionQuestionToken,
+  ts.SyntaxKind.CommaToken,
+]);
+
+// Whether a publish call's promise can reject with nothing to handle it.
+// Follow the promise up: through parentheses, type assertions, method calls
+// on it (`.then`, `.catch`, ...), a branch of ?:, and the right side of
+// && || ?? and comma. It is handed to someone else if it ends up awaited,
+// returned, assigned, stored or passed as an argument. Anywhere else (void,
+// a bare statement, a condition, the left of a comma, ...) it is thrown
+// away, which is fine only if its last method call was `.catch(...)`.
+function isUnhandled(call: ts.CallExpression): boolean {
+  let n: ts.Node = call;
+  let last: string | undefined;
   for (;;) {
-    while (ts.isParenthesizedExpression(e)) e = e.expression;
-    if (!ts.isCallExpression(e)) return calls;
-    calls.push(e);
-    if (!ts.isPropertyAccessExpression(e.expression)) return calls;
-    e = e.expression.expression;
+    const p = n.parent;
+    if (
+      ts.isParenthesizedExpression(p) ||
+      ts.isAsExpression(p) ||
+      ts.isNonNullExpression(p) ||
+      ts.isSatisfiesExpression(p) ||
+      ts.isTypeAssertionExpression(p)
+    ) {
+      n = p;
+    } else if (
+      ts.isPropertyAccessExpression(p) &&
+      p.expression === n &&
+      ts.isCallExpression(p.parent) &&
+      p.parent.expression === p
+    ) {
+      last = p.name.text;
+      n = p.parent;
+    } else if (ts.isConditionalExpression(p) && n !== p.condition) {
+      n = p;
+    } else if (
+      ts.isBinaryExpression(p) &&
+      n === p.right &&
+      PASS_THROUGH.has(p.operatorToken.kind)
+    ) {
+      n = p;
+    } else if (
+      ts.isAwaitExpression(p) ||
+      ts.isReturnStatement(p) ||
+      ts.isYieldExpression(p) ||
+      ts.isArrayLiteralExpression(p) ||
+      ts.isSpreadElement(p) ||
+      ts.isPropertyAssignment(p) ||
+      (ts.isArrowFunction(p) && p.body === n) ||
+      (ts.isVariableDeclaration(p) && p.initializer === n) ||
+      (ts.isBinaryExpression(p) &&
+        n === p.right &&
+        p.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+      ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression !== n)
+    ) {
+      return false;
+    } else {
+      return last !== "catch";
+    }
   }
 }
 
-function isPublisherCall(call: ts.CallExpression | undefined): boolean {
-  return (
-    call != null &&
-    ts.isIdentifier(call.expression) &&
-    PUBLISHERS.has(call.expression.text)
-  );
-}
-
-// The discarded promise is handled only if the chain's last call is
-// `.catch(...)`; `.then` or `.finally` after it reject again.
-function endsInCatch(calls: ts.CallExpression[]): boolean {
-  const outer = calls[0]?.expression;
-  return (
-    outer != null &&
-    ts.isPropertyAccessExpression(outer) &&
-    outer.name.text === "catch"
-  );
-}
-
-// The promise a node throws away: the operand of `void`, or a bare
-// expression statement (a `void` statement is handled as its operand).
-function discarded(node: ts.Node): ts.Expression | undefined {
-  if (ts.isVoidExpression(node)) return node.expression;
-  if (ts.isExpressionStatement(node) && !ts.isVoidExpression(node.expression))
-    return node.expression;
-  return undefined;
-}
-
-// Lines of discarded `publishLro...(...)...` whose rejection nothing handles.
+// Lines of publishLro... calls whose rejection nothing handles.
 function uncaughtPublishes(text: string): number[] {
   const file = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
   const lines: number[] = [];
   const visit = (node: ts.Node) => {
-    const expr = discarded(node);
-    if (expr != null) {
-      const calls = callChain(expr);
-      if (isPublisherCall(calls[calls.length - 1]) && !endsInCatch(calls)) {
-        lines.push(
-          file.getLineAndCharacterOfPosition(node.getStart()).line + 1,
-        );
-      }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      PUBLISHERS.has(node.expression.text) &&
+      isUnhandled(node)
+    ) {
+      lines.push(file.getLineAndCharacterOfPosition(node.getStart()).line + 1);
     }
     ts.forEachChild(node, visit);
   };
@@ -142,6 +164,28 @@ describe("fire-and-forget LRO publishes", () => {
         ].join("\n"),
       ),
     ).toEqual([1, 2]);
+  });
+
+  it("follows the promise through && || ?? ?: and commas", () => {
+    expect(
+      uncaughtPublishes(
+        [
+          "ready && publishLroEvent({});",
+          "void (ready && publishLroEvent({}));",
+          "ready ? publishLroEvent({}) : undefined;",
+          "void (ready ? undefined : publishLroSummary({}));",
+          "(publishLroEvent({}), 1);",
+          "x ?? publishLroEvent({});",
+          "ready && publishLroEvent({}).catch(() => {});",
+          "void (ready ? publishLroEvent({}).catch(() => {}) : 0);",
+          "(ready && publishLroEvent({}))?.catch(() => {});",
+          "const p = ready && publishLroEvent({});",
+          "await (ready ? publishLroEvent({}) : null);",
+          "f(publishLroEvent({}));",
+          "publishLroEvent({}) ? a() : b();",
+        ].join("\n"),
+      ),
+    ).toEqual([1, 2, 3, 4, 5, 6, 13]);
   });
 
   it("always handle rejection", () => {
