@@ -2,6 +2,7 @@ import {
   handleFileDownload,
   DOWNLOAD_ERROR_HEADER,
   fileETag,
+  ifRangeMatches,
   isNotModified,
 } from "./file-download";
 import { EventEmitter } from "node:events";
@@ -646,6 +647,17 @@ describe("handleFileDownload", () => {
       });
       expect(res.statusCode).toBe(206);
     });
+  });
+});
+
+describe("ifRangeMatches", () => {
+  const mtime = new Date("2026-10-19T03:00:00.250Z");
+  const headers = { "if-range": mtime.toUTCString() };
+
+  it("trusts a matching date only once it is at least a second old", () => {
+    expect(ifRangeMatches({ headers, mtime, now: mtime.valueOf() + 1000 })).toBe(true);
+    expect(ifRangeMatches({ headers, mtime, now: mtime.valueOf() + 999 })).toBe(false);
+    expect(ifRangeMatches({ headers: {}, mtime, now: mtime.valueOf() })).toBe(true);
   });
 });
 

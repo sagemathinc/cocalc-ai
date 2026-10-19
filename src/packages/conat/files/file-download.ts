@@ -74,13 +74,17 @@ export function fileETag({ size, mtime }: { size: number; mtime: Date }): string
 // RFC 9110 §13.1.5: a range is served only if If-Range still matches;
 // otherwise the whole file is sent, so a cached partial copy is never
 // completed with bytes of a newer version.  Entity tags need a strong match,
-// which our weak ones never are; a date must equal Last-Modified exactly.
+// which our weak ones never are; a date must equal Last-Modified exactly,
+// and only counts if that date is strong (§8.8.2.2: at least a second old,
+// so the file can't have changed again within the same second).
 export function ifRangeMatches({
   headers,
   mtime,
+  now = Date.now(),
 }: {
   headers?: Record<string, unknown>;
   mtime?: unknown;
+  now?: number;
 }): boolean {
   const ifRange = headers?.["if-range"];
   if (typeof ifRange !== "string") return true;
@@ -89,6 +93,7 @@ export function ifRangeMatches({
   return (
     mtime instanceof Date &&
     Number.isFinite(mtime.valueOf()) &&
+    mtime.valueOf() <= now - 1000 &&
     value === mtime.toUTCString()
   );
 }
