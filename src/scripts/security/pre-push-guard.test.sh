@@ -425,6 +425,10 @@ inst() { # <expect> <desc>
 git init -q "$T/inst" && cd "$T/inst" || exit 1
 inst 0 "install into a fresh clone"
 inst 0 "re-install over its own hook"
+mkdir -p "$T/tmpparent"
+TMPDIR="$T/tmpparent" bash "$here/install-hooks.sh" >/dev/null 2>&1
+[ -z "$(ls -A "$T/tmpparent")" ] && { pass=$((pass + 1)); echo "ok    installer leaves no temporary files behind"; } ||
+  { fail=$((fail + 1)); echo "FAIL  installer left temporary files: $(ls -A "$T/tmpparent" | head -3)"; }
 printf '#!/bin/sh\n# my wrapper\nexec %s "$@"\n' "$H" >.git/hooks/pre-push
 inst 1 "refuses to overwrite a wrapper hook that calls the guard"
 grep -q "my wrapper" .git/hooks/pre-push && { pass=$((pass + 1)); echo "ok    wrapper left intact"; } || { fail=$((fail + 1)); echo "FAIL  wrapper was modified"; }

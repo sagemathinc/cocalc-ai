@@ -16,8 +16,9 @@ cannot_verify() {
   echo "install-hooks: cannot verify core.hooksPath ($1); refusing." >&2
   exit 1
 }
-tmp=$(mktemp -d) || cannot_verify "no temporary directory"
-trap 'rm -rf "$tmp"' EXIT
+tmpdir=$(mktemp -d) || cannot_verify "no temporary directory"
+hook_tmp=""
+trap 'rm -rf "$tmpdir"; [ -z "$hook_tmp" ] || rm -f "$hook_tmp"' EXIT
 # core.hooksPath value from a git config command, if set: rc 0 = set (value on
 # stdout), 1 = not set; any other status cannot be verified.
 check_hooks_path() { # <description> <git config args...>
@@ -32,16 +33,16 @@ check_hooks_path() { # <description> <git config args...>
 }
 # core.hooksPath anywhere it could apply: the effective config of every
 # worktree (covers per-worktree config and conditions true there) ...
-git worktree list --porcelain >"$tmp/worktrees" || cannot_verify "git worktree list failed"
+git worktree list --porcelain >"$tmpdir/worktrees" || cannot_verify "git worktree list failed"
 while read -r line; do
   case $line in worktree\ *) wt=${line#worktree } ;; *) continue ;; esac
   check_hooks_path "in worktree $wt" -C "$wt" config
-done <"$tmp/worktrees"
+done <"$tmpdir/worktrees"
 # ... and every include/includeIf target, whatever its condition (e.g.
 # includeIf.onbranch:security/**), since a later checkout could activate it.
 # A target that is missing or unreadable now could be created later: refuse.
 rc=0
-git config -z --show-origin --get-regexp '^include(if\..*)?\.path$' >"$tmp/includes" || rc=$?
+git config -z --show-origin --get-regexp '^include(if\..*)?\.path$' >"$tmpdir/includes" || rc=$?
 [ $rc = 0 ] || [ $rc = 1 ] || cannot_verify "listing include paths failed"
 # NUL-separated entries: "<origin>\0<key>\n<value>\0" (paths may contain spaces).
 while IFS= read -r -d '' origin && IFS= read -r -d '' entry; do
@@ -58,7 +59,7 @@ while IFS= read -r -d '' origin && IFS= read -r -d '' entry; do
     1) ;;
     *) cannot_verify "reading $file (via $key) failed" ;;
   esac
-done <"$tmp/includes"
+done <"$tmpdir/includes"
 hooks=$(git rev-parse --path-format=absolute --git-common-dir)/hooks
 mkdir -p "$hooks"
 target=$hooks/pre-push
@@ -67,14 +68,15 @@ if [ -e "$target" ] && [ "$(sed -n 2p "$target")" != "$MARKER" ]; then
   echo "install-hooks: call $here/pre-push-guard.sh from it (passing \$1 \$2 and stdin), or remove it and re-run." >&2
   exit 1
 fi
-tmp=$(mktemp "$hooks/.pre-push.XXXXXX")
+hook_tmp=$(mktemp "$hooks/.pre-push.XXXXXX")
 {
   sed -n 1p "$here/pre-push-guard.sh"
   echo "$MARKER"
   sed 1d "$here/pre-push-guard.sh"
-} >"$tmp"
-chmod +x "$tmp"
-mv "$tmp" "$target"
+} >"$hook_tmp"
+chmod +x "$hook_tmp"
+mv "$hook_tmp" "$target"
+hook_tmp=""
 # Verify that this is the hook Git will run from here.
 effective=$(git rev-parse --path-format=absolute --git-path hooks/pre-push)
 if [ "$effective" != "$target" ]; then
