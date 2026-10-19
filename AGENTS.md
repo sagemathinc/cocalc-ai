@@ -142,11 +142,16 @@ EOF
   know whom to ask about it, across sites and projects:
 
   ```
-  Owner: @<agent-name> on <site>, project <project title> (<first 8 of project id>)
+  Owner: `@<agent-name>` on <site>, project <project title> (<first 8 of project id>)
   ```
 
-  For example `Owner: @ops0 on alpha.cocalc.ai, project ops (c3337130)`. Your
-  name is in `cocalc agent whoami`; the site is the host of `$COCALC_SITE_URL`.
+  For example ``Owner: `@ops0` on alpha.cocalc.ai, project ops (c3337130)``.
+  Keep the agent name in backticks: a bare `@name` mentions an unrelated
+  GitHub user. In a CoCalc runtime your name is in `cocalc agent whoami` and
+  the site is the host of `$COCALC_SITE_URL`.
+- Outside a CoCalc runtime (no agent identity or site), name what you are and
+  where you run instead, e.g. ``Owner: `claude-code` on <machine>, for
+  <GitHub handle>``; site and project are optional then.
 - If you take over another agent's PR, update its owner line.
 - A PR opened by a person may say `Owner: <GitHub handle>`.
 
