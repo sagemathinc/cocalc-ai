@@ -43,14 +43,15 @@ export type TurnOutcome = {
   | {
       state: "failed";
       failure: TurnFailure;
-      /** Any tool ran before it ended, so it may have changed something. */
-      tool_ran: boolean;
+      /** Any tool ran before it ended, so it may have changed something.
+       * Absent when it is not known. */
+      tool_ran?: boolean;
     }
   | {
       state: "canceled";
       /** person: someone in the recipient's project stopped or canceled it. */
       by: "person" | "sender" | "superseded" | "system";
-      tool_ran: boolean;
+      tool_ran?: boolean;
     }
   | {
       state: "never-started";
@@ -174,7 +175,8 @@ export function turnOutcomeOf(opts: {
   failure?: TurnFailure;
   code?: string;
   error?: string;
-  toolRan: boolean;
+  /** Undefined when it is not known. */
+  toolRan?: boolean;
 }): TurnOutcome {
   if (opts.terminalState === "completed")
     return { version: 1, state: "completed" };
@@ -184,7 +186,7 @@ export function turnOutcomeOf(opts: {
       version: 1,
       state: "canceled",
       by: "person",
-      tool_ran: opts.toolRan,
+      ...(opts.toolRan !== undefined ? { tool_ran: opts.toolRan } : {}),
       ...(detail ? { detail } : {}),
     };
   const signal = opts.failure ?? turnFailureFromCode(opts.code);
@@ -192,7 +194,7 @@ export function turnOutcomeOf(opts: {
     version: 1,
     state: "failed",
     failure: signal ?? turnFailureFromText(opts.error ?? ""),
-    tool_ran: opts.toolRan,
+    ...(opts.toolRan !== undefined ? { tool_ran: opts.toolRan } : {}),
     classified_by: signal ? "signal" : "text",
     ...(detail ? { detail } : {}),
   };
@@ -206,6 +208,9 @@ function validFailure(value: unknown): value is TurnFailure {
     return failure.scope === "credential" || failure.scope === "cocalc";
   return true;
 }
+
+const optionalBoolean = (value: unknown) =>
+  value === undefined || typeof value === "boolean";
 
 /** A stored or received outcome, if it is one; undefined otherwise. */
 export function parseTurnOutcome(value: unknown): TurnOutcome | undefined {
@@ -224,14 +229,13 @@ export function parseTurnOutcome(value: unknown): TurnOutcome | undefined {
     case "completed":
       return outcome as TurnOutcome;
     case "failed":
-      return validFailure(outcome.failure) &&
-        typeof outcome.tool_ran === "boolean"
+      return validFailure(outcome.failure) && optionalBoolean(outcome.tool_ran)
         ? (outcome as TurnOutcome)
         : undefined;
     case "canceled":
       return ["person", "sender", "superseded", "system"].includes(
         outcome.by,
-      ) && typeof outcome.tool_ran === "boolean"
+      ) && optionalBoolean(outcome.tool_ran)
         ? (outcome as TurnOutcome)
         : undefined;
     case "never-started":

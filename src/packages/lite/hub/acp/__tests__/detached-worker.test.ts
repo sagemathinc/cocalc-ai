@@ -261,6 +261,90 @@ function makeRequest() {
   };
 }
 
+it("a turn that cannot start still records how it ended", async () => {
+  const original = process.env.COCALC_ACP_HARNESSES;
+  process.env.COCALC_ACP_HARNESSES = "1";
+  setHarnessLauncher(async () => {
+    throw Error("must not launch");
+  });
+  const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+  hubApi.agent.authorizeRpcExecution = jest
+    .fn()
+    .mockRejectedValue(Error("network membership revoked"));
+  const base = makeRequest();
+  try {
+    const job = enqueueAcpJob({
+      ...base,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 1,
+          kind: "acp",
+          id: "fixture",
+          revision: "1",
+          executable: "/home/user/fixture",
+          args: [],
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+      chat: {
+        ...base.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+        agent_rpc_execution: {
+          version: 3,
+          source: { agent_id: randomUUID(), project_id: randomUUID() },
+          source_run_id: randomUUID(),
+          target: { agent_id: randomUUID(), project_id: base.project_id },
+          target_path: base.chat.path,
+          target_thread_id: base.chat.thread_id,
+          agent_network_id: randomUUID(),
+          network_generation: randomUUID(),
+          account_generation: 0,
+          configured_delivery: "queued",
+          principal_account_id: base.account_id,
+          guidance: false,
+        },
+      },
+    } as any);
+    const queuedRequest = decodeAcpJobRequest(job);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: job.thread_id,
+          agent_kind: "acp",
+          agent_runtime: queuedRequest.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+    })!;
+    await acpTestInternals.runQueuedAcpJob(claimed);
+    const row = getAcpJobByOpId(job.op_id);
+    expect(row?.state).toBe("error");
+    const outcome = parseTurnOutcome(row?.outcome_json);
+    expect(outcome).toMatchObject({ version: 1, state: "failed" });
+    // Nothing is claimed about tools it never got to run.
+    expect(outcome && "tool_ran" in outcome).toBe(false);
+  } finally {
+    hubApi.agent.authorizeRpcExecution = originalAuthorize;
+    setHarnessLauncher();
+    if (original === undefined) delete process.env.COCALC_ACP_HARNESSES;
+    else process.env.COCALC_ACP_HARNESSES = original;
+  }
+});
+
 it.each(["network membership revoked", "authorization service unavailable"])(
   "persisted generic peer execution refuses launch when %s",
   async (message) => {
@@ -365,9 +449,15 @@ it.each([
     },
   ],
   ["a completed turn", undefined, { state: "completed" }],
+  [
+    "a turn that only asked for permission",
+    () => new Error("boom"),
+    { state: "failed", failure: { kind: "error" }, tool_ran: false },
+    false,
+  ],
 ] as const)(
   "records how a queued turn ended, from %s",
-  async (_name, failWith, expected) => {
+  async (_name, failWith, expected, runsTool = true) => {
     const previousEnabled = process.env.COCALC_ACP_HARNESSES;
     process.env.COCALC_ACP_HARNESSES = "1";
     setHarnessLauncher(async () => {
@@ -421,9 +511,38 @@ it.each([
           type: "harness",
           source: "acp",
           kind: "update",
-          data: { sessionUpdate: "tool_call", toolCallId: "t1" },
+          // Waiting for permission is not running.
+          kind: "permission",
+          data: { toolCallId: "t1", outcome: "cancelled" },
         },
       });
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          data: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t0",
+            status: "pending",
+          },
+        },
+      });
+      if (runsTool)
+        await stream({
+          type: "event",
+          event: {
+            type: "harness",
+            source: "acp",
+            kind: "update",
+            data: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "t1",
+              status: "in_progress",
+            },
+          },
+        });
       if (failWith) throw failWith();
       await stream({ type: "summary", finalResponse: "done" });
     });

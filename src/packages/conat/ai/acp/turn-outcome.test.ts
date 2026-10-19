@@ -197,7 +197,12 @@ describe("stored outcomes", () => {
         failure: { kind: "limit" },
         tool_ran: false,
       },
-      { version: 1, state: "failed", failure: { kind: "error" } },
+      {
+        version: 1,
+        state: "failed",
+        failure: { kind: "error" },
+        tool_ran: "yes",
+      },
       { version: 1, state: "canceled", by: "someone", tool_ran: false },
       { version: 1, state: "never-started", reason: "whatever" },
     ])
