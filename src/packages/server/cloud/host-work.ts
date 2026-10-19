@@ -2034,6 +2034,7 @@ async function handleStart(row: any) {
           `standard fallback is not supported for provider '${providerId}'`,
         );
       }
+      // content DNS: the VM was preempted, so its address is already gone.
       await entry.provider.setPricingModel(runtime, "on_demand", creds);
       effectivePricingForStart = "on_demand";
       await updateRecoveryRecord(nextRecoveryState);
@@ -2068,6 +2069,7 @@ async function handleStart(row: any) {
         policy: recoveryPolicy,
       }).find((candidate) => !tried.has(candidate));
       if (!nextMachineType) return false;
+      // content DNS: the VM was preempted, so its address is already gone.
       await entry.provider.setMachineType(runtime, nextMachineType, creds);
       tried.add(nextMachineType);
       nextRecoveryState = {
@@ -2528,6 +2530,7 @@ async function handleStart(row: any) {
           desiredMachineType &&
           entry.provider.setMachineType
         ) {
+          // content DNS: released above, before stopHost.
           await entry.provider.setMachineType(
             runtimeForStart,
             desiredMachineType,
@@ -2540,6 +2543,7 @@ async function handleStart(row: any) {
             spot_machine_types_tried: [desiredMachineType],
           };
         }
+        // content DNS: released above, before stopHost.
         await entry.provider.setPricingModel(runtimeForStart, "spot", creds);
         effectivePricingForStart = "spot";
         nextRecoveryState = {

@@ -33,6 +33,22 @@ import {
 import { recordHostAvailabilityFromSnapshot } from "@cocalc/server/hosts/availability";
 import { hostOfflineFenced } from "@cocalc/server/hosts/maintenance";
 import { recoverHostToRunning } from "@cocalc/server/hosts/desired-state";
+import { releaseHostContentDns } from "./host-content-dns";
+
+// The provider took a host's address away without a call from us (spot
+// preemption, termination): remove its content-origin DNS now rather than at
+// the sweeper's next run.  Best effort; the sweeper is the backstop.
+async function releaseLostAddressContentDns(row: any): Promise<void> {
+  try {
+    await releaseHostContentDns(row);
+  } catch (err) {
+    logger.warn("could not release project content DNS of a host that lost its address", {
+      host_id: row?.id,
+      err: `${err}`,
+    });
+  }
+}
+
 export { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
 
 const logger = getLogger("server:cloud:reconcile");
@@ -870,6 +886,8 @@ async function reconcileProvider(provider: Provider) {
         await updateHost(row, { runtime: nextRuntime });
         continue;
       }
+      // The instance is gone, and its address with it.
+      await releaseLostAddressContentDns(row);
       if (diskState === "present") {
         if (
           await enqueueSpotRestore(
@@ -928,6 +946,10 @@ async function reconcileProvider(provider: Provider) {
       row.metadata?.bootstrap_lifecycle?.summary_status === "in_sync";
     const nextStatus =
       desiredStatus === "starting" && bootstrapDone ? "running" : desiredStatus;
+    if (nextStatus === "off") {
+      // Stopped by the provider (e.g. a spot preemption): no address.
+      await releaseLostAddressContentDns(row);
+    }
     if (
       nextStatus === "off" &&
       (await enqueueSpotRestore(

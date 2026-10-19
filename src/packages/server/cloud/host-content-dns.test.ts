@@ -26,11 +26,48 @@ type HostRow = {
   metadata: Record<string, any>;
 };
 let hosts: Map<string, HostRow>;
+// pg_advisory_xact_lock, held until COMMIT or ROLLBACK.
+const advisoryLocks = new Map<string, Promise<void>>();
+let lockEvents: string[] = [];
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({
+    connect: async () => {
+      let unlock: (() => void) | undefined;
+      const end = () => {
+        unlock?.();
+        unlock = undefined;
+      };
+      return {
+        query: async (sql: string, params: any[] = []) => {
+          if (sql.includes("pg_advisory_xact_lock")) {
+            const key = params[0];
+            while (advisoryLocks.has(key)) await advisoryLocks.get(key);
+            advisoryLocks.set(
+              key,
+              new Promise<void>((resolve) => {
+                unlock = () => {
+                  advisoryLocks.delete(key);
+                  lockEvents.push(`unlock ${key}`);
+                  resolve();
+                };
+              }),
+            );
+            lockEvents.push(`lock ${key}`);
+          } else if (/^(COMMIT|ROLLBACK)/.test(sql)) {
+            end();
+          }
+          return { rows: [] };
+        },
+        release: () => end(),
+      };
+    },
     query: async (sql: string, params: any[] = []) => {
       const q = sql.replace(/\s+/g, " ");
+      if (q.includes("SELECT id, status, deleted, metadata FROM project_hosts")) {
+        const h = hosts.get(params[0]);
+        return { rows: h ? [JSON.parse(JSON.stringify(h))] : [] };
+      }
       if (q.includes("- 'content_dns'")) {
         const h = hosts.get(params[0]);
         if (h) delete h.metadata.content_dns;
@@ -110,6 +147,7 @@ beforeEach(() => {
     ],
   ]);
   zones = { "usercontent.example.org": [], "old.example.net": [] };
+  lockEvents = [];
   calls = [];
   authHeaders = [];
   failDeletesFor = new Set();
@@ -285,6 +323,133 @@ describe("releaseHostContentDns", () => {
     mockedSettings.project_hosts_cloudflare_tunnel_api_token = "";
     await expect(releaseHostContentDns(row())).rejects.toThrow("no Cloudflare API token");
     expect(row().metadata.content_dns).toBeDefined();
+  });
+});
+
+describe("sync racing a stop, delete or restart (review r2, I1)", () => {
+  // Holds the next getServerSettings() (before the lock) until released.
+  async function holdSyncBeforeLock() {
+    const settings = require("@cocalc/database/settings/server-settings");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    settings.getServerSettings.mockImplementationOnce(async () => {
+      await gate;
+      return mockedSettings;
+    });
+    return release;
+  }
+
+  it("a sync started before a stop doesn't recreate the released wildcard", async () => {
+    const { syncHostContentDns, releaseHostContentDns } = await load();
+    await syncHostContentDns(row());
+    const release = await holdSyncBeforeLock();
+    const inFlight = syncHostContentDns(JSON.parse(JSON.stringify(row())));
+    // The stop API marks the host wanted-stopped, then handleStop releases.
+    row().metadata.desired_state = "stopped";
+    await releaseHostContentDns(row());
+    release();
+    await inFlight;
+    expect(zones["usercontent.example.org"]).toEqual([]);
+    expect(row().metadata.content_dns).toBeUndefined();
+  });
+
+  it.each([
+    ["off", { status: "off" }],
+    ["deprovisioned", { status: "deprovisioned" }],
+    ["deleted", { deleted: "2026-10-19" }],
+  ])("and not once the host is %s", async (_label, change) => {
+    const { syncHostContentDns, releaseHostContentDns } = await load();
+    await syncHostContentDns(row());
+    const release = await holdSyncBeforeLock();
+    const inFlight = syncHostContentDns(JSON.parse(JSON.stringify(row())));
+    await releaseHostContentDns(row());
+    Object.assign(row(), change);
+    release();
+    await inFlight;
+    expect(zones["usercontent.example.org"]).toEqual([]);
+  });
+
+  it("doesn't sync while the host restarts or is stopping", async () => {
+    const { syncHostContentDns } = await load();
+    for (const status of ["restarting", "stopping"]) {
+      row().status = status;
+      await syncHostContentDns(row());
+      expect(zones["usercontent.example.org"]).toEqual([]);
+    }
+  });
+
+  it("doesn't publish an address the host no longer has", async () => {
+    const { syncHostContentDns } = await load();
+    const stale = JSON.parse(JSON.stringify(row()));
+    row().metadata.runtime.public_ip = "198.51.100.9";
+    await syncHostContentDns(stale);
+    expect(zones["usercontent.example.org"]).toEqual([]);
+    await syncHostContentDns(row());
+    expect(zones["usercontent.example.org"].map((r) => r.content)).toEqual([
+      "198.51.100.9",
+    ]);
+  });
+
+  it("a release arriving while a sync holds the lock waits, then removes what it created", async () => {
+    const { syncHostContentDns, releaseHostContentDns } = await load();
+    // Hold the sync inside the lock, at its Cloudflare create.
+    const realFetch = (global as any).fetch;
+    let releaseCreate!: () => void;
+    const created = new Promise<void>((resolve) => (releaseCreate = resolve));
+    (global as any).fetch = jest.fn(async (input: any, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "POST") await created;
+      return await realFetch(input, init);
+    });
+    const inFlight = syncHostContentDns(row());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const releasing = releaseHostContentDns(row());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The release is waiting for the lock: nothing deleted yet.
+    expect(lockEvents.filter((e) => e.startsWith("lock"))).toHaveLength(1);
+    releaseCreate();
+    await inFlight;
+    await releasing;
+    expect(zones["usercontent.example.org"]).toEqual([]);
+    expect(row().metadata.content_dns).toBeUndefined();
+  });
+});
+
+describe("release details (review r2, M1 and M25)", () => {
+  it("releases what is recorded now, even when the caller's row is older", async () => {
+    const { syncHostContentDns, releaseHostContentDns } = await load();
+    const loadedBeforeSync = JSON.parse(JSON.stringify(row()));
+    await syncHostContentDns(row());
+    await releaseHostContentDns(loadedBeforeSync);
+    expect(zones["usercontent.example.org"]).toEqual([]);
+    expect(row().metadata.content_dns).toBeUndefined();
+  });
+
+  it("deletes the current domain's wildcard even if nothing was recorded", async () => {
+    const { releaseHostContentDns } = await load();
+    // A sync created the record but failed to write the metadata.
+    zones["usercontent.example.org"].push({
+      id: "orphan",
+      type: "A",
+      name: WILDCARD,
+      content: "203.0.113.7",
+      proxied: true,
+    });
+    await releaseHostContentDns(row());
+    expect(zones["usercontent.example.org"]).toEqual([]);
+  });
+
+  it("uses the content token for release and sweep", async () => {
+    const { syncHostContentDns, releaseHostContentDns, sweepProjectContentDns } =
+      await load();
+    await syncHostContentDns(row());
+    authHeaders.length = 0;
+    await releaseHostContentDns(row());
+    await sweepProjectContentDns({
+      localBayId: "bay-local",
+      resolveHostBay: async () => null,
+    });
+    expect(authHeaders.length).toBeGreaterThan(0);
+    expect(new Set(authHeaders)).toEqual(new Set(["Bearer content-token"]));
   });
 });
 

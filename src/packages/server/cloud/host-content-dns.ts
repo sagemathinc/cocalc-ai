@@ -23,6 +23,20 @@ reused address would serve those origins.  So:
   that address: a backstop for crashes, lost metadata and manual edits.
 - Ensuring is best effort: a failure only makes content links on that host
   fail until reconciliation retries.
+- Sync and release of a host take one lock and re-read the host row, so a
+  sync already in flight can't recreate a record a stop has just released;
+  sync does nothing unless the host is wanted running, not stopping or
+  restarting, and still at the address it would publish.
+- When the provider takes the address away on its own (spot preemption),
+  reconcile releases the record as soon as it notices; the sweeper remains
+  the backstop.
+
+If release keeps failing (e.g. the token lost access to the zone, or the
+zone was removed), the host can't stop or be deleted: failing closed is
+deliberate.  The way out is to restore the token's access, or to delete the
+record (*.h-<host>.<domain>) by hand in Cloudflare and then clear the host's
+metadata.content_dns:
+  UPDATE project_hosts SET metadata = metadata - 'content_dns' WHERE id = '<host>';
 */
 
 import getLogger from "@cocalc/backend/logger";
@@ -132,6 +146,57 @@ async function setContentDnsMetadata(
   }
 }
 
+// Sync and release of one host's content records run one at a time, so a
+// sync already in flight can't recreate a record that a stop or delete has
+// just released (both re-read the host row under the lock).
+async function withHostContentDnsLock<T>(
+  host_id: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`host-content-dns:${host_id}`],
+    );
+    const result = await fn();
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function loadHostRow(
+  host_id: string,
+): Promise<(HostRowLike & { status?: string; deleted?: unknown }) | undefined> {
+  const { rows } = await getPool().query(
+    "SELECT id, status, deleted, metadata FROM project_hosts WHERE id = $1",
+    [host_id],
+  );
+  return rows[0];
+}
+
+// Whether a host may get (or keep) a content record now: wanted running, not
+// going down or restarting, and still at the address about to be published.
+function hostWantsContentDns(
+  host: (HostRowLike & { status?: string; deleted?: unknown }) | undefined,
+  ip: string,
+): boolean {
+  if (host == null || host.deleted) return false;
+  const desired = `${host.metadata?.desired_state ?? ""}`.trim();
+  if (desired === "stopped" || desired === "deleted") return false;
+  const status = `${host.status ?? ""}`.trim();
+  if (["stopping", "restarting", "off", "deprovisioned"].includes(status)) {
+    return false;
+  }
+  return `${host.metadata?.runtime?.public_ip ?? ""}`.trim() === ip;
+}
+
 function isZoneNotFound(err: unknown): boolean {
   return `${(err as Error)?.message ?? err}`.includes(
     "cloudflare zone not found",
@@ -155,21 +220,27 @@ export async function syncHostContentDns(row: HostRowLike): Promise<void> {
     }
     if (!ip) return;
     const name = hostContentWildcardHostname({ host_id: row.id, domain });
-    if (recorded && recorded.name !== name) {
-      // The content domain changed: the old record goes first.
-      await deleteHostnameDns({ hostname: recorded.name, token });
-    }
-    const { record_id } = await ensureProxiedAddressDnsWithToken({
-      name,
-      ipAddress: ip,
-      token,
-    });
-    await setContentDnsMetadata(row.id, {
-      name,
-      record_id,
-      domain,
-      ip,
-      updated_at: new Date().toISOString(),
+    await withHostContentDnsLock(row.id, async () => {
+      // The row the caller had may be stale (a stop may have started since).
+      const current = await loadHostRow(row.id);
+      if (!hostWantsContentDns(current, ip)) return;
+      const currentRecorded = recordedContentDns(current!);
+      if (currentRecorded && currentRecorded.name !== name) {
+        // The content domain changed: the old record goes first.
+        await deleteHostnameDns({ hostname: currentRecorded.name, token });
+      }
+      const { record_id } = await ensureProxiedAddressDnsWithToken({
+        name,
+        ipAddress: ip,
+        token,
+      });
+      await setContentDnsMetadata(row.id, {
+        name,
+        record_id,
+        domain,
+        ip,
+        updated_at: new Date().toISOString(),
+      });
     });
   } catch (err) {
     logger.warn("unable to ensure project content DNS for host", {
@@ -183,6 +254,14 @@ export async function syncHostContentDns(row: HostRowLike): Promise<void> {
 // current setting.  Throws unless they are all gone, so the caller does not
 // release the address.
 export async function releaseHostContentDns(row: HostRowLike): Promise<void> {
+  await withHostContentDnsLock(row.id, async () => {
+    // What is recorded now, not when the caller loaded the row.
+    const current = await loadHostRow(row.id);
+    await releaseLocked(current ?? row);
+  });
+}
+
+async function releaseLocked(row: HostRowLike): Promise<void> {
   const settings = await getServerSettings();
   const recorded = recordedContentDns(row);
   const names = new Set<string>();

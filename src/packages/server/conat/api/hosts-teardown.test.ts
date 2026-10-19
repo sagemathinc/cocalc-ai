@@ -40,6 +40,8 @@ describe("hosts teardown helpers", () => {
       deleteCloudflareTunnel: jest.fn(async () => undefined),
       hasDns: async () => false,
       deleteHostDns: jest.fn(async () => undefined),
+      releaseHostContentDns: jest.fn(async () => undefined),
+      alertAdmin: jest.fn(async () => undefined),
       logWarn: jest.fn(),
       updateHostDeprovisionedRecord,
       markHostProjectsUnprovisioned,
@@ -77,6 +79,7 @@ describe("hosts teardown helpers", () => {
     const run = async (releaseHostContentDns: jest.Mock) => {
       const updateHostDeprovisionedRecord = jest.fn(async () => undefined);
       const logWarn = jest.fn();
+      const alertAdmin = jest.fn(async (_opts: any) => undefined);
       await markHostDeprovisionedInternal({
         row: {
           id: "e5536552-6cb0-4426-b214-212af4779efd",
@@ -96,6 +99,7 @@ describe("hosts teardown helpers", () => {
         hasDns: async () => true,
         deleteHostDns: jest.fn(async () => undefined),
         releaseHostContentDns,
+        alertAdmin,
         logWarn,
         updateHostDeprovisionedRecord,
         markHostProjectsUnprovisioned: jest.fn(async () => undefined),
@@ -104,13 +108,16 @@ describe("hosts teardown helpers", () => {
         logCloudVmEvent: jest.fn(async () => undefined),
         normalizeProviderId: (provider) => provider,
       });
-      return { updateHostDeprovisionedRecord, logWarn };
+      return { updateHostDeprovisionedRecord, logWarn, alertAdmin };
     };
 
     it("removes it whatever the route mode, then drops the record", async () => {
       const releaseHostContentDns = jest.fn(async () => undefined);
-      const { updateHostDeprovisionedRecord } = await run(releaseHostContentDns);
+      const { updateHostDeprovisionedRecord, alertAdmin } = await run(
+        releaseHostContentDns,
+      );
       expect(releaseHostContentDns).toHaveBeenCalledTimes(1);
+      expect(alertAdmin).not.toHaveBeenCalled();
       expect(updateHostDeprovisionedRecord).toHaveBeenCalledWith(
         expect.objectContaining({
           nextMetadata: expect.not.objectContaining({ content_dns: expect.anything() }),
@@ -122,7 +129,16 @@ describe("hosts teardown helpers", () => {
       const releaseHostContentDns = jest.fn(async () => {
         throw new Error("forbidden");
       });
-      const { updateHostDeprovisionedRecord, logWarn } = await run(releaseHostContentDns);
+      const { updateHostDeprovisionedRecord, logWarn, alertAdmin } = await run(
+        releaseHostContentDns,
+      );
+      // An admin hears about it: the sweeper can't help if the token is the cause.
+      expect(alertAdmin).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: expect.stringContaining("content DNS not removed"),
+          body: expect.stringContaining(content_dns.name),
+        }),
+      );
       expect(updateHostDeprovisionedRecord).toHaveBeenCalledWith(
         expect.objectContaining({
           nextMetadata: expect.objectContaining({ content_dns }),
