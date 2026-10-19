@@ -22,7 +22,7 @@
 // speech's are.
 
 import getLogger from "@cocalc/backend/logger";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
 import { ensureAccountUsageWindowsForEvent } from "@cocalc/server/membership/usage-windows";
 import { AI_USAGE_UNITS_PER_DOLLAR } from "./usage-units";
@@ -94,10 +94,18 @@ export function siteFundedDecideFunding({
       if (!global.created) {
         throw codedError("This answer is already being checked.", 409);
       }
-      const client = await getPool().connect();
+      // From here this request owns the global hold it just created. Every
+      // step until the reservation is returned (the connection, BEGIN, each
+      // query, COMMIT) is in this one try: any throw releases the hold,
+      // exactly once, and the rollback cannot prevent that (Codex on
+      // #1134). Once returned, the caller commits or releases it.
+      let client: PoolClient | undefined;
+      let broken = false;
       try {
-        await client.query("BEGIN");
-        const account = await client.query(
+        const db = await getPool().connect();
+        client = db;
+        await db.query("BEGIN");
+        const account = await db.query(
           "SELECT account_id FROM accounts WHERE account_id=$1 FOR UPDATE",
           [accountId],
         );
@@ -108,7 +116,7 @@ export function siteFundedDecideFunding({
         // becomes a released row at no cost, which still counts toward the
         // limits below. Released rows are kept for the longest window they
         // count toward, the board's hour.
-        await client.query(
+        await db.query(
           `UPDATE ai_usage_log SET input=$3, tag=$4, cost_microusd=0
            WHERE account_id=$1 AND tag=$2
              AND time < NOW() - ($5::BIGINT * INTERVAL '1 millisecond')`,
@@ -120,7 +128,7 @@ export function siteFundedDecideFunding({
             RESERVATION_TTL_MS,
           ],
         );
-        await client.query(
+        await db.query(
           `DELETE FROM ai_usage_log
            WHERE account_id=$1 AND tag=$2 AND time < NOW() - INTERVAL '1 hour'`,
           [accountId, RELEASED_TAG],
@@ -129,7 +137,7 @@ export function siteFundedDecideFunding({
         // counted under its row's lock: one limit across every hub replica
         // (the per-process count in board-decide.ts is only a cheap guard
         // in front of this one).
-        const recent = await client.query(
+        const recent = await db.query(
           `SELECT COUNT(*) AS n FROM ai_usage_log
            WHERE account_id=$1 AND tag IN ($2, $3, $4)
              AND time > NOW() - INTERVAL '1 minute'`,
@@ -146,7 +154,7 @@ export function siteFundedDecideFunding({
         }
         // The account's calls on this board (as the file's server resolved
         // it) in the last hour, the same way, under the same lock.
-        const onBoard = await client.query(
+        const onBoard = await db.query(
           `SELECT COUNT(*) AS n FROM ai_usage_log
            WHERE account_id=$1 AND tag IN ($2, $3, $4)
              AND project_id=$5 AND path=$6
@@ -170,7 +178,7 @@ export function siteFundedDecideFunding({
         }
         const requested = microusdToUsageUnits(microusd);
         for (const window of status.windows) {
-          const { rows } = await client.query(
+          const { rows } = await db.query(
             `SELECT SUM(COALESCE(
                cost_microusd * $4::numeric / 1000000, usage_units, 0
              )) AS used
@@ -190,7 +198,7 @@ export function siteFundedDecideFunding({
             throw codedError(EXHAUSTED, 403);
           }
         }
-        await client.query(
+        await db.query(
           `INSERT INTO ai_usage_log(
              time, input, output, history, account_id, total_tokens,
              prompt_tokens, total_time_s, model, tag, cost_microusd,
@@ -210,18 +218,28 @@ export function siteFundedDecideFunding({
             board.path,
           ],
         );
-        await client.query("COMMIT");
+        await db.query("COMMIT");
       } catch (err) {
-        await client.query("ROLLBACK");
-        if (global.created) {
-          await finishSiteFundedSpeechGlobal({
-            requestId,
-            status: "released",
-          }).catch(() => undefined);
+        if (client != null) {
+          // Best effort: a broken connection is discarded, not reused.
+          await client.query("ROLLBACK").catch(() => {
+            broken = true;
+          });
         }
+        await finishSiteFundedSpeechGlobal({
+          requestId,
+          status: "released",
+        }).catch((releaseErr) =>
+          // The hold then expires with its reservation (5 minutes).
+          logger.error("board decide global hold not released", {
+            accountId,
+            requestId,
+            err: `${releaseErr}`,
+          }),
+        );
         throw err;
       } finally {
-        client.release();
+        client?.release(broken ? true : undefined);
       }
       return {
         async commit(costMicrousd: number) {
