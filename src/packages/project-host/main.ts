@@ -481,6 +481,7 @@ export async function main(
           account_id,
           // Served on the project's own origin, so SVG may render inline.
           allowUnsafe: true,
+          conditional: true,
           readServiceName: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
         });
       },
@@ -1245,6 +1246,7 @@ export async function main(
             readOptions?.readServiceName ??
             PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
           statSubject: readOptions?.statSubject,
+          conditional: true,
           beforeExplicitDownload: explicitDownload
             ? async ({ project_id }: { project_id: string; path: string }) =>
                 await checkManagedFileDownloadAllowedBestEffort({

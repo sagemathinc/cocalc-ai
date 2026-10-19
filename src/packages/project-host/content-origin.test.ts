@@ -166,7 +166,7 @@ describe("content origin request handling", () => {
     expect(r.headers["x-content-type-options"]).toBe("nosniff");
     expect(r.headers["origin-agent-cluster"]).toBe("?1");
     expect(r.headers["cross-origin-opener-policy"]).toBe("same-origin");
-    expect(r.headers["cache-control"]).toBe("private, no-store");
+    expect(r.headers["cache-control"]).toBe("private, no-cache");
     expect(r.headers["content-security-policy"]).toBe(
       "frame-ancestors 'self' https://app.example.org",
     );
@@ -470,6 +470,8 @@ describe("canonicalPathWithinDir on a real sandboxed filesystem", () => {
   it("is what the host passes to the handler", () => {
     const main = readFileSync(join(__dirname, "main.ts"), "utf8");
     expect(main).toMatch(/realPathWithinDir: projectRealPathWithinDir,/);
+    // Both file routes let browsers revalidate instead of re-downloading.
+    expect(main.match(/^\s*conditional: true,$/gm)?.length).toBe(2);
     const fileServer = readFileSync(join(__dirname, "file-server.ts"), "utf8");
     expect(fileServer).toMatch(
       /export const projectRealPathWithinDir = createContentPathChecker\(\{\s*createFs: createProjectFilesystem,/,
