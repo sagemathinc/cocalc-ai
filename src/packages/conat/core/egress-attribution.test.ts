@@ -8,7 +8,9 @@ import {
   diffEgressBySubject,
   MAX_EGRESS_SUBJECT_KEYS,
   MAX_REPLY_SUBJECT_LENGTH,
+  MAX_REPORTED_TOP_SUBJECTS,
   mergeTopEgressSubjects,
+  reportedTopEgressSubjects,
   normalizeSubjectForAttribution,
   OTHER_KEY,
   ReplySubjectAttribution,
@@ -90,7 +92,7 @@ describe("egress attribution", () => {
     expect(normalizeSubjectForAttribution("hub.API.call")).toBe("hub.API.call");
   });
 
-  it("merges top-subject lists by summing bytes and keeps the largest", () => {
+  it("merges top-subject lists by summing bytes, folding the overflow into (other)", () => {
     expect(
       mergeTopEgressSubjects(
         [
@@ -106,9 +108,33 @@ describe("egress attribution", () => {
         2,
       ),
     ).toEqual([
+      { subject: "(other)", bytes: 7 },
       { subject: "a", bytes: 7 },
-      { subject: "c", bytes: 6 },
     ]);
     expect(mergeTopEgressSubjects(undefined, "junk")).toEqual([]);
+  });
+
+  it("keeps a recurring subject that is small in each sample but largest over the minute", () => {
+    // each 5 s sample: one recurring subject at 10 bytes, nine one-offs at 100
+    let bucket: unknown = undefined;
+    for (let i = 0; i < 12; i++) {
+      const sample = [{ subject: "recurring", bytes: 10 }];
+      for (let j = 0; j < 9; j++) {
+        sample.push({ subject: `once-${i}-${j}`, bytes: 100 });
+      }
+      bucket = mergeTopEgressSubjects(bucket, sample);
+    }
+    const reported = reportedTopEgressSubjects(bucket);
+    // the largest named subject; the 90 one-offs beyond the top 20 are in
+    // "(other)"
+    expect(reported.filter(({ subject }) => subject !== "(other)")[0]).toEqual({
+      subject: "recurring",
+      bytes: 120,
+    });
+    expect(reported).toHaveLength(MAX_REPORTED_TOP_SUBJECTS);
+    // nothing is lost: the reported list (with "(other)") sums to the minute
+    expect(reported.reduce((t, { bytes }) => t + bytes, 0)).toBe(
+      12 * 10 + 12 * 9 * 100,
+    );
   });
 });

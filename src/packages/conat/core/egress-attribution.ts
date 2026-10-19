@@ -129,19 +129,16 @@ export function diffEgressBySubject(
   return out;
 }
 
-// Top subjects stored per rollup bucket, after merging its samples.
-export const MAX_ROLLUP_TOP_SUBJECTS = 20;
+// A rollup bucket accumulates every subject its samples report, up to this
+// many (beyond it, the smallest are summed under OTHER_KEY, so totals are
+// kept).  A minute of samples from one hub has at most 12 x 10 subjects.
+export const MAX_ROLLUP_SUBJECT_KEYS = 256;
+// Subjects shown per event when rollups are read.
+export const MAX_REPORTED_TOP_SUBJECTS = 20;
 
-// Sum two top-subject lists (e.g. two samples of one rollup bucket) and keep
-// the largest.  Subjects outside a sample's own top list are not known, so
-// the result is approximate, but it covers every sample, not just the first.
-export function mergeTopEgressSubjects(
-  a: unknown,
-  b: unknown,
-  limit = MAX_ROLLUP_TOP_SUBJECTS,
-): { subject: string; bytes: number }[] {
+function sumSubjectLists(lists: unknown[]): Record<string, number> {
   const bySubject: Record<string, number> = {};
-  for (const list of [a, b]) {
+  for (const list of lists) {
     if (!Array.isArray(list)) continue;
     for (const item of list) {
       const subject = `${item?.subject ?? ""}`;
@@ -150,7 +147,45 @@ export function mergeTopEgressSubjects(
       bySubject[subject] = (bySubject[subject] ?? 0) + bytes;
     }
   }
-  return topEgressSubjects(bySubject, limit);
+  return bySubject;
+}
+
+// At most `limit` subjects, largest first; the rest are summed under
+// OTHER_KEY.  The SQL rollup upsert applies the same rule.
+export function foldEgressSubjects(
+  bySubject: Record<string, number>,
+  limit: number,
+): { subject: string; bytes: number }[] {
+  const sorted = topEgressSubjects(bySubject, Number.MAX_SAFE_INTEGER);
+  if (sorted.length <= limit) return sorted;
+  const kept: Record<string, number> = {};
+  for (const { subject, bytes } of sorted.slice(0, limit - 1)) {
+    kept[subject] = bytes;
+  }
+  const rest = sorted
+    .slice(limit - 1)
+    .reduce((total, { bytes }) => total + bytes, 0);
+  kept[OTHER_KEY] = (kept[OTHER_KEY] ?? 0) + rest;
+  return topEgressSubjects(kept, limit);
+}
+
+// Sum top-subject lists (samples of one rollup bucket) without losing
+// totals: truncation to the reported top N happens only when reading.
+export function mergeTopEgressSubjects(
+  a: unknown,
+  b: unknown,
+  limit = MAX_ROLLUP_SUBJECT_KEYS,
+): { subject: string; bytes: number }[] {
+  return foldEgressSubjects(sumSubjectLists([a, b]), limit);
+}
+
+// What an event reports: the top subjects of its bucket, the rest summed
+// under OTHER_KEY.
+export function reportedTopEgressSubjects(
+  list: unknown,
+  limit = MAX_REPORTED_TOP_SUBJECTS,
+): { subject: string; bytes: number }[] {
+  return foldEgressSubjects(sumSubjectLists([list]), limit);
 }
 
 export function topEgressSubjects(

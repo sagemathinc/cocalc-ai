@@ -8,6 +8,8 @@ import type { Client } from "@cocalc/conat/core/client";
 import type { ConatServer } from "@cocalc/conat/core/server";
 import {
   diffEgressBySubject,
+  foldEgressSubjects,
+  MAX_ROLLUP_SUBJECT_KEYS,
   topEgressSubjects,
 } from "@cocalc/conat/core/egress-attribution";
 import { sysApiMany } from "@cocalc/conat/core/sys";
@@ -42,6 +44,7 @@ type AccountEgressDelta = {
   by_subject: Record<string, number>;
 };
 
+// subjects in the sample log line
 const TOP_SUBJECTS = 10;
 
 type RawSendDeltaSocket = {
@@ -309,7 +312,12 @@ export function startHubConatManagedEgressLoop({
               metadata: {
                 browser_ids: delta.browser_ids,
                 socket_count: delta.socket_ids.length,
-                top_subjects: topEgressSubjects(delta.by_subject, TOP_SUBJECTS),
+                // the whole breakdown (bounded per socket), so rollups can
+                // sum it exactly; events report only the top subjects
+                top_subjects: foldEgressSubjects(
+                  delta.by_subject,
+                  MAX_ROLLUP_SUBJECT_KEYS,
+                ),
               },
             });
           } catch (err) {

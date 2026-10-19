@@ -7,8 +7,10 @@ import getPool, { type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import LRU from "lru-cache";
 import {
-  MAX_ROLLUP_TOP_SUBJECTS,
+  MAX_ROLLUP_SUBJECT_KEYS,
   mergeTopEgressSubjects,
+  OTHER_KEY,
+  reportedTopEgressSubjects,
 } from "@cocalc/conat/core/egress-attribution";
 import type {
   AbuseReviewAnnotation,
@@ -174,7 +176,9 @@ function mergePendingRollup(entry: PendingManagedEgressRollup): void {
 }
 
 // A bucket keeps its first sample's metadata, except top_subjects, which is
-// summed over all its samples (the upsert below does the same in SQL).
+// summed over all its samples, up to MAX_ROLLUP_SUBJECT_KEYS subjects with
+// the rest under "(other)" (the upsert below does the same in SQL).  Events
+// report only the top subjects (mapManagedEgressEventRows).
 export function mergeMetadataSamples(
   existing?: Record<string, unknown>,
   incoming?: Record<string, unknown>,
@@ -415,24 +419,39 @@ async function flushManagedEgressRollupBatch(
                 '[]'::jsonb
               )
               FROM (
-                SELECT item->>'subject' AS subject, SUM((item->>'bytes')::numeric) AS bytes
+                -- at most MAX_ROLLUP_SUBJECT_KEYS subjects; the smallest
+                -- beyond that are summed under OTHER_KEY (foldEgressSubjects)
+                SELECT
+                  CASE WHEN ranked.n <= ${MAX_ROLLUP_SUBJECT_KEYS}
+                      OR ranked.rn < ${MAX_ROLLUP_SUBJECT_KEYS}
+                    THEN ranked.subject ELSE '${OTHER_KEY}' END AS subject,
+                  SUM(ranked.bytes) AS bytes
                 FROM (
-                  SELECT jsonb_array_elements(
-                    CASE WHEN jsonb_typeof(${ROLLUP_TABLE}.metadata_sample->'top_subjects') = 'array'
-                      THEN ${ROLLUP_TABLE}.metadata_sample->'top_subjects' ELSE '[]'::jsonb END
-                  ) AS item
-                  UNION ALL
-                  SELECT jsonb_array_elements(
-                    CASE WHEN jsonb_typeof(EXCLUDED.metadata_sample->'top_subjects') = 'array'
-                      THEN EXCLUDED.metadata_sample->'top_subjects' ELSE '[]'::jsonb END
-                  ) AS item
-                ) AS items
-                WHERE item->>'subject' IS NOT NULL
-                  AND jsonb_typeof(item->'bytes') = 'number'
-                  AND (item->>'bytes')::numeric > 0
-                GROUP BY item->>'subject'
-                ORDER BY bytes DESC, subject
-                LIMIT ${MAX_ROLLUP_TOP_SUBJECTS}
+                  SELECT
+                    summed.subject,
+                    summed.bytes,
+                    row_number() OVER (ORDER BY summed.bytes DESC, summed.subject) AS rn,
+                    count(*) OVER () AS n
+                  FROM (
+                    SELECT item->>'subject' AS subject, SUM((item->>'bytes')::numeric) AS bytes
+                    FROM (
+                      SELECT jsonb_array_elements(
+                        CASE WHEN jsonb_typeof(${ROLLUP_TABLE}.metadata_sample->'top_subjects') = 'array'
+                          THEN ${ROLLUP_TABLE}.metadata_sample->'top_subjects' ELSE '[]'::jsonb END
+                      ) AS item
+                      UNION ALL
+                      SELECT jsonb_array_elements(
+                        CASE WHEN jsonb_typeof(EXCLUDED.metadata_sample->'top_subjects') = 'array'
+                          THEN EXCLUDED.metadata_sample->'top_subjects' ELSE '[]'::jsonb END
+                      ) AS item
+                    ) AS items
+                    WHERE item->>'subject' IS NOT NULL
+                      AND jsonb_typeof(item->'bytes') = 'number'
+                      AND (item->>'bytes')::numeric > 0
+                    GROUP BY item->>'subject'
+                  ) AS summed
+                ) AS ranked
+                GROUP BY 1
               ) AS merged
             )
           )
@@ -1406,8 +1425,17 @@ function mapManagedEgressEventRows(
     category: row.category,
     bytes: Math.max(0, Number(row.bytes) || 0),
     occurred_at: new Date(row.occurred_at).toISOString(),
-    metadata: row.metadata ?? null,
+    metadata: reportedMetadata(row.metadata),
   }));
+}
+
+function reportedMetadata(metadata: any): Record<string, unknown> | null {
+  if (metadata == null) return null;
+  if (!Array.isArray(metadata.top_subjects)) return metadata;
+  return {
+    ...metadata,
+    top_subjects: reportedTopEgressSubjects(metadata.top_subjects),
+  };
 }
 
 function activeAnnotationsFor({
