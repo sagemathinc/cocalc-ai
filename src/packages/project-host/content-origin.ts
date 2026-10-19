@@ -195,12 +195,42 @@ export async function canonicalPathWithinDir({
   path: string;
   dir: string;
 }): Promise<boolean> {
+  if (dir === "/") return true;
   const absolute = (p: string) => (p.startsWith("/") ? p : `/${p}`);
   const [realPath, realDir] = await Promise.all([
     fs.canonicalSyncIdentityPath(path),
     fs.canonicalSyncIdentityPath(dir),
   ]);
   return contentPathWithinDir(absolute(realPath), absolute(realDir));
+}
+
+type CanonicalFs = Parameters<typeof canonicalPathWithinDir>[0]["fs"];
+
+// realPathWithinDir for the handler.  A page's subresources arrive in
+// bursts, so each project's filesystem is reused for a short while.
+export function createContentPathChecker({
+  createFs,
+  ttlMs = 30_000,
+  now = () => Date.now(),
+}: {
+  createFs: (project_id: string) => Promise<CanonicalFs>;
+  ttlMs?: number;
+  now?: () => number;
+}): (opts: { project_id: string; path: string; dir: string }) => Promise<boolean> {
+  const cache = new Map<string, { fs: Promise<CanonicalFs>; expires: number }>();
+  return async ({ project_id, path, dir }) => {
+    if (dir === "/") return true;
+    let entry = cache.get(project_id);
+    if (entry == null || entry.expires <= now()) {
+      const fs = createFs(project_id);
+      entry = { fs, expires: now() + ttlMs };
+      cache.set(project_id, entry);
+      fs.catch(() => {
+        if (cache.get(project_id)?.fs === fs) cache.delete(project_id);
+      });
+    }
+    return await canonicalPathWithinDir({ fs: await entry.fs, path, dir });
+  };
 }
 
 export interface ContentOriginHandlerOptions {

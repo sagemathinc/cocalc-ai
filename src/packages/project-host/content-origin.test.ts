@@ -16,12 +16,14 @@ import { createServer, request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { issueProjectContentCapability } from "@cocalc/conat/auth/project-content-capability";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   canonicalPathWithinDir,
   createContentOriginHandler,
+  createContentPathChecker,
   installContentHostnameUpgradeGuard,
   parseContentPath,
   projectContentHostname,
@@ -392,6 +394,7 @@ describe("canonicalPathWithinDir on a real sandboxed filesystem", () => {
     await symlink("../../grades.course", join(home, "collect", "student-1", "grades-link"));
     await symlink("..", join(home, "collect", "student-1", "up"));
     await symlink("img", join(home, "collect", "student-1", "pictures"));
+    await symlink("collect/student-1", join(home, "linked"));
     fs = new SandboxedFilesystem(home, { homeAliases: ["/home/user"] });
   });
 
@@ -407,6 +410,59 @@ describe("canonicalPathWithinDir on a real sandboxed filesystem", () => {
     expect(await within("/home/user/collect/student-1/img/a.png")).toBe(true);
     expect(await within("/home/user/collect/student-1/pictures/a.png")).toBe(true);
     expect(await within("/home/user/collect/student-1/missing.css")).toBe(true);
+  });
+
+  it("resolves the folder itself, so a link's folder may be a symlink", async () => {
+    const linked = (path: string) =>
+      canonicalPathWithinDir({ fs, path, dir: "/home/user/linked" });
+    expect(await linked("/home/user/linked/page.html")).toBe(true);
+    expect(await linked("/home/user/linked/grades-link")).toBe(false);
+  });
+
+  it("allows everything for the whole project", async () => {
+    expect(
+      await canonicalPathWithinDir({ fs, path: "/home/user/grades.course", dir: "/" }),
+    ).toBe(true);
+  });
+
+  it("reuses a project's filesystem briefly, and not after a failure", async () => {
+    let t = 0;
+    const created: string[] = [];
+    let fail = true;
+    const check = createContentPathChecker({
+      createFs: async (project_id) => {
+        created.push(project_id);
+        if (fail) throw new Error("volume not ready");
+        return fs;
+      },
+      ttlMs: 1000,
+      now: () => t,
+    });
+    const opts = {
+      project_id: "p",
+      path: "/home/user/collect/student-1/page.html",
+      dir: "/home/user/collect/student-1",
+    };
+    await expect(check(opts)).rejects.toThrow("volume not ready");
+    fail = false;
+    expect(await check(opts)).toBe(true);
+    expect(await check({ ...opts, path: "/home/user/collect/student-1/grades-link" })).toBe(
+      false,
+    );
+    t = 1001;
+    expect(await check(opts)).toBe(true);
+    expect(created).toEqual(["p", "p", "p"]);
+    expect(await check({ ...opts, dir: "/" })).toBe(true);
+    expect(created).toHaveLength(3);
+  });
+
+  it("is what the host passes to the handler", () => {
+    const main = readFileSync(join(__dirname, "main.ts"), "utf8");
+    expect(main).toMatch(/realPathWithinDir: projectRealPathWithinDir,/);
+    const fileServer = readFileSync(join(__dirname, "file-server.ts"), "utf8");
+    expect(fileServer).toMatch(
+      /export const projectRealPathWithinDir = createContentPathChecker\(\{\s*createFs: createProjectFilesystem,/,
+    );
   });
 
   it("refuses links that lead out of the folder", async () => {

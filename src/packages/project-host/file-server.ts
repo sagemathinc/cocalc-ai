@@ -2,7 +2,7 @@
 // This allows users to browse and generally use the filesystem of any project,
 // without having to run that project.
 
-import { canonicalPathWithinDir } from "./content-origin";
+import { createContentPathChecker } from "./content-origin";
 import { createHash, randomUUID } from "node:crypto";
 import { withArtifactCatalog } from "./artifact-catalog";
 import {
@@ -5297,22 +5297,9 @@ async function createProjectFilesystem(project_id: string) {
 
 // For content links (content-origin.ts): whether path, with symlinks
 // resolved, is dir or inside it (dir resolved the same way).
-export async function projectRealPathWithinDir({
-  project_id,
-  path,
-  dir,
-}: {
-  project_id: string;
-  path: string;
-  dir: string;
-}): Promise<boolean> {
-  if (dir === "/") return true;
-  return await canonicalPathWithinDir({
-    fs: await createProjectFilesystem(project_id),
-    path,
-    dir,
-  });
-}
+export const projectRealPathWithinDir = createContentPathChecker({
+  createFs: createProjectFilesystem,
+});
 
 export async function ensureFileDownloadReadServer({
   client,
