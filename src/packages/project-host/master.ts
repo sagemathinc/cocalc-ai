@@ -1,4 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
+import { getProjectContentDomain } from "./content-origin";
 import { randomUUID } from "crypto";
 import { readFileSync } from "node:fs";
 import { promises as fsPromises } from "node:fs";
@@ -2214,6 +2215,9 @@ export async function startMasterRegistration({
         rootfs_scanner: rootfsScanner,
         software: versions,
         software_inventory: softwareInventory,
+        // The content domain this host actually serves (null when off), so
+        // the hub only issues content links the host will accept.
+        content_origin_domain: getProjectContentDomain() ?? null,
       },
     };
   };

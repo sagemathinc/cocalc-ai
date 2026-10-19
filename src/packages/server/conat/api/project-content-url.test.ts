@@ -56,6 +56,7 @@ function readyHost(overrides: Record<string, any> = {}) {
     bay_id: "bay-0",
     deleted: null,
     metadata: {
+      content_origin_domain: DOMAIN,
       content_dns: {
         name: `*.h-33333333333343338333333333333333.${DOMAIN}`,
         domain: DOMAIN,
@@ -76,7 +77,14 @@ beforeEach(() => {
   projectRows = [{ host_id: HOST, bay_id: "bay-0", group: "collaborator" }];
   hostRows = [readyHost()];
   queryMock.mockImplementation(async (sql: string) => {
-    if (sql.includes("FROM projects")) return { rows: projectRows };
+    if (sql.includes("FROM projects")) {
+      // Like the database: a deleted project only matches without the filter.
+      return {
+        rows: projectRows.filter(
+          (row) => !row.deleted || !sql.includes("deleted IS NOT true"),
+        ),
+      };
+    }
     if (sql.includes("FROM project_hosts")) return { rows: hostRows };
     throw new Error(`unexpected query: ${sql}`);
   });
@@ -184,6 +192,28 @@ describe("issueProjectContentUrlLocal", () => {
     projectRows = [];
     resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-1" });
     await expect(issue()).resolves.toEqual({ unavailable: "other-bay" });
+  });
+
+  it("treats a deleted project as unknown", async () => {
+    projectRows[0].deleted = true;
+    await expect(issue()).rejects.toThrow("project not found");
+  });
+
+  it("reports a host that doesn't serve this content domain", async () => {
+    hostRows = [
+      readyHost({
+        metadata: { ...readyHost().metadata, content_origin_domain: null },
+      }),
+    ];
+    await expect(issue()).resolves.toEqual({ unavailable: "host-not-ready" });
+    hostRows = [
+      readyHost({
+        metadata: {
+          content_dns: readyHost().metadata.content_dns,
+        },
+      }),
+    ];
+    await expect(issue()).resolves.toEqual({ unavailable: "host-not-ready" });
   });
 
   it("throws for an unknown project", async () => {

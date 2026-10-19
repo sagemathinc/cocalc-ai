@@ -18,7 +18,8 @@ When the content origin can't serve this project, the result says why
 instead of throwing, so the frontend can fall back to today's behavior:
   - "off": no content domain is configured;
   - "no-host": the project has no host yet;
-  - "host-not-ready": the host has no content DNS record for this domain;
+  - "host-not-ready": the host has no content DNS record for this domain,
+    or doesn't report serving it (old software, or a missing env line);
   - "other-bay": the project or its host belongs to another bay (the
     capability must be signed with that bay's key; not wired up yet).
 */
@@ -60,8 +61,8 @@ export type ProjectContentUrl =
 
 const MAX_PATH_LENGTH = 4096;
 
-// The path as URL segments, or an error.  Absolute and home-relative paths
-// both work: the host's file route re-adds the leading slash.
+// The path as URL segments, or an error.  The host's file route treats the
+// result as absolute (it re-adds the leading slash).
 export function encodeContentFilePath(path: unknown): string {
   const raw = `${path ?? ""}`;
   if (raw.length > MAX_PATH_LENGTH || raw.includes("\0")) {
@@ -145,7 +146,10 @@ export async function issueProjectContentUrlLocal({
   if (host == null || host.deleted) return { unavailable: "host-not-ready" };
   if (host.bay_id !== localBayId) return { unavailable: "other-bay" };
   const recorded = recordedContentDns({ id: host_id, metadata: host.metadata });
-  if (recorded?.name !== hostContentWildcardHostname({ host_id, domain })) {
+  if (
+    recorded?.name !== hostContentWildcardHostname({ host_id, domain }) ||
+    host.metadata?.content_origin_domain !== domain
+  ) {
     return { unavailable: "host-not-ready" };
   }
 

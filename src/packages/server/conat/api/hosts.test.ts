@@ -224,6 +224,16 @@ jest.mock("@cocalc/server/conat/socketio/browser-auth-sessions", () => ({
     getBrowserAuthSessionHashMock(...args),
 }));
 
+const issueProjectContentUrlLocalMock = jest.fn(async (_opts: any) => ({
+  url: "https://content.example/_c/cap/files/a.html",
+  expires_at: 1,
+}));
+jest.mock("./project-content-url", () => ({
+  __esModule: true,
+  issueProjectContentUrlLocal: (opts: any) =>
+    issueProjectContentUrlLocalMock(opts),
+}));
+
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   __esModule: true,
   getCurrentAuthSessionForSessionHash: (...args: any[]) =>
@@ -7211,6 +7221,35 @@ describe("hosts.issueProjectHostAuthToken", () => {
         browser_session_exp_s: Math.floor(expiresAtMs / 1000),
       }),
     );
+  });
+
+  it("caps a content link by a testing session's expiration", async () => {
+    const expiresAtMs = Date.now() + 3_600_000;
+    getCurrentAuthSessionForSessionHashMock = jest.fn(async () => ({
+      account_id: ACCOUNT_UUID,
+      expire: new Date(expiresAtMs),
+      metadata: { testing_account: true },
+    }));
+    issueProjectContentUrlLocalMock.mockClear();
+    const { issueProjectContentUrl } = await import("./hosts");
+
+    await issueProjectContentUrl({
+      account_id: ACCOUNT_UUID,
+      session_hash: "authenticated-testing-session",
+      project_id: PROJECT_UUID,
+      path: "/home/user/a.html",
+    });
+
+    expect(getCurrentAuthSessionForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      session_hash: "authenticated-testing-session",
+    });
+    expect(issueProjectContentUrlLocalMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      project_id: PROJECT_UUID,
+      path: "/home/user/a.html",
+      browser_session_exp_s: Math.floor(expiresAtMs / 1000),
+    });
   });
 
   it("issues a browser token for a project with an available public share without syncing collaborator ACLs", async () => {
