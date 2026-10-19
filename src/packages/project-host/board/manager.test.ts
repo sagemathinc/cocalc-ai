@@ -18,8 +18,15 @@ import {
 } from "@cocalc/backend/conat/files/test/util";
 import * as lib from "@sagemathinc/sagebrush-board";
 import { uuid } from "@cocalc/util/misc";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
+import {
+  BOARD_PRIMARY_KEYS,
+  BOARD_STRING_COLS,
+} from "@cocalc/util/board/names";
 import { BoardManager, type BoardFile } from "./manager";
 import {
+  type ReplaceHooks,
   closeBoards,
   fileOf,
   openBoard,
@@ -48,11 +55,27 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  for (const fs of locals) fs.close();
   await cleanupFileservers();
   await rm(home, { recursive: true, force: true });
   await rm(rootfs, { recursive: true, force: true });
   await afterConat();
 });
+
+// The project's files as the project host's file service hands them to the
+// board code: a local SandboxedFilesystem (with its bounded reads and
+// openat2's no-replace rename), here over the test file server's directory.
+const locals: SandboxedFilesystem[] = [];
+function localFs(project_id: string): any {
+  const fs = new SandboxedFilesystem(join(home, project_id), {
+    host: project_id,
+    homeAliases: ["/home/user"],
+    allowSafeModeHardlink: true,
+    allowSafeModeSymlink: true,
+  });
+  locals.push(fs);
+  return fs;
+}
 
 const BOARD = {
   format: "sagebrush-board",
@@ -82,6 +105,7 @@ async function setup(
   opts: {
     manager?: Partial<ConstructorParameters<typeof BoardManager>[0]>;
     wrap?: (file: BoardFile, fs: any, path: string) => BoardFile;
+    hooks?: ReplaceHooks;
   } = {},
 ) {
   const project_id = uuid();
@@ -95,7 +119,8 @@ async function setup(
     path,
     service: fileserver.service,
   });
-  const file = fileOf(fs, path);
+  const local = localFs(project_id);
+  const file = fileOf(local, path, opts.hooks);
   const writes: string[] = [];
   const counted: BoardFile = {
     ...file,
@@ -121,7 +146,18 @@ async function setup(
     path,
     service: fileserver.service,
   });
-  const read = async () => `${await fs.readFile(path, "utf8")}`;
+  // A save renames the board aside for an instant; a reader then may find
+  // no file, or the path changing under it, and reads again.
+  const read = async () => {
+    for (let i = 0; ; i++) {
+      try {
+        return `${await fs.readFile(path, "utf8")}`;
+      } catch (err) {
+        if (i >= 20) throw err;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    }
+  };
   const cleanup = async () => {
     await manager.close();
     await browser.close();
@@ -130,6 +166,7 @@ async function setup(
   return {
     project_id,
     fs,
+    local,
     path,
     syncdb,
     browser,
@@ -256,7 +293,7 @@ test("the file is the official version when a board is opened again", async () =
   const manager = new BoardManager({
     lib,
     syncdb: syncdb as any,
-    file: fileOf(t.fs, t.path),
+    file: fileOf(t.local, t.path),
     recordsToString,
     saveDelayMs: 50,
   });
@@ -278,7 +315,7 @@ test("a missing file is reported, not created", async () => {
     const fresh = new BoardManager({
       lib,
       syncdb: t.syncdb as any,
-      file: fileOf(t.fs, t.path),
+      file: fileOf(t.local, t.path),
       recordsToString,
     });
     await fresh.start();
@@ -476,7 +513,7 @@ test("two managers: one that lost the board cannot write over the next", async (
     const next = new BoardManager({
       lib,
       syncdb: other as any,
-      file: fileOf(t.fs, t.path),
+      file: fileOf(t.local, t.path),
       recordsToString,
       saveDelayMs: 50,
     });
@@ -552,9 +589,9 @@ describe("limits", () => {
       manager,
       wrap: (file) => ({
         ...file,
-        read: async () => {
+        read: async (maxBytes) => {
           reads += 1;
-          return await file.read();
+          return await file.read(maxBytes);
         },
       }),
     });
@@ -610,7 +647,7 @@ test("a board file with another hard link is not loaded", async () => {
     const fresh = new BoardManager({
       lib,
       syncdb: t.syncdb as any,
-      file: fileOf(t.fs, t.path),
+      file: fileOf(t.local, t.path),
       recordsToString,
     });
     await fresh.start();
@@ -626,8 +663,14 @@ describe("the service", () => {
     const project_id = uuid();
     const client = connect();
     const fs: any = client.fs({ project_id, service: fileserver.service });
-    const opts = { client, project_id, fs, service: fileserver.service };
+    const opts = {
+      client,
+      project_id,
+      fs: localFs(project_id),
+      service: fileserver.service,
+    };
     try {
+      await fs.writeFile("home-exists.txt", "");
       expect(
         await openBoard({ ...opts, path: "nothing-here.board.json" }),
       ).toMatchObject({ state: "missing" });
@@ -650,4 +693,235 @@ describe("the service", () => {
     }
     expect(openBoardCount()).toBe(0);
   });
+});
+
+// Find the file replaceBoardFile set aside, during a replace.
+async function asideOf(fs: any, path: string): Promise<string> {
+  const names: string[] = await fs.readdir(".");
+  const name = names.find(
+    (n) => n.startsWith(`.${path}.`) && n.endsWith(".sage-board-aside"),
+  );
+  if (!name) throw Error("no aside file");
+  return name;
+}
+
+describe("no version from another writer is lost, at any step of a save", () => {
+  test("a file created while the board is aside wins, and is merged", async () => {
+    let hook: (() => Promise<void>) | undefined;
+    const hooks: ReplaceHooks = {
+      afterVerify: async () => {
+        const h = hook;
+        hook = undefined;
+        await h?.();
+      },
+    };
+    const t = await setup(canonical(BOARD), { hooks });
+    try {
+      await until(() => itemText(t.browser, "a") === "hello world");
+      hook = async () => {
+        // The board's name is free for a moment: someone writes it.
+        await t.fs.writeFile(t.path, withNode("a", { x: 4242 }));
+      };
+      setText(t.browser, "b", "local");
+      await until(async () => (await t.read()).includes('"local"'));
+      expect(hook).toBeUndefined();
+      const doc = JSON.parse(await t.read());
+      expect(doc.nodes.find((n) => n.id === "a").x).toBe(4242);
+      expect(t.manager.getStatus().state).toBe("ok");
+      const names: string[] = await t.fs.readdir(".");
+      expect(names.filter((n) => n.includes(".sage-board-"))).toEqual([]);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  test("a write into the old file after the check is kept as a conflict copy", async () => {
+    let hook: (() => Promise<void>) | undefined;
+    const t = await setup(canonical(BOARD), {
+      hooks: {
+        afterPlace: async () => {
+          const h = hook;
+          hook = undefined;
+          await h?.();
+        },
+      },
+    });
+    try {
+      await until(() => itemText(t.browser, "a") === "hello world");
+      const late = withNode("a", { x: 9 });
+      hook = async () => {
+        // A writer that had the old file open writes into it.
+        await t.fs.writeFile(await asideOf(t.fs, t.path), late);
+      };
+      setText(t.browser, "b", "local");
+      await until(() => hook === undefined);
+      await t.manager.settled();
+      const names: string[] = await t.fs.readdir(".");
+      const copies = names.filter((n) => n.startsWith(`${t.path}.conflict-`));
+      expect(copies.length).toBe(1);
+      expect(`${await t.fs.readFile(copies[0], "utf8")}`).toBe(late);
+      expect(await t.read()).toContain('"local"');
+      expect(names.filter((n) => n.includes(".sage-board-"))).toEqual([]);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  test("a version found aside after a crash goes back to the board's name", async () => {
+    const t = await setup(canonical(BOARD));
+    try {
+      await t.manager.close();
+      const aside = `.${t.path}.${uuid()}.sage-board-aside`;
+      await t.fs.rename(t.path, aside);
+      const info = await fileOf(t.local, `/home/user/${t.path}`).info();
+      expect(info?.size).toBe(Buffer.byteLength(canonical(BOARD)));
+      expect(await t.read()).toBe(canonical(BOARD));
+    } finally {
+      await t.cleanup();
+    }
+  });
+});
+
+// A live document in the syncdb's format, in memory.
+class MemorySyncdb {
+  private doc = immerFromStr("", BOARD_PRIMARY_KEYS, BOARD_STRING_COLS);
+  get_doc() {
+    return this.doc;
+  }
+  from_str(value: string) {
+    this.doc = immerFromStr(value, BOARD_PRIMARY_KEYS, BOARD_STRING_COLS);
+  }
+  set(record: object) {
+    this.doc = this.doc.set(record);
+  }
+  commit() {}
+  on() {}
+  removeListener() {}
+}
+
+// A minimal note, as Sagebrush's records have it.
+const item = (id: string, pos: number) => ({
+  type: "item",
+  page: "",
+  id,
+  text: "",
+  x: 0,
+  y: 0,
+  parent: "",
+  pos,
+});
+
+describe("the record limit is checked before writing", () => {
+  test("one record over: nothing is written; back under: it saves", async () => {
+    const records = lib.toRecords(lib.cleanDoc(BOARD)).length;
+    const replaced: string[] = [];
+    const t = await setup(canonical(BOARD), {
+      manager: { maxRecords: records },
+      wrap: (file) => ({
+        ...file,
+        replace: async (text, expected) => {
+          replaced.push(text);
+          return await file.replace(text, expected);
+        },
+      }),
+    });
+    try {
+      await until(() => itemText(t.browser, "a") === "hello world");
+      t.browser.set({
+        type: "item",
+        page: "",
+        id: "c",
+        text: "one too many",
+        x: 400,
+        y: 0,
+        parent: "",
+        pos: 2,
+      });
+      t.browser.commit();
+      await until(() => t.manager.getStatus().state === "too-large");
+      expect(replaced).toEqual([]);
+      expect(await t.read()).toBe(canonical(BOARD));
+      t.browser.delete({ type: "item", page: "", id: "c" });
+      setText(t.browser, "b", "fits again");
+      await until(async () => (await t.read()).includes('"fits again"'));
+      expect(t.manager.getStatus().state).toBe("ok");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  // At production size the live syncdb is far too slow (patchflow applies a
+  // patch of n new records in O(n^2)), so this one uses an in-memory
+  // document with the syncdb's own format, and the real file and library.
+  test("at the production limit: 100,000 records save, 100,001 do not", async () => {
+    // A board with 99,999 records (its doc record and 99,998 notes).
+    const nodes = Array.from({ length: 99_998 }, (_, i) => ({
+      id: `n${i}`,
+      text: "",
+      x: 0,
+      y: 0,
+    }));
+    const big = canonical({ ...BOARD, nodes, edges: [] });
+    expect(lib.toRecords(lib.cleanDoc(JSON.parse(big))).length).toBe(99_999);
+    const project_id = uuid();
+    const path = "big.board.json";
+    const fs: any = connect().fs({ project_id, service: fileserver.service });
+    await fs.writeFile(path, big);
+    const syncdb = new MemorySyncdb();
+    const replaced: string[] = [];
+    const file = fileOf(localFs(project_id), path);
+    const manager = new BoardManager({
+      lib,
+      syncdb,
+      file: {
+        ...file,
+        replace: async (text, expected) => {
+          replaced.push(text);
+          return await file.replace(text, expected);
+        },
+      },
+      recordsToString,
+      saveDelayMs: 60_000,
+    });
+    try {
+      await manager.start();
+      expect(manager.getStatus().state).toBe("ok");
+      syncdb.set(item("at-limit", 99_998));
+      await manager.save();
+      expect(manager.getStatus().state).toBe("ok");
+      expect(replaced.length).toBe(1);
+      const saved = `${await fs.readFile(path, "utf8")}`;
+      expect(Buffer.byteLength(saved)).toBeLessThan(8 * 1024 * 1024);
+      expect(lib.toRecords(lib.cleanDoc(JSON.parse(saved))).length).toBe(
+        100_000,
+      );
+      syncdb.set(item("one-more", 99_999));
+      await manager.save();
+      expect(manager.getStatus()).toMatchObject({ state: "too-large" });
+      expect(replaced.length).toBe(1); // never attempted
+      expect(`${await fs.readFile(path, "utf8")}`).toBe(saved);
+    } finally {
+      await manager.close();
+    }
+  }, 120_000);
+});
+
+test("a document grown past what a host keeps retires its manager", async () => {
+  const text = canonical(BOARD);
+  const bytes = Buffer.byteLength(text);
+  const t = await setup(text, {
+    manager: { maxBytes: bytes + 20, hardMaxBytes: bytes + 60 },
+  });
+  try {
+    let retired = 0;
+    (t.manager as any).onRetire(() => (retired += 1));
+    await until(() => itemText(t.browser, "a") === "hello world");
+    setText(t.browser, "b", "x".repeat(200));
+    await until(() => t.manager.isRetired());
+    expect(retired).toBe(1);
+    expect(t.manager.getStatus().state).toBe("too-large");
+    expect(await t.read()).toBe(text);
+  } finally {
+    await t.cleanup();
+  }
 });

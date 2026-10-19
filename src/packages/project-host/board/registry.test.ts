@@ -58,7 +58,8 @@ function harness(
   let running = 0;
   let maxRunning = 0;
   const start =
-    (startGate?: Promise<void>) => async (): Promise<StartedBoard> => {
+    (startGate?: Promise<void>, syncdbCloseGate?: Promise<void>) =>
+    async (): Promise<StartedBoard> => {
       running += 1;
       maxRunning = Math.max(maxRunning, running);
       await startGate;
@@ -67,6 +68,7 @@ function harness(
       return {
         manager,
         close: async () => {
+          await syncdbCloseGate;
           running -= 1;
         },
       };
@@ -178,4 +180,69 @@ test("limits: per project, per host, and the open boards' bytes", async () => {
     /too many open boards on this host/,
   );
   await small.registry.closeAll();
+});
+
+test("bytes are reserved at admission, so concurrent starts stay under the cap", async () => {
+  const h = harness({ maxTotalBytes: 100, startTimeoutMs: 5000 });
+  const held = gate();
+  const opens = Array.from({ length: 10 }, (_, i) =>
+    h.registry.open(`p${i}:a`, "a", h.start(held.promise), 30),
+  );
+  const outcomes = await Promise.allSettled(
+    opens.map((p) => Promise.race([p, new Promise((r) => setTimeout(r, 50))])),
+  );
+  // Three fit (90 bytes); the rest were refused before starting.
+  const refused = outcomes.filter((o) => o.status === "rejected");
+  expect(refused.length).toBe(7);
+  for (const o of refused) {
+    expect(`${(o as PromiseRejectedResult).reason}`).toMatch(/too large/);
+  }
+  expect(h.registry.size()).toBe(3);
+  expect(h.registry.chargedBytes()).toBe(90);
+  held.release();
+  await Promise.allSettled(opens);
+  expect(h.registry.chargedBytes()).toBe(90);
+  // A board that grows is charged its size.
+  h.managers[0].status = { state: "ok", bytes: 50 };
+  expect(h.registry.chargedBytes()).toBe(110);
+  await expect(h.registry.open("q:a", "a", h.start(), 1)).rejects.toThrow(
+    /too large/,
+  );
+  await h.registry.closeAll();
+  expect(h.registry.chargedBytes()).toBe(0);
+});
+
+test("a syncdb close that does not end keeps the slot and blocks takeover", async () => {
+  const h = harness();
+  const closeHeld = gate();
+  await h.registry.open("p:a", "a", h.start(undefined, closeHeld.promise), 10);
+  h.registry.sweep(Date.now() + h.registry.leaseMs + 1);
+  // Past the close timeout (100 ms): still charged and blocking.
+  await new Promise((r) => setTimeout(r, 250));
+  expect(h.registry.size()).toBe(1);
+  expect(h.registry.chargedBytes()).toBe(10);
+  await expect(h.registry.open("p:a", "a", h.start())).rejects.toThrow(
+    /still closing/,
+  );
+  // Ending late frees it.
+  closeHeld.release();
+  await new Promise((r) => setTimeout(r, 20));
+  expect(h.registry.size()).toBe(0);
+  await h.registry.open("p:a", "a", h.start());
+  expect(h.maxRunning()).toBe(1);
+  await h.registry.closeAll();
+});
+
+test("a manager that retires is closed at once", async () => {
+  const h = harness();
+  let retire: (() => void) | undefined;
+  const manager = (await h.registry.open("p:a", "a", async () => {
+    const m = new FakeManager();
+    (m as any).onRetire = (f: () => void) => (retire = f);
+    return { manager: m, close: async () => {} };
+  })) as FakeManager;
+  retire!();
+  await new Promise((r) => setTimeout(r, 20));
+  expect(manager.closes).toBe(1);
+  expect(h.registry.size()).toBe(0);
 });

@@ -17,14 +17,13 @@ compute is stopped. registry.ts keeps one manager per board, through its
 close.
 */
 
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { BoardOpenResult, Filesystem } from "@cocalc/conat/files/fs";
 import { immerdb, type ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
 import { getLogger } from "@cocalc/backend/logger";
 import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
-import { make_patch } from "@cocalc/util/dmp";
 import {
   BOARD_EDITABLE_LIMIT,
   BOARD_PRIMARY_KEYS,
@@ -32,7 +31,12 @@ import {
   boardSyncdbPath,
   isBoardJsonPath,
 } from "@cocalc/util/board/names";
-import { BoardManager, type BoardFile, type BoardLib } from "./manager";
+import {
+  BoardManager,
+  type BoardFile,
+  type BoardLib,
+  type BoardRead,
+} from "./manager";
 import {
   BoardRegistry,
   type BoardManagerLike,
@@ -59,10 +63,11 @@ export function loadBoardLib(): Promise<BoardLib> {
 }
 
 // The syncdb's string for a list of records, as its own documents make it.
+// Built in one pass (a set per record copies the document each time,
+// quadratic for a large board).
 export function recordsToString(records: any[]): string {
-  let doc: any = immerFromStr("", BOARD_PRIMARY_KEYS, BOARD_STRING_COLS);
-  for (const record of records) doc = doc.set(record);
-  return doc.to_str();
+  const lines = records.map((record) => JSON.stringify(record)).join("\n");
+  return immerFromStr(lines, BOARD_PRIMARY_KEYS, BOARD_STRING_COLS).to_str();
 }
 
 // The board's path as every client names it: absolute, normalized.
@@ -82,24 +87,236 @@ function isMissing(err: any): boolean {
   return err?.code === "ENOENT" || err?.code === "ENOTDIR";
 }
 
-// A write that lost its compare-and-swap: the file is not the expected text
-// (or is gone).
-function isConflict(err: any): boolean {
-  return (
-    err?.code === "ETAG_MISMATCH" ||
-    err?.code === "PATCH_FAILED" ||
-    /Mismatched base version|Failed to apply patch/.test(`${err?.message}`)
+// SandboxedFilesystem's bounded read, which the project host's file
+// service hands the board handlers (it is not on the RPC surface).
+type BoundedReadFilesystem = {
+  readRegularFileAuthorized?: (opts: {
+    path: string;
+    authorizeCanonicalIdentity: (identity: string) => void;
+    maxBytes: number;
+    encoding?: string;
+  }) => Promise<string | Buffer>;
+};
+
+type BoardFilesystem = Pick<
+  Filesystem,
+  | "lstat"
+  | "readFile"
+  | "writeFile"
+  | "watch"
+  | "rename"
+  | "move"
+  | "unlink"
+  | "chmod"
+  | "readdir"
+> &
+  BoundedReadFilesystem;
+
+async function readBoundedText(
+  fs: BoundedReadFilesystem,
+  path: string,
+  maxBytes: number,
+  authorizeCanonicalIdentity: (identity: string) => void = () => {},
+): Promise<string> {
+  const readAuthorized = fs.readRegularFileAuthorized;
+  if (typeof readAuthorized !== "function") {
+    throw Error("boards require the sandbox's bounded reads");
+  }
+  const value = await readAuthorized.call(fs, {
+    path,
+    maxBytes: Math.max(1, maxBytes),
+    encoding: "utf8",
+    authorizeCanonicalIdentity,
+  });
+  return `${value}`;
+}
+
+function isExists(err: any): boolean {
+  return err?.code === "EEXIST" || /already exists/i.test(`${err?.message}`);
+}
+
+// Is the file at p exactly text? Reads at most text's size + 1 bytes.
+async function holdsExactly(
+  fs: BoardFilesystem,
+  p: string,
+  text: string,
+): Promise<boolean> {
+  try {
+    return (await readBoundedText(fs, p, Buffer.byteLength(text))) === text;
+  } catch (err: any) {
+    if (isMissing(err) || err?.code === "EFBIG" || err?.code === "EACCES") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+// Test hooks: run in the windows between replaceBoardFile's steps.
+export interface ReplaceHooks {
+  afterAside?: () => Promise<void>;
+  afterVerify?: () => Promise<void>;
+  afterPlace?: () => Promise<void>;
+}
+
+function sidePath(path: string, id: string, kind: "tmp" | "aside"): string {
+  return posix.join(
+    posix.dirname(path),
+    `.${posix.basename(path)}.${id}.sage-board-${kind}`,
   );
 }
 
+function conflictPath(path: string): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${path}.conflict-${stamp}-${randomUUID().slice(0, 8)}`;
+}
+
+// Move a version of the board aside from p to a place nobody overwrites:
+// back to path if path is free, else a conflict copy beside it.
+async function keepVersion(fs: BoardFilesystem, p: string, path: string) {
+  try {
+    await fs.move(p, path, { overwrite: false });
+    return;
+  } catch (err) {
+    if (!isExists(err)) throw err;
+  }
+  const copy = conflictPath(path);
+  await fs.move(p, copy, { overwrite: false });
+  logger.warn("board: kept another writer's version as a conflict copy", {
+    path,
+    copy,
+  });
+}
+
+/*
+Replace the board's file with text, only if it is exactly expected, so that
+no other writer's version is ever written over or deleted:
+
+1. text goes to a temp file beside the board;
+2. the board is renamed aside (atomic: whatever is there at that instant,
+   from anyone, is now in the aside file; a missing file is a conflict and
+   is not created);
+3. the aside file must be exactly expected, or it goes back (and the save
+   is a conflict);
+4. the temp file is renamed to the board's name only if nothing is there
+   (the sandbox's renameNoReplace, an atomic RENAME_NOREPLACE): a file
+   someone created since step 2 wins, and the save is a conflict;
+5. the aside file is checked again, for a writer that held it open and
+   wrote after step 3; if it changed, it is kept as a conflict copy rather
+   than deleted. Otherwise it is deleted.
+
+Every version some other writer produced therefore ends up at the board's
+name, in the aside file put back, or in a conflict copy. Between steps 2 and
+4 (two in-process syscalls) the board's name is briefly absent: a reader
+then sees no file, and a delete in that instant fails (ENOENT) rather than
+being undone silently. Without openat2, the sandbox's no-replace move is a
+check then a rename, and step 4 has a small window again.
+*/
+export async function replaceBoardFile({
+  fs,
+  path,
+  text,
+  expected,
+  hooks,
+}: {
+  fs: BoardFilesystem;
+  path: string;
+  text: string;
+  expected: string;
+  hooks?: ReplaceHooks;
+}): Promise<"ok" | "conflict"> {
+  const id = randomUUID();
+  const tmp = sidePath(path, id, "tmp");
+  const aside = sidePath(path, id, "aside");
+  let holdingAside = false;
+  let placed = false;
+  await fs.writeFile(tmp, text);
+  try {
+    try {
+      const mode = (await fs.lstat(path)).mode & 0o7777;
+      await fs.chmod(tmp, mode);
+    } catch (err) {
+      if (isMissing(err)) return "conflict";
+      throw err;
+    }
+    try {
+      await fs.rename(path, aside);
+    } catch (err) {
+      if (isMissing(err)) return "conflict";
+      throw err;
+    }
+    holdingAside = true;
+    await hooks?.afterAside?.();
+    if (!(await holdsExactly(fs, aside, expected))) return "conflict";
+    await hooks?.afterVerify?.();
+    try {
+      await fs.move(tmp, path, { overwrite: false });
+    } catch (err) {
+      if (isExists(err)) return "conflict";
+      throw err;
+    }
+    placed = true;
+    await hooks?.afterPlace?.();
+    if (!(await holdsExactly(fs, aside, expected))) {
+      holdingAside = false;
+      await keepVersion(fs, aside, path);
+    }
+    return "ok";
+  } finally {
+    if (!placed) await fs.unlink(tmp).catch(() => {});
+    if (holdingAside) {
+      if (placed) {
+        // Exactly expected, the version this save replaces.
+        await fs.unlink(aside).catch(() => {});
+      } else {
+        await keepVersion(fs, aside, path).catch((err) =>
+          logger.warn("board: could not put a version back", {
+            path,
+            aside,
+            err: `${err}`,
+          }),
+        );
+      }
+    }
+  }
+}
+
+// A board left aside by a host that stopped between steps 2 and 4 of
+// replaceBoardFile goes back to its name, if that is free.
+async function recoverAside(fs: BoardFilesystem, path: string) {
+  const dir = posix.dirname(path);
+  const prefix = `.${posix.basename(path)}.`;
+  let names: string[];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return;
+  }
+  const asides = names.filter(
+    (name) =>
+      name.startsWith(prefix) &&
+      /^[0-9a-f-]{36}\.sage-board-aside$/.test(name.slice(prefix.length)),
+  );
+  for (const name of asides) {
+    await keepVersion(fs, posix.join(dir, name), path).catch(() => {});
+  }
+}
+
 export function fileOf(
-  fs: Pick<Filesystem, "lstat" | "readFile" | "writeFile" | "watch">,
+  fs: BoardFilesystem,
   path: string,
+  hooks?: ReplaceHooks,
 ): BoardFile {
   return {
     info: async () => {
       try {
-        const stats = await fs.lstat(path);
+        let stats;
+        try {
+          stats = await fs.lstat(path);
+        } catch (err) {
+          if (!isMissing(err)) throw err;
+          await recoverAside(fs, path);
+          stats = await fs.lstat(path);
+        }
         return {
           size: stats.size,
           links: stats.nlink,
@@ -110,36 +327,37 @@ export function fileOf(
         throw err;
       }
     },
-    read: async (): Promise<string | undefined> => {
+    // The sandbox's descriptor-anchored read: a regular file only, at most
+    // maxBytes + 1 bytes, and only if the opened file is still the board's
+    // identity (not swapped for a link elsewhere).
+    read: async (maxBytes: number): Promise<BoardRead | undefined> => {
       try {
-        const value = await fs.readFile(path, "utf8");
-        return typeof value === "string"
-          ? value
-          : Buffer.from(value).toString();
+        const text = await readBoundedText(fs, path, maxBytes, (identity) => {
+          let resolved: string | undefined;
+          try {
+            resolved = canonicalBoardPath(identity);
+          } catch {}
+          if (resolved !== canonicalBoardPath(path)) {
+            throw Object.assign(
+              Error(`the board's file is now ${identity}, not ${path}`),
+              { code: "EBOARDIDENTITY" },
+            );
+          }
+        });
+        return { text };
       } catch (err: any) {
         if (isMissing(err)) return;
+        if (err?.code === "EFBIG") return { tooLarge: true };
+        if (err?.code === "EACCES" || err?.code === "EBOARDIDENTITY") {
+          return { refused: `${err?.message ?? err}`.slice(0, 500) };
+        }
         throw err;
       }
     },
-    // The storage's conditional write: it applies the patch only if the
-    // file's SHA-256 is expected's, writes a temp file and renames it over
-    // the file, and never creates the file.
-    replace: async (text: string, expected: string) => {
-      try {
-        await fs.writeFile(
-          path,
-          {
-            patch: make_patch(expected, text),
-            sha256: createHash("sha256").update(expected).digest("hex"),
-          },
-          true,
-        );
-        return "ok";
-      } catch (err: any) {
-        if (isConflict(err) || isMissing(err)) return "conflict";
-        throw err;
-      }
-    },
+    // Replace the file only if it is still exactly expected, without ever
+    // writing over or deleting anyone else's version (see replaceBoardFile).
+    replace: (text: string, expected: string) =>
+      replaceBoardFile({ fs, path, text, expected, hooks }),
     watch: (onChange: () => void) => {
       let stopped = false;
       let iterator: any;
@@ -191,7 +409,7 @@ export async function startBoard({
   client: ConatClient;
   project_id: string;
   path: string;
-  fs: Pick<Filesystem, "lstat" | "readFile" | "writeFile" | "watch">;
+  fs: BoardFilesystem;
   service?: string;
   manager?: Partial<ConstructorParameters<typeof BoardManager>[0]>;
 }): Promise<StartedBoard & { syncdb: ImmerDB }> {
@@ -310,6 +528,7 @@ type ManagerFor =
 async function managerFor(opts: BoardRequest): Promise<ManagerFor> {
   const path = await boardIdentity(opts);
   const key = `${opts.project_id}:${path}`;
+  let reserve = 0;
   if (!registry.has(key)) {
     // Nothing to start for a file that is missing or too large: so such
     // paths take no slot and no memory.
@@ -328,9 +547,14 @@ async function managerFor(opts: BoardRequest): Promise<ManagerFor> {
         },
       };
     }
+    // Its size is charged from now, through start and close.
+    reserve = info.size;
   }
-  const manager = await registry.open(key, path, () =>
-    startBoard({ ...opts, path }),
+  const manager = await registry.open(
+    key,
+    path,
+    () => startBoard({ ...opts, path }),
+    reserve,
   );
   return { path, manager };
 }

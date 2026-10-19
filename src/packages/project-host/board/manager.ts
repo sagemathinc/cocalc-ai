@@ -18,12 +18,16 @@ board on the project host, is the only thing that writes the file:
 - After the document changes it saves, debounced, and on demand: the file
   gets canonical(fromRecords(records)), only if that differs from what is
   on disk, so an open board nobody edits never rewrites its file.
-- Every write is a compare-and-swap: the storage replaces the file only if
-  it still has exactly the text this manager last read or wrote (by
-  SHA-256), atomically (temp file and rename), and never creates it. So a
-  change made by anyone else, valid or not, is never written over, and a
-  manager that lost the board (a later owner wrote, or the file was
-  deleted) cannot write it.
+- A write replaces the file only if it is still exactly the text this
+  manager last read or wrote, and never creates it (service.ts,
+  replaceBoardFile: the file is renamed aside, checked, and the new text
+  renamed in only if the name is still free). Every version another writer
+  produced is kept: at the board's name, put back, or as a conflict copy.
+  A save that finds another version is a conflict: the manager merges it,
+  or stops. So a manager that lost the board (a later owner wrote, or the
+  file was deleted) cannot write it.
+- Everything about what would be written is checked before writing: size,
+  format and record count.
 - It follows the file. A change made by someone else (an agent, git, an
   editor), including a restore of an earlier version, is merged into the
   syncdb by records, as a three-way merge from the file's previous state,
@@ -35,7 +39,9 @@ board on the project host, is the only thing that writes the file:
   limits is never loaded and never written over: the syncdb is left as it
   was, and the status says so until the file changes.
 - A file that disappears after it was loaded (deleted or moved) retires the
-  manager: it never writes again, and the status says so.
+  manager: it never writes again, and the status says so. So does a live
+  document grown past what a host keeps for a board (hardMaxBytes,
+  hardMaxRecords): its host closes it, and it reopens from its file.
 */
 
 import {
@@ -69,8 +75,9 @@ export interface BoardFile {
   // The file's size and kind (not following a symbolic link), or
   // undefined if it does not exist.
   info(): Promise<BoardFileInfo | undefined>;
-  // The file's text, or undefined if it does not exist.
-  read(): Promise<string | undefined>;
+  // The file's text, reading at most maxBytes + 1 bytes: a larger file is
+  // never allocated whole. undefined if it does not exist.
+  read(maxBytes: number): Promise<BoardRead | undefined>;
   // Replace the file's text, only if it is exactly expected now; never
   // create it. "conflict" if it is not (it changed, or is gone).
   replace(text: string, expected: string): Promise<"ok" | "conflict">;
@@ -85,6 +92,14 @@ export interface BoardFileInfo {
   links: number;
   symlink: boolean;
 }
+
+export type BoardRead =
+  | { text: string }
+  // Over maxBytes (it grew after info()).
+  | { tooLarge: true }
+  // Not a file this board may be read from (not a regular file, or no
+  // longer the board's identity).
+  | { refused: string };
 
 export type BoardStatus =
   | { state: "ok"; bytes: number }
@@ -101,8 +116,15 @@ export interface BoardManagerOptions {
   saveDelayMs?: number;
   // At most one load from the file per this many ms.
   loadIntervalMs?: number;
+  // Over these the board is not loaded or saved (it is "too-large"), but a
+  // document that shrinks back under them saves again.
   maxBytes?: number;
   maxRecords?: number;
+  // A document over these (default twice the above) is more than a host
+  // keeps for a board: the manager retires, its host closes it, and the
+  // board reopens from its file.
+  hardMaxBytes?: number;
+  hardMaxRecords?: number;
   log?: (message: string, extra?: object) => void;
 }
 
@@ -122,6 +144,8 @@ export class BoardManager {
   private readonly loadIntervalMs: number;
   private readonly maxBytes: number;
   private readonly maxRecords: number;
+  private readonly hardMaxBytes: number;
+  private readonly hardMaxRecords: number;
   private readonly log: (message: string, extra?: object) => void;
 
   private status: BoardStatus = { state: "missing" };
@@ -147,6 +171,7 @@ export class BoardManager {
   private closed = false;
   // The file was deleted or moved: never written again.
   private retired = false;
+  private retireListeners: (() => void)[] = [];
 
   constructor(opts: BoardManagerOptions) {
     this.lib = opts.lib;
@@ -157,6 +182,8 @@ export class BoardManager {
     this.loadIntervalMs = opts.loadIntervalMs ?? 250;
     this.maxBytes = opts.maxBytes ?? BOARD_EDITABLE_LIMIT;
     this.maxRecords = opts.maxRecords ?? BOARD_RECORD_LIMIT;
+    this.hardMaxBytes = opts.hardMaxBytes ?? 2 * this.maxBytes;
+    this.hardMaxRecords = opts.hardMaxRecords ?? 2 * this.maxRecords;
     this.log = opts.log ?? (() => {});
   }
 
@@ -292,7 +319,15 @@ export class BoardManager {
     };
   }
 
-  private parse(text: string): Parsed {
+  private tooManyRecords(count: number): BoardStatus {
+    return {
+      state: "too-large",
+      message: `the board has ${count} records, over the ${this.maxRecords} a board can be edited with`,
+    };
+  }
+
+  // Parse a board, refusing more than maxRecords records.
+  private parse(text: string, maxRecords = this.maxRecords): Parsed {
     let raw: unknown;
     try {
       raw = JSON.parse(text);
@@ -307,20 +342,14 @@ export class BoardManager {
     }
     const doc = this.lib.cleanDoc(raw);
     const records = this.lib.toRecords(doc);
-    if (records.length > this.maxRecords) {
-      return {
-        ok: false,
-        status: {
-          state: "too-large",
-          message: `the board has ${records.length} records, over the ${this.maxRecords} a board can be edited with`,
-        },
-      };
+    if (records.length > maxRecords) {
+      return { ok: false, status: this.tooManyRecords(records.length) };
     }
     return { ok: true, doc, records };
   }
 
-  // Read the file, never allocating more than the limit allows for one
-  // that is known to be larger. undefined: the status says why not.
+  // Read the file, never allocating more than the limit. undefined: the
+  // status says why not.
   private async readBounded(): Promise<string | undefined> {
     const info = await this.file.info();
     if (info !== undefined && (info.symlink || info.links > 1)) {
@@ -340,31 +369,37 @@ export class BoardManager {
       this.status = this.tooLarge(info.size);
       return;
     }
-    const text = info === undefined ? undefined : await this.file.read();
-    if (text === undefined) {
+    const read =
+      info === undefined ? undefined : await this.file.read(this.maxBytes);
+    if (read === undefined) {
       this.fileGone();
       return;
     }
-    const bytes = Buffer.byteLength(text);
-    if (bytes > this.maxBytes) {
-      // It grew between the size and the read.
+    if ("tooLarge" in read) {
+      // It grew between info() and the read, which stopped at the limit.
       this.diskText = undefined;
-      this.status = this.tooLarge(bytes);
+      this.status = this.tooLarge(this.maxBytes + 1);
       return;
     }
-    return text;
+    if ("refused" in read) {
+      this.diskText = undefined;
+      this.status = { state: "invalid", message: read.refused };
+      return;
+    }
+    return read.text;
   }
 
   // No file. One this manager had loaded was deleted or moved: retire.
   private fileGone(): void {
     this.diskText = undefined;
-    if (this.diskRecords !== undefined && !this.retired) {
-      this.retired = true;
-      this.log("board: the file was deleted or moved; no longer saving it");
+    if (this.diskRecords !== undefined) {
+      this.retire({
+        state: "missing",
+        message: "the board was deleted or moved",
+      });
+    } else {
+      this.status = { state: "missing" };
     }
-    this.status = this.retired
-      ? { state: "missing", message: "the board was deleted or moved" }
-      : { state: "missing" };
   }
 
   private documentText(): string {
@@ -417,6 +452,10 @@ export class BoardManager {
       if (this.diskText === undefined) return;
       const text = this.documentText();
       const bytes = Buffer.byteLength(text);
+      if (bytes > this.hardMaxBytes) {
+        this.retire(this.tooLarge(bytes));
+        return;
+      }
       if (bytes > this.maxBytes) {
         this.status = this.tooLarge(bytes);
         return;
@@ -425,9 +464,20 @@ export class BoardManager {
         this.status = { state: "ok", bytes };
         return;
       }
+      // All of what would be written is checked before it is: the format
+      // and the record limit, not just the size.
+      const parsed = this.parse(text, this.hardMaxRecords);
+      if (!parsed.ok) {
+        this.retire(parsed.status);
+        return;
+      }
+      if (parsed.records.length > this.maxRecords) {
+        this.status = this.tooManyRecords(parsed.records.length);
+        return;
+      }
       if ((await this.file.replace(text, this.diskText)) === "ok") {
         this.diskText = text;
-        this.diskRecords = this.recordsToString(this.parseRecords(text));
+        this.diskRecords = this.recordsToString(parsed.records);
         this.status = { state: "ok", bytes };
         return;
       }
@@ -438,13 +488,26 @@ export class BoardManager {
     }
   }
 
-  private parseRecords(text: string): any[] {
-    const parsed = this.parse(text);
-    if (!parsed.ok) {
-      throw Error(
-        `saved board is not loadable: ${JSON.stringify(parsed.status)}`,
-      );
+  // Stop for good: the file went away, or the document grew past what a
+  // host keeps for a board (it reopens from its file).
+  private retire(status: BoardStatus): void {
+    this.status = status;
+    if (this.retired) return;
+    this.retired = true;
+    this.log("board: retired", status);
+    for (const f of this.retireListeners) {
+      try {
+        f();
+      } catch {}
     }
-    return parsed.records;
+  }
+
+  // Call f when this manager retires.
+  onRetire(f: () => void): void {
+    if (this.retired) {
+      f();
+      return;
+    }
+    this.retireListeners.push(f);
   }
 }
