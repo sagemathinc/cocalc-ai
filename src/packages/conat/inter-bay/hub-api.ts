@@ -33,6 +33,11 @@ export interface ForwardedHubApiCall {
    * bay runs each call id at most once (server/inter-bay/forwarded-calls).
    */
   call_id?: string;
+  /**
+   * How long the receiving bay waits for the call in all, when longer than
+   * the default 30 s; the owning bay lets a repeat wait accordingly.
+   */
+  budget_ms?: number;
 }
 
 export interface InterBayHubApi {

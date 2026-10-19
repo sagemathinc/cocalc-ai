@@ -81,7 +81,8 @@ export class AccountClient {
       auth_session_hash: this.client.info?.user?.auth_session_hash ?? null,
       name,
       args,
-      timeout: 30_000,
+      // As the hub API clients do: a call may ask for a longer timeout.
+      timeout: args[0]?.timeout ?? 30_000,
     });
   }
 

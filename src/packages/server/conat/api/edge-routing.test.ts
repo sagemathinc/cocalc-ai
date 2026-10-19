@@ -110,6 +110,41 @@ describe("executeHubApiCall at the edge", () => {
       call_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
     expect(local).not.toHaveBeenCalled();
+    // The default budget: 12 s attempts, and no budget sent.
+    expect(createInterBayHubApiClient).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout: 12_000 }),
+    );
+  });
+
+  it("gives a call that asks for longer the caller's own timeout", async () => {
+    resolveProjectBay.mockResolvedValue({ bay_id: "bay-1", epoch: 0 });
+    forward.mockResolvedValue({ ok: true, result: { done: true } });
+    const call = routed([{ project_id: PROJECT, timeout: 10 * 60_000 }]);
+    expect(await executeHubApiCall(call)).toEqual({ done: true });
+    expect(createInterBayHubApiClient).toHaveBeenCalledWith(
+      expect.objectContaining({ bay_id: "bay-1", timeout: 4 * 60_000 }),
+    );
+    expect(forward.mock.calls[0][0]).toMatchObject({
+      ...call,
+      budget_ms: 10 * 60_000,
+    });
+    // Bounded: at most 30 min, and never less than the default.
+    forward.mockClear();
+    createInterBayHubApiClient.mockClear();
+    await executeHubApiCall(
+      routed([{ project_id: PROJECT, timeout: 24 * 60 * 60_000 }]),
+    );
+    expect(createInterBayHubApiClient).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout: 12 * 60_000 }),
+    );
+    expect(forward.mock.calls[0][0].budget_ms).toBe(30 * 60_000);
+    forward.mockClear();
+    createInterBayHubApiClient.mockClear();
+    await executeHubApiCall(routed([{ project_id: PROJECT, timeout: 1_000 }]));
+    expect(createInterBayHubApiClient).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout: 12_000 }),
+    );
+    expect(forward.mock.calls[0][0]).not.toHaveProperty("budget_ms");
   });
 
   it("sends an unanswered call again with the same call id", async () => {
@@ -197,6 +232,27 @@ describe("handleForwardedHubApiCall on the owning bay", () => {
     const { call_hash } = runForwardedCallOnce.mock.calls[0][0];
     expect(call_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(runForwardedCallOnce.mock.calls[1][0].call_hash).toBe(call_hash);
+    // The default budget: a repeat waits up to 9 s for the first attempt.
+    expect(runForwardedCallOnce.mock.calls[0][0].wait_ms).toBe(9_000);
+  });
+
+  it("lets a repeat of a longer call wait for it, without passing the budget on", async () => {
+    resolveProjectBay.mockResolvedValue({ bay_id: "bay-0", epoch: 0 });
+    const call = forwarded({
+      call_id: "22222222-2222-4222-8222-222222222222",
+      budget_ms: 10 * 60_000,
+    });
+    await handleForwardedHubApiCall(call);
+    expect(runForwardedCallOnce.mock.calls[0][0].wait_ms).toBe(3 * 60_000);
+    expect(local).toHaveBeenCalledWith(routed());
+    // A bay cannot ask for more than the most a caller may wait.
+    await handleForwardedHubApiCall(
+      forwarded({
+        call_id: "33333333-3333-4333-8333-333333333333",
+        budget_ms: 24 * 60 * 60_000,
+      }),
+    );
+    expect(runForwardedCallOnce.mock.calls[1][0].wait_ms).toBe(9 * 60_000);
   });
 
   it("refuses methods that are not routable", async () => {

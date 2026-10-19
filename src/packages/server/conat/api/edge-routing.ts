@@ -48,13 +48,34 @@ const logger = getLogger("server:conat:api:edge-routing");
 export type HubApiCall = Omit<ForwardedHubApiCall, "source_bay_id" | "call_id">;
 
 // A forwarded call gets two attempts with the same call id, within the
-// caller's own 30 s hub call timeout, so the caller hears the outcome (or that
-// it is unknown) from this bay rather than timing out itself.
+// caller's own hub call timeout, so the caller hears the outcome (or that it
+// is unknown) from this bay rather than timing out itself. That timeout is
+// 30 s unless the call asks for longer (args[0].timeout, as hub API clients
+// send it), up to 30 min: a slow host read, say.
 const FORWARD_ATTEMPTS = 2;
-const FORWARD_ATTEMPT_TIMEOUT_MS = 12_000;
-// How long the owning bay lets a repeat wait for the first attempt to finish;
-// shorter than an attempt, so the answer arrives before the attempt times out.
-const REPEAT_WAIT_MS = 9_000;
+const DEFAULT_FORWARD_BUDGET_MS = 30_000;
+const MAX_FORWARD_BUDGET_MS = 30 * 60_000;
+// Each attempt gets 40% of the budget. The owning bay lets a repeat wait up
+// to 30% for the first attempt to finish: shorter than an attempt, so the
+// answer arrives before the attempt times out.
+const attemptTimeoutMs = (budget_ms: number) => Math.round(budget_ms * 0.4);
+const repeatWaitMs = (budget_ms: number) => Math.round(budget_ms * 0.3);
+const FORWARD_ATTEMPT_TIMEOUT_MS = attemptTimeoutMs(DEFAULT_FORWARD_BUDGET_MS);
+
+function clampBudgetMs(ms: unknown): number {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) {
+    return DEFAULT_FORWARD_BUDGET_MS;
+  }
+  return Math.min(
+    MAX_FORWARD_BUDGET_MS,
+    Math.max(DEFAULT_FORWARD_BUDGET_MS, ms),
+  );
+}
+
+/** How long a forwarded call may take in all: the caller's own timeout. */
+export function forwardBudgetMs(args: any[]): number {
+  return clampBudgetMs(args?.[0]?.timeout);
+}
 
 type Executor = (call: HubApiCall) => Promise<any>;
 
@@ -140,7 +161,7 @@ export async function executeHubApiCall(call: HubApiCall): Promise<any> {
   const owner = await ownerBay(route, call.args);
   const here = getConfiguredBayId();
   if (owner == null || owner === here) return await requireExecutor()(call);
-  return await forwardHubApiCall(owner, call);
+  return await forwardHubApiCall(owner, call, forwardBudgetMs(call.args));
 }
 
 // How many bays a call on several projects runs on at once.
@@ -302,11 +323,15 @@ async function executeSplitByProject(
 export async function forwardHubApiCall(
   bay_id: string,
   call: HubApiCall,
+  budget_ms: number = DEFAULT_FORWARD_BUDGET_MS,
 ): Promise<any> {
+  budget_ms = clampBudgetMs(budget_ms);
   const forwarded: ForwardedHubApiCall = {
     ...call,
     source_bay_id: getConfiguredBayId(),
     call_id: randomUUID(),
+    // Only a longer budget is sent; the owning bay assumes the default.
+    ...(budget_ms > DEFAULT_FORWARD_BUDGET_MS ? { budget_ms } : {}),
   };
   let lastError: unknown;
   for (let attempt = 1; attempt <= FORWARD_ATTEMPTS; attempt++) {
@@ -315,7 +340,7 @@ export async function forwardHubApiCall(
       response = await createInterBayHubApiClient({
         client: getInterBayFabricClient(),
         bay_id,
-        timeout: FORWARD_ATTEMPT_TIMEOUT_MS,
+        timeout: attemptTimeoutMs(budget_ms),
       }).call(forwarded);
     } catch (err) {
       // No answer. Even "no responders" (503) does not prove the call was not
@@ -356,7 +381,7 @@ export async function handleForwardedHubApiCall(
       account_id: call.account_id,
       source_bay_id: call.source_bay_id,
       call_hash: forwardedCallHash(call),
-      wait_ms: REPEAT_WAIT_MS,
+      wait_ms: repeatWaitMs(clampBudgetMs(call.budget_ms)),
       run: async () => await runForwardedHubApiCall(call),
     });
   } catch (err) {
@@ -373,7 +398,12 @@ async function runForwardedHubApiCall(
   call: ForwardedHubApiCall,
 ): Promise<ForwardedResult> {
   try {
-    const { source_bay_id, call_id: _call_id, ...rest } = call;
+    const {
+      source_bay_id,
+      call_id: _call_id,
+      budget_ms: _budget_ms,
+      ...rest
+    } = call;
     const route = getHubApiRoute(rest.name);
     // Only routed methods cross bays this way.
     if (route == null) {

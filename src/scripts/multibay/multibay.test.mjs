@@ -956,6 +956,39 @@ describe("host reads across bays", () => {
     );
     assert.equal(await forwardedReads(), before + 1);
   });
+
+  it("waits as long as the caller asked for a slow read", async () => {
+    // The log read is held up 25 s on the host's bay: longer than the
+    // default forwarding budget covers (two 12 s attempts, a repeat waiting
+    // 9 s), within the 90 s this call asks for.
+    const locked = runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const db = await getPool().connect();
+       try {
+         await db.query("BEGIN");
+         await db.query("LOCK TABLE cloud_vm_log IN ACCESS EXCLUSIVE MODE");
+         await db.query("SELECT pg_sleep(25)");
+         await db.query("COMMIT");
+       } finally {
+         db.release();
+       }`,
+      { timeoutMs: 120_000 },
+    );
+    await sleep(2000);
+    const started = Date.now();
+    const log = await alice.client.call("hosts.getHostLog", {
+      id: host_id,
+      timeout: 90_000,
+    });
+    assert.ok(Date.now() - started > 15_000, "the read was held up");
+    assert.deepEqual(
+      log.map(({ vm_id, action }) => ({ vm_id, action })),
+      [{ vm_id: host_id, action: "create" }],
+    );
+    await locked;
+  });
 });
 
 describe("course reconfiguration across bays", () => {
