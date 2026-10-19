@@ -207,6 +207,13 @@ describeDb(
       expect(
         await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
       ).toMatchObject({ state: "canceled" });
+      // Revoked by an account-wide sign-out.
+      mockEnrollmentStatus.mockRejectedValueOnce(
+        new Error("external_credential_revoked"),
+      );
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "canceled" });
       // If the home bay can't be asked, the page still opens (as pending).
       mockEnrollmentStatus.mockRejectedValue(new Error("home bay unreachable"));
       expect(
