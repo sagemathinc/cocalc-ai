@@ -33,6 +33,7 @@ import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run"
 import {
   configureProjectHostAcpContainerFileIO,
   ensureFileDownloadReadServer,
+  projectRealPathWithinDir,
   ensureShareFileDownloadReadServer,
   ensureFileUploadWriteServer,
   ensureViewerFileDownloadReadServer,
@@ -470,6 +471,7 @@ export async function main(
       frameAncestors: () => [...approvedBrowserOrigins()],
       hasReadAccess: hasProjectContentReadAccess,
       currentEpoch: projectContentEpoch,
+      realPathWithinDir: projectRealPathWithinDir,
       serveFile: async ({ req, res, project_id, account_id }) => {
         await ensureFileDownloadReadServer({ client: conatClient, project_id });
         await handleFileDownload({

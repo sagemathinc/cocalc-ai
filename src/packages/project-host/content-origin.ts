@@ -29,6 +29,7 @@ Invariants (see kucalc step6-content-origin-design):
 import type { IncomingMessage, Server, ServerResponse } from "http";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
+  contentPathWithinDir,
   verifyProjectContentCapability,
   type ProjectContentCapabilityClaims,
 } from "@cocalc/conat/auth/project-content-capability";
@@ -183,6 +184,25 @@ export function contentResponseHeaders({
   };
 }
 
+// Whether path, with symlinks resolved, is dir or inside it (dir resolved
+// the same way), on a project's sandboxed filesystem.
+export async function canonicalPathWithinDir({
+  fs,
+  path,
+  dir,
+}: {
+  fs: { canonicalSyncIdentityPath: (path: string) => Promise<string> };
+  path: string;
+  dir: string;
+}): Promise<boolean> {
+  const absolute = (p: string) => (p.startsWith("/") ? p : `/${p}`);
+  const [realPath, realDir] = await Promise.all([
+    fs.canonicalSyncIdentityPath(path),
+    fs.canonicalSyncIdentityPath(dir),
+  ]);
+  return contentPathWithinDir(absolute(realPath), absolute(realDir));
+}
+
 export interface ContentOriginHandlerOptions {
   domain: string;
   host_id: string;
@@ -193,6 +213,14 @@ export interface ContentOriginHandlerOptions {
   // capabilities carry the project-wide read floor.
   hasReadAccess: (opts: { account_id: string; project_id: string }) => boolean;
   currentEpoch: (project_id: string) => number;
+  // Whether path, with symlinks resolved, is still inside dir (also
+  // resolved).  Only members can create symlinks in a project, but a
+  // collected or copied folder can carry one that points elsewhere.
+  realPathWithinDir: (opts: {
+    project_id: string;
+    path: string;
+    dir: string;
+  }) => Promise<boolean>;
   serveFile: (opts: {
     req: IncomingMessage;
     res: ServerResponse;
@@ -310,6 +338,25 @@ export function createContentOriginHandler(opts: ContentOriginHandlerOptions) {
     const account_id = claims.sub;
     if (!opts.hasReadAccess({ account_id, project_id })) {
       return refuse(res, 403, "invalid or expired link");
+    }
+    // parseContentPath rejected dot segments and encoded slashes, so this is
+    // the absolute path the file route will read.
+    const path = `/${parsed.filePath
+      .split("/")
+      .map((segment) => decodeURIComponent(segment))
+      .join("/")}`;
+    if (!contentPathWithinDir(path, claims.dir)) {
+      return refuse(res, 403, "outside this link's folder");
+    }
+    try {
+      if (
+        !(await opts.realPathWithinDir({ project_id, path, dir: claims.dir }))
+      ) {
+        return refuse(res, 403, "outside this link's folder");
+      }
+    } catch (err) {
+      opts.onError?.({ project_id, err });
+      return refuse(res, 404, "not found");
     }
     setRequestUrl(req, `/${project_id}/files/${parsed.filePath}`);
     try {

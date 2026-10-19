@@ -15,7 +15,12 @@ import { generateKeyPairSync } from "node:crypto";
 import { createServer, request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { issueProjectContentCapability } from "@cocalc/conat/auth/project-content-capability";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  canonicalPathWithinDir,
   createContentOriginHandler,
   installContentHostnameUpgradeGuard,
   parseContentPath,
@@ -43,6 +48,7 @@ function cap(extra: Record<string, unknown> = {}): string {
     host_id: hostId,
     account_id: member,
     epoch: 0,
+    dir: "/",
     private_key: privateKeyPem,
     ...extra,
   }).token;
@@ -62,12 +68,16 @@ let served: Served[];
 let passedOn: string[];
 let epoch: number;
 let errors: unknown[];
+let realPathWithinDir: (opts: { project_id: string; path: string; dir: string }) => Promise<boolean>;
+let realChecks: { project_id: string; path: string; dir: string }[];
 
 beforeEach(async () => {
   served = [];
   passedOn = [];
   errors = [];
   epoch = 0;
+  realChecks = [];
+  realPathWithinDir = async () => true;
   const handler = createContentOriginHandler({
     domain,
     host_id: hostId,
@@ -76,6 +86,10 @@ beforeEach(async () => {
     hasReadAccess: ({ account_id, project_id }) =>
       account_id === member && (project_id === projectA || project_id === projectB),
     currentEpoch: () => epoch,
+    realPathWithinDir: async (opts) => {
+      realChecks.push(opts);
+      return await realPathWithinDir(opts);
+    },
     serveFile: async ({ req, res, project_id, account_id }) => {
       served.push({
         url: req.url,
@@ -149,6 +163,47 @@ describe("content origin request handling", () => {
     expect(r.headers["content-security-policy"]).toBe(
       "frame-ancestors 'self' https://app.example.org",
     );
+  });
+
+  it("serves only inside the capability's folder", async () => {
+    const c = cap({ dir: "/home/user/cs101-collect/hw1/student-1" });
+    const inside = await get(
+      hostA,
+      `/_c/${c}/files/home/user/cs101-collect/hw1/student-1/img/a%20b.png`,
+    );
+    expect(inside.status).toBe(200);
+    expect(realChecks).toEqual([
+      {
+        project_id: projectA,
+        path: "/home/user/cs101-collect/hw1/student-1/img/a b.png",
+        dir: "/home/user/cs101-collect/hw1/student-1",
+      },
+    ]);
+    for (const path of [
+      "home/user/cs101.course",
+      "home/user/hw1/solution.ipynb",
+      "home/user/cs101-collect/hw1/student-2/page.html",
+      "home/user/cs101-collect/hw1/student-10/page.html",
+      "home/user/cs101-collect/hw1/student-1",
+    ]) {
+      const r = await get(hostA, `/_c/${c}/files/${path}`);
+      expect(r.status).toBe(path.endsWith("student-1") ? 200 : 403);
+    }
+    expect(served.map((x) => x.url)).toEqual([
+      `/${projectA}/files/home/user/cs101-collect/hw1/student-1/img/a%20b.png`,
+      `/${projectA}/files/home/user/cs101-collect/hw1/student-1`,
+    ]);
+  });
+
+  it("refuses a path whose real location leaves the folder, and fails closed if that can't be checked", async () => {
+    const c = cap({ dir: "/home/user/sub" });
+    realPathWithinDir = async () => false;
+    expect((await get(hostA, `/_c/${c}/files/home/user/sub/link.txt`)).status).toBe(403);
+    realPathWithinDir = async () => {
+      throw new Error("ELOOP");
+    };
+    expect((await get(hostA, `/_c/${c}/files/home/user/sub/loop.txt`)).status).toBe(404);
+    expect(served).toEqual([]);
   });
 
   it("never serves project A's capability under project B's origin", async () => {
@@ -235,6 +290,7 @@ describe("content origin request handling", () => {
         frameAncestors: () => [],
         hasReadAccess: () => true,
         currentEpoch: () => 0,
+        realPathWithinDir: async () => true,
         serveFile: async ({ res }) => {
           res.writeHead(200, headers as any);
           res.end("ok");
@@ -281,6 +337,7 @@ describe("content origin request handling", () => {
       frameAncestors: () => [],
       hasReadAccess: () => true,
       currentEpoch: () => 1, // stale: refused before serving
+      realPathWithinDir: async () => true,
       serveFile: async () => {},
     });
     const req: any = {
@@ -317,6 +374,45 @@ describe("content origin request handling", () => {
     expect(parseContentPath("/_c//files/x")).toBeUndefined();
     expect(parseContentPath("/_c/a.b.c/files/../x")).toBeUndefined();
     expect(parseContentPath("/x/_c/a.b.c/files/y")).toBeUndefined();
+  });
+});
+
+describe("canonicalPathWithinDir on a real sandboxed filesystem", () => {
+  let tmp: string;
+  let fs: SandboxedFilesystem;
+
+  beforeAll(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "content-origin-"));
+    const home = join(tmp, "home");
+    await mkdir(join(home, "collect", "student-1", "img"), { recursive: true });
+    await writeFile(join(home, "grades.course"), "benign");
+    await writeFile(join(home, "collect", "student-1", "page.html"), "<p>benign</p>");
+    await writeFile(join(home, "collect", "student-1", "img", "a.png"), "png");
+    // What a collected folder could carry: links pointing out of it.
+    await symlink("../../grades.course", join(home, "collect", "student-1", "grades-link"));
+    await symlink("..", join(home, "collect", "student-1", "up"));
+    await symlink("img", join(home, "collect", "student-1", "pictures"));
+    fs = new SandboxedFilesystem(home, { homeAliases: ["/home/user"] });
+  });
+
+  afterAll(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const within = (path: string) =>
+    canonicalPathWithinDir({ fs, path, dir: "/home/user/collect/student-1" });
+
+  it("allows files and links that stay inside the folder", async () => {
+    expect(await within("/home/user/collect/student-1/page.html")).toBe(true);
+    expect(await within("/home/user/collect/student-1/img/a.png")).toBe(true);
+    expect(await within("/home/user/collect/student-1/pictures/a.png")).toBe(true);
+    expect(await within("/home/user/collect/student-1/missing.css")).toBe(true);
+  });
+
+  it("refuses links that lead out of the folder", async () => {
+    expect(await within("/home/user/collect/student-1/grades-link")).toBe(false);
+    expect(await within("/home/user/collect/student-1/up/student-1/page.html")).toBe(true);
+    expect(await within("/home/user/collect/student-1/up/other.html")).toBe(false);
   });
 });
 

@@ -36,6 +36,7 @@ const issue = (extra = {}) =>
     host_id: hostId,
     account_id: accountId,
     epoch: 3,
+    dir: "/home/user/hw1",
     private_key: privateKeyPem,
     now_ms,
     ...extra,
@@ -76,7 +77,16 @@ describe("project content capability", () => {
       hid: hostId,
       epoch: 3,
       scope: "read",
+      dir: "/home/user/hw1",
     });
+  });
+
+  it("carries a canonical directory, and refuses to issue for a relative or climbing one", () => {
+    expect(verify(issue({ dir: "//home/user/hw1/" })).dir).toBe("/home/user/hw1");
+    expect(verify(issue({ dir: "/" })).dir).toBe("/");
+    for (const dir of ["home/user", "/home/../etc", "/home/./user", "", undefined]) {
+      expect(() => issue({ dir })).toThrow("invalid content directory");
+    }
   });
 
   it("is refused for another project or another host", () => {
@@ -122,6 +132,12 @@ describe("project content capability", () => {
     expect(() => verify(signRaw(missing))).toThrow("claims");
     expect(() => verify(signRaw({ ...good, scope: "write" }))).toThrow("claims");
     expect(() => verify(signRaw({ ...good, v: "phat-v1" }))).toThrow("claims");
+    expect(() => verify(signRaw({ ...good, v: "pcc-v1" }))).toThrow("claims");
+    const { dir: _dir, ...noDir } = good;
+    expect(() => verify(signRaw(noDir))).toThrow("claims");
+    for (const dir of ["/home/user/hw1/", "home/user", "/home/user/../x", 7]) {
+      expect(() => verify(signRaw({ ...good, dir }))).toThrow("claims");
+    }
     expect(() =>
       verify(signRaw({ ...good, exp: good.iat + PROJECT_CONTENT_CAPABILITY_TTL_SECONDS + 1 })),
     ).toThrow("expired");

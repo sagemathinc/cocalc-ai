@@ -20,7 +20,10 @@ no cookies.  The capability is what authorizes the request:
 - sub = the account it reads as; the host re-checks access on every request.
 - epoch = the project's content epoch when issued; bumping the epoch revokes
   every outstanding capability of the project.
-- scope = "read".
+- scope = "read", limited to dir: the absolute directory whose files (and
+  subdirectories) it may read.  HTML in a project isn't always written by
+  its members (course collect and peer grading copy students' work into
+  other projects), so a page's link must not reach the rest of the project.
 */
 
 import {
@@ -34,8 +37,9 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const TOKEN_TYPE = "JWT";
 const TOKEN_ALG = "EdDSA";
-const CONTENT_TOKEN_VERSION = "pcc-v1";
-const CLAIM_KEYS = "aud,epoch,exp,hid,iat,iss,jti,scope,sub,v";
+const CONTENT_TOKEN_VERSION = "pcc-v2";
+const CLAIM_KEYS = "aud,dir,epoch,exp,hid,iat,iss,jti,scope,sub,v";
+const MAX_DIR_LENGTH = 4096;
 const CLOCK_TOLERANCE_SECONDS = 30;
 
 export const PROJECT_CONTENT_CAPABILITY_TTL_SECONDS = 24 * 60 * 60;
@@ -48,10 +52,30 @@ export interface ProjectContentCapabilityClaims {
   hid: string; // host_id
   epoch: number;
   scope: "read";
+  dir: string; // absolute, normalized; "/" is the whole project
   iat: number;
   exp: number;
   jti: string;
   v: string;
+}
+
+// The canonical form of a capability's directory, or an error.
+export function normalizeContentDir(dir: unknown): string {
+  const raw = `${dir ?? ""}`;
+  if (!raw.startsWith("/") || raw.length > MAX_DIR_LENGTH || raw.includes("\0")) {
+    throw new Error("invalid content directory");
+  }
+  const segments = raw.split("/").filter((segment) => segment !== "");
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    throw new Error("invalid content directory");
+  }
+  return `/${segments.join("/")}`;
+}
+
+// Whether an absolute, normalized path is dir or inside it.
+export function contentPathWithinDir(path: string, dir: string): boolean {
+  if (dir === "/") return path.startsWith("/");
+  return path === dir || path.startsWith(`${dir}/`);
 }
 
 export function projectContentAudience(project_id: string): string {
@@ -77,6 +101,14 @@ function base64UrlDecode(input: string): Buffer {
   return Buffer.from(padded, "base64");
 }
 
+function isCanonicalDir(value: unknown): value is string {
+  try {
+    return typeof value === "string" && normalizeContentDir(value) === value;
+  } catch {
+    return false;
+  }
+}
+
 function isEpoch(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
@@ -86,6 +118,7 @@ export function issueProjectContentCapability({
   host_id,
   account_id,
   epoch,
+  dir,
   private_key,
   ttl_seconds = PROJECT_CONTENT_CAPABILITY_TTL_SECONDS,
   issuer = "cocalc-hub",
@@ -95,6 +128,7 @@ export function issueProjectContentCapability({
   host_id: string;
   account_id: string;
   epoch: number;
+  dir: string;
   private_key: string;
   ttl_seconds?: number;
   issuer?: string;
@@ -110,6 +144,7 @@ export function issueProjectContentCapability({
   if (!isEpoch(epoch)) {
     throw new Error("invalid content epoch");
   }
+  const scopeDir = normalizeContentDir(dir);
   const ttl = Math.floor(ttl_seconds);
   if (
     !(
@@ -127,6 +162,7 @@ export function issueProjectContentCapability({
     hid: host_id,
     epoch,
     scope: "read",
+    dir: scopeDir,
     iat,
     exp: iat + ttl,
     jti: randomUUID(),
@@ -200,7 +236,8 @@ export function verifyProjectContentCapability({
     claims.scope !== "read" ||
     !isValidUUID(claims.sub) ||
     !isValidUUID(claims.jti) ||
-    !isEpoch(claims.epoch)
+    !isEpoch(claims.epoch) ||
+    !isCanonicalDir(claims.dir)
   ) {
     throw new Error("invalid capability claims");
   }
