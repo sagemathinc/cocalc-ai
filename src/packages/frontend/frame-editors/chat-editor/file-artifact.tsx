@@ -28,6 +28,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
 import { LocalCommentButton } from "@cocalc/frontend/chat/contextual-reply";
+import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { isBoardPath, useBoardFrameUrl } from "./board-artifact-frame";
 
 const BINARY_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "pdf"]);
@@ -174,6 +175,9 @@ function BinaryPreview({
 
 export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
   const boardFrameUrl = useBoardFrameUrl();
+  // The editor frame showing this (empty outside a frame tree): with the
+  // artifact it names the view, whose live board survives remounts.
+  const { id: frameId } = useFrameContext();
   const path = props.artifact.file?.path ?? "";
   // A Sagebrush board runs live in Sagebrush's sandboxed frame; with the
   // sagebrush_origin site setting blank it is shown as text. Until the site's
@@ -188,6 +192,13 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
           key={`${path}\n${boardFrameUrl}`}
           path={path}
           frameUrl={boardFrameUrl}
+          viewKey={[
+            props.projectId ?? "",
+            props.artifact.thread_id,
+            props.artifact.artifact_id,
+            frameId,
+            props.onToolbarActions ? "card" : "view",
+          ].join("\n")}
           historical={props.historical}
           onToolbarActions={props.onToolbarActions}
         />

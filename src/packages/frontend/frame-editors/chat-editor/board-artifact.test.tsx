@@ -12,6 +12,11 @@ import {
 } from "@testing-library/react";
 import BoardArtifact from "./board-artifact";
 import { boardFrameUrl, isBoardPath } from "./board-artifact-frame";
+import {
+  BOARD_FRAME_MAX_HIDDEN,
+  layoutBoardFrames,
+  resetBoardFrames,
+} from "./board-frame-host";
 
 const readFile = jest.fn();
 const stat = jest.fn();
@@ -25,20 +30,41 @@ const FRAME = "https://sagebrush.test/frame/board/";
 const PATH = "/home/user/overnight.board.json";
 const TITLE = "Sagebrush board: overnight.board.json";
 const TEXT = '{"format":"sagebrush-board","version":1}';
-const READY = { sagebrush: "ready", version: 1 };
+const VIEW = "project\nthread\nartifact\nframe-1\nview";
 
-// The frame is mounted once the file has been read.
+function nonceOf(frame: HTMLIFrameElement): string {
+  return new URL(frame.src).hash.replace(/^#sb-nonce=/, "");
+}
+
+function ready(frame: HTMLIFrameElement) {
+  return { sagebrush: "ready", version: 1, nonce: nonceOf(frame) };
+}
+
 function watch(frame: HTMLIFrameElement) {
   const posted = jest.fn();
   frame.contentWindow!.postMessage = posted;
   return posted;
 }
 
-async function renderBoard() {
-  render(<BoardArtifact path={PATH} frameUrl={FRAME} />);
-  const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
-  await screen.findByText("Current saved board");
-  return { frame, posted: watch(frame) };
+function Board({ viewKey = VIEW }: { viewKey?: string }) {
+  return <BoardArtifact path={PATH} frameUrl={FRAME} viewKey={viewKey} />;
+}
+
+// Renders a view that has no live frame yet, and returns its new frame.
+async function renderBoard(viewKey = VIEW) {
+  const before = new Set(document.querySelectorAll("iframe"));
+  const view = render(<Board viewKey={viewKey} />);
+  const frame = await waitFor(() => {
+    const created = [...document.querySelectorAll("iframe")].filter(
+      (f) => !before.has(f),
+    );
+    expect(created).toHaveLength(1);
+    return created[0] as HTMLIFrameElement;
+  });
+  await waitFor(() =>
+    expect(view.getByText("Current saved board")).toBeInTheDocument(),
+  );
+  return { view, frame, posted: watch(frame) };
 }
 
 function fromFrame(frame: HTMLIFrameElement | Window | null, data: unknown) {
@@ -54,19 +80,52 @@ function fromFrame(frame: HTMLIFrameElement | Window | null, data: unknown) {
   });
 }
 
+function placeholder(container: ParentNode = document): HTMLElement {
+  return container.querySelector("[data-board-frame-placeholder]")!;
+}
+
+function rect(left: number, top: number, width: number, height: number) {
+  return {
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   stat.mockResolvedValue({ size: 100 });
   readFile.mockResolvedValue(TEXT);
 });
 
-test("the frame is sandboxed and loads Sagebrush's frame page", async () => {
+afterEach(() => {
+  resetBoardFrames();
+});
+
+test("the frame is sandboxed and loads Sagebrush's frame page with a nonce", async () => {
   const { frame } = await renderBoard();
-  expect(frame.getAttribute("src")).toBe(FRAME);
+  expect(frame.src.startsWith(`${FRAME}#sb-nonce=`)).toBe(true);
+  expect(nonceOf(frame)).toMatch(/^[0-9a-f-]{36}$/);
   expect(frame.getAttribute("sandbox")).toBe(
     "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads",
   );
   expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+});
+
+test("each frame gets its own nonce", async () => {
+  const first = await renderBoard("a");
+  readFile.mockResolvedValue(TEXT);
+  render(<Board viewKey="b" />);
+  await waitFor(() => expect(screen.getAllByTitle(TITLE)).toHaveLength(2));
+  const [a, b] = screen.getAllByTitle(TITLE) as HTMLIFrameElement[];
+  expect(a).toBe(first.frame);
+  expect(nonceOf(a)).not.toBe(nonceOf(b));
 });
 
 test("says which site receives the board", async () => {
@@ -78,12 +137,12 @@ test("says which site receives the board", async () => {
   ).toBeInTheDocument();
 });
 
-test("posts the saved board when the frame is ready", async () => {
+test("posts the saved board when the frame is ready with its nonce", async () => {
   const { frame, posted } = await renderBoard();
   expect(readFile).toHaveBeenCalledWith(PATH);
   // Nothing is posted before the frame says it listens.
   expect(posted).not.toHaveBeenCalled();
-  fromFrame(frame, READY);
+  fromFrame(frame, ready(frame));
   expect(posted).toHaveBeenCalledWith(
     {
       sagebrush: "board",
@@ -95,17 +154,24 @@ test("posts the saved board when the frame is ready", async () => {
   );
 });
 
+test("a ready without the frame's nonce gets nothing", async () => {
+  const { frame, posted } = await renderBoard();
+  fromFrame(frame, { sagebrush: "ready", version: 1 });
+  fromFrame(frame, { sagebrush: "ready", version: 1, nonce: "guess" });
+  expect(posted).not.toHaveBeenCalled();
+});
+
 test("decodes a file read as bytes", async () => {
   readFile.mockResolvedValue(Buffer.from('{"title":"Größe"}'));
   const { frame, posted } = await renderBoard();
-  fromFrame(frame, READY);
+  fromFrame(frame, ready(frame));
   expect(posted.mock.calls[0][0].text).toBe('{"title":"Größe"}');
 });
 
 test("ignores messages from any other window", async () => {
-  const { posted } = await renderBoard();
-  fromFrame(window, READY);
-  fromFrame(null, READY);
+  const { frame, posted } = await renderBoard();
+  fromFrame(window, ready(frame));
+  fromFrame(null, ready(frame));
   fromFrame(window, { sagebrush: "error", version: 1, message: "spoofed" });
   expect(posted).not.toHaveBeenCalled();
   expect(screen.queryByText("spoofed")).toBeNull();
@@ -113,7 +179,7 @@ test("ignores messages from any other window", async () => {
 
 test("ignores other versions and malformed messages", async () => {
   const { frame, posted } = await renderBoard();
-  fromFrame(frame, { sagebrush: "ready", version: 2 });
+  fromFrame(frame, { ...ready(frame), version: 2 });
   fromFrame(frame, "ready");
   fromFrame(frame, null);
   expect(posted).not.toHaveBeenCalled();
@@ -121,7 +187,7 @@ test("ignores other versions and malformed messages", async () => {
 
 test("shows the frame's error", async () => {
   const { frame } = await renderBoard();
-  fromFrame(frame, READY);
+  fromFrame(frame, ready(frame));
   fromFrame(frame, { sagebrush: "error", version: 1, message: "not a board" });
   expect(
     screen.getByText("Sagebrush could not show this board"),
@@ -133,16 +199,49 @@ test("a later document in the same frame gets nothing", async () => {
   // A window object keeps its identity when its frame navigates, so a
   // replacement document passes the source check. It must not get the board.
   const { frame, posted } = await renderBoard();
-  fromFrame(frame, READY);
+  fromFrame(frame, ready(frame));
   expect(posted).toHaveBeenCalledTimes(1);
-  fromFrame(frame, READY);
-  fromFrame(frame, READY);
+  fromFrame(frame, ready(frame));
   expect(posted).toHaveBeenCalledTimes(1);
+});
+
+test("a frame that loaded a second document is answered no more", async () => {
+  const { frame, posted } = await renderBoard();
+  act(() => {
+    frame.dispatchEvent(new Event("load"));
+    frame.dispatchEvent(new Event("load"));
+  });
+  fromFrame(frame, ready(frame));
+  expect(posted).not.toHaveBeenCalled();
+});
+
+test("a remount with the same view keeps the same live frame", async () => {
+  const { view, frame, posted } = await renderBoard();
+  fromFrame(frame, ready(frame));
+  // Maximizing, a layout change or a tab switch: a new card for the view.
+  view.unmount();
+  expect(frame.isConnected).toBe(true);
+  expect(frame.style.visibility).toBe("hidden");
+  render(<Board />);
+  await screen.findByText("Current saved board");
+  expect(screen.getAllByTitle(TITLE)).toEqual([frame]);
+  // Neither read nor posted again: the frame keeps the user's edits.
+  expect(readFile).toHaveBeenCalledTimes(1);
+  expect(posted).toHaveBeenCalledTimes(1);
+});
+
+test("another view gets a frame of its own", async () => {
+  const { view, frame } = await renderBoard("one");
+  view.unmount();
+  render(<Board viewKey="two" />);
+  await waitFor(() => expect(screen.getAllByTitle(TITLE)).toHaveLength(2));
+  expect(readFile).toHaveBeenCalledTimes(2);
+  expect(frame.isConnected).toBe(true);
 });
 
 test("Refresh reads the file again and posts it to a new frame", async () => {
   const { frame, posted } = await renderBoard();
-  fromFrame(frame, READY);
+  fromFrame(frame, ready(frame));
   readFile.mockResolvedValue('{"format":"sagebrush-board","version":1,"x":2}');
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   const second = await waitFor(() => {
@@ -151,16 +250,83 @@ test("Refresh reads the file again and posts it to a new frame", async () => {
     return f;
   });
   await screen.findByText("Current saved board");
+  expect(frame.isConnected).toBe(false);
   const posted2 = watch(second);
-  fromFrame(second, READY);
+  fromFrame(second, ready(second));
   expect(posted2).toHaveBeenCalledTimes(1);
   expect(posted2.mock.calls[0][0].text).toContain('"x":2');
+  // The old frame's nonce opens nothing in the new one.
+  fromFrame(second, ready(frame));
+  expect(posted2).toHaveBeenCalledTimes(1);
   expect(posted).toHaveBeenCalledTimes(1);
+});
+
+test("lays the frame over the placeholder, clipped to its scrolling ancestors", async () => {
+  const view = render(
+    <div style={{ overflowY: "auto" }} data-testid="scroller">
+      <Board />
+    </div>,
+  );
+  const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+  await screen.findByText("Current saved board");
+  const shown = placeholder(view.container);
+  jest
+    .spyOn(shown, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 50, 400, 300));
+  jest
+    .spyOn(screen.getByTestId("scroller"), "getBoundingClientRect")
+    .mockReturnValue(rect(0, 100, 800, 600));
+  act(() => layoutBoardFrames());
+  expect(frame.style.visibility).toBe("visible");
+  expect(frame.style.left).toBe("10px");
+  expect(frame.style.top).toBe("50px");
+  expect(frame.style.width).toBe("400px");
+  expect(frame.style.height).toBe("300px");
+  // The top 50px are scrolled out of the ancestor.
+  expect(frame.style.clipPath).toBe("inset(50px 0px 0px 0px)");
+});
+
+test("a placeholder with no size (an inactive tab) hides the frame but keeps it", async () => {
+  const { view, frame } = await renderBoard();
+  jest
+    .spyOn(placeholder(view.container), "getBoundingClientRect")
+    .mockReturnValue(rect(0, 0, 0, 0));
+  act(() => layoutBoardFrames());
+  expect(frame.style.visibility).toBe("hidden");
+  expect(frame.isConnected).toBe(true);
+});
+
+test("hidden frames beyond the limit are dropped, oldest first", async () => {
+  const frames: HTMLIFrameElement[] = [];
+  for (let i = 0; i <= BOARD_FRAME_MAX_HIDDEN; i++) {
+    const { view, frame } = await renderBoard(`view-${i}`);
+    frames.push(frame);
+    view.unmount();
+  }
+  expect(frames[0].isConnected).toBe(false);
+  expect(frames.slice(1).every((frame) => frame.isConnected)).toBe(true);
+});
+
+test("shown in two places, the newest has the frame", async () => {
+  const first = await renderBoard();
+  const second = render(<Board />);
+  await waitFor(() =>
+    expect(
+      first.view.getByText("This board is shown in another view."),
+    ).toBeInTheDocument(),
+  );
+  expect(screen.getAllByTitle(TITLE)).toEqual([first.frame]);
+  second.unmount();
+  await waitFor(() =>
+    expect(
+      first.view.queryByText("This board is shown in another view."),
+    ).toBeNull(),
+  );
 });
 
 test("refuses a board over the preview limit without reading it", async () => {
   stat.mockResolvedValue({ size: 17 * 1024 * 1024 });
-  render(<BoardArtifact path={PATH} frameUrl={FRAME} />);
+  render(<Board />);
   expect(
     await screen.findByText(/exceeds the 16 MiB preview limit/),
   ).toBeInTheDocument();
@@ -170,7 +336,7 @@ test("refuses a board over the preview limit without reading it", async () => {
 
 test("refuses a board that grew past the limit after the size check", async () => {
   readFile.mockResolvedValue("x".repeat(16 * 1024 * 1024 + 1));
-  render(<BoardArtifact path={PATH} frameUrl={FRAME} />);
+  render(<Board />);
   expect(
     await screen.findByText(/exceeds the 16 MiB preview limit/),
   ).toBeInTheDocument();
