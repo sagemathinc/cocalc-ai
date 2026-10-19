@@ -122,6 +122,25 @@ patch_ids() { # <oids-file> <out-file>
   [ "$(wc -l <"$2")" -eq "$(wc -l <"$tmp/pid-want")" ] || return 1
 }
 
+# "<oid> <sha256 of its message>" for each commit in file $1 into file $2.
+message_hashes() { # <oids-file> <out-file>
+  local oid msg hash
+  : >"$2" || return 1
+  while read -r oid; do
+    [ -n "$oid" ] || continue
+    msg=$(git log -1 --format=%B "$oid") || return 1
+    hash=$(printf '%s' "$msg" | sha256sum) || return 1
+    echo "$oid ${hash%% *}" >>"$2" || return 1
+  done <"$1"
+}
+
+# Non-merge commits in file $1 ("<oid> <tree> <parents...>") whose tree is
+# their parent's (empty commits), given "<oid> <tree>" of the parents in $2.
+empty_commits() { # <commits-file> <parent-trees-file> <out-file>
+  awk 'NR == FNR { pt[$1] = $2; next } NF == 3 && ($3 in pt) && pt[$3] == $2 { print $1 }' \
+    "$2" "$1" >"$3"
+}
+
 # Patch-id of the combined change base..tip (what a squash of that range
 # produces), "-" if empty; printed on stdout.
 range_patch_id() { # <base> <tip>
@@ -168,6 +187,11 @@ load_private_signatures() {
   fi
   awk 'NR == FNR { pt[$1] = $2; next } !($3 in pt) || pt[$3] != $2 { print $2 }' \
     "$tmp/parent-trees" "$tmp/private-commits" | sort -u >"$tmp/private-trees" || return 1
+  # An empty private commit has no tree or patch to recognize, but its
+  # message may describe the fix: keep its message as its signature.
+  empty_commits "$tmp/private-commits" "$tmp/parent-trees" "$tmp/private-empty" || return 1
+  message_hashes "$tmp/private-empty" "$tmp/private-empty-msgs" || return 1
+  awk '{ print $2 }' "$tmp/private-empty-msgs" | sort -u >"$tmp/private-msgs" || return 1
   patch_ids "$tmp/private-oids" "$tmp/private-pids-all" || return 1
   awk '$2 != "-"' "$tmp/private-pids-all" >"$tmp/private-patch-ids" || return 1
   require_public_main || return 1
@@ -218,6 +242,19 @@ rewritten_private_work() {
       sort -u "$tmp/public-trees-raw" >"$tmp/public-trees" || return 1
     fi
     awk 'NR == FNR { pub[$1] = 1; next } !($1 in pub) { print $2 }' "$tmp/public-trees" "$tmp/tree-hits" >>"$tmp/hits" || return 1
+  fi
+  # An empty pushed commit with the message of an empty private commit.
+  if [ -s "$tmp/private-msgs" ]; then
+    git log --no-walk --format='%H %T %P' --stdin <"$tmp/pushed-oids" >"$tmp/pushed-commits" || return 1
+    awk 'NF == 3 { print $3 }' "$tmp/pushed-commits" | sort -u >"$tmp/pushed-parent-oids" || return 1
+    : >"$tmp/pushed-parent-trees" || return 1
+    if [ -s "$tmp/pushed-parent-oids" ]; then
+      git log --no-walk --format='%H %T' --stdin <"$tmp/pushed-parent-oids" >"$tmp/pushed-parent-trees" || return 1
+    fi
+    empty_commits "$tmp/pushed-commits" "$tmp/pushed-parent-trees" "$tmp/pushed-empty" || return 1
+    message_hashes "$tmp/pushed-empty" "$tmp/pushed-empty-msgs" || return 1
+    awk 'NR == FNR { m[$1] = 1; next } ($2 in m) { print $1 }' \
+      "$tmp/private-msgs" "$tmp/pushed-empty-msgs" >>"$tmp/hits" || return 1
   fi
   # Patch-ids of the pushed commits, and of the pushed branch's combined
   # change from each of its public boundary commits (parents of pushed commits

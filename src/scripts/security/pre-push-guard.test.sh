@@ -495,6 +495,25 @@ echo pub >d && git add d && git commit -q -m "public moves on" && git push -q "$
 echo fix >>a && git commit -q -am "part a" && echo fix >>b && git commit -q -am "part b" && echo other >c && git add c && git commit -q -m "unrelated" && RA=$(git rev-parse HEAD)
 check 1 "re-split private change on a newer main, followed by an unrelated commit" "$T/pubA.git" refs/heads/main "$RA" refs/heads/main "$EA" "$PA"
 
+# An empty private commit (no tree change, no patch) whose message describes
+# the vulnerability, recreated on a newer main under a neutral branch: its
+# message is its signature.  An unrelated empty commit still goes through.
+git init -q --bare "$T/pubE.git" && git init -q --bare "$T/privE.git"
+git init -q "$T/empty" && cd "$T/empty" || exit 1
+EE="COCALC_PUBLIC_URL=$T/pubE.git"
+PE="COCALC_PRIVATE_URL=$T/privE.git"
+echo base >a && git add a && git commit -q -m base && BE=$(git rev-parse HEAD)
+git push -q "$T/pubE.git" HEAD:refs/heads/main && git push -q "$T/privE.git" HEAD:refs/heads/main
+git commit -q --allow-empty -m "notes: the share token check is bypassed by a double-encoded path" && PEMPTY=$(git rev-parse HEAD)
+git push -q "$T/privE.git" HEAD:refs/heads/security/notes
+git reset -q --hard "$BE"
+echo pub >b && git add b && git commit -q -m "public moves on" && git push -q "$T/pubE.git" HEAD:refs/heads/main
+git cherry-pick --allow-empty "$PEMPTY" >/dev/null && RE=$(git rev-parse HEAD)
+check 1 "empty private commit recreated on a newer main (same message)" "$T/pubE.git" refs/heads/x "$RE" refs/heads/docs/notes "$EE" "$PE"
+git reset -q --hard HEAD~1
+git commit -q --allow-empty -m "trigger CI" && OE=$(git rev-parse HEAD)
+check 0 "an unrelated empty commit is allowed" "$T/pubE.git" refs/heads/x "$OE" refs/heads/ci/retry "$EE" "$PE"
+
 # Content public long ago (2020) under another commit id stays allowed, even
 # if a newer private commit has the same content (tree and patch-id cases).
 git init -q --bare "$T/pub3.git" && git init -q --bare "$T/priv3.git"
