@@ -34,7 +34,10 @@ jest.mock("../frame-tree/hooks", () => ({
 
 import { set_local_storage } from "@cocalc/frontend/misc/local-storage";
 import { CONTENT_FRAME_SANDBOX, IFrameHTML } from "./iframe-html";
-import { refreshDelayMs } from "@cocalc/frontend/project/use-project-content-url";
+import {
+  errorRetryDelayMs,
+  refreshDelayMs,
+} from "@cocalc/frontend/project/use-project-content-url";
 
 const CONTENT_URL =
   "https://p.h-h.usercontent.example/_c/cap/files/home/user/a.html";
@@ -199,6 +202,46 @@ describe("IFrameHTML without a content origin", () => {
       await jest.advanceTimersByTimeAsync(31_000);
     });
     expect(issueMock).toHaveBeenCalledTimes(2);
+    // Then backs off: the next attempt waits 60 s, not 30 s.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(31_000);
+    });
+    expect(issueMock).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(30_000);
+    });
+    expect(issueMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("starts the backoff over after a success", async () => {
+    jest.useFakeTimers();
+    issueMock
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce({ url: CONTENT_URL, expires_at: Date.now() + 120_000 })
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValue({ url: CONTENT_URL, expires_at: Date.now() + 24 * 3600_000 });
+    renderFrame(freshProject());
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(31_000); // retry: succeeds
+    });
+    expect(issueMock).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(61_000); // re-issue: fails
+    });
+    expect(issueMock).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(31_000); // 30 s again, not 60 s
+    });
+    expect(issueMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("backs off up to ten minutes", () => {
+    expect([1, 2, 3, 5, 6, 20].map(errorRetryDelayMs)).toEqual([
+      30_000, 60_000, 120_000, 480_000, 600_000, 600_000,
+    ]);
   });
 
   it.each([["/home/user/notes.rst"], ["/home/user/page.wiki"], ["/home/user/doc.qmd"]])(

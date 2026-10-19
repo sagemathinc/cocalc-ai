@@ -8,7 +8,7 @@
 // the file's HTML, scripts and relative images can run safely.  The link is
 // re-issued before it expires.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 export type ProjectContentUrlState =
@@ -21,7 +21,16 @@ export type ProjectContentUrlState =
 
 // Don't ask again for a while once a project's content origin is off.
 const UNAVAILABLE_RETRY_MS = 5 * 60 * 1000;
+// After an error, ask again with exponential backoff.
 const ERROR_RETRY_MS = 30 * 1000;
+const MAX_ERROR_RETRY_MS = 10 * 60 * 1000;
+
+export function errorRetryDelayMs(failures: number): number {
+  return Math.min(
+    MAX_ERROR_RETRY_MS,
+    ERROR_RETRY_MS * 2 ** Math.max(0, failures - 1),
+  );
+}
 const unavailableUntil = new Map<string, number>();
 
 // When to re-issue a link: an hour before it expires, or halfway for a
@@ -44,8 +53,10 @@ export function useProjectContentUrl({
     status: "loading",
   });
   const [generation, setGeneration] = useState(0);
+  const failures = useRef(0);
 
   useEffect(() => {
+    failures.current = 0;
     setState({ status: "loading" });
   }, [project_id, path]);
 
@@ -68,6 +79,7 @@ export function useProjectContentUrl({
             path,
           });
         if (canceled) return;
+        failures.current = 0;
         if (!("url" in result)) {
           unavailableUntil.set(project_id, Date.now() + UNAVAILABLE_RETRY_MS);
           setState({ status: "unavailable" });
@@ -86,7 +98,11 @@ export function useProjectContentUrl({
         // For example a viewer, an old hub, or a network error.
         if (canceled) return;
         setState({ status: "error" });
-        timer = setTimeout(() => setGeneration((n) => n + 1), ERROR_RETRY_MS);
+        failures.current += 1;
+        timer = setTimeout(
+          () => setGeneration((n) => n + 1),
+          errorRetryDelayMs(failures.current),
+        );
       }
     })();
     return () => {
