@@ -11,15 +11,16 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("./security-state", () => ({
   recordAccountSecurityState: jest.fn(async () => {}),
 }));
-const warn = jest.fn();
+const error = jest.fn();
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
-  default: () => ({ warn, debug: jest.fn(), info: jest.fn() }),
+  default: () => ({ error, warn: jest.fn(), debug: jest.fn(), info: jest.fn() }),
 }));
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  contentCutoffNow,
   listAccountRevocationsSince,
   recordContentRevocation,
   revokeContentLinksBestEffort,
@@ -30,7 +31,7 @@ const ACCOUNT = "00000000-0000-4000-8000-000000000001";
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
-  warn.mockClear();
+  error.mockClear();
 });
 
 function contentUpdate(): [string, any[]] {
@@ -90,7 +91,7 @@ it("sends the content cutoff to hosts with the session one", async () => {
 it("best effort: a failure is logged, not thrown (the password already changed)", async () => {
   queryMock.mockRejectedValue(new Error("db down"));
   await expect(revokeContentLinksBestEffort(ACCOUNT)).resolves.toBeUndefined();
-  expect(warn).toHaveBeenCalled();
+  expect(error).toHaveBeenCalled();
 });
 
 it("rejects an invalid account id", async () => {
@@ -109,4 +110,13 @@ it("is called wherever a password changes or other sessions are signed out", () 
       /await deleteOtherRememberMe\(accountId, currentHash\);\s*await revokeOtherAuthSessions\(\{[^}]*\}\);\s*(\/\/[^\n]*\n\s*)?await revokeContentLinksBestEffort\(accountId\);/,
     );
   }
+});
+
+it("ends the cutoff just before the current second, so links re-issued now stay valid", () => {
+  const now = Date.UTC(2026, 9, 19, 4, 0, 0, 700);
+  const cutoff = contentCutoffNow(now);
+  const iatNow = Math.floor(now / 1000);
+  // The host refuses iat * 1000 <= cutoff.
+  expect(iatNow * 1000 <= cutoff).toBe(false);
+  expect((iatNow - 1) * 1000 <= cutoff).toBe(true);
 });

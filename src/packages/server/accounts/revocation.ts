@@ -58,11 +58,19 @@ export async function recordAccountRevocation(
   });
 }
 
+// Hosts refuse links with iat * 1000 <= cutoff, and iat is in whole seconds.
+// Ending the cutoff just before the current second keeps links this browser
+// re-issues right away valid (a link minted earlier in the same second by
+// someone else survives; that second is the price).
+export function contentCutoffNow(now_ms = Date.now()): number {
+  return Math.floor(now_ms / 1000) * 1000 - 1;
+}
+
 // Every content-origin link of the account issued before now stops working;
 // sessions are untouched (the current browser just re-issues its links).
 export async function recordContentRevocation(
   account_id: string,
-  content_revoked_before_ms = Date.now(),
+  content_revoked_before_ms = contentCutoffNow(),
 ): Promise<void> {
   if (!isValidUUID(account_id)) {
     throw new Error("invalid account_id");
@@ -91,7 +99,7 @@ export async function revokeContentLinksBestEffort(
   try {
     await recordContentRevocation(account_id);
   } catch (err) {
-    logger.warn("could not revoke content links", {
+    logger.error("could not revoke content links", {
       account_id,
       err: `${err}`,
     });

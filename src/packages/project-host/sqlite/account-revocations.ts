@@ -29,9 +29,14 @@ function ensureTables() {
     .prepare(`PRAGMA table_info(account_revocations)`)
     .all() as Array<{ name?: string }>;
   if (!columns.some((c) => c.name === "content_revoked_before_ms")) {
-    db.exec(
-      `ALTER TABLE account_revocations ADD COLUMN content_revoked_before_ms INTEGER NOT NULL DEFAULT 0`,
-    );
+    try {
+      db.exec(
+        `ALTER TABLE account_revocations ADD COLUMN content_revoked_before_ms INTEGER NOT NULL DEFAULT 0`,
+      );
+    } catch (err) {
+      // Another process (the conat-router daemon) added it first.
+      if (!`${err}`.includes("duplicate column")) throw err;
+    }
   }
 }
 
@@ -102,7 +107,8 @@ export function getAccountRevokedBeforeMs(
     )
     .get(account_id) as { revoked_before_ms?: number } | undefined;
   const ms = Number(row?.revoked_before_ms);
-  return Number.isFinite(ms) ? ms : undefined;
+  // 0: the row only carries a content-only cutoff; sessions aren't revoked.
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
 }
 
 // Content-origin links issued at or before this were revoked: the later of

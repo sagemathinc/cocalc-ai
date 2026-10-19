@@ -39,7 +39,8 @@ describe("account revocations on the host", () => {
     });
     // A password change revokes content links, not sessions.
     expect(getAccountContentRevokedBeforeMs(account_id)).toBe(2000);
-    expect(getAccountRevokedBeforeMs(account_id)).toBe(0);
+    // No session revocation: sessions without an iat aren't treated as revoked.
+    expect(getAccountRevokedBeforeMs(account_id)).toBeUndefined();
     // Sign out everywhere later on.
     upsertAccountRevocation({
       account_id,
