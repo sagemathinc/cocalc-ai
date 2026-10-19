@@ -129,9 +129,10 @@ export function diffEgressBySubject(
   return out;
 }
 
-// A rollup bucket accumulates every subject its samples report, up to this
-// many (beyond it, the smallest are summed under OTHER_KEY, so totals are
-// kept).  A minute of samples from one hub has at most 12 x 10 subjects.
+// The stored size of a rollup bucket's subjects: a finished minute's exact
+// per-subject totals are folded to this many once (the smallest beyond it
+// summed under OTHER_KEY, so totals are kept); rows from different hub
+// processes are merged with the same fold.
 export const MAX_ROLLUP_SUBJECT_KEYS = 256;
 // Subjects kept while a minute is still being summed: per sample (all of an
 // account's sockets) and per open minute bucket.  Only a sample or minute
