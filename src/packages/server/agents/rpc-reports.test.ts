@@ -44,13 +44,23 @@ const claimExecution = jest.fn();
 let remoteSender = false;
 // The delivery report version A's host advertises (undefined: none).
 let senderReportVersion: number | undefined;
+// The build A's host runs now (it advertised its version for "build-2").
+let senderBuild = "build-2";
 
 jest.mock("./store", () => ({
   agentStore: () => ({
     get: async (agent_id: string) => identities.get(agent_id),
     query: async (sql: string) =>
-      sql.includes("agent_rpc_report_version")
-        ? { rows: [{ version: senderReportVersion?.toString() ?? null }] }
+      sql.includes("agent_rpc_report")
+        ? {
+            rows: [
+              {
+                version: senderReportVersion?.toString() ?? null,
+                for_build: "build-2",
+                build: senderBuild,
+              },
+            ],
+          }
         : { rows: [{ host_id: host, state: "running" }] },
   }),
 }));
@@ -170,6 +180,7 @@ beforeEach(() => {
   remoteSender = false;
   // A's host is current unless a test says otherwise.
   senderReportVersion = 2;
+  senderBuild = "build-2";
   claimExecution.mockReset().mockResolvedValue(true);
   assertHost.mockClear();
   enqueueExternal.mockReset();
@@ -230,6 +241,15 @@ describe("B's host reports the failed turn", () => {
     senderReportVersion = 2;
     await reportRpcTurnFailure(fromHost(stopped));
     expect(deliverAgentRpcReport.mock.calls[0][0].report).toEqual(stopped);
+    // A host rolled back to an older build keeps the newer build's value
+    // (heartbeats are merged): it counts as the old version.
+    senderBuild = "build-1";
+    deliverAgentRpcReport.mockClear();
+    await expect(reportRpcTurnFailure(fromHost(stopped))).rejects.toThrow(
+      /must be upgraded/,
+    );
+    expect(deliverAgentRpcReport).not.toHaveBeenCalled();
+    senderBuild = "build-2";
     // An older host would tell A that B "did not act": it is held, and B's
     // host tries again later.
     senderReportVersion = undefined;

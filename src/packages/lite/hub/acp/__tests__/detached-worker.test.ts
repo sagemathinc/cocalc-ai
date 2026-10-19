@@ -4210,6 +4210,30 @@ describe("the agent that sent a message is told how its turn ended", () => {
     expect(reports()[0].report.tool_ran).toBe(true);
   });
 
+  it("when its turn cannot even be prepared", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockRejectedValueOnce(new Error("chat unavailable"));
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+    })!;
+    await acpTestInternals.runQueuedAcpJob(claimed);
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+    expect(
+      parseTurnOutcome(getAcpJobByOpId(job.op_id)?.outcome_json),
+    ).toMatchObject({ state: "failed", tool_ran: false });
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      tool_ran: false,
+    });
+  });
+
   it("a cancel of a message a fence already canceled reports nothing", async () => {
     const { request } = agentRequest();
     const job = enqueueAcpJob(request);

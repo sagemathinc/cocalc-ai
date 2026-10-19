@@ -2218,8 +2218,12 @@ export async function startMasterRegistration({
         software: versions,
         software_inventory: softwareInventory,
         // The delivery reports this host can render (the hub downgrades or
-        // holds others for it).
-        agent_rpc_report_version: AGENT_RPC_REPORT_VERSION,
+        // holds others for it). Tied to this build: the hub merges heartbeat
+        // metadata, so after a rollback a stale value must not count.
+        agent_rpc_report: {
+          version: AGENT_RPC_REPORT_VERSION,
+          project_host: versions.project_host ?? null,
+        },
       },
     };
   };

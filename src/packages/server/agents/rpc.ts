@@ -245,14 +245,23 @@ function preparationKey(e: AgentRpcEnvelope) {
   });
 }
 
-/** The delivery report version a host advertises (1 if it advertises none). */
+/**
+ * The delivery report version a host advertises: 1 if it advertises none,
+ * or advertised it for another build than the one it runs now (heartbeat
+ * metadata is merged, so a rolled-back host keeps the newer build's value).
+ */
 async function hostAgentRpcReportVersion(host_id: string): Promise<number> {
   const { rows } = await agentStore().query(
-    "SELECT metadata->>'agent_rpc_report_version' AS version FROM project_hosts WHERE id=$1",
+    `SELECT metadata->'agent_rpc_report'->>'version' AS version,
+            metadata->'agent_rpc_report'->>'project_host' AS for_build,
+            metadata->'software'->>'project_host' AS build
+       FROM project_hosts WHERE id=$1`,
     [host_id],
   );
-  const version = Number(rows[0]?.version);
-  return Number.isSafeInteger(version) && version > 0 ? version : 1;
+  const row = rows[0];
+  const version = Number(row?.version);
+  if (!Number.isSafeInteger(version) || version < 1) return 1;
+  return row?.for_build && row.for_build === row.build ? version : 1;
 }
 
 export async function hostFor(endpoint: AgentEndpoint) {

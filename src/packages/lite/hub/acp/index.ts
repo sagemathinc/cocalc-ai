@@ -10104,22 +10104,34 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   const path = `${job.path}`.trim();
   const thread_id = `${job.thread_id}`.trim();
   const user_message_id = `${job.user_message_id}`.trim();
-  if (!project_id || !path || !thread_id || !user_message_id) {
+  // Ended before anything ran: an agent that sent it is told so.
+  const endWithoutRunning = (
+    state: "error" | "canceled",
+    error: string,
+  ): void => {
+    const outcome = turnOutcomeOf({
+      terminalState: "error",
+      error,
+      toolRan: false,
+    });
     setAcpJobState({
       op_id: job.op_id,
-      state: "error",
-      error: "queued acp job missing required thread identity",
+      state,
+      error,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+      outcome,
     });
+    reportFailedAgentMessageTurn(job, request, error, outcome);
+  };
+  if (!project_id || !path || !thread_id || !user_message_id) {
+    endWithoutRunning(
+      "error",
+      "queued acp job missing required thread identity",
+    );
     return;
   }
   if (!conatClient) {
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "error",
-      error: "conat client must be initialized",
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
+    endWithoutRunning("error", "conat client must be initialized");
     return;
   }
   let latestQueuedMessageContent: string | undefined;
@@ -10158,12 +10170,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         !request.chat?.agent_rpc_report)
     )
       await writeQueuedJobFailureToChat({ request, error: `${err}` });
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "canceled",
-      error: `${err}`,
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
+    endWithoutRunning("canceled", `${err}`);
     return;
   }
 
