@@ -237,6 +237,20 @@ rewritten_private_work() {
     pid=$(range_patch_id "$base" "$tip") || return 1
     echo "$tip $pid" >>"$tmp/pushed-pids" || return 1
   done <"$tmp/boundaries-sorted"
+  # Combined change from the public boundary to EVERY pushed commit (each
+  # prefix), so private work re-split across commits and followed by unrelated
+  # commits is still recognized (same topological rule as the private side).
+  {
+    cat "$tmp/pushed-oids" && echo "--not" && echo "--glob=$GUARD_REFS/public/*"
+  } >"$tmp/pushed-boundary-args" || return 1
+  git rev-list --reverse --topo-order --parents --stdin <"$tmp/pushed-boundary-args" >"$tmp/pushed-topo" || return 1
+  awk 'NF >= 2 { base[$1] = ($2 in base) ? base[$2] : $2; print base[$1], $1 }' \
+    "$tmp/pushed-topo" >"$tmp/pushed-ranges" || return 1
+  while read -r base oid; do
+    [ -n "$oid" ] || continue
+    pid=$(range_patch_id "$base" "$oid") || return 1
+    echo "$oid $pid" >>"$tmp/pushed-pids" || return 1
+  done <"$tmp/pushed-ranges"
   # Same patch-id as private work, and no public commit touching the same
   # files has that patch-id.
   while read -r oid pid; do

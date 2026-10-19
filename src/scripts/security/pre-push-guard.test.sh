@@ -481,6 +481,20 @@ printf '#!/bin/sh\nexit 96\n' >"$T/a2bin/awk" && chmod +x "$T/a2bin/awk"
   { pass=$((pass + 1)); echo "ok    awk failure in the deletion check fails closed"; }
 check 1 "'git remote' fails (input collection): fail closed" "$T/pub6.git" refs/heads/feature/side "$FB6" refs/heads/feature/side "$E6" "$P6" PATH="$T/gbin:$PATH"
 
+# Private change re-split across commits, followed by an unrelated commit:
+# no single commit matches and boundary..tip includes the unrelated change.
+git init -q --bare "$T/pubA.git" && git init -q --bare "$T/privA.git"
+git init -q "$T/resplit" && cd "$T/resplit" || exit 1
+EA="COCALC_PUBLIC_URL=$T/pubA.git"
+PA="COCALC_PRIVATE_URL=$T/privA.git"
+echo base >a && echo base >b && git add a b && git commit -q -m base && BA=$(git rev-parse HEAD)
+git push -q "$T/pubA.git" HEAD:refs/heads/main && git push -q "$T/privA.git" HEAD:refs/heads/main
+echo fix >>a && echo fix >>b && git commit -q -am "private fix (a+b)" && git push -q "$T/privA.git" HEAD:refs/heads/security/ab
+git reset -q --hard "$BA"
+echo pub >d && git add d && git commit -q -m "public moves on" && git push -q "$T/pubA.git" HEAD:refs/heads/main
+echo fix >>a && git commit -q -am "part a" && echo fix >>b && git commit -q -am "part b" && echo other >c && git add c && git commit -q -m "unrelated" && RA=$(git rev-parse HEAD)
+check 1 "re-split private change on a newer main, followed by an unrelated commit" "$T/pubA.git" refs/heads/main "$RA" refs/heads/main "$EA" "$PA"
+
 # Content public long ago (2020) under another commit id stays allowed, even
 # if a newer private commit has the same content (tree and patch-id cases).
 git init -q --bare "$T/pub3.git" && git init -q --bare "$T/priv3.git"
@@ -531,6 +545,11 @@ git config extensions.worktreeConfig true && git -C "$T/inst-wt" config --worktr
 inst 1 "refuses when another worktree's config sets core.hooksPath"
 git -C "$T/inst-wt" config --worktree --unset core.hooksPath
 inst 0 "installs again once nothing sets core.hooksPath"
+printf '[core]\n\thooksPath = wt-cond-hooks\n' >"$T/wtcond.gitconfig"
+git -C "$T/inst-wt" config --worktree 'includeIf.onbranch:security/**.path' "$T/wtcond.gitconfig"
+inst 1 "refuses an inactive includeIf in another worktree's config"
+git -C "$T/inst-wt" config --worktree --unset 'includeIf.onbranch:security/**.path'
+inst 0 "installs again once that include is gone"
 git config 'includeIf.onbranch:security/**.path' "$T/not-there-yet.gitconfig"
 inst 1 "refuses an include target that does not exist (yet)"
 git config --unset 'includeIf.onbranch:security/**.path'

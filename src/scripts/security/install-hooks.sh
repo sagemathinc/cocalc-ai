@@ -41,9 +41,15 @@ done <"$tmpdir/worktrees"
 # ... and every include/includeIf target, whatever its condition (e.g.
 # includeIf.onbranch:security/**), since a later checkout could activate it.
 # A target that is missing or unreadable now could be created later: refuse.
-rc=0
-git config -z --show-origin --get-regexp '^include(if\..*)?\.path$' >"$tmpdir/includes" || rc=$?
-[ $rc = 0 ] || [ $rc = 1 ] || cannot_verify "listing include paths failed"
+# Include directives are listed in every worktree's configuration context
+# (per-worktree config.worktree files included), not just this one.
+: >"$tmpdir/includes" || cannot_verify "temporary file"
+while read -r line; do
+  case $line in worktree\ *) wt=${line#worktree } ;; *) continue ;; esac
+  rc=0
+  git -C "$wt" config -z --show-origin --get-regexp '^include(if\..*)?\.path$' >>"$tmpdir/includes" || rc=$?
+  [ $rc = 0 ] || [ $rc = 1 ] || cannot_verify "listing include paths in worktree $wt failed"
+done <"$tmpdir/worktrees"
 # NUL-separated entries: "<origin>\0<key>\n<value>\0" (paths may contain spaces).
 while IFS= read -r -d '' origin && IFS= read -r -d '' entry; do
   key=${entry%%$'\n'*}
