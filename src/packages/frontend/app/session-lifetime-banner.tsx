@@ -8,14 +8,17 @@
 // factor, which starts a new lifetime, so they are never signed out mid-use.
 
 import { Alert, Button } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { postAuthApi } from "@cocalc/frontend/auth/api";
 import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const REFRESH_MS = 60 * 60_000;
+// Browsers keep the sign-in cookie 400 days from when it was last set.
+const COOKIE_REFRESH_MS = 24 * 60 * 60_000;
 
 type SessionLifetime = {
   max_expire?: string;
@@ -34,25 +37,55 @@ export function sessionLifetimeWarningDue(
 
 export function SessionLifetimeBanner() {
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
+  const accountId = useTypedRedux("account", "account_id") as
+    | string
+    | undefined;
   const [lifetime, setLifetime] = useState<SessionLifetime | undefined>();
   const [verifying, setVerifying] = useState(false);
+  // Which signed-in account a response belongs to: a reply for an earlier
+  // account (sign-out, then sign-in as someone else) is dropped.
+  const generation = useRef(0);
+  const cookieRefreshedAt = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refreshCookie = useCallback(async (force = false) => {
+    if (!force && Date.now() - cookieRefreshedAt.current < COOKIE_REFRESH_MS)
+      return;
+    cookieRefreshedAt.current = Date.now();
     try {
-      setLifetime(
-        await webapp_client.conat_client.hub.system.getSessionLifetime({}),
-      );
+      await postAuthApi({ endpoint: "auth/refresh-session-cookie", body: {} });
     } catch {
-      // Only a reminder: try again at the next refresh.
+      // Tried again at a later refresh.
+      cookieRefreshedAt.current = 0;
     }
   }, []);
 
+  const refresh = useCallback(async () => {
+    const current = generation.current;
+    let next: SessionLifetime | undefined;
+    try {
+      next = await webapp_client.conat_client.hub.system.getSessionLifetime({});
+    } catch {
+      // Only a reminder: show nothing rather than an old deadline, and try
+      // again at the next refresh.
+      next = undefined;
+    }
+    if (current !== generation.current) return;
+    setLifetime(next);
+    // An active browser keeps its cookie as long as the server keeps the
+    // session (impersonation sessions are not renewable and keep theirs).
+    if (next?.renewable) void refreshCookie();
+  }, [refreshCookie]);
+
   useEffect(() => {
+    generation.current += 1;
+    setLifetime(undefined);
+    setVerifying(false);
+    cookieRefreshedAt.current = 0;
     if (!isLoggedIn) return;
     void refresh();
     const timer = setInterval(() => void refresh(), REFRESH_MS);
     return () => clearInterval(timer);
-  }, [isLoggedIn, refresh]);
+  }, [isLoggedIn, accountId, refresh]);
 
   if (!isLoggedIn || !sessionLifetimeWarningDue(lifetime)) {
     return null;
@@ -96,6 +129,8 @@ export function SessionLifetimeBanner() {
         onCancel={() => setVerifying(false)}
         onSuccess={async () => {
           setVerifying(false);
+          // The session now lasts longer: so must the cookie.
+          await refreshCookie(true);
           await refresh();
         }}
       />

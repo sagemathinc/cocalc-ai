@@ -2,6 +2,7 @@ import type { LiveVoiceRequest, LiveVoiceResult } from "./live-voice";
 import {
   noAuth,
   authFirstRequireAccount,
+  authFirstRequireAccountWithBoundSession,
   authFirstRequireAccountOrHost,
   authFirstRequireAccountOrHostWithAccountTarget,
   authFirstRequireAccountOrProjectOrHost,
@@ -76,7 +77,7 @@ export const system = {
   getLaunchHealth: authFirstRequireAccount,
   getFundingApprovalReadiness: authFirstRequireAccount,
   getBillingAuthorityStatus: authFirstRequireAccount,
-  getSessionLifetime: authFirstRequireAccount,
+  getSessionLifetime: authFirstRequireAccountWithBoundSession,
   drainBillingAuthority: authFirstRequireAccount,
   resumeBillingAuthority: authFirstRequireAccount,
   handoffBillingAuthority: authFirstRequireAccount,

@@ -25,6 +25,8 @@ getAccountIdFromRememberMe), which records the use there.
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getLogger from "@cocalc/backend/logger";
+import { SESSION_LIMIT_MAX_DAYS } from "@cocalc/util/db-schema/site-defaults";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 
 const logger = getLogger("server:auth:session-expiry");
 
@@ -40,28 +42,38 @@ export const BROWSER_SESSION_COOKIE_MAX_AGE_MS = 400 * DAY_MS;
 // The frontend asks for the password or second factor from this long before
 // the maximum lifetime ends.
 export const SESSION_LIFETIME_WARNING_MS = 3 * DAY_MS;
+// After a refused write (e.g., during a rehome), record use again this soon.
+const TOUCH_RETRY_MS = 5 * 60_000;
 const MAINTENANCE_INTERVAL_MS = 60 * 60_000;
 const MAINTENANCE_BATCH = 5000;
+// Accounts whose live sessions are changed per pass, each in its own fenced
+// transaction.
+const MAINTENANCE_ACCOUNT_BATCH = 500;
 
 export interface SessionLimits {
   idle_ms: number;
   max_lifetime_ms: number;
 }
 
-function positiveDays(value: unknown, fallback: number): number {
+// Saving the settings checks them (sessionLimitSettingsError); a value from
+// elsewhere (an old row, an environment variable) that is out of range falls
+// back to the default.
+function sessionDays(value: unknown, fallback: number): number {
   const days = Number(value);
-  return Number.isFinite(days) && days > 0 ? days : fallback;
+  return Number.isInteger(days) && days > 0 && days <= SESSION_LIMIT_MAX_DAYS
+    ? days
+    : fallback;
 }
 
 export function sessionLimitsFromSettings(settings: {
   session_idle_timeout_days?: unknown;
   session_max_lifetime_days?: unknown;
 }): SessionLimits {
-  const idleDays = positiveDays(
+  const idleDays = sessionDays(
     settings.session_idle_timeout_days,
     DEFAULT_SESSION_IDLE_TIMEOUT_DAYS,
   );
-  const maxDays = positiveDays(
+  const maxDays = sessionDays(
     settings.session_max_lifetime_days,
     DEFAULT_SESSION_MAX_LIFETIME_DAYS,
   );
@@ -133,47 +145,74 @@ function rememberTouch(hash: string, now: number): boolean {
 // Record that a valid session was just used. Cheap to call on every
 // successful authentication: writes happen at most about once an hour per
 // session, in this process and (by the last_used test) across processes.
-// Never revives a session that has already ended.
-export async function touchSession(hash: string): Promise<void> {
-  if (!hash) return;
+// Never revives a session that has already ended. Like every other write to
+// an account's sessions, it goes through the account rehome fence: it is
+// refused while the account moves to another bay (its rows are being copied)
+// and on a bay that is not the account's home.
+export async function touchSession({
+  hash,
+  account_id,
+}: {
+  hash: string;
+  account_id: string;
+}): Promise<void> {
+  if (!hash || !account_id) return;
   const now = Date.now();
   if (!rememberTouch(hash, now)) return;
   try {
     const { idle_ms, max_lifetime_ms } = await getSessionLimits();
-    await getPool().query(
-      `
-        WITH r AS (
-          UPDATE remember_me
-             SET last_used = NOW(),
-                 max_expire = COALESCE(
-                   max_expire,
-                   LEAST(expire, NOW() + $3 * INTERVAL '1 millisecond')
-                 ),
-                 expire = LEAST(
-                   NOW() + $2 * INTERVAL '1 millisecond',
-                   COALESCE(
-                     max_expire,
-                     LEAST(expire, NOW() + $3 * INTERVAL '1 millisecond')
-                   )
+    await withAccountRehomeWriteFence({
+      account_id,
+      action: "record session use",
+      fn: async (db) => {
+        await db.query(
+          `
+            WITH r AS (
+              UPDATE remember_me
+                 SET last_used = NOW(),
+                     max_expire = COALESCE(
+                       max_expire,
+                       LEAST(expire, NOW() + $3 * INTERVAL '1 millisecond')
+                     ),
+                     expire = LEAST(
+                       NOW() + $2 * INTERVAL '1 millisecond',
+                       COALESCE(
+                         max_expire,
+                         LEAST(expire, NOW() + $3 * INTERVAL '1 millisecond')
+                       )
+                     )
+               WHERE hash = $1::CHAR(127)
+                 AND account_id = $5::UUID
+                 AND expire > NOW()
+                 AND (
+                   last_used IS NULL
+                   OR last_used < NOW() - $4 * INTERVAL '1 millisecond'
                  )
-           WHERE hash = $1::CHAR(127)
-             AND expire > NOW()
-             AND (
-               last_used IS NULL
-               OR last_used < NOW() - $4 * INTERVAL '1 millisecond'
-             )
-          RETURNING hash, expire
-        )
-        ${SYNC_AUTH_SESSION_EXPIRE}
-      `,
-      [hash.slice(0, 127), idle_ms, max_lifetime_ms, SESSION_TOUCH_INTERVAL_MS],
-    );
+              RETURNING hash, expire
+            )
+            ${SYNC_AUTH_SESSION_EXPIRE}
+          `,
+          [
+            hash.slice(0, 127),
+            idle_ms,
+            max_lifetime_ms,
+            SESSION_TOUCH_INTERVAL_MS,
+            account_id,
+          ],
+        );
+      },
+    });
   } catch (err) {
-    // Use is recorded again on the next authentication; a failed write must
-    // not fail the request that used the session.
-    lastTouchMs.delete(hash);
+    // Use is recorded again a little later (a rehome refuses writes for a
+    // while); a failed write must not fail the request that used the session.
+    lastTouchMs.set(hash, now - SESSION_TOUCH_INTERVAL_MS + TOUCH_RETRY_MS);
     logger.debug("recording session use failed", { err: `${err}` });
   }
+}
+
+// For tests.
+export function resetSessionTouchesForTest(): void {
+  lastTouchMs.clear();
 }
 
 // After the person re-enters their password or second factor, the session
@@ -221,20 +260,37 @@ export async function getSessionMaxExpire(
 }
 
 // Sessions held by connected browsers on this process count as used.
-const connectedSessions = new Map<string, number>();
+const connectedSessions = new Map<
+  string,
+  { account_id: string; count: number }
+>();
 
-export function trackConnectedSession(hash: string): () => void {
-  if (!hash) return () => {};
-  connectedSessions.set(hash, (connectedSessions.get(hash) ?? 0) + 1);
+export function trackConnectedSession({
+  hash,
+  account_id,
+}: {
+  hash: string;
+  account_id: string;
+}): () => void {
+  if (!hash || !account_id) return () => {};
+  const entry = connectedSessions.get(hash);
+  if (entry) entry.count += 1;
+  else connectedSessions.set(hash, { account_id, count: 1 });
   ensureConnectedTouchLoop();
   let released = false;
   return () => {
     if (released) return;
     released = true;
-    const count = (connectedSessions.get(hash) ?? 1) - 1;
-    if (count > 0) connectedSessions.set(hash, count);
-    else connectedSessions.delete(hash);
+    const current = connectedSessions.get(hash);
+    if (current == null) return;
+    current.count -= 1;
+    if (current.count <= 0) connectedSessions.delete(hash);
   };
+}
+
+// For tests.
+export function connectedSessionCount(hash: string): number {
+  return connectedSessions.get(hash)?.count ?? 0;
 }
 
 let connectedTouchTimer: ReturnType<typeof setInterval> | undefined;
@@ -242,8 +298,8 @@ let connectedTouchTimer: ReturnType<typeof setInterval> | undefined;
 function ensureConnectedTouchLoop(): void {
   if (connectedTouchTimer != null) return;
   connectedTouchTimer = setInterval(() => {
-    for (const hash of connectedSessions.keys()) {
-      void touchSession(hash);
+    for (const [hash, { account_id }] of connectedSessions) {
+      void touchSession({ hash, account_id });
     }
   }, SESSION_TOUCH_INTERVAL_MS / 4);
   connectedTouchTimer.unref?.();
@@ -253,6 +309,81 @@ export interface SessionMaintenanceResult {
   started_idle_clock?: number;
   reapplied_limits?: number;
   removed?: number;
+  // More is waiting: run again soon.
+  more?: boolean;
+}
+
+async function accountRehomeOperationsExist(db): Promise<boolean> {
+  const { rows } = await db.query(
+    "SELECT to_regclass('public.account_rehome_operations') AS t",
+  );
+  return rows[0]?.t != null;
+}
+
+// Changes one account's live sessions inside the account rehome fence, as
+// every other write to them: refused while the account is being rehomed (its
+// rows are being copied to another bay) and on a bay that is not its home.
+async function maintainAccountSessions({
+  account_id,
+  idle_ms,
+  max_lifetime_ms,
+}: {
+  account_id: string;
+  idle_ms: number;
+  max_lifetime_ms: number;
+}): Promise<{ started: number; reapplied: number }> {
+  return await withAccountRehomeWriteFence({
+    account_id,
+    action: "apply session limits",
+    fn: async (db) => {
+      const started = await db.query(
+        `
+          WITH r AS (
+            UPDATE remember_me
+               SET last_used = NOW(),
+                   max_expire = LEAST(expire, NOW() + $3 * INTERVAL '1 millisecond'),
+                   expire = LEAST(
+                     expire,
+                     NOW() + $2 * INTERVAL '1 millisecond',
+                     NOW() + $3 * INTERVAL '1 millisecond'
+                   )
+             WHERE account_id = $1::UUID
+               AND last_used IS NULL
+               AND expire > NOW()
+            RETURNING hash, expire
+          )
+          ${SYNC_AUTH_SESSION_EXPIRE}
+        `,
+        [account_id, idle_ms, max_lifetime_ms],
+      );
+      const reapplied = await db.query(
+        `
+          WITH r AS (
+            UPDATE remember_me
+               SET expire = LEAST(
+                     last_used + $2 * INTERVAL '1 millisecond',
+                     max_expire
+                   )
+             WHERE account_id = $1::UUID
+               AND last_used IS NOT NULL
+               AND max_expire IS NOT NULL
+               AND expire > NOW()
+               AND expire IS DISTINCT FROM LEAST(
+                 last_used + $2 * INTERVAL '1 millisecond',
+                 max_expire
+               )
+            RETURNING hash, expire
+          )
+          ${SYNC_AUTH_SESSION_EXPIRE}
+        `,
+        [account_id, idle_ms],
+      );
+      return {
+        started: started.rowCount ?? 0,
+        reapplied: reapplied.rowCount ?? 0,
+      };
+    },
+  });
 }
 
 // One bounded pass on this bay, by one process at a time:
@@ -261,99 +392,124 @@ export interface SessionMaintenanceResult {
 //   out at deploy);
 // - sessions follow a changed idle timeout from their last use;
 // - ended sessions are deleted, and their auth sessions revoked.
+// Live sessions change only through the account rehome fence, per account.
+// Deleting ended sessions needs no fence: they no longer work anywhere, so
+// whether a rehome copies one makes no difference (the destination deletes it
+// in turn); accounts being rehomed are still skipped.
 export async function runSessionMaintenance({
   batch = MAINTENANCE_BATCH,
-}: { batch?: number } = {}): Promise<SessionMaintenanceResult> {
+  account_batch = MAINTENANCE_ACCOUNT_BATCH,
+}: {
+  batch?: number;
+  account_batch?: number;
+} = {}): Promise<SessionMaintenanceResult> {
   const { idle_ms, max_lifetime_ms } = await getSessionLimits();
   const client = await getPool().connect();
+  let broken = false;
   try {
-    await client.query("BEGIN");
     const locked = (
       await client.query(
-        "SELECT pg_try_advisory_xact_lock(hashtextextended('session-expiry-maintenance',0)) AS locked",
+        "SELECT pg_try_advisory_lock(hashtextextended('session-expiry-maintenance',0)) AS locked",
       )
     ).rows[0]?.locked;
-    if (!locked) {
-      await client.query("COMMIT");
-      return {};
+    if (!locked) return {};
+    try {
+      const notRehoming = (await accountRehomeOperationsExist(client))
+        ? `AND NOT EXISTS (
+             SELECT 1 FROM account_rehome_operations o
+              WHERE o.account_id = m.account_id AND o.status = 'running'
+           )`
+        : "";
+      const accounts = (
+        await client.query(
+          `
+            SELECT DISTINCT m.account_id
+              FROM remember_me m
+              JOIN accounts a ON a.account_id = m.account_id
+             WHERE a.deleted IS NOT TRUE
+               AND m.expire > NOW()
+               AND (
+                 m.last_used IS NULL
+                 OR (
+                   m.max_expire IS NOT NULL
+                   AND m.expire IS DISTINCT FROM LEAST(
+                     m.last_used + $1 * INTERVAL '1 millisecond',
+                     m.max_expire
+                   )
+                 )
+               )
+               ${notRehoming}
+             LIMIT $2
+          `,
+          [idle_ms, account_batch],
+        )
+      ).rows.map(({ account_id }) => account_id as string);
+      let started = 0;
+      let reapplied = 0;
+      let changedAccounts = 0;
+      for (const account_id of accounts) {
+        try {
+          const r = await maintainAccountSessions({
+            account_id,
+            idle_ms,
+            max_lifetime_ms,
+          });
+          started += r.started;
+          reapplied += r.reapplied;
+          changedAccounts += 1;
+        } catch (err) {
+          // Refused by the rehome fence (or failed): its next pass retries.
+          logger.debug("session maintenance skipped an account", {
+            account_id,
+            err: `${err}`,
+          });
+        }
+      }
+      const removed = await client.query(
+        `
+          WITH r AS (
+            DELETE FROM remember_me
+             WHERE hash IN (
+               SELECT m.hash FROM remember_me m
+                WHERE m.expire <= NOW()
+                ${notRehoming}
+                LIMIT $1
+             )
+            RETURNING hash
+          ), revoked AS (
+            UPDATE account_auth_sessions s
+               SET revoked_at = COALESCE(s.revoked_at, NOW()), updated = NOW()
+              FROM r
+             WHERE s.session_hash = r.hash
+            RETURNING 1
+          )
+          SELECT hash FROM r
+        `,
+        [batch],
+      );
+      const removedCount = removed.rowCount ?? 0;
+      return {
+        started_idle_clock: started,
+        reapplied_limits: reapplied,
+        removed: removedCount,
+        // Continue soon only while passes make progress, so accounts the
+        // fence keeps refusing cannot spin.
+        more:
+          (accounts.length >= account_batch && changedAccounts > 0) ||
+          removedCount >= batch,
+      };
+    } finally {
+      await client.query(
+        "SELECT pg_advisory_unlock(hashtextextended('session-expiry-maintenance',0))",
+      );
     }
-    const started = await client.query(
-      `
-        WITH r AS (
-          UPDATE remember_me
-             SET last_used = NOW(),
-                 max_expire = LEAST(expire, NOW() + $2 * INTERVAL '1 millisecond'),
-                 expire = LEAST(
-                   expire,
-                   NOW() + $1 * INTERVAL '1 millisecond',
-                   NOW() + $2 * INTERVAL '1 millisecond'
-                 )
-           WHERE hash IN (
-             SELECT hash FROM remember_me
-              WHERE last_used IS NULL AND expire > NOW()
-              LIMIT $3
-           )
-          RETURNING hash, expire
-        )
-        ${SYNC_AUTH_SESSION_EXPIRE}
-      `,
-      [idle_ms, max_lifetime_ms, batch],
-    );
-    const reapplied = await client.query(
-      `
-        WITH r AS (
-          UPDATE remember_me
-             SET expire = LEAST(
-                   last_used + $1 * INTERVAL '1 millisecond',
-                   max_expire
-                 )
-           WHERE hash IN (
-             SELECT hash FROM remember_me
-              WHERE last_used IS NOT NULL
-                AND max_expire IS NOT NULL
-                AND expire > NOW()
-                AND expire IS DISTINCT FROM LEAST(
-                  last_used + $1 * INTERVAL '1 millisecond',
-                  max_expire
-                )
-              LIMIT $2
-           )
-          RETURNING hash, expire
-        )
-        ${SYNC_AUTH_SESSION_EXPIRE}
-      `,
-      [idle_ms, batch],
-    );
-    const removed = await client.query(
-      `
-        WITH r AS (
-          DELETE FROM remember_me
-           WHERE hash IN (
-             SELECT hash FROM remember_me WHERE expire <= NOW() LIMIT $1
-           )
-          RETURNING hash
-        ), revoked AS (
-          UPDATE account_auth_sessions s
-             SET revoked_at = COALESCE(s.revoked_at, NOW()), updated = NOW()
-            FROM r
-           WHERE s.session_hash = r.hash
-          RETURNING 1
-        )
-        SELECT hash FROM r
-      `,
-      [batch],
-    );
-    await client.query("COMMIT");
-    return {
-      started_idle_clock: started.rowCount ?? 0,
-      reapplied_limits: reapplied.rowCount ?? 0,
-      removed: removed.rowCount ?? 0,
-    };
   } catch (err) {
-    await client.query("ROLLBACK").catch(() => {});
+    broken = true;
     throw err;
   } finally {
-    client.release();
+    // A connection whose unlock may have failed must not return to the pool
+    // still holding the lock.
+    client.release(broken);
   }
 }
 
@@ -370,11 +526,15 @@ export function startSessionMaintenance(): () => void {
     let delay = MAINTENANCE_INTERVAL_MS;
     try {
       const result = await runSessionMaintenance();
-      if (Object.values(result).some(Boolean)) {
+      if (
+        result.started_idle_clock ||
+        result.reapplied_limits ||
+        result.removed
+      ) {
         logger.info("session expiry maintenance", result);
       }
-      // A full batch means more is waiting: continue soon, in bounded steps.
-      if (Object.values(result).some((n) => (n ?? 0) >= MAINTENANCE_BATCH)) {
+      // More is waiting: continue soon, in bounded steps.
+      if (result.more) {
         delay = 1_000;
       }
     } catch (err) {

@@ -142,6 +142,25 @@ function assertHubInteractiveEgressAllowed(
   }
 }
 
+// A connected browser is using its session: keep it from going idle while
+// connected. The connection itself is never cut by expiry. Called only once
+// the socket is admitted, and synchronously with checking that it is still
+// connected, so its disconnect always releases the session: a socket that
+// closed while it was authenticating is never tracked.
+export function trackConnectedBrowserSession({
+  socket,
+  account_id,
+  hash,
+}: {
+  socket: any;
+  account_id: string;
+  hash: string;
+}): void {
+  if (socket?.connected !== true || typeof socket?.once !== "function") return;
+  const release = trackConnectedSession({ hash, account_id });
+  socket.once("disconnect", release);
+}
+
 type CoCalcUserWithAgent = CoCalcUser & {
   auth_agent_id?: string;
   auth_agent_run_id?: string;
@@ -473,12 +492,11 @@ export async function getUser(
       browser_id: readBrowserId(socket),
       session_hash: hash,
     });
-    // A connected browser is using its session: keep it from going idle
-    // while connected. The connection itself is never cut by expiry.
-    const releaseSession = trackConnectedSession(hash);
-    socket?.once?.("disconnect", releaseSession);
     const user = { account_id, auth_session_hash: hash };
     assertHubInteractiveEgressAllowed(socket, user);
+    if (!options?.revalidation) {
+      trackConnectedBrowserSession({ socket, account_id, hash });
+    }
     return user;
   }
   if (!sawValidHash) {

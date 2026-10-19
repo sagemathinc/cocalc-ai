@@ -186,11 +186,10 @@ async function checkForRememberMeAccess({
   if (signed_in_mesg == null) {
     return { access: false, error: "not signed in via remember_me" };
   }
-  // Using a session keeps it from going idle (rate-limited inside).
-  void touchSession(hash);
-
   let access: boolean = false;
   const { account_id, email_address } = signed_in_mesg;
+  // Using a session keeps it from going idle (rate-limited inside).
+  void touchSession({ hash, account_id });
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(account_id)) {
     return { access: false, account_id, error: "banned" };
@@ -239,7 +238,7 @@ async function resolveRememberMeAccountId(
   if (!account_id) {
     return;
   }
-  void touchSession(hash);
+  void touchSession({ hash, account_id });
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(account_id)) {
     return;

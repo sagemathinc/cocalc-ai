@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { Client } from "pg";
 
 import getPool from "@cocalc/database/pool";
 import { after, before } from "@cocalc/server/test";
@@ -25,8 +26,10 @@ jest.mock("@cocalc/database/settings/server-settings", () => {
 import { getAccountIdFromRememberMe } from "./get-account";
 import { createRememberMeCookie } from "./remember-me";
 import { recordNewAuthSession, setSessionFreshAuth } from "./auth-sessions";
+import { refreshSignInCookies } from "./set-sign-in-cookies";
 import {
   renewSessionLifetime,
+  resetSessionTouchesForTest,
   runSessionMaintenance,
   touchSession,
 } from "./session-expiry";
@@ -40,6 +43,7 @@ afterAll(after);
 
 beforeEach(() => {
   for (const key of Object.keys(settings)) delete settings[key];
+  resetSessionTouchesForTest();
 });
 
 async function newAccount(): Promise<string> {
@@ -93,7 +97,7 @@ async function session(lifetime_s?: number) {
     session_hash: created.hash,
     expire: created.expire,
   });
-  return { account_id, hash: created.hash };
+  return { account_id, hash: created.hash, value: created.value };
 }
 
 it("a new session ends after the idle timeout, at most at its lifetime", async () => {
@@ -126,15 +130,15 @@ it("using a session moves its idle deadline, never past its lifetime", async () 
     expire: "1 day",
     max_expire: "2 days",
   });
-  await touchSession(capped.hash);
+  await touchSession({ hash: capped.hash, account_id: capped.account_id });
   near((await row(capped.hash)).expire, Date.now() + 2 * DAY);
 });
 
 it("an idle session stops working and is not revived by use", async () => {
-  const { hash } = await session();
+  const { account_id, hash } = await session();
   await setRow(hash, { last_used: "-15 days", expire: "-1 day" });
   expect(await getAccountIdFromRememberMe(hash)).toBeUndefined();
-  await touchSession(hash);
+  await touchSession({ hash, account_id });
   expect(new Date((await row(hash)).expire).valueOf()).toBeLessThan(Date.now());
 });
 
@@ -200,4 +204,156 @@ it("fresh auth renews the lifetime, except for an impersonation session", async 
     fresh_auth_until: new Date(Date.now() + 15 * 60_000),
   });
   near((await row(impersonated.hash)).max_expire, Date.now() + 3600_000);
+});
+
+// A running rehome copies the account's remember_me and auth session rows to
+// the destination bay; nothing may change them meanwhile.
+async function startRehome(account_id: string): Promise<string> {
+  await getPool().query(`
+    CREATE TABLE IF NOT EXISTS account_rehome_operations (
+      op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      account_id UUID NOT NULL,
+      source_bay_id TEXT NOT NULL,
+      dest_bay_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      stage TEXT NOT NULL DEFAULT 'requested',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  const { rows } = await getPool().query(
+    `INSERT INTO account_rehome_operations (account_id, source_bay_id, dest_bay_id, stage)
+     VALUES ($1, 'bay-0', 'bay-1', 'source_flipped') RETURNING op_id`,
+    [account_id],
+  );
+  return rows[0].op_id;
+}
+
+async function finishRehome(op_id: string) {
+  await getPool().query(
+    "UPDATE account_rehome_operations SET status = 'succeeded' WHERE op_id = $1",
+    [op_id],
+  );
+}
+
+it("session use and maintenance leave a rehoming account's sessions alone", async () => {
+  const used = await session();
+  const legacy = await session();
+  await setRow(used.hash, { last_used: "-13 days", expire: "1 day" });
+  await getPool().query(
+    "UPDATE remember_me SET last_used = NULL, max_expire = NULL, expire = NOW() + INTERVAL '170 days' WHERE hash = $1::CHAR(127)",
+    [legacy.hash],
+  );
+  const before = await row(used.hash);
+  const beforeAuth = await authSession(used.hash);
+  const op1 = await startRehome(used.account_id);
+  const op2 = await startRehome(legacy.account_id);
+
+  // Signing in with the cookie still works; recording its use is refused.
+  await touchSession({ hash: used.hash, account_id: used.account_id });
+  expect(await row(used.hash)).toEqual(before);
+  expect(await authSession(used.hash)).toEqual(beforeAuth);
+
+  await runSessionMaintenance();
+  expect((await row(legacy.hash)).last_used).toBeNull();
+
+  // Once the rehome is over, both proceed.
+  await finishRehome(op1);
+  await finishRehome(op2);
+  resetSessionTouchesForTest();
+  await touchSession({ hash: used.hash, account_id: used.account_id });
+  near((await row(used.hash)).expire, Date.now() + 14 * DAY);
+  near((await authSession(used.hash)).expire, Date.now() + 14 * DAY);
+  await runSessionMaintenance();
+  near((await row(legacy.hash)).last_used, Date.now());
+});
+
+it("session use racing a rehome start waits for it, then is refused", async () => {
+  const { account_id, hash } = await session();
+  await setRow(hash, { last_used: "-13 days", expire: "1 day" });
+  // A rehome starts like createOperation: it takes the account fence and
+  // records the running rehome in one transaction. A use that comes in
+  // meanwhile waits for the fence, then sees the rehome and changes nothing.
+  await startRehome(account_id).then(finishRehome); // creates the table
+  const database = (await getPool().query("SELECT current_database() AS d"))
+    .rows[0].d;
+  const rehome = new Client({ database });
+  await rehome.connect();
+  try {
+    await rehome.query("BEGIN");
+    await rehome.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+      ["account-rehome", account_id],
+    );
+    const touched = touchSession({ hash, account_id });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await rehome.query(
+      `INSERT INTO account_rehome_operations (account_id, source_bay_id, dest_bay_id)
+       VALUES ($1, 'bay-0', 'bay-1')`,
+      [account_id],
+    );
+    await rehome.query("COMMIT");
+    await touched;
+  } finally {
+    await rehome.end();
+  }
+  near((await row(hash)).expire, Date.now() + DAY);
+});
+
+it("a stale session limit setting from elsewhere falls back to the default", async () => {
+  settings.session_idle_timeout_days = 5000;
+  const { hash } = await session();
+  near((await row(hash)).expire, Date.now() + 14 * DAY);
+});
+
+function cookieRequest(value: string) {
+  const headers = { cookie: `remember_me=${value}`, host: "localhost" };
+  const set: string[] = [];
+  const req = {
+    headers,
+    protocol: "http",
+    secure: false,
+    connection: {},
+    socket: {},
+    header: (name: string) => headers[name.toLowerCase()],
+  };
+  const res = {
+    getHeader: (name: string) =>
+      name.toLowerCase() === "set-cookie" ? set : undefined,
+    setHeader: (name: string, value: string | string[]) => {
+      if (name.toLowerCase() !== "set-cookie") return;
+      set.splice(0, set.length, ...(Array.isArray(value) ? value : [value]));
+    },
+  };
+  return { req, res, set };
+}
+
+it("an active browser's cookie is set again for the full cookie lifetime", async () => {
+  const own = await session();
+  const { req, res, set } = cookieRequest(own.value);
+  expect(await refreshSignInCookies({ req, res })).toEqual({ refreshed: true });
+  const rememberMe = set.find((c) => c.startsWith(`remember_me=${own.value};`));
+  expect(rememberMe).toBeDefined();
+  const expires = /expires=([^;]+)/i.exec(rememberMe!)?.[1];
+  near(new Date(expires!), Date.now() + 400 * DAY);
+
+  // An impersonation session keeps its own short cookie.
+  const impersonated = await session(3600);
+  await getPool().query(
+    `INSERT INTO account_impersonation_sessions
+       (session_hash, subject_account_id, actor_account_id, created, updated, expire)
+     VALUES ($1::CHAR(127), $2, $3, NOW(), NOW(), NOW() + INTERVAL '1 hour')`,
+    [impersonated.hash, impersonated.account_id, await newAccount()],
+  );
+  const other = cookieRequest(impersonated.value);
+  expect(
+    await refreshSignInCookies({ req: other.req, res: other.res }),
+  ).toEqual({ refreshed: false });
+  expect(other.set).toEqual([]);
+
+  // An ended session gets nothing.
+  const ended = await session();
+  await setRow(ended.hash, { expire: "-1 minute" });
+  const gone = cookieRequest(ended.value);
+  expect(await refreshSignInCookies({ req: gone.req, res: gone.res })).toEqual({
+    refreshed: false,
+  });
 });

@@ -136,6 +136,7 @@ import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-sett
 import { getProjectRecoveryNotificationConfiguration } from "@cocalc/server/projects/recovery-notification-configuration";
 import { is_valid_email_address, isValidUUID } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
+import { sessionLimitSettingsError } from "@cocalc/util/db-schema/site-defaults";
 import {
   displayNameFromParts,
   legacyNamePartsFromDisplayName,
@@ -953,6 +954,32 @@ export async function getSiteSettingsOnSeed({
   };
 }
 
+const SESSION_LIMIT_SETTINGS = [
+  "session_idle_timeout_days",
+  "session_max_lifetime_days",
+] as const;
+
+// The two session limits are checked together, as they will be after this
+// update: each in range, and the idle timeout at most the maximum lifetime.
+async function assertSessionLimitSettings(
+  updates: SiteSettingUpdate[],
+): Promise<void> {
+  if (!updates.some(({ name }) => SESSION_LIMIT_SETTINGS.includes(name as any)))
+    return;
+  const next: Record<string, string> = {};
+  for (const name of SESSION_LIMIT_SETTINGS) {
+    const update = updates.filter((u) => u.name === name).pop();
+    const current =
+      update?.value ??
+      (await callback2(db().get_server_setting, { name })) ??
+      "";
+    // An unset setting means its default.
+    next[name] = `${current}`.trim() || siteSettingSpec(name)?.default;
+  }
+  const error = sessionLimitSettingsError(next);
+  if (error) throw Error(error);
+}
+
 async function assertSiteSettingWritable(name: string): Promise<void> {
   const { rows } = await getPool().query(
     "SELECT readonly FROM server_settings WHERE name=$1 LIMIT 1",
@@ -1246,6 +1273,7 @@ export async function setSiteSettingsOnSeed({
     );
   }
   const updates = settings.map(normalizeSiteSettingUpdate);
+  await assertSessionLimitSettings(updates);
   const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
     isSignupEmailDomainPolicySetting(name),
   )

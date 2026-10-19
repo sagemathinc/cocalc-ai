@@ -325,6 +325,35 @@ export const only_nonneg_int = (val) =>
 export const only_pos_int = (val) =>
   ((v) => only_ints(v) && v > 0)(to_int(val));
 
+// Sign-in sessions: browsers keep a cookie at most 400 days, so a session
+// limit must stay well below that.
+export const SESSION_LIMIT_MAX_DAYS = 365;
+export const only_session_days = (val) =>
+  /^\s*\d+\s*$/.test(`${val ?? ""}`) &&
+  only_pos_int(val) &&
+  to_int(val) <= SESSION_LIMIT_MAX_DAYS;
+
+// Why these session settings cannot be saved together, if they cannot.
+export function sessionLimitSettingsError(settings: {
+  session_idle_timeout_days?: string;
+  session_max_lifetime_days?: string;
+}): string | undefined {
+  const idle = settings.session_idle_timeout_days ?? "";
+  const max = settings.session_max_lifetime_days ?? "";
+  for (const [label, value] of [
+    ["idle timeout", idle],
+    ["maximum lifetime", max],
+  ]) {
+    if (!only_session_days(value)) {
+      return `The sign-in session ${label} must be a whole number of days from 1 to ${SESSION_LIMIT_MAX_DAYS}.`;
+    }
+  }
+  if (to_int(idle) > to_int(max)) {
+    return "The sign-in session idle timeout must be at most its maximum lifetime.";
+  }
+  return undefined;
+}
+
 const validDomainList = (val: string): boolean =>
   !val.trim() || parseDomainRules(val).length > 0;
 
@@ -1944,9 +1973,9 @@ export const site_settings_conf: SiteSettings = {
   },
   session_idle_timeout_days: {
     name: "Sign-in session idle timeout (days)",
-    desc: "A browser or CLI sign-in session that is not used for this many days stops working and is deleted. Using a session (loading a page, calling the API, or keeping a browser tab connected) moves this deadline forward, so people are not signed out while they use the site. Must be at most the maximum session lifetime.",
+    desc: "A browser or CLI sign-in session that is not used for this many days stops working and is deleted. Using a session (loading a page, calling the API, or keeping a browser tab connected) moves this deadline forward, so people are not signed out while they use the site. Must be at most the maximum session lifetime, and at most 365.",
     default: "14",
-    valid: only_pos_int,
+    valid: only_session_days,
     to_val: to_int,
     tags: ["Security"],
     group: "Access & Identity",
@@ -1954,9 +1983,9 @@ export const site_settings_conf: SiteSettings = {
   },
   session_max_lifetime_days: {
     name: "Sign-in session maximum lifetime (days)",
-    desc: "However much it is used, a sign-in session ends this many days after sign-in, and the person signs in again. An open browser tab is never cut off; from 3 days before the end it asks for the password or second factor, which starts a new lifetime. Applies to sessions created after a change; existing sessions keep their end date.",
+    desc: "However much it is used, a sign-in session ends this many days after sign-in, and the person signs in again. An open browser tab is never cut off; from 3 days before the end it asks for the password or second factor, which starts a new lifetime. Applies to sessions created after a change; existing sessions keep their end date. At most 365.",
     default: "60",
-    valid: only_pos_int,
+    valid: only_session_days,
     to_val: to_int,
     tags: ["Security"],
     group: "Access & Identity",

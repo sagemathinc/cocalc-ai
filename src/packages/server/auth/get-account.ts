@@ -99,6 +99,6 @@ export async function getAccountIdFromRememberMe(
   }
   logger.debug("remember_me cookie valid -- sign in as ", account_id);
   // Using a session keeps it from going idle (rate-limited inside).
-  void touchSession(hash);
+  void touchSession({ hash, account_id });
   return account_id;
 }
