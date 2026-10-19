@@ -61,7 +61,7 @@ function fakeProvider(
   };
 }
 
-function fakeFunding(refuse = false) {
+function fakeFunding(refuse = false, callingFails = false) {
   const events: string[] = [];
   const funding: DecideFunding = {
     reserve: async ({ microusd }) => {
@@ -69,6 +69,10 @@ function fakeFunding(refuse = false) {
         throw Object.assign(new Error("over allowance"), { code: 402 });
       events.push(`reserve ${microusd}`);
       return {
+        calling: async () => {
+          if (callingFails) throw new Error("database unavailable");
+          events.push("calling");
+        },
         commit: async (m) => void events.push(`commit ${m}`),
         release: async () => void events.push("release"),
       };
@@ -103,7 +107,8 @@ test("an answer is classified into the question's own options, and paid for", as
   );
   // reserved an upper bound, committed the reported cost (5.04 -> 6 micro-dollars)
   expect(events[0]).toMatch(/^reserve \d+$/);
-  expect(events[1]).toBe("commit 6");
+  expect(events[1]).toBe("calling");
+  expect(events[2]).toBe("commit 6");
 });
 
 test("without a provider or funding, decide is unavailable and nothing is called", async () => {
@@ -151,7 +156,11 @@ test("a failed call releases its reservation, and its error stays ours", async (
   }).catch((e) => e);
   expect(err.code).toBe(502);
   expect(err.message).not.toMatch(/secret upstream/);
-  expect(events).toEqual([expect.stringMatching(/^reserve/), "release"]);
+  expect(events).toEqual([
+    expect.stringMatching(/^reserve/),
+    "calling",
+    "release",
+  ]);
 });
 
 test("limits: answer, prompt and options", async () => {
@@ -317,7 +326,7 @@ test("a cost above the reservation is committed in full, never clamped", async (
   });
   const reserved = Number(events[0].split(" ")[1]);
   expect(reserved).toBeLessThan(10_000_000);
-  expect(events[1]).toBe("commit 10000000");
+  expect(events[2]).toBe("commit 10000000");
 });
 
 test("one-shot accounts leave this process's counts bounded", async () => {
@@ -355,4 +364,24 @@ test("one-shot accounts leave this process's counts bounded", async () => {
     recentCalls: 1,
     usedRequestIds: 1,
   });
+});
+
+// Codex on #1134: a hold is marked before the provider runs; if that
+// can't be recorded, the provider isn't called and the hold goes.
+test("no provider call when its hold can't be marked", async () => {
+  const provider = fakeProvider();
+  const { funding, events } = fakeFunding(false, true);
+  await expect(
+    boardDecide({
+      board: BOARD_KEY,
+      accountId: ACCOUNT,
+      requestId: rid(),
+      question,
+      answer: "x",
+      provider,
+      funding,
+    }),
+  ).rejects.toMatchObject({ code: 503 });
+  expect(provider.calls).toHaveLength(0);
+  expect(events).toEqual([expect.stringMatching(/^reserve/), "release"]);
 });

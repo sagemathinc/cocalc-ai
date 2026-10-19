@@ -528,4 +528,171 @@ describe("site-funded board decide", () => {
       await next.release();
     });
   });
+
+  // Codex on #1134: after a successful provider call, settlement never
+  // ends with the site pool charged and the account released. The hold
+  // row is CALLING from before the call; each step is retried; a stale
+  // CALLING row is finished as a charge, its global hold settled.
+  describe("settlement after the provider succeeded", () => {
+    const pool: any = getPool();
+    const reservations = require("./site-funded-speech-reservations");
+    afterEach(() => jest.restoreAllMocks());
+    // a fresh account each test: clear of the minute limit
+    let acct = "";
+    beforeEach(async () => {
+      acct = uuid();
+      await getPool().query(
+        `INSERT INTO accounts(account_id, created, email_address)
+         VALUES($1, NOW(), $2)`,
+        [acct, `${acct}@example.com`],
+      );
+    });
+    async function rowsOf(requestId: string) {
+      const { rows } = await getPool().query(
+        `SELECT tag, cost_microusd FROM ai_usage_log
+         WHERE account_id=$1 AND funded_event_id=$2`,
+        [acct, requestId],
+      );
+      return rows.map((r) => ({ tag: r.tag, cost: Number(r.cost_microusd) }));
+    }
+    // Make the account UPDATE whose 4th parameter matches fail `times`
+    // times ("[board-decide]": recording the cost; "board-decide":
+    // marking it settled).
+    function failAccountStep(param4: string, times = Infinity) {
+      const real = pool.query.bind(pool);
+      let n = 0;
+      jest
+        .spyOn(pool, "query")
+        .mockImplementation(async (text: any, params?: any) => {
+          if (
+            typeof text === "string" &&
+            /UPDATE ai_usage_log SET/.test(text) &&
+            /tag = ANY/.test(text) &&
+            params?.[3] === param4 &&
+            n < times
+          ) {
+            n++;
+            throw new Error("home database unavailable");
+          }
+          return await real(text, params);
+        });
+    }
+    async function called(requestId: string) {
+      const r = await funding.reserve({
+        board: BOARD_KEY,
+        accountId: acct,
+        requestId,
+        microusd: 3,
+      });
+      await r.calling();
+      return r;
+    }
+    // Past the 5-minute TTL; then the account's next reservation finishes it.
+    async function finishStale(requestId: string) {
+      await getPool().query(
+        `UPDATE ai_usage_log SET time = time - INTERVAL '6 minutes'
+         WHERE account_id=$1 AND funded_event_id=$2`,
+        [acct, requestId],
+      );
+      const next = await funding.reserve({
+        board: BOARD_KEY,
+        accountId: acct,
+        requestId: uuid(),
+        microusd: 1,
+      });
+      await next.release();
+    }
+
+    it("marking it settled fails: the row keeps the cost, and is charged it when finished", async () => {
+      const requestId = uuid();
+      const r = await called(requestId);
+      failAccountStep("board-decide");
+      await r.commit(2); // doesn't refuse the answer
+      jest.restoreAllMocks();
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide-calling", cost: 2 },
+      ]);
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "committed", committed: 2 },
+      ]);
+      await finishStale(requestId);
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide", cost: 2 },
+      ]);
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "committed", committed: 2 },
+      ]);
+    });
+
+    it("recording the cost fails: charged the reserved bound, never released", async () => {
+      const requestId = uuid();
+      const r = await called(requestId);
+      failAccountStep("[board-decide]");
+      await r.commit(2);
+      jest.restoreAllMocks();
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide-calling", cost: 3 },
+      ]);
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "committed", committed: 2 },
+      ]);
+      await finishStale(requestId);
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide", cost: 3 },
+      ]);
+    });
+
+    it("a transient failure is retried: charged the cost at once", async () => {
+      const requestId = uuid();
+      const r = await called(requestId);
+      failAccountStep("[board-decide]", 1);
+      await r.commit(2);
+      jest.restoreAllMocks();
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide", cost: 2 },
+      ]);
+    });
+
+    it("the reverse, the site pool fails: the account is charged and the hold settled when finished", async () => {
+      const requestId = uuid();
+      const r = await called(requestId);
+      const realFinish = reservations.finishSiteFundedSpeechGlobal;
+      jest
+        .spyOn(reservations, "finishSiteFundedSpeechGlobal")
+        .mockImplementation(async (o: any) => {
+          if (o.requestId === requestId)
+            throw new Error("seed bay unreachable");
+          return await realFinish(o);
+        });
+      await r.commit(2);
+      jest.restoreAllMocks();
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide-calling", cost: 2 },
+      ]);
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "active", committed: 0 },
+      ]);
+      await finishStale(requestId);
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide", cost: 2 },
+      ]);
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "committed", committed: 2 },
+      ]);
+    });
+
+    it("a stale hold never called is still released at no cost", async () => {
+      const requestId = uuid();
+      await funding.reserve({
+        board: BOARD_KEY,
+        accountId: acct,
+        requestId,
+        microusd: 3,
+      });
+      await finishStale(requestId);
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide-released", cost: 0 },
+      ]);
+    });
+  });
 });

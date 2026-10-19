@@ -82,7 +82,11 @@ test("one configuration read per call: the key that admitted it is the key it us
     })
     .mockResolvedValue({ board_decide_enabled: true, openrouter_api_key: "" });
   const commit = jest.fn(async () => {});
-  mockReserve.mockResolvedValue({ commit, release: jest.fn(async () => {}) });
+  mockReserve.mockResolvedValue({
+    calling: jest.fn(async () => {}),
+    commit,
+    release: jest.fn(async () => {}),
+  });
   const fetchMock = jest.fn(async () => ({
     ok: true,
     status: 200,

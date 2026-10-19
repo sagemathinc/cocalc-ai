@@ -67,6 +67,13 @@ export interface DecideProvider {
 }
 
 export interface DecideReservation {
+  /** Recorded before the provider is called: a hold that may have run is
+   * never released at no cost. Throws if it can't be recorded, and then
+   * the provider isn't called. */
+  calling(): Promise<void>;
+  /** After the provider: settles the charge. Bookkeeping that can't finish
+   * now is finished later from the hold's durable state, so this doesn't
+   * refuse an answer that is paid for. */
   commit(microusd: number): Promise<void>;
   release(): Promise<void>;
 }
@@ -276,11 +283,20 @@ export async function boardDecide({
     microusd: reserved,
     board: { projectId: board.projectId, path: board.path },
   });
+  // Marked before the provider is called, so a hold that may have run is
+  // never released at no cost; if that can't be recorded, it isn't called.
+  try {
+    await reservation.calling();
+  } catch {
+    await reservation.release().catch(() => undefined);
+    throw codedError("The answer couldn't be checked. Try again.", 503);
+  }
   let result: DecideProviderResult;
   try {
     result = await provider.decide(valid.question, valid.answer, signal);
   } catch (err) {
-    await reservation.release();
+    // A release that fails leaves the hold to be finished when stale.
+    await reservation.release().catch(() => undefined);
     throw codedError("The answer couldn't be checked. Try again.", 502);
   }
   // Commit what the provider reports (the reservation when it reports

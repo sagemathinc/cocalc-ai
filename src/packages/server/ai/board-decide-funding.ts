@@ -40,6 +40,23 @@ import {
 
 const RESERVATION_TAG = "board-decide-reservation";
 const COMMITTED_TAG = "board-decide";
+// A hold whose provider call may have run: settled after it, or finished
+// as a charge when it goes stale, never released at no cost.
+const CALLING_TAG = "board-decide-calling";
+// A settlement step is retried a little before it is left to the stale
+// finish.
+const SETTLE_ATTEMPTS = 3;
+
+async function retried<T>(step: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await step();
+    } catch (err) {
+      if (attempt >= SETTLE_ATTEMPTS) throw err;
+      await new Promise((r) => setTimeout(r, 100 * attempt));
+    }
+  }
+}
 // A hold released after its call failed (or gone stale): kept at no cost
 // for an hour, so the call still counts toward the limits above.
 const RELEASED_TAG = "board-decide-released";
@@ -117,22 +134,91 @@ export function siteFundedDecideFunding({
       //   at no cost (still counted for the hour) by this account's next
       //   reservation that commits after those 5 minutes.
       // The reservation this call returns, once its hold is in place.
+      //
+      // Settlement (Codex on #1134): the account's hold row is its durable
+      // state. Before the provider is called it is marked CALLING, so a
+      // hold whose provider may have run is never released at no cost
+      // (a stale RESERVATION, never called, still is). After the call:
+      // 1. the row records the cost, still CALLING (the global pending);
+      // 2. the global hold is settled (idempotent: a settled one is left);
+      // 3. the row becomes COMMITTED.
+      // Each step is retried. If one still fails, nothing is lost: a stale
+      // CALLING row is finished by the account's next reservation (charged
+      // at the cost it records, its global hold settled), and the call's
+      // answer stands: it is paid for, so it is not refused.
+      const accountUpdate = async (
+        set: string,
+        params: unknown[],
+        fromTags: string[],
+      ): Promise<number> => {
+        const { rows } = await getPool().query(
+          `UPDATE ai_usage_log SET ${set}
+           WHERE account_id=$1 AND funded_event_id=$2 AND tag = ANY($3::TEXT[])
+           RETURNING funded_event_id`,
+          [accountId, requestId, fromTags, ...params],
+        );
+        return rows.length;
+      };
       const reservation = (): DecideReservation => ({
+        async calling() {
+          // Before the provider: if this can't be recorded, it isn't called.
+          const n = await accountUpdate(
+            "tag=$4",
+            [CALLING_TAG],
+            [RESERVATION_TAG],
+          );
+          if (n !== 1) throw new Error("decide reservation was not found");
+        },
         async commit(costMicrousd: number) {
           if (!Number.isSafeInteger(costMicrousd) || costMicrousd <= 0) {
             throw new Error("decide cost must be a positive safe integer");
           }
+          const failed = (step: string, err: unknown) =>
+            logger.error(`board decide settlement: ${step} failed`, {
+              accountId,
+              requestId,
+              costMicrousd,
+              err: `${err}`,
+            });
+          // 1. The cost, durably, on the account's row (still CALLING).
+          let costRecorded = false;
+          try {
+            await retried(async () => {
+              const n = await accountUpdate(
+                "input=$4, cost_microusd=$5, tag=$6",
+                ["[board-decide]", costMicrousd, CALLING_TAG],
+                [CALLING_TAG, RESERVATION_TAG],
+              );
+              if (n !== 1 && !(await settled())) {
+                throw new Error("decide hold was not found");
+              }
+            });
+            costRecorded = true;
+          } catch (err) {
+            // Then the row keeps its reserved upper bound, charged in full
+            // when it is finished as stale.
+            failed("recording the cost", err);
+          }
+          // 2. The site pool.
           // A cost above the hold is never discarded: the account's row
           // records all of it, the site pool gets the excess as a hold of
           // its own, and it is logged as an error to alert admins. The
           // reservation is a real bound (max_price), so this should not
           // happen.
           const excess = Math.max(0, costMicrousd - microusd);
-          await finishSiteFundedSpeechGlobal({
-            requestId,
-            status: "committed",
-            costMicrousd: Math.min(costMicrousd, microusd),
-          });
+          let globalSettled = false;
+          try {
+            await retried(() =>
+              finishSiteFundedSpeechGlobal({
+                requestId,
+                status: "committed",
+                costMicrousd: Math.min(costMicrousd, microusd),
+              }),
+            );
+            globalSettled = true;
+          } catch (err) {
+            failed("settling the site pool", err);
+          }
           if (excess > 0) {
             logger.error("board decide cost exceeded its reservation", {
               accountId,
@@ -164,36 +250,37 @@ export function siteFundedDecideFunding({
               );
             }
           }
-          const { rows } = await getPool().query(
-            `UPDATE ai_usage_log SET input=$3, tag=$4, cost_microusd=$5
-             WHERE account_id=$1 AND funded_event_id=$2 AND tag=$6
-             RETURNING funded_event_id`,
-            [
-              accountId,
-              requestId,
-              "[board-decide]",
-              COMMITTED_TAG,
-              costMicrousd,
-              RESERVATION_TAG,
-            ],
-          );
-          if (rows.length !== 1)
-            throw new Error("decide reservation was not found");
+          // 3. Done: only once both sides are. Otherwise the row stays
+          // CALLING and is finished as stale.
+          if (!costRecorded || !globalSettled) return;
+          try {
+            await retried(async () => {
+              const n = await accountUpdate(
+                "tag=$4",
+                [COMMITTED_TAG],
+                [CALLING_TAG],
+              );
+              // A row not found is retried and logged too (daybreak2); the
+              // stale finish is still there behind it.
+              if (n !== 1) throw new Error("decide hold was not found");
+            });
+          } catch (err) {
+            failed("marking it settled", err);
+          }
         },
         async release() {
+          // The provider failed: no charge. A row whose release fails stays
+          // CALLING and is charged when finished as stale (it may have run).
           const results = await Promise.allSettled([
-            finishSiteFundedSpeechGlobal({ requestId, status: "released" }),
-            getPool().query(
-              `UPDATE ai_usage_log
-                  SET input=$4, tag=$5, cost_microusd=0
-               WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
-              [
-                accountId,
-                requestId,
-                RESERVATION_TAG,
-                "[board-decide-released]",
-                RELEASED_TAG,
-              ],
+            retried(() =>
+              finishSiteFundedSpeechGlobal({ requestId, status: "released" }),
+            ),
+            retried(() =>
+              accountUpdate(
+                "input=$4, tag=$5, cost_microusd=0",
+                ["[board-decide-released]", RELEASED_TAG],
+                [RESERVATION_TAG, CALLING_TAG],
+              ),
             ),
           ]);
           const failure = results.find(
@@ -202,8 +289,22 @@ export function siteFundedDecideFunding({
           if (failure) throw failure.reason;
         },
       });
+      // Whether the row was already settled (a retry whose earlier attempt
+      // went through).
+      const settled = async (): Promise<boolean> => {
+        const { rows } = await getPool().query(
+          `SELECT 1 FROM ai_usage_log
+           WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3
+             AND input='[board-decide]'`,
+          [accountId, requestId, CALLING_TAG],
+        );
+        return rows.length === 1;
+      };
       let client: PoolClient | undefined;
       let broken = false;
+      // Stale CALLING holds charged in this transaction, whose global holds
+      // are settled once it commits.
+      let finishing: { requestId: string; costMicrousd: number }[] = [];
       let committing = false;
       try {
         const db = await getPool().connect();
@@ -232,6 +333,27 @@ export function siteFundedDecideFunding({
             RESERVATION_TTL_MS,
           ],
         );
+        // A stale CALLING hold's provider may have run (its settlement
+        // didn't finish): it is charged, at the cost it records (the call's,
+        // or else the reserved upper bound), never released. Its global
+        // hold is settled after this transaction.
+        const unsettled = await db.query(
+          `UPDATE ai_usage_log SET input=$3, tag=$4
+           WHERE account_id=$1 AND tag=$2
+             AND time < NOW() - ($5::BIGINT * INTERVAL '1 millisecond')
+           RETURNING funded_event_id, cost_microusd`,
+          [
+            accountId,
+            CALLING_TAG,
+            "[board-decide-unsettled]",
+            COMMITTED_TAG,
+            RESERVATION_TTL_MS,
+          ],
+        );
+        finishing = unsettled.rows.map((r) => ({
+          requestId: `${r.funded_event_id}`,
+          costMicrousd: Number(r.cost_microusd),
+        }));
         await db.query(
           `DELETE FROM ai_usage_log
            WHERE account_id=$1 AND tag=$2 AND time < NOW() - INTERVAL '1 hour'`,
@@ -243,9 +365,15 @@ export function siteFundedDecideFunding({
         // in front of this one).
         const recent = await db.query(
           `SELECT COUNT(*) AS n FROM ai_usage_log
-           WHERE account_id=$1 AND tag IN ($2, $3, $4)
+           WHERE account_id=$1 AND tag IN ($2, $3, $4, $5)
              AND time > NOW() - INTERVAL '1 minute'`,
-          [accountId, RESERVATION_TAG, COMMITTED_TAG, RELEASED_TAG],
+          [
+            accountId,
+            RESERVATION_TAG,
+            COMMITTED_TAG,
+            RELEASED_TAG,
+            CALLING_TAG,
+          ],
         );
         if (
           Number(recent.rows[0]?.n ?? 0) >=
@@ -260,7 +388,7 @@ export function siteFundedDecideFunding({
         // it) in the last hour, the same way, under the same lock.
         const onBoard = await db.query(
           `SELECT COUNT(*) AS n FROM ai_usage_log
-           WHERE account_id=$1 AND tag IN ($2, $3, $4)
+           WHERE account_id=$1 AND tag IN ($2, $3, $4, $7)
              AND project_id=$5 AND path=$6
              AND time > NOW() - INTERVAL '1 hour'`,
           [
@@ -270,6 +398,7 @@ export function siteFundedDecideFunding({
             RELEASED_TAG,
             board.projectId,
             board.path,
+            CALLING_TAG,
           ],
         );
         if (
@@ -376,6 +505,21 @@ export function siteFundedDecideFunding({
         throw err;
       } finally {
         client?.release(broken ? true : undefined);
+      }
+      for (const f of finishing) {
+        // Idempotent: a global hold already settled (or expired) is left.
+        await finishSiteFundedSpeechGlobal({
+          requestId: f.requestId,
+          status: "committed",
+          costMicrousd: f.costMicrousd,
+        }).catch((err) =>
+          logger.error("board decide stale settlement: site pool not settled", {
+            accountId,
+            requestId: f.requestId,
+            costMicrousd: f.costMicrousd,
+            err: `${err}`,
+          }),
+        );
       }
       return reservation();
     },
