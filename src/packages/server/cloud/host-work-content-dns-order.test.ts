@@ -87,3 +87,26 @@ describe("reconcile releases content DNS when the provider took the address", ()
     );
   });
 });
+
+describe("handleRestart releases after the host is marked restarting", () => {
+  it("so a sync in between refuses instead of recreating the record", () => {
+    const source = readFileSync(join(__dirname, "host-work.ts"), "utf8");
+    const body = source.slice(
+      source.indexOf("async function handleRestart("),
+      source.indexOf("\nasync function ", source.indexOf("async function handleRestart(") + 1),
+    );
+    const restarting = body.indexOf('status: "restarting"');
+    const release = body.indexOf("await releaseHostContentDns(row);");
+    expect(restarting).toBeGreaterThan(0);
+    expect(release).toBeGreaterThan(restarting);
+  });
+});
+
+describe("reconcile doesn't call Cloudflare for hosts that stay off", () => {
+  it("returns early without a record once the host is off", () => {
+    const source = readFileSync(join(__dirname, "reconcile.ts"), "utf8");
+    expect(source).toMatch(
+      /async function releaseLostAddressContentDns\(row: any\)[^{]*\{[\s\S]{0,300}?if \(row\?\.metadata\?\.content_dns == null && row\?\.status === "off"\) return;/,
+    );
+  });
+});

@@ -3115,10 +3115,6 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
     region: row.region,
   });
   const provider = entry.provider;
-  // A restart can change the host's address (a hard restart, or a stop and
-  // start), so its content origins stop resolving first; the runtime refresh
-  // after the restart restores them.
-  await releaseHostContentDns(row);
   let runtimeForRestart = runtime;
   try {
     const { baseUrl } = await resolveLaunchpadBootstrapUrl({
@@ -3153,6 +3149,11 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
     last_seen: null,
     metadata: nextMetadata,
   });
+  // A restart can change the host's address (a hard restart, or a stop and
+  // start), so its content origins stop resolving first; the runtime refresh
+  // after the restart restores them.  After "restarting" is set, so a sync
+  // can't recreate the record in between (it refuses while restarting).
+  await releaseHostContentDns(row);
   if (mode === "hard") {
     if (provider.hardRestartHost) {
       await provider.hardRestartHost(runtimeForRestart, creds);

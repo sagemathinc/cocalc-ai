@@ -121,14 +121,19 @@ function recordedContentDns(
   return { ...value, name } as HostContentDnsRecord;
 }
 
+// Inside withHostContentDnsLock, queries must use its client: the lock holds
+// one pooled connection, and waiting for a second could exhaust the pool.
+type Queryable = { query: (sql: string, params?: any[]) => Promise<any> };
+
 async function setContentDnsMetadata(
+  db: Queryable,
   host_id: string,
   value: HostContentDnsRecord | null,
 ): Promise<void> {
   // Field-level updates, so a concurrent whole-metadata write of another
   // field cannot be undone here (and this cannot undo it).
   if (value == null) {
-    await getPool().query(
+    await db.query(
       `UPDATE project_hosts
           SET metadata = COALESCE(metadata, '{}'::jsonb) - 'content_dns',
               updated = NOW()
@@ -136,7 +141,7 @@ async function setContentDnsMetadata(
       [host_id],
     );
   } else {
-    await getPool().query(
+    await db.query(
       `UPDATE project_hosts
           SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{content_dns}', $2::jsonb, true),
               updated = NOW()
@@ -151,7 +156,7 @@ async function setContentDnsMetadata(
 // just released (both re-read the host row under the lock).
 async function withHostContentDnsLock<T>(
   host_id: string,
-  fn: () => Promise<T>,
+  fn: (db: Queryable) => Promise<T>,
 ): Promise<T> {
   const client = await getPool().connect();
   try {
@@ -160,7 +165,7 @@ async function withHostContentDnsLock<T>(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`host-content-dns:${host_id}`],
     );
-    const result = await fn();
+    const result = await fn(client);
     await client.query("COMMIT");
     return result;
   } catch (err) {
@@ -172,9 +177,10 @@ async function withHostContentDnsLock<T>(
 }
 
 async function loadHostRow(
+  db: Queryable,
   host_id: string,
 ): Promise<(HostRowLike & { status?: string; deleted?: unknown }) | undefined> {
-  const { rows } = await getPool().query(
+  const { rows } = await db.query(
     "SELECT id, status, deleted, metadata FROM project_hosts WHERE id = $1",
     [host_id],
   );
@@ -220,9 +226,9 @@ export async function syncHostContentDns(row: HostRowLike): Promise<void> {
     }
     if (!ip) return;
     const name = hostContentWildcardHostname({ host_id: row.id, domain });
-    await withHostContentDnsLock(row.id, async () => {
+    await withHostContentDnsLock(row.id, async (db) => {
       // The row the caller had may be stale (a stop may have started since).
-      const current = await loadHostRow(row.id);
+      const current = await loadHostRow(db, row.id);
       if (!hostWantsContentDns(current, ip)) return;
       const currentRecorded = recordedContentDns(current!);
       if (currentRecorded && currentRecorded.name !== name) {
@@ -234,7 +240,7 @@ export async function syncHostContentDns(row: HostRowLike): Promise<void> {
         ipAddress: ip,
         token,
       });
-      await setContentDnsMetadata(row.id, {
+      await setContentDnsMetadata(db, row.id, {
         name,
         record_id,
         domain,
@@ -254,14 +260,14 @@ export async function syncHostContentDns(row: HostRowLike): Promise<void> {
 // current setting.  Throws unless they are all gone, so the caller does not
 // release the address.
 export async function releaseHostContentDns(row: HostRowLike): Promise<void> {
-  await withHostContentDnsLock(row.id, async () => {
+  await withHostContentDnsLock(row.id, async (db) => {
     // What is recorded now, not when the caller loaded the row.
-    const current = await loadHostRow(row.id);
-    await releaseLocked(current ?? row);
+    const current = await loadHostRow(db, row.id);
+    await releaseLocked(db, current ?? row);
   });
 }
 
-async function releaseLocked(row: HostRowLike): Promise<void> {
+async function releaseLocked(db: Queryable, row: HostRowLike): Promise<void> {
   const settings = await getServerSettings();
   const recorded = recordedContentDns(row);
   const names = new Set<string>();
@@ -290,7 +296,7 @@ async function releaseLocked(row: HostRowLike): Promise<void> {
       throw err;
     }
   }
-  if (recorded) await setContentDnsMetadata(row.id, null);
+  if (recorded) await setContentDnsMetadata(db, row.id, null);
 }
 
 const KEEP_STATUSES = new Set([

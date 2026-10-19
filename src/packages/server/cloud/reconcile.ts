@@ -39,6 +39,9 @@ import { releaseHostContentDns } from "./host-content-dns";
 // preemption, termination): remove its content-origin DNS now rather than at
 // the sweeper's next run.  Best effort; the sweeper is the backstop.
 async function releaseLostAddressContentDns(row: any): Promise<void> {
+  // Reconcile sees stopped hosts on every pass: only call Cloudflare when a
+  // record is recorded, or the host has just gone off.
+  if (row?.metadata?.content_dns == null && row?.status === "off") return;
   try {
     await releaseHostContentDns(row);
   } catch (err) {

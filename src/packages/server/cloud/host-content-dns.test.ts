@@ -29,6 +29,10 @@ let hosts: Map<string, HostRow>;
 // pg_advisory_xact_lock, held until COMMIT or ROLLBACK.
 const advisoryLocks = new Map<string, Promise<void>>();
 let lockEvents: string[] = [];
+// A pooled query made while this process holds a lock needs a second
+// connection, which can exhaust the pool (review r3, B).
+let poolQueriesWhileLocked = 0;
+let handleQuery: (sql: string, params?: any[]) => Promise<any>;
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({
@@ -56,6 +60,8 @@ jest.mock("@cocalc/database/pool", () => ({
             lockEvents.push(`lock ${key}`);
           } else if (/^(COMMIT|ROLLBACK)/.test(sql)) {
             end();
+          } else if (!/^BEGIN/.test(sql)) {
+            return await handleQuery(sql, params);
           }
           return { rows: [] };
         },
@@ -63,6 +69,13 @@ jest.mock("@cocalc/database/pool", () => ({
       };
     },
     query: async (sql: string, params: any[] = []) => {
+      if (advisoryLocks.size > 0) poolQueriesWhileLocked += 1;
+      return await handleQuery(sql, params);
+    },
+  }),
+}));
+
+handleQuery = async (sql: string, params: any[] = []) => {
       const q = sql.replace(/\s+/g, " ");
       if (q.includes("SELECT id, status, deleted, metadata FROM project_hosts")) {
         const h = hosts.get(params[0]);
@@ -102,9 +115,7 @@ jest.mock("@cocalc/database/pool", () => ({
         };
       }
       throw new Error(`unexpected query: ${q}`);
-    },
-  }),
-}));
+};
 
 jest.mock("../bay-config", () => ({ getConfiguredBayId: () => "bay-local" }));
 
@@ -148,6 +159,7 @@ beforeEach(() => {
   ]);
   zones = { "usercontent.example.org": [], "old.example.net": [] };
   lockEvents = [];
+  poolQueriesWhileLocked = 0;
   calls = [];
   authHeaders = [];
   failDeletesFor = new Set();
@@ -508,4 +520,9 @@ describe("sweepProjectContentDns", () => {
     await sweepProjectContentDns({ localBayId: "bay-local", resolveHostBay: async () => null });
     expect(zones["old.example.net"]).toEqual([]);
   });
+});
+
+afterEach(() => {
+  // Every critical section ran on its locked client alone.
+  expect(poolQueriesWhileLocked).toBe(0);
 });
