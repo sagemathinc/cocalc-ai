@@ -116,6 +116,10 @@ import {
   refineInitialWatchSourceDecision,
 } from "./watch-policy";
 import {
+  diskIpynbHasContent,
+  isPlaceholderIpynb,
+} from "./placeholder-notebook";
+import {
   classifyRunStreamEnd,
   classifyRunStreamMessage,
   shouldReplayLiveRunSnapshot,
@@ -4614,9 +4618,13 @@ export class JupyterActions extends JupyterActions0 {
   loadFromDisk = async ({
     diskRead,
     expectedRtcVersion,
+    replacingPlaceholder = false,
   }: {
     diskRead?: DiskIpynbRead;
     expectedRtcVersion?: string;
+    // The live notebook is only the empty placeholder, whose own pending
+    // change carries no work; still abandon the load if RTC changes.
+    replacingPlaceholder?: boolean;
   } = {}) => {
     this.runDebug("ipynb.load.start");
     const read = diskRead ?? (await this.readIpynbFromDisk());
@@ -4628,7 +4636,7 @@ export class JupyterActions extends JupyterActions0 {
     const { ipynb } = await this.syncdb.fs.jupyterImportIpynb!(read.ipynb);
     if (
       expectedRtcVersion != null &&
-      (this.hasPendingIpynbChanges() ||
+      ((!replacingPlaceholder && this.hasPendingIpynbChanges()) ||
         this.getRtcVersion() !== expectedRtcVersion)
     ) {
       this.runDebug("ipynb.load.skipped.rtc_changed", {
@@ -4641,6 +4649,9 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     await this.setToIpynb(ipynb);
+    if (!isPlaceholderIpynb(read.ipynb)) {
+      this.rtcHadContent = true;
+    }
     this.markIpynbSaved();
     this.runDebug("ipynb.load.done", { bytes: read.bytes });
     // good time to refresh status
@@ -4648,6 +4659,24 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   public savedVersion: number = 0;
+
+  // Whether this session has seen the live notebook with real content. Only
+  // then may an empty notebook be saved over a file that has content (the
+  // user deleted every cell); otherwise it is the placeholder of a notebook
+  // whose content has not been loaded yet.
+  private rtcHadContent = false;
+
+  // Errors count as content, which keeps the previous behavior.
+  private rtcIsPlaceholder = async (): Promise<boolean> => {
+    try {
+      if (this.syncdb.get_one({ type: "cell" }) == null) return true;
+      if ((this.syncdb.get({ type: "cell" })?.size ?? 0) > 1) return false;
+      return isPlaceholderIpynb(await this.toIpynb());
+    } catch {
+      return false;
+    }
+  };
+
   private getRtcVersion = (): string | undefined => {
     try {
       return this.syncdb?.newestVersion?.();
@@ -4691,6 +4720,25 @@ export class JupyterActions extends JupyterActions0 {
         snapshotVersion,
       });
       return;
+    }
+    if (isPlaceholderIpynb(ipynb)) {
+      if (!this.rtcHadContent) {
+        const read = await this.readIpynbFromDisk().catch(() => undefined);
+        if (this.isClosed()) return;
+        if (diskIpynbHasContent(read)) {
+          // Never replace a notebook that has content with the placeholder;
+          // load the file instead.
+          this.runDebug("ipynb.save.skipped.placeholder_over_content");
+          await this.loadFromDisk({
+            diskRead: read,
+            expectedRtcVersion: snapshotVersion,
+            replacingPlaceholder: true,
+          });
+          return;
+        }
+      }
+    } else {
+      this.rtcHadContent = true;
     }
     const result = await this.syncdb.fs.jupyterSaveIpynb!(this.path, ipynb);
     if (this.isClosed()) return;
@@ -4799,6 +4847,23 @@ export class JupyterActions extends JupyterActions0 {
       ...this.summarizePatch(patch),
     }));
     try {
+      if (!initial && (await this.rtcIsPlaceholder())) {
+        const expectedRtcVersion = this.getRtcVersion();
+        const read = diskRead ?? (await this.readIpynbFromDisk());
+        if (diskIpynbHasContent(read)) {
+          // The live notebook is only the empty placeholder: the file wins
+          // even if the placeholder itself is unsaved.
+          this.runDebug("watch.load.placeholder_yields_to_disk", { patchSeq });
+          await this.loadFromDisk({
+            diskRead: read,
+            expectedRtcVersion,
+            replacingPlaceholder: true,
+          });
+          this.isIpynbDeleted = false;
+          return;
+        }
+        diskRead = read;
+      }
       if (!initial) {
         if (this.hasPendingIpynbChanges()) {
           this.runDebug("watch.load.skipped.rtc_dirty", { patchSeq });
@@ -4893,7 +4958,12 @@ export class JupyterActions extends JupyterActions0 {
     this.runDebug("watch.start");
     const done = () => this.isClosed();
     if (done()) return;
-    const hasRtcCells = this.syncdb.get_one({ type: "cell" }) != null;
+    // The empty placeholder cell does not count: it must not win over a file
+    // with content (it can exist when the file was read while still empty).
+    const hasRtcCells = !(await this.rtcIsPlaceholder());
+    if (hasRtcCells) {
+      this.rtcHadContent = true;
+    }
     const rtcLastChangedMs =
       typeof rtcLastChangedMsAtReady === "number" &&
       Number.isFinite(rtcLastChangedMsAtReady) &&
