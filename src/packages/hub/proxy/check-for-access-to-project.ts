@@ -1,3 +1,4 @@
+import { touchSession } from "@cocalc/server/auth/session-expiry";
 import LRU from "lru-cache";
 import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "../logger";
@@ -185,6 +186,8 @@ async function checkForRememberMeAccess({
   if (signed_in_mesg == null) {
     return { access: false, error: "not signed in via remember_me" };
   }
+  // Using a session keeps it from going idle (rate-limited inside).
+  void touchSession(hash);
 
   let access: boolean = false;
   const { account_id, email_address } = signed_in_mesg;
@@ -236,6 +239,7 @@ async function resolveRememberMeAccountId(
   if (!account_id) {
     return;
   }
+  void touchSession(hash);
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(account_id)) {
     return;

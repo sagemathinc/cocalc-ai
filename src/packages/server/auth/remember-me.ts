@@ -1,7 +1,10 @@
 import { v4 } from "uuid";
 import passwordHash from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
-import { expireTime } from "@cocalc/database/pool/util";
+import {
+  getSessionLimits,
+  newSessionExpiry,
+} from "@cocalc/server/auth/session-expiry";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import Cookies from "cookies";
 import type { Request } from "express";
@@ -31,8 +34,8 @@ export async function createRememberMeCookie(
   // the value of the cookie, which encodes
   // a random uuid-v4 and the hash algorithm
   value: string;
-  // time to live of the cookie in seconds, after which the
-  // database considers it invalid; cookie should have same age
+  // the longest this session may live in seconds (its maximum lifetime);
+  // idle sessions end sooner, see session-expiry.ts
   ttl_s: number;
   // the hash persisted in the remember_me table and used as the browser session id
   hash: string;
@@ -48,8 +51,14 @@ export async function createRememberMeCookie(
   const hash_session_id: string = passwordHash(session_id);
   const x: string[] = hash_session_id.split("$");
   const value = [x[0], x[1], x[2], session_id].join("$");
-  const ttl_s: number = arg_ttl_s ?? 24 * 3600 * 30; // 30 days -- seems to work well, but this could be per user configurable, etc.
-  const expire = expireTime(ttl_s);
+  // The site's maximum session lifetime, or less if the caller asks for less
+  // (impersonation, short automated sign-ins).
+  const { expire, max_expire, last_used } = newSessionExpiry({
+    limits: await getSessionLimits(),
+    lifetime_ms:
+      arg_ttl_s != null && arg_ttl_s > 0 ? arg_ttl_s * 1000 : undefined,
+  });
+  const ttl_s = Math.round((max_expire.valueOf() - last_used.valueOf()) / 1000);
 
   // store the cookie in the database
   const hash = hash_session_id.slice(0, 127);
@@ -58,8 +67,8 @@ export async function createRememberMeCookie(
     action: "create remember me cookie",
     fn: async (db) => {
       await db.query(
-        "INSERT INTO remember_me (hash, expire, account_id) VALUES($1::TEXT, $2::TIMESTAMP, $3::UUID)",
-        [hash, expire, account_id],
+        "INSERT INTO remember_me (hash, expire, account_id, last_used, max_expire) VALUES($1::TEXT, $2::TIMESTAMP, $3::UUID, $4::TIMESTAMP, $5::TIMESTAMP)",
+        [hash, expire, account_id, last_used, max_expire],
       );
     },
   });

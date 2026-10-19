@@ -301,6 +301,7 @@ import {
   getActiveUserMapHistorySnapshot as getActiveUserMapHistorySnapshotLocal,
 } from "@cocalc/server/active-user-map-history";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
+import { SESSION_LIFETIME_WARNING_MS } from "@cocalc/server/auth/session-expiry";
 import {
   recordNewAuthSession,
   type AuthSessionFactorLevel,
@@ -2841,6 +2842,46 @@ export async function getFundingApprovalReadiness({
   await assertAdmin(account_id);
   if (force === true) await initCourseFundingApprovalService();
   return await getFundingApprovalReadiness0({ force: force === true });
+}
+
+export async function getSessionLifetime({
+  account_id,
+  session_hash,
+}: {
+  account_id?: string;
+  session_hash?: string | null;
+} = {}): Promise<{
+  max_expire?: string;
+  warn_before_ms: number;
+  renewable: boolean;
+}> {
+  const hash = `${session_hash ?? ""}`.trim();
+  if (!account_id || !hash) {
+    return { warn_before_ms: SESSION_LIFETIME_WARNING_MS, renewable: false };
+  }
+  const row = (
+    await getPool().query(
+      `
+        SELECT r.max_expire,
+               EXISTS (
+                 SELECT 1 FROM account_impersonation_sessions i
+                  WHERE i.session_hash = r.hash
+               ) AS impersonation
+          FROM remember_me r
+         WHERE r.hash = $1::CHAR(127)
+           AND r.account_id = $2::UUID
+           AND r.expire > NOW()
+      `,
+      [hash.slice(0, 127), account_id],
+    )
+  ).rows[0];
+  return {
+    max_expire: row?.max_expire
+      ? new Date(row.max_expire).toISOString()
+      : undefined,
+    warn_before_ms: SESSION_LIFETIME_WARNING_MS,
+    renewable: row != null && !row.impersonation,
+  };
 }
 
 export async function getBillingAuthorityStatus({

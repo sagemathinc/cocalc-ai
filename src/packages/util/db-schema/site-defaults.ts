@@ -200,6 +200,8 @@ export type SiteSettingsKeys =
   | "project_rootfs_default_image_gpu"
   | "project_rootfs_prepull_images"
   | "samesite_remember_me"
+  | "session_idle_timeout_days"
+  | "session_max_lifetime_days"
   | "browser_raw_exec_policy";
 
 type Mapping = { [key: string]: string | number | boolean };
@@ -1936,6 +1938,26 @@ export const site_settings_conf: SiteSettings = {
     default: "strict",
     valid: ["strict", "lax"],
     to_val: (x) => (x === "none" ? "lax" : `${x}`),
+    tags: ["Security"],
+    group: "Access & Identity",
+    subgroup: "Security",
+  },
+  session_idle_timeout_days: {
+    name: "Sign-in session idle timeout (days)",
+    desc: "A browser or CLI sign-in session that is not used for this many days stops working and is deleted. Using a session (loading a page, calling the API, or keeping a browser tab connected) moves this deadline forward, so people are not signed out while they use the site. Must be at most the maximum session lifetime.",
+    default: "14",
+    valid: only_pos_int,
+    to_val: to_int,
+    tags: ["Security"],
+    group: "Access & Identity",
+    subgroup: "Security",
+  },
+  session_max_lifetime_days: {
+    name: "Sign-in session maximum lifetime (days)",
+    desc: "However much it is used, a sign-in session ends this many days after sign-in, and the person signs in again. An open browser tab is never cut off; from 3 days before the end it asks for the password or second factor, which starts a new lifetime. Applies to sessions created after a change; existing sessions keep their end date.",
+    default: "60",
+    valid: only_pos_int,
+    to_val: to_int,
     tags: ["Security"],
     group: "Access & Identity",
     subgroup: "Security",

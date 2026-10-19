@@ -76,6 +76,7 @@ export const system = {
   getLaunchHealth: authFirstRequireAccount,
   getFundingApprovalReadiness: authFirstRequireAccount,
   getBillingAuthorityStatus: authFirstRequireAccount,
+  getSessionLifetime: authFirstRequireAccount,
   drainBillingAuthority: authFirstRequireAccount,
   resumeBillingAuthority: authFirstRequireAccount,
   handoffBillingAuthority: authFirstRequireAccount,
@@ -2247,6 +2248,19 @@ export interface System {
   getBillingAuthorityStatus: (opts?: {
     account_id?: string;
   }) => Promise<BillingAuthorityStatus>;
+
+  // When this browser session's maximum lifetime ends, for the reminder to
+  // re-enter the password or second factor (which starts a new lifetime).
+  // Nothing for sessions without a known end, and renewable is false for
+  // sessions the person cannot extend (impersonation).
+  getSessionLifetime: (opts?: {
+    account_id?: string;
+    session_hash?: string | null;
+  }) => Promise<{
+    max_expire?: string;
+    warn_before_ms: number;
+    renewable: boolean;
+  }>;
 
   drainBillingAuthority: (opts?: {
     account_id?: string;

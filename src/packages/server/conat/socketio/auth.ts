@@ -3,6 +3,7 @@
 // Both adapters intentionally share subject-policy logic from
 // src/packages/conat/auth/subject-policy.ts.
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
+import { trackConnectedSession } from "@cocalc/server/auth/session-expiry";
 import { parse } from "cookie";
 import {
   getRememberMeCookieNamesForRequest,
@@ -472,6 +473,10 @@ export async function getUser(
       browser_id: readBrowserId(socket),
       session_hash: hash,
     });
+    // A connected browser is using its session: keep it from going idle
+    // while connected. The connection itself is never cut by expiry.
+    const releaseSession = trackConnectedSession(hash);
+    socket?.once?.("disconnect", releaseSession);
     const user = { account_id, auth_session_hash: hash };
     assertHubInteractiveEgressAllowed(socket, user);
     return user;
