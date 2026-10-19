@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
 import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
+import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -42,25 +43,37 @@ export function SessionLifetimeBanner() {
     | undefined;
   const [lifetime, setLifetime] = useState<SessionLifetime | undefined>();
   const [verifying, setVerifying] = useState(false);
-  // Which signed-in account a response belongs to: a reply for an earlier
-  // account (sign-out, then sign-in as someone else) is dropped.
-  const generation = useRef(0);
+  // Only the latest request's answer is shown: an earlier one (for an
+  // earlier account, or an hourly refresh overtaken by the one after "Stay
+  // signed in") is dropped.
+  const latestRequest = useRef(0);
   const cookieRefreshedAt = useRef(0);
+  const cookieRefreshing = useRef(false);
 
   const refreshCookie = useCallback(async (force = false) => {
+    if (cookieRefreshing.current) return;
     if (!force && Date.now() - cookieRefreshedAt.current < COOKIE_REFRESH_MS)
       return;
-    cookieRefreshedAt.current = Date.now();
+    cookieRefreshing.current = true;
     try {
-      await postAuthApi({ endpoint: "auth/refresh-session-cookie", body: {} });
+      // The auth origin of this account's home bay, as for fresh auth: only
+      // it has this session.
+      const result = await postAuthApi<{ refreshed?: boolean }>({
+        endpoint: "auth/refresh-session-cookie",
+        body: {},
+        origin: getControlPlaneOrigin(),
+      });
+      // Not refreshed: try again at the next hourly refresh.
+      cookieRefreshedAt.current = result?.refreshed === true ? Date.now() : 0;
     } catch {
-      // Tried again at a later refresh.
       cookieRefreshedAt.current = 0;
+    } finally {
+      cookieRefreshing.current = false;
     }
   }, []);
 
   const refresh = useCallback(async () => {
-    const current = generation.current;
+    const request = ++latestRequest.current;
     let next: SessionLifetime | undefined;
     try {
       next = await webapp_client.conat_client.hub.system.getSessionLifetime({});
@@ -69,7 +82,7 @@ export function SessionLifetimeBanner() {
       // again at the next refresh.
       next = undefined;
     }
-    if (current !== generation.current) return;
+    if (request !== latestRequest.current) return;
     setLifetime(next);
     // An active browser keeps its cookie as long as the server keeps the
     // session (impersonation sessions are not renewable and keep theirs).
@@ -77,7 +90,7 @@ export function SessionLifetimeBanner() {
   }, [refreshCookie]);
 
   useEffect(() => {
-    generation.current += 1;
+    latestRequest.current += 1;
     setLifetime(undefined);
     setVerifying(false);
     cookieRefreshedAt.current = 0;

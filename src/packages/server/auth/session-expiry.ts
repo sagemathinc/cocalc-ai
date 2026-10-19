@@ -27,7 +27,6 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getLogger from "@cocalc/backend/logger";
 import { SESSION_LIMIT_MAX_DAYS } from "@cocalc/util/db-schema/site-defaults";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
-import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const logger = getLogger("server:auth:session-expiry");
 
@@ -421,8 +420,10 @@ export async function runSessionMaintenance({
               WHERE o.account_id = m.account_id AND o.status = 'running'
            )`
         : "";
-      // Accounts homed on this bay, in random order: an account the fence
-      // keeps refusing cannot hold back the others.
+      // In random order, so an account the fence keeps refusing (being
+      // rehomed, or homed elsewhere) cannot hold back the others. The fence
+      // alone decides which bay owns an account: its directory entry wins
+      // over the accounts row, which can lag behind a failed cutover.
       const accounts = (
         await client.query(
           `
@@ -431,7 +432,6 @@ export async function runSessionMaintenance({
                 FROM remember_me m
                 JOIN accounts a ON a.account_id = m.account_id
                WHERE a.deleted IS NOT TRUE
-                 AND COALESCE(NULLIF(TRIM(a.home_bay_id), ''), $3) = $3
                  AND m.expire > NOW()
                  AND (
                    m.last_used IS NULL
@@ -448,7 +448,7 @@ export async function runSessionMaintenance({
             ORDER BY random()
             LIMIT $2
           `,
-          [idle_ms, account_batch, getConfiguredBayId()],
+          [idle_ms, account_batch],
         )
       ).rows.map(({ account_id }) => account_id as string);
       let started = 0;

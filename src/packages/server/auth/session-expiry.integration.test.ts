@@ -26,6 +26,7 @@ import { getAccountIdFromRememberMe } from "./get-account";
 import { createRememberMeCookie } from "./remember-me";
 import { recordNewAuthSession, setSessionFreshAuth } from "./auth-sessions";
 import { refreshSignInCookies } from "./set-sign-in-cookies";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   renewSessionLifetime,
   resetSessionTouchesForTest,
@@ -357,4 +358,49 @@ it("an active browser's cookie is set again for the full cookie lifetime", async
   expect(await refreshSignInCookies({ req: gone.req, res: gone.res })).toEqual({
     refreshed: false,
   });
+});
+
+it("maintenance follows the directory, not a stale accounts row", async () => {
+  // A cutover that updated the directory to this bay but failed before
+  // finalizing leaves the accounts row naming the source bay; the fence lets
+  // this bay write, so maintenance must too.
+  const { account_id, hash } = await session();
+  await getPool().query(
+    "UPDATE remember_me SET last_used = NULL, max_expire = NULL, expire = NOW() + INTERVAL '170 days' WHERE hash = $1::CHAR(127)",
+    [hash],
+  );
+  await getPool().query(
+    "UPDATE accounts SET home_bay_id = 'bay-source' WHERE account_id = $1",
+    [account_id],
+  );
+  const existed = (
+    await getPool().query(
+      "SELECT to_regclass('public.cluster_account_directory') AS t",
+    )
+  ).rows[0].t;
+  if (!existed) {
+    await getPool().query(
+      "CREATE TABLE cluster_account_directory (account_id UUID PRIMARY KEY, home_bay_id TEXT)",
+    );
+  }
+  try {
+    await getPool().query(
+      `INSERT INTO cluster_account_directory (account_id, email_address, home_bay_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (account_id) DO UPDATE SET home_bay_id = EXCLUDED.home_bay_id`,
+      [account_id, `${account_id}@example.test`, getConfiguredBayId()],
+    );
+    await maintain();
+    near((await row(hash)).last_used, Date.now());
+    near((await row(hash)).expire, Date.now() + 14 * DAY);
+  } finally {
+    if (!existed) {
+      await getPool().query("DROP TABLE cluster_account_directory");
+    } else {
+      await getPool().query(
+        "DELETE FROM cluster_account_directory WHERE account_id = $1",
+        [account_id],
+      );
+    }
+  }
 });
