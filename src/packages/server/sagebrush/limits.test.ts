@@ -107,6 +107,23 @@ describe("getSagebrushLimits", () => {
     expect(sync?.read_bytes_per_day).toBe(0);
   });
 
+  it("never answers a storage limit Sagebrush can't read: it uses the fallback's", async () => {
+    mockGetOAuthAccountState.mockResolvedValue(
+      live({
+        class: "custom",
+        effective_limits: {
+          sagebrush_storage_bytes: 1e20,
+          sagebrush_max_file_bytes: 2.5,
+          sagebrush_private_links: "yes",
+        },
+      }),
+    );
+    const limits = await getSagebrushLimits(ACCOUNT);
+    expect(limits?.storage_bytes).toBe(1_000_000_000);
+    expect(limits?.max_file_bytes).toBe(100_000_000);
+    expect(limits?.private_links).toBe(false);
+  });
+
   it("always answers the sync block, off for a tier that turns sync off", async () => {
     mockGetOAuthAccountState.mockResolvedValue(
       live({

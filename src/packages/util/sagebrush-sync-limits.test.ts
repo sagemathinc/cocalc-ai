@@ -4,9 +4,10 @@
  */
 
 import {
-  assertValidSagebrushSyncLimits,
+  assertValidSagebrushLimits,
   sagebrushSafeInteger,
-  SAGEBRUSH_SYNC_INTEGER_LIMITS,
+  SAGEBRUSH_BOOLEAN_LIMITS,
+  SAGEBRUSH_INTEGER_LIMITS,
 } from "./sagebrush-sync-limits";
 
 const BAD = [
@@ -21,7 +22,7 @@ const BAD = [
   true,
 ];
 
-describe("Sagebrush sync limits", () => {
+describe("Sagebrush limits", () => {
   it("accepts exactly the non-negative safe integers", () => {
     expect(sagebrushSafeInteger(0)).toBe(0);
     expect(sagebrushSafeInteger(Number.MAX_SAFE_INTEGER)).toBe(
@@ -32,28 +33,33 @@ describe("Sagebrush sync limits", () => {
   });
 
   it("refuses a tier that sets a sync limit Sagebrush can't read", () => {
-    for (const key of SAGEBRUSH_SYNC_INTEGER_LIMITS) {
+    for (const key of SAGEBRUSH_INTEGER_LIMITS) {
       for (const value of BAD) {
-        expect(() => assertValidSagebrushSyncLimits({ [key]: value })).toThrow(
+        expect(() => assertValidSagebrushLimits({ [key]: value })).toThrow(
           `usage_limits.${key}`,
         );
       }
       expect(() =>
-        assertValidSagebrushSyncLimits({ [key]: Number.MAX_SAFE_INTEGER }),
+        assertValidSagebrushLimits({ [key]: Number.MAX_SAFE_INTEGER }),
       ).not.toThrow();
     }
-    expect(() =>
-      assertValidSagebrushSyncLimits({ sagebrush_sync_enabled: "yes" }),
-    ).toThrow("sagebrush_sync_enabled");
+    for (const key of SAGEBRUSH_BOOLEAN_LIMITS) {
+      expect(() => assertValidSagebrushLimits({ [key]: "yes" })).toThrow(
+        `usage_limits.${key}`,
+      );
+    }
+    expect(SAGEBRUSH_INTEGER_LIMITS).toContain("sagebrush_storage_bytes");
+    expect(SAGEBRUSH_INTEGER_LIMITS).toContain("sagebrush_max_file_bytes");
   });
 
   it("allows blank limits, which are inherited", () => {
-    expect(() => assertValidSagebrushSyncLimits(undefined)).not.toThrow();
+    expect(() => assertValidSagebrushLimits(undefined)).not.toThrow();
     expect(() =>
-      assertValidSagebrushSyncLimits({
+      assertValidSagebrushLimits({
         sagebrush_sync_enabled: null,
         sagebrush_sync_version_bytes: null,
-        sagebrush_storage_bytes: 1.5,
+        sagebrush_storage_bytes: undefined,
+        max_projects: 1.5,
       }),
     ).not.toThrow();
   });

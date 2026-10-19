@@ -222,10 +222,12 @@ export function normalizeMembershipEffectiveLimits(
       usageLimits?.rootfs_max_storage_gb,
     ),
     rootfs_oci_images: normalizeBoolean(usageLimits?.rootfs_oci_images),
-    sagebrush_storage_bytes: normalizeNonNegativeInteger(
+    // (exactly the values Sagebrush can read: anything else is dropped, so
+    // the tier template's value is used; see util/sagebrush-sync-limits.ts)
+    sagebrush_storage_bytes: sagebrushSafeInteger(
       usageLimits?.sagebrush_storage_bytes,
     ),
-    sagebrush_max_file_bytes: normalizeNonNegativeInteger(
+    sagebrush_max_file_bytes: sagebrushSafeInteger(
       usageLimits?.sagebrush_max_file_bytes,
     ),
     sagebrush_private_links: normalizeBoolean(
@@ -234,8 +236,6 @@ export function normalizeMembershipEffectiveLimits(
     sagebrush_sync_enabled: normalizeBoolean(
       usageLimits?.sagebrush_sync_enabled,
     ),
-    // (exactly the values Sagebrush can read: anything else is dropped, so
-    // the tier template's value is used; see util/sagebrush-sync-limits.ts)
     sagebrush_sync_version_bytes: sagebrushSafeInteger(
       usageLimits?.sagebrush_sync_version_bytes,
     ),
