@@ -177,6 +177,23 @@ describe("IFrameHTML on a site with a content origin", () => {
     expect(frame.getAttribute("srcdoc")).toBeNull();
   });
 
+  it("drops an expired link for the safe preview when the refresh fails", async () => {
+    jest.useFakeTimers();
+    issueMock
+      .mockResolvedValueOnce({ url: CONTENT_URL, expires_at: Date.now() + 30_000 })
+      .mockRejectedValue(new Error("network"));
+    renderFrame(freshProject());
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(31_000); // refresh after expiry fails
+    });
+    const frame = screen.getByTitle("Rendered preview of /home/user/a.html");
+    expect(frame.getAttribute("src")).toBeNull();
+    expect(frame.getAttribute("srcdoc")).toBe("<p>hi</p>");
+  });
+
   it("shows a re-issued link at the next save, or shortly before the old one expires, not at once", async () => {
     jest.useFakeTimers();
     const second = CONTENT_URL.replace("/cap/", "/cap2/");
