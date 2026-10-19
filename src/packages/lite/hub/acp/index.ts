@@ -18,6 +18,7 @@ import {
   drainAgentRpcReports,
   noteAgentMessageTurnFailed,
 } from "./agent-rpc-report";
+import { toolUseTracker } from "./tool-use";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
@@ -8052,37 +8053,6 @@ type AcpExecutionResult = {
   outcome: TurnOutcome;
 };
 
-/** Events that mean the agent acted (ran a command, wrote a file, ...). */
-function isToolEvent(payload?: AcpStreamPayload | null): boolean {
-  if (payload?.type !== "event") return false;
-  const event = payload.event;
-  switch (event.type) {
-    case "terminal":
-    case "file":
-    case "diff":
-    case "image":
-    case "subagent":
-    case "peerMessage":
-      return true;
-    case "harness": {
-      // A tool call counts once it runs, not while it waits for permission
-      // (which may be refused or canceled). "failed" ran too: it may have
-      // changed something before it failed, and an agent need not report
-      // in_progress first.
-      const data = event.data as { sessionUpdate?: unknown; status?: unknown };
-      return (
-        (data?.sessionUpdate === "tool_call" ||
-          data?.sessionUpdate === "tool_call_update") &&
-        (data.status === "in_progress" ||
-          data.status === "completed" ||
-          data.status === "failed")
-      );
-    }
-    default:
-      return false;
-  }
-}
-
 function paymentSourceFromAuthSource({
   authSource,
   accountId,
@@ -8295,11 +8265,11 @@ async function executeAcpRequest({
     let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
     let recoveryDetail: string | undefined;
     // What the turn did and how it failed, for its outcome.
-    let toolRan = false;
+    const toolUse = toolUseTracker();
     let streamedFailure: TurnFailure | undefined;
     let streamedCode: string | undefined;
     const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
-      if (isToolEvent(payload)) toolRan = true;
+      toolUse.observe(payload);
       if (payload?.type === "error") {
         streamedFailure ??= payload.failure;
         streamedCode ??= payload.code;
@@ -8495,7 +8465,7 @@ async function executeAcpRequest({
         failure: streamedFailure,
         code: recoveryCode ?? streamedCode,
         error: terminalError,
-        toolRan,
+        toolRan: toolUse.ran,
       }),
     };
   } finally {

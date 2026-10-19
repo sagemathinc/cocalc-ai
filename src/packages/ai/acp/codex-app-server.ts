@@ -3655,6 +3655,7 @@ export class CodexAppServerAgent implements AcpAgent {
                         ? item.exitCode
                         : undefined,
                   },
+                  ...(item.status === "declined" ? { declined: true } : {}),
                 },
               });
             }

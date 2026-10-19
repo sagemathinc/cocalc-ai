@@ -501,6 +501,8 @@ export type AcpStreamEvent =
         signal?: string;
       };
       output?: string;
+      /** exit: the command was refused, so it never ran. */
+      declined?: boolean;
     }
   | ({ type: "peerMessage" } & Omit<
       AgentMessageRuntimeEvent,
