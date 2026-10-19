@@ -3499,15 +3499,16 @@ export class ChatActions extends Actions<ChatState> {
   // Dispatch a message already written with sendChat({ skipModelDispatch }),
   // resolving only once the agent has admitted it or definitely not (see
   // getAcpMessageState). The hub admits a user message once, by message_id,
-  // so dispatching one again is safe.
+  // so dispatching one again is safe. A message that is gone (deleted in
+  // another tab) is a failure, never a dispatch done (Codex on #1134).
   dispatchChatMessage = async (messageId: string): Promise<void> => {
     const raw = this.getMessageById(messageId);
-    if (raw == null) return;
+    if (raw == null) throw Error("the message to dispatch is gone");
     const obj = this.toImmutableRecord(raw);
     const { message } = normalizeChatMessage(
       (obj.toJS?.() ?? obj) as ChatMessage,
     );
-    if (message == null) return;
+    if (message == null) throw Error("the message to dispatch is gone");
     await this.processAI({
       message,
       acpSendMode:

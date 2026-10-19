@@ -2392,3 +2392,13 @@ it("a board submission's row carries the mark the hub limits by", () => {
     "board_answers",
   );
 });
+
+// Codex on #1134: a board submission's row deleted in another tab before
+// its dispatch is a failed dispatch, never one done without the hub.
+it("dispatching a message that is gone fails, without contacting the hub", async () => {
+  const actions = makeActions();
+  actions.processAI = jest.fn();
+  await expect(actions.dispatchChatMessage("gone")).rejects.toThrow(/gone/);
+  expect(actions.processAI).not.toHaveBeenCalled();
+  expect(actions.getAcpMessageState("gone")).toBeUndefined();
+});

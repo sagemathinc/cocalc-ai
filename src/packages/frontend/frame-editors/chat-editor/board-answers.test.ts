@@ -392,6 +392,96 @@ describe("delivery", () => {
     ).rejects.toBeInstanceOf(BoardAnswersRefusal);
   });
 
+  // Codex on #1134: a row deleted (another tab, a collaborator) between
+  // the save and the lookup has no state either; that is never "admitted".
+  // As chat's own dispatch does for a missing row: nothing, or a throw.
+  function deleteOn(chat: any, messages: Map<string, string>) {
+    return (id?: string) => {
+      for (const key of [...messages.keys()]) {
+        if (!id || key === id) {
+          messages.delete(key);
+          chat.states.delete(key);
+        }
+      }
+    };
+  }
+
+  test("a row deleted between the save and the lookup is not sent, and nothing is dispatched", async () => {
+    const { chat, messages } = fakeChat();
+    chat.syncdb.save.mockImplementationOnce(async () =>
+      deleteOn(chat, messages)(),
+    );
+    const delivery = deliverBoardAnswers({
+      chat,
+      threadId: "thread-1",
+      submission,
+      stale: false,
+    });
+    await expect(delivery).rejects.toBeInstanceOf(BoardAnswersRefusal);
+    await expect(delivery).rejects.toThrow(/Not sent/);
+    expect(chat.dispatchChatMessage).not.toHaveBeenCalled();
+  });
+
+  test("a row deleted while it is dispatched is not confirmed", async () => {
+    const { chat, messages } = fakeChat();
+    // The dispatch finds no row and does nothing; the row and its state go.
+    chat.dispatchChatMessage.mockImplementationOnce(async (id: string) =>
+      deleteOn(chat, messages)(id),
+    );
+    await expect(
+      deliverBoardAnswers({
+        chat,
+        threadId: "thread-1",
+        submission,
+        stale: false,
+      }),
+    ).rejects.toThrow(/Not confirmed/);
+  });
+
+  test("a repeat of a delivered submission whose row is gone is not received again", async () => {
+    const { chat, messages } = fakeChat();
+    await deliverBoardAnswers({
+      chat,
+      threadId: "thread-1",
+      submission,
+      stale: false,
+    });
+    // Sent again after its row was deleted, and deleted again at the save.
+    deleteOn(chat, messages)();
+    chat.syncdb.save.mockImplementationOnce(async () =>
+      deleteOn(chat, messages)(),
+    );
+    await expect(
+      deliverBoardAnswers({
+        chat,
+        threadId: "thread-1",
+        submission,
+        stale: false,
+      }),
+    ).rejects.toBeInstanceOf(BoardAnswersRefusal);
+  });
+
+  test("through the channel: the frame is told not received, never received", async () => {
+    const { chat, messages } = fakeChat();
+    chat.syncdb.save.mockImplementationOnce(async () =>
+      deleteOn(chat, messages)(),
+    );
+    const { send, sent } = open((s: Submission, o: { stale: boolean }) =>
+      deliverBoardAnswers({
+        chat,
+        threadId: "thread-1",
+        submission: s,
+        stale: o.stale,
+      }),
+    );
+    send(answers());
+    await until(() => sent.length > 0);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ sagebrush: "refused", id: ID });
+    expect(sent[0].message).toMatch(/Not sent/);
+    expect(sent.some((m) => m.sagebrush === "received")).toBe(false);
+  });
+
   test("another thread is another message", async () => {
     expect(await boardAnswersMessageId("thread-1", ID)).not.toBe(
       await boardAnswersMessageId("thread-2", ID),
@@ -472,9 +562,11 @@ describe("one row per submission", () => {
   test("two deliveries of the same id at once write one message", async () => {
     const rows: string[] = [];
     let saved: (() => void) | undefined;
+    let afterSave = false;
     const chat = {
       getMessagesInThread: () => [{}],
-      getMessageById: () => undefined, // neither sees the other's row yet
+      // neither sees the other's row before the save; both after it
+      getMessageById: () => (afterSave ? {} : undefined),
       reserveChatSendIdentity: () => ({
         date: `${rows.length}`,
         message_id: "x",
@@ -486,7 +578,16 @@ describe("one row per submission", () => {
       },
       dispatchChatMessage: async () => {},
       getAcpMessageState: () => "sent",
-      syncdb: { save: () => new Promise<void>((r) => (saved = r)) },
+      syncdb: {
+        save: () =>
+          new Promise<void>(
+            (r) =>
+              (saved = () => {
+                afterSave = true;
+                r();
+              }),
+          ),
+      },
     };
     const submission: any = {
       id: ID,
@@ -617,8 +718,8 @@ describe("an hourly cap per thread, across channels", () => {
 
   test("a write that failed takes no slot (astra's note)", async () => {
     const c = chat();
-    c.sendChat.mockReturnValue("");
     for (let i = 0; i < MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR; i++) {
+      c.sendChat.mockReturnValueOnce("");
       await expect(
         deliverBoardAnswers({
           chat: c,
@@ -628,7 +729,7 @@ describe("an hourly cap per thread, across channels", () => {
         }),
       ).rejects.toThrow("isn't ready");
     }
-    c.sendChat.mockImplementation((opts: any) => "d");
+    // now the write succeeds (the fake's own sendChat, which writes the row)
     await expect(
       deliverBoardAnswers({
         chat: c,

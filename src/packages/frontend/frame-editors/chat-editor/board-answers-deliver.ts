@@ -59,7 +59,15 @@ export interface BoardAnswersChat {
 
 /** Whether the agent has the message: anything but still sending or not
  * sent (a message nothing dispatched stays "sending"). */
-function admitted(state: string | undefined): boolean {
+// Whether the agent has admitted the message: only on positive evidence.
+// The row must still be there; then its state is "queue", "sent",
+// "running", or none once its turn has ended (a board submission is
+// written "sending" and only the hub moves it on). A missing row says
+// nothing: its state is missing too, so it is never taken as admitted
+// (Codex on #1134).
+function admitted(chat: BoardAnswersChat, messageId: string): boolean {
+  if (chat.getMessageById(messageId) == null) return false;
+  const state = chat.getAcpMessageState(messageId);
   return state !== "sending" && state !== "not-sent";
 }
 
@@ -255,9 +263,16 @@ async function deliverOnce(
     );
   }
   await chat.syncdb.save();
-  if (existing && admitted(chat.getAcpMessageState(messageId))) return;
+  if (existing && admitted(chat, messageId)) return;
+  // Deleted meanwhile (another tab or a collaborator): nothing to dispatch,
+  // so not sent.
+  if (chat.getMessageById(messageId) == null) {
+    throw new BoardAnswersRefusal(
+      "Not sent: the message with your answers was removed from the conversation. Submit again.",
+    );
+  }
   await chat.dispatchChatMessage(messageId);
-  if (!admitted(chat.getAcpMessageState(messageId))) {
+  if (!admitted(chat, messageId)) {
     // Possibly taken with the reply lost. The hub sends a board submission
     // at most once: sending it again either delivers it (if it surely
     // wasn't) or is refused (if it may have been).

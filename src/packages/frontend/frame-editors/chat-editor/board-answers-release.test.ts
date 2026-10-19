@@ -163,9 +163,11 @@ describe("through the channel and the delivery", () => {
     });
     const submission = (checkSubmission(POSTED, answers()) as any).submission;
     let input = "";
+    let written = false;
     const chat = {
       getMessagesInThread: () => [{}],
-      getMessageById: () => undefined,
+      // The row, once written (delivery needs it there to count it admitted).
+      getMessageById: () => (written ? {} : undefined),
       reserveChatSendIdentity: () => ({
         date: "2026-10-17T08:00:00.000Z",
         message_id: "x",
@@ -173,6 +175,7 @@ describe("through the channel and the delivery", () => {
       }),
       sendChat: (opts: any) => {
         input = opts.input;
+        written = true;
         return opts.chatIdentity.date;
       },
       dispatchChatMessage: async () => {},
