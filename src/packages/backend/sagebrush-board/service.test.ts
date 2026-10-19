@@ -23,7 +23,12 @@ import {
   boardDecideServiceInFlightForTests,
   handleBoardDecidePrepare,
   initBoardDecideService,
+  sandboxBoardFiles,
 } from "./service";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const ID = "33333333-3333-4333-8333-333333333333";
 const PROJECT = "22222222-2222-4222-8222-222222222222";
@@ -61,8 +66,8 @@ function files(over: Partial<BoardFiles> = {}) {
   const reads: string[] = [];
   const f: BoardFiles = {
     realpath: async (path) => `/home/user/${path}`,
-    stat: async () => ({ size: BOARD.length }),
-    readFile: async (path) => {
+    readBoard: async (path, maxBytes) => {
+      expect(maxBytes).toBe(BOARD_FILE_LIMIT);
       reads.push(path);
       return BOARD;
     },
@@ -136,25 +141,83 @@ describe("the board, read and checked where it is", () => {
 
   test("not exactly the posted board: 409", async () => {
     const { f } = files({
-      readFile: async () => BOARD.replace("Is 7 prime?", "Is 8 prime?"),
+      readBoard: async () => BOARD.replace("Is 7 prime?", "Is 8 prime?"),
     });
     await expect(prepareBoardDecideFromFiles(f, opts())).rejects.toMatchObject({
       code: 409,
     });
   });
 
-  test("too large: 413, without reading it; or grown past it since", async () => {
-    const big = files({ stat: async () => ({ size: BOARD_FILE_LIMIT + 1 }) });
+  test("too large: the capped read's 413 is the answer", async () => {
+    const big = files({
+      readBoard: async () => {
+        throw Object.assign(new Error("too large"), { code: 413 });
+      },
+    });
     await expect(
       prepareBoardDecideFromFiles(big.f, opts()),
     ).rejects.toMatchObject({ code: 413 });
-    expect(big.reads).toHaveLength(0);
+    // and what a read returns is checked again
     const grown = files({
-      readFile: async () => "x".repeat(BOARD_FILE_LIMIT + 1),
+      readBoard: async () => "x".repeat(BOARD_FILE_LIMIT + 1),
     });
     await expect(
       prepareBoardDecideFromFiles(grown.f, opts()),
     ).rejects.toMatchObject({ code: 413 });
+  });
+
+  // astra, CORR-E3B-1: the request is bounded before it leaves.
+  test("a request larger than the model is sent is refused (400)", async () => {
+    const answer = (note: string) => message({ note });
+    const board = (over: Record<string, unknown>) =>
+      JSON.stringify({ ...JSON.parse(BOARD), ...over });
+    const cases: [string, any][] = [
+      [board({ prompt: "p".repeat(4_001) }), message()],
+      [board({}), answer("a".repeat(2_001))],
+      [
+        board({ options: [{ name: "n".repeat(81) }, { name: "b" }] }),
+        message(),
+      ],
+      [
+        board({
+          options: [{ name: "a", about: "x".repeat(2_001) }, { name: "b" }],
+        }),
+        message(),
+      ],
+      [
+        board({
+          options: Array.from({ length: 33 }, (_, i) => ({ name: `o${i}` })),
+        }),
+        message(),
+      ],
+    ];
+    for (const [text, m] of cases) {
+      const { f } = files({ readBoard: async () => text });
+      await expect(
+        prepareBoardDecideFromFiles(
+          f,
+          opts({ sha256: await boardTextDigest(text), message: m }),
+        ),
+      ).rejects.toMatchObject({ code: 400 });
+    }
+    // at the bounds, it goes
+    const ok = board({
+      prompt: "p".repeat(4_000),
+      options: [
+        { name: "n".repeat(80), about: "x".repeat(2_000) },
+        { name: "b" },
+      ],
+    });
+    const { f } = files({ readBoard: async () => ok });
+    await expect(
+      prepareBoardDecideFromFiles(
+        f,
+        opts({
+          sha256: await boardTextDigest(ok),
+          message: answer("a".repeat(2_000)),
+        }),
+      ),
+    ).resolves.toMatchObject({ request: { id: ID } });
   });
 
   test("a bad path or binding is refused before anything is touched", async () => {
@@ -201,12 +264,82 @@ describe("the board, read and checked where it is", () => {
   });
 });
 
+// daybreak2, LIMITS-R6-1: the board is read through the project's sandbox
+// from one opened handle, at most limit + 1 bytes, so a file swapped or grown
+// after any size check is never read whole.
+describe("the capped read, through a real sandbox", () => {
+  let dir = "";
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "board-decide-"));
+  });
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const LIMIT = 4096;
+
+  test("a board at the limit is read; one byte more is 413", async () => {
+    const files = sandboxBoardFiles(new SandboxedFilesystem(dir) as any);
+    await writeFile(join(dir, "ok.board.json"), "x".repeat(LIMIT));
+    await writeFile(join(dir, "big.board.json"), "x".repeat(LIMIT + 1));
+    expect(await files.readBoard("ok.board.json", LIMIT)).toHaveLength(LIMIT);
+    await expect(
+      files.readBoard("big.board.json", LIMIT),
+    ).rejects.toMatchObject({ code: 413 });
+  });
+
+  test("a file grown after the size check: no byte past limit + 1 is read", async () => {
+    await writeFile(join(dir, "q.board.json"), "x".repeat(10 * LIMIT));
+    // the handle's own stat says it is small, as if it grew right after
+    const probe = await open(join(dir, "q.board.json"));
+    const FileHandle = Object.getPrototypeOf(probe);
+    await probe.close();
+    const realStat = FileHandle.stat;
+    jest.spyOn(FileHandle, "stat").mockImplementation(async function (
+      this: any,
+    ) {
+      const info = await realStat.call(this);
+      return Object.assign(Object.create(Object.getPrototypeOf(info)), info, {
+        size: 10,
+      });
+    });
+    const realRead = FileHandle.read;
+    let returned = 0;
+    let asked = 0;
+    jest.spyOn(FileHandle, "read").mockImplementation(async function (
+      this: any,
+      ...args: any[]
+    ) {
+      asked += typeof args[2] === "number" ? args[2] : 0;
+      const out = await realRead.apply(this, args);
+      returned += out.bytesRead;
+      return out;
+    });
+    const files = sandboxBoardFiles(new SandboxedFilesystem(dir) as any);
+    await expect(files.readBoard("q.board.json", LIMIT)).rejects.toMatchObject({
+      code: 413,
+    });
+    // it was this handle that was checked and read, and the read stopped
+    expect(FileHandle.stat).toHaveBeenCalled();
+    expect(returned).toBeGreaterThan(LIMIT);
+    expect(returned).toBeLessThanOrEqual(LIMIT + 1);
+    expect(asked).toBeLessThanOrEqual(LIMIT + 1);
+  });
+
+  test("only a regular file", async () => {
+    const files = sandboxBoardFiles(new SandboxedFilesystem(dir) as any);
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(join(dir, "d.board.json"));
+    await expect(files.readBoard("d.board.json", LIMIT)).rejects.toBeTruthy();
+  });
+});
+
 describe("the service's own bounds", () => {
   const OTHER = "44444444-4444-4444-8444-444444444444";
   function held() {
     const release: (() => void)[] = [];
     const { f } = files({
-      readFile: async () => {
+      readBoard: async () => {
         await new Promise<void>((r) => release.push(r));
         return BOARD;
       },
@@ -258,7 +391,7 @@ describe("the service's own bounds", () => {
 
   test("a failure frees its slot", async () => {
     const { f } = files({
-      readFile: async () => {
+      readBoard: async () => {
         throw Error("read failed");
       },
     });
@@ -280,7 +413,11 @@ describe("the service's own bounds", () => {
         return { close() {} };
       },
     };
-    await initBoardDecideService(client);
+    await initBoardDecideService(client, {
+      projectFilesystem: async () => {
+        throw Error("not reached");
+      },
+    });
     expect(subject).toBe(BOARD_DECIDE_SUBJECT);
     expect(subject).toBe("project.*.board-decide.-");
     // a subject without a project is refused before any file is touched

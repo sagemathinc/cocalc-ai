@@ -84,12 +84,14 @@ function deps({
   const files: BoardFiles = {
     realpath: async (path) =>
       `/home/user/${path.replace(/^\/home\/user\//, "")}`,
-    stat: async (path) => {
-      reads.push(path);
-      return { size: BOARD.length };
-    },
-    readFile: async () => BOARD,
+    readBoard: async () => BOARD,
     ...filesOver,
+  };
+  // every read, whoever's readBoard it is
+  const readBoard = files.readBoard;
+  files.readBoard = async (path, maxBytes) => {
+    reads.push(path);
+    return await readBoard(path, maxBytes);
   };
   const d: BoardDecideDeps = {
     assertCollab: async () => {},
@@ -194,7 +196,7 @@ test("the question comes from what the file's server read, never the message", a
 test("the file must be exactly the board the card posted", async () => {
   const { d, calls } = deps({
     files: {
-      readFile: async () => BOARD.replace("Is 7 prime?", "Is 8 prime?"),
+      readBoard: async () => BOARD.replace("Is 7 prime?", "Is 8 prime?"),
     },
   });
   await expect(boardDecideForBoard(opts(), d)).rejects.toMatchObject({
@@ -314,27 +316,24 @@ test("a board whose name is in any case is decided, as the card shows it", async
   }
 });
 
-test("a board over the size limit is not read", async () => {
-  let read = false;
+test("a board over the size limit is refused by the capped read", async () => {
   const { d, calls } = deps({
     files: {
-      stat: async () => ({ size: BOARD_FILE_LIMIT + 1 }),
-      readFile: async () => {
-        read = true;
-        return BOARD;
+      readBoard: async (_path, maxBytes) => {
+        expect(maxBytes).toBe(BOARD_FILE_LIMIT);
+        throw Object.assign(new Error("too large"), { code: 413 });
       },
     },
   });
   await expect(boardDecideForBoard(opts(), d)).rejects.toMatchObject({
     code: 413,
   });
-  expect(read).toBe(false);
   expect(calls).toHaveLength(0);
 });
 
-test("a board that grew past the limit after stat is refused", async () => {
+test("what a read returns is checked against the limit again", async () => {
   const { d, calls } = deps({
-    files: { readFile: async () => "x".repeat(BOARD_FILE_LIMIT + 1) },
+    files: { readBoard: async () => "x".repeat(BOARD_FILE_LIMIT + 1) },
   });
   await expect(boardDecideForBoard(opts(), d)).rejects.toMatchObject({
     code: 413,
@@ -346,7 +345,7 @@ test("one call in flight per board, taken before the file is read", async () => 
   const release: (() => void)[] = [];
   const { d, reads } = deps({
     files: {
-      readFile: async () => {
+      readBoard: async () => {
         await new Promise<void>((r) => release.push(r));
         return BOARD;
       },
@@ -444,7 +443,7 @@ test("a failure frees the board", async () => {
   let fail = true;
   const { d } = deps({
     files: {
-      readFile: async () => {
+      readBoard: async () => {
         if (fail) throw Error("read failed");
         return BOARD;
       },
@@ -506,7 +505,7 @@ test("a total in-flight cap, before any read", async () => {
   let block = true;
   const { d, reads } = deps({
     files: {
-      readFile: async () => {
+      readBoard: async () => {
         if (block) await new Promise<void>((r) => release.push(r));
         return BOARD;
       },

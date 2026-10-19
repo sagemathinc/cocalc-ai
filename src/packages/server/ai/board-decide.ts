@@ -17,13 +17,16 @@
 // - money goes through the injected funding: none configured means
 //   `decide` is unavailable, and nothing is called.
 
-/** Limits on one call. */
+import { BOARD_DECIDE_REQUEST_LIMITS } from "@cocalc/util/sagebrush-board";
+
+/** Limits on one call (the request's sizes are util's, shared with the
+ * server that reads the board). */
 export const DECIDE_LIMITS = {
-  answerCharacters: 2_000,
-  promptCharacters: 4_000,
-  options: 32,
-  optionNameCharacters: 80,
-  optionAboutCharacters: 2_000,
+  answerCharacters: BOARD_DECIDE_REQUEST_LIMITS.answer,
+  promptCharacters: BOARD_DECIDE_REQUEST_LIMITS.prompt,
+  options: BOARD_DECIDE_REQUEST_LIMITS.options,
+  optionNameCharacters: BOARD_DECIDE_REQUEST_LIMITS.optionName,
+  optionAboutCharacters: BOARD_DECIDE_REQUEST_LIMITS.optionAbout,
   callsPerAccountPerMinute: 20,
 } as const;
 

@@ -17,6 +17,18 @@ export function isBoardPath(path: string): boolean {
   return path.toLowerCase().endsWith(".board.json");
 }
 
+/** The most a board decide request may send the model, in characters:
+ * checked where the board is read, before the request leaves
+ * (backend/sagebrush-board/prepare.ts), and again on the account's home bay
+ * (server/ai/board-decide.ts). */
+export const BOARD_DECIDE_REQUEST_LIMITS = {
+  prompt: 4_000,
+  options: 32,
+  optionName: 80,
+  optionAbout: 2_000,
+  answer: 2_000,
+} as const;
+
 const BOARD_PATH_LIMIT = 4096;
 const BOARD_REVISION_LIMIT = 200;
 const SHA256_HEX = /^[0-9a-f]{64}$/;

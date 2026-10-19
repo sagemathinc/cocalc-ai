@@ -11,6 +11,7 @@
 // question and options always come from the file, never from the caller.
 
 import {
+  BOARD_DECIDE_REQUEST_LIMITS,
   boardPostedName,
   boardTextDigest,
   isBoardDecideBinding,
@@ -28,8 +29,10 @@ export const BOARD_FILE_LIMIT = 16 * 1024 * 1024;
 /** The project's files, as the file server sees them. */
 export interface BoardFiles {
   realpath(path: string): Promise<string>;
-  stat(path: string): Promise<{ size: number }>;
-  readFile(path: string): Promise<string>;
+  /** The regular file at `path` as UTF-8, reading at most maxBytes + 1
+   * bytes of it from one opened handle: one larger is refused (413), never
+   * read whole (daybreak2, LIMITS-R6-1). */
+  readBoard(path: string, maxBytes: number): Promise<string>;
 }
 
 function codedError(message: string, code: number): Error {
@@ -47,12 +50,9 @@ export async function prepareBoardDecideFromFiles(
     throw codedError("Invalid request.", 400);
   }
   const resolved_path = await files.realpath(path);
-  const { size } = await files.stat(resolved_path);
-  if (!(size >= 0) || size > BOARD_FILE_LIMIT) {
-    throw codedError("This board is too large to check answers on.", 413);
-  }
-  const text = await files.readFile(resolved_path);
-  // The file can grow between stat and read: check what was read.
+  const text = await files.readBoard(resolved_path, BOARD_FILE_LIMIT);
+  // What was read can't be more than the limit (the read stops there);
+  // checked again here all the same.
   if (new TextEncoder().encode(text).byteLength > BOARD_FILE_LIMIT) {
     throw codedError("This board is too large to check answers on.", 413);
   }
@@ -67,6 +67,26 @@ export async function prepareBoardDecideFromFiles(
     throw codedError(deciding.message.slice(0, 500), 400);
   }
   const { id, prompt, options, answer } = deciding.request;
+  // Bounded before anything leaves (astra, CORR-E3B-1): a board may ask a
+  // question longer than the model is sent; that one isn't checked here.
+  const L = BOARD_DECIDE_REQUEST_LIMITS;
+  if (
+    typeof prompt !== "string" ||
+    prompt.length > L.prompt ||
+    typeof answer !== "string" ||
+    answer.length > L.answer ||
+    !Array.isArray(options) ||
+    options.length > L.options ||
+    !options.every(
+      (o) =>
+        typeof o?.name === "string" &&
+        o.name.length <= L.optionName &&
+        (o.about === undefined ||
+          (typeof o.about === "string" && o.about.length <= L.optionAbout)),
+    )
+  ) {
+    throw codedError("This question can't be checked.", 400);
+  }
   // Only these fields: nothing else of the board goes back.
   return {
     resolved_path,

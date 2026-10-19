@@ -152,8 +152,7 @@ describe("end to end through the bound call", () => {
         await prepareBoardDecideFromFiles(
           {
             realpath: async (path) => `/home/user/${path}`,
-            stat: async () => ({ size: BOARD.length }),
-            readFile: async () => BOARD,
+            readBoard: async () => BOARD,
           },
           o,
         ),

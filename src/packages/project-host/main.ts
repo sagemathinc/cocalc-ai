@@ -42,6 +42,7 @@ import {
   artifactCatalogFilesystem,
   verifyProvisionedProjectInventoryBatch,
   PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
+  boardDecideFilesystem,
 } from "./file-server";
 import { handleProjectHostUpload } from "./upload";
 import { startArtifactCatalog } from "./artifact-catalog";
@@ -454,7 +455,9 @@ export async function main(
     await initProjectArchiveInfoService(conatClient);
   // A board's decide request is read and checked here, where its project's
   // files are; only the bounded request goes back to the hub.
-  const boardDecideService = await initBoardDecideService(conatClient);
+  const boardDecideService = await initBoardDecideService(conatClient, {
+    projectFilesystem: boardDecideFilesystem,
+  });
   const sharedBrowserService = await initSharedBrowserService(conatClient);
 
   // ACP runs inside project-host in container mode (no env flag needed).

@@ -6,10 +6,10 @@
 // The board decide service (conat/project/board-decide.ts), started wherever
 // a project's files are served: on a project host (project-host/main.ts),
 // and on the owning bay in the workspace runtime
-// (server/conat/project/workspace-filesystem.ts). A board is read here, by
-// the server that has it, through the project's own file service, so its
-// bytes stay on the data plane; only the bounded request goes back to the
-// hub that asked (AGENTS.md: control plane and data plane).
+// (server/conat/project/run.ts). A board is read here, by the server that
+// has it, through the same sandboxed view of the project its file service
+// uses, so its bytes stay on the data plane; only the bounded request goes
+// back to the hub that asked (AGENTS.md: control plane and data plane).
 //
 // Its own bounds, for the server it runs on: at most
 // MAX_IN_FLIGHT_PER_PROJECT reads in flight for one project, and
@@ -21,7 +21,6 @@
 import getLogger from "@cocalc/backend/logger";
 import type { Client } from "@cocalc/conat/core/client";
 import { extractProjectSubject } from "@cocalc/conat/auth/subject-policy";
-import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
 import {
   BOARD_DECIDE_SERVICE,
   type BoardDecidePrepareOptions,
@@ -49,14 +48,43 @@ export function boardDecideServiceInFlightForTests(): number {
   return inFlightTotal;
 }
 
-/** The project's files through its own file service (local to this
- * server: it serves them). */
-function projectFiles(client: Client, project_id: string): BoardFiles {
-  const fs = fsClient({ client, subject: fsSubject({ project_id }) });
+/** What the service needs of a project's sandboxed filesystem
+ * (backend/sandbox: SandboxedFilesystem). */
+export interface BoardSandbox {
+  realpath(path: string): Promise<string>;
+  readRegularFileAuthorized(opts: {
+    path: string;
+    authorizeCanonicalIdentity: (identity: string) => void;
+    maxBytes?: number;
+    encoding?: string;
+  }): Promise<string | Buffer>;
+  close?(): void;
+}
+
+/** A project's board files through its sandbox: one opened handle, a
+ * regular file only, at most maxBytes + 1 bytes read (EFBIG past that). The
+ * caller was authorized as a collaborator by the hub; the sandbox keeps the
+ * path inside the project. */
+export function sandboxBoardFiles(sandbox: BoardSandbox): BoardFiles {
   return {
-    realpath: async (path) => await fs.realpath(path),
-    stat: async (path) => await fs.stat(path),
-    readFile: async (path) => String(await fs.readFile(path, "utf8")),
+    realpath: async (path) => await sandbox.realpath(path),
+    readBoard: async (path, maxBytes) => {
+      try {
+        return String(
+          await sandbox.readRegularFileAuthorized({
+            path,
+            authorizeCanonicalIdentity: () => {},
+            maxBytes,
+            encoding: "utf8",
+          }),
+        );
+      } catch (err) {
+        if ((err as { code?: unknown })?.code === "EFBIG") {
+          throw codedError("This board is too large to check answers on.", 413);
+        }
+        throw err;
+      }
+    },
   };
 }
 
@@ -89,7 +117,16 @@ export async function handleBoardDecidePrepare(
   }
 }
 
-export async function initBoardDecideService(client: Client) {
+export async function initBoardDecideService(
+  client: Client,
+  {
+    projectFilesystem,
+  }: {
+    /** The sandboxed filesystem of a project this server serves, as its
+     * file service has it (without provisioning anything). */
+    projectFilesystem: (project_id: string) => Promise<BoardSandbox>;
+  },
+) {
   logger.debug("starting board decide service", {
     subject: BOARD_DECIDE_SUBJECT,
   });
@@ -100,11 +137,16 @@ export async function initBoardDecideService(client: Client) {
     ) {
       const project_id = extractProjectSubject(`${this?.subject ?? ""}`);
       if (!project_id) throw codedError("Invalid request.", 400);
-      return await handleBoardDecidePrepare(
-        project_id,
-        opts,
-        projectFiles(client, project_id),
-      );
+      const sandbox = await projectFilesystem(project_id);
+      try {
+        return await handleBoardDecidePrepare(
+          project_id,
+          opts,
+          sandboxBoardFiles(sandbox),
+        );
+      } finally {
+        sandbox.close?.();
+      }
     },
   });
 }

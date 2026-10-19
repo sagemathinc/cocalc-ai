@@ -5209,6 +5209,14 @@ export async function artifactCatalogFilesystem(project_id: string) {
   return getProjectSandboxFilesystem(project_id);
 }
 
+// A board decide request's read (backend/sagebrush-board/service.ts): the
+// project's sandbox, as its file service has it. Like the artifact catalog's,
+// it never provisions storage.
+export async function boardDecideFilesystem(project_id: string) {
+  await getVolume(project_id);
+  return getProjectSandboxFilesystem(project_id);
+}
+
 export async function initFsServer({
   client,
   service = DEFAULT_FILE_SERVICE,
