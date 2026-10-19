@@ -438,6 +438,17 @@ git config --unset 'includeIf.onbranch:security/**.path'
 git commit -q --allow-empty -m wt && git worktree add -q "$T/inst-wt" -b other >/dev/null 2>&1
 git config extensions.worktreeConfig true && git -C "$T/inst-wt" config --worktree core.hooksPath wt-hooks
 inst 1 "refuses when another worktree's config sets core.hooksPath"
+git -C "$T/inst-wt" config --worktree --unset core.hooksPath
+inst 0 "installs again once nothing sets core.hooksPath"
+git config 'includeIf.onbranch:security/**.path' "$T/not-there-yet.gitconfig"
+inst 1 "refuses an include target that does not exist (yet)"
+git config --unset 'includeIf.onbranch:security/**.path'
+mkdir -p "$T/wtbin"
+printf '#!/bin/sh\n[ "$1" = worktree ] && [ "$2" = list ] && exit 73\nexec %s "$@"\n' "$REALGIT" >"$T/wtbin/git"
+chmod +x "$T/wtbin/git"
+PATH="$T/wtbin:$PATH" bash "$here/install-hooks.sh" >/dev/null 2>&1 &&
+  { fail=$((fail + 1)); echo "FAIL  installer ignored a failing 'git worktree list'"; } ||
+  { pass=$((pass + 1)); echo "ok    installer refuses when 'git worktree list' fails"; }
 
 echo "pass=$pass fail=$fail"
 [ $fail = 0 ]

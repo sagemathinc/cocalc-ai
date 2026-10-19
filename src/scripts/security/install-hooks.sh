@@ -12,24 +12,50 @@ hooks_path_refuse() {
   echo "install-hooks: add $here/pre-push-guard.sh to that hooks directory yourself, or unset core.hooksPath." >&2
   exit 1
 }
+cannot_verify() {
+  echo "install-hooks: cannot verify core.hooksPath ($1); refusing." >&2
+  exit 1
+}
+tmp=$(mktemp -d) || cannot_verify "no temporary directory"
+trap 'rm -rf "$tmp"' EXIT
+# core.hooksPath value from a git config command, if set: rc 0 = set (value on
+# stdout), 1 = not set; any other status cannot be verified.
+check_hooks_path() { # <description> <git config args...>
+  local what=$1 hp rc=0
+  shift
+  hp=$(git "$@" --get core.hooksPath) || rc=$?
+  case $rc in
+    0) hooks_path_refuse "'$hp' $what" ;;
+    1) ;;
+    *) cannot_verify "reading $what failed" ;;
+  esac
+}
 # core.hooksPath anywhere it could apply: the effective config of every
 # worktree (covers per-worktree config and conditions true there) ...
+git worktree list --porcelain >"$tmp/worktrees" || cannot_verify "git worktree list failed"
 while read -r line; do
   case $line in worktree\ *) wt=${line#worktree } ;; *) continue ;; esac
-  if hp=$(git -C "$wt" config --get core.hooksPath); then hooks_path_refuse "'$hp' in worktree $wt"; fi
-done < <(git worktree list --porcelain)
-# ... and any include/includeIf target that sets it, whatever its condition
-# (e.g. includeIf.onbranch:security/**), since a later checkout could activate it.
+  check_hooks_path "in worktree $wt" -C "$wt" config
+done <"$tmp/worktrees"
+# ... and every include/includeIf target, whatever its condition (e.g.
+# includeIf.onbranch:security/**), since a later checkout could activate it.
+# A target that is missing or unreadable now could be created later: refuse.
+rc=0
+git config --show-origin --get-regexp '^include(if\..*)?\.path$' >"$tmp/includes" || rc=$?
+[ $rc = 0 ] || [ $rc = 1 ] || cannot_verify "listing include paths failed"
 while read -r origin key value; do
   file=${value/#\~/$HOME}
   case $file in /*) ;; *) file="$(dirname "${origin#file:}")/$file" ;; esac
-  [ -e "$file" ] || continue
-  if hp=$(git config --file "$file" --get core.hooksPath); then hooks_path_refuse "'$hp' via $key -> $file"; fi
-  if git config --file "$file" --get-regexp '^include(if\..*)?\.path$' >/dev/null; then
-    echo "install-hooks: $file (via $key) has nested includes; cannot verify core.hooksPath. Refusing." >&2
-    exit 1
-  fi
-done < <(git config --show-origin --get-regexp '^include(if\..*)?\.path$')
+  [ -f "$file" ] && [ -r "$file" ] || cannot_verify "$key -> $file is missing or unreadable"
+  check_hooks_path "via $key -> $file" config --file "$file"
+  rc=0
+  git config --file "$file" --get-regexp '^include(if\..*)?\.path$' >/dev/null || rc=$?
+  case $rc in
+    0) cannot_verify "$file (via $key) has nested includes" ;;
+    1) ;;
+    *) cannot_verify "reading $file (via $key) failed" ;;
+  esac
+done <"$tmp/includes"
 hooks=$(git rev-parse --path-format=absolute --git-common-dir)/hooks
 mkdir -p "$hooks"
 target=$hooks/pre-push
