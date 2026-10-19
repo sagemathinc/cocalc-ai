@@ -29,32 +29,51 @@ function sources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// `publish(...).catch(handler)`: the call is the object of a `.catch` that is
-// itself called.
-function isCaught(call: ts.CallExpression): boolean {
-  const access = call.parent;
+// The calls of a method chain `f(...).a(...).b(...)`, outermost first, down
+// to the root call `f(...)`.
+function callChain(expr: ts.Expression): ts.CallExpression[] {
+  const calls: ts.CallExpression[] = [];
+  let e = expr;
+  for (;;) {
+    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    if (!ts.isCallExpression(e)) return calls;
+    calls.push(e);
+    if (!ts.isPropertyAccessExpression(e.expression)) return calls;
+    e = e.expression.expression;
+  }
+}
+
+function isPublisherCall(call: ts.CallExpression | undefined): boolean {
   return (
-    ts.isPropertyAccessExpression(access) &&
-    access.expression === call &&
-    access.name.text === "catch" &&
-    ts.isCallExpression(access.parent) &&
-    access.parent.expression === access
+    call != null &&
+    ts.isIdentifier(call.expression) &&
+    PUBLISHERS.has(call.expression.text)
   );
 }
 
-// Lines of `void publishLro...(...)` calls whose rejection nothing handles.
+// The discarded promise is handled only if the chain's last call is
+// `.catch(...)`; `.then` or `.finally` after it reject again.
+function endsInCatch(calls: ts.CallExpression[]): boolean {
+  const outer = calls[0]?.expression;
+  return (
+    outer != null &&
+    ts.isPropertyAccessExpression(outer) &&
+    outer.name.text === "catch"
+  );
+}
+
+// Lines of `void publishLro...(...)...` whose rejection nothing handles.
 function uncaughtPublishes(text: string): number[] {
   const file = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
   const lines: number[] = [];
   const visit = (node: ts.Node) => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      PUBLISHERS.has(node.expression.text) &&
-      ts.isVoidExpression(node.parent) &&
-      !isCaught(node)
-    ) {
-      lines.push(file.getLineAndCharacterOfPosition(node.getStart()).line + 1);
+    if (ts.isVoidExpression(node)) {
+      const calls = callChain(node.expression);
+      if (isPublisherCall(calls[calls.length - 1]) && !endsInCatch(calls)) {
+        lines.push(
+          file.getLineAndCharacterOfPosition(node.getStart()).line + 1,
+        );
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -82,6 +101,21 @@ describe("fire-and-forget LRO publishes", () => {
         ].join("\n"),
       ),
     ).toEqual([2, 3]);
+  });
+
+  it("requires the chain to end in .catch", () => {
+    expect(
+      uncaughtPublishes(
+        [
+          "void publishLroEvent({}).then(() => {});",
+          "void publishLroEvent({}).finally(() => {});",
+          "void publishLroEvent({}).catch(() => {}).then(() => {});",
+          "void publishLroEvent({}).then(() => {}).catch(() => {});",
+          "void (publishLroSummary({}));",
+          "void (publishLroSummary({})).catch(() => {});",
+        ].join("\n"),
+      ),
+    ).toEqual([1, 2, 3, 5]);
   });
 
   it("always handle rejection", () => {
