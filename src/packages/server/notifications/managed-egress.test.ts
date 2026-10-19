@@ -18,6 +18,7 @@ jest.mock("@cocalc/server/inter-bay/accounts", () => ({
 import {
   __test__,
   managedEgressNoticeDue,
+  managedEgressNotificationId,
   managedEgressNoticeSummary,
   maybeNotifyManagedEgressLimit,
 } from "./managed-egress";
@@ -111,5 +112,31 @@ describe("managed egress notices", () => {
     expect(summary.title).toBe("Browser control traffic limit reached");
     expect(summary.body_markdown).toContain("limit of 0");
     expect(summary.body_markdown).not.toMatch(/Infinity|NaN/);
+  });
+
+  it("derives the same notification id on every bay for a key and UTC day", () => {
+    const at = new Date("2026-10-19T00:30:00.000Z");
+    const id = managedEgressNotificationId(
+      "managed-egress:shared:7d:blocked:a",
+      at,
+    );
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(
+      managedEgressNotificationId(
+        "managed-egress:shared:7d:blocked:a",
+        new Date("2026-10-19T23:59:00.000Z"),
+      ),
+    ).toBe(id);
+    expect(
+      managedEgressNotificationId(
+        "managed-egress:shared:7d:blocked:a",
+        new Date("2026-10-20T00:00:00.000Z"),
+      ),
+    ).not.toBe(id);
+    expect(
+      managedEgressNotificationId("managed-egress:shared:7d:near:a", at),
+    ).not.toBe(id);
   });
 });

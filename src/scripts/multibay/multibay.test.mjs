@@ -2089,4 +2089,67 @@ describe("managed egress notices", () => {
       assert.equal((await noticeIn(account)).length, 1);
     });
   }
+
+  it("merges the same notice sent by both bays into one notice and one email on the home bay", async () => {
+    // bob's projects can be metered on both bays; each may send the notice
+    const input = {
+      account_id: bob.account_id,
+      pool: "control-plane",
+      window: "5h",
+      used: 11_000_000_000,
+      limit: 10_000_000_000,
+      blocked: true,
+    };
+    const send = async (bay) =>
+      await runInBay(
+        cluster,
+        bay,
+        `const { notifyManagedEgressLimit, managedEgressNotificationId } =
+           server("notifications/managed-egress.js");
+         const sent = await notifyManagedEgressLimit(${JSON.stringify(input)});
+         return { sent, id: managedEgressNotificationId(
+           "managed-egress:control-plane:5h:blocked:" + ${JSON.stringify(bob.account_id)}) };`,
+      );
+    const fromSeed = await send(SEED);
+    const fromHome = await send(ATTACHED);
+    assert.deepEqual([fromSeed.sent, fromHome.sent], [true, true]);
+    assert.equal(fromSeed.id, fromHome.id);
+    const isThisNotice = (row) =>
+      row.summary?.title === "Browser control traffic limit reached";
+    await eventually(
+      async () =>
+        (await runInBay(
+          cluster,
+          SEED,
+          `const getPool = require("@cocalc/database/pool").default;
+             const { rows } = await getPool().query(
+               "SELECT 1 FROM notification_target_outbox WHERE notification_id=$1 AND published_at IS NOT NULL",
+               [${JSON.stringify(fromSeed.id)}]);
+             return rows.length;`,
+        )) === 1,
+      { what: "the seed's copy to be published to bob's home bay" },
+    );
+    await eventually(
+      async () =>
+        (await bob.client.call("notifications.list", { limit: 50 })).some(
+          isThisNotice,
+        ),
+      { timeoutMs: 60_000, what: "the control-plane notice to reach bob" },
+    );
+    await sleep(3_000);
+    const notices = (
+      await bob.client.call("notifications.list", { limit: 50 })
+    ).filter(isThisNotice);
+    assert.equal(notices.length, 1);
+    const emails = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT count(*)::INT AS n FROM notification_email_outbox WHERE target_account_id=$1 AND notification_id=$2",
+         [${JSON.stringify(bob.account_id)}, ${JSON.stringify(fromSeed.id)}]);
+       return rows[0].n;`,
+    );
+    assert.equal(emails, 1, `${emails} email outbox rows for one notice`);
+  });
 });

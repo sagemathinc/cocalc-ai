@@ -15,6 +15,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import { humanSize } from "@cocalc/util/misc";
 import LRU from "lru-cache";
+import { createHash } from "node:crypto";
 
 const logger = getLogger("notifications:managed-egress");
 
@@ -100,8 +101,31 @@ export function managedEgressNoticeSummary(input: ManagedEgressNoticeInput) {
   };
 }
 
-// Returns true if a notice was created.  At most one notice per pool, window
-// and level (near/blocked) per account per day from each evaluating bay.
+// The same notification id on every bay for one account, pool, window, level
+// and UTC day.  Each bay that evaluates the account's policy may send the
+// notice; the home bay's inbox (upsert on account and notification id) and
+// email outbox (deduplicated by notification id) then keep only one.
+export function managedEgressNotificationId(
+  key: string,
+  now: Date = new Date(),
+): string {
+  const day = now.toISOString().slice(0, 10);
+  const hex = createHash("sha256").update(`${key}:${day}`).digest("hex");
+  // RFC 4122 layout: version 5 (name-based), variant 10xx
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `5${hex.slice(13, 16)}`,
+    ((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80)
+      .toString(16)
+      .padStart(2, "0") + hex.slice(18, 20),
+    hex.slice(20, 32),
+  ].join("-");
+}
+
+// Returns true if a notice was sent.  At most one notice per pool, window and
+// level (near/blocked) per account per day: each evaluating bay sends at most
+// one per 24 hours, and the home bay merges same-day notices from all bays.
 export async function notifyManagedEgressLimit(
   input: ManagedEgressNoticeInput,
 ): Promise<boolean> {
@@ -127,8 +151,7 @@ export async function notifyManagedEgressLimit(
       await client.query("COMMIT");
       return false;
     }
-    // Deduplicated per evaluating bay: notices sent from here are recorded
-    // here, whichever bay they are delivered to.
+    // This bay's own record of what it sent, whichever bay it went to.
     const { rows: existing } = await client.query(
       `SELECT 1 FROM notification_targets WHERE target_account_id=$1 AND dedupe_key=$2
        AND created_at > NOW() - make_interval(hours => $3) LIMIT 1`,
@@ -150,6 +173,7 @@ export async function notifyManagedEgressLimit(
           {
             target_account_id: account_id,
             target_home_bay_id,
+            notification_id: managedEgressNotificationId(key),
             dedupe_key: key,
             summary_json: summary,
           },

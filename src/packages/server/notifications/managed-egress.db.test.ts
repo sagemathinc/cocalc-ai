@@ -7,7 +7,10 @@ import { randomUUID } from "node:crypto";
 import { before, after, getPool } from "@cocalc/server/test";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
-import { notifyManagedEgressLimit } from "./managed-egress";
+import {
+  managedEgressNotificationId,
+  notifyManagedEgressLimit,
+} from "./managed-egress";
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountsByIds: jest.fn(),
@@ -47,6 +50,7 @@ it("addresses the notice to the account's home bay when another bay evaluates th
   expect(await notifyManagedEgressLimit(blocked(account_id))).toBe(true);
   const { rows } = await getPool().query(
     `SELECT t.target_home_bay_id, o.target_home_bay_id AS outbox_home,
+            t.notification_id, o.notification_id AS outbox_notification_id,
             e.source_bay_id, e.payload_json
        FROM notification_targets t
        JOIN notification_events e USING(event_id)
@@ -61,6 +65,12 @@ it("addresses the notice to the account's home bay when another bay evaluates th
     outbox_home: "other-home-bay",
     source_bay_id: getConfiguredBayId(),
   });
+  // the same id any other bay would use for this notice today
+  const id = managedEgressNotificationId(
+    `managed-egress:shared:7d:blocked:${account_id}`,
+  );
+  expect(rows[0].notification_id).toBe(id);
+  expect(rows[0].outbox_notification_id).toBe(id);
   expect(rows[0].payload_json).toMatchObject({
     notice_type: "managed_egress_blocked",
     title: "Managed network traffic limit reached",
