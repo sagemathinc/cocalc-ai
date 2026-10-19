@@ -215,6 +215,9 @@ git config remote.nourl.fetch '+refs/heads/*:refs/remotes/nourl/*'
 git update-ref refs/remotes/nourl/security/topic "$NOURL_SECRET"
 check 1 "URL-less remote's security/* tracking ref (private repo down)" "$T/pub.git" refs/heads/neutral "$NOURL_SECRET" refs/heads/fix/innocent COCALC_PRIVATE_URL=$T/missing.git
 check 1 "URL-less remote's security/* tracking ref (private repo up)" "$T/pub.git" refs/heads/neutral "$NOURL_SECRET" refs/heads/fix/innocent
+git update-ref refs/remotes/nourl/feature/ordinary "$(git rev-parse HEAD)"
+ORD=$(commit "ordinary new work") && git reset -q --hard HEAD~1
+check 0 "URL-less remote does not block an ordinary push" "$T/pub.git" refs/heads/x "$ORD" refs/heads/fix/ok
 
 # Rewritten private work: cherry-pick, rebase onto a newer base, squash.
 git init -q --bare "$T/pub2.git" && git init -q --bare "$T/priv2.git"
@@ -358,6 +361,38 @@ git push -q "$T/priv6.git" HEAD:refs/heads/security/series
 git reset -q --hard "$B6" && echo side >>c && git commit -q -am "public side branch" && git push -q "$T/pub6.git" HEAD:refs/heads/feature/side
 printf 'p1\np2\n' >>a && git commit -q -am "split: a" && printf 'p1\np2\n' >>b && git commit -q -am "split: b" && FB6=$(git rev-parse HEAD)
 check 1 "private series re-split on top of a public side branch" "$T/pub6.git" refs/heads/feature/side "$FB6" refs/heads/feature/side "$E6" "$P6"
+
+# Injected failures fail closed: a failing sort of the boundary list (signature
+# step) and a failing `git remote` (input collection).
+mkdir -p "$T/fbin" "$T/gbin"
+# Real binaries, not wrappers that may themselves call through PATH.
+REALSORT=$(PATH=/usr/bin:/bin command -v sort) REALGIT=$(PATH=/usr/bin:/bin command -v git)
+printf '#!/bin/sh\ncase "$*" in *boundaries*) exit 97 ;; esac\nexec %s "$@"\n' "$REALSORT" >"$T/fbin/sort"
+printf '#!/bin/sh\n[ "$1" = remote ] && [ $# -eq 1 ] && exit 97\nexec %s "$@"\n' "$REALGIT" >"$T/gbin/git"
+chmod +x "$T/fbin/sort" "$T/gbin/git"
+cd "$T/fb" || exit 1
+check 1 "boundary sort fails (signature step): fail closed" "$T/pub6.git" refs/heads/feature/side "$FB6" refs/heads/feature/side "$E6" "$P6" PATH="$T/fbin:$PATH"
+REALAWK=$(PATH=/usr/bin:/bin command -v awk)
+mkdir -p "$T/abin"
+printf '#!/bin/sh\nfor a; do case "$a" in */private-patch-ids) exit 96 ;; esac; done\nexec %s "$@"\n' "$REALAWK" >"$T/abin/awk"
+chmod +x "$T/abin/awk"
+check 1 "awk on private-patch-ids fails (membership test): fail closed" "$T/pub6.git" refs/heads/feature/side "$FB6" refs/heads/feature/side "$E6" "$P6" PATH="$T/abin:$PATH"
+REALCOMM=$(PATH=/usr/bin:/bin command -v comm)
+mkdir -p "$T/cbin"
+printf '#!/bin/sh\n[ "$1" = -12 ] && exit 95\nexec %s "$@"\n' "$REALCOMM" >"$T/cbin/comm"
+chmod +x "$T/cbin/comm"
+(cd "$T/work" && printf 'refs/heads/x %s refs/heads/fix/innocent %s\n' "$PRIV" "$Z" |
+  PATH="$T/cbin:$PATH" bash "$H" origin "$T/pub.git" >/dev/null 2>&1) &&
+  { fail=$((fail + 1)); echo "FAIL  exact private commit allowed when comm fails"; } ||
+  { pass=$((pass + 1)); echo "ok    exact private (empty) commit: comm failure fails closed"; }
+# awk failing in the deletion-only check must not mean "deletions only".
+mkdir -p "$T/a2bin"
+printf '#!/bin/sh\nexit 96\n' >"$T/a2bin/awk" && chmod +x "$T/a2bin/awk"
+(cd "$T/work" && printf 'refs/heads/x %s refs/heads/fix/innocent %s\n' "$PRIV" "$Z" |
+  PATH="$T/a2bin:$PATH" bash "$H" origin "$T/pub.git" >/dev/null 2>&1) &&
+  { fail=$((fail + 1)); echo "FAIL  awk failure treated as a deletion-only push"; } ||
+  { pass=$((pass + 1)); echo "ok    awk failure in the deletion check fails closed"; }
+check 1 "'git remote' fails (input collection): fail closed" "$T/pub6.git" refs/heads/feature/side "$FB6" refs/heads/feature/side "$E6" "$P6" PATH="$T/gbin:$PATH"
 
 # Content public long ago (2020) under another commit id stays allowed, even
 # if a newer private commit has the same content (tree and patch-id cases).

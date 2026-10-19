@@ -71,6 +71,21 @@ refuse() {
   status=1
 }
 
+# Whether patch-id $2 appears in column 2 of file $1: 0 = yes, 1 = no,
+# 2 = could not tell (error).
+has_pid() { # <file> <pid>
+  local rc
+  awk -v p="$2" '$2 == p { found = 1 } END { exit found ? 10 : 11 }' "$1"
+  rc=$?
+  case $rc in 10) return 0 ;; 11) return 1 ;; *) return 2 ;; esac
+}
+
+# Public main must exist once the public fetch succeeded; anything else is an
+# error.
+require_public_main() {
+  git rev-parse -q --verify "$GUARD_REFS/public/main^{commit}" >/dev/null
+}
+
 # All signature helpers below return nonzero on ANY failure (git, cache,
 # filesystem); the caller then refuses the push.  Loops read from files rather
 # than pipelines so that failures are not lost.
@@ -154,7 +169,8 @@ load_private_signatures() {
     "$tmp/parent-trees" "$tmp/private-commits" | sort -u >"$tmp/private-trees" || return 1
   patch_ids "$tmp/private-oids" "$tmp/private-pids-all" || return 1
   awk '$2 != "-"' "$tmp/private-pids-all" >"$tmp/private-patch-ids" || return 1
-  if git rev-parse --verify -q "$GUARD_REFS/public/main" >/dev/null; then
+  require_public_main || return 1
+  {
     (
       git for-each-ref --format='%(objectname)' "$GUARD_REFS/src/" "$GUARD_REFS/retired/" "$GUARD_REFS/seen/" || exit 1
       for ref in "${local_private_branches[@]}"; do git rev-parse "$ref" || exit 1; done
@@ -171,7 +187,7 @@ load_private_signatures() {
       pid=$(range_patch_id "$base" "$tip") || return 1
       [ "$pid" = "-" ] || echo "$base..$tip $pid" >>"$tmp/private-patch-ids" || return 1
     done <"$tmp/private-tips"
-  fi
+  }
   : >"$tmp/sig-ok"
 }
 
@@ -180,7 +196,7 @@ load_private_signatures() {
 # is already public as an individual public commit.  Prints the matching
 # pushed oids; returns nonzero on any failure.
 rewritten_private_work() {
-  local pushed=$1 tip=$2 pid oid base files=()
+  local pushed=$1 tip=$2 pid oid base verdict files=()
   printf '%s\n' "$pushed" | awk 'NF' >"$tmp/pushed-oids" || return 1
   : >"$tmp/hits" || return 1
   # Same tree as a private commit, and no public commit has that tree.
@@ -202,20 +218,21 @@ rewritten_private_work() {
   tr ' ' '\n' <"$tmp/pushed-parents" | awk 'NF' | sort -u >"$tmp/pushed-parents-sorted" || return 1
   sort -u "$tmp/pushed-oids" >"$tmp/pushed-sorted" || return 1
   comm -23 "$tmp/pushed-parents-sorted" "$tmp/pushed-sorted" >"$tmp/boundaries" || return 1
-  if git rev-parse --verify -q "$GUARD_REFS/public/main" >/dev/null; then
-    base=$(fork_point "$tip") || return 1
-    [ -n "$base" ] && echo "$base" >>"$tmp/boundaries"
-  fi
+  require_public_main || return 1
+  base=$(fork_point "$tip") || return 1
+  if [ -n "$base" ]; then echo "$base" >>"$tmp/boundaries" || return 1; fi
+  sort -u "$tmp/boundaries" >"$tmp/boundaries-sorted" || return 1
   while read -r base; do
     [ -n "$base" ] && [ "$base" != "$tip" ] || continue
     pid=$(range_patch_id "$base" "$tip") || return 1
     echo "$tip $pid" >>"$tmp/pushed-pids" || return 1
-  done < <(sort -u "$tmp/boundaries")
+  done <"$tmp/boundaries-sorted"
   # Same patch-id as private work, and no public commit touching the same
   # files has that patch-id.
   while read -r oid pid; do
     [ -n "$pid" ] && [ "$pid" != "-" ] || continue
-    awk -v p="$pid" '$2 == p { found = 1 } END { exit !found }' "$tmp/private-patch-ids" || continue
+    has_pid "$tmp/private-patch-ids" "$pid"
+    case $? in 0) ;; 1) continue ;; *) return 1 ;; esac
     if [ ! -e "$tmp/pid-public-$pid" ]; then
       awk -v p="$pid" '$2 == p { print $1 }' "$tmp/private-patch-ids" >"$tmp/pid-specs" || return 1
       : >"$tmp/pid-files" || return 1
@@ -226,17 +243,26 @@ rewritten_private_work() {
           git diff-tree --no-commit-id --name-only -r --root "$c" >>"$tmp/pid-files" || return 1
         fi
       done <"$tmp/pid-specs"
-      mapfile -t files < <(sort -u "$tmp/pid-files")
+      sort -u "$tmp/pid-files" >"$tmp/pid-files-sorted" || return 1
+      mapfile -t files <"$tmp/pid-files-sorted"
       echo private >"$tmp/pid-public-$pid" || return 1
       if [ ${#files[@]} -gt 0 ]; then
         git log --glob="$GUARD_REFS/public/*" --format='%H' -- "${files[@]}" >"$tmp/pid-cands" || return 1
         patch_ids "$tmp/pid-cands" "$tmp/pid-cand-pids" || return 1
-        if awk -v p="$pid" '$2 == p { found = 1 } END { exit !found }' "$tmp/pid-cand-pids"; then
-          echo public >"$tmp/pid-public-$pid" || return 1
-        fi
+        has_pid "$tmp/pid-cand-pids" "$pid"
+        case $? in
+          0) echo public >"$tmp/pid-public-$pid" || return 1 ;;
+          1) ;;
+          *) return 1 ;;
+        esac
       fi
     fi
-    [ "$(cat "$tmp/pid-public-$pid")" = private ] && echo "$oid" >>"$tmp/hits"
+    verdict=$(cat "$tmp/pid-public-$pid") || return 1
+    case $verdict in
+      private) echo "$oid" >>"$tmp/hits" || return 1 ;;
+      public) ;;
+      *) return 1 ;;
+    esac
   done <"$tmp/pushed-pids"
   awk 'NF' "$tmp/hits" | sort -u
 }
@@ -249,7 +275,16 @@ if is_private_url "$remote_url"; then
   zero=0000000000000000000000000000000000000000
   while read -r _local_ref local_sha _remote_ref _remote_sha; do
     [ -n "$local_sha" ] && [ "$local_sha" != "$zero" ] || continue
-    commit=$(git rev-parse -q --verify "$local_sha^{commit}") || continue
+    if ! type=$(git cat-file -t "$local_sha"); then
+      echo "pre-push-guard: could not inspect $local_sha; refusing (fail closed)." >&2
+      exit 1
+    fi
+    case $type in commit | tag) ;; *) continue ;; esac # blobs/trees: nothing to record
+    if ! commit=$(git rev-parse -q --verify "$local_sha^{commit}"); then
+      [ "$type" = tag ] && continue # a tag of a blob or tree
+      echo "pre-push-guard: could not resolve $local_sha; refusing (fail closed)." >&2
+      exit 1
+    fi
     if ! git update-ref "$GUARD_REFS/seen/$commit" "$commit"; then
       echo "pre-push-guard: could not record $commit as private; refusing (fail closed)." >&2
       exit 1
@@ -263,15 +298,24 @@ if [ "${COCALC_DISCLOSE:-0}" = 1 ]; then
 fi
 
 status=0
-updates=$(cat)
+if ! updates=$(cat); then
+  echo "pre-push-guard: could not read the push updates; refusing (fail closed)." >&2
+  exit 1
+fi
 
 zero=0000000000000000000000000000000000000000
 
 # Deletions publish nothing; a push that only deletes branches (e.g. removing
 # an accidentally pushed private branch) is allowed without any analysis.
-if ! awk -v z="$zero" 'NF && $2 != z { found = 1 } END { exit !found }' <<<"$updates"; then
-  exit 0
-fi
+awk -v z="$zero" 'NF && $2 != z { found = 1 } END { exit found ? 10 : 11 }' <<<"$updates"
+case $? in
+  10) ;;        # something is published: analyze
+  11) exit 0 ;; # deletions only
+  *)
+    echo "pre-push-guard: could not parse the push updates; refusing (fail closed)." >&2
+    exit 1
+    ;;
+esac
 
 # Branch names first: no network needed.  Deletions publish nothing, and
 # deleting an accidentally pushed private branch must work.
@@ -285,6 +329,26 @@ while read -r local_ref local_sha remote_ref _remote_sha; do
   done
 done <<<"$updates"
 
+tmp=$(mktemp -d) || {
+  echo "pre-push-guard: cannot create a temporary directory; refusing (fail closed)." >&2
+  exit 1
+}
+trap 'rm -rf "$tmp"' EXIT
+# Every input below is collected into a checked file first: a failing git
+# command must refuse the push, never silently shrink the private lists.
+fail_closed() {
+  echo "pre-push-guard: $*; refusing (fail closed)." >&2
+  exit 1
+}
+git remote >"$tmp/remotes" || fail_closed "could not list remotes"
+git config --get-all cocalc.privateUrl >"$tmp/private-urls"
+rc=$?
+[ $rc = 0 ] || [ $rc = 1 ] || fail_closed "could not read cocalc.privateUrl"
+git for-each-ref --format='%(refname)' refs/heads >"$tmp/local-heads" || fail_closed "could not list branches"
+git for-each-ref --format='%(refname)' refs/remotes >"$tmp/remote-refs" || fail_closed "could not list remote-tracking branches"
+git for-each-ref --count=1 "$GUARD_REFS/src/" "$GUARD_REFS/retired/" "$GUARD_REFS/seen/" >"$tmp/guard-cached" ||
+  fail_closed "could not read the guard's cached refs"
+
 # Sources of private commits: the private repo, every private remote and every
 # cocalc.privateUrl, fetched fresh (in parallel) into $GUARD_REFS/src/<key>/*,
 # plus the private remotes' tracking refs and local private-named branches.
@@ -294,29 +358,32 @@ add_source() { # <url>
   # Dedupe by exact URL; the ref namespace is the hash of that URL, so
   # different URLs never share a namespace.
   local key
-  key=$(url_key "$1")
+  key=$(url_key "$1") && [ -n "$key" ] || fail_closed "could not hash $1"
   [[ $seen == *" $key "* ]] && return
   seen+="$key "
   sources+=("$key|$1")
 }
 add_source "$PRIVATE_URL"
 private_remote_refs=()
-while read -r name; do
+mapfile -t remote_names <"$tmp/remotes"
+for name in "${remote_names[@]}"; do
   [ -z "$name" ] && continue
-  url=$(git remote get-url "$name" 2>/dev/null || true)
+  # A configured remote may have no URL (exit status 1): that is fine.
+  url=$(git config --get "remote.$name.url")
+  rc=$?
+  [ $rc = 0 ] || [ $rc = 1 ] || fail_closed "could not read the URL of remote $name"
   if [ -n "$url" ] && is_private_url "$url"; then
     private_remote_refs+=("--remotes=$name")
     add_source "$url"
   fi
-done < <(git remote)
+done
 while read -r extra; do
   [ -n "$extra" ] && add_source "$extra"
-done < <(git config --get-all cocalc.privateUrl 2>/dev/null)
+done <"$tmp/private-urls"
 local_private_branches=()
 while read -r ref; do
   is_private_branch "${ref#refs/heads/}" && local_private_branches+=("$ref")
-done < <(git for-each-ref --format='%(refname)' refs/heads)
-mapfile -t remote_names < <(git remote)
+done <"$tmp/local-heads"
 # Private-named tracking branches of ANY remote (refs/remotes/<remote>/security/*
 # etc.) are private too, even if the remote has no URL or an unrecognized one.
 while read -r ref; do
@@ -339,20 +406,17 @@ while read -r ref; do
       fi
     done
   fi
-done < <(git for-each-ref --format='%(refname)' refs/remotes)
+done <"$tmp/remote-refs"
 
 # A clone has private work if it has a private remote, a cocalc.privateUrl,
 # a private-named local or tracking branch, retired private refs, or private
 # branch lists cached by an earlier run of this guard.
 has_private_work=0
 if [ ${#private_remote_refs[@]} -gt 0 ] || [ ${#local_private_branches[@]} -gt 0 ] ||
-  [ -n "$(git config --get-all cocalc.privateUrl 2>/dev/null)" ] ||
-  [ -n "$(git for-each-ref --count=1 "$GUARD_REFS/src/" "$GUARD_REFS/retired/" "$GUARD_REFS/seen/")" ]; then
+  [ -s "$tmp/private-urls" ] || [ -s "$tmp/guard-cached" ]; then
   has_private_work=1
 fi
 
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
 for source in "${sources[@]}"; do
   key=${source%%|*}
   url=${source#*|}
@@ -366,11 +430,12 @@ failed=()
 for source in "${sources[@]}"; do
   key=${source%%|*}
   url=${source#*|}
-  if [ "$(cat "$tmp/$key.rc" 2>/dev/null)" = 0 ]; then
-    has_private_work=1
-  else
-    failed+=("$url")
-  fi
+  fetch_rc=$(cat "$tmp/$key.rc") || fail_closed "could not read the fetch result for $url"
+  case $fetch_rc in
+    0) has_private_work=1 ;;
+    [0-9]*) failed+=("$url") ;;
+    *) fail_closed "unexpected fetch result for $url" ;;
+  esac
 done
 # Private refs are never pruned, and every private tip ever seen is archived by
 # object id, so deleting or force-pushing a private branch early cannot erase
@@ -413,7 +478,11 @@ if [ $has_private_work = 1 ] && [ $status = 0 ]; then
         fi
         [ -z "$pushed" ] && continue
         # ... and that some private branch has.
-        leaked=$(comm -12 <(echo "$pushed") <(echo "$private"))
+        if ! printf '%s\n' "$pushed" >"$tmp/leak-pushed" || ! printf '%s\n' "$private" >"$tmp/leak-private" ||
+          ! leaked=$(comm -12 "$tmp/leak-pushed" "$tmp/leak-private"); then
+          refuse "could not compare $local_ref with the private commits; refusing (fail closed)."
+          continue
+        fi
         if [ -n "$leaked" ]; then
           refuse "refusing to push $local_ref -> $remote_ref to $remote_url: it contains $(echo "$leaked" | wc -l) undisclosed private commit(s), e.g.:"
           echo "$leaked" | head -5 | while read -r c; do echo "  $(git log -1 --format='%h %s' "$c")" >&2; done
