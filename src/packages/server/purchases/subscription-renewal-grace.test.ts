@@ -28,6 +28,7 @@ const mockProcessFailure = jest.fn();
 const mockProcessPaymentIntents = jest.fn();
 const mockSend = jest.fn();
 const mockCreateSubscriptionPayment = jest.fn();
+const SUPPORT_ACCOUNT_ID = uuid();
 
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
@@ -61,6 +62,7 @@ jest.mock("@cocalc/server/purchases/billing-authority/context", () => ({
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => ({
+    support_account_id: SUPPORT_ACCOUNT_ID,
     site_name: "CoCalc",
     subscription_maintenance: { renewal_mode: "active" },
   }),
@@ -75,6 +77,7 @@ jest.mock("@cocalc/server/messages/send", () => ({
 
 beforeAll(async () => {
   await before({ noConat: true });
+  await createTestAccount(SUPPORT_ACCOUNT_ID);
 }, 15000);
 afterAll(after);
 
@@ -346,5 +349,45 @@ describe("subscription renewal grace period", () => {
 
     expect(mockSend).not.toHaveBeenCalled();
     expect(mockProcessFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not duplicate the notice if a stored message was never recorded", async () => {
+    // Use the real message sender so its deduplication is exercised.
+    const { default: realSend } = jest.requireActual(
+      "@cocalc/server/messages/send",
+    );
+    mockSend.mockImplementation((opts) => realSend(opts));
+    const { account_id, subscription_id, payment_intent_id } =
+      await setupDueRenewal(dayjs().subtract(1, "hour").toDate());
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "requires_action",
+    });
+    await runWorker();
+
+    // Simulate a crash after the message was stored but before delivery was
+    // recorded, and the next recheck six hours later.
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts
+          SET customer_action_notified_at=NULL, next_attempt_at=NOW()
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    await getPool().query(
+      `UPDATE messages SET sent=sent - INTERVAL '7 hours'
+        WHERE $1::UUID = ANY(to_ids)`,
+      [account_id],
+    );
+    await runWorker();
+
+    const { rows } = await getPool().query(
+      `SELECT COUNT(*)::int AS n FROM messages
+        WHERE $1::UUID = ANY(to_ids) AND subject LIKE 'Action needed:%'`,
+      [account_id],
+    );
+    expect(rows[0].n).toBe(1);
+    expect(await attemptRow(subscription_id)).toEqual(
+      expect.objectContaining({ notified: true }),
+    );
   });
 });

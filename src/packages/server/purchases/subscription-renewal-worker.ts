@@ -20,10 +20,14 @@ import {
   getSubscriptionRenewalAttempt,
   markSubscriptionRenewalCustomerNotified,
   releaseSubscriptionRenewalAttempt,
+  RENEWAL_PAYMENT_GRACE_MS,
   renewalGraceEndsAt,
   scheduleMissingSubscriptionRenewalAttempts,
 } from "./subscription-renewal-attempts";
 import { formatRenewalDate } from "./subscription-renewal-notice";
+
+const RENEWAL_NOTICE_DEDUP_MINUTES =
+  Math.ceil(RENEWAL_PAYMENT_GRACE_MS / 60_000) + 24 * 60;
 
 const logger = getLogger("purchases:subscription-renewal-worker");
 const DEFAULT_CONCURRENCY = 1;
@@ -167,6 +171,11 @@ async function sendRenewalPaymentActionNotice({
   const payLine = invoiceUrl ? `- [Complete the payment](${invoiceUrl})` : "";
   await send({
     to_ids: [attempt.account_id],
+    // The notice is retried until delivery is recorded; if a previous try
+    // stored the message but crashed before recording it, this suppresses the
+    // duplicate. The subject names the subscription and is stable.
+    dedupMinutes: RENEWAL_NOTICE_DEDUP_MINUTES,
+    dedupBySubject: true,
     subject: `Action needed: ${site_name} subscription renewal payment (Id ${attempt.subscription_id})`,
     body: `
 We couldn't automatically collect the renewal payment for your ${site_name} subscription (id=${attempt.subscription_id}). Your bank may have declined the card or asked you to confirm the payment.
