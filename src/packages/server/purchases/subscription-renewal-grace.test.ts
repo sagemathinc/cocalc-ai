@@ -1,0 +1,263 @@
+/*
+ *  This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ *  License: MS-RSL - see LICENSE.md for details
+ */
+
+// A renewal payment that needs the customer (declined card, or the bank asks
+// them to authenticate) must not end the membership immediately: the payment
+// stays open, benefits continue for a grace period, and the customer is told
+// once. Only after the grace period does the subscription get canceled.
+
+import getPool from "@cocalc/database/pool";
+import { before, after } from "@cocalc/server/test";
+import { uuid } from "@cocalc/util/misc";
+import dayjs from "dayjs";
+import {
+  createTestAccount,
+  createTestMembershipSubscription,
+} from "./test-data";
+import {
+  RENEWAL_CUSTOMER_ACTION_RECHECK_MS,
+  scheduleMissingSubscriptionRenewalAttempts,
+} from "./subscription-renewal-attempts";
+
+const mockRetrievePaymentIntent = jest.fn();
+const mockRetrieveInvoice = jest.fn();
+const mockCancelPaymentIntent = jest.fn();
+const mockProcessFailure = jest.fn();
+const mockProcessPaymentIntents = jest.fn();
+const mockSend = jest.fn();
+
+jest.mock("@cocalc/server/stripe/connection", () => ({
+  __esModule: true,
+  default: async () => ({
+    paymentIntents: {
+      retrieve: (...args: any[]) => mockRetrievePaymentIntent(...args),
+    },
+    invoices: { retrieve: (...args: any[]) => mockRetrieveInvoice(...args) },
+  }),
+}));
+
+jest.mock("./stripe/create-subscription-payment", () => ({
+  __esModule: true,
+  default: jest.fn(),
+  processSubscriptionRenewalFailure: (...args: any[]) =>
+    mockProcessFailure(...args),
+}));
+
+jest.mock("./stripe/create-payment-intent", () => ({
+  cancelPaymentIntent: (...args: any[]) => mockCancelPaymentIntent(...args),
+}));
+
+jest.mock("./stripe/process-payment-intents", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockProcessPaymentIntents(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/billing-authority/context", () => ({
+  registerBillingAuthorityAccount: async () => {},
+}));
+
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  getServerSettings: async () => ({
+    site_name: "CoCalc",
+    subscription_maintenance: { renewal_mode: "active" },
+  }),
+}));
+
+jest.mock("@cocalc/server/messages/send", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockSend(...args),
+  url: async (...args: any[]) => args.join("/"),
+  support: async () => "support",
+}));
+
+beforeAll(async () => {
+  await before({ noConat: true });
+}, 15000);
+afterAll(after);
+
+async function setupDueRenewal(periodEnd: Date) {
+  const account_id = uuid();
+  await createTestAccount(account_id);
+  const { subscription_id } = await createTestMembershipSubscription(
+    account_id,
+    { start: dayjs(periodEnd).subtract(1, "month").toDate(), end: periodEnd },
+  );
+  await scheduleMissingSubscriptionRenewalAttempts();
+  const payment_intent_id = `pi_${uuid().replaceAll("-", "")}`;
+  await getPool().query(
+    `UPDATE subscription_renewal_attempts
+        SET payment_intent_id=$2, stripe_invoice_id='in_test'
+      WHERE subscription_id=$1`,
+    [subscription_id, payment_intent_id],
+  );
+  return { account_id, subscription_id, payment_intent_id };
+}
+
+async function attemptRow(subscription_id: number) {
+  const { rows } = await getPool().query(
+    `SELECT a.state, a.customer_action_required_at IS NOT NULL AS waiting,
+            EXTRACT(EPOCH FROM (a.next_attempt_at - NOW())) * 1000 AS next_in_ms,
+            a.last_error, s.status
+       FROM subscription_renewal_attempts a
+       JOIN subscriptions s ON s.id=a.subscription_id
+      WHERE a.subscription_id=$1`,
+    [subscription_id],
+  );
+  return rows[0];
+}
+
+async function runWorker() {
+  const { default: maintainSubscriptionRenewals } =
+    await import("./subscription-renewal-worker");
+  await maintainSubscriptionRenewals();
+}
+
+describe("subscription renewal grace period", () => {
+  beforeEach(async () => {
+    await getPool().query("DELETE FROM subscription_renewal_attempts");
+    await getPool().query("DELETE FROM subscriptions");
+    for (const m of [
+      mockRetrievePaymentIntent,
+      mockRetrieveInvoice,
+      mockCancelPaymentIntent,
+      mockProcessFailure,
+      mockProcessPaymentIntents,
+      mockSend,
+    ]) {
+      m.mockReset();
+    }
+    mockRetrieveInvoice.mockResolvedValue({
+      hosted_invoice_url: "https://invoice.example/pay",
+    });
+  });
+
+  it.each(["requires_action", "requires_payment_method"])(
+    "keeps the payment open and the subscription active when it %s",
+    async (status) => {
+      const { account_id, subscription_id, payment_intent_id } =
+        await setupDueRenewal(dayjs().subtract(1, "minute").toDate());
+      mockRetrievePaymentIntent.mockResolvedValue({
+        id: payment_intent_id,
+        status,
+      });
+
+      await runWorker();
+
+      expect(mockCancelPaymentIntent).not.toHaveBeenCalled();
+      expect(mockProcessFailure).not.toHaveBeenCalled();
+      const row = await attemptRow(subscription_id);
+      expect(row).toEqual(
+        expect.objectContaining({
+          state: "scheduled",
+          status: "active",
+          waiting: true,
+        }),
+      );
+      // Rechecked later, not every minute.
+      expect(Number(row.next_in_ms)).toBeGreaterThan(
+        RENEWAL_CUSTOMER_ACTION_RECHECK_MS - 60_000,
+      );
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      const message = mockSend.mock.calls[0][0];
+      expect(message.to_ids).toEqual([account_id]);
+      expect(message.subject).toContain("Action needed");
+      expect(message.body).toContain("https://invoice.example/pay");
+      expect(message.body).toContain("stays active until");
+
+      // The membership is still in force while the attempt is open.
+      const { rows } = await getPool().query(
+        `SELECT 1 FROM subscriptions s
+           JOIN subscription_renewal_attempts a ON a.subscription_id=s.id
+          WHERE s.id=$1 AND s.status='active'
+            AND a.state IN ('scheduled','processing') AND a.not_before <= NOW()`,
+        [subscription_id],
+      );
+      expect(rows.length).toBe(1);
+    },
+  );
+
+  it("notifies the customer only once across rechecks", async () => {
+    const { subscription_id, payment_intent_id } = await setupDueRenewal(
+      dayjs().subtract(1, "hour").toDate(),
+    );
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "requires_action",
+    });
+    await runWorker();
+    await getPool().query(
+      "UPDATE subscription_renewal_attempts SET next_attempt_at=NOW() WHERE subscription_id=$1",
+      [subscription_id],
+    );
+    await runWorker();
+
+    expect(mockRetrievePaymentIntent).toHaveBeenCalledTimes(2);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockProcessFailure).not.toHaveBeenCalled();
+  });
+
+  it("completes the renewal when the customer pays during the grace period", async () => {
+    const { subscription_id, payment_intent_id } = await setupDueRenewal(
+      dayjs().subtract(2, "days").toDate(),
+    );
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "requires_action",
+    });
+    await runWorker();
+    await getPool().query(
+      "UPDATE subscription_renewal_attempts SET next_attempt_at=NOW() WHERE subscription_id=$1",
+      [subscription_id],
+    );
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "succeeded",
+    });
+    await runWorker();
+
+    expect(mockProcessPaymentIntents).toHaveBeenCalledWith(
+      expect.objectContaining({ payment_intent_id, strict: true }),
+    );
+    expect(mockProcessFailure).not.toHaveBeenCalled();
+  });
+
+  it("cancels after the grace period ends", async () => {
+    const { payment_intent_id } = await setupDueRenewal(
+      dayjs().subtract(8, "days").toDate(),
+    );
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "requires_payment_method",
+    });
+
+    await runWorker();
+
+    expect(mockCancelPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ id: payment_intent_id }),
+    );
+    expect(mockProcessFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntent: expect.objectContaining({ status: "canceled" }),
+      }),
+    );
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("treats an already canceled payment as final", async () => {
+    const { payment_intent_id } = await setupDueRenewal(
+      dayjs().subtract(1, "minute").toDate(),
+    );
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "canceled",
+    });
+
+    await runWorker();
+
+    expect(mockCancelPaymentIntent).not.toHaveBeenCalled();
+    expect(mockProcessFailure).toHaveBeenCalledTimes(1);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+});

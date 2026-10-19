@@ -77,6 +77,33 @@ describe("subscription renewal health alert", () => {
     expect(body).toContain("Affected renewals: 2");
   });
 
+  it("does not count payments waiting for the customer during the grace period", async () => {
+    const waitingAccount = uuid();
+    const expiredAccount = uuid();
+    await createTestAccount(waitingAccount);
+    await createTestAccount(expiredAccount);
+    const waiting = await createTestMembershipSubscription(waitingAccount, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(2, "day").toDate(),
+    });
+    const expired = await createTestMembershipSubscription(expiredAccount, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(8, "day").toDate(),
+    });
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts
+          SET customer_action_required_at=NOW()
+        WHERE subscription_id = ANY($1)`,
+      [[waiting.subscription_id, expired.subscription_id]],
+    );
+
+    // Still open after the grace period is an operational problem.
+    await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(1);
+    const body = mockAdminAlert.mock.calls[0][0].body;
+    expect(body).toContain(expiredAccount);
+    expect(body).not.toContain(waitingAccount);
+  });
+
   it("does not alert when no attempt has crossed the warning threshold", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);

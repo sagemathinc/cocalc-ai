@@ -6,6 +6,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getConn from "@cocalc/server/stripe/connection";
+import send, { support, url } from "@cocalc/server/messages/send";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import type { SubscriptionRenewalAttempt } from "@cocalc/util/db-schema/subscription-renewal-attempts";
 import createSubscriptionPayment, {
@@ -15,10 +16,13 @@ import { cancelPaymentIntent } from "./stripe/create-payment-intent";
 import processPaymentIntents from "./stripe/process-payment-intents";
 import {
   claimDueSubscriptionRenewalAttempts,
+  deferSubscriptionRenewalAttemptForCustomer,
   getSubscriptionRenewalAttempt,
   releaseSubscriptionRenewalAttempt,
+  renewalGraceEndsAt,
   scheduleMissingSubscriptionRenewalAttempts,
 } from "./subscription-renewal-attempts";
+import { formatRenewalDate } from "./subscription-renewal-notice";
 
 const logger = getLogger("purchases:subscription-renewal-worker");
 const DEFAULT_CONCURRENCY = 1;
@@ -87,6 +91,29 @@ async function finishFromStripe({
       `Stripe payment ${payment_intent_id} is ${paymentIntent.status}`,
     );
   }
+  if (
+    paymentIntent.status !== "canceled" &&
+    Date.now() < renewalGraceEndsAt(attempt.period_end).valueOf()
+  ) {
+    // A declined card or a bank asking the customer to authenticate is not a
+    // reason to end the membership immediately: leave the payment open (the
+    // customer can complete it from the invoice), keep benefits during the
+    // grace period, and tell the customer once.
+    const { deferred, firstTime } =
+      await deferSubscriptionRenewalAttemptForCustomer({
+        attempt_id: attempt.id,
+        error: `Stripe payment ${payment_intent_id} is ${paymentIntent.status}`,
+      });
+    if (deferred && firstTime) {
+      await sendRenewalPaymentActionNotice({ attempt }).catch((err) =>
+        logger.warn("unable to send renewal payment action notice", {
+          attempt_id: attempt.id,
+          err: `${err}`,
+        }),
+      );
+    }
+    return;
+  }
   if (paymentIntent.status !== "canceled") {
     await cancelPaymentIntent({ id: payment_intent_id, reason: "abandoned" });
     paymentIntent = {
@@ -97,6 +124,47 @@ async function finishFromStripe({
   await processSubscriptionRenewalFailure({
     account_id: attempt.account_id,
     paymentIntent,
+  });
+}
+
+async function hostedInvoiceUrl(
+  stripe_invoice_id?: string,
+): Promise<string | undefined> {
+  if (!stripe_invoice_id) return;
+  try {
+    const stripe = await getConn();
+    const invoice = await stripe.invoices.retrieve(stripe_invoice_id);
+    return invoice.hosted_invoice_url ?? undefined;
+  } catch (err) {
+    logger.warn("unable to load renewal invoice", {
+      stripe_invoice_id,
+      err: `${err}`,
+    });
+  }
+}
+
+async function sendRenewalPaymentActionNotice({
+  attempt,
+}: {
+  attempt: SubscriptionRenewalAttempt;
+}): Promise<void> {
+  const { site_name } = await getServerSettings();
+  const graceEnd = formatRenewalDate(renewalGraceEndsAt(attempt.period_end));
+  const invoiceUrl = await hostedInvoiceUrl(attempt.stripe_invoice_id);
+  const payLine = invoiceUrl ? `- [Complete the payment](${invoiceUrl})` : "";
+  await send({
+    to_ids: [attempt.account_id],
+    subject: `Action needed: ${site_name} subscription renewal payment (Id ${attempt.subscription_id})`,
+    body: `
+We couldn't automatically collect the renewal payment for your ${site_name} subscription (id=${attempt.subscription_id}). Your bank may have declined the card or asked you to confirm the payment.
+
+**Your membership stays active until ${graceEnd}.** To keep it, complete the payment before then${invoiceUrl ? " using the link below, where you can also confirm the charge with your bank or pay with a different card" : ""}. If the payment isn't completed by ${graceEnd}, the subscription will be canceled.
+
+${payLine}
+
+- [Manage Membership](${await url(`/settings/membership`)})
+
+${await support()}`,
   });
 }
 

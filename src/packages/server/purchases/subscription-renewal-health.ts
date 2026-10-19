@@ -6,6 +6,7 @@
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getPool from "@cocalc/database/pool";
 import adminAlert from "@cocalc/server/messages/admin-alert";
+import { RENEWAL_PAYMENT_GRACE_MS } from "./subscription-renewal-attempts";
 
 const DEFAULT_WARNING_MINUTES = 10;
 const DEFAULT_CRITICAL_MINUTES = 24 * 60;
@@ -101,8 +102,14 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
         AND s.current_period_end=a.period_end
       WHERE a.state IN ('scheduled','processing')
         AND a.not_before <= NOW() - ($1 * INTERVAL '1 minute')
+        -- Waiting for the customer during the grace period is expected,
+        -- not an operational delay.
+        AND NOT (
+          a.customer_action_required_at IS NOT NULL AND
+          a.not_before > NOW() - ($2 * INTERVAL '1 millisecond')
+        )
       ORDER BY a.not_before, a.subscription_id`,
-    [warningMinutes],
+    [warningMinutes, RENEWAL_PAYMENT_GRACE_MS],
   );
   if (rows.length === 0) {
     return 0;
