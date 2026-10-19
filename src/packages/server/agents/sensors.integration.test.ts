@@ -59,6 +59,8 @@ jest.mock("./sensor-credentials", () => ({
 // Budgets live on the approver's home bay; here that is this database. Every
 // call is recorded, to show which account's home is asked.
 const budget = { calls: [] as string[], failRelease: false };
+// Connectors the account gave the agent, as its home bay reports them.
+const grants = { github: true };
 jest.mock("./cocalc-connector-routing", () => {
   const home = jest.requireActual("./sensor-budget");
   const call =
@@ -74,6 +76,9 @@ jest.mock("./cocalc-connector-routing", () => {
       releaseWake: call("releaseWake", home.releaseSensorWakeAtHome),
       reserveWatcher: call("reserveWatcher", home.reserveSensorWatcherAtHome),
       releaseWatcher: call("releaseWatcher", home.releaseSensorWatcherAtHome),
+    },
+    sensorConnectors: {
+      hasCli: async (opts: any) => opts.connector === "github" && grants.github,
     },
   };
 });
@@ -137,6 +142,7 @@ describeDb("agent sensors", () => {
     access.denied.clear();
     for (const key of Object.keys(limits)) delete limits[key];
     lease.missing = [];
+    grants.github = true;
     lease.issued = [];
     lease.released = 0;
     budget.calls = [];
@@ -1116,7 +1122,56 @@ describeDb("agent sensors", () => {
     );
   });
 
-  test("a watcher paused because its connector is off gives back its place", async () => {
+  test("a ci watcher is refused when the agent has no GitHub connector", async () => {
+    grants.github = false;
+    await expect(
+      agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
+      }),
+    ).rejects.toThrow(/GitHub connector.*gh pr checks/);
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM agent_sensors WHERE agent_id=$1",
+      [agent.agent_id],
+    );
+    expect(rows).toHaveLength(0);
+    // Other watchers need no connector.
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a ci watcher whose connector was turned off gives up and wakes its agent, not the person", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
+    })) as any;
+    grants.github = false;
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    // Nothing ran with credentials, and nobody is asked to resume it.
+    expect(lease.issued).toHaveLength(0);
+    expect(paused).toHaveLength(0);
+    const delivered = host.deliverAgentSensorWake.mock.calls.map(
+      (call: any[]) => call[0],
+    );
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].prompt).toMatch(/Gave up: .*needs GitHub/);
+    const { rows } = await getPool().query(
+      "SELECT status, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({ status: "active", next_run_at: null });
+    // Done, so its place is free again.
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a watcher whose connector is lost when its token is issued also gives up, not pauses", async () => {
     limits.sensor_max_active_watchers = 1;
     const ci = (await agentSensorRequest(run, agent, {
       action: "sensor",
@@ -1124,16 +1179,27 @@ describeDb("agent sensors", () => {
       watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
     })) as any;
     await expect(fileWatch()).rejects.toThrow(/at most 1 watchers/);
+    // The grant was still there for the check, but no token came back.
     lease.missing = ["github"];
     await makeDue(ci.sensor.sensor_id);
     await runDue();
+    expect(host.runAgentSensor).not.toHaveBeenCalled();
+    expect(paused).toHaveLength(0);
+    const delivered = host.deliverAgentSensorWake.mock.calls.map(
+      (call: any[]) => call[0],
+    );
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].prompt).toMatch(/Gave up: .*needs GitHub/);
     const { rows } = await getPool().query(
-      "SELECT status, pause_reason FROM agent_sensors WHERE sensor_id=$1",
+      "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
       [ci.sensor.sensor_id],
     );
-    expect(rows[0]).toMatchObject({ status: "paused" });
-    expect(rows[0].pause_reason).toMatch(/uses GitHub/);
-    // A watcher can never be resumed, so its place is free again.
+    expect(rows[0]).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+    // Done, so its place is free again.
     lease.missing = [];
     await expect(fileWatch()).resolves.toMatchObject({
       sensor: expect.objectContaining({ status: "active" }),

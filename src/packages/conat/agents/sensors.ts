@@ -568,23 +568,35 @@ export function sensorWatchScript(watch: SensorWatch): string | undefined {
   if (watch.type === "ci")
     return (
       params +
-      `r = subprocess.run(["gh", "pr", "checks", str(P["pr"]), "--repo", P["repo"], "--json", "name,bucket"], capture_output=True, text=True)
-try:
-    checks = json.loads(r.stdout or "null")
-except ValueError:
-    checks = None
-if not isinstance(checks, list):
-    message = (r.stderr or r.stdout or "").strip()
-    if "no checks" in message:
-        sys.exit(0)
-    print(message[-1000:], file=sys.stderr)
-    sys.exit(1)
-if not checks or any(c.get("bucket") == "pending" for c in checks):
+      `def gh(path, jq):
+    r = subprocess.run(["gh", "api", "--paginate", path, "--jq", jq], capture_output=True, text=True)
+    if r.returncode != 0:
+        print((r.stderr or r.stdout or "").strip()[-1000:], file=sys.stderr)
+        sys.exit(1)
+    return [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
+repo = P["repo"]
+sha = gh("repos/%s/pulls/%d" % (repo, P["pr"]), "{sha: .head.sha}")[0]["sha"]
+# Like gh pr checks: check runs (GitHub returns only the latest attempt of
+# each; same-named checks of different suites stay separate) and statuses.
+# Anything not known to be finished counts as pending, e.g. "stale".
+def run_bucket(c):
+    state = c.get("conclusion") if c.get("status") == "completed" else c.get("status")
+    if state in ("success", "neutral", "skipped"):
+        return "pass"
+    if state in ("failure", "timed_out", "action_required", "startup_failure", "error"):
+        return "fail"
+    if state == "cancelled":
+        return "cancel"
+    return "pending"
+checks = [{"name": c["name"], "bucket": run_bucket(c)} for c in gh("repos/%s/commits/%s/check-runs?filter=latest&per_page=100" % (repo, sha), ".check_runs[] | {name, status, conclusion}")]
+for s in gh("repos/%s/commits/%s/status" % (repo, sha), ".statuses[] | {context, state}"):
+    checks.append({"name": s["context"], "bucket": {"success": "pass", "failure": "fail", "error": "fail"}.get(s["state"], "pending")})
+if not checks or any(c["bucket"] == "pending" for c in checks):
     sys.exit(0)
-failed = [c.get("name", "?") for c in checks if c.get("bucket") in ("fail", "cancel")]
-where = P["repo"] + "#" + str(P["pr"])
+failed = [c["name"] for c in checks if c["bucket"] in ("fail", "cancel")]
+where = repo + "#" + str(P["pr"])
 summary = ("CI finished on %s: all %d checks passed" % (where, len(checks))) if not failed else ("CI finished on %s: %d of %d checks failed: %s" % (where, len(failed), len(checks), ", ".join(failed[:5])))
-print(json.dumps({"wake": True, "summary": summary, "data": {"repo": P["repo"], "pr": P["pr"], "checks": [{"name": c.get("name"), "bucket": c.get("bucket")} for c in checks[:50]]}}))
+print(json.dumps({"wake": True, "summary": summary, "data": {"repo": repo, "pr": P["pr"], "checks": checks[:50]}}))
 `
     );
   if (watch.type === "file")

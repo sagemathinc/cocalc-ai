@@ -609,6 +609,10 @@ cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123 merged"
 cocalc sensor watch exit -- make test   # runs it in a project terminal
 ```
 
+`watch ci` needs this agent's GitHub connector and is refused without it.
+Without it, watch the checks with the project's own `gh` login instead:
+`cocalc sensor watch exit -- gh pr checks 123 --repo owner/name --watch`.
+
 Once it has fired (or given up), a watcher's status is `done`: it never runs
 again, and is removed a day later.
 
