@@ -17,7 +17,7 @@ import type {
   ManagedProjectEgressCategory,
   ProjectBandwidthRelayEvidence,
 } from "@cocalc/conat/hub/api/system";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import {
   getProjectHostManagedEgressMode,
   isProjectHostManagedEgressEnforced,
@@ -396,11 +396,11 @@ export function summarizeManagedRawNetworkEgressDeltas({
 }
 
 function buildBlockedMessage(policy: ManagedEgressPolicy): string {
-  return [
-    "Project outbound network traffic limit reached.",
-    "Raw outbound network access for this project is temporarily blocked until the egress usage window resets.",
-    ...formatManagedEgressPolicyDetails(policy),
-  ].join("\n");
+  return formatManagedEgressBlockedMessage({
+    category: CATEGORY,
+    policy,
+    blocked: "Raw outbound network access for this project is blocked.",
+  });
 }
 
 export async function assertManagedRawNetworkStartAllowedBestEffort({

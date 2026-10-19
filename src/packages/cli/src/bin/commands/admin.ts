@@ -435,6 +435,22 @@ export function buildEntitlementOverrideSchemaDoc() {
         unit: "bytes",
         description: descriptions.usage_limits.egress_7d_bytes.adminDescription,
       }),
+      fieldDoc({
+        path: "usage_limits.control_plane_egress_5h_bytes",
+        ...descriptions.usage_limits.control_plane_egress_5h_bytes,
+        unit: "bytes",
+        description:
+          descriptions.usage_limits.control_plane_egress_5h_bytes
+            .adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.control_plane_egress_7d_bytes",
+        ...descriptions.usage_limits.control_plane_egress_7d_bytes,
+        unit: "bytes",
+        description:
+          descriptions.usage_limits.control_plane_egress_7d_bytes
+            .adminDescription,
+      }),
       {
         path: "usage_limits.egress_policy",
         kind: "enum_rule",

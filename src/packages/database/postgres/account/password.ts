@@ -12,9 +12,9 @@ import type { QueryRows } from "@cocalc/util/types/database";
 
 import passwordHash from "@cocalc/backend/auth/password-hash";
 
-import { accountWhere } from "./core";
 import type { PostgreSQL } from "../types";
-import { invalidate_all_remember_me } from "./remember-me";
+import { endAllSessionsWithDb } from "./remember-me";
+import { withAccountRehomeWriteFence } from "../account-rehome-fence";
 
 export interface ChangePasswordOptions {
   account_id: string;
@@ -23,22 +23,35 @@ export interface ChangePasswordOptions {
 }
 
 export async function change_password(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: ChangePasswordOptions,
 ): Promise<void> {
   if (opts.password_hash.length > 173) {
     throw "password_hash must be at most 173 characters";
   }
-
-  await callback2(db._query.bind(db), {
-    query: "UPDATE accounts",
-    set: { password_hash: opts.password_hash },
-    where: accountWhere(opts),
-  });
-
-  if (opts.invalidate_remember_me ?? true) {
-    await invalidate_all_remember_me(db, { account_id: opts.account_id });
+  if (!opts.account_id) {
+    throw new Error("account_id is required");
   }
+
+  // The new password and signing out everywhere happen together, in one
+  // transaction inside the account rehome fence: a rehome copies both the
+  // account row and its sessions, so none of them may change while it runs.
+  await withAccountRehomeWriteFence({
+    account_id: opts.account_id,
+    action: "change password",
+    fn: async (client) => {
+      const { rowCount } = await client.query(
+        "UPDATE accounts SET password_hash = $2::TEXT WHERE account_id = $1::UUID",
+        [opts.account_id, opts.password_hash],
+      );
+      if (!rowCount) {
+        throw new Error(`account ${opts.account_id} not found`);
+      }
+      if (opts.invalidate_remember_me ?? true) {
+        await endAllSessionsWithDb(client, opts.account_id);
+      }
+    },
+  });
 }
 
 export interface ResetPasswordOptions {

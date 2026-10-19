@@ -1,8 +1,9 @@
 /** @jest-environment jsdom */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
 import { ExternalAgentApproval } from "../external-agent-approval";
+import { withRequestTimeSpent } from "../cli-auth-views";
 
 jest.mock("@cocalc/frontend/auth/api", () => ({ postAuthApi: jest.fn() }));
 jest.mock("@cocalc/frontend/control-plane-origin", () => ({
@@ -92,4 +93,156 @@ test("signed-out visitors cannot enumerate or approve networks", () => {
     screen.queryByRole("button", { name: "Approve Network Membership" }),
   ).toBeNull();
   expect(api).not.toHaveBeenCalled();
+});
+
+test("an expired request says so as soon as the page opens, with no form", async () => {
+  render(<ExternalAgentApproval {...props} expiresInMs={0} state="pending" />);
+  expect(
+    await screen.findByText("This enrollment request is no longer open."),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(/It expired at .*Run the enrollment command/),
+  ).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Agent Network" })).toBeNull();
+  expect(api).not.toHaveBeenCalled();
+});
+
+test("an already approved request is not offered again", async () => {
+  render(
+    <ExternalAgentApproval
+      {...props}
+      expiresInMs={30 * 60_000}
+      state="redeemed"
+    />,
+  );
+  expect(await screen.findByText(/It was already approved\./)).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Agent Network" })).toBeNull();
+});
+
+test("the page shows when the request expires, and warns when it is soon", async () => {
+  const { unmount } = render(
+    <ExternalAgentApproval
+      {...props}
+      expiresInMs={50 * 60_000}
+      state="pending"
+    />,
+  );
+  expect(
+    await screen.findByText(/^This request expires at [^(]*\.$/),
+  ).toBeTruthy();
+  expect(
+    await screen.findByRole("combobox", { name: "Agent Network" }),
+  ).toBeTruthy();
+  unmount();
+  render(
+    <ExternalAgentApproval
+      {...props}
+      expiresInMs={4 * 60_000}
+      state="pending"
+    />,
+  );
+  expect(
+    await screen.findByText(
+      /This request expires at .*\(in about 4 minutes\)\./,
+    ),
+  ).toBeTruthy();
+});
+
+test("a browser clock far ahead of the server's still offers a fresh request", async () => {
+  const now = jest
+    .spyOn(Date, "now")
+    .mockReturnValue(Date.now() + 2 * 3600_000);
+  try {
+    render(
+      <ExternalAgentApproval
+        {...props}
+        expiresInMs={50 * 60_000}
+        state="pending"
+      />,
+    );
+    expect(
+      await screen.findByRole("combobox", { name: "Agent Network" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("This enrollment request is no longer open."),
+    ).toBeNull();
+  } finally {
+    now.mockRestore();
+  }
+});
+
+test("the page counts the server's time left down and closes when it runs out", () => {
+  jest.useFakeTimers();
+  try {
+    render(
+      <ExternalAgentApproval {...props} expiresInMs={60_000} state="pending" />,
+    );
+    expect(
+      screen.queryByText("This enrollment request is no longer open."),
+    ).toBeNull();
+    act(() => {
+      jest.advanceTimersByTime(75_000);
+    });
+    expect(
+      screen.getByText("This enrollment request is no longer open."),
+    ).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("the form closes exactly when the server's time runs out, not at the next tick", () => {
+  jest.useFakeTimers();
+  try {
+    render(
+      <ExternalAgentApproval {...props} expiresInMs={5_000} state="pending" />,
+    );
+    act(() => {
+      jest.advanceTimersByTime(4_900);
+    });
+    expect(
+      screen.queryByText("This enrollment request is no longer open."),
+    ).toBeNull();
+    act(() => {
+      jest.advanceTimersByTime(200);
+    });
+    expect(
+      screen.getByText("This enrollment request is no longer open."),
+    ).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("time spent on the challenge-info request is counted against the request", () => {
+  // The server measured 3 s left; the reply took 2.5 s to arrive.
+  expect(withRequestTimeSpent({ expires_in_ms: 3_000 }, 2_500)).toEqual({
+    expires_in_ms: 500,
+  });
+  expect(withRequestTimeSpent({ expires_in_ms: 3_000 }, 9_000)).toEqual({
+    expires_in_ms: 0,
+  });
+  expect(withRequestTimeSpent({}, 9_000)).toEqual({});
+  jest.useFakeTimers();
+  try {
+    const { expires_in_ms } = withRequestTimeSpent(
+      { expires_in_ms: 3_000 },
+      2_500,
+    );
+    render(
+      <ExternalAgentApproval
+        {...props}
+        expiresInMs={expires_in_ms}
+        state="pending"
+      />,
+    );
+    act(() => {
+      jest.advanceTimersByTime(600);
+    });
+    expect(
+      screen.getByText("This enrollment request is no longer open."),
+    ).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
 });

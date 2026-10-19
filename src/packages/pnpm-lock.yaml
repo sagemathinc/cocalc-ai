@@ -2332,6 +2332,9 @@ importers:
       playwright-core:
         specifier: ^1.57.0
         version: 1.57.0
+      typescript:
+        specifier: npm:@typescript/typescript6@^6.0.2
+        version: '@typescript/typescript6@6.0.2'
 
   static:
     devDependencies:

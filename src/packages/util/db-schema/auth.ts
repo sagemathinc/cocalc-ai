@@ -20,12 +20,21 @@ Table({
     },
     expire: {
       type: "timestamp",
+      desc: "When this session stops working: the earlier of last_used plus the idle timeout and max_expire.",
+    },
+    last_used: {
+      type: "timestamp",
+      desc: "When this session was last used (recorded at most about once an hour). NULL for sessions from before idle timeouts; maintenance sets it.",
+    },
+    max_expire: {
+      type: "timestamp",
+      desc: "Latest possible expiry: sign-in (or the last re-entered password or second factor) plus the maximum session lifetime.",
     },
   },
   rules: {
     primary_key: "hash",
     durability: "soft", // dropping this would just require a user to login again
-    pg_indexes: ["account_id"],
+    pg_indexes: ["account_id", "expire", "last_used"],
   },
 });
 

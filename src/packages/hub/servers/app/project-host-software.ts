@@ -524,20 +524,41 @@ async function sendBootstrapSha(req: Request, res: Response): Promise<void> {
   sendShaResponse(res, meta.sha256, basename(filePath));
 }
 
+/** Redirect to an artifact's own software endpoint, when one is configured. */
+function redirectToArtifactBaseUrl(
+  req: Request,
+  res: Response,
+  configured: string | undefined,
+): boolean {
+  const base = `${configured ?? ""}`.trim();
+  return (
+    !!base &&
+    !isSameSoftwareBaseUrl(base, softwareBaseFromReq(req)) &&
+    redirectSoftwareRequest(req, res, normalizeSoftwareBaseUrl(base))
+  );
+}
+
+// Tools (~336 MB: codex, Claude Code, Chromium, the CLI) can come from a
+// published endpoint even when this hub serves its own bundles: a dev hub's
+// hosts then do not download a fresh local build on every deploy, which is
+// the hub's metered egress when the hosts are elsewhere.
+function redirectTools(req: Request, res: Response): boolean {
+  return redirectToArtifactBaseUrl(
+    req,
+    res,
+    process.env.COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL,
+  );
+}
+
 async function redirectContainerRuntime(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const configuredFallback = `${
-    process.env.COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL ?? ""
-  }`.trim();
   if (
-    configuredFallback &&
-    !isSameSoftwareBaseUrl(configuredFallback, softwareBaseFromReq(req)) &&
-    redirectSoftwareRequest(
+    redirectToArtifactBaseUrl(
       req,
       res,
-      normalizeSoftwareBaseUrl(configuredFallback),
+      process.env.COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL,
     )
   ) {
     return;
@@ -594,6 +615,7 @@ export default function init(router: Router) {
   });
 
   router.get("/software/tools/latest-:os-:arch.json", async (req, res) => {
+    if (redirectTools(req, res)) return;
     try {
       await sendLatestBundleManifest(req, res, {
         artifact: "tools",
@@ -643,6 +665,7 @@ export default function init(router: Router) {
   router.get(
     "/software/tools/versions-:channel-:os-:arch.json",
     async (req, res) => {
+      if (redirectTools(req, res)) return;
       try {
         await sendVersionsIndex(req, res, {
           artifact: "tools",
@@ -726,6 +749,7 @@ export default function init(router: Router) {
   router.get(
     "/software/tools/:version/tools-:os-:arch.tar.xz",
     async (req, res) => {
+      if (redirectTools(req, res)) return;
       try {
         await sendBundleFile(req, res, {
           artifact: "tools",
@@ -743,6 +767,7 @@ export default function init(router: Router) {
   router.get(
     "/software/tools/:version/tools-:os-:arch.tar.xz.sha256",
     async (req, res) => {
+      if (redirectTools(req, res)) return;
       try {
         await sendBundleSha(req, res, {
           artifact: "tools",

@@ -26,7 +26,7 @@ import {
   type Client as ConatClient,
 } from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
@@ -734,14 +734,14 @@ export async function main(
       if (policy.allowed) {
         return { allowed: true };
       }
-      const lines = [
-        "Managed download limit reached for this account.",
-        "New file downloads are temporarily blocked until the egress usage window resets.",
-        ...formatManagedEgressPolicyDetails(policy),
-      ];
+      const message = formatManagedEgressBlockedMessage({
+        category: policy.category ?? "",
+        policy,
+        blocked: "New file downloads are blocked.",
+      });
       return {
         allowed: false,
-        message: lines.join("\n"),
+        message,
       };
     } catch (err) {
       logger.warn("unable to evaluate managed file download policy", {
@@ -815,14 +815,14 @@ export async function main(
       if (policy.allowed) {
         return { allowed: true };
       }
-      const lines = [
-        "Managed app HTTP limit reached for this project.",
-        "New app HTTP responses are temporarily blocked until the egress usage window resets.",
-        ...formatManagedEgressPolicyDetails(policy),
-      ];
+      const message = formatManagedEgressBlockedMessage({
+        category: policy.category ?? "",
+        policy,
+        blocked: "New app HTTP responses are blocked.",
+      });
       return {
         allowed: false,
-        message: lines.join("\n"),
+        message,
       };
     } catch (err) {
       logger.warn("unable to evaluate managed http egress policy", {
@@ -897,14 +897,14 @@ export async function main(
       if (policy.allowed) {
         return { allowed: true };
       }
-      const lines = [
-        "Managed app WebSocket limit reached for this project.",
-        "New app WebSocket traffic is temporarily blocked until the egress usage window resets.",
-        ...formatManagedEgressPolicyDetails(policy),
-      ];
+      const message = formatManagedEgressBlockedMessage({
+        category: policy.category ?? "",
+        policy,
+        blocked: "New app WebSocket traffic is blocked.",
+      });
       return {
         allowed: false,
-        message: lines.join("\n"),
+        message,
       };
     } catch (err) {
       logger.warn("unable to evaluate managed websocket egress policy", {

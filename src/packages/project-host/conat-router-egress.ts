@@ -11,7 +11,7 @@ import type { ConatServer } from "@cocalc/conat/core/server";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { getExamUsageAccountId } from "./exam/usage";
 import type { ManagedProjectEgressCategory } from "@cocalc/conat/hub/api/system";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import {
   clearProjectHostManagedEgressBlockedAccount,
   clearProjectHostManagedEgressBlockedAccounts,
@@ -208,11 +208,11 @@ function buildBlockedMessage(policy: {
   managed_egress_categories_5h_bytes?: Record<string, number>;
   managed_egress_categories_7d_bytes?: Record<string, number>;
 }): string {
-  return [
-    "Interactive session traffic limit reached for this account.",
-    "New terminal, notebook, and editor session traffic is temporarily blocked until the egress usage window resets.",
-    ...formatManagedEgressPolicyDetails(policy),
-  ].join("\n");
+  return formatManagedEgressBlockedMessage({
+    category: CATEGORY,
+    policy,
+    blocked: "New terminal, notebook, and editor session traffic is blocked.",
+  });
 }
 
 export function startConatRouterManagedEgressLoop({
