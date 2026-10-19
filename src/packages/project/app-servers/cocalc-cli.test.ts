@@ -42,12 +42,24 @@ describe("resolveAppCommand", () => {
 
   test("an explicit COCALC_CLI_BIN (Lite) wins, also inside a project", () => {
     const js = "/home/user/cocalc/src/packages/cli/dist/bin/cocalc.js";
+    const node = "/usr/local/bin/node";
     expect(
       resolveAppCommand(
         { exec: "cocalc", args },
-        { env: { COCALC_CLI_BIN: js }, exists: () => true },
+        { env: { COCALC_CLI_BIN: js }, exists: () => true, execPath: node },
       ),
-    ).toEqual({ exec: js, args });
+    ).toEqual({ exec: node, args: [js, ...args] });
+    // A real binary runs directly.
+    expect(
+      resolveAppCommand(
+        { exec: "cocalc", args },
+        {
+          env: { COCALC_CLI_BIN: "/lite/bin/cocalc" },
+          exists: () => true,
+          execPath: node,
+        },
+      ),
+    ).toEqual({ exec: "/lite/bin/cocalc", args });
     // ... and is ignored if it does not exist.
     expect(
       resolveAppCommand(
@@ -55,6 +67,35 @@ describe("resolveAppCommand", () => {
         { env: { COCALC_CLI_BIN: js }, exists: (path) => path !== js },
       ),
     ).toEqual(bundled);
+  });
+
+  test("a JavaScript CLI runs with node.exe on Windows", () => {
+    const js = "C:\\cocalc\\cli\\dist\\bin\\cocalc.js";
+    const node = "C:\\Program Files\\nodejs\\node.exe";
+    expect(
+      resolveAppCommand(
+        { exec: "cocalc", args },
+        {
+          env: { COCALC_CLI_BIN: js },
+          exists: (path) => path === js,
+          execPath: node,
+        },
+      ),
+    ).toEqual({ exec: node, args: [js, ...args] });
+  });
+
+  test("in a SEA build the JavaScript CLI runs by its shebang", () => {
+    const js = "/lite/cli/dist/bin/cocalc.js";
+    expect(
+      resolveAppCommand(
+        { exec: "cocalc", args },
+        {
+          env: { COCALC_CLI_BIN: js },
+          exists: (path) => path === js,
+          execPath: "/opt/cocalc/bin/cocalc-lite",
+        },
+      ),
+    ).toEqual({ exec: js, args });
   });
 
   test("keeps the PATH lookup when no CLI is known", () => {
