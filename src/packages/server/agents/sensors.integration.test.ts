@@ -1253,6 +1253,38 @@ describeDb("agent sensors", () => {
     });
   });
 
+  test("a watcher whose check cannot even run gives up the same way", async () => {
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+    })) as any;
+    host.runAgentSensor.mockRejectedValue(
+      new Error("container failed to start"),
+    );
+    for (let i = 0; i < 4; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+    expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toMatch(
+      /Gave up: .*failed 5 times in a row\. Last error: .*container failed to start/,
+    );
+    expect(paused).toHaveLength(0);
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+  });
+
   test("a give-up wake the host did not send is tried again, not paused", async () => {
     const ci = (await agentSensorRequest(run, agent, {
       action: "sensor",

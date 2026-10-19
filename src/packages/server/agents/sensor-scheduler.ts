@@ -381,6 +381,9 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       });
       connectors = lease.given;
       let result;
+      // The check could not be run at all (e.g. the host or its container
+      // failed): a failed run, like a failing check.
+      let runError: string | undefined;
       try {
         if (lease.missing.length > 0 && !watch) {
           const names = lease.missing
@@ -414,17 +417,21 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
               await changed();
               return;
             }
-            result = await host.api.runAgentSensor({
-              project_id: row.project_id,
-              sensor_id: row.sensor_id,
-              run_id,
-              language: watch ? "python" : (spec as any).language,
-              script,
-              timeout_seconds,
-              path: agent.path,
-              image: dispatch.image,
-              credentials: lease.credentials,
-            });
+            try {
+              result = await host.api.runAgentSensor({
+                project_id: row.project_id,
+                sensor_id: row.sensor_id,
+                run_id,
+                language: watch ? "python" : (spec as any).language,
+                script,
+                timeout_seconds,
+                path: agent.path,
+                image: dispatch.image,
+                credentials: lease.credentials,
+              });
+            } catch (err) {
+              runError = errorText(err);
+            }
           } finally {
             clearInterval(renewal);
           }
@@ -435,18 +442,22 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       let wake: SensorWake | undefined;
       if (missingNow.length > 0) prompt = giveUpWatcher();
       else {
-        exit_code = result.exit_code;
-        output = logOutput(result.stdout, result.stderr);
-        if (result.timed_out) {
-          outcome = "timeout";
-          error = `The script ran longer than ${timeout_seconds} seconds.`;
-        } else if (exit_code !== 0) {
-          error = `The script exited with code ${exit_code}.`;
+        if (runError != null) {
+          error = runError;
         } else {
-          try {
-            wake = parseSensorWake(result.stdout);
-          } catch (err) {
-            error = errorText(err);
+          exit_code = result.exit_code;
+          output = logOutput(result.stdout, result.stderr);
+          if (result.timed_out) {
+            outcome = "timeout";
+            error = `The script ran longer than ${timeout_seconds} seconds.`;
+          } else if (exit_code !== 0) {
+            error = `The script exited with code ${exit_code}.`;
+          } else {
+            try {
+              wake = parseSensorWake(result.stdout);
+            } catch (err) {
+              error = errorText(err);
+            }
           }
         }
         if (error != null) {
