@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { selectThreadByUser } from "@cocalc/frontend/chat/select-thread-by-user";
 import { URL_REJECTED } from "@cocalc/frontend/lib/url-transform";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -467,7 +468,7 @@ function WorkbenchDocument(props: WorkbenchProps) {
       suffix: "artifact-feedback",
       text: JSON.stringify(feedback),
     });
-    chat.setSelectedThread?.(feedback.thread_id);
+    selectThreadByUser(chat, feedback.thread_id);
   };
   const returnToChat = () => {
     const origin = desc.get("data-origin");

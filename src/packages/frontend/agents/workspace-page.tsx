@@ -2521,7 +2521,6 @@ function AgentProjectContext({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const initialThreadRef = useRef(agent.thread_id);
-  const requestedThreadRef = useRef<string | undefined>(undefined);
   const wasActiveRef = useRef(active);
   const useEditor = useEditorRedux<{ activity: any; local_view_state: any }>({
     project_id: agent.endpoint.project_id,
@@ -2694,7 +2693,6 @@ function AgentProjectContext({
 
   useEffect(() => {
     if (!active || !ready) return;
-    requestedThreadRef.current = agent.thread_id;
     const editorActions: any = redux.getEditorActions(
       agent.endpoint.project_id,
       agent.path,
@@ -2720,13 +2718,19 @@ function AgentProjectContext({
   }, [active, agent.endpoint.project_id, agent.path, agent.thread_id, ready]);
 
   useEffect(() => {
-    if (!active || !ready || !selectedThread) return;
-    if (requestedThreadRef.current) {
-      if (selectedThread !== requestedThreadRef.current) return;
-      requestedThreadRef.current = undefined;
-    }
-    onSelectedThread(selectedThread);
-  }, [active, onSelectedThread, ready, selectedThread]);
+    if (!active || !ready) return;
+    // The route alone selects the agent. The embedded chat is passive: it
+    // reports only a thread the person chooses in it (thread list, a link,
+    // find or search), never a selection made by code, so its view state can
+    // never send the route back and forth between agents.
+    const editorActions: any = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
+    );
+    if (typeof editorActions?.setEmbeddedThreadSelectHandler !== "function")
+      return;
+    return editorActions.setEmbeddedThreadSelectHandler(onSelectedThread);
+  }, [active, agent.endpoint.project_id, agent.path, onSelectedThread, ready]);
 
   useEffect(() => {
     if (!ready) return;

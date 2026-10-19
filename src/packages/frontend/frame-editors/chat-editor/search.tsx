@@ -325,6 +325,8 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         fragment["thread"] = hit.threadId;
       }
       const editorNavigator = actions as ChatEditorNavigator | undefined;
+      // Choosing a search result is the person's choice of thread.
+      if (hit.threadId) (actions as any)?.userSelectedThread?.(hit.threadId);
       if (typeof editorNavigator?.gotoFragment === "function") {
         void editorNavigator.gotoFragment(fragment);
         return;

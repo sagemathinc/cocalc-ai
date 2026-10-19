@@ -1,3 +1,4 @@
+import { selectThreadByUser } from "./select-thread-by-user";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ChatActions } from "./actions";
 import { dateValue, field } from "./access";
@@ -132,7 +133,7 @@ export async function findInChatAndOpenFirstResult({
   const threadId = `${best.threadId ?? ""}`.trim();
   if (threadId && threadId !== ALL_MESSAGES_KEY) {
     actions.clearAllFilters?.();
-    actions.setSelectedThread?.(threadId);
+    selectThreadByUser(actions, threadId);
   }
   const jump = () => actions.setFragment?.(new Date(best.dateMs));
   if (threadId) {

@@ -547,6 +547,7 @@ export function ChatRoomSidebarContent({
                 : undefined);
             setAllowAutoSelectThread(true);
             setSelectedThreadKey(String(menuKey));
+            actions?.selectThreadByUser?.(String(menuKey));
             if (isCompact) {
               setSidebarVisible(false);
             }
@@ -697,6 +698,7 @@ export function ChatRoomSidebarContent({
                           setArchivedOpen,
                           setSidebarVisible,
                         });
+                        actions?.selectThreadByUser?.(thread.key);
                       }}
                     >
                       Open
