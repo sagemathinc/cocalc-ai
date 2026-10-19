@@ -2015,3 +2015,152 @@ describe("CLI logout across bays", () => {
     assert.deepEqual(JSON.parse(readFileSync(config, "utf8")).profiles, {});
   });
 });
+
+describe("managed egress notices", () => {
+  // The bay that evaluates an egress policy (e.g. the one owning the
+  // project's host) is often not the account's home bay. The notice must
+  // still reach the account's own notification list.
+  //
+  // A notice's id depends on its UTC day: every send and lookup here uses
+  // this one instant, so a run across midnight cannot mix two days' ids.
+  const NOW = new Date().toISOString();
+  const notifyOn = async (bay, account) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const { notifyManagedEgressLimit } = server("notifications/managed-egress.js");
+       return await notifyManagedEgressLimit({ ...${JSON.stringify({
+         account_id: account.account_id,
+         pool: "shared",
+         window: "7d",
+         used: 2100,
+         limit: 2000,
+         blocked: true,
+       })}, now: new Date(${JSON.stringify(NOW)}) });`,
+    );
+
+  // This notice's own outbox rows: earlier scenarios leave other
+  // notifications for the same accounts.
+  const outbox = async (bay, account) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { managedEgressNotificationId } = server("notifications/managed-egress.js");
+       const id = managedEgressNotificationId(
+         "managed-egress:shared:7d:blocked:" + ${JSON.stringify(account.account_id)},
+         new Date(${JSON.stringify(NOW)}));
+       const { rows } = await getPool().query(
+         "SELECT target_home_bay_id, published_at IS NOT NULL AS published FROM notification_target_outbox WHERE target_account_id=$1 AND notification_id=$2",
+         [${JSON.stringify(account.account_id)}, id]);
+       return rows;`,
+    );
+
+  const noticeIn = async (account) =>
+    (await account.client.call("notifications.list", { limit: 50 })).filter(
+      (row) => row.summary?.notice_type === "managed_egress_blocked",
+    );
+
+  for (const [evaluating, who] of [
+    [SEED, "bob"],
+    [ATTACHED, "alice"],
+  ]) {
+    it(`delivers a block notice evaluated on ${evaluating} to ${who}'s home bay, once a day`, async () => {
+      const account = who === "bob" ? bob : alice;
+      assert.notEqual(account.home_bay_id, evaluating);
+      assert.equal(await notifyOn(evaluating, account), true);
+      const [notice] = await eventually(
+        async () => {
+          const rows = await noticeIn(account);
+          return rows.length > 0 ? rows : undefined;
+        },
+        { timeoutMs: 60_000, what: `the egress notice to reach ${who}` },
+      );
+      assert.equal(
+        notice.summary.title,
+        "Managed network traffic limit reached",
+      );
+      assert.match(notice.summary.body_markdown, /2\.1 KB of 2 KB/);
+      // the source bay addressed and published it to the home bay
+      await eventually(
+        async () => {
+          const rows = await outbox(evaluating, account);
+          return (
+            rows.length === 1 &&
+            rows[0].target_home_bay_id === account.home_bay_id &&
+            rows[0].published
+          );
+        },
+        { what: `${evaluating}'s outbox row for ${who} to be published` },
+      );
+      // deduplicated on the evaluating bay
+      assert.equal(await notifyOn(evaluating, account), false);
+      await sleep(2_000);
+      assert.equal((await noticeIn(account)).length, 1);
+    });
+  }
+
+  it("merges the same notice sent by both bays into one notice and one email on the home bay", async () => {
+    // bob's projects can be metered on both bays; each may send the notice
+    const input = {
+      account_id: bob.account_id,
+      pool: "control-plane",
+      window: "5h",
+      used: 11_000_000_000,
+      limit: 10_000_000_000,
+      blocked: true,
+    };
+    const send = async (bay) =>
+      await runInBay(
+        cluster,
+        bay,
+        `const { notifyManagedEgressLimit, managedEgressNotificationId } =
+           server("notifications/managed-egress.js");
+         const now = new Date(${JSON.stringify(NOW)});
+         const sent = await notifyManagedEgressLimit({ ...${JSON.stringify(input)}, now });
+         return { sent, id: managedEgressNotificationId(
+           "managed-egress:control-plane:5h:blocked:" + ${JSON.stringify(bob.account_id)}, now) };`,
+      );
+    const fromSeed = await send(SEED);
+    const fromHome = await send(ATTACHED);
+    assert.deepEqual([fromSeed.sent, fromHome.sent], [true, true]);
+    assert.equal(fromSeed.id, fromHome.id);
+    const isThisNotice = (row) =>
+      row.summary?.title === "Browser control traffic limit reached";
+    await eventually(
+      async () =>
+        (await runInBay(
+          cluster,
+          SEED,
+          `const getPool = require("@cocalc/database/pool").default;
+             const { rows } = await getPool().query(
+               "SELECT 1 FROM notification_target_outbox WHERE notification_id=$1 AND published_at IS NOT NULL",
+               [${JSON.stringify(fromSeed.id)}]);
+             return rows.length;`,
+        )) === 1,
+      { what: "the seed's copy to be published to bob's home bay" },
+    );
+    await eventually(
+      async () =>
+        (await bob.client.call("notifications.list", { limit: 50 })).some(
+          isThisNotice,
+        ),
+      { timeoutMs: 60_000, what: "the control-plane notice to reach bob" },
+    );
+    await sleep(3_000);
+    const notices = (
+      await bob.client.call("notifications.list", { limit: 50 })
+    ).filter(isThisNotice);
+    assert.equal(notices.length, 1);
+    const emails = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT count(*)::INT AS n FROM notification_email_outbox WHERE target_account_id=$1 AND notification_id=$2",
+         [${JSON.stringify(bob.account_id)}, ${JSON.stringify(fromSeed.id)}]);
+       return rows[0].n;`,
+    );
+    assert.equal(emails, 1, `${emails} email outbox rows for one notice`);
+  });
+});

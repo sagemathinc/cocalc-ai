@@ -35,7 +35,7 @@ import { normalizePrivateAppCacheControl } from "@cocalc/backend/auth/app-proxy"
 import { getLogger } from "@cocalc/project/logger";
 import { project_id } from "@cocalc/project/data";
 import { secretToken } from "@cocalc/project/data";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import {
   managedServiceAppForPort,
   resolveAppProxyTarget,
@@ -295,14 +295,14 @@ async function checkManagedFileDownloadAllowedBestEffort(
     if (policy.allowed) {
       return { allowed: true };
     }
-    const lines = [
-      "Managed download limit reached for this account.",
-      "New file downloads are temporarily blocked until the egress usage window resets.",
-      ...formatManagedEgressPolicyDetails(policy),
-    ];
+    const message = formatManagedEgressBlockedMessage({
+      category: policy.category ?? "",
+      policy,
+      blocked: "New file downloads are blocked.",
+    });
     return {
       allowed: false,
-      message: lines.join("\n"),
+      message,
     };
   } catch (err) {
     logger.warn("unable to evaluate managed file download policy", {
