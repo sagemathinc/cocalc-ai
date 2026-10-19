@@ -961,8 +961,9 @@ describe("host reads across bays", () => {
   it("waits as long as the caller asked for a slow read", async () => {
     // The log read is held up 26 s on the host's bay: past what the default
     // forwarding budget covers (two 12 s attempts, a repeat waiting 9 s),
-    // within the 120 s this call asks for, and within the bay's own 30 s
-    // statement timeout.
+    // within the 300 s this call asks for, and within the bay's own 30 s
+    // statement timeout. Its 120 s attempts exceed fast RPC's 90 s ack
+    // limit, so they go by request/reply.
     const BLOCKED_MS = 26_000;
     const db = await connectBayDatabase(cluster, ATTACHED);
     let released;
@@ -973,7 +974,7 @@ describe("host reads across bays", () => {
       const started = Date.now();
       const log = await alice.client.call("hosts.getHostLog", {
         id: host_id,
-        timeout: 120_000,
+        timeout: 300_000,
       });
       assert.ok(Date.now() - started > 22_000, "the read was held up");
       assert.deepEqual(

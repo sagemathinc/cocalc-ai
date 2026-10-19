@@ -8,7 +8,7 @@
 // that attested context (bays are one trusted application) and runs the call
 // through its normal hub API pipeline.
 
-import type { Client } from "@cocalc/conat/core/client";
+import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import type { Options } from "@cocalc/conat/service/service";
 import {
   createServiceClient,
@@ -65,6 +65,10 @@ export function createInterBayHubApiClient({
     subject: hubApiSubject(bay_id),
     client,
     timeout: timeout ?? 30_000,
+    // Fast RPC's target ack is capped at MAX_INTEREST_TIMEOUT; a call given
+    // longer (a slow host read, say) uses request/reply instead.
+    transport:
+      timeout != null && timeout > MAX_INTEREST_TIMEOUT ? "request" : undefined,
   });
 }
 
