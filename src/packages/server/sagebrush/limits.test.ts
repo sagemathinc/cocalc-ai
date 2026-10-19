@@ -75,6 +75,38 @@ describe("getSagebrushLimits", () => {
     });
   });
 
+  it("never answers a sync value Sagebrush can't read: it uses the fallback's", async () => {
+    mockGetOAuthAccountState.mockResolvedValue(
+      live({
+        class: "custom",
+        effective_limits: {
+          sagebrush_sync_enabled: "yes",
+          sagebrush_sync_version_bytes: Number.MAX_SAFE_INTEGER + 1,
+          sagebrush_sync_read_bytes_per_day: 1e20,
+          sagebrush_sync_retention_days: 1.5,
+        },
+      }),
+    );
+    expect((await getSagebrushLimits(ACCOUNT))?.sync).toEqual({
+      enabled: false,
+      version_bytes: 100_000_000,
+      read_bytes_per_day: 2_000_000_000,
+      retention_days: 90,
+    });
+    mockGetOAuthAccountState.mockResolvedValue(
+      live({
+        class: "custom",
+        effective_limits: {
+          sagebrush_sync_version_bytes: Number.MAX_SAFE_INTEGER,
+          sagebrush_sync_read_bytes_per_day: 0,
+        },
+      }),
+    );
+    const sync = (await getSagebrushLimits(ACCOUNT))?.sync;
+    expect(sync?.version_bytes).toBe(Number.MAX_SAFE_INTEGER);
+    expect(sync?.read_bytes_per_day).toBe(0);
+  });
+
   it("always answers the sync block, off for a tier that turns sync off", async () => {
     mockGetOAuthAccountState.mockResolvedValue(
       live({

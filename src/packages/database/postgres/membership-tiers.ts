@@ -1,4 +1,5 @@
 import { callback2 } from "@cocalc/util/async-utils";
+import { assertValidSagebrushSyncLimits } from "@cocalc/util/sagebrush-sync-limits";
 import type {
   MembershipTierUsageCountRow,
   MembershipTierUsageReport,
@@ -657,6 +658,7 @@ export async function upsertMembershipTier(
     notes,
   } = query;
   assertValidMembershipTierLabel(label);
+  assertValidSagebrushSyncLimits(usage_limits);
 
   const existing = await callback2(db._query, {
     query: "SELECT * FROM membership_tiers WHERE id = $1",

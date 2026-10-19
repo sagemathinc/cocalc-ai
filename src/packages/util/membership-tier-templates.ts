@@ -1086,10 +1086,6 @@ export const STAR_GENEROUS_USAGE_LIMITS = [
   "sagebrush_storage_bytes",
   "sagebrush_max_file_bytes",
   "sagebrush_private_links",
-  "sagebrush_sync_enabled",
-  "sagebrush_sync_version_bytes",
-  "sagebrush_sync_read_bytes_per_day",
-  "sagebrush_sync_retention_days",
   "max_backups_per_project",
   "rootfs_oci_images",
 ] as const;
@@ -1122,6 +1118,12 @@ export const STAR_RETAINED_USAGE_LIMITS = [
   "invite_email_allow_course_title",
   "invite_email_allow_urls",
   "invite_email_link_copy_enabled",
+  // Sagebrush sync stays off for free accounts on Star too (William): free's
+  // own values, not the generous tier's.
+  "sagebrush_sync_enabled",
+  "sagebrush_sync_version_bytes",
+  "sagebrush_sync_read_bytes_per_day",
+  "sagebrush_sync_retention_days",
 ] as const;
 
 function starFreeTierTemplate() {

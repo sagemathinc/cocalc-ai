@@ -10,6 +10,7 @@ import type {
   MembershipResolution,
   MembershipUsageLimits,
 } from "@cocalc/conat/hub/api/purchases";
+import { sagebrushSafeInteger } from "@cocalc/util/sagebrush-sync-limits";
 
 const EGRESS_POLICIES = new Set<MembershipEgressPolicy>([
   "metered-shared-hosts",
@@ -233,13 +234,15 @@ export function normalizeMembershipEffectiveLimits(
     sagebrush_sync_enabled: normalizeBoolean(
       usageLimits?.sagebrush_sync_enabled,
     ),
-    sagebrush_sync_version_bytes: normalizeNonNegativeInteger(
+    // (exactly the values Sagebrush can read: anything else is dropped, so
+    // the tier template's value is used; see util/sagebrush-sync-limits.ts)
+    sagebrush_sync_version_bytes: sagebrushSafeInteger(
       usageLimits?.sagebrush_sync_version_bytes,
     ),
-    sagebrush_sync_read_bytes_per_day: normalizeNonNegativeInteger(
+    sagebrush_sync_read_bytes_per_day: sagebrushSafeInteger(
       usageLimits?.sagebrush_sync_read_bytes_per_day,
     ),
-    sagebrush_sync_retention_days: normalizeNonNegativeInteger(
+    sagebrush_sync_retention_days: sagebrushSafeInteger(
       usageLimits?.sagebrush_sync_retention_days,
     ),
   };
