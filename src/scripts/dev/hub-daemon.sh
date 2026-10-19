@@ -459,6 +459,7 @@ load_config() {
   HUB_HOST_IP="${HUB_HOST_IP:-}"
   HUB_SOFTWARE_BASE_URL_FORCE="${HUB_SOFTWARE_BASE_URL_FORCE:-}"
   HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL="${HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL-https://software.cocalc.ai/software}"
+  HUB_TOOLS_SOFTWARE_BASE_URL="${HUB_TOOLS_SOFTWARE_BASE_URL:-}"
   HUB_NODE_BIN="${HUB_NODE_BIN:-}"
   HUB_SELF_HOST_PAIR_URL="${HUB_SELF_HOST_PAIR_URL:-}"
   COCALC_SETTING_PROJECT_HOSTS_ROUTE_MODE="${COCALC_SETTING_PROJECT_HOSTS_ROUTE_MODE:-public}"
@@ -861,6 +862,11 @@ start_cluster_bay() {
     else
       unset COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL
     fi
+    if [ -n "$HUB_TOOLS_SOFTWARE_BASE_URL" ]; then
+      export COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL="$HUB_TOOLS_SOFTWARE_BASE_URL"
+    else
+      unset COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL
+    fi
     if [ -n "$self_host_pair_url" ]; then
       export COCALC_SELF_HOST_PAIR_URL="$self_host_pair_url"
     else
@@ -1065,7 +1071,8 @@ ensure_local_software_artifacts() {
   local need_tools_bundle=0
   [ -f "$source_root/project-host/build/bundle-linux.tar.xz" ] || need_project_host_bundle=1
   [ -f "$source_root/project/build/bundle-linux.tar.xz" ] || need_project_bundle=1
-  if ! have_local_tools_bundle "$source_root"; then
+  # Tools served from HUB_TOOLS_SOFTWARE_BASE_URL are never built here.
+  if [ -z "$HUB_TOOLS_SOFTWARE_BASE_URL" ] && ! have_local_tools_bundle "$source_root"; then
     need_tools_bundle=1
   fi
 
@@ -1157,10 +1164,20 @@ billing_authority_enabled() {
   return 1
 }
 
+# A process that has exited but was not reaped (a zombie, e.g. under a
+# container PID 1 that does not reap) still answers kill -0: it is not live.
+pid_live() {
+  kill -0 "$1" >/dev/null 2>&1 || return 1
+  case "$(ps -o stat= -p "$1" 2>/dev/null)" in
+    Z*) return 1 ;;
+  esac
+  return 0
+}
+
 billing_worker_running() {
   local pid
   pid="$(cat "$BILLING_PID_FILE" 2>/dev/null || true)"
-  [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1
+  [ -n "$pid" ] && pid_live "$pid"
 }
 
 # Called with the seed hub's environment. Billing authority needs exactly one
@@ -1209,12 +1226,12 @@ stop_billing_worker() {
   # It leads its own session (setsid): signal the whole group.
   kill -TERM -- "-$pid" >/dev/null 2>&1 || kill -TERM "$pid" >/dev/null 2>&1 || true
   for i in $(seq 1 30); do
-    if ! kill -0 "$pid" >/dev/null 2>&1; then
+    if ! pid_live "$pid"; then
       break
     fi
     sleep 1
   done
-  if kill -0 "$pid" >/dev/null 2>&1; then
+  if pid_live "$pid"; then
     kill -KILL -- "-$pid" >/dev/null 2>&1 || kill -KILL "$pid" >/dev/null 2>&1 || true
     echo "billing worker killed"
   else
@@ -1274,6 +1291,11 @@ start_daemon() {
         export COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL="$HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL"
       else
         unset COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL
+      fi
+      if [ -n "$HUB_TOOLS_SOFTWARE_BASE_URL" ]; then
+        export COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL="$HUB_TOOLS_SOFTWARE_BASE_URL"
+      else
+        unset COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL
       fi
       export COCALC_CONAT_MAX_CONNECTIONS_PER_USER
       export COCALC_CONAT_MAX_CONNECTIONS_PER_HUB_USER
@@ -1388,12 +1410,17 @@ build_daemon() {
   (
     cd "$SRC_DIR"
     pnpm build
-    # The three bundles only read what `pnpm build` produced and write to
-    # their own output directories, so they are built in parallel.
+    # The bundles only read what `pnpm build` produced and write to their own
+    # output directories, so they are built in parallel. Tools served from
+    # HUB_TOOLS_SOFTWARE_BASE_URL are not built here.
+    local tools=()
+    if [ -z "$HUB_TOOLS_SOFTWARE_BASE_URL" ]; then
+      tools=(-- "tools" pnpm --dir "$SRC_DIR/packages/project" build:tools)
+    fi
     run_parallel_logged \
       "project-host bundle" pnpm --dir "$SRC_DIR/packages/project-host" build:bundle -- \
-      "project bundle" pnpm --dir "$SRC_DIR/packages/project" build:bundle -- \
-      "tools" pnpm --dir "$SRC_DIR/packages/project" build:tools
+      "project bundle" pnpm --dir "$SRC_DIR/packages/project" build:bundle \
+      "${tools[@]}"
   )
 }
 
@@ -1610,6 +1637,7 @@ HUB_START_TIMEOUT=$HUB_START_TIMEOUT
 HUB_HOST_IP=$HUB_HOST_IP
 HUB_SOFTWARE_BASE_URL_FORCE=$HUB_SOFTWARE_BASE_URL_FORCE
 HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL=$HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL
+HUB_TOOLS_SOFTWARE_BASE_URL=$HUB_TOOLS_SOFTWARE_BASE_URL
 HUB_NODE_BIN=$HUB_NODE_BIN
 HUB_SELF_HOST_PAIR_URL=$HUB_SELF_HOST_PAIR_URL
 HUB_CLOUDFLARED_PID_FILE=$HUB_CLOUDFLARED_PID_FILE
