@@ -1027,6 +1027,7 @@ export function setAcpJobState({
   recovery_code,
   recovery_detail,
   outcome,
+  onlyIfRunning = false,
 }: {
   op_id: string;
   state: Exclude<AcpJobState, "queued" | "running">;
@@ -1035,14 +1036,17 @@ export function setAcpJobState({
   recovery_code?: string;
   recovery_detail?: string;
   outcome?: TurnOutcome;
-}): void {
+  /** End only a running job: one a fence or cancel already ended stays so. */
+  onlyIfRunning?: boolean;
+}): boolean {
   const outcome_json = outcome ? JSON.stringify(outcome) : null;
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
   if (`${worker_id ?? ""}`.trim()) {
-    db.prepare(
-      `UPDATE ${TABLE}
+    const { changes } = db
+      .prepare(
+        `UPDATE ${TABLE}
         SET state = ?,
             error = COALESCE(?, error),
             recovery_code = COALESCE(?, recovery_code),
@@ -1053,7 +1057,34 @@ export function setAcpJobState({
         WHERE op_id = ?
           AND state = 'running'
           AND (worker_id IS NULL OR worker_id = ?)`,
-    ).run(
+      )
+      .run(
+        state,
+        error ?? null,
+        recovery_code ?? null,
+        recovery_detail ?? null,
+        outcome_json,
+        now,
+        now,
+        op_id,
+        worker_id,
+      );
+    mirrorAcpJobSession(getAcpJobByOpId(op_id));
+    return changes > 0;
+  }
+  const { changes } = db
+    .prepare(
+      `UPDATE ${TABLE}
+      SET state = ?,
+          error = COALESCE(?, error),
+          recovery_code = COALESCE(?, recovery_code),
+          recovery_detail = COALESCE(?, recovery_detail),
+          outcome_json = COALESCE(?, outcome_json),
+          updated_at = ?,
+          finished_at = ?
+      WHERE op_id = ?${onlyIfRunning ? " AND state = 'running'" : ""}`,
+    )
+    .run(
       state,
       error ?? null,
       recovery_code ?? null,
@@ -1062,32 +1093,9 @@ export function setAcpJobState({
       now,
       now,
       op_id,
-      worker_id,
     );
-    mirrorAcpJobSession(getAcpJobByOpId(op_id));
-    return;
-  }
-  db.prepare(
-    `UPDATE ${TABLE}
-      SET state = ?,
-          error = COALESCE(?, error),
-          recovery_code = COALESCE(?, recovery_code),
-          recovery_detail = COALESCE(?, recovery_detail),
-          outcome_json = COALESCE(?, outcome_json),
-          updated_at = ?,
-          finished_at = ?
-      WHERE op_id = ?`,
-  ).run(
-    state,
-    error ?? null,
-    recovery_code ?? null,
-    recovery_detail ?? null,
-    outcome_json,
-    now,
-    now,
-    op_id,
-  );
   mirrorAcpJobSession(getAcpJobByOpId(op_id));
+  return changes > 0;
 }
 
 /** How a job ended, for the paths that end it without running it. */

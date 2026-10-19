@@ -10185,7 +10185,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     // Record progress now so the host watchdog cannot mistake that gap for a
     // stall.
     noteDetachedWorkerExecutionSettled(job.op_id);
-    setAcpJobState({
+    // A fence (project stop) or cancel may have ended the job while the turn
+    // unwound: then it, not this worker, resumes or reports the turn.
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state: result.terminalState,
       error: result.terminalState === "error" ? result.error : undefined,
@@ -10198,6 +10201,13 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     let resumed: AcpJobRow | undefined;
     let recoveryPending = false;
+    if (!ended) {
+      logger.info("queued acp job was ended by another path while it ran", {
+        op_id: job.op_id,
+        state: getAcpJobByOpId(job.op_id)?.state,
+      });
+      return;
+    }
     if (result.terminalState === "error" && result.recoveryCode) {
       try {
         resumed = await enqueueFailureRecoveryContinuation({
@@ -10244,14 +10254,15 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       request,
       error: message,
     });
-    setAcpJobState({
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state: "error",
       error: message,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
       outcome,
     });
-    reportFailedAgentMessageTurn(job, request, message, outcome);
+    if (ended) reportFailedAgentMessageTurn(job, request, message, outcome);
   }
 }
 
