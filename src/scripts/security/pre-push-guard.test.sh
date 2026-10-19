@@ -11,6 +11,7 @@ trap 'rm -rf "$T"' EXIT
 export GIT_CONFIG_NOSYSTEM=1 HOME=$T GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export COCALC_PUBLIC_URL=$T/pub.git COCALC_PRIVATE_URL=$T/priv.git
 Z=0000000000000000000000000000000000000000
+REALGIT_RETIRE=$(PATH=/usr/bin:/bin command -v git)
 pass=0
 fail=0
 
@@ -163,6 +164,20 @@ rc=$?
 [ -z "$(git config --get-all cocalc.privateUrl)" ] && { pass=$((pass + 1)); echo "ok    retire-remote removes the matching cocalc.privateUrl"; } || { fail=$((fail + 1)); echo "FAIL  retire-remote left cocalc.privateUrl"; }
 check 1 "after retire-remote: its commit is still private" "$T/pub.git" refs/heads/neutral4 "$OLD" refs/heads/fix/innocent
 check 0 "after retire-remote: public commits push normally" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok
+# retire-remote refuses (and keeps the remote) when a ref listing fails
+# partway: one real ref printed, then exit 73.
+git init -q --bare "$T/old2.git" && git push -q "$T/old2.git" "$(git rev-parse HEAD):refs/heads/main"
+git push -q "$T/old2.git" "$(git rev-parse HEAD):refs/heads/security/a"
+git remote add old2 "$T/old2.git" && git fetch -q old2 && git config --add cocalc.privateUrl "$T/old2.git"
+mkdir -p "$T/fbin2"
+printf '#!/bin/sh\nif [ "$1" = for-each-ref ]; then case "$*" in *refs/remotes/old2/*) %s "$@" | head -1; exit 73 ;; esac; fi\nexec %s "$@"\n' "$REALGIT_RETIRE" "$REALGIT_RETIRE" >"$T/fbin2/git"
+chmod +x "$T/fbin2/git"
+PATH="$T/fbin2:$PATH" bash "$here/private-fix.sh" retire-remote old2 >/dev/null 2>&1 &&
+  { fail=$((fail + 1)); echo "FAIL  retire-remote continued after a partial ref listing"; } ||
+  { pass=$((pass + 1)); echo "ok    retire-remote refuses after a partial ref listing"; }
+git remote | grep -qx old2 && { pass=$((pass + 1)); echo "ok    the remote is kept after the failed listing"; } ||
+  { fail=$((fail + 1)); echo "FAIL  remote removed after a failed listing"; }
+git remote remove old2; git config --fixed-value --unset-all cocalc.privateUrl "$T/old2.git"
 # retire-remote refuses non-private remotes and remotes with nothing to keep.
 git remote add pubremote "$T/pub.git"
 bash "$here/private-fix.sh" retire-remote pubremote >/dev/null 2>&1 && { fail=$((fail + 1)); echo "FAIL  retired a non-private remote"; } || { pass=$((pass + 1)); echo "ok    retire-remote refuses a non-private remote"; }

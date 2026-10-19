@@ -88,14 +88,24 @@ retire_remote() { # <remote name>
   url=$(git remote get-url "$name") || die "no remote '$name'"
   is_private_url "$url" || die "$name ($url) is not a recognized private repo; refusing to retire it"
   key=$(url_key "$url")
+  # Take complete, checked inventories before changing anything: a listing
+  # that fails partway must not lead to removing the remote.
+  retire_tmp=$(mktemp -d) || die "cannot create a temporary directory"
+  trap 'rm -rf "${retire_tmp:-}"' EXIT
+  git for-each-ref --format='%(refname)' "refs/remotes/$name/" >"$retire_tmp/tracking" ||
+    die "could not list the tracking refs of $name; not removing it"
+  git for-each-ref --format='%(refname)' "refs/cocalc-guard/src/$key/" >"$retire_tmp/guard" ||
+    die "could not list the guard refs of $name; not removing it"
   while read -r ref; do
-    git update-ref "refs/cocalc-guard/retired/$key/tracking/${ref#refs/remotes/$name/}" "$ref"
+    git update-ref "refs/cocalc-guard/retired/$key/tracking/${ref#refs/remotes/$name/}" "$ref" ||
+      die "could not archive $ref; not removing $name"
     n=$((n + 1))
-  done < <(git for-each-ref --format='%(refname)' "refs/remotes/$name/")
+  done <"$retire_tmp/tracking"
   while read -r ref; do
-    git update-ref "refs/cocalc-guard/retired/$key/guard/${ref#refs/cocalc-guard/src/$key/}" "$ref"
+    git update-ref "refs/cocalc-guard/retired/$key/guard/${ref#refs/cocalc-guard/src/$key/}" "$ref" ||
+      die "could not archive $ref; not removing $name"
     n=$((n + 1))
-  done < <(git for-each-ref --format='%(refname)' "refs/cocalc-guard/src/$key/")
+  done <"$retire_tmp/guard"
   [ $n -gt 0 ] || die "no refs of $name to keep (never fetched?); fetch it first, or remove it by hand if it never held private work"
   git for-each-ref --format='update refs/cocalc-guard/seen/%(objectname) %(objectname)' \
     "refs/cocalc-guard/retired/$key/" | sort -u | git update-ref --stdin ||
