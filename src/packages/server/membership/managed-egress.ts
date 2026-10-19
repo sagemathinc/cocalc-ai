@@ -7,6 +7,7 @@ import getPool, { type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import LRU from "lru-cache";
 import {
+  foldEgressSubjects,
   MAX_ROLLUP_SUBJECT_KEYS,
   mergeTopEgressSubjects,
   OTHER_KEY,
@@ -118,6 +119,74 @@ type PendingManagedEgressRollup = {
 
 const pendingRollups = new Map<string, PendingManagedEgressRollup>();
 
+// Per-subject attribution (top_subjects) of the buckets still open in this
+// process, summed exactly over every sample.  A bucket's subjects are written
+// once, when its minute is over, folded to MAX_ROLLUP_SUBJECT_KEYS by these
+// exact totals, so no subject loses its identity to an early cut.  (Rows from
+// different hub processes are still merged by the upsert below.)  Bytes are
+// flushed as before, independently of this.
+type OpenBucketSubjects = {
+  bucket_start: Date;
+  account_id: string;
+  project_id?: string;
+  category: ManagedProjectEgressCategory;
+  first_occurred_at: Date;
+  bySubject: Record<string, number>;
+};
+const openBucketSubjects = new Map<string, OpenBucketSubjects>();
+// Safety bound per open bucket (a sample has at most ~65 keys per socket).
+const MAX_OPEN_BUCKET_SUBJECT_KEYS = 4096;
+const BUCKET_MS = 60_000;
+
+function addOpenBucketSubjects(
+  entry: Omit<OpenBucketSubjects, "bySubject">,
+  topSubjects: unknown[],
+): void {
+  const key = rollupKey(entry);
+  let open = openBucketSubjects.get(key);
+  if (open == null) {
+    open = { ...entry, bySubject: {} };
+    openBucketSubjects.set(key, open);
+  }
+  for (const item of topSubjects as any[]) {
+    const subject = `${item?.subject ?? ""}`;
+    const bytes = Number(item?.bytes);
+    if (!subject || !(bytes > 0) || !Number.isFinite(bytes)) continue;
+    open.bySubject[subject] = (open.bySubject[subject] ?? 0) + bytes;
+  }
+  if (Object.keys(open.bySubject).length > MAX_OPEN_BUCKET_SUBJECT_KEYS) {
+    open.bySubject = Object.fromEntries(
+      foldEgressSubjects(open.bySubject, MAX_OPEN_BUCKET_SUBJECT_KEYS).map(
+        ({ subject, bytes }) => [subject, bytes],
+      ),
+    );
+  }
+}
+
+// Move the attribution of every finished bucket into the pending rollups.
+function closeFinishedBucketSubjects(now = Date.now()): void {
+  for (const [key, open] of openBucketSubjects) {
+    if (open.bucket_start.getTime() + BUCKET_MS > now) continue;
+    openBucketSubjects.delete(key);
+    mergePendingRollup({
+      bucket_start: open.bucket_start,
+      account_id: open.account_id,
+      project_id: open.project_id,
+      category: open.category,
+      bytes: 0,
+      event_count: 0,
+      first_occurred_at: open.first_occurred_at,
+      last_occurred_at: open.first_occurred_at,
+      metadata_sample: {
+        top_subjects: foldEgressSubjects(
+          open.bySubject,
+          MAX_ROLLUP_SUBJECT_KEYS,
+        ),
+      },
+    });
+  }
+}
+
 const adminOverviewCache = new LRU<
   string,
   Promise<ManagedEgressAdminOverviewBase>
@@ -176,9 +245,11 @@ function mergePendingRollup(entry: PendingManagedEgressRollup): void {
 }
 
 // A bucket keeps its first sample's metadata, except top_subjects, which is
-// summed over all its samples, up to MAX_ROLLUP_SUBJECT_KEYS subjects with
-// the rest under "(other)" (the upsert below does the same in SQL).  Events
-// report only the top subjects (mapManagedEgressEventRows).
+// summed (the upsert below does the same in SQL), up to
+// MAX_ROLLUP_SUBJECT_KEYS subjects with the rest under "(other)".  In normal
+// operation each process contributes one exact list per bucket (see
+// openBucketSubjects).  Events report only the top subjects
+// (mapManagedEgressEventRows).
 export function mergeMetadataSamples(
   existing?: Record<string, unknown>,
   incoming?: Record<string, unknown>,
@@ -217,9 +288,13 @@ async function flushManagedEgressRollups(): Promise<void> {
     clearTimeout(rollupFlushTimer);
     rollupFlushTimer = undefined;
   }
+  closeFinishedBucketSubjects();
   const batch = [...pendingRollups.values()];
   pendingRollups.clear();
-  if (batch.length === 0) return;
+  if (batch.length === 0) {
+    if (openBucketSubjects.size > 0) scheduleManagedEgressRollupFlush();
+    return;
+  }
   rollupFlushPromise = flushManagedEgressRollupBatch(batch)
     .catch((err) => {
       logger.warn("failed to flush managed egress rollups", {
@@ -233,7 +308,7 @@ async function flushManagedEgressRollups(): Promise<void> {
     })
     .finally(() => {
       rollupFlushPromise = undefined;
-      if (pendingRollups.size > 0) {
+      if (pendingRollups.size > 0 || openBucketSubjects.size > 0) {
         scheduleManagedEgressRollupFlush();
       }
     });
@@ -257,16 +332,34 @@ async function recordManagedProjectEgressRollup({
 }): Promise<void> {
   const bucket_start = rollupBucketStart(occurred_at);
   const eventTime = occurred_at ?? new Date();
+  const normalizedProjectId = `${project_id ?? ""}`.trim() || undefined;
+  // top_subjects is accumulated exactly per open bucket and written when the
+  // bucket is over; the rest of the metadata is the bucket's first sample.
+  let metadata_sample = metadata;
+  if (metadata != null && Array.isArray(metadata.top_subjects)) {
+    const { top_subjects, ...rest } = metadata;
+    metadata_sample = rest;
+    addOpenBucketSubjects(
+      {
+        bucket_start,
+        account_id,
+        project_id: normalizedProjectId,
+        category,
+        first_occurred_at: eventTime,
+      },
+      top_subjects,
+    );
+  }
   mergePendingRollup({
     bucket_start,
     account_id,
-    project_id: `${project_id ?? ""}`.trim() || undefined,
+    project_id: normalizedProjectId,
     category,
     bytes,
     event_count: 1,
     first_occurred_at: eventTime,
     last_occurred_at: eventTime,
-    metadata_sample: metadata,
+    metadata_sample,
   });
   if (pendingRollups.size >= ROLLUP_FLUSH_MAX_PENDING) {
     await flushManagedEgressRollups();
@@ -1702,5 +1795,7 @@ function buildEmptyHistoryPoints({
 
 export const __test__ = {
   flushManagedEgressRollupBatch,
+  flushManagedEgressRollups,
+  recordManagedProjectEgressRollup,
   ROLLUP_TABLE,
 };
