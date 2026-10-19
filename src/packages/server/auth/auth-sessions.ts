@@ -507,7 +507,9 @@ async function sessionAccountId(
   return rows[0]?.account_id ?? undefined;
 }
 
-// End one sign-in session. Without account_id, the session's own account.
+// End one sign-in session on this bay. Without account_id, the session's own
+// account, looked up on this bay: a session homed on another bay is left
+// alone (its rows are not here).
 export async function endSignInSession({
   session_hash,
   account_id,
