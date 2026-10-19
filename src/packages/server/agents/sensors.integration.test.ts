@@ -37,9 +37,11 @@ const lease = {
   missing: [] as string[],
   issued: [] as any[],
   released: 0,
+  fail: "",
 };
 jest.mock("./sensor-credentials", () => ({
   issueSensorRunCredentials: async (opts: any) => {
+    if (lease.fail) throw new Error(lease.fail);
     lease.issued.push(opts);
     return {
       credentials: {
@@ -60,7 +62,7 @@ jest.mock("./sensor-credentials", () => ({
 // call is recorded, to show which account's home is asked.
 const budget = { calls: [] as string[], failRelease: false };
 // Connectors the account gave the agent, as its home bay reports them.
-const grants = { github: true };
+const grants = { github: true, fail: "" };
 jest.mock("./cocalc-connector-routing", () => {
   const home = jest.requireActual("./sensor-budget");
   const call =
@@ -78,7 +80,10 @@ jest.mock("./cocalc-connector-routing", () => {
       releaseWatcher: call("releaseWatcher", home.releaseSensorWatcherAtHome),
     },
     sensorConnectors: {
-      hasCli: async (opts: any) => opts.connector === "github" && grants.github,
+      hasCli: async (opts: any) => {
+        if (grants.fail) throw new Error(grants.fail);
+        return opts.connector === "github" && grants.github;
+      },
     },
   };
 });
@@ -142,7 +147,9 @@ describeDb("agent sensors", () => {
     access.denied.clear();
     for (const key of Object.keys(limits)) delete limits[key];
     lease.missing = [];
+    lease.fail = "";
     grants.github = true;
+    grants.fail = "";
     lease.issued = [];
     lease.released = 0;
     budget.calls = [];
@@ -1284,6 +1291,42 @@ describeDb("agent sensors", () => {
       next_run_at: null,
     });
   });
+
+  test.each([
+    ["the connector check", () => (grants.fail = "home bay unreachable")],
+    ["issuing credentials", () => (lease.fail = "home bay unreachable")],
+  ])(
+    "a watcher whose setup fails (%s) gives up the same way",
+    async (_what, breakIt) => {
+      const ci = (await agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+      })) as any;
+      breakIt();
+      for (let i = 0; i < 4; i++) {
+        await makeDue(ci.sensor.sensor_id);
+        await runDue();
+      }
+      expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+      expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+      expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toMatch(
+        /Gave up: .*failed 5 times in a row\. Last error: .*home bay unreachable/,
+      );
+      expect(paused).toHaveLength(0);
+      const { rows } = await getPool().query(
+        "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+        [ci.sensor.sensor_id],
+      );
+      expect(rows[0]).toMatchObject({
+        status: "active",
+        pause_reason: null,
+        next_run_at: null,
+      });
+    },
+  );
 
   test("a give-up wake the host did not send is tried again, not paused", async () => {
     const ci = (await agentSensorRequest(run, agent, {

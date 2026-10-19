@@ -359,11 +359,6 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       });
       summary = wake.summary;
       finished = true;
-    } else if (
-      spec.kind === "watch" &&
-      (missingNow = await missingWatcherConnectors(row, spec)).length > 0
-    ) {
-      prompt = giveUpWatcher();
     } else {
       // Code runs: an approved script, or a ci/file watcher's built-in one.
       const watch = spec.kind === "watch" ? spec.watch : undefined;
@@ -372,72 +367,76 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       const timeout_seconds = watch
         ? SENSOR_LIMITS.defaultTimeoutSeconds
         : (spec as any).timeout_seconds;
-      const lease = await issueSensorRunCredentials({
-        agent,
-        account_id: row.approved_by,
-        host_id: host.host_id,
-        run_id,
-        uses: sensorUses(spec),
-      });
-      connectors = lease.given;
       let result;
-      // The check could not be run at all (e.g. the host or its container
-      // failed): a failed run, like a failing check.
+      // The check could not be set up or run at all (a connector or
+      // credential request, the host or its container failed): a failed run,
+      // like a failing check.
       let runError: string | undefined;
       try {
-        if (lease.missing.length > 0 && !watch) {
-          const names = lease.missing
-            .map((c) => SENSOR_CONNECTOR_LABELS[c])
-            .join(" and ");
-          pause = `This sensor uses ${names}, which the person who approved it has not turned on for this agent (its Connectors menu). Turn it on, then resume the sensor.`;
-          outcome = "skipped";
-          failed = false;
-          error = pause;
-          return;
-        }
-        // Turned off (or its connection lost) since the check above.
-        if (lease.missing.length > 0) missingNow = lease.missing;
-        else {
-          const renewal = setInterval(
-            () =>
-              void lease.renew().catch((err) =>
-                logger.warn("sensor connector renewal failed", {
-                  run_id,
-                  err: errorText(err),
-                }),
-              ),
-            60_000,
-          );
+        if (watch) missingNow = await missingWatcherConnectors(row, spec);
+        if (missingNow.length === 0) {
+          const lease = await issueSensorRunCredentials({
+            agent,
+            account_id: row.approved_by,
+            host_id: host.host_id,
+            run_id,
+            uses: sensorUses(spec),
+          });
+          connectors = lease.given;
           try {
-            await beforeDispatchHook?.();
-            // Checked again now that credentials exist, and the exact image
-            // checked is the one run.
-            const dispatch = await currentDispatch(row);
-            if (!dispatch) {
-              await changed();
+            if (lease.missing.length > 0 && !watch) {
+              const names = lease.missing
+                .map((c) => SENSOR_CONNECTOR_LABELS[c])
+                .join(" and ");
+              pause = `This sensor uses ${names}, which the person who approved it has not turned on for this agent (its Connectors menu). Turn it on, then resume the sensor.`;
+              outcome = "skipped";
+              failed = false;
+              error = pause;
               return;
             }
-            try {
-              result = await host.api.runAgentSensor({
-                project_id: row.project_id,
-                sensor_id: row.sensor_id,
-                run_id,
-                language: watch ? "python" : (spec as any).language,
-                script,
-                timeout_seconds,
-                path: agent.path,
-                image: dispatch.image,
-                credentials: lease.credentials,
-              });
-            } catch (err) {
-              runError = errorText(err);
+            // Turned off (or its connection lost) since the check above.
+            if (lease.missing.length > 0) missingNow = lease.missing;
+            else {
+              const renewal = setInterval(
+                () =>
+                  void lease.renew().catch((err) =>
+                    logger.warn("sensor connector renewal failed", {
+                      run_id,
+                      err: errorText(err),
+                    }),
+                  ),
+                60_000,
+              );
+              try {
+                await beforeDispatchHook?.();
+                // Checked again now that credentials exist, and the exact
+                // image checked is the one run.
+                const dispatch = await currentDispatch(row);
+                if (!dispatch) {
+                  await changed();
+                  return;
+                }
+                result = await host.api.runAgentSensor({
+                  project_id: row.project_id,
+                  sensor_id: row.sensor_id,
+                  run_id,
+                  language: watch ? "python" : (spec as any).language,
+                  script,
+                  timeout_seconds,
+                  path: agent.path,
+                  image: dispatch.image,
+                  credentials: lease.credentials,
+                });
+              } finally {
+                clearInterval(renewal);
+              }
             }
           } finally {
-            clearInterval(renewal);
+            await lease.release();
           }
         }
-      } finally {
-        await lease.release();
+      } catch (err) {
+        runError = errorText(err);
       }
       let wake: SensorWake | undefined;
       if (missingNow.length > 0) prompt = giveUpWatcher();
