@@ -270,6 +270,31 @@ check 0 "annotated tag of a public commit" "$T/pub.git" refs/tags/ann-public "$(
 git tag -a -m "tag of a blob" ann-blob "$(git hash-object -w --stdin <<<TOP-SECRET)"
 check 1 "annotated tag of a blob" "$T/pub.git" refs/tags/ann-blob "$(git rev-parse ann-blob)" refs/tags/ann-blob
 
+# A remote whose name contains "/": its security/* tracking refs are private.
+git init -q "$T/slash" && cd "$T/slash" || exit 1
+git fetch -q "$T/pub.git" main && git reset -q --hard FETCH_HEAD
+SL=$(commit "secret behind a remote named foo/bar") && git reset -q --hard HEAD~1
+git config remote.foo/bar.url "$T/nowhere.git"
+git config remote.foo/bar.fetch '+refs/heads/*:refs/remotes/foo/bar/*'
+git update-ref refs/remotes/foo/bar/security/topic "$SL" && git branch -q neutral "$SL"
+check 1 "security/* tracking ref of a remote named foo/bar" "$T/pub.git" refs/heads/neutral "$SL" refs/heads/fix/innocent
+
+# A broken patch-id cache fails closed: a rebased private patch followed by an
+# unrelated commit is only recognizable through the cache-backed patch-ids.
+git init -q --bare "$T/pub5.git" && git init -q --bare "$T/priv5.git"
+git init -q "$T/brk" && cd "$T/brk" || exit 1
+E5="COCALC_PUBLIC_URL=$T/pub5.git"
+P5="COCALC_PRIVATE_URL=$T/priv5.git"
+echo base >a && echo base >b && git add a b && git commit -q -m base && B5=$(git rev-parse HEAD)
+git push -q "$T/pub5.git" HEAD:refs/heads/main && git push -q "$T/priv5.git" HEAD:refs/heads/main
+echo fix >>a && git commit -q -am "private fix" && PF5=$(git rev-parse HEAD) && git push -q "$T/priv5.git" HEAD:refs/heads/security/x
+git reset -q --hard "$B5" && echo pub >>b && git commit -q -am "public moves on" && git push -q "$T/pub5.git" HEAD:refs/heads/main
+git cherry-pick -n "$PF5" && git commit -q -m "rebased" && echo other >c && git add c && git commit -q -m "unrelated" && BR5=$(git rev-parse HEAD)
+check 1 "rebased private patch + unrelated commit (cache OK)" "$T/pub5.git" refs/heads/main "$BR5" refs/heads/main "$E5" "$P5"
+rm -f .git/cocalc-guard-patch-ids && mkdir .git/cocalc-guard-patch-ids
+check 1 "same, with the patch-id cache broken (fail closed)" "$T/pub5.git" refs/heads/main "$BR5" refs/heads/main "$E5" "$P5"
+rmdir .git/cocalc-guard-patch-ids
+
 # Several private commits squashed onto a newer public main: new tree and a
 # combined patch-id (Codex/@review repro).
 git init -q --bare "$T/pub4.git" && git init -q --bare "$T/priv4.git"
@@ -288,6 +313,21 @@ check 1 "multi-commit private squash onto a newer public main" "$T/pub4.git" ref
 git reset -q --hard HEAD~1
 echo one >>a && git commit -q -am "step A" && echo two >>a && git commit -q -am "step B" && RE4=$(git rev-parse HEAD)
 check 1 "private change recreated as several new commits (combined patch)" "$T/pub4.git" refs/heads/main "$RE4" refs/heads/main "$E4" "$P4"
+
+# A private series recreated on top of another public branch, re-split by
+# file: matched through the pushed branch's combined change from its public
+# boundary (not only from public main).
+git init -q --bare "$T/pub6.git" && git init -q --bare "$T/priv6.git"
+git init -q "$T/fb" && cd "$T/fb" || exit 1
+E6="COCALC_PUBLIC_URL=$T/pub6.git"
+P6="COCALC_PRIVATE_URL=$T/priv6.git"
+echo base >a && echo base >b && echo base >c && git add a b c && git commit -q -m base && B6=$(git rev-parse HEAD)
+git push -q "$T/pub6.git" HEAD:refs/heads/main && git push -q "$T/priv6.git" HEAD:refs/heads/main
+echo p1 >>a && echo p1 >>b && git commit -q -am "private 1" && echo p2 >>a && echo p2 >>b && git commit -q -am "private 2"
+git push -q "$T/priv6.git" HEAD:refs/heads/security/series
+git reset -q --hard "$B6" && echo side >>c && git commit -q -am "public side branch" && git push -q "$T/pub6.git" HEAD:refs/heads/feature/side
+printf 'p1\np2\n' >>a && git commit -q -am "split: a" && printf 'p1\np2\n' >>b && git commit -q -am "split: b" && FB6=$(git rev-parse HEAD)
+check 1 "private series re-split on top of a public side branch" "$T/pub6.git" refs/heads/feature/side "$FB6" refs/heads/feature/side "$E6" "$P6"
 
 # Content public long ago (2020) under another commit id stays allowed, even
 # if a newer private commit has the same content (tree and patch-id cases).
