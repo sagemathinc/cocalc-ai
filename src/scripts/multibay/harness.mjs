@@ -100,6 +100,32 @@ function parseEnvFile(text) {
   return out;
 }
 
+const serverRequire = createRequire(
+  path.join(SRC, "packages/server/package.json"),
+);
+
+/**
+ * A connection of the test's own to a bay's database, for what a snippet is
+ * too slow to start for: holding a lock for a set time, say. End it.
+ */
+export async function connectBayDatabase(cluster, bayId) {
+  const { Client } = serverRequire("pg");
+  const env = parseEnvFile(
+    readFileSync(
+      path.join(cluster.postgresDir(bayId), "local-postgres.env"),
+      "utf8",
+    ),
+  );
+  const db = new Client({
+    host: env.PGHOST,
+    user: env.PGUSER,
+    database: env.PGDATABASE,
+    ...(env.PGPORT ? { port: Number(env.PGPORT) } : {}),
+  });
+  await db.connect();
+  return db;
+}
+
 /**
  * Run a CommonJS snippet with the server package in a bay's environment
  * (its database and its fabric credential). The snippet's async result is
