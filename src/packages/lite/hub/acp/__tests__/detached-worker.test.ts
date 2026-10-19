@@ -3766,6 +3766,68 @@ describe("project fence follow-ups", () => {
     // Typed, not guessed from the text.
     expect(reports[0].report.kind).toBe("project-stopped");
   });
+
+  it("tells it too when the stopped turn was resuming an earlier one", async () => {
+    const base = makeRequest();
+    const request = {
+      ...base,
+      chat: {
+        ...base.chat,
+        agent_message: true,
+        agent_rpc_execution: {
+          version: 3,
+          source: {
+            project_id: "11111111-1111-4111-8111-111111111111",
+            agent_id: "22222222-2222-4222-8222-222222222222",
+          },
+          source_run_id: "77777777-7777-4777-8777-777777777777",
+          target: {
+            project_id: base.project_id,
+            agent_id: "44444444-4444-4444-8444-444444444444",
+          },
+          target_path: base.chat.path,
+          target_thread_id: base.chat.thread_id,
+          agent_network_id: "88888888-8888-4888-8888-888888888888",
+          network_generation: "99999999-9999-4999-8999-999999999999",
+          account_generation: 3,
+          configured_delivery: "queued",
+          principal_account_id: base.account_id,
+          guidance: false,
+          attempt_id: "55555555-5555-4555-8555-555555555555",
+          report_capability: "1791800000000." + "c".repeat(43),
+        },
+      },
+    };
+    // The first attempt was cut off and queued this continuation.
+    const first = enqueueAcpJob({
+      ...request,
+      chat: {
+        ...request.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    });
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET state='error', started_at=? WHERE op_id=?")
+      .run(Date.now() - 120_000, first.op_id);
+    const rows: any[] = [];
+    const { job } = runningTurn(rows, request);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_parent_op_id=? WHERE op_id=?")
+      .run(first.op_id, job.op_id);
+
+    await fenceAcpProjectAfterStop({ project_id: job.project_id });
+    await processAcpProjectFenceIntents(client);
+
+    const reports = listDueAgentRpcReports(Date.now() + 60 * 60_000);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].report.attempt_id).toBe(
+      "55555555-5555-4555-8555-555555555555",
+    );
+    expect(reports[0].report.detail ?? "").toContain("project was stopped");
+    // Typed, not guessed from the text.
+    expect(reports[0].report.kind).toBe("project-stopped");
+  });
 });
 
 describe("the agent that sent a message is told how its turn ended", () => {
@@ -4022,13 +4084,14 @@ describe("the agent that sent a message is told how its turn ended", () => {
     } as any);
     expect(canceled.map((row) => row.op_id)).toEqual([child.op_id]);
     for (const row of canceled) acpTestInternals.reportSupersededRecovery(row);
+    // The continuation itself never ran; its chain had run tools.
     expect(
       parseTurnOutcome(getAcpJobByOpId(child.op_id)?.outcome_json),
     ).toEqual({
       version: 1,
       state: "canceled",
       by: "superseded",
-      tool_ran: true,
+      tool_ran: false,
     });
     const due = reports();
     expect(due).toHaveLength(1);
@@ -4037,5 +4100,85 @@ describe("the agent that sent a message is told how its turn ended", () => {
       kind: "superseded",
       tool_ran: true,
     });
+  });
+
+  function chain(request: any, toolRan: (boolean | undefined)[]) {
+    // Attempts of one message: each later one continues the one before.
+    const jobs: any[] = [];
+    for (const ran of toolRan) {
+      const job = enqueueAcpJob({
+        ...request,
+        chat: {
+          ...request.chat,
+          message_id: randomUUID(),
+          parent_message_id: jobs.length
+            ? randomUUID()
+            : request.chat.parent_message_id,
+        },
+      });
+      getAcpDatabase()
+        .prepare(
+          "UPDATE acp_jobs SET state='error', started_at=?, recovery_parent_op_id=?, outcome_json=? WHERE op_id=?",
+        )
+        .run(
+          Date.now() - 60_000,
+          jobs.at(-1)?.op_id ?? null,
+          JSON.stringify({
+            version: 1,
+            state: "failed",
+            failure: { kind: "host-lost" },
+            ...(ran === undefined ? {} : { tool_ran: ran }),
+          }),
+          job.op_id,
+        );
+      jobs.push(getAcpJobByOpId(job.op_id));
+    }
+    return jobs;
+  }
+
+  it.each([
+    [[true, false, false], true],
+    [[false, false, false], false],
+    [[false, undefined, false], undefined],
+  ] as const)(
+    "a recovery chain whose attempts ran tools %j reports tool_ran %j, once",
+    (attempts, expected) => {
+      const { request } = agentRequest();
+      const jobs = chain(request, [...attempts]);
+      for (const job of [jobs.at(-1), jobs.at(-1)]) {
+        acpTestInternals.reportFailedAgentMessageTurn(
+          job,
+          decodeAcpJobRequest(job),
+          "lost",
+        );
+      }
+      // An earlier attempt reporting too is the same report.
+      acpTestInternals.reportFailedAgentMessageTurn(
+        jobs[0],
+        decodeAcpJobRequest(jobs[0]),
+        "lost",
+      );
+      const due = reports();
+      expect(due).toHaveLength(1);
+      expect(due[0].report.tool_ran).toBe(expected);
+    },
+  );
+
+  it("a cancel of a message a fence already canceled reports nothing", async () => {
+    const { request } = agentRequest();
+    const job = enqueueAcpJob(request);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET state='canceled' WHERE op_id=?")
+      .run(job.op_id);
+    await acpTestInternals.handleAcpControlRequest({
+      action: "cancel",
+      account_id: request.account_id,
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      user_message_id: job.user_message_id,
+    } as any);
+    expect(reports()).toHaveLength(0);
+    expect(getAcpJobByOpId(job.op_id)?.outcome_json).toBeNull();
   });
 });

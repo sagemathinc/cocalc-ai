@@ -1564,7 +1564,19 @@ export function reprioritizeAcpJobImmediate({
   return job;
 }
 
-export function cancelQueuedAcpJob({
+export function cancelQueuedAcpJob(
+  owner: {
+    project_id: string;
+    path: string;
+    user_message_id: string;
+  } & AcpJobOwner,
+): AcpJobRow | undefined {
+  return cancelQueuedAcpJobReportingChange(owner).job;
+}
+
+/** Cancel a queued (or restart-held) message; `canceled` is whether this
+ * call canceled it, not an earlier cancel or a fence. */
+export function cancelQueuedAcpJobReportingChange({
   project_id,
   path,
   user_message_id,
@@ -1574,15 +1586,17 @@ export function cancelQueuedAcpJob({
   project_id: string;
   path: string;
   user_message_id: string;
-} & AcpJobOwner): AcpJobRow | undefined {
+} & AcpJobOwner): { job: AcpJobRow | undefined; canceled: boolean } {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
+  let canceled = false;
   db.exec("BEGIN IMMEDIATE");
   try {
     // A message a restart is holding is canceled too: it must not resume.
-    db.prepare(
-      `UPDATE ${TABLE}
+    const released = db
+      .prepare(
+        `UPDATE ${TABLE}
         SET recovery_code = NULL,
             recovery_detail = NULL,
             error = ?,
@@ -1594,23 +1608,25 @@ export function cancelQueuedAcpJob({
           AND thread_id = ?
           AND state = 'canceled'
           AND recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})`,
-    ).run(
-      ACP_FENCED_JOB_CANCELED_ERROR,
-      now,
-      project_id,
-      path,
-      user_message_id,
-      account_id,
-      thread_id,
-      ...ACP_FENCE_LIVE_RESUME_INTENTS,
-    );
-    takeQueuedAcpJob(db, now, {
+      )
+      .run(
+        ACP_FENCED_JOB_CANCELED_ERROR,
+        now,
+        project_id,
+        path,
+        user_message_id,
+        account_id,
+        thread_id,
+        ...ACP_FENCE_LIVE_RESUME_INTENTS,
+      );
+    const taken = takeQueuedAcpJob(db, now, {
       project_id,
       path,
       user_message_id,
       account_id,
       thread_id,
     });
+    canceled = Number(released.changes) > 0 || taken;
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -1624,7 +1640,7 @@ export function cancelQueuedAcpJob({
     thread_id,
   });
   mirrorAcpJobSession(job);
-  return job;
+  return { job, canceled };
 }
 
 function takeQueuedAcpJob(

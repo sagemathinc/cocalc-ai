@@ -1,4 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
+import { AGENT_RPC_REPORT_VERSION } from "@cocalc/conat/agents/rpc-reports";
 import { randomUUID } from "crypto";
 import { readFileSync } from "node:fs";
 import { promises as fsPromises } from "node:fs";
@@ -2216,6 +2217,9 @@ export async function startMasterRegistration({
         rootfs_scanner: rootfsScanner,
         software: versions,
         software_inventory: softwareInventory,
+        // The delivery reports this host can render (the hub downgrades or
+        // holds others for it).
+        agent_rpc_report_version: AGENT_RPC_REPORT_VERSION,
       },
     };
   };

@@ -42,11 +42,16 @@ const remoteDeliverReport = jest.fn();
 const enqueueExternal = jest.fn();
 const claimExecution = jest.fn();
 let remoteSender = false;
+// The delivery report version A's host advertises (undefined: none).
+let senderReportVersion: number | undefined;
 
 jest.mock("./store", () => ({
   agentStore: () => ({
     get: async (agent_id: string) => identities.get(agent_id),
-    query: async () => ({ rows: [{ host_id: host, state: "running" }] }),
+    query: async (sql: string) =>
+      sql.includes("agent_rpc_report_version")
+        ? { rows: [{ version: senderReportVersion?.toString() ?? null }] }
+        : { rows: [{ host_id: host, state: "running" }] },
   }),
 }));
 jest.mock("./access", () => ({
@@ -163,6 +168,7 @@ function report(overrides: any = {}) {
 
 beforeEach(() => {
   remoteSender = false;
+  senderReportVersion = undefined;
   claimExecution.mockReset().mockResolvedValue(true);
   assertHost.mockClear();
   enqueueExternal.mockReset();
@@ -215,6 +221,37 @@ describe("B's host reports the failed turn", () => {
       thread_id: "thread-a",
       target_label: "@reviewer",
     });
+  });
+
+  test("only as A's host can render it truthfully", async () => {
+    const stopped = report({ kind: "stopped", tool_ran: true });
+    // A host that advertises version 2 gets it as it is.
+    senderReportVersion = 2;
+    await reportRpcTurnFailure(fromHost(stopped));
+    expect(deliverAgentRpcReport.mock.calls[0][0].report).toEqual(stopped);
+    // An older host would tell A that B "did not act": it is held, and B's
+    // host tries again later.
+    senderReportVersion = undefined;
+    deliverAgentRpcReport.mockClear();
+    await expect(reportRpcTurnFailure(fromHost(stopped))).rejects.toThrow(
+      /must be upgraded/,
+    );
+    expect(deliverAgentRpcReport).not.toHaveBeenCalled();
+    // Unless that is true: nothing ran, so it can have the old shape.
+    const canceled = report({ kind: "canceled", tool_ran: false });
+    await reportRpcTurnFailure(fromHost(canceled));
+    const sent = deliverAgentRpcReport.mock.calls[0][0].report;
+    expect(sent.kind).toBe("error");
+    expect(sent.detail).toMatch(/canceled your message before it ran/);
+    expect(sent).not.toHaveProperty("tool_ran");
+    // An old kind is sent without the new fields.
+    deliverAgentRpcReport.mockClear();
+    await reportRpcTurnFailure(
+      fromHost(report({ kind: "limit", resets_at: 123, tool_ran: true })),
+    );
+    expect(deliverAgentRpcReport.mock.calls[0][0].report).not.toHaveProperty(
+      "resets_at",
+    );
   });
 
   test("through A's project bay when A is elsewhere", async () => {

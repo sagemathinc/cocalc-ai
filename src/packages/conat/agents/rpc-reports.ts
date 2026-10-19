@@ -79,6 +79,45 @@ export type AgentRpcReportDeliveryResult =
 
 export const AGENT_RPC_REPORT_DETAIL_MAX = 300;
 
+/**
+ * The report shape a sender's host can render, as it advertises in its
+ * heartbeat (agent_rpc_report_version). 1 (no advertisement): the first five
+ * kinds, no resets_at or tool_ran, and a text that always says the recipient
+ * "did not act" and invites a resend.
+ */
+export const AGENT_RPC_REPORT_VERSION = 2;
+const V1_KINDS: AgentRpcTurnFailureKind[] = [
+  "refused",
+  "limit",
+  "sign-in",
+  "timeout",
+  "error",
+];
+
+/**
+ * A report for a sender's host that renders only version `version`, or
+ * undefined to hold it until that host is upgraded: an old host's text
+ * would invite a resend, which is unsafe once the recipient may have acted.
+ */
+export function agentRpcReportForVersion(
+  report: AgentRpcTurnFailureReport,
+  version: number,
+): AgentRpcTurnFailureReport | undefined {
+  if (version >= AGENT_RPC_REPORT_VERSION) return report;
+  const { resets_at: _r, tool_ran, ...v1 } = report;
+  if (V1_KINDS.includes(report.kind)) return v1;
+  // Nothing ran, so its old "you can send it again" is true.
+  if (tool_ran === false)
+    return {
+      ...v1,
+      kind: "error",
+      detail: agentRpcReportDetail(
+        `${KIND_TEXT[report.kind]}${report.detail ? `: ${report.detail}` : ""}`,
+      ),
+    };
+  return undefined;
+}
+
 const KIND_TEXT: Record<AgentRpcTurnFailureKind, string> = {
   refused: "the model refused the request (a safety check)",
   limit: "a usage, credit or subscription limit",

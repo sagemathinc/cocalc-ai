@@ -197,7 +197,6 @@ import {
   acpJobHasLiveFenceResume,
   ACP_PROJECT_RESUME_FENCE_REASON,
   ACP_PROJECT_RUNTIME_LOST_FENCE_REASON,
-  cancelQueuedAcpJob,
   cancelQueuedAcpJobForControl,
   claimNextQueuedAcpJobForThread,
   clearAcpJobRecoveryIntent,
@@ -233,6 +232,7 @@ import {
   reprioritizeAcpJobImmediate,
   setAcpJobState,
   recordAcpJobOutcome,
+  cancelQueuedAcpJobReportingChange,
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
 import {
@@ -9578,9 +9578,9 @@ function reportFencedAgentMessage(
   outcome: TurnOutcome,
 ): void {
   recordAcpJobOutcome(job.op_id, outcome);
-  // A resumed turn reports through the turn it continues, never twice.
-  if (`${job.recovery_parent_op_id ?? ""}`.trim()) return;
-  // A message that never ran still has a reply cut-off: when it was sent.
+  // A resumed turn reports for its whole chain (once: see
+  // reportFailedAgentMessageTurn). A message that never ran still has a
+  // reply cut-off: when it was sent.
   reportFailedAgentMessageTurn(
     { ...job, started_at: job.started_at ?? job.created_at },
     decodeAcpJobRequest(job),
@@ -10274,19 +10274,36 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   }
 }
 
-function reportSupersededRecovery(job: AcpJobRow): void {
-  const parent = job.recovery_parent_op_id
-    ? parseTurnOutcome(getAcpJobByOpId(job.recovery_parent_op_id)?.outcome_json)
+function toolRanOf(outcome: TurnOutcome | undefined): boolean | undefined {
+  return outcome?.state === "failed" || outcome?.state === "canceled"
+    ? outcome.tool_ran
     : undefined;
-  const tool_ran =
-    parent?.state === "failed" || parent?.state === "canceled"
-      ? parent.tool_ran
+}
+
+/** For the sender: tools ran if any attempt ran them; none ran only if no
+ * attempt did and every attempt is known. */
+function withChainToolRan(
+  outcome: TurnOutcome,
+  attempts: (boolean | undefined)[],
+): TurnOutcome {
+  if (outcome.state !== "failed" && outcome.state !== "canceled")
+    return outcome;
+  const { tool_ran: _, ...rest } = outcome;
+  const tool_ran = attempts.includes(true)
+    ? true
+    : attempts.every((ran) => ran === false)
+      ? false
       : undefined;
+  return (tool_ran === undefined ? rest : { ...rest, tool_ran }) as TurnOutcome;
+}
+
+function reportSupersededRecovery(job: AcpJobRow): void {
+  // It never ran; its chain's earlier attempts say whether tools ran.
   const outcome: TurnOutcome = {
     version: 1,
     state: "canceled",
     by: "superseded",
-    ...(tool_ran !== undefined ? { tool_ran } : {}),
+    tool_ran: false,
   };
   recordAcpJobOutcome(job.op_id, outcome);
   reportFailedAgentMessageTurn(
@@ -10306,20 +10323,25 @@ function reportFailedAgentMessageTurn(
   outcome: TurnOutcome | undefined = parseTurnOutcome(job.outcome_json),
 ): void {
   // A recovery continuation carries the same message: the turn began when
-  // the first of them started, and a reply from any of them counts.
+  // the first of them started, a reply from any of them counts, any of them
+  // may have run tools, and the chain is reported once (as its first job).
   let started = job.started_at;
+  let root = job.op_id;
+  const toolRan = [toolRanOf(outcome)];
   let parent = job.recovery_parent_op_id;
   for (let hops = 0; parent && hops < 20; hops++) {
     const row = getAcpJobByOpId(parent);
     if (!row) break;
+    root = row.op_id;
     if (row.started_at != null) started = row.started_at;
+    toolRan.push(toolRanOf(parseTurnOutcome(row.outcome_json)));
     parent = row.recovery_parent_op_id;
   }
   const report = noteAgentMessageTurnFailed({
-    op_id: job.op_id,
+    op_id: root,
     request,
     error: `${error ?? ""}`.trim() || undefined,
-    outcome,
+    outcome: outcome && withChainToolRan(outcome, toolRan),
     turn_started_at: started,
   });
   if (report)
@@ -12469,13 +12491,14 @@ async function handleAcpControlRequestNow(
     };
   }
   if (request.action === "cancel") {
-    const row = cancelQueuedAcpJob({
-      project_id,
-      path,
-      user_message_id,
-      account_id: request.account_id,
-      thread_id,
-    });
+    const { job: row, canceled: canceledNow } =
+      cancelQueuedAcpJobReportingChange({
+        project_id,
+        path,
+        user_message_id,
+        account_id: request.account_id,
+        thread_id,
+      });
     if (!row || row.state !== "canceled") {
       return { ok: false, state: row?.state ?? "missing" };
     }
@@ -12487,19 +12510,22 @@ async function handleAcpControlRequestNow(
       user_message_id,
       queued: false,
     });
-    // An agent that sent it is told it will not run.
-    const canceled: TurnOutcome = {
-      version: 1,
-      state: "never-started",
-      reason: "canceled",
-    };
-    recordAcpJobOutcome(row.op_id, canceled);
-    reportFailedAgentMessageTurn(
-      { ...row, started_at: row.started_at ?? row.created_at },
-      decodeAcpJobRequest(row),
-      undefined,
-      canceled,
-    );
+    // An agent that sent it is told it will not run, if this canceled it
+    // (not an earlier cancel, or a fence that reports on its own).
+    if (canceledNow) {
+      // A message a restart held may have run already.
+      const canceled: TurnOutcome =
+        row.started_at != null
+          ? { version: 1, state: "canceled", by: "person" }
+          : { version: 1, state: "never-started", reason: "canceled" };
+      recordAcpJobOutcome(row.op_id, canceled);
+      reportFailedAgentMessageTurn(
+        { ...row, started_at: row.started_at ?? row.created_at },
+        decodeAcpJobRequest(row),
+        undefined,
+        canceled,
+      );
+    }
     return { ok: true, state: "canceled" };
   }
   if (
@@ -13437,6 +13463,7 @@ export const acpTestInternals = {
   handleInterruptRequest,
   processPendingAcpInterruptsOnce,
   reportSupersededRecovery,
+  reportFailedAgentMessageTurn,
   registerInterruptAgentForTests: (
     key: string,
     projectId: string,
