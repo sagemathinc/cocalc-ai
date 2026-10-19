@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
 import { ExternalAgentApproval } from "../external-agent-approval";
+import { withRequestTimeSpent } from "../cli-auth-views";
 
 jest.mock("@cocalc/frontend/auth/api", () => ({ postAuthApi: jest.fn() }));
 jest.mock("@cocalc/frontend/control-plane-origin", () => ({
@@ -204,6 +205,39 @@ test("the form closes exactly when the server's time runs out, not at the next t
     ).toBeNull();
     act(() => {
       jest.advanceTimersByTime(200);
+    });
+    expect(
+      screen.getByText("This enrollment request is no longer open."),
+    ).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("time spent on the challenge-info request is counted against the request", () => {
+  // The server measured 3 s left; the reply took 2.5 s to arrive.
+  expect(withRequestTimeSpent({ expires_in_ms: 3_000 }, 2_500)).toEqual({
+    expires_in_ms: 500,
+  });
+  expect(withRequestTimeSpent({ expires_in_ms: 3_000 }, 9_000)).toEqual({
+    expires_in_ms: 0,
+  });
+  expect(withRequestTimeSpent({}, 9_000)).toEqual({});
+  jest.useFakeTimers();
+  try {
+    const { expires_in_ms } = withRequestTimeSpent(
+      { expires_in_ms: 3_000 },
+      2_500,
+    );
+    render(
+      <ExternalAgentApproval
+        {...props}
+        expiresInMs={expires_in_ms}
+        state="pending"
+      />,
+    );
+    act(() => {
+      jest.advanceTimersByTime(600);
     });
     expect(
       screen.getByText("This enrollment request is no longer open."),

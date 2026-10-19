@@ -47,7 +47,7 @@ export const EXTERNAL_AGENT_CHALLENGE_TTL_MS = 60 * 60_000;
 // Enrollment-status errors for an installation that exists for this request
 // (its secret matched) but can no longer be used.
 const EXTERNAL_INSTALLATION_ENDED =
-  /external_credential_inactive|external_credential_revoked|external_identity_unavailable/;
+  /external_credential_inactive|external_credential_revoked|external_identity_unavailable|account_disabled/;
 const PENDING_CLI_LOGIN_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
 const CLI_LOGIN_START_IP_LIMIT_10M = 20;
 const CLI_LOGIN_START_IP_LIMIT_DAY = 100;

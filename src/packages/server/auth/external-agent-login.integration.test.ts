@@ -214,6 +214,11 @@ describeDb(
       expect(
         await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
       ).toMatchObject({ state: "canceled" });
+      // The approving account was disabled since.
+      mockEnrollmentStatus.mockRejectedValueOnce(new Error("account_disabled"));
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "canceled" });
       // If the home bay can't be asked, the page still opens (as pending).
       mockEnrollmentStatus.mockRejectedValue(new Error("home bay unreachable"));
       expect(

@@ -100,6 +100,19 @@ type ChallengeInfo = {
   expires_in_ms?: number;
 };
 
+/** The server measured the time left before its reply travelled here; count
+ * the whole request against it, so the page never stays open past expiry. */
+export function withRequestTimeSpent<T extends { expires_in_ms?: number }>(
+  info: T,
+  spentMs: number,
+): T {
+  if (info.expires_in_ms == null) return info;
+  return {
+    ...info,
+    expires_in_ms: Math.max(0, info.expires_in_ms - Math.max(0, spentMs)),
+  };
+}
+
 type CliElevationFreshAuthStatus = {
   enabled: boolean;
   methods?: SecondFactorMethod[];
@@ -280,12 +293,13 @@ export function PublicCliLoginApprovalView({
     onEmailHintChange?.(undefined);
     async function load() {
       try {
+        const requestedAt = performance.now();
         const next = await postAuthApi<ChallengeInfo>({
           endpoint: "auth/cli/challenge-info",
           body: { challenge_id: challengeId },
         });
         if (!cancelled) {
-          setInfo(next);
+          setInfo(withRequestTimeSpent(next, performance.now() - requestedAt));
           const emailHint = `${next.email_hint ?? ""}`.trim();
           onEmailHintChange?.(emailHint || undefined);
         }
