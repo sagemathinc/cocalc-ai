@@ -120,6 +120,9 @@ async function setup(
   const fs: any = client.fs({ project_id, service: fileserver.service });
   await fs.writeFile(path, text);
   const syncdb = await openBoardSyncdb({
+    // Writes as the host does (only the manager writes in production; these
+    // replicas stand in for edits the host has admitted).
+    writer: true,
     client,
     project_id,
     path,
@@ -147,6 +150,9 @@ async function setup(
   await manager.start();
   // A second replica, as a browser has.
   const browser = await openBoardSyncdb({
+    // Writes as the host does (only the manager writes in production; these
+    // replicas stand in for edits the host has admitted).
+    writer: true,
     client: connect(),
     project_id,
     path,
@@ -291,6 +297,9 @@ test("the file is the official version when a board is opened again", async () =
   await t.fs.writeFile(t.path, changed);
   const client = connect();
   const syncdb = await openBoardSyncdb({
+    // Writes as the host does (only the manager writes in production; these
+    // replicas stand in for edits the host has admitted).
+    writer: true,
     client,
     project_id: t.project_id,
     path: t.path,
@@ -511,6 +520,9 @@ test("two managers: one that lost the board cannot write over the next", async (
     // The next owner: another manager of the same file, with its own
     // document, as after a takeover elsewhere.
     const other = await openBoardSyncdb({
+      // Writes as the host does (only the manager writes in production; these
+      // replicas stand in for edits the host has admitted).
+      writer: true,
       client: connect(),
       project_id: uuid(),
       path: t.path,
@@ -1041,6 +1053,9 @@ test.each([
     const gated: any = connect().fs({ project_id, service });
     await files.writeFile("gated.board.json", canonical(BOARD));
     const writer = await openBoardSyncdb({
+      // Writes as the host does (only the manager writes in production; these
+      // replicas stand in for edits the host has admitted).
+      writer: true,
       client: connect(),
       project_id,
       path: "gated.board.json",
