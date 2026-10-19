@@ -89,7 +89,13 @@ function progressEvent({
       progress: progressSteps[step],
       detail,
     },
-  });
+  }).catch((err) =>
+    logger.warn("failed to publish copy progress", {
+      op_id: op.op_id,
+      step,
+      err: `${err}`,
+    }),
+  );
 }
 
 async function handleCopyOp(op: LroSummary): Promise<void> {

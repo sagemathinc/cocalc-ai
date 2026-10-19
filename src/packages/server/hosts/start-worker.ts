@@ -201,7 +201,13 @@ function progressEvent({
       progress: resolveProgress(step, progress),
       detail,
     },
-  });
+  }).catch((err) =>
+    logger.warn("failed to publish host op progress", {
+      op_id: op.op_id,
+      step,
+      err: `${err}`,
+    }),
+  );
 }
 
 async function updateProgressSummary(
