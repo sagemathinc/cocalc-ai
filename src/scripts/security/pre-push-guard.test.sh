@@ -430,6 +430,14 @@ inst 1 "refuses to overwrite a wrapper hook that calls the guard"
 grep -q "my wrapper" .git/hooks/pre-push && { pass=$((pass + 1)); echo "ok    wrapper left intact"; } || { fail=$((fail + 1)); echo "FAIL  wrapper was modified"; }
 rm .git/hooks/pre-push && git config core.hooksPath .custom-hooks
 inst 1 "refuses when core.hooksPath is set"
+git config --unset core.hooksPath
+printf '[core]\n\thooksPath = conditional-hooks\n' >"$T/cond.gitconfig"
+git config 'includeIf.onbranch:security/**.path' "$T/cond.gitconfig"
+inst 1 "refuses when a branch-conditional include sets core.hooksPath"
+git config --unset 'includeIf.onbranch:security/**.path'
+git commit -q --allow-empty -m wt && git worktree add -q "$T/inst-wt" -b other >/dev/null 2>&1
+git config extensions.worktreeConfig true && git -C "$T/inst-wt" config --worktree core.hooksPath wt-hooks
+inst 1 "refuses when another worktree's config sets core.hooksPath"
 
 echo "pass=$pass fail=$fail"
 [ $fail = 0 ]
