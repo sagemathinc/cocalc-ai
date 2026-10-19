@@ -29,11 +29,23 @@ The private repo is a separate repository, not a fork: an ordinary fork of a pub
 src/scripts/security/install-hooks.sh
 ```
 
-This installs the push guard in the clone's common git directory, so it covers every worktree of the clone. It refuses to run if `core.hooksPath` is set, since Git would then ignore that directory. The guard allows any push to a private repo (`github.com/sagemathinc/cocalc-ai-<name>`, in any URL form). For every other destination (the public repo, forks, other hosts, local paths) it refuses:
+This installs the push guard in the clone's common git directory, so it covers every worktree of the clone. The installer:
+
+- refuses if `core.hooksPath` is set, because Git would then ignore that directory;
+- only ever replaces a hook it installed itself.
+
+The guard allows any push to a known private repo. These are, on GitHub in any URL form:
+
+- `sagemathinc/cocalc-ai-private`;
+- `sagemathinc/cocalc-ai-content-security`;
+- advisory forks `sagemathinc/cocalc-ai-ghsa-xxxx-xxxx-xxxx`;
+- any URL added with `git config --add cocalc.privateUrl <url>`.
+
+Other `cocalc-ai-*` repos are not trusted; `cocalc-ai-doc`, for example, is public. For every other destination (the public repo, forks, other hosts, local paths) the guard refuses:
 
 - a source or destination branch named `security/*`, `ghsa*` or `release/*security*`;
-- a commit that is on a private branch but not in public main or on a public `disclose/*` branch. Private branches are those of the private repo, of other configured `sagemathinc/cocalc-ai-*` remotes, and local branches with private names.
+- a commit that is on a private branch but on no branch of the public repo. Private branches are those of the private repo, of other private remotes, and local branches with private names.
 
-It fetches the private and public branch lists fresh on every such push, and fails closed if it can't when the clone has private work. `COCALC_DISCLOSE=1`, set by `disclose.sh`, allows the deliberate disclosure push. Keep the `private` remote's push URL disabled; the scripts push to its explicit URL.
+On every such push it fetches the private and public branch lists fresh, about 2 seconds. If the private fetch fails and the clone has, or has seen, private work, it refuses (fail closed). `COCALC_DISCLOSE=1`, set by `disclose.sh`, allows the deliberate disclosure push. Keep the `private` remote's push URL disabled; the scripts push to its explicit URL.
 
-`pre-push-guard.test.sh` exercises the guard without pushing anything. It needs access to the private repo.
+`pre-push-guard.test.sh` tests the guard and the installer in a temporary directory, with local stand-in repos. It needs no network and doesn't touch your branches.
