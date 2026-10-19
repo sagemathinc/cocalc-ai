@@ -25,6 +25,9 @@ export function restoreRetryAvailable(
 ): boolean {
   return (
     !!project.project_id &&
+    // The server only retries for the account that owns the import; another
+    // linked account must Open (join) the project first.
+    project.joined === true &&
     project.restore_status === "failed" &&
     archiveAvailable(project)
   );

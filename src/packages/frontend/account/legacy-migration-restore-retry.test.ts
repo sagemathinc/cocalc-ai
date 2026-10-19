@@ -23,19 +23,30 @@ describe("restoreRetryAvailable", () => {
   it("offers a retry for a failed restore into an existing project", () => {
     expect(
       restoreRetryAvailable(
-        project({ project_id: "p1", restore_status: "failed" }),
+        project({ project_id: "p1", joined: true, restore_status: "failed" }),
       ),
     ).toBe(true);
   });
 
   it.each([
     ["not imported yet", { restore_status: "failed" }],
-    ["restored", { project_id: "p1", restore_status: "restored" }],
-    ["still restoring", { project_id: "p1", restore_status: "restoring" }],
+    [
+      "this account has not joined the imported project",
+      { project_id: "p1", joined: false, restore_status: "failed" },
+    ],
+    [
+      "restored",
+      { project_id: "p1", joined: true, restore_status: "restored" },
+    ],
+    [
+      "still restoring",
+      { project_id: "p1", joined: true, restore_status: "restoring" },
+    ],
     [
       "without an archive",
       {
         project_id: "p1",
+        joined: true,
         restore_status: "failed",
         artifact_status: "missing",
       },
