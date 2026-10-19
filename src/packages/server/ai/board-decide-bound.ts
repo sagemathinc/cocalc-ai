@@ -21,19 +21,22 @@
 // The card's revision only labels the posted board: what is classified is
 // the file the server read, matching the digest (daybreak2, cad7a07be2).
 //
-// Per (account, board): one call in flight per path as asked, taken before
-// the file is read (HARD-CAD-2), and at most CALLS_PER_BOARD_PER_HOUR an
-// hour per path as the filesystem resolves it; and in total, for every
-// account and board, MAX_IN_FLIGHT_TOTAL in flight and
-// MAX_CALLS_PER_MINUTE_TOTAL a minute, both before the file is read (the
-// spec's "per user and board, and bounds the total rate it serves"). The
-// file's server bounds its reads per project and in total. These are per
-// process; the hard
-// bounds, shared by every replica and atomic, are in the funding's
-// reservation (board-decide-funding.ts): the account's per-minute limit,
-// its AI allowance, and the site pool.
+// Limits (the spec's "per user and board, and bounds the total rate it
+// serves"):
+// - shared by every hub replica, atomic, in the funding's reservation on
+//   the account's home bay (board-decide-funding.ts): the account's calls a
+//   minute, its calls on one board (as the filesystem resolves it) an hour,
+//   its AI allowance and the site pool. The resolved board goes there with
+//   the call.
+// - per hub process, here, before the file is read: one call in flight per
+//   (account, board path as asked) (HARD-CAD-2); the same per-board hourly
+//   count, only as an early refusal in front of the shared one; and for
+//   this process's own capacity, MAX_IN_FLIGHT_TOTAL in flight and
+//   MAX_CALLS_PER_MINUTE_TOTAL started a minute, for every account and
+//   board. The file's server bounds its reads per project and in total,
+//   per process (backend/sagebrush-board/service.ts).
 
-import type { DecideResult } from "./board-decide";
+import { DECIDE_LIMITS, type DecideResult } from "./board-decide";
 import {
   isBoardDecideBinding,
   isPlainBoardPath,
@@ -44,10 +47,13 @@ import type {
 } from "@cocalc/conat/project/board-decide";
 
 export { isPlainBoardPath };
-export const CALLS_PER_BOARD_PER_HOUR = 60;
+/** Per (account, board) an hour: enforced for every replica by the funding;
+ * this process's count of it is only an early refusal. */
+export const CALLS_PER_BOARD_PER_HOUR = DECIDE_LIMITS.callsPerBoardPerHour;
 /** The total this hub process serves, for every account and board: at most
- * this many in flight and this many started a minute. (A board is never
- * read here: the file's server reads it, backend/sagebrush-board.) */
+ * this many in flight and this many started a minute. Per process by
+ * design (each replica's own capacity), not a site-wide limit. (A board is
+ * never read here: the file's server reads it, backend/sagebrush-board.) */
 export const MAX_IN_FLIGHT_TOTAL = 16;
 export const MAX_CALLS_PER_MINUTE_TOTAL = 600;
 const MINUTE_MS = 60_000;
@@ -130,6 +136,9 @@ export interface BoardDecideDeps {
     request_id: string;
     question: { prompt: string; options: { name: string; about?: string }[] };
     answer: string;
+    /** The board as the file's server resolved it, for the home bay's
+     * per-board count. */
+    board: { project_id: string; path: string };
   }): Promise<DecideResult>;
   now?: () => number;
 }
@@ -211,6 +220,7 @@ export async function boardDecideForBoard(
       request_id: request.id,
       question: { prompt: request.prompt, options: request.options },
       answer: request.answer,
+      board: { project_id, path: resolved_path },
     });
     return {
       id: request.id,

@@ -52,11 +52,13 @@ export async function boardDecideLocal({
   request_id,
   question,
   answer,
+  board,
 }: {
   account_id?: string;
   request_id: string;
   question: DecideQuestion;
   answer: string;
+  board: { project_id: string; path: string };
 }): Promise<DecideResult> {
   if (!account_id) throw codedError("must be signed in", 401);
   // One snapshot for the whole call: the key that admitted it is the key
@@ -70,6 +72,7 @@ export async function boardDecideLocal({
     requestId: request_id,
     question,
     answer,
+    board: { projectId: board?.project_id, path: board?.path },
     provider: openRouterDecideProvider({
       model: BOARD_DECIDE_MODEL,
       apiKey: async () => config.apiKey,

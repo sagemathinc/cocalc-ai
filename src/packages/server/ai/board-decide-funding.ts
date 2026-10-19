@@ -14,7 +14,11 @@
 // - commit: the provider's reported cost, all of it. A cost above the hold
 //   (which max_price should prevent) is recorded in full and alerted.
 // - release: both holds go.
-// Stale holds (a hub that died mid-call) are removed after 5 minutes, as
+// - limits, counted under the account's row lock, so one limit for every
+//   hub replica: the account's calls a minute, and its calls a board (the
+//   board's project and real path are on the hold's row) an hour. Held,
+//   done and failed calls all count.
+// A stale hold (a hub that died mid-call) is released after 5 minutes, as
 // speech's are.
 
 import getLogger from "@cocalc/backend/logger";
@@ -32,9 +36,8 @@ import { DECIDE_LIMITS, type DecideFunding } from "./board-decide";
 
 const RESERVATION_TAG = "board-decide-reservation";
 const COMMITTED_TAG = "board-decide";
-// A hold released after its call failed: kept (at no cost) until the
-// reservations expire, so the call still counts toward the account's
-// per-minute limit.
+// A hold released after its call failed (or gone stale): kept at no cost
+// for an hour, so the call still counts toward the limits above.
 const RELEASED_TAG = "board-decide-released";
 const RESERVATION_TTL_MS = 5 * 60_000;
 const PRICE_VERSION = "board-decide-2026-10-16";
@@ -59,7 +62,7 @@ export function siteFundedDecideFunding({
   model: string;
 }): DecideFunding {
   return {
-    async reserve({ accountId, requestId, microusd }) {
+    async reserve({ accountId, requestId, microusd, board }) {
       if (!Number.isSafeInteger(microusd) || microusd <= 0) {
         throw new Error("microusd must be a positive safe integer");
       }
@@ -101,11 +104,26 @@ export function siteFundedDecideFunding({
         if (account.rows.length !== 1) {
           throw codedError("The account is unavailable.", 404);
         }
+        // A stale hold (its hub died mid-call) no longer holds money: it
+        // becomes a released row at no cost, which still counts toward the
+        // limits below. Released rows are kept for the longest window they
+        // count toward, the board's hour.
+        await client.query(
+          `UPDATE ai_usage_log SET input=$3, tag=$4, cost_microusd=0
+           WHERE account_id=$1 AND tag=$2
+             AND time < NOW() - ($5::BIGINT * INTERVAL '1 millisecond')`,
+          [
+            accountId,
+            RESERVATION_TAG,
+            "[board-decide-released]",
+            RELEASED_TAG,
+            RESERVATION_TTL_MS,
+          ],
+        );
         await client.query(
           `DELETE FROM ai_usage_log
-           WHERE account_id=$1 AND tag IN ($2, $3)
-             AND time < NOW() - ($4::BIGINT * INTERVAL '1 millisecond')`,
-          [accountId, RESERVATION_TAG, RELEASED_TAG, RESERVATION_TTL_MS],
+           WHERE account_id=$1 AND tag=$2 AND time < NOW() - INTERVAL '1 hour'`,
+          [accountId, RELEASED_TAG],
         );
         // The account's calls in the last minute, held, done or failed,
         // counted under its row's lock: one limit across every hub replica
@@ -123,6 +141,30 @@ export function siteFundedDecideFunding({
         ) {
           throw codedError(
             "Too many answers checked. Try again in a minute.",
+            429,
+          );
+        }
+        // The account's calls on this board (as the file's server resolved
+        // it) in the last hour, the same way, under the same lock.
+        const onBoard = await client.query(
+          `SELECT COUNT(*) AS n FROM ai_usage_log
+           WHERE account_id=$1 AND tag IN ($2, $3, $4)
+             AND project_id=$5 AND path=$6
+             AND time > NOW() - INTERVAL '1 hour'`,
+          [
+            accountId,
+            RESERVATION_TAG,
+            COMMITTED_TAG,
+            RELEASED_TAG,
+            board.projectId,
+            board.path,
+          ],
+        );
+        if (
+          Number(onBoard.rows[0]?.n ?? 0) >= DECIDE_LIMITS.callsPerBoardPerHour
+        ) {
+          throw codedError(
+            "Too many answers checked on this board. Try later.",
             429,
           );
         }
@@ -152,10 +194,10 @@ export function siteFundedDecideFunding({
           `INSERT INTO ai_usage_log(
              time, input, output, history, account_id, total_tokens,
              prompt_tokens, total_time_s, model, tag, cost_microusd,
-             funded_event_id, price_version
+             funded_event_id, price_version, project_id, path
            ) VALUES(
              NOW(), '[board-decide-reservation]', '', ARRAY[]::JSONB[], $1, 0,
-             0, 0, $2, $3, $4, $5, $6
+             0, 0, $2, $3, $4, $5, $6, $7, $8
            )`,
           [
             accountId,
@@ -164,6 +206,8 @@ export function siteFundedDecideFunding({
             microusd,
             requestId,
             PRICE_VERSION,
+            board.projectId,
+            board.path,
           ],
         );
         await client.query("COMMIT");

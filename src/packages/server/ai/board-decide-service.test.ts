@@ -25,6 +25,10 @@ const request = {
     ],
   },
   answer: "every point can reach every other",
+  board: {
+    project_id: "44444444-4444-4444-8444-444444444444",
+    path: "/home/user/plan.board.json",
+  },
 };
 
 beforeEach(() => jest.clearAllMocks());

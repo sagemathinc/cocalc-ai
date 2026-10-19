@@ -1548,6 +1548,9 @@ export interface AccountLocalBoardDecideRequest {
   request_id: string;
   question: { prompt: string; options: { name: string; about?: string }[] };
   answer: string;
+  /** The board, as the file's server resolved it: the home bay counts the
+   * account's calls per board. */
+  board: { project_id: string; path: string };
 }
 
 export interface BoardDecideResult {

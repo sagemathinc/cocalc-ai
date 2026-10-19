@@ -191,6 +191,10 @@ describe("end to end through the bound call", () => {
           options: OPTIONS,
         },
         answer: "only 1 and 7 divide it",
+        board: {
+          project_id: PROJECT,
+          path: "/home/user/work/primes.board.json",
+        },
       },
     ]);
   });

@@ -147,6 +147,7 @@ test("the question and options come from the board file, not the message", async
       request_id: "33333333-3333-4333-8333-333333333333",
       question: JSON.parse(BOARD),
       answer: "sure it is",
+      board: { project_id: PROJECT, path: "/home/user/work/q.board.json" },
     },
   ]);
 });
@@ -408,6 +409,26 @@ test("a link to the board shares its hourly bucket", async () => {
     ),
   ).rejects.toMatchObject({ code: 429 });
   expect(calls).toHaveLength(CALLS_PER_BOARD_PER_HOUR);
+});
+
+// Codex on #1134: the hourly count per board holds across hub replicas, in
+// the funding on the account's home bay; the board goes there as resolved.
+test("the home bay is told the board as the filesystem resolved it", async () => {
+  const { d, calls } = deps({
+    files: { realpath: async () => "/home/user/work/q.board.json" },
+  });
+  await boardDecideForBoard(
+    opts({
+      path: "link.board.json",
+      message: message({ name: "link.board.json" }),
+    }),
+    d,
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0].board).toEqual({
+    project_id: opts().project_id,
+    path: "/home/user/work/q.board.json",
+  });
 });
 
 test("an hourly cap per board, across spellings", async () => {

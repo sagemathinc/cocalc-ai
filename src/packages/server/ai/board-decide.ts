@@ -29,6 +29,9 @@ export const DECIDE_LIMITS = {
   optionNameCharacters: BOARD_DECIDE_REQUEST_LIMITS.optionName,
   optionAboutCharacters: BOARD_DECIDE_REQUEST_LIMITS.optionAbout,
   callsPerAccountPerMinute: 20,
+  // Per (account, board as the filesystem resolves it), across every hub
+  // replica: counted in the funding's reservation (board-decide-funding.ts).
+  callsPerBoardPerHour: 60,
 } as const;
 
 const RATE_WINDOW_MS = 60_000;
@@ -75,7 +78,29 @@ export interface DecideFunding {
     accountId: string;
     requestId: string;
     microusd: number;
+    board: DecideBoard;
   }): Promise<DecideReservation>;
+}
+
+/** The board a call is for, as the file's server resolved it: its project
+ * and real path. The funding counts calls per account and board. */
+export interface DecideBoard {
+  projectId: string;
+  path: string;
+}
+
+export const DECIDE_BOARD_PATH_CHARACTERS = 4096;
+
+function validDecideBoard(board: unknown): board is DecideBoard {
+  const b = board as DecideBoard;
+  return (
+    b != null &&
+    typeof b.projectId === "string" &&
+    UUID.test(b.projectId) &&
+    typeof b.path === "string" &&
+    b.path.length > 0 &&
+    b.path.length <= DECIDE_BOARD_PATH_CHARACTERS
+  );
 }
 
 export interface DecideResult {
@@ -212,6 +237,7 @@ export async function boardDecide({
   requestId,
   question,
   answer,
+  board,
   provider,
   funding,
   now = Date.now(),
@@ -221,6 +247,7 @@ export async function boardDecide({
   requestId: string;
   question: DecideQuestion;
   answer: unknown;
+  board: DecideBoard;
   provider?: DecideProvider;
   funding?: DecideFunding;
   now?: number;
@@ -229,7 +256,11 @@ export async function boardDecide({
   if (!provider || !funding) {
     throw codedError("Checking answers isn't available on this site.", 503);
   }
-  if (typeof requestId !== "string" || !UUID.test(requestId)) {
+  if (
+    typeof requestId !== "string" ||
+    !UUID.test(requestId) ||
+    !validDecideBoard(board)
+  ) {
     throw codedError("Invalid request.", 400);
   }
   const valid = validateDecideRequest(question, answer);
@@ -243,6 +274,7 @@ export async function boardDecide({
     accountId,
     requestId,
     microusd: reserved,
+    board: { projectId: board.projectId, path: board.path },
   });
   let result: DecideProviderResult;
   try {

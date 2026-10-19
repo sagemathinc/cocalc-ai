@@ -16,6 +16,11 @@ import {
 } from "./board-decide";
 
 const ACCOUNT = "11111111-1111-4111-8111-111111111111";
+// The board a call is for, as the file's server resolved it.
+const BOARD_KEY = {
+  projectId: "44444444-4444-4444-8444-444444444444",
+  path: "/home/user/plan.board.json",
+};
 let n = 0;
 const rid = () => `00000000-0000-4000-8000-${`${++n}`.padStart(12, "0")}`;
 
@@ -78,6 +83,7 @@ test("an answer is classified into the question's own options, and paid for", as
   const provider = fakeProvider();
   const { funding, events } = fakeFunding();
   const result = await boardDecide({
+    board: BOARD_KEY,
     accountId: ACCOUNT,
     requestId: rid(),
     question,
@@ -104,6 +110,7 @@ test("without a provider or funding, decide is unavailable and nothing is called
   const provider = fakeProvider();
   await expect(
     boardDecide({
+      board: BOARD_KEY,
       accountId: ACCOUNT,
       requestId: rid(),
       question,
@@ -119,6 +126,7 @@ test("over the allowance: refused before the provider is called", async () => {
   const { funding } = fakeFunding(true);
   await expect(
     boardDecide({
+      board: BOARD_KEY,
       accountId: ACCOUNT,
       requestId: rid(),
       question,
@@ -133,6 +141,7 @@ test("over the allowance: refused before the provider is called", async () => {
 test("a failed call releases its reservation, and its error stays ours", async () => {
   const { funding, events } = fakeFunding();
   const err: any = await boardDecide({
+    board: BOARD_KEY,
     accountId: ACCOUNT,
     requestId: rid(),
     question,
@@ -150,6 +159,7 @@ test("limits: answer, prompt and options", async () => {
   const provider = fakeProvider();
   const call = (q: any, answer: any) =>
     boardDecide({
+      board: BOARD_KEY,
       accountId: ACCOUNT,
       requestId: rid(),
       question: q,
@@ -192,6 +202,7 @@ test("a request id is used once, and calls per account per minute are capped", a
   const provider = fakeProvider();
   const id = rid();
   await boardDecide({
+    board: BOARD_KEY,
     accountId: ACCOUNT,
     requestId: id,
     question,
@@ -202,6 +213,7 @@ test("a request id is used once, and calls per account per minute are capped", a
   });
   await expect(
     boardDecide({
+      board: BOARD_KEY,
       accountId: ACCOUNT,
       requestId: id,
       question,
@@ -214,6 +226,7 @@ test("a request id is used once, and calls per account per minute are capped", a
   resetBoardDecideStateForTests();
   for (let i = 0; i < DECIDE_LIMITS.callsPerAccountPerMinute; i++) {
     await boardDecide({
+      board: BOARD_KEY,
       accountId: ACCOUNT,
       requestId: rid(),
       question,
@@ -225,6 +238,7 @@ test("a request id is used once, and calls per account per minute are capped", a
   }
   await expect(
     boardDecide({
+      board: BOARD_KEY,
       accountId: ACCOUNT,
       requestId: rid(),
       question,
@@ -236,6 +250,7 @@ test("a request id is used once, and calls per account per minute are capped", a
   ).rejects.toMatchObject({ code: 429 });
   // a minute later it is allowed again
   await boardDecide({
+    board: BOARD_KEY,
     accountId: ACCOUNT,
     requestId: rid(),
     question,
@@ -246,6 +261,7 @@ test("a request id is used once, and calls per account per minute are capped", a
   });
   await expect(
     boardDecide({
+      board: BOARD_KEY,
       accountId: "22222222-2222-4222-8222-222222222222",
       requestId: rid(),
       question,
@@ -291,6 +307,7 @@ test("a cost above the reservation is committed in full, never clamped", async (
     costMicrousd: 10_000_000,
   });
   await boardDecide({
+    board: BOARD_KEY,
     accountId: ACCOUNT,
     requestId: rid(),
     question,
@@ -309,6 +326,7 @@ test("one-shot accounts leave this process's counts bounded", async () => {
   const accounts = MAX_RATE_KEYS + 500;
   for (let i = 0; i < accounts; i++) {
     await boardDecide({
+      board: BOARD_KEY,
       accountId: `22222222-2222-4222-8222-${`${i}`.padStart(12, "0")}`,
       requestId: rid(),
       question,
@@ -324,6 +342,7 @@ test("one-shot accounts leave this process's counts bounded", async () => {
   // Past their windows (ten minutes for request ids), the next call leaves
   // only its own entries.
   await boardDecide({
+    board: BOARD_KEY,
     accountId: ACCOUNT,
     requestId: rid(),
     question,

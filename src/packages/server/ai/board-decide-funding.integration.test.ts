@@ -19,6 +19,11 @@ jest.mock("./usage-status", () => ({ getAIUsageStatus: jest.fn() }));
 
 const accountId = uuid();
 const funding = siteFundedDecideFunding({ model: "typesafe/jev-1.14" });
+// The board a call is for, as the file's server resolved it.
+const BOARD_KEY = {
+  projectId: "44444444-4444-4444-8444-444444444444",
+  path: "/home/user/plan.board.json",
+};
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -70,7 +75,12 @@ describe("site-funded board decide", () => {
 
   it("holds, then commits the reported cost", async () => {
     const requestId = uuid();
-    const r = await funding.reserve({ accountId, requestId, microusd: 2 });
+    const r = await funding.reserve({
+      board: BOARD_KEY,
+      accountId,
+      requestId,
+      microusd: 2,
+    });
     expect(await rows(requestId)).toEqual([
       { tag: "board-decide-reservation", cost: 2 },
     ]);
@@ -80,14 +90,24 @@ describe("site-funded board decide", () => {
 
   it("records a cost above the hold in full", async () => {
     const requestId = uuid();
-    const r = await funding.reserve({ accountId, requestId, microusd: 2 });
+    const r = await funding.reserve({
+      board: BOARD_KEY,
+      accountId,
+      requestId,
+      microusd: 2,
+    });
     await r.commit(5);
     expect(await rows(requestId)).toEqual([{ tag: "board-decide", cost: 5 }]);
   });
 
   it("releases a hold when the call fails", async () => {
     const requestId = uuid();
-    const r = await funding.reserve({ accountId, requestId, microusd: 2 });
+    const r = await funding.reserve({
+      board: BOARD_KEY,
+      accountId,
+      requestId,
+      microusd: 2,
+    });
     await r.release();
     // kept at no cost, so it still counts toward the minute's limit
     expect(await rows(requestId)).toEqual([
@@ -113,6 +133,7 @@ describe("site-funded board decide", () => {
     const held = await Promise.all(
       Array.from({ length: n }, (_, i) =>
         replicas[i % 2].reserve({
+          board: BOARD_KEY,
           accountId: account,
           requestId: uuid(),
           microusd: 1,
@@ -124,7 +145,12 @@ describe("site-funded board decide", () => {
     await held[1].release();
     for (const replica of replicas) {
       await expect(
-        replica.reserve({ accountId: account, requestId: uuid(), microusd: 1 }),
+        replica.reserve({
+          board: BOARD_KEY,
+          accountId: account,
+          requestId: uuid(),
+          microusd: 1,
+        }),
       ).rejects.toMatchObject({ code: 429 });
     }
     // a minute later there is room again
@@ -135,6 +161,109 @@ describe("site-funded board decide", () => {
     );
     await expect(
       replicas[1].reserve({
+        board: BOARD_KEY,
+        accountId: account,
+        requestId: uuid(),
+        microusd: 1,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  // Codex on #1134: the per-board hourly limit holds across hub replicas
+  // too: counted in the database under the account's lock, by the board
+  // (project and resolved path) on each hold's row.
+  it("at most callsPerBoardPerHour an hour on one board, across replicas", async () => {
+    const account = uuid();
+    await getPool().query(
+      `INSERT INTO accounts(account_id, created, email_address)
+       VALUES($1, NOW(), $2)`,
+      [account, `${account}@example.com`],
+    );
+    const replicas = [
+      siteFundedDecideFunding({ model: "typesafe/jev-1.14" }),
+      siteFundedDecideFunding({ model: "typesafe/jev-1.14" }),
+    ];
+    const board = BOARD_KEY;
+    const other = { ...BOARD_KEY, path: "/home/user/other.board.json" };
+    const age = async (interval: string) =>
+      await getPool().query(
+        `UPDATE ai_usage_log SET time = time - INTERVAL '${interval}'
+         WHERE account_id=$1`,
+        [account],
+      );
+    const perMinute = DECIDE_LIMITS.callsPerAccountPerMinute;
+    const perHour = DECIDE_LIMITS.callsPerBoardPerHour;
+    let made = 0;
+    let first: any;
+    // In batches the minute limit allows, alternating replicas; each
+    // batch then a minute older.
+    while (made < perHour) {
+      const n = Math.min(perMinute, perHour - made);
+      const held = await Promise.all(
+        Array.from({ length: n }, (_, i) =>
+          replicas[(made + i) % 2].reserve({
+            board,
+            accountId: account,
+            requestId: uuid(),
+            microusd: 1,
+          }),
+        ),
+      );
+      if (made === 0) {
+        first = held[0];
+        // held[1] is never settled: a hold whose hub died.
+        await first.release(); // a failed call counts, for the hour
+        for (const h of held.slice(2)) await h.commit(1);
+      } else {
+        for (const h of held) await h.commit(1);
+      }
+      made += n;
+      await age("61 seconds");
+    }
+    // The failed call and the stale hold (its hub "died": never settled)
+    // are past their 5 minutes now, and still count.
+    await age("5 minutes");
+    for (const replica of replicas) {
+      await expect(
+        replica.reserve({
+          board,
+          accountId: account,
+          requestId: uuid(),
+          microusd: 1,
+        }),
+      ).rejects.toMatchObject({
+        code: 429,
+        message: expect.stringMatching(/on this board/),
+      });
+    }
+    // Another board of the same account has room.
+    await expect(
+      replicas[1].reserve({
+        board: other,
+        accountId: account,
+        requestId: uuid(),
+        microusd: 1,
+      }),
+    ).resolves.toBeDefined();
+    // The stale hold was released, at no cost, not dropped (by the
+    // reservation that succeeded: a refused one rolls back).
+    const { rows } = await getPool().query(
+      `SELECT tag, COUNT(*) AS n, SUM(cost_microusd) AS cost
+       FROM ai_usage_log WHERE account_id=$1 GROUP BY tag ORDER BY tag`,
+      [account],
+    );
+    expect(
+      rows.map((r) => ({ tag: r.tag, n: Number(r.n), cost: Number(r.cost) })),
+    ).toEqual([
+      { tag: "board-decide", n: perHour - 2, cost: perHour - 2 },
+      { tag: "board-decide-released", n: 2, cost: 0 },
+      { tag: "board-decide-reservation", n: 1, cost: 1 },
+    ]);
+    // An hour later, this board has room again.
+    await age("1 hour");
+    await expect(
+      replicas[0].reserve({
+        board,
         accountId: account,
         requestId: uuid(),
         microusd: 1,
@@ -144,13 +273,23 @@ describe("site-funded board decide", () => {
 
   it("refuses when the allowance has no room, or there is no allowance", async () => {
     await expect(
-      funding.reserve({ accountId, requestId: uuid(), microusd: 10_000_000 }),
+      funding.reserve({
+        board: BOARD_KEY,
+        accountId,
+        requestId: uuid(),
+        microusd: 10_000_000,
+      }),
     ).rejects.toMatchObject({ code: 403 });
     jest
       .mocked(getAIUsageStatus)
       .mockResolvedValueOnce({ units_per_dollar: 100_000, windows: [] } as any);
     await expect(
-      funding.reserve({ accountId, requestId: uuid(), microusd: 1 }),
+      funding.reserve({
+        board: BOARD_KEY,
+        accountId,
+        requestId: uuid(),
+        microusd: 1,
+      }),
     ).rejects.toMatchObject({ code: 403 });
   });
 
@@ -160,8 +299,8 @@ describe("site-funded board decide", () => {
   it("the same request id at once: one reservation, settled once", async () => {
     const requestId = uuid();
     const [a, b] = await Promise.allSettled([
-      funding.reserve({ accountId, requestId, microusd: 2 }),
-      funding.reserve({ accountId, requestId, microusd: 2 }),
+      funding.reserve({ board: BOARD_KEY, accountId, requestId, microusd: 2 }),
+      funding.reserve({ board: BOARD_KEY, accountId, requestId, microusd: 2 }),
     ]);
     const won = [a, b].filter((r) => r.status === "fulfilled");
     const lost = [a, b].filter((r) => r.status === "rejected");
@@ -207,6 +346,7 @@ describe("site-funded board decide", () => {
     } as any;
     resetBoardDecideStateForTests();
     const first = boardDecide({
+      board: BOARD_KEY,
       accountId,
       requestId,
       question,
@@ -222,6 +362,7 @@ describe("site-funded board decide", () => {
     resetBoardDecideStateForTests();
     await expect(
       boardDecide({
+        board: BOARD_KEY,
         accountId,
         requestId,
         question,
@@ -241,6 +382,7 @@ describe("site-funded board decide", () => {
     resetBoardDecideStateForTests();
     await expect(
       boardDecide({
+        board: BOARD_KEY,
         accountId,
         requestId,
         question,
