@@ -12,6 +12,7 @@ import {
 } from "@cocalc/server/accounts/rehome-fence";
 import { getRememberMeHashes } from "@cocalc/server/auth/remember-me";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
+import { renewSessionLifetime } from "@cocalc/server/auth/session-expiry";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
@@ -463,6 +464,21 @@ export async function setSessionFreshAuth({
       );
       if ((rowCount ?? 0) === 0) {
         throw new Error("current browser session not found");
+      }
+      // Re-entering the password or second factor starts a new maximum
+      // lifetime for this session, so an active person is never forced to
+      // sign in again mid-use. An impersonation session keeps its own short
+      // lifetime.
+      const impersonation = await db.query(
+        "SELECT 1 FROM account_impersonation_sessions WHERE session_hash = $1::CHAR(127) LIMIT 1",
+        [cleanedSessionHash],
+      );
+      if (impersonation.rows.length === 0) {
+        await renewSessionLifetime({
+          db,
+          hash: cleanedSessionHash,
+          account_id,
+        });
       }
     },
   });

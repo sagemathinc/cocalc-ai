@@ -18,6 +18,7 @@
  * 4. If you already have an email address belonging to a newly introduced exclusive domain, it will start to be controlled by it.
  */
 
+import { touchSession } from "@cocalc/server/auth/session-expiry";
 import Cookies from "cookies";
 import * as _ from "lodash";
 import { isEmpty } from "lodash";
@@ -347,6 +348,8 @@ export class PassportLogin {
         L("user does have valid remember_me token");
         locals.account_id = signed_in_mesg.account_id;
         locals.has_valid_remember_me = true;
+        // Using a session keeps it from going idle (rate-limited inside).
+        void touchSession({ hash, account_id: signed_in_mesg.account_id });
       } else {
         L("no valid remember_me token");
         return;

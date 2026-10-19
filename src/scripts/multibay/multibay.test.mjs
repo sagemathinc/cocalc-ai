@@ -2077,6 +2077,78 @@ describe("CLI logout across bays", () => {
   });
 });
 
+describe("session idle timeout across bays", () => {
+  // Sessions live on the account's home bay. A cookie checked through
+  // another bay (inter-bay getAccountIdFromRememberMe) must count as use
+  // there, and an idle session must be refused there.
+  it("keeps a session used through another bay alive, and refuses it once idle", async () => {
+    const dana = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "dana",
+    });
+    const session = await new AccountClient(cluster, dana).signIn();
+    session.close();
+    const hashCode = `const { getRememberMeHashFromCookieValue } = server("auth/remember-me.js");
+       const getPool = require("@cocalc/database/pool").default;
+       const hash = getRememberMeHashFromCookieValue(${JSON.stringify(session.cookie)}).slice(0, 127);`;
+    const onHome = (sql) =>
+      runInBay(
+        cluster,
+        ATTACHED,
+        `${hashCode}
+         const { rows } = await getPool().query(${JSON.stringify(sql)}, [hash]);
+         return rows[0] ?? null;`,
+      );
+    const checkThroughSeed = () =>
+      runInBay(
+        cluster,
+        SEED,
+        `${hashCode}
+         const { createInterBayAccountLocalClient } = require("@cocalc/conat/inter-bay/api");
+         const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+         const client = createInterBayAccountLocalClient({
+           client: getInterBayFabricClient(),
+           dest_bay: ${JSON.stringify(ATTACHED)},
+           timeout: 10000,
+         });
+         return (await client.getAccountIdFromRememberMe({ hash })).account_id ?? null;`,
+      );
+
+    // About to go idle: last used 13 days ago, with a long lifetime left
+    // (the harness signs in with short sessions).
+    await onHome(
+      "UPDATE remember_me SET last_used = NOW() - INTERVAL '13 days', expire = NOW() + INTERVAL '1 day', max_expire = NOW() + INTERVAL '30 days' WHERE hash = $1::CHAR(127) RETURNING hash",
+    );
+    assert.equal(await checkThroughSeed(), dana.account_id);
+    await eventually(async () => {
+      const row = await onHome(
+        "SELECT EXTRACT(EPOCH FROM expire - NOW()) / 86400 AS days_left FROM remember_me WHERE hash = $1::CHAR(127)",
+      );
+      assert.ok(Number(row.days_left) > 13, `days left: ${row.days_left}`);
+      return true;
+    });
+
+    // Unused past the idle timeout: refused through the other bay too, and
+    // maintenance deletes it.
+    await onHome(
+      "UPDATE remember_me SET last_used = NOW() - INTERVAL '15 days', expire = NOW() - INTERVAL '1 day' WHERE hash = $1::CHAR(127) RETURNING hash",
+    );
+    assert.equal(await checkThroughSeed(), null);
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { runSessionMaintenance } = server("auth/session-expiry.js");
+       return await runSessionMaintenance();`,
+    );
+    assert.equal(
+      await onHome(
+        "SELECT hash FROM remember_me WHERE hash = $1::CHAR(127)",
+      ),
+      null,
+    );
+  });
+});
+
 describe("managed egress notices", () => {
   // The bay that evaluates an egress policy (e.g. the one owning the
   // project's host) is often not the account's home bay. The notice must
