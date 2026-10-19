@@ -6,6 +6,14 @@
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import LRU from "lru-cache";
+import {
+  foldEgressSubjects,
+  MAX_OPEN_SUBJECT_KEYS,
+  MAX_ROLLUP_SUBJECT_KEYS,
+  mergeTopEgressSubjects,
+  OTHER_KEY,
+  reportedTopEgressSubjects,
+} from "@cocalc/conat/core/egress-attribution";
 import type {
   AbuseReviewAnnotation,
   ManagedEgressAccountSummary,
@@ -112,6 +120,72 @@ type PendingManagedEgressRollup = {
 
 const pendingRollups = new Map<string, PendingManagedEgressRollup>();
 
+// Per-subject attribution (top_subjects) of the buckets still open in this
+// process, summed exactly over every sample.  A bucket's subjects are written
+// once, when its minute is over, folded to MAX_ROLLUP_SUBJECT_KEYS by these
+// exact totals, so no subject loses its identity to an early cut.  (Rows from
+// different hub processes are still merged by the upsert below.)  Bytes are
+// flushed as before, independently of this.
+type OpenBucketSubjects = {
+  bucket_start: Date;
+  account_id: string;
+  project_id?: string;
+  category: ManagedProjectEgressCategory;
+  first_occurred_at: Date;
+  bySubject: Record<string, number>;
+};
+const openBucketSubjects = new Map<string, OpenBucketSubjects>();
+const BUCKET_MS = 60_000;
+
+function addOpenBucketSubjects(
+  entry: Omit<OpenBucketSubjects, "bySubject">,
+  topSubjects: unknown[],
+): void {
+  const key = rollupKey(entry);
+  let open = openBucketSubjects.get(key);
+  if (open == null) {
+    open = { ...entry, bySubject: {} };
+    openBucketSubjects.set(key, open);
+  }
+  for (const item of topSubjects as any[]) {
+    const subject = `${item?.subject ?? ""}`;
+    const bytes = Number(item?.bytes);
+    if (!subject || !(bytes > 0) || !Number.isFinite(bytes)) continue;
+    open.bySubject[subject] = (open.bySubject[subject] ?? 0) + bytes;
+  }
+  if (Object.keys(open.bySubject).length > MAX_OPEN_SUBJECT_KEYS) {
+    open.bySubject = Object.fromEntries(
+      foldEgressSubjects(open.bySubject, MAX_OPEN_SUBJECT_KEYS).map(
+        ({ subject, bytes }) => [subject, bytes],
+      ),
+    );
+  }
+}
+
+// Move the attribution of every finished bucket into the pending rollups.
+function closeFinishedBucketSubjects(now = Date.now()): void {
+  for (const [key, open] of openBucketSubjects) {
+    if (open.bucket_start.getTime() + BUCKET_MS > now) continue;
+    openBucketSubjects.delete(key);
+    mergePendingRollup({
+      bucket_start: open.bucket_start,
+      account_id: open.account_id,
+      project_id: open.project_id,
+      category: open.category,
+      bytes: 0,
+      event_count: 0,
+      first_occurred_at: open.first_occurred_at,
+      last_occurred_at: open.first_occurred_at,
+      metadata_sample: {
+        top_subjects: foldEgressSubjects(
+          open.bySubject,
+          MAX_ROLLUP_SUBJECT_KEYS,
+        ),
+      },
+    });
+  }
+}
+
 const adminOverviewCache = new LRU<
   string,
   Promise<ManagedEgressAdminOverviewBase>
@@ -163,7 +237,37 @@ function mergePendingRollup(entry: PendingManagedEgressRollup): void {
   if (entry.last_occurred_at > existing.last_occurred_at) {
     existing.last_occurred_at = entry.last_occurred_at;
   }
-  existing.metadata_sample ??= entry.metadata_sample;
+  existing.metadata_sample = mergeMetadataSamples(
+    existing.metadata_sample,
+    entry.metadata_sample,
+  );
+}
+
+// A bucket keeps its first sample's metadata, except top_subjects, which is
+// summed (the upsert below does the same in SQL), up to
+// MAX_ROLLUP_SUBJECT_KEYS subjects with the rest under "(other)".  In normal
+// operation each process contributes one exact list per bucket (see
+// openBucketSubjects).  Events report only the top subjects
+// (mapManagedEgressEventRows).
+export function mergeMetadataSamples(
+  existing?: Record<string, unknown>,
+  incoming?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (existing == null) return incoming;
+  if (incoming == null) return existing;
+  if (
+    !Array.isArray(existing.top_subjects) &&
+    !Array.isArray(incoming.top_subjects)
+  ) {
+    return existing;
+  }
+  return {
+    ...existing,
+    top_subjects: mergeTopEgressSubjects(
+      existing.top_subjects,
+      incoming.top_subjects,
+    ),
+  };
 }
 
 function scheduleManagedEgressRollupFlush(): void {
@@ -183,9 +287,13 @@ async function flushManagedEgressRollups(): Promise<void> {
     clearTimeout(rollupFlushTimer);
     rollupFlushTimer = undefined;
   }
+  closeFinishedBucketSubjects();
   const batch = [...pendingRollups.values()];
   pendingRollups.clear();
-  if (batch.length === 0) return;
+  if (batch.length === 0) {
+    if (openBucketSubjects.size > 0) scheduleManagedEgressRollupFlush();
+    return;
+  }
   rollupFlushPromise = flushManagedEgressRollupBatch(batch)
     .catch((err) => {
       logger.warn("failed to flush managed egress rollups", {
@@ -199,7 +307,7 @@ async function flushManagedEgressRollups(): Promise<void> {
     })
     .finally(() => {
       rollupFlushPromise = undefined;
-      if (pendingRollups.size > 0) {
+      if (pendingRollups.size > 0 || openBucketSubjects.size > 0) {
         scheduleManagedEgressRollupFlush();
       }
     });
@@ -223,16 +331,34 @@ async function recordManagedProjectEgressRollup({
 }): Promise<void> {
   const bucket_start = rollupBucketStart(occurred_at);
   const eventTime = occurred_at ?? new Date();
+  const normalizedProjectId = `${project_id ?? ""}`.trim() || undefined;
+  // top_subjects is accumulated exactly per open bucket and written when the
+  // bucket is over; the rest of the metadata is the bucket's first sample.
+  let metadata_sample = metadata;
+  if (metadata != null && Array.isArray(metadata.top_subjects)) {
+    const { top_subjects, ...rest } = metadata;
+    metadata_sample = rest;
+    addOpenBucketSubjects(
+      {
+        bucket_start,
+        account_id,
+        project_id: normalizedProjectId,
+        category,
+        first_occurred_at: eventTime,
+      },
+      top_subjects,
+    );
+  }
   mergePendingRollup({
     bucket_start,
     account_id,
-    project_id: `${project_id ?? ""}`.trim() || undefined,
+    project_id: normalizedProjectId,
     category,
     bytes,
     event_count: 1,
     first_occurred_at: eventTime,
     last_occurred_at: eventTime,
-    metadata_sample: metadata,
+    metadata_sample,
   });
   if (pendingRollups.size >= ROLLUP_FLUSH_MAX_PENDING) {
     await flushManagedEgressRollups();
@@ -370,7 +496,59 @@ async function flushManagedEgressRollupBatch(
         event_count = ${ROLLUP_TABLE}.event_count + EXCLUDED.event_count,
         first_occurred_at = LEAST(${ROLLUP_TABLE}.first_occurred_at, EXCLUDED.first_occurred_at),
         last_occurred_at = GREATEST(${ROLLUP_TABLE}.last_occurred_at, EXCLUDED.last_occurred_at),
-        metadata_sample = COALESCE(${ROLLUP_TABLE}.metadata_sample, EXCLUDED.metadata_sample)
+        metadata_sample = CASE
+          WHEN ${ROLLUP_TABLE}.metadata_sample IS NULL THEN EXCLUDED.metadata_sample
+          WHEN jsonb_typeof(${ROLLUP_TABLE}.metadata_sample->'top_subjects') = 'array'
+            OR jsonb_typeof(EXCLUDED.metadata_sample->'top_subjects') = 'array'
+          THEN ${ROLLUP_TABLE}.metadata_sample || jsonb_build_object(
+            'top_subjects',
+            (
+              SELECT COALESCE(
+                jsonb_agg(
+                  jsonb_build_object('subject', merged.subject, 'bytes', merged.bytes)
+                  ORDER BY merged.bytes DESC, merged.subject
+                ),
+                '[]'::jsonb
+              )
+              FROM (
+                -- at most MAX_ROLLUP_SUBJECT_KEYS subjects; the smallest
+                -- beyond that are summed under OTHER_KEY (foldEgressSubjects)
+                SELECT
+                  CASE WHEN ranked.n <= ${MAX_ROLLUP_SUBJECT_KEYS}
+                      OR ranked.rn < ${MAX_ROLLUP_SUBJECT_KEYS}
+                    THEN ranked.subject ELSE '${OTHER_KEY}' END AS subject,
+                  SUM(ranked.bytes) AS bytes
+                FROM (
+                  SELECT
+                    summed.subject,
+                    summed.bytes,
+                    row_number() OVER (ORDER BY summed.bytes DESC, summed.subject) AS rn,
+                    count(*) OVER () AS n
+                  FROM (
+                    SELECT item->>'subject' AS subject, SUM((item->>'bytes')::numeric) AS bytes
+                    FROM (
+                      SELECT jsonb_array_elements(
+                        CASE WHEN jsonb_typeof(${ROLLUP_TABLE}.metadata_sample->'top_subjects') = 'array'
+                          THEN ${ROLLUP_TABLE}.metadata_sample->'top_subjects' ELSE '[]'::jsonb END
+                      ) AS item
+                      UNION ALL
+                      SELECT jsonb_array_elements(
+                        CASE WHEN jsonb_typeof(EXCLUDED.metadata_sample->'top_subjects') = 'array'
+                          THEN EXCLUDED.metadata_sample->'top_subjects' ELSE '[]'::jsonb END
+                      ) AS item
+                    ) AS items
+                    WHERE item->>'subject' IS NOT NULL
+                      AND jsonb_typeof(item->'bytes') = 'number'
+                      AND (item->>'bytes')::numeric > 0
+                    GROUP BY item->>'subject'
+                  ) AS summed
+                ) AS ranked
+                GROUP BY 1
+              ) AS merged
+            )
+          )
+          ELSE ${ROLLUP_TABLE}.metadata_sample
+        END
     `,
     [
       JSON.stringify(
@@ -1339,8 +1517,17 @@ function mapManagedEgressEventRows(
     category: row.category,
     bytes: Math.max(0, Number(row.bytes) || 0),
     occurred_at: new Date(row.occurred_at).toISOString(),
-    metadata: row.metadata ?? null,
+    metadata: reportedMetadata(row.metadata),
   }));
+}
+
+function reportedMetadata(metadata: any): Record<string, unknown> | null {
+  if (metadata == null) return null;
+  if (!Array.isArray(metadata.top_subjects)) return metadata;
+  return {
+    ...metadata,
+    top_subjects: reportedTopEgressSubjects(metadata.top_subjects),
+  };
 }
 
 function activeAnnotationsFor({
@@ -1604,3 +1791,10 @@ function buildEmptyHistoryPoints({
   }
   return points;
 }
+
+export const __test__ = {
+  flushManagedEgressRollupBatch,
+  flushManagedEgressRollups,
+  recordManagedProjectEgressRollup,
+  ROLLUP_TABLE,
+};
