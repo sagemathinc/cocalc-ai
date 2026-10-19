@@ -6,6 +6,10 @@
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import LRU from "lru-cache";
+import {
+  MAX_ROLLUP_TOP_SUBJECTS,
+  mergeTopEgressSubjects,
+} from "@cocalc/conat/core/egress-attribution";
 import type {
   AbuseReviewAnnotation,
   ManagedEgressAccountSummary,
@@ -163,7 +167,33 @@ function mergePendingRollup(entry: PendingManagedEgressRollup): void {
   if (entry.last_occurred_at > existing.last_occurred_at) {
     existing.last_occurred_at = entry.last_occurred_at;
   }
-  existing.metadata_sample ??= entry.metadata_sample;
+  existing.metadata_sample = mergeMetadataSamples(
+    existing.metadata_sample,
+    entry.metadata_sample,
+  );
+}
+
+// A bucket keeps its first sample's metadata, except top_subjects, which is
+// summed over all its samples (the upsert below does the same in SQL).
+export function mergeMetadataSamples(
+  existing?: Record<string, unknown>,
+  incoming?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (existing == null) return incoming;
+  if (incoming == null) return existing;
+  if (
+    !Array.isArray(existing.top_subjects) &&
+    !Array.isArray(incoming.top_subjects)
+  ) {
+    return existing;
+  }
+  return {
+    ...existing,
+    top_subjects: mergeTopEgressSubjects(
+      existing.top_subjects,
+      incoming.top_subjects,
+    ),
+  };
 }
 
 function scheduleManagedEgressRollupFlush(): void {
@@ -370,7 +400,44 @@ async function flushManagedEgressRollupBatch(
         event_count = ${ROLLUP_TABLE}.event_count + EXCLUDED.event_count,
         first_occurred_at = LEAST(${ROLLUP_TABLE}.first_occurred_at, EXCLUDED.first_occurred_at),
         last_occurred_at = GREATEST(${ROLLUP_TABLE}.last_occurred_at, EXCLUDED.last_occurred_at),
-        metadata_sample = COALESCE(${ROLLUP_TABLE}.metadata_sample, EXCLUDED.metadata_sample)
+        metadata_sample = CASE
+          WHEN ${ROLLUP_TABLE}.metadata_sample IS NULL THEN EXCLUDED.metadata_sample
+          WHEN jsonb_typeof(${ROLLUP_TABLE}.metadata_sample->'top_subjects') = 'array'
+            OR jsonb_typeof(EXCLUDED.metadata_sample->'top_subjects') = 'array'
+          THEN ${ROLLUP_TABLE}.metadata_sample || jsonb_build_object(
+            'top_subjects',
+            (
+              SELECT COALESCE(
+                jsonb_agg(
+                  jsonb_build_object('subject', merged.subject, 'bytes', merged.bytes)
+                  ORDER BY merged.bytes DESC, merged.subject
+                ),
+                '[]'::jsonb
+              )
+              FROM (
+                SELECT item->>'subject' AS subject, SUM((item->>'bytes')::numeric) AS bytes
+                FROM (
+                  SELECT jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(${ROLLUP_TABLE}.metadata_sample->'top_subjects') = 'array'
+                      THEN ${ROLLUP_TABLE}.metadata_sample->'top_subjects' ELSE '[]'::jsonb END
+                  ) AS item
+                  UNION ALL
+                  SELECT jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(EXCLUDED.metadata_sample->'top_subjects') = 'array'
+                      THEN EXCLUDED.metadata_sample->'top_subjects' ELSE '[]'::jsonb END
+                  ) AS item
+                ) AS items
+                WHERE item->>'subject' IS NOT NULL
+                  AND jsonb_typeof(item->'bytes') = 'number'
+                  AND (item->>'bytes')::numeric > 0
+                GROUP BY item->>'subject'
+                ORDER BY bytes DESC, subject
+                LIMIT ${MAX_ROLLUP_TOP_SUBJECTS}
+              ) AS merged
+            )
+          )
+          ELSE ${ROLLUP_TABLE}.metadata_sample
+        END
     `,
     [
       JSON.stringify(
@@ -1604,3 +1671,8 @@ function buildEmptyHistoryPoints({
   }
   return points;
 }
+
+export const __test__ = {
+  flushManagedEgressRollupBatch,
+  ROLLUP_TABLE,
+};

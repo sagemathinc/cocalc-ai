@@ -8,6 +8,7 @@ import {
   diffEgressBySubject,
   MAX_EGRESS_SUBJECT_KEYS,
   MAX_REPLY_SUBJECT_LENGTH,
+  mergeTopEgressSubjects,
   normalizeSubjectForAttribution,
   OTHER_KEY,
   ReplySubjectAttribution,
@@ -78,5 +79,36 @@ describe("egress attribution", () => {
       { subject: "a", bytes: 6 },
       { subject: "b", bytes: 5 },
     ]);
+  });
+
+  it("collapses upper-case base32-like client ids, even without digits", () => {
+    expect(
+      normalizeSubjectForAttribution(
+        "persist.abc123def456ab.client.CEZFLEJZNX",
+      ),
+    ).toBe("persist.*.client.*");
+    expect(normalizeSubjectForAttribution("hub.API.call")).toBe("hub.API.call");
+  });
+
+  it("merges top-subject lists by summing bytes and keeps the largest", () => {
+    expect(
+      mergeTopEgressSubjects(
+        [
+          { subject: "a", bytes: 5 },
+          { subject: "b", bytes: 1 },
+        ],
+        [
+          { subject: "a", bytes: 2 },
+          { subject: "c", bytes: 6 },
+          { subject: "", bytes: 9 },
+          { subject: "d", bytes: -1 },
+        ],
+        2,
+      ),
+    ).toEqual([
+      { subject: "a", bytes: 7 },
+      { subject: "c", bytes: 6 },
+    ]);
+    expect(mergeTopEgressSubjects(undefined, "junk")).toEqual([]);
   });
 });

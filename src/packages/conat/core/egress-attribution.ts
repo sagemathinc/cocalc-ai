@@ -21,6 +21,9 @@ const UUID_RE =
 function isIdentifierToken(token: string): boolean {
   if (UUID_RE.test(token)) return true;
   if (/^\d+$/.test(token)) return true;
+  // Generated client ids (e.g. persist clients) are upper-case base32-like,
+  // possibly without any digit: "CEZFLEJZNX".
+  if (token.length >= 8 && /^[A-Z0-9]+$/.test(token)) return true;
   // Random ids (inboxes, hashes, base64-ish keys) mix letters and digits.
   return token.length >= 12 && /\d/.test(token) && /[a-z]/i.test(token);
 }
@@ -124,6 +127,30 @@ export function diffEgressBySubject(
     if (delta > 0) out[key] = delta;
   }
   return out;
+}
+
+// Top subjects stored per rollup bucket, after merging its samples.
+export const MAX_ROLLUP_TOP_SUBJECTS = 20;
+
+// Sum two top-subject lists (e.g. two samples of one rollup bucket) and keep
+// the largest.  Subjects outside a sample's own top list are not known, so
+// the result is approximate, but it covers every sample, not just the first.
+export function mergeTopEgressSubjects(
+  a: unknown,
+  b: unknown,
+  limit = MAX_ROLLUP_TOP_SUBJECTS,
+): { subject: string; bytes: number }[] {
+  const bySubject: Record<string, number> = {};
+  for (const list of [a, b]) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const subject = `${item?.subject ?? ""}`;
+      const bytes = Number(item?.bytes);
+      if (!subject || !(bytes > 0) || !Number.isFinite(bytes)) continue;
+      bySubject[subject] = (bySubject[subject] ?? 0) + bytes;
+    }
+  }
+  return topEgressSubjects(bySubject, limit);
 }
 
 export function topEgressSubjects(
