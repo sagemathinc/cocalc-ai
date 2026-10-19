@@ -95,11 +95,18 @@ export default function BoardArtifact({
   const decideEnabledRef = useRef(decideEnabled);
   decideEnabledRef.current = decideEnabled;
   const frameRef = useRef<HTMLIFrameElement>(null);
-  // The text read (one load of the file).
+  // The text read (one load of the file), with the project and path it was
+  // read from. A read is the identity everything after it uses: the frame
+  // mounted for it, the name posted, and what its port decides and
+  // delivers for. A new project or path is a new read, so a new frame, a
+  // fresh nonce and the old port closed: the same mechanism as Refresh
+  // (Codex on #1134).
   const [board, setBoard] = useState<{
     id: number;
     text: string;
     revision: string | null;
+    project_id?: string;
+    path: string;
   }>();
   // Whether this view may answer the board's questions.
   const canAnswer = deliverAnswers != null;
@@ -134,6 +141,9 @@ export default function BoardArtifact({
   deliverRef.current = deliverAnswers;
   const revisionRef = useRef(revision ?? null);
   revisionRef.current = revision ?? null;
+  // The card's current project and path, for the check at each call.
+  const identityRef = useRef({ project_id, path });
+  identityRef.current = { project_id, path };
   const closeChannel = () => {
     channelRef.current?.close();
     channelRef.current = undefined;
@@ -143,6 +153,9 @@ export default function BoardArtifact({
 
   useEffect(() => {
     let cancelled = false;
+    // A port opened for the previous project or path ends now, before the
+    // new read.
+    closeChannel();
     setError("");
     setFrameError("");
     setBoard(undefined);
@@ -177,6 +190,8 @@ export default function BoardArtifact({
             id: refresh,
             text,
             revision: revisionRef.current,
+            project_id,
+            path,
           });
       } catch (err) {
         if (!cancelled) setError(String(err));
@@ -187,7 +202,7 @@ export default function BoardArtifact({
     return () => {
       cancelled = true;
     };
-  }, [actions, path, refresh]);
+  }, [actions, project_id, path, refresh]);
 
   useEffect(() => {
     closeChannel();
@@ -213,13 +228,17 @@ export default function BoardArtifact({
         const loads = loadsRef.current;
         if (loads.id === mounted.id && loads.loads > 1) return;
         answeredRef.current = mounted.id;
-        // Answering only while this frame is the one mounted to answer, and
-        // the view still may: checked at each call, so a port never
-        // outlives the capability, even before its frame is replaced.
+        // Answering only while this frame is the one mounted to answer, the
+        // view still may, and the card still shows this board's project and
+        // path: checked at each call, so a port never outlives the
+        // capability or the identity, even before its frame is replaced.
         const live = () =>
           deliverRef.current != null &&
           mountRef.current?.id === mounted.id &&
-          mountRef.current.canAnswer;
+          mountRef.current.canAnswer &&
+          identityRef.current.project_id === current.project_id &&
+          identityRef.current.path === current.path;
+        const name = boardPostedName(current.path);
         if (
           mounted.canAnswer &&
           deliverRef.current &&
@@ -235,10 +254,10 @@ export default function BoardArtifact({
           const channel = new MessageChannel();
           closeChannel();
           const decider =
-            decideEnabledRef.current && project_id
+            decideEnabledRef.current && current.project_id
               ? boardDecider({
-                  project_id,
-                  path,
+                  project_id: current.project_id,
+                  path: current.path,
                   revision: current.revision,
                   text: current.text,
                 })
@@ -286,7 +305,8 @@ export default function BoardArtifact({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [name]);
+    // Registered once: it reads the card's state only through refs.
+  }, []);
 
   useEffect(() => closeChannel, [mount?.id]);
 

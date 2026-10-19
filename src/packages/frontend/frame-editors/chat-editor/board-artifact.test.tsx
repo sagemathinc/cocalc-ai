@@ -29,8 +29,9 @@ function efbig() {
   });
 }
 const PROJECT = "22222222-2222-4222-8222-222222222222";
+let mockProjectId = PROJECT;
 jest.mock("@cocalc/frontend/project/context", () => ({
-  useProjectContext: () => ({ actions, project_id: PROJECT }),
+  useProjectContext: () => ({ actions, project_id: mockProjectId }),
 }));
 let mockDecideEnabled: boolean | undefined = undefined;
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -98,6 +99,7 @@ function fromFrame(frame: HTMLIFrameElement | Window | null, data: unknown) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockDecideEnabled = undefined;
+  mockProjectId = PROJECT;
   stat.mockResolvedValue({ size: 100 });
   readRegularFile.mockResolvedValue(TEXT);
 });
@@ -514,6 +516,97 @@ describe("the answers bootstrap (board-host-protocol.md)", () => {
         sagebrush: "received",
       });
       expect(deliver).toHaveBeenCalledTimes(1);
+    });
+
+    // Codex on #1134: an artifact republished to another directory keeps
+    // its basename, so its posted name; the card must still decide and
+    // deliver for the new file, never the old one. A new project or path
+    // is a new read, so a new frame, nonce and port (like Refresh).
+    describe("a new project or path, with the same basename", () => {
+      withSubtle();
+      const MOVED = "/home/user/final/overnight.board.json";
+      const OTHER_PROJECT = "33333333-3333-4333-8333-333333333333";
+      const decide = {
+        sagebrush: "decide",
+        version: 1,
+        id: "6b1f0c1e-2d3a-4f5b-8c7d-9e0f1a2b3c4d",
+        name: "overnight.board.json",
+        revision: "pub-1",
+        page: { number: 1 },
+        item: "pick",
+        note: "the first",
+      };
+      const at = (path: string) => (
+        <BoardArtifact
+          path={path}
+          frameUrl={FRAME}
+          deliverAnswers={deliver}
+          revision="pub-1"
+        />
+      );
+      async function replaced(old: HTMLIFrameElement) {
+        await waitFor(() => expect(screen.getByTitle(TITLE)).not.toBe(old));
+        return await granted();
+      }
+      beforeEach(() => {
+        mockDecideEnabled = true;
+        boardDecide.mockResolvedValue({ id: decide.id, option: "a" });
+      });
+
+      test("a path change: the old port is closed; decide and deliver use the new path", async () => {
+        const view = render(at(PATH));
+        const first = await granted();
+        expect(first.port).toBeInstanceOf(TestPort);
+        view.rerender(at(MOVED));
+        const now = await replaced(first.frame);
+        expect(readRegularFile).toHaveBeenLastCalledWith(MOVED, {
+          maxBytes: LIMIT,
+        });
+        expect(now.nonce).not.toBe(first.nonce);
+        expect(now.port).toBeInstanceOf(TestPort);
+        // Nothing reaches either callback through the old port.
+        expect(await replyOn(first.port, decide)).toBeUndefined();
+        expect(await replyOn(first.port, answers(ids[0]))).toBeUndefined();
+        expect(boardDecide).not.toHaveBeenCalled();
+        expect(deliver).not.toHaveBeenCalled();
+        // The new port decides for the new path, and delivers.
+        expect(await replyOn(now.port, decide)).toMatchObject({
+          sagebrush: "decided",
+          option: "a",
+        });
+        expect(boardDecide).toHaveBeenCalledTimes(1);
+        expect(boardDecide.mock.calls[0][0]).toMatchObject({
+          project_id: PROJECT,
+          path: MOVED,
+        });
+        expect(await replyOn(now.port, answers(ids[1]))).toMatchObject({
+          sagebrush: "received",
+        });
+        expect(deliver).toHaveBeenCalledTimes(1);
+        expect(screen.getAllByTitle(TITLE)).toHaveLength(1);
+      });
+
+      test("a project change: the old port is closed; decide uses the new project", async () => {
+        const view = render(at(PATH));
+        const first = await granted();
+        mockProjectId = OTHER_PROJECT;
+        view.rerender(at(PATH));
+        const now = await replaced(first.frame);
+        expect(now.nonce).not.toBe(first.nonce);
+        expect(await replyOn(first.port, decide)).toBeUndefined();
+        expect(boardDecide).not.toHaveBeenCalled();
+        expect(await replyOn(now.port, decide)).toMatchObject({
+          sagebrush: "decided",
+        });
+        expect(boardDecide.mock.calls[0][0]).toMatchObject({
+          project_id: OTHER_PROJECT,
+          path: PATH,
+        });
+        expect(await replyOn(now.port, answers(ids[2]))).toMatchObject({
+          sagebrush: "received",
+        });
+        expect(deliver).toHaveBeenCalledTimes(1);
+      });
     });
 
     test("a rapid toggle leaves exactly one live channel", async () => {
