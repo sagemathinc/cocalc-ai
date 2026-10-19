@@ -2174,6 +2174,75 @@ def parse_env_assignment_line(line: str) -> tuple[str, str] | None:
     return key, value
 
 
+DEFAULT_PROJECT_HOST_PORT = 9002
+DEFAULT_PROJECT_HOST_ENV_FILE = "/etc/cocalc/project-host.env"
+
+
+def project_host_local_env_path(env_path: Path) -> Path:
+    """The operator override file that project-host reads after env_path."""
+    return env_path.with_name(
+        env_path.name[:-4] + ".local.env"
+        if env_path.name.endswith(".env")
+        else "project-host.local.env"
+    )
+
+
+JS_DECIMAL_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+JS_RADIX_NUMBER = {"0x": (16, "0123456789abcdef"), "0o": (8, "01234567"), "0b": (2, "01")}
+
+
+def js_positive_integer(value: str | None) -> int | None:
+    """JavaScript's Number(value) when it is a positive integer, else None:
+    how project-host reads its port settings (parsePort, parsePositiveInteger)."""
+    text = str(value if value is not None else "").strip()
+    if JS_DECIMAL_NUMBER.fullmatch(text):
+        number = float(text)
+    elif (
+        text[:2].lower() in JS_RADIX_NUMBER
+        and len(text) > 2
+        and all(c in JS_RADIX_NUMBER[text[:2].lower()][1] for c in text[2:].lower())
+    ):
+        number = float(int(text[2:], JS_RADIX_NUMBER[text[:2].lower()][0]))
+    else:
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return int(number) if number == int(number) and number > 0 else None
+
+
+def project_conat_router_port(env_lines: list[str]) -> int:
+    """The port of this host's conat router, the one host-local service
+    besides DNS that projects may connect to. Derived as project-host derives
+    it (project-host/daemon.ts): COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else
+    PORT + 100, with PORT defaulting to 9002. That is daemon index 0, the only
+    one bootstrap runs; another daemon on the same host (index > 0, PORT
+    9002 + index) would need its router port allowed too."""
+    env: dict[str, str] = {}
+    for line in env_lines:
+        try:
+            parsed = parse_env_assignment_line(line)
+        except RuntimeError:
+            continue
+        if parsed is not None:
+            env[parsed[0]] = parsed[1].strip().strip("\"'")
+
+    def valid(number: int | None) -> int | None:
+        return number if number is not None and number <= 65535 else None
+
+    # The router binds Number(COCALC_PROJECT_HOST_CONAT_ROUTER_PORT); PORT is
+    # read by parsePort, i.e. Number() of the text after the last ":".
+    explicit = valid(
+        js_positive_integer(env.get("COCALC_PROJECT_HOST_CONAT_ROUTER_PORT"))
+    )
+    if explicit is not None:
+        return explicit
+    raw_port = env.get("PORT")
+    base = (
+        js_positive_integer(raw_port.rsplit(":", 1)[-1]) if raw_port else None
+    ) or DEFAULT_PROJECT_HOST_PORT
+    return valid(base + 100) or DEFAULT_PROJECT_HOST_PORT + 100
+
+
 def read_env_assignments(path: str | Path) -> dict[str, str]:
     env: dict[str, str] = {}
     p = Path(path)
@@ -6721,6 +6790,22 @@ PROJECT_UDP_NEW_BURST="400"
 PROJECT_METADATA_IPV4="169.254.169.254"
 PROJECT_METADATA_IPV6="fd20:ce::254"
 PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"
+# Projects must not open connections to the host itself or into the private
+# network: through pasta, a project's connection to its gateway address
+# arrives at the host's own services (sshd, the project-host API, ...), and a
+# connection to a VPC address leaves as the host. The only host-local services
+# a project needs are the host resolver (pasta forwards the project's DNS to
+# it) and this host's conat router. DNS to a private address stays allowed so
+# a host whose resolver is on its VPC keeps working; on GCP the project's DNS
+# goes to the host's 127.0.0.53, so this could later be narrowed to the
+# host's actual resolvers. The conat router port is read from the daemon's
+# env files when the rules are emitted (see project_conat_router_port); this
+# bootstrap-derived value applies only when neither file sets it.
+PROJECT_CONAT_ROUTER_PORT_DEFAULT="__PROJECT_CONAT_ROUTER_PORT__"
+PROJECT_HOST_ENV_FILE="__PROJECT_HOST_ENV_FILE__"
+PROJECT_HOST_LOCAL_ENV_FILE="__PROJECT_HOST_LOCAL_ENV_FILE__"
+PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"
+PROJECT_PRIVATE_IPV6="fc00::/7"
 PROJECT_NETWORK_NFT="/usr/sbin/nft"
 PROJECT_NETWORK_TABLE="cocalc_project_network"
 PROJECT_NETWORK_CHAIN="output"
@@ -8355,6 +8440,103 @@ emit_project_startup_network_rules() {
     "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" "$marker"
 }
 
+# Prints the value of the last KEY=value line in an env file, parsed as
+# project-host's parseEnvFile does (trimmed, one pair of matching quotes
+# removed); fails when the file does not set the key.
+project_host_env_file_value() {
+  local file="$1" key="$2"
+  [ -r "$file" ] || return 1
+  awk -v key="$key" '
+    BEGIN { found = 0; dq = sprintf("%c", 34); sq = sprintf("%c", 39) }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "" || substr(line, 1, 1) == "#") next
+      eq = index(line, "=")
+      if (eq == 0) next
+      k = substr(line, 1, eq - 1)
+      sub(/[[:space:]]+$/, "", k)
+      if (k != key) next
+      v = substr(line, eq + 1)
+      sub(/^[[:space:]]+/, "", v)
+      first = substr(v, 1, 1)
+      if (length(v) >= 2 && (first == dq || first == sq) && substr(v, length(v), 1) == first) {
+        v = substr(v, 2, length(v) - 2)
+      }
+      value = v
+      found = 1
+    }
+    END { if (found) print value; exit !found }
+  ' "$file"
+}
+
+# The daemon's value of an env key: project-host.local.env overrides
+# project-host.env, as in project-host's resolveEnv.
+project_host_env_value() {
+  project_host_env_file_value "$PROJECT_HOST_LOCAL_ENV_FILE" "$1" ||
+    project_host_env_file_value "$PROJECT_HOST_ENV_FILE" "$1"
+}
+
+# JavaScript's Number(value) as project-host reads its port settings: prints
+# it when it is an integer from 1 to 65535, else nothing. Accepts what Number
+# accepts: surrounding whitespace, decimal with sign, fraction and exponent
+# (9010.0, 9.01e3, +9010), and 0x/0o/0b literals.
+project_host_port_number() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [[ "$value" =~ ^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$ ]]; then
+    awk -v s="$value" 'BEGIN { n = s + 0; if (n == int(n) && n >= 1 && n <= 65535) printf "%d", n }'
+    return 0
+  elif [[ "$value" =~ ^0[xX]0*[0-9a-fA-F]{1,4}$ ]]; then
+    value="$((16#${value:2}))"
+  elif [[ "$value" =~ ^0[oO]0*[0-7]{1,6}$ ]]; then
+    value="$((8#${value:2}))"
+  elif [[ "$value" =~ ^0[bB]0*[01]{1,16}$ ]]; then
+    value="$((2#${value:2}))"
+  else
+    return 0
+  fi
+  if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 65535 ]; then
+    echo "$value"
+  fi
+}
+
+# The port of this host's conat router, the one host-local TCP service besides
+# DNS that projects may connect to, derived as project-host's ensureDefaults
+# derives it: COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100, where an
+# empty or unparsable PORT means the default 9002. Presence matters: an empty
+# value in the local file still overrides the managed one. Only when neither
+# file sets either key does the bootstrap-derived value apply.
+project_conat_router_port() {
+  local explicit="" base="" has_explicit=0 has_base=0
+  if explicit="$(project_host_env_value COCALC_PROJECT_HOST_CONAT_ROUTER_PORT)"; then
+    has_explicit=1
+  fi
+  if base="$(project_host_env_value PORT)"; then
+    has_base=1
+  fi
+  if [ "$has_explicit" -eq 0 ] && [ "$has_base" -eq 0 ]; then
+    echo "$PROJECT_CONAT_ROUTER_PORT_DEFAULT"
+    return
+  fi
+  # The router binds Number(COCALC_PROJECT_HOST_CONAT_ROUTER_PORT); PORT goes
+  # through parsePort, i.e. Number() of the text after the last ":".
+  explicit="$(project_host_port_number "$explicit")"
+  if [ "$has_explicit" -eq 1 ] && [ -n "$explicit" ]; then
+    echo "$explicit"
+    return
+  fi
+  base="$(project_host_port_number "${base##*:}")"
+  [ -n "$base" ] || base=9002
+  if [ "$((base + 100))" -le 65535 ]; then
+    echo "$((base + 100))"
+  else
+    echo 9102
+  fi
+}
+
 emit_project_metadata_rules() {
   local path level marker="cocalc-project-network-metadata"
   path="$(project_network_pool_cgroup_path)"
@@ -8365,6 +8547,26 @@ emit_project_metadata_rules() {
   printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ip6 daddr %s tcp dport %s counter drop comment "%s-ipv6"\\n' \
     "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
     "$PROJECT_METADATA_IPV6" "$PROJECT_METADATA_TCP_PORTS" "$marker"
+  # Shared egress block for every project policy. These are drop-only rules:
+  # the pool rules run before the per-project rules, so an accept here would
+  # bypass the disabled policy's DNS reject, and these drops also cover the
+  # disabled policy's broad local accept. Only new connections are dropped;
+  # replies on the inbound pasta forwards (SSH into the project, the host
+  # proxy) go to host-local client ports and must keep flowing.
+  # Host-local: DNS over TCP and UDP, and the conat router (HTTP) over TCP only.
+  marker="cocalc-project-network-egress"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto tcp tcp dport != { 53, %s } counter drop comment "%s-local-tcp"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$(project_conat_router_port)" "$marker"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop comment "%s-local-udp"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$marker"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new ip daddr %s meta l4proto { tcp, udp } th dport != 53 counter drop comment "%s-private-ipv4"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$PROJECT_PRIVATE_IPV4" "$marker"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new ip6 daddr %s meta l4proto { tcp, udp } th dport != 53 counter drop comment "%s-private-ipv6"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$PROJECT_PRIVATE_IPV6" "$marker"
 }
 
 emit_project_network_rules() {
@@ -8407,7 +8609,7 @@ project_cgroup_has_processes() {
 }
 
 verify_project_network_limits() {
-  local project_id="$1" unenforceable marker rules metadata_ipv4_count metadata_ipv6_count startup_established_count startup_deny_count tcp_count udp_count disabled_dns_count disabled_local_count disabled_established_count disabled_reject_count policy pid found=0 limits
+  local project_id="$1" unenforceable marker rules metadata_ipv4_count metadata_ipv6_count egress_local_tcp_count egress_local_udp_count egress_private_ipv4_count egress_private_ipv6_count startup_established_count startup_deny_count tcp_count udp_count disabled_dns_count disabled_local_count disabled_established_count disabled_reject_count policy pid found=0 limits
   is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
   require_project_network_tools
   marker="$(project_network_rule_marker "$project_id")"
@@ -8422,6 +8624,10 @@ verify_project_network_limits() {
   fi
   metadata_ipv4_count="$(grep -Fc 'comment "cocalc-project-network-metadata-ipv4"' <<< "$rules" || true)"
   metadata_ipv6_count="$(grep -Fc 'comment "cocalc-project-network-metadata-ipv6"' <<< "$rules" || true)"
+  egress_local_tcp_count="$(grep -Fc 'comment "cocalc-project-network-egress-local-tcp"' <<< "$rules" || true)"
+  egress_local_udp_count="$(grep -Fc 'comment "cocalc-project-network-egress-local-udp"' <<< "$rules" || true)"
+  egress_private_ipv4_count="$(grep -Fc 'comment "cocalc-project-network-egress-private-ipv4"' <<< "$rules" || true)"
+  egress_private_ipv6_count="$(grep -Fc 'comment "cocalc-project-network-egress-private-ipv6"' <<< "$rules" || true)"
   startup_established_count="$(grep -Fc 'comment "cocalc-project-network-startup-established"' <<< "$rules" || true)"
   startup_deny_count="$(grep -Fc 'comment "cocalc-project-network-startup-deny"' <<< "$rules" || true)"
   tcp_count="$(grep -Fc "comment \\\"${marker}-tcp\\\"" <<< "$rules" || true)"
@@ -8436,6 +8642,10 @@ verify_project_network_limits() {
   if [ "$unenforceable" -eq 0 ]; then
     if [ "$metadata_ipv4_count" -ne 1 ] || [ "$metadata_ipv6_count" -ne 1 ] || [ "$startup_established_count" -ne 1 ] || [ "$startup_deny_count" -ne 1 ]; then
       echo "project shared network rules are missing or duplicated: metadata_ipv4=${metadata_ipv4_count} metadata_ipv6=${metadata_ipv6_count} startup_established=${startup_established_count} startup_deny=${startup_deny_count}" >&2
+      return 1
+    fi
+    if [ "$egress_local_tcp_count" -ne 1 ] || [ "$egress_local_udp_count" -ne 1 ] || [ "$egress_private_ipv4_count" -ne 1 ] || [ "$egress_private_ipv6_count" -ne 1 ]; then
+      echo "project egress block rules are missing or duplicated: local_tcp=${egress_local_tcp_count} local_udp=${egress_local_udp_count} private_ipv4=${egress_private_ipv4_count} private_ipv6=${egress_private_ipv6_count}" >&2
       return 1
     fi
     if [ "$policy" = "disabled" ]; then
@@ -11009,6 +11219,18 @@ esac
         "__MIN_PROJECT_POOL_MEMORY_MB__",
         str(MIN_PROJECT_POOL_MEMORY_MB),
     )
+    # Standalone hosts (PrivilegedWrapperConfig) have no env lines and run
+    # project-host on its default ports.
+    storage_wrapper = storage_wrapper.replace(
+        "__PROJECT_CONAT_ROUTER_PORT__",
+        str(project_conat_router_port(getattr(cfg, "env_lines", None) or [])),
+    )
+    env_path = Path(getattr(cfg, "env_file", None) or DEFAULT_PROJECT_HOST_ENV_FILE)
+    storage_wrapper = storage_wrapper.replace(
+        "__PROJECT_HOST_ENV_FILE__", str(env_path)
+    ).replace(
+        "__PROJECT_HOST_LOCAL_ENV_FILE__", str(project_host_local_env_path(env_path))
+    )
     storage_path_helper = RUNTIME_STORAGE_PATH_HELPER.replace(
         "__ALLOW_LOOPBACK_RUSTIC_REST__",
         "1" if cfg.allow_loopback_rustic_rest else "0",
@@ -11303,11 +11525,7 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
             continue
         key, value = parsed
         env_assignments[key] = value
-    local_env_path = env_path.with_name(
-        env_path.name[:-4] + ".local.env"
-        if env_path.name.endswith(".env")
-        else "project-host.local.env"
-    )
+    local_env_path = project_host_local_env_path(env_path)
     if not local_env_path.exists():
         text_write_atomic(
             local_env_path,
@@ -14498,6 +14716,11 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
                 cfg, "running", "Restarting project-host services"
             )
             start_project_host(cfg)
+        # The egress block exempts the conat router port from the daemon's
+        # env files, which write_env may have changed after the containment
+        # pass above. A changed key also restarts the stack (the fingerprint
+        # covers both files), so rebuild the rules for the env it now runs with.
+        reconcile_project_network_limits(cfg)
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(cfg, "done", "Host software reconciled")
         log_line(cfg, "bootstrap: reconcile completed successfully")
@@ -14548,6 +14771,9 @@ def run_reconcile_environment(cfg: BootstrapConfig) -> int:
         image_size_gb = compute_image_size(cfg)
         write_env(cfg, image_size_gb)
         write_bootstrap_state_files(cfg)
+        # No network reconcile here: the running daemon keeps its conat port
+        # until it restarts, and its reconciler rebuilds the egress rules from
+        # the env files it loaded on its first pass after starting.
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(
             cfg, "done", "Managed project-host environment reconciled"
