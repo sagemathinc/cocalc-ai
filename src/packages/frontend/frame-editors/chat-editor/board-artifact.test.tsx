@@ -370,6 +370,128 @@ describe("the answers bootstrap (board-host-protocol.md)", () => {
     expect(await replyOn(port, SUBMIT)).toBeUndefined();
   });
 
+  // Codex on #1134: answering is a capability of the view. When it goes
+  // (the same card switched to a historical version, or write access lost)
+  // the frame that had it is replaced and its port closed; when it comes
+  // back, a fresh frame gets a fresh nonce and port.
+  describe("the capability to answer, revoked and restored", () => {
+    const QBOARD = JSON.stringify({
+      format: "sagebrush-board",
+      version: 1,
+      title: "Plan",
+      layout: "column",
+      nodes: [
+        {
+          id: "pick",
+          kind: "ask",
+          input: "radio",
+          title: "Which plan?",
+          options: [
+            { value: "a", label: "Plan A" },
+            { value: "b", label: "Plan B" },
+          ],
+        },
+      ],
+    });
+    const answers = (id: string) => ({
+      sagebrush: "answers",
+      version: 1,
+      id,
+      name: "overnight.board.json",
+      revision: "pub-1",
+      page: { number: 1 },
+      answers: { pick: "a" },
+      notes: {},
+      comment: "",
+    });
+    const ids = [
+      "1a2b3c4d-0000-4000-8000-000000000001",
+      "1a2b3c4d-0000-4000-8000-000000000002",
+      "1a2b3c4d-0000-4000-8000-000000000003",
+    ];
+    beforeEach(() => readFile.mockResolvedValue(QBOARD));
+    const card = (answering: boolean) => (
+      <BoardArtifact
+        path={PATH}
+        frameUrl={FRAME}
+        deliverAnswers={answering ? deliver : undefined}
+        revision="pub-1"
+      />
+    );
+    // The frame now shown, granted its port if it was mounted to answer.
+    async function granted() {
+      const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+      await screen.findByText("Current saved board");
+      const posted = watch(frame);
+      const nonce = new URL(frame.getAttribute("src")!).hash.replace(
+        "#sb-nonce=",
+        "",
+      );
+      fromFrame(frame, { ...READY, nonce });
+      return { frame, nonce, port: posted.mock.calls[0]?.[2]?.[0] };
+    }
+
+    test("current -> historical: the old port is closed and delivers nothing", async () => {
+      const view = render(card(true));
+      const first = await granted();
+      expect(first.port).toBeInstanceOf(TestPort);
+      expect(await replyOn(first.port, answers(ids[0]))).toMatchObject({
+        sagebrush: "received",
+      });
+      expect(deliver).toHaveBeenCalledTimes(1);
+      view.rerender(card(false));
+      // a new frame, mounted without a nonce
+      const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+      expect(frame).not.toBe(first.frame);
+      expect(frame.getAttribute("src")).toBe(FRAME);
+      // the old document's port is gone: nothing reaches the callback
+      expect(await replyOn(first.port, answers(ids[1]))).toBeUndefined();
+      expect(deliver).toHaveBeenCalledTimes(1);
+      // and the new frame gets the board without a port, even with the old nonce
+      const posted = watch(frame);
+      fromFrame(frame, { ...READY, nonce: first.nonce });
+      expect(posted.mock.calls[0][2]).toBeUndefined();
+    });
+
+    test("historical -> current: a fresh frame, nonce and port that deliver", async () => {
+      const view = render(card(false));
+      const before = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+      expect(before.getAttribute("src")).toBe(FRAME);
+      view.rerender(card(true));
+      await waitFor(() =>
+        expect(screen.getByTitle(TITLE).getAttribute("src")).toContain(
+          "#sb-nonce=",
+        ),
+      );
+      const now = await granted();
+      expect(now.frame).not.toBe(before);
+      expect(await replyOn(now.port, answers(ids[0]))).toMatchObject({
+        sagebrush: "received",
+      });
+      expect(deliver).toHaveBeenCalledTimes(1);
+    });
+
+    test("a rapid toggle leaves exactly one live channel", async () => {
+      const view = render(card(true));
+      const first = await granted();
+      view.rerender(card(false));
+      view.rerender(card(true));
+      view.rerender(card(false));
+      view.rerender(card(true));
+      await waitFor(() =>
+        expect(screen.getByTitle(TITLE)).not.toBe(first.frame),
+      );
+      const last = await granted();
+      expect(last.nonce).not.toBe(first.nonce);
+      expect(await replyOn(first.port, answers(ids[0]))).toBeUndefined();
+      expect(await replyOn(last.port, answers(ids[1]))).toMatchObject({
+        sagebrush: "received",
+      });
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect(screen.getAllByTitle(TITLE)).toHaveLength(1);
+    });
+  });
+
   test("without delivery (read-only views) there is no nonce and no port", async () => {
     const { frame, posted } = await renderBoard();
     expect(frame.getAttribute("src")).toBe(FRAME);

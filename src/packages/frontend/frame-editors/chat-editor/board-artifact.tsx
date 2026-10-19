@@ -52,6 +52,7 @@ import {
   BOARD_PREVIEW_LIMIT,
 } from "./board-artifact-frame";
 import {
+  BoardAnswersRefusal,
   openAnswersChannel,
   type DeliverBoardAnswers,
 } from "./board-answers-channel";
@@ -94,14 +95,29 @@ export default function BoardArtifact({
   const decideEnabledRef = useRef(decideEnabled);
   decideEnabledRef.current = decideEnabled;
   const frameRef = useRef<HTMLIFrameElement>(null);
-  // The text read for one frame: `id` is that frame's key, `nonce` the
-  // secret in its address that only the document it loads first has.
+  // The text read (one load of the file).
   const [board, setBoard] = useState<{
     id: number;
     text: string;
-    nonce: string;
     revision: string | null;
   }>();
+  // Whether this view may answer the board's questions.
+  const canAnswer = deliverAnswers != null;
+  // One frame: `id` is its key, `nonce` the secret in its address that only
+  // the document it loads first has, `canAnswer` what it was mounted with.
+  // A new board read, or the capability coming or going, is a new frame: a
+  // fresh document, a fresh nonce, the old one's port closed. So a frame
+  // mounted to answer never keeps a port once answering is off (a
+  // historical view, or write access lost), and one mounted without never
+  // gets one (Codex on #1134).
+  const [mount, setMount] = useState<{
+    id: number;
+    nonce: string;
+    canAnswer: boolean;
+  }>();
+  const mountSeq = useRef(0);
+  const mountRef = useRef(mount);
+  mountRef.current = mount;
   const [error, setError] = useState("");
   const [frameError, setFrameError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -153,7 +169,6 @@ export default function BoardArtifact({
           setBoard({
             id: refresh,
             text,
-            nonce: frameNonce(),
             revision: revisionRef.current,
           });
       } catch (err) {
@@ -168,24 +183,41 @@ export default function BoardArtifact({
   }, [actions, path, refresh]);
 
   useEffect(() => {
+    closeChannel();
+    setMount(
+      board
+        ? { id: ++mountSeq.current, nonce: frameNonce(), canAnswer }
+        : undefined,
+    );
+  }, [board, canAnswer]);
+
+  useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const frame = frameRef.current?.contentWindow;
       const current = boardRef.current;
-      if (!frame || !current || event.source !== frame) return;
+      const mounted = mountRef.current;
+      if (!frame || !current || !mounted || event.source !== frame) return;
       const data = event.data;
       if (data == null || typeof data !== "object" || data.version !== 1)
         return;
       if (data.sagebrush === "ready") {
         // Only the frame's first document, the one its src loaded.
-        if (answeredRef.current === current.id) return;
+        if (answeredRef.current === mounted.id) return;
         const loads = loadsRef.current;
-        if (loads.id === current.id && loads.loads > 1) return;
-        answeredRef.current = current.id;
-        const deliver = deliverRef.current;
+        if (loads.id === mounted.id && loads.loads > 1) return;
+        answeredRef.current = mounted.id;
+        // Answering only while this frame is the one mounted to answer, and
+        // the view still may: checked at each call, so a port never
+        // outlives the capability, even before its frame is replaced.
+        const live = () =>
+          deliverRef.current != null &&
+          mountRef.current?.id === mounted.id &&
+          mountRef.current.canAnswer;
         if (
-          deliver &&
+          mounted.canAnswer &&
+          deliverRef.current &&
           typeof data.nonce === "string" &&
-          data.nonce === current.nonce
+          data.nonce === mounted.nonce
         ) {
           // The answers channel: one port, for this document only.
           const posted = {
@@ -195,20 +227,34 @@ export default function BoardArtifact({
           };
           const channel = new MessageChannel();
           closeChannel();
+          const decider =
+            decideEnabledRef.current && project_id
+              ? boardDecider({
+                  project_id,
+                  path,
+                  revision: current.revision,
+                  text: current.text,
+                })
+              : undefined;
+          const revoked = () =>
+            new BoardAnswersRefusal(
+              "Not sent: answers can't be sent from this view.",
+            );
           channelRef.current = openAnswersChannel({
             port: channel.port1,
             posted,
-            deliver,
+            deliver: async (submission, opts) => {
+              const deliver = deliverRef.current;
+              if (!live() || !deliver) throw revoked();
+              return await deliver(submission, opts);
+            },
             isCurrentRevision: (r) => r === revisionRef.current,
-            decide:
-              decideEnabledRef.current && project_id
-                ? boardDecider({
-                    project_id,
-                    path,
-                    revision: current.revision,
-                    text: current.text,
-                  })
-                : undefined,
+            decide: decider
+              ? async (message) => {
+                  if (!live()) throw revoked();
+                  return await decider(message);
+                }
+              : undefined,
           });
           frame.postMessage(
             { sagebrush: "board", version: 1, ...posted },
@@ -224,7 +270,7 @@ export default function BoardArtifact({
         }
       } else if (
         data.sagebrush === "error" &&
-        answeredRef.current === current.id
+        answeredRef.current === mounted.id
       ) {
         setFrameError(
           `${data.message ?? "The board could not be shown."}`.slice(0, 500),
@@ -235,7 +281,7 @@ export default function BoardArtifact({
     return () => window.removeEventListener("message", onMessage);
   }, [name]);
 
-  useEffect(() => closeChannel, [board?.id]);
+  useEffect(() => closeChannel, [mount?.id]);
 
   const onFrameLoad = (id: number) => {
     const loads = loadsRef.current;
@@ -320,14 +366,14 @@ export default function BoardArtifact({
           description={frameError}
         />
       )}
-      {board && (
+      {board && mount && (
         <iframe
-          key={board.id}
+          key={mount.id}
           ref={frameRef}
           src={
-            deliverAnswers ? `${frameUrl}#sb-nonce=${board.nonce}` : frameUrl
+            mount.canAnswer ? `${frameUrl}#sb-nonce=${mount.nonce}` : frameUrl
           }
-          onLoad={() => onFrameLoad(board.id)}
+          onLoad={() => onFrameLoad(mount.id)}
           sandbox={BOARD_FRAME_SANDBOX}
           title={`Sagebrush board: ${name}`}
           style={{
