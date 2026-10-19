@@ -37,6 +37,7 @@ jest.mock("@cocalc/backend/data", () => ({
 }));
 
 import {
+  contentDirForFile,
   encodeContentFilePath,
   issueProjectContentUrlLocal,
 } from "./project-content-url";
@@ -116,7 +117,12 @@ describe("issueProjectContentUrlLocal", () => {
       public_key: PUBLIC_KEY,
       now_ms: NOW,
     });
-    expect(claims).toMatchObject({ sub: ACCOUNT, scope: "read", epoch: 0 });
+    expect(claims).toMatchObject({
+      sub: ACCOUNT,
+      scope: "read",
+      epoch: 0,
+      dir: "/home/user/a dir",
+    });
     expect(result.expires_at).toBe(NOW + 24 * 60 * 60 * 1000);
     expect(claims.exp * 1000).toBe(result.expires_at);
   });
@@ -234,6 +240,17 @@ describe("issueProjectContentUrlLocal", () => {
     await expect(issue({ project_id: "nope" })).rejects.toThrow("invalid");
     await expect(issue({ account_id: "nope" })).rejects.toThrow("invalid");
     expect(queryMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("contentDirForFile", () => {
+  it("is the file's own directory", () => {
+    expect(contentDirForFile("/home/user/cs101-collect/hw1/student-1/page.html")).toBe(
+      "/home/user/cs101-collect/hw1/student-1",
+    );
+    expect(contentDirForFile("//home//user/a.html")).toBe("/home/user");
+    expect(contentDirForFile("/a.html")).toBe("/");
+    expect(() => contentDirForFile("/home/user/../a.html")).toThrow("invalid path");
   });
 });
 

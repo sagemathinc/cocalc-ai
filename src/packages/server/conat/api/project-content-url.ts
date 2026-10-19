@@ -14,6 +14,11 @@ which the project's host serves on an origin of its own, with no cookies
 (project-host/content-origin.ts).  Only owners and collaborators get one,
 matching what the host checks on every request.
 
+A link reads only the file's own folder and its subfolders: HTML in a
+project isn't always written by its members (course collect and peer
+grading copy students' folders into other projects), so a page must not
+reach the rest of the project.
+
 When the content origin can't serve this project, the result says why
 instead of throwing, so the frontend can fall back to today's behavior:
   - "off": no content domain is configured;
@@ -61,9 +66,7 @@ export type ProjectContentUrl =
 
 const MAX_PATH_LENGTH = 4096;
 
-// The path as URL segments, or an error.  The host's file route treats the
-// result as absolute (it re-adds the leading slash).
-export function encodeContentFilePath(path: unknown): string {
+function contentPathSegments(path: unknown): string[] {
   const raw = `${path ?? ""}`;
   if (raw.length > MAX_PATH_LENGTH || raw.includes("\0")) {
     throw new Error("invalid path");
@@ -75,7 +78,20 @@ export function encodeContentFilePath(path: unknown): string {
   ) {
     throw new Error("invalid path");
   }
-  return segments.map((segment) => encodeURIComponent(segment)).join("/");
+  return segments;
+}
+
+// The path as URL segments, or an error.  The host's file route treats the
+// result as absolute (it re-adds the leading slash).
+export function encodeContentFilePath(path: unknown): string {
+  return contentPathSegments(path)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+// The folder a link to this file may read: the file's own directory.
+export function contentDirForFile(path: unknown): string {
+  return `/${contentPathSegments(path).slice(0, -1).join("/")}`;
 }
 
 export async function issueProjectContentUrlLocal({
@@ -96,6 +112,7 @@ export async function issueProjectContentUrlLocal({
     throw new Error("invalid project or account");
   }
   const filePath = encodeContentFilePath(path);
+  const dir = contentDirForFile(path);
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(account_id)) {
     throw new Error("account is banned");
@@ -170,6 +187,7 @@ export async function issueProjectContentUrlLocal({
     // Projects don't carry a content epoch yet (the host also reads 0); the
     // "revoke links" button adds one.
     epoch: 0,
+    dir,
     private_key: getProjectHostAuthTokenPrivateKey(),
     ttl_seconds,
     now_ms,
