@@ -112,6 +112,40 @@ check 1 "fail closed: private repo unreachable, cached private refs" "$T/pub.git
 git init -q "$T/outsider" && cd "$T/outsider" && git commit -q --allow-empty -m o
 check 0 "clone without private work: private repo unreachable" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok COCALC_PRIVATE_URL=$T/missing.git
 
+# Deleting an accidentally pushed private branch must work.
+check 0 "deleting a private-named remote branch" "$T/pub.git" "(delete)" "$Z" refs/heads/security/accidental
+
+# A configured private source that reports "repository not found" (GitHub
+# says that for inaccessible repos too) fails closed.
+mkdir -p "$T/bin"
+printf '#!/bin/sh\necho "fatal: repository not found" >&2\nexit 128\n' >"$T/bin/git-remote-missing"
+chmod +x "$T/bin/git-remote-missing"
+git init -q "$T/cfgonly" && cd "$T/cfgonly" && git commit -q --allow-empty -m maybe-private
+git config cocalc.privateUrl "missing::repo"
+check 1 "fail closed: private source says 'not found'" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok PATH="$T/bin:$PATH"
+# Config alone marks private work (fresh clone, no cached guard refs): every
+# private fetch fails -> refuse.
+git init -q "$T/cfgonly2" && cd "$T/cfgonly2" && git commit -q --allow-empty -m maybe-private2
+git config cocalc.privateUrl "$T/missing-too.git"
+check 1 "fail closed: only cocalc.privateUrl configured, all private fetches fail" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok COCALC_PRIVATE_URL=$T/missing.git
+
+# Retiring the remote of a deleted private repo keeps its commits private.
+git init -q --bare "$T/old.git"
+git init -q "$T/retire" && cd "$T/retire" || exit 1
+git commit -q --allow-empty -m base2 && git push -q "$T/pub.git" HEAD:refs/heads/base2
+OLD=$(commit "secret on a later-deleted advisory fork")
+git push -q "$T/old.git" "$OLD:refs/heads/main"
+git reset -q --hard HEAD~1
+git remote add old "$T/old.git" && git fetch -q old
+git config cocalc.privateUrl "$T/old.git" # stand-in for the GitHub allowlist
+git branch -q neutral4 "$OLD"
+rm -rf "$T/old.git"
+check 1 "deleted private repo still configured: fail closed" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok
+git config --unset cocalc.privateUrl
+bash "$here/private-fix.sh" retire-remote old >/dev/null
+check 1 "after retire-remote: its commit is still private" "$T/pub.git" refs/heads/neutral4 "$OLD" refs/heads/fix/innocent
+check 0 "after retire-remote: public commits push normally" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok
+
 # install-hooks.sh
 inst() { # <expect> <desc>
   local rc

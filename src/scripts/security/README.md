@@ -48,7 +48,10 @@ Other `cocalc-ai-*` repos are not trusted; `cocalc-ai-doc`, for example, is publ
 
 On every such push it fetches all of these branch lists fresh, in parallel: the private repo's, every private remote's, every `cocalc.privateUrl` repo's, and the public repo's. That takes 2–4 seconds. The guard never touches your `FETCH_HEAD`.
 
-- If a fetch fails and the clone has, or has seen, private work, the guard refuses the push (fail closed).
-- One exception: a secondary private repo that GitHub reports as not found, such as a deleted advisory fork, is checked using its cached and tracking refs, since it can no longer gain commits. Remove remotes for deleted repos when convenient. `COCALC_DISCLOSE=1`, set by `disclose.sh`, allows the deliberate disclosure push. Keep the `private` remote's push URL disabled; the scripts push to its explicit URL.
+- If any of those fetches fails and the clone has private work, the guard refuses the push (fail closed). Private work means a private remote, a `cocalc.privateUrl`, a private-named branch, or refs cached by an earlier run.
+- When a private repo is deleted, for example a published advisory fork, run `private-fix.sh retire-remote <name>`. It keeps that remote's commits under `refs/cocalc-guard/retired/` as permanently private, then removes the remote.
+- Deleting a remote branch is always allowed, including an accidentally pushed `security/*` branch.
+
+`COCALC_DISCLOSE=1`, set by `disclose.sh`, allows the deliberate disclosure push. Keep the `private` remote's push URL disabled; the scripts push to its explicit URL.
 
 `pre-push-guard.test.sh` tests the guard and the installer in a temporary directory, with local stand-in repos. It needs no network and doesn't touch your branches.

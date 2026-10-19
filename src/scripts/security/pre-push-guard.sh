@@ -13,10 +13,10 @@
 #   - it would push a private commit: one on a branch of the private repo, of
 #     another private remote or cocalc.privateUrl repo, or of a local
 #     private-named branch, that is not on any branch of the public repo.
-# All of those branch lists are fetched fresh on every such push.  If a fetch
-# fails for a clone that has (or has seen) private work, the push is refused
-# (fail closed), except that a secondary private repo GitHub reports as not
-# found (deleted) is checked using its cached refs.
+# All of those branch lists are fetched fresh on every such push; commits of
+# retired private remotes (private-fix.sh retire-remote) count as private too.
+# If any fetch fails for a clone that has (or has seen) private work, the push
+# is refused (fail closed).
 # disclose.sh sets COCALC_DISCLOSE=1 to make the deliberate disclosure push.
 #
 # Install for every worktree of a clone with install-hooks.sh.
@@ -74,9 +74,13 @@ fi
 status=0
 updates=$(cat)
 
-# Branch names first: no network needed.
+zero=0000000000000000000000000000000000000000
+
+# Branch names first: no network needed.  Deletions publish nothing, and
+# deleting an accidentally pushed private branch must work.
 while read -r local_ref local_sha remote_ref _remote_sha; do
   [ -z "$local_ref" ] && continue
+  [ "$local_sha" = "$zero" ] && continue
   for ref in "$local_ref" "$remote_ref"; do
     if [[ $ref == refs/heads/* ]] && is_private_branch "${ref#refs/heads/}"; then
       refuse "refusing to push $local_ref -> $remote_ref to $remote_url: '${ref#refs/heads/}' is a private branch name."
@@ -100,7 +104,6 @@ add_source() { # <url>
   sources+=("$key|$1")
 }
 add_source "$PRIVATE_URL"
-private_key=${sources[0]%%|*}
 private_remote_refs=()
 while read -r name; do
   [ -z "$name" ] && continue
@@ -118,11 +121,13 @@ while read -r ref; do
   is_private_branch "${ref#refs/heads/}" && local_private_branches+=("$ref")
 done < <(git for-each-ref --format='%(refname)' refs/heads)
 
-# A clone has private work if it has a private remote, a private-named local
-# branch, or private branch lists cached by an earlier run of this guard.
+# A clone has private work if it has a private remote, a cocalc.privateUrl,
+# a private-named local branch, retired private refs, or private branch lists
+# cached by an earlier run of this guard.
 has_private_work=0
 if [ ${#private_remote_refs[@]} -gt 0 ] || [ ${#local_private_branches[@]} -gt 0 ] ||
-  [ -n "$(git for-each-ref --count=1 "$GUARD_REFS/src/")" ]; then
+  [ -n "$(git config --get-all cocalc.privateUrl 2>/dev/null)" ] ||
+  [ -n "$(git for-each-ref --count=1 "$GUARD_REFS/src/" "$GUARD_REFS/retired/")" ]; then
   has_private_work=1
 fi
 
@@ -143,24 +148,19 @@ for source in "${sources[@]}"; do
   url=${source#*|}
   if [ "$(cat "$tmp/$key.rc" 2>/dev/null)" = 0 ]; then
     has_private_work=1
-  elif [ "$key" != "$private_key" ] && grep -qi "not found" "$tmp/$key.err"; then
-    # A deleted repo (e.g. a removed advisory fork) cannot gain commits; its
-    # cached guard refs and tracking refs still count as private.
-    echo "pre-push-guard: note: $url no longer exists; using its cached refs." >&2
   else
     failed+=("$url")
   fi
 done
 if [ ${#failed[@]} -gt 0 ] && [ $has_private_work = 1 ]; then
-  refuse "cannot fetch ${failed[*]} to check for private commits; refusing (fail closed)."
+  refuse "cannot fetch ${failed[*]} to check for private commits; refusing (fail closed). If a private repo was deleted (e.g. a published advisory fork), retire its remote with: src/scripts/security/private-fix.sh retire-remote <name>"
 fi
 
 if [ $has_private_work = 1 ] && [ $status = 0 ]; then
   if ! git fetch -q --no-tags --prune --no-write-fetch-head "$PUBLIC_URL" "+refs/heads/*:$GUARD_REFS/public/*" 2>/dev/null; then
     refuse "cannot fetch $PUBLIC_URL to check what is already public; refusing (fail closed)."
   else
-    zero=0000000000000000000000000000000000000000
-    if ! private=$(git rev-list --glob="$GUARD_REFS/src/*" "${private_remote_refs[@]}" \
+    if ! private=$(git rev-list --glob="$GUARD_REFS/src/*" --glob="$GUARD_REFS/retired/*" "${private_remote_refs[@]}" \
       "${local_private_branches[@]}" --not --glob="$GUARD_REFS/public/*" | sort); then
       refuse "could not list private commits; refusing (fail closed)."
     else

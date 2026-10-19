@@ -6,6 +6,9 @@
 #                                       pushed to the private repo
 #   private-fix.sh integration <name>   new integration branch security/<name> from
 #                                       public main, for the private PRs of one release
+#   private-fix.sh retire-remote <name> remove the remote of a deleted private repo
+#                                       (e.g. a published advisory fork), keeping its
+#                                       commits as private for pre-push-guard.sh
 #
 # Pushes to the private repo use its explicit URL, because local clones keep
 # the "private" remote's push URL disabled on purpose.
@@ -50,6 +53,34 @@ new_branch() { # <branch>
   echo "created $branch from public main $(git rev-parse --short "$PUBLIC_MAIN") in the private repo"
 }
 
+# Same normalization as pre-push-guard.sh, so namespaces match.
+normalize_url() {
+  local u=${1,,}
+  u=${u#*://}
+  [[ $u == *@* ]] && u=${u#*@}
+  [[ $u != /* ]] && u=${u/:/\/}
+  [[ $u =~ ^([^/]+)/[0-9]+/(.*)$ ]] && u="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+  u=${u%/}
+  u=${u%.git}
+  echo "${u%/}"
+}
+
+retire_remote() { # <remote name>
+  local name=$1 url key ref n=0
+  url=$(git remote get-url "$name") || die "no remote '$name'"
+  key=$(printf '%s' "$(normalize_url "$url")" | git hash-object --stdin)
+  while read -r ref; do
+    git update-ref "refs/cocalc-guard/retired/$key/${ref#refs/remotes/$name/}" "$ref"
+    n=$((n + 1))
+  done < <(git for-each-ref --format='%(refname)' "refs/remotes/$name/")
+  while read -r ref; do
+    git update-ref "refs/cocalc-guard/retired/$key/${ref#refs/cocalc-guard/src/$key/}" "$ref"
+    n=$((n + 1))
+  done < <(git for-each-ref --format='%(refname)' "refs/cocalc-guard/src/$key/")
+  git remote remove "$name"
+  echo "retired remote $name ($url): kept $n ref(s) under refs/cocalc-guard/retired/$key/ as private"
+}
+
 case "${1:-}" in
   sync-main)
     sync_main
@@ -65,8 +96,12 @@ case "${1:-}" in
     new_branch "security/$2"
     echo "Point this release's private PRs at security/$2; merge it into the release branch to build."
     ;;
+  retire-remote)
+    [ -n "${2:-}" ] || die "usage: private-fix.sh retire-remote <name>"
+    retire_remote "$2"
+    ;;
   *)
-    sed -n '2,10p' "$0"
+    sed -n '2,13p' "$0"
     exit 2
     ;;
 esac
