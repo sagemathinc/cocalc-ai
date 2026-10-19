@@ -40,6 +40,19 @@ export interface ManagedEgressNoticeInput {
   resets_at?: Date;
 }
 
+// A notice is due when blocked (whatever the limit, including 0), or at 90%
+// of a positive limit.
+export function managedEgressNoticeDue(
+  input: Pick<ManagedEgressNoticeInput, "used" | "limit" | "blocked">,
+): boolean {
+  if (!Number.isFinite(input.limit) || input.limit < 0) return false;
+  if (input.blocked) return true;
+  return (
+    input.limit > 0 &&
+    input.used >= MANAGED_EGRESS_NOTICE_THRESHOLD * input.limit
+  );
+}
+
 function poolLabel(pool: ManagedEgressPool): string {
   return pool === "control-plane"
     ? "Browser control traffic"
@@ -47,9 +60,15 @@ function poolLabel(pool: ManagedEgressPool): string {
 }
 
 export function managedEgressNoticeSummary(input: ManagedEgressNoticeInput) {
-  const percent = Math.floor((100 * input.used) / input.limit);
+  // a 0 limit has no meaningful percentage
+  const percent =
+    input.limit > 0 ? Math.floor((100 * input.used) / input.limit) : undefined;
   const label = poolLabel(input.pool);
-  const usage = `${humanSize(input.used)} of ${humanSize(input.limit)} (${percent}%) in the last ${input.window === "5h" ? "5 hours" : "7 days"}`;
+  const amounts =
+    percent == null
+      ? `${humanSize(input.used)} with a limit of 0 (no traffic allowed)`
+      : `${humanSize(input.used)} of ${humanSize(input.limit)} (${percent}%)`;
+  const usage = `${amounts} in the last ${input.window === "5h" ? "5 hours" : "7 days"}`;
   const reset =
     input.resets_at && Number.isFinite(input.resets_at.getTime())
       ? ` It is expected to be back under the limit by ${input.resets_at.toISOString()}.`
@@ -58,10 +77,10 @@ export function managedEgressNoticeSummary(input: ManagedEgressNoticeInput) {
     input.pool === "control-plane"
       ? input.blocked
         ? "New browser sessions for this account are blocked. The command line (cocalc CLI) still works."
-        : "At 100%, new browser sessions for this account are blocked. The command line (cocalc CLI) is not affected."
+        : "Over the limit, new browser sessions for this account are blocked. The command line (cocalc CLI) is not affected."
       : input.blocked
         ? "Until usage is back under the limit, downloads, app traffic, interactive sessions, SSH and backups are blocked, and running projects that send outbound network traffic are stopped."
-        : "At 100%, downloads, app traffic, interactive sessions, SSH, backups and outbound project network traffic may be blocked.";
+        : "Over the limit, downloads, app traffic, interactive sessions, SSH, backups and outbound project network traffic may be blocked.";
   const todo =
     input.pool === "control-plane"
       ? "If you need a higher limit, contact support."
@@ -69,7 +88,7 @@ export function managedEgressNoticeSummary(input: ManagedEgressNoticeInput) {
   return {
     title: input.blocked
       ? `${label} limit reached`
-      : `${label} is at ${percent}% of its limit`,
+      : `${label} is at ${percent ?? 100}% of its limit`,
     severity: input.blocked ? "error" : "warning",
     origin_label: "Network usage",
     notice_type: input.blocked
@@ -86,12 +105,7 @@ export function managedEgressNoticeSummary(input: ManagedEgressNoticeInput) {
 export async function notifyManagedEgressLimit(
   input: ManagedEgressNoticeInput,
 ): Promise<boolean> {
-  if (
-    !(input.limit > 0) ||
-    !(input.used >= MANAGED_EGRESS_NOTICE_THRESHOLD * input.limit)
-  ) {
-    return false;
-  }
+  if (!managedEgressNoticeDue(input)) return false;
   const { account_id } = input;
   const level = input.blocked ? "blocked" : "near";
   const key = `managed-egress:${input.pool}:${input.window}:${level}:${account_id}`;
@@ -158,12 +172,7 @@ export async function notifyManagedEgressLimit(
 export function maybeNotifyManagedEgressLimit(
   input: ManagedEgressNoticeInput,
 ): void {
-  if (
-    !(input.limit > 0) ||
-    !(input.used >= MANAGED_EGRESS_NOTICE_THRESHOLD * input.limit)
-  ) {
-    return;
-  }
+  if (!managedEgressNoticeDue(input)) return;
   const level = input.blocked ? "blocked" : "near";
   const localKey = `${input.pool}:${input.window}:${level}:${input.account_id}`;
   if (recentlyChecked.has(localKey)) return;

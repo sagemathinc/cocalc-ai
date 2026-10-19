@@ -14,7 +14,7 @@ import {
   managedEgressBlockUpgradeHelps,
   type ManagedEgressBlockedInfo,
 } from "@cocalc/frontend/purchases/managed-egress-blocked";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -25,13 +25,15 @@ const CONTAINER_STYLE = {
   justifyContent: "center",
   padding: "32px 16px",
   overflow: "auto",
-  background: "#fafafa",
+  background: UI_COLORS.page,
 } as const;
 
 const CARD_STYLE = {
   width: "min(720px, 100%)",
   borderRadius: "16px",
-  boxShadow: "0 12px 32px rgba(0,0,0,0.08)",
+  background: UI_COLORS.surface,
+  borderColor: UI_COLORS.border,
+  boxShadow: `0 12px 32px ${UI_COLORS.shadow}`,
 } as const;
 
 export function ManagedEgressBlockedScreen({
@@ -47,14 +49,23 @@ export function ManagedEgressBlockedScreen({
     blocked.resets_at != null ? new Date(blocked.resets_at) : undefined;
 
   return (
-    <div style={CONTAINER_STYLE}>
+    <div
+      style={CONTAINER_STYLE}
+      role="region"
+      aria-labelledby="managed-egress-blocked-title"
+      data-cocalc-managed-egress-blocked
+    >
       <Card style={CARD_STYLE}>
         <Space vertical size="large" style={{ width: "100%" }}>
           <div>
-            <Text strong style={{ color: COLORS.ORANGE_WARN }}>
+            <Text strong style={{ color: UI_COLORS.warning }}>
               Network access temporarily blocked
             </Text>
-            <Title level={2} style={{ marginTop: "8px", marginBottom: "8px" }}>
+            <Title
+              id="managed-egress-blocked-title"
+              level={2}
+              style={{ marginTop: "8px", marginBottom: "8px" }}
+            >
               {blocked.title}
             </Title>
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>

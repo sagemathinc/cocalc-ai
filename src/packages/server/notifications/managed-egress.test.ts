@@ -12,6 +12,7 @@ jest.mock("@cocalc/database/pool", () => ({
 
 import {
   __test__,
+  managedEgressNoticeDue,
   managedEgressNoticeSummary,
   maybeNotifyManagedEgressLimit,
 } from "./managed-egress";
@@ -57,7 +58,7 @@ describe("managed egress notices", () => {
       "Managed network traffic is at 90% of its limit",
     );
     expect(summary.notice_type).toBe("managed_egress_near_limit");
-    expect(summary.body_markdown).toContain("At 100%");
+    expect(summary.body_markdown).toContain("Over the limit");
     expect(summary.body_markdown).toContain("Upgrade your membership");
   });
 
@@ -76,5 +77,32 @@ describe("managed egress notices", () => {
     maybeNotifyManagedEgressLimit({ ...input, used: 950 });
     maybeNotifyManagedEgressLimit({ ...input, used: 960 });
     expect(connectMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("always notifies a block, including under a 0 limit, without an Infinity percentage", () => {
+    expect(managedEgressNoticeDue({ used: 5, limit: 0, blocked: true })).toBe(
+      true,
+    );
+    // a 0 limit with no usage is not blocked and never "near"
+    expect(managedEgressNoticeDue({ used: 0, limit: 0, blocked: false })).toBe(
+      false,
+    );
+    expect(
+      managedEgressNoticeDue({ used: 899, limit: 1000, blocked: false }),
+    ).toBe(false);
+    expect(
+      managedEgressNoticeDue({ used: 900, limit: 1000, blocked: false }),
+    ).toBe(true);
+    const summary = managedEgressNoticeSummary({
+      account_id: "a",
+      pool: "control-plane",
+      window: "5h",
+      used: 5_000_000,
+      limit: 0,
+      blocked: true,
+    });
+    expect(summary.title).toBe("Browser control traffic limit reached");
+    expect(summary.body_markdown).toContain("limit of 0");
+    expect(summary.body_markdown).not.toMatch(/Infinity|NaN/);
   });
 });

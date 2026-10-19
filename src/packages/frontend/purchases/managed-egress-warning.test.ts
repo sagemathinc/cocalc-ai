@@ -131,4 +131,37 @@ describe("getManagedEgressWindowWarnings", () => {
       over: true,
     });
   });
+
+  it("shows a block under a 0 limit (no Infinity), and is not blocked exactly at the limit", () => {
+    const details = makeDetails({ limit5h: 1000, used5h: 1000 });
+    expect(getManagedEgressWindowWarnings(details)).toEqual([
+      expect.objectContaining({
+        pool: "shared",
+        window: "5h",
+        over: false,
+        percent: 100,
+        severity: "severe",
+      }),
+    ]);
+    details.usage_status = {
+      ...details.usage_status!,
+      managed_egress_5h_bytes: 0,
+      managed_control_plane_egress_7d_bytes: 5_000_000,
+      managed_control_plane_egress_7d_limit_bytes: 0,
+    };
+    const [blocked, ...rest] = getManagedEgressWindowWarnings(details);
+    expect(rest).toEqual([]);
+    expect(blocked).toMatchObject({
+      pool: "control-plane",
+      window: "7d",
+      over: true,
+      severity: "blocked",
+      percent: 100,
+      limit: 0,
+    });
+    expect(Number.isFinite(blocked.ratio)).toBe(true);
+    // 0 limit, no traffic: nothing to show
+    details.usage_status.managed_control_plane_egress_7d_bytes = 0;
+    expect(getManagedEgressWindowWarnings(details)).toEqual([]);
+  });
 });

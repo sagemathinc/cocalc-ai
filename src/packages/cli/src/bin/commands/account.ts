@@ -84,16 +84,21 @@ export function managedEgressWarnings({
     limit: number | undefined,
     effect: string,
   ) => {
-    if (typeof used !== "number" || typeof limit !== "number" || !(limit > 0))
+    if (typeof used !== "number" || typeof limit !== "number" || !(limit >= 0))
       return;
-    const ratio = used / limit;
-    if (ratio < EGRESS_WARNING_RATIO) return;
-    const percent = Math.floor(100 * ratio);
-    const amounts = `${formatByteCount(used)} of ${formatByteCount(limit)} (${percent}%) in the ${window} window`;
+    // Same boundary as the server: blocked only when usage exceeds the
+    // limit; a 0 limit blocks any traffic and has no percentage.
+    const over = used > limit;
+    const ratio = limit > 0 ? used / limit : 0;
+    if (!over && !(limit > 0 && ratio >= EGRESS_WARNING_RATIO)) return;
+    const amounts =
+      limit > 0
+        ? `${formatByteCount(used)} of ${formatByteCount(limit)} (${Math.floor(100 * ratio)}%) in the ${window} window`
+        : `${formatByteCount(used)} with a limit of 0 in the ${window} window`;
     out.push(
-      used > limit
+      over
         ? `${name} limit reached: ${amounts}. ${effect} is blocked.`
-        : `${name} is at ${amounts}. At 100%, ${effect.toLowerCase()} is blocked.`,
+        : `${name} is at ${amounts}. Over the limit, ${effect.toLowerCase()} is blocked.`,
     );
   };
   for (const window of ["5h", "7d"] as const) {

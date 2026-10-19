@@ -78,7 +78,8 @@ function getManagedEgressLimit(
     details?.selected?.entitlements?.usage_limits;
   const key = window === "5h" ? "egress_5h_bytes" : "egress_7d_bytes";
   const value = usageLimits?.[key];
-  return typeof value === "number" && Number.isFinite(value) && value > 0
+  // 0 is a real limit (any traffic blocks), as in the server policy
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined;
 }
@@ -115,7 +116,7 @@ function getControlPlaneEgress(
         ? used
         : undefined,
     limit:
-      typeof limit === "number" && Number.isFinite(limit) && limit > 0
+      typeof limit === "number" && Number.isFinite(limit) && limit >= 0
         ? limit
         : undefined,
   };
@@ -149,9 +150,12 @@ export function getManagedEgressWindowWarnings(
     });
   }
   for (const { pool, window, used, limit, threshold } of candidates) {
-    if (limit == null || used == null || limit <= 0) continue;
-    const ratio = used / limit;
-    if (!(ratio >= threshold)) continue;
+    if (limit == null || used == null || limit < 0) continue;
+    // Same boundary as the server policy: blocked only when usage exceeds
+    // the limit.  A 0 limit blocks any traffic; it never warns "near".
+    const over = used > limit;
+    const ratio = limit > 0 ? used / limit : over ? 1 : 0;
+    if (!over && !(limit > 0 && ratio >= threshold)) continue;
     warnings.push({
       pool,
       window,
@@ -159,13 +163,12 @@ export function getManagedEgressWindowWarnings(
       limit,
       ratio,
       percent: Math.round(ratio * 100),
-      over: ratio >= 1,
-      severity:
-        ratio >= 1
-          ? "blocked"
-          : ratio >= MANAGED_EGRESS_SEVERE_THRESHOLD
-            ? "severe"
-            : "warning",
+      over,
+      severity: over
+        ? "blocked"
+        : ratio >= MANAGED_EGRESS_SEVERE_THRESHOLD
+          ? "severe"
+          : "warning",
     });
   }
   warnings.sort((a, b) => {
