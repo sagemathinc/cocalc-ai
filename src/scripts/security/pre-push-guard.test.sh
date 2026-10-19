@@ -69,6 +69,29 @@ check 0 "public commit" "$T/pub.git" refs/heads/x "$C0" refs/heads/fix/ok
 check 0 "deleting a remote branch" "$T/pub.git" "(delete)" "$Z" refs/heads/fix/old
 check 0 "COCALC_DISCLOSE override" "$T/pub.git" refs/heads/x "$PRIV" refs/heads/fix/innocent COCALC_DISCLOSE=1
 
+# An additional private remote whose tracking ref is stale: the secret commit
+# reached the local repo only through a raw-URL fetch onto a neutral branch.
+git init -q --bare "$T/extra.git"
+git push -q "$T/extra.git" "$C0:refs/heads/security/topic"
+git remote add extra "$T/extra.git"
+git config --add cocalc.privateUrl "$T/extra.git"
+git fetch -q extra
+SECRET=$(commit "secret on the extra private repo")
+git push -q "$T/extra.git" "$SECRET:refs/heads/security/topic"
+git reset -q --hard "$C0"
+git update-ref -d "refs/remotes/extra/security/topic" && git update-ref "refs/remotes/extra/security/topic" "$C0" # stale
+git fetch -q "$T/extra.git" refs/heads/security/topic && git branch -q neutral2 FETCH_HEAD
+check 1 "commit on an additional private remote with a stale tracking ref" "$T/pub.git" refs/heads/neutral2 "$SECRET" refs/heads/fix/innocent
+fh=$(git rev-parse FETCH_HEAD)
+check 0 "public commit (FETCH_HEAD check)" "$T/pub.git" refs/heads/x "$C0" refs/heads/fix/ok
+[ "$(git rev-parse FETCH_HEAD)" = "$fh" ] && { pass=$((pass + 1)); echo "ok    guard leaves FETCH_HEAD alone"; } || { fail=$((fail + 1)); echo "FAIL  guard changed FETCH_HEAD"; }
+git config --add cocalc.privateUrl "$T/unreachable.git"
+check 1 "fail closed: an additional private repo cannot be fetched" "$T/pub.git" refs/heads/x "$C0" refs/heads/fix/ok
+git config --unset-all cocalc.privateUrl
+git remote remove extra
+git branch -q -D neutral2
+git config cocalc.privateUrl "$T/priv.git"
+
 # Fail closed: only the guard's cached private refs mark this clone as having
 # private work (no private remote, no private-named branch); private repo down.
 git branch -q -D security/local neutral
