@@ -3922,6 +3922,32 @@ describe("the agent that sent a message is told how its turn ended", () => {
     });
   });
 
+  it("even when the chat cannot be updated for the cancel", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockRejectedValue(new Error("chat unavailable"));
+    await expect(
+      acpTestInternals.handleAcpControlRequest({
+        action: "cancel",
+        account_id: request.account_id,
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+        user_message_id: job.user_message_id,
+      } as any),
+    ).rejects.toThrow("chat unavailable");
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      kind: "canceled",
+      tool_ran: false,
+    });
+  });
+
   it("but not for a person's own message", async () => {
     const job = enqueueAcpJob({
       ...makeRequest(),

@@ -12487,16 +12487,9 @@ async function handleAcpControlRequestNow(
     if (!row || row.state !== "canceled") {
       return { ok: false, state: row?.state ?? "missing" };
     }
-    await persistQueuedUserMessageProjection({
-      client: conatClient,
-      project_id,
-      path,
-      thread_id,
-      user_message_id,
-      queued: false,
-    });
     // An agent that sent it is told it will not run, if this canceled it
-    // (not an earlier cancel, or a fence that reports on its own).
+    // (not an earlier cancel, or a fence that reports on its own). First:
+    // the chat update below can fail, and a retried cancel changes nothing.
     if (canceledNow) {
       // A message a restart held may have run already.
       const canceled: TurnOutcome =
@@ -12511,6 +12504,14 @@ async function handleAcpControlRequestNow(
         canceled,
       );
     }
+    await persistQueuedUserMessageProjection({
+      client: conatClient,
+      project_id,
+      path,
+      thread_id,
+      user_message_id,
+      queued: false,
+    });
     return { ok: true, state: "canceled" };
   }
   if (
