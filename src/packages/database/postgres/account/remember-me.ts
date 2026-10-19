@@ -11,6 +11,7 @@ OF course, not everything is rewritten yet...
 
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { accountWhere } from "./core";
+import { withAccountRehomeWriteFence } from "../account-rehome-fence";
 import type { PostgreSQL } from "../types";
 
 async function _get_remember_me(
@@ -78,26 +79,38 @@ export interface InvalidateAllRememberMeOptions {
   email_address?: string;
 }
 
+// Signs the account out everywhere: deletes its remember_me rows (its cookies
+// stop working) and revokes its auth sessions together, in one transaction
+// inside the account rehome fence, like server/auth/auth-sessions.ts
+// endAllSignInSessions. Both rows move with the account when it is rehomed,
+// so neither may change while a rehome copies them.
 export async function invalidate_all_remember_me(
   db: PostgreSQL,
   opts: InvalidateAllRememberMeOptions,
 ): Promise<void> {
-  await db.async_query({
-    query: "DELETE FROM remember_me",
+  const { rows } = await db.async_query({
+    query: "SELECT account_id FROM accounts",
     where: accountWhere(opts),
   });
-}
-
-export interface DeleteRememberMeOptions {
-  hash: string;
-}
-
-export async function delete_remember_me(
-  db: PostgreSQL,
-  opts: DeleteRememberMeOptions,
-): Promise<void> {
-  await db.async_query({
-    query: "DELETE FROM remember_me",
-    where: { "hash = $::TEXT": opts.hash.slice(0, 127) },
+  const account_id: string | undefined = rows[0]?.account_id;
+  if (!account_id) return;
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "sign out everywhere",
+    fn: async (client) => {
+      await client.query(
+        "DELETE FROM remember_me WHERE account_id = $1::UUID",
+        [account_id],
+      );
+      await client.query(
+        `
+          UPDATE account_auth_sessions
+             SET updated = NOW(), revoked_at = NOW()
+           WHERE account_id = $1::UUID
+             AND revoked_at IS NULL
+        `,
+        [account_id],
+      );
+    },
   });
 }
