@@ -6,7 +6,8 @@
 // LRO progress publishes are fire-and-forget, so nothing awaits them. A
 // publish that times out (e.g. while a course collect floods the persist
 // server) then rejects with nobody listening, and the hub logs it as an
-// unhandled rejection. Every `void publishLro...(...)` must end in `.catch(`.
+// unhandled rejection. Every discarded `publishLro...(...)`, whether `void`
+// or a bare statement, must end in `.catch(`.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -62,13 +63,23 @@ function endsInCatch(calls: ts.CallExpression[]): boolean {
   );
 }
 
-// Lines of `void publishLro...(...)...` whose rejection nothing handles.
+// The promise a node throws away: the operand of `void`, or a bare
+// expression statement (a `void` statement is handled as its operand).
+function discarded(node: ts.Node): ts.Expression | undefined {
+  if (ts.isVoidExpression(node)) return node.expression;
+  if (ts.isExpressionStatement(node) && !ts.isVoidExpression(node.expression))
+    return node.expression;
+  return undefined;
+}
+
+// Lines of discarded `publishLro...(...)...` whose rejection nothing handles.
 function uncaughtPublishes(text: string): number[] {
   const file = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
   const lines: number[] = [];
   const visit = (node: ts.Node) => {
-    if (ts.isVoidExpression(node)) {
-      const calls = callChain(node.expression);
+    const expr = discarded(node);
+    if (expr != null) {
+      const calls = callChain(expr);
       if (isPublisherCall(calls[calls.length - 1]) && !endsInCatch(calls)) {
         lines.push(
           file.getLineAndCharacterOfPosition(node.getStart()).line + 1,
@@ -116,6 +127,21 @@ describe("fire-and-forget LRO publishes", () => {
         ].join("\n"),
       ),
     ).toEqual([1, 2, 3, 5]);
+  });
+
+  it("treats a bare statement like void", () => {
+    expect(
+      uncaughtPublishes(
+        [
+          "publishLroEvent({});",
+          "publishLroSummary({}).then(() => {});",
+          "publishLroEvent({}).catch(() => {});",
+          "async function f() { await publishLroEvent({}); }",
+          "function g() { return publishLroSummary({}); }",
+          "const p = publishLroEvent({});",
+        ].join("\n"),
+      ),
+    ).toEqual([1, 2]);
   });
 
   it("always handle rejection", () => {
