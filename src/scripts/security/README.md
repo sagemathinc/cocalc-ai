@@ -59,4 +59,19 @@ On every such push it fetches all of these branch lists fresh, in parallel: the 
 
 `COCALC_DISCLOSE=1`, set by `disclose.sh`, allows the deliberate disclosure push. Keep the `private` remote's push URL disabled; the scripts push to its explicit URL.
 
+## What the guard does and doesn't promise
+
+It protects against **accidental** publication of private work.
+
+**Hard guarantees:** pushes to non-private destinations are refused for:
+
+- private branch names;
+- any private commit id;
+- non-commit objects;
+- pushes made when private state can't be fetched, archived or analyzed (fail closed).
+
+**Best-effort detection:** private work rewritten with git (cherry-pick, amend, rebase, squash, re-split by file onto another public base) is refused when its tree or patch-id matches private work.
+
+**Out of scope:** deliberate evasion, such as retyping the code by hand, copying only some hunks, or mixing private hunks with new edits in the same commit. Treat the guard as a seatbelt, not as access control: anyone who can read the private repo can publish its contents.
+
 `pre-push-guard.test.sh` tests the guard and the installer in a temporary directory, with local stand-in repos. It needs no network and doesn't touch your branches.
