@@ -1164,10 +1164,20 @@ billing_authority_enabled() {
   return 1
 }
 
+# A process that has exited but was not reaped (a zombie, e.g. under a
+# container PID 1 that does not reap) still answers kill -0: it is not live.
+pid_live() {
+  kill -0 "$1" >/dev/null 2>&1 || return 1
+  case "$(ps -o stat= -p "$1" 2>/dev/null)" in
+    Z*) return 1 ;;
+  esac
+  return 0
+}
+
 billing_worker_running() {
   local pid
   pid="$(cat "$BILLING_PID_FILE" 2>/dev/null || true)"
-  [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1
+  [ -n "$pid" ] && pid_live "$pid"
 }
 
 # Called with the seed hub's environment. Billing authority needs exactly one
@@ -1216,12 +1226,12 @@ stop_billing_worker() {
   # It leads its own session (setsid): signal the whole group.
   kill -TERM -- "-$pid" >/dev/null 2>&1 || kill -TERM "$pid" >/dev/null 2>&1 || true
   for i in $(seq 1 30); do
-    if ! kill -0 "$pid" >/dev/null 2>&1; then
+    if ! pid_live "$pid"; then
       break
     fi
     sleep 1
   done
-  if kill -0 "$pid" >/dev/null 2>&1; then
+  if pid_live "$pid"; then
     kill -KILL -- "-$pid" >/dev/null 2>&1 || kill -KILL "$pid" >/dev/null 2>&1 || true
     echo "billing worker killed"
   else
