@@ -16,6 +16,17 @@ interface WindowOpts {
   noopener?: boolean;
 }
 
+// A URL that runs script when opened.  Browsers ignore ASCII whitespace and
+// control characters around and inside the scheme, so they are ignored here
+// too.  window.open with such a URL into a new blank window runs it with this
+// page's origin, so it is never opened.
+export function isScriptUrl(url: unknown): boolean {
+  return (
+    typeof url === "string" &&
+    /^(?:javascript|vbscript):/i.test(url.replace(/[\u0000-\u0020]/g, ""))
+  );
+}
+
 export function open_popup_window(url: string, opts: WindowOpts = {}) {
   return open_new_tab(url, true, opts);
 }
@@ -27,6 +38,10 @@ export function open_new_tab(
   opts: WindowOpts = {},
 ) {
   // if popup=true, it opens a smaller overlay window instead of a new tab (though depends on browser)
+  if (isScriptUrl(url)) {
+    console.warn("not opening a script URL in a new tab");
+    return null;
+  }
 
   let tab;
   opts = defaults(opts, {
