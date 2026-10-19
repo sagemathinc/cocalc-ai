@@ -4179,6 +4179,272 @@ normalize_project_io_class_state
             self.assertEqual((state / pid(4003)).read_text(), "premium\n")
             self.assertEqual(len(list(state.iterdir())), 3000 + 1 + 2)
 
+    def test_project_conat_router_port_follows_project_host(self) -> None:
+        port = bootstrap.project_conat_router_port
+        self.assertEqual(port([]), 9102)
+        self.assertEqual(port(["PORT=9010"]), 9110)
+        self.assertEqual(port(['PORT="9010"']), 9110)
+        self.assertEqual(
+            port(["PORT=9010", "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9555"]),
+            9555,
+        )
+        # Malformed or out-of-range values fall back like project-host does.
+        self.assertEqual(port(["PORT=nope", "garbage line"]), 9102)
+        self.assertEqual(port(["COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=0"]), 9102)
+        self.assertEqual(port(["PORT=65500"]), 9102)
+        self.assertEqual(port(["PORT=127.0.0.1:9010"]), 9110)
+
+    def _storage_wrapper_for(self, cfg) -> str:
+        captured: dict[str, str] = {}
+        original_text_write_atomic = bootstrap.text_write_atomic
+        original_chmod = bootstrap.os.chmod
+        original_chown = bootstrap.os.chown
+
+        def capture_write(path, data, **_kwargs):
+            captured[str(path)] = data
+            return len(data)
+
+        try:
+            bootstrap.text_write_atomic = capture_write
+            bootstrap.os.chmod = lambda *_args, **_kwargs: None
+            bootstrap.os.chown = lambda *_args, **_kwargs: None
+            bootstrap.install_privileged_wrappers(cfg)
+        finally:
+            bootstrap.text_write_atomic = original_text_write_atomic
+            bootstrap.os.chmod = original_chmod
+            bootstrap.os.chown = original_chown
+        return captured["/usr/local/sbin/cocalc-runtime-storage"]
+
+    def test_storage_wrapper_templates_the_conat_router_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), env_lines=["PORT=9010"])
+            script = self._storage_wrapper_for(cfg)
+            env_file = Path(cfg.env_file)
+        self.assertIn('PROJECT_CONAT_ROUTER_PORT_DEFAULT="9110"', script)
+        self.assertIn(f'PROJECT_HOST_ENV_FILE="{env_file}"', script)
+        self.assertIn(
+            f'PROJECT_HOST_LOCAL_ENV_FILE="{bootstrap.project_host_local_env_path(env_file)}"',
+            script,
+        )
+
+    def _egress_rules(
+        self,
+        env: str | None = None,
+        local_env: str | None = None,
+        env_lines: list[str] | None = None,
+    ) -> list[str]:
+        """Run the wrapper's real shell functions and return the nft rules
+        emit_project_metadata_rules prints, with the daemon's env files
+        (absent when None) in a temporary directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            if env_lines is not None:
+                cfg = replace(cfg, env_lines=env_lines)
+            script = self._storage_wrapper_for(cfg)
+            env_file = Path(tmpdir) / "project-host.env"
+            local_env_file = Path(tmpdir) / "project-host.local.env"
+            if env is not None:
+                env_file.write_text(env)
+            if local_env is not None:
+                local_env_file.write_text(local_env)
+            variables = "\n".join(
+                line
+                for line in script.splitlines()
+                if line.startswith(
+                    (
+                        "PROJECT_METADATA_",
+                        "PROJECT_CONAT_ROUTER_PORT_DEFAULT=",
+                        "PROJECT_PRIVATE_IPV",
+                        "PROJECT_NETWORK_TABLE=",
+                        "PROJECT_NETWORK_CHAIN=",
+                    )
+                )
+            )
+
+            def function(name: str) -> str:
+                return f"{name}() {{" + script.split(f"\n{name}() {{", 1)[1].split(
+                    "\n}\n", 1
+                )[0] + "\n}\n"
+
+            program = "\n".join(
+                [
+                    variables,
+                    f'PROJECT_HOST_ENV_FILE="{env_file}"',
+                    f'PROJECT_HOST_LOCAL_ENV_FILE="{local_env_file}"',
+                    'project_network_pool_cgroup_path() { echo "cocalc-project-pool"; }',
+                    *(
+                        function(name)
+                        for name in (
+                            "project_host_env_file_value",
+                            "project_host_env_value",
+                            "project_host_port_number",
+                            "project_conat_router_port",
+                            "emit_project_metadata_rules",
+                        )
+                    ),
+                    "emit_project_metadata_rules",
+                ]
+            )
+            return subprocess.run(
+                ["bash", "-c", program], check=True, capture_output=True, text=True
+            ).stdout.splitlines()
+
+    def _conat_exemption(self, rules: list[str]) -> str:
+        local_tcp = [rule for rule in rules if "egress-local-tcp" in rule]
+        self.assertEqual(len(local_tcp), 1)
+        return local_tcp[0].split("tcp dport != { 53, ", 1)[1].split(" }", 1)[0]
+
+    def test_project_egress_conat_port_follows_the_daemon_env_files(self) -> None:
+        # No env files: the bootstrap-derived default.
+        self.assertEqual(self._conat_exemption(self._egress_rules()), "9102")
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env_lines=["PORT=9010"])), "9110"
+        )
+        # The managed file, then the local override file, as resolveEnv merges them.
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=9010\n")), "9110"
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(env="PORT=9010\n", local_env="PORT=9020\n")
+            ),
+            "9120",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\nCOCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9500\n",
+                    local_env='# override\n  COCALC_PROJECT_HOST_CONAT_ROUTER_PORT = "9555"\n',
+                )
+            ),
+            "9555",
+        )
+        # An explicit router port in the managed file beats a local PORT.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9500\n",
+                    local_env="PORT=9020\n",
+                )
+            ),
+            "9500",
+        )
+        # The files win over the bootstrap-derived value; invalid values fall back.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(env="PORT=9030\n", env_lines=["PORT=9010"])
+            ),
+            "9130",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\n",
+                    local_env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=nope\n",
+                )
+            ),
+            "9110",
+        )
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=65500\n")), "9102"
+        )
+        # A key present but empty in the local file still overrides the managed
+        # value: project-host then falls back to its default PORT 9002.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\n", local_env="PORT=\n", env_lines=["PORT=9010"]
+                )
+            ),
+            "9102",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(local_env="PORT=\n", env_lines=["PORT=9010"])
+            ),
+            "9102",
+        )
+        # parsePort takes the text after the last ":".
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=127.0.0.1:9010\n")),
+            "9110",
+        )
+
+    # JavaScript's Number(value) for each input, restricted to ports 1-65535,
+    # as checked against node: project-host reads its port settings this way.
+    JS_PORT_CASES = [
+        ("9010", 9010), ("9010.0", 9010), ("9.01e3", 9010), ("+9010", 9010),
+        (" 9010 ", 9010), ("0x2332", 9010), ("0X2332", 9010), ("0o21462", 9010),
+        ("0b10001100110010", 9010), ("09010", 9010), ("9010.", 9010),
+        ("  +.9010e4 ", 9010), (".5e4", 5000), ("1.0e+3", 1000), ("65535", 65535),
+        ("-9010", None), ("9010abc", None), ("", None), ("1_000", None),
+        ("Infinity", None), ("0", None), ("9010.5", None), ("1e999", None),
+        ("+0x10", None), ("00x10", None), ("0x", None), ("65536", None),
+    ]
+
+    def test_port_parsing_matches_javascript_number(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = self._storage_wrapper_for(make_cfg(tmpdir))
+        function = "project_host_port_number() {" + script.split(
+            "\nproject_host_port_number() {", 1
+        )[1].split("\n}\n", 1)[0] + "\n}\n"
+        for value, expected in self.JS_PORT_CASES:
+            with self.subTest(value=value):
+                shell = subprocess.run(
+                    ["bash", "-c", function + 'project_host_port_number "$1"', "_", value],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                self.assertEqual(int(shell) if shell else None, expected)
+                python = bootstrap.js_positive_integer(value)
+                self.assertEqual(
+                    python if python is not None and python <= 65535 else None,
+                    expected,
+                )
+
+    def test_project_egress_conat_port_accepts_what_project_host_accepts(self) -> None:
+        # Values project-host runs with even though they are not plain digits.
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=9010.0\n")), "9110"
+        )
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(local_env="PORT=h:9.01e3\n")),
+            "9110",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=+9555\n"
+                )
+            ),
+            "9555",
+        )
+        self.assertEqual(
+            bootstrap.project_conat_router_port(["PORT=9010.0"]), 9110
+        )
+        self.assertEqual(
+            bootstrap.project_conat_router_port(
+                ["COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=0x2553"]
+            ),
+            9555,
+        )
+
+    def test_project_egress_rules_render_as_nft(self) -> None:
+        rules = self._egress_rules()
+        prefix = 'add rule inet cocalc_project_network output socket cgroupv2 level 1 "cocalc-project-pool"'
+        self.assertEqual(
+            rules[2:],
+            [
+                f"{prefix} ct state new fib daddr type local meta l4proto tcp tcp dport != {{ 53, 9102 }} counter drop comment \"cocalc-project-network-egress-local-tcp\"",
+                f"{prefix} ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop comment \"cocalc-project-network-egress-local-udp\"",
+                f"{prefix} ct state new ip daddr {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv4\"",
+                f"{prefix} ct state new ip6 daddr fc00::/7 meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv6\"",
+            ],
+        )
+        self.assertTrue(rules[0].endswith('comment "cocalc-project-network-metadata-ipv4"'))
+        self.assertTrue(rules[1].endswith('comment "cocalc-project-network-metadata-ipv6"'))
+
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
     ) -> None:
@@ -4728,6 +4994,15 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"', script
             )
+            self.assertIn('PROJECT_CONAT_ROUTER_PORT_DEFAULT="9102"', script)
+            self.assertNotIn("__PROJECT_CONAT_ROUTER_PORT__", script)
+            self.assertNotIn("__PROJECT_HOST_ENV_FILE__", script)
+            self.assertNotIn("__PROJECT_HOST_LOCAL_ENV_FILE__", script)
+            self.assertIn(
+                'PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"',
+                script,
+            )
+            self.assertIn('PROJECT_PRIVATE_IPV6="fc00::/7"', script)
             self.assertIn("socket cgroupv2 level", script)
             self.assertIn("apply_pasta_resource_limits", script)
             self.assertIn("ensure_project_network_rule", script)
@@ -4777,11 +5052,40 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'path="$(project_network_pool_cgroup_path)"', emit_metadata_body
             )
+            # The shared egress block: new connections only, drop-only, and
+            # after the metadata rules in the shared pool rules.
+            self.assertIn(
+                'marker="cocalc-project-network-egress"', emit_metadata_body
+            )
+            for comment in ("local-tcp", "local-udp", "private-ipv4", "private-ipv6"):
+                self.assertIn(f'comment "%s-{comment}"', emit_metadata_body)
+            self.assertEqual(emit_metadata_body.count("ct state new"), 4)
+            self.assertNotIn("counter accept", emit_metadata_body)
+            # The conat port is exempt for TCP only; UDP keeps only DNS.
+            self.assertIn(
+                "ct state new fib daddr type local meta l4proto tcp tcp dport != { 53, %s } counter drop",
+                emit_metadata_body,
+            )
+            self.assertIn('"$(project_conat_router_port)"', emit_metadata_body)
+            self.assertIn(
+                "ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop",
+                emit_metadata_body,
+            )
+            self.assertEqual(emit_metadata_body.count("th dport != 53"), 2)
             verify_network_body = script.split(
                 "verify_project_network_limits() {", 1
             )[1].split("\n}\n\nrender_project_network_rules()", 1)[0]
             self.assertIn("metadata_ipv4_count", verify_network_body)
             self.assertIn("metadata_ipv6_count", verify_network_body)
+            for name in ("local-tcp", "local-udp", "private-ipv4", "private-ipv6"):
+                self.assertIn(
+                    f'comment "cocalc-project-network-egress-{name}"',
+                    verify_network_body,
+                )
+            self.assertIn(
+                "project egress block rules are missing or duplicated",
+                verify_network_body,
+            )
             ensure_network_body = script.split(
                 "ensure_project_network_rule() {", 1
             )[1].split("\n}\n\nemit_project_metadata_rules()", 1)[0]
@@ -7184,6 +7488,7 @@ class BootstrapModesTest(unittest.TestCase):
             "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
             "configure_cloudflared_with_options "
             "configure_critical_service_oom_protection configure_autostart "
+            "reconcile_project_network_limits "
             "record_operation_start record_operation_success "
             "record_operation_failure report_bootstrap_status log_line"
         ).split()
@@ -7234,6 +7539,74 @@ class BootstrapModesTest(unittest.TestCase):
                 )
                 self.assertEqual(start.called, expected)
                 self.assertEqual(fingerprint.call_count, len(fingerprints))
+
+    def test_reconcile_rebuilds_egress_rules_for_the_env_the_stack_runs_with(
+        self,
+    ) -> None:
+        # write_env runs after the containment pass. When it changes the conat
+        # router port, the final network reconcile must see the new env file.
+        steps = (
+            "ensure_runtime_user ensure_bootstrap_paths "
+            "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_kernel_module_hardening configure_kernel_key_limits "
+            "configure_inotify_limits configure_journald_limits "
+            "configure_rsyslog_limits install_btrfs_helper "
+            "install_privileged_wrappers ensure_cocalc_mount setup_shared_scratch "
+            "ensure_btrfs_data reconcile_bees_runtime_policy "
+            "reconcile_project_io_policy reconcile_host_service_cgroup "
+            "ensure_subuids ensure_runtime_user_manager configure_podman "
+            "verify_runtime_user_contract configure_runtime_shell_env "
+            "setup_master_conat_token install_privileged_tool_binaries "
+            "install_node configure_node_bind_service_capability write_wrapper "
+            "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
+            "configure_cloudflared_with_options "
+            "configure_critical_service_oom_protection configure_autostart "
+            "record_operation_start record_operation_success "
+            "record_operation_failure report_bootstrap_status log_line"
+        ).split()
+        with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
+            cfg = replace(make_cfg(tmpdir), env_lines=["PORT=9020"])
+            env_path = Path(cfg.env_file)
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            env_path.write_text("PORT=9010\n")
+            events: list[str] = []
+            for name in steps:
+                stack.enter_context(
+                    mock.patch.object(bootstrap, name, lambda *a, **k: None)
+                )
+            stack.enter_context(
+                mock.patch.object(bootstrap, "compute_image_size", return_value=10)
+            )
+            stack.enter_context(
+                mock.patch.object(bootstrap, "extract_bundle", return_value=None)
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "write_env",
+                    lambda *_a, **_k: env_path.write_text("PORT=9020\n"),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "start_project_host",
+                    lambda *_a, **_k: events.append("start"),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "reconcile_project_network_limits",
+                    lambda *_a, **_k: events.append(
+                        "network " + env_path.read_text().strip()
+                    ),
+                )
+            )
+            self.assertEqual(bootstrap.run_reconcile(cfg), 0)
+        self.assertEqual(
+            events, ["network PORT=9010", "start", "network PORT=9020"]
+        )
 
     def test_restart_fingerprint_tracks_what_the_running_stack_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
