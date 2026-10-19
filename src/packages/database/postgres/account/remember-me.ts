@@ -97,20 +97,26 @@ export async function invalidate_all_remember_me(
   await withAccountRehomeWriteFence({
     account_id,
     action: "sign out everywhere",
-    fn: async (client) => {
-      await client.query(
-        "DELETE FROM remember_me WHERE account_id = $1::UUID",
-        [account_id],
-      );
-      await client.query(
-        `
-          UPDATE account_auth_sessions
-             SET updated = NOW(), revoked_at = NOW()
-           WHERE account_id = $1::UUID
-             AND revoked_at IS NULL
-        `,
-        [account_id],
-      );
-    },
+    fn: async (client) => await endAllSessionsWithDb(client, account_id),
   });
+}
+
+// The writes of signing an account out everywhere, for a caller already
+// inside the account's rehome fence transaction.
+export async function endAllSessionsWithDb(
+  client: { query: (sql: string, params?: any[]) => Promise<unknown> },
+  account_id: string,
+): Promise<void> {
+  await client.query("DELETE FROM remember_me WHERE account_id = $1::UUID", [
+    account_id,
+  ]);
+  await client.query(
+    `
+      UPDATE account_auth_sessions
+         SET updated = NOW(), revoked_at = NOW()
+       WHERE account_id = $1::UUID
+         AND revoked_at IS NULL
+    `,
+    [account_id],
+  );
 }
