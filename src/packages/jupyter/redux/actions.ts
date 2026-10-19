@@ -2923,13 +2923,34 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
   };
 
+  private recordNotebookHadContentIfPlaceholder = (): void => {
+    try {
+      if (
+        cellRecordsAreGeneratedPlaceholder(this.syncdb.get({ type: "cell" })) &&
+        this.syncdb.get_one({ type: "settings" })?.get("has_had_content") !==
+          true
+      ) {
+        this._set({ type: "settings", has_had_content: true }, false);
+      }
+    } catch {
+      // not ready
+    }
+  };
+
   ensureThereIsACell = () => {
     if (this._state !== "ready") {
       return;
     }
     const cells = this.store.get("cells");
     if (cells != null && cells.size > 0) {
-      this.noteNotebookContent();
+      if (this.sawNotebookContent) {
+        // Content was cleared back to exactly the generated empty cell (for
+        // example its only input was deleted): record it, as for deleting
+        // every cell, so stale content on disk does not come back.
+        this.recordNotebookHadContentIfPlaceholder();
+      } else {
+        this.noteNotebookContent();
+      }
       return;
     }
     if (cells == null || cells.size === 0) {

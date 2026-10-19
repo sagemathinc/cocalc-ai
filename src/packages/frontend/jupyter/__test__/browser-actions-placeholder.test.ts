@@ -50,7 +50,11 @@ function createActions({
   actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "" }] }));
   let version = "v1";
   actions.setVersion = (v: string) => (version = v);
-  const cellList = List(cells.map((cell) => fromJS(cell)));
+  let cellList = List(cells.map((cell) => fromJS(cell)));
+  let settingsRecord: object = settings;
+  actions.setCells = (next: object[]) =>
+    (cellList = List(next.map((cell) => fromJS(cell))));
+  actions.setSettings = (next: object) => (settingsRecord = next);
   actions.syncdb = {
     fs: {
       jupyterImportIpynb: jest.fn(async (ipynb) => ({ ipynb })),
@@ -66,7 +70,7 @@ function createActions({
     get: (where) => (where?.type === "cell" ? cellList : List()),
     get_one: (where) =>
       where?.type === "settings"
-        ? fromJS({ type: "settings", ...settings })
+        ? fromJS({ type: "settings", ...settingsRecord })
         : cellList.first(),
     has_uncommitted_changes: () => false,
     newestVersion: () => version,
@@ -328,5 +332,91 @@ describe("ensureThereIsACell", () => {
       expect.objectContaining({ type: "settings" }),
       expect.anything(),
     );
+  });
+
+  it("records durably when the generated cell is cleared back to empty after having content", () => {
+    const actions = createActions({ cells: [{ ...ALPHA, input: "x = 1" }] });
+    actions._set = jest.fn();
+    actions.set_trust_notebook = jest.fn();
+    actions.noteNotebookContent();
+    actions.setCells([ALPHA]);
+    storeCells(actions, [ALPHA]);
+    actions.ensureThereIsACell();
+
+    expect(actions._set).toHaveBeenCalledWith(
+      { type: "settings", has_had_content: true },
+      false,
+    );
+  });
+
+  it("does not rewrite the flag once it is set", () => {
+    const actions = createActions({ cells: [{ ...ALPHA, input: "x = 1" }] });
+    actions._set = jest.fn();
+    actions.noteNotebookContent();
+    actions.setCells([ALPHA]);
+    actions.setSettings({ has_had_content: true });
+    storeCells(actions, [ALPHA]);
+    actions.ensureThereIsACell();
+
+    expect(actions._set).not.toHaveBeenCalled();
+  });
+
+  it("records durably when a file loaded on a file event is then emptied", async () => {
+    const actions = createActions(); // the placeholder
+    actions._set = jest.fn();
+    actions.set_trust_notebook = jest.fn();
+    actions.setToIpynb = jest.fn(async () => {
+      actions.setCells([
+        { type: "cell", id: "m1", input: "### Lab 3", cell_type: "markdown" },
+      ]);
+    });
+    await actions.watchLoadFromDisk({ diskRead: LAB_READ });
+    expect(actions.setToIpynb).toHaveBeenCalled();
+
+    actions.setCells([]);
+    storeCells(actions, []);
+    actions.ensureThereIsACell();
+
+    expect(actions._set).toHaveBeenCalledWith(
+      { type: "settings", has_had_content: true },
+      false,
+    );
+  });
+});
+
+describe("watcher hand-off", () => {
+  it("rechecks the file once the watcher exists, so content written after the initial read is not missed", async () => {
+    const actions = createActions();
+    let closed = false;
+    actions.isClosed = jest.fn(() => closed);
+    actions.noteOpenInitPhase = jest.fn();
+    actions.maybeLogFirstVisibleCell = jest.fn();
+    actions.maybeLogOpenInitSummary = jest.fn();
+    actions.initKernel = jest.fn();
+    actions.signalIfFileDeleted = jest.fn(async () => {});
+    actions.syncdb.on = jest.fn();
+    // The initial read sees an empty file ...
+    actions.syncdb.fs.readFile = jest.fn(async () => Buffer.from(""));
+    actions.syncdb.fs.stat = jest.fn(async () => ({ mtimeMs: 3000 }));
+    // ... and the copy finishes as the watcher is being established, which
+    // produces no event for it.
+    actions.syncdb.fs.watch = jest.fn(async () => {
+      actions.syncdb.fs.readFile = jest.fn(async () => Buffer.from(LAB_TEXT));
+      return {
+        close: jest.fn(),
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => {
+              closed = true;
+              return { done: false, value: { event: "change" } };
+            },
+          };
+        },
+      };
+    });
+
+    await actions.watchIpynb();
+
+    expect(actions.setToIpynb).toHaveBeenCalledWith(LAB);
   });
 });

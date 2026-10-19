@@ -4653,6 +4653,9 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     await this.setToIpynb(ipynb);
+    // setToIpynb runs with change handling paused, so note the loaded content
+    // here (see ensureThereIsACell).
+    this.noteNotebookContent();
     this.markIpynbSaved();
     this.runDebug("ipynb.load.done", { bytes: read.bytes });
     // good time to refresh status
@@ -5109,6 +5112,13 @@ export class JupyterActions extends JupyterActions0 {
           });
           this.runDebug("watch.stream.opened");
           this.noteOpenInitPhase("watch_stream_opened");
+          // The watcher does not replay changes made before it existed. If
+          // the notebook is still the generated placeholder, recheck the
+          // file now, so content written between the initial read and this
+          // point (e.g. a course assignment copy finishing) is not missed.
+          if (this.rtcIsGeneratedPlaceholder()) {
+            await this.watchLoadFromDisk({});
+          }
           this.maybeLogOpenInitSummary("watch_stream_opened");
           for await (const { event, ignore, patch, patchSeq } of this
             .fileWatcher) {
