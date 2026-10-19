@@ -62,6 +62,9 @@ import { boardDecider } from "./board-decide-card";
  * crypto.getRandomValues, which every origin has: randomUUID is missing on a
  * plain-http site (cocalc-star on a LAN), where a board must still show
  * (Codex on #1134). */
+// Reads of a board that a publication overtook, before giving up.
+const MAX_READ_ATTEMPTS = 3;
+
 function frameNonce(): string {
   const b = crypto.getRandomValues(new Uint8Array(16));
   b[6] = (b[6] & 0x0f) | 0x40;
@@ -167,16 +170,33 @@ export default function BoardArtifact({
         const tooLarge = Error(
           `The board exceeds the ${BOARD_PREVIEW_LIMIT / 1024 / 1024} MiB preview limit. Open the file to see it.`,
         );
-        // The file service caps the read on the opened file, so a board
-        // that grows while it is read is refused there, not buffered here.
+        // The read's identity is fixed when it starts: its project and path
+        // (this effect's), and the artifact's revision then. A publication
+        // that lands while the file is read could otherwise label these
+        // bytes with the newer revision, so submissions against them would
+        // look current (Codex on #1134): then the bytes are dropped and the
+        // file is read again, under the new revision.
+        let revision = revisionRef.current;
         let raw: string | Buffer;
-        try {
-          raw = await fs.readRegularFile(path, {
-            maxBytes: BOARD_PREVIEW_LIMIT,
-          });
-        } catch (err) {
-          if (err?.code === "EFBIG") throw tooLarge;
-          throw err;
+        for (let attempt = 1; ; attempt++) {
+          revision = revisionRef.current;
+          // The file service caps the read on the opened file, so a board
+          // that grows while it is read is refused there, not buffered here.
+          try {
+            raw = await fs.readRegularFile(path, {
+              maxBytes: BOARD_PREVIEW_LIMIT,
+            });
+          } catch (err) {
+            if (err?.code === "EFBIG") throw tooLarge;
+            throw err;
+          }
+          if (cancelled) return;
+          if (revisionRef.current === revision) break;
+          if (attempt >= MAX_READ_ATTEMPTS) {
+            throw Error(
+              "The board kept changing while it was read. Refresh to try again.",
+            );
+          }
         }
         const bytes =
           typeof raw === "string"
@@ -189,7 +209,7 @@ export default function BoardArtifact({
           setBoard({
             id: refresh,
             text,
-            revision: revisionRef.current,
+            revision,
             project_id,
             path,
           });

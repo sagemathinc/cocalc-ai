@@ -10,6 +10,8 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { useState } from "react";
+import { flushSync } from "react-dom";
 import BoardArtifact from "./board-artifact";
 import { boardFrameUrl, isBoardPath } from "./board-artifact-frame";
 
@@ -384,6 +386,73 @@ describe("the answers bootstrap (board-host-protocol.md)", () => {
     expect(deliver).not.toHaveBeenCalled();
     fromFrame(frame, { ...READY, nonce }); // a second ready: nothing more
     expect(posted).toHaveBeenCalledTimes(1);
+  });
+
+  // Codex on #1134: a publication that lands while the file is read must
+  // not label the bytes read before it: they are dropped and read again.
+  test("a revision that changes during the read: the board is read again, under it", async () => {
+    let finish!: (text: string) => void;
+    readRegularFile.mockImplementationOnce(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const card = (revision: string) => (
+      <BoardArtifact
+        path={PATH}
+        frameUrl={FRAME}
+        deliverAnswers={deliver}
+        revision={revision}
+      />
+    );
+    const view = render(card("pub-1"));
+    await waitFor(() => expect(readRegularFile).toHaveBeenCalledTimes(1));
+    view.rerender(card("pub-2")); // published while the read is pending
+    readRegularFile.mockResolvedValueOnce(
+      '{"format":"sagebrush-board","version":1,"v":2}',
+    );
+    finish('{"format":"sagebrush-board","version":1,"v":1}');
+    const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+    await screen.findByText("Current saved board");
+    expect(readRegularFile).toHaveBeenCalledTimes(2);
+    const posted = watch(frame);
+    const nonce = new URL(frame.getAttribute("src")!).hash.replace(
+      "#sb-nonce=",
+      "",
+    );
+    fromFrame(frame, { ...READY, nonce });
+    expect(posted).toHaveBeenCalledTimes(1);
+    expect(posted.mock.calls[0][0]).toMatchObject({
+      text: '{"format":"sagebrush-board","version":1,"v":2}',
+      revision: "pub-2",
+    });
+  });
+
+  test("a board that keeps changing while it is read is refused, never mislabelled", async () => {
+    let setRevision!: (r: string) => void;
+    function Card() {
+      const [revision, set] = useState("r0");
+      setRevision = set;
+      return (
+        <BoardArtifact
+          path={PATH}
+          frameUrl={FRAME}
+          deliverAnswers={deliver}
+          revision={revision}
+        />
+      );
+    }
+    let n = 0;
+    // each read is overtaken by another publication before it returns
+    readRegularFile.mockImplementation(async () => {
+      n++;
+      flushSync(() => setRevision(`r${n}`));
+      return TEXT;
+    });
+    render(<Card />);
+    expect(
+      await screen.findByText(/kept changing while it was read/),
+    ).toBeInTheDocument();
+    expect(n).toBe(3);
+    expect(screen.queryByTitle(TITLE)).toBeNull();
   });
 
   test("a ready without the nonce gets the board without a port (no Submit)", async () => {
