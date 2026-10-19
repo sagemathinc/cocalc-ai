@@ -8066,9 +8066,14 @@ function isToolEvent(payload?: AcpStreamPayload | null): boolean {
     case "peerMessage":
       return true;
     case "harness": {
-      if (event.kind === "permission") return true;
-      const update = `${(event.data as { sessionUpdate?: unknown })?.sessionUpdate ?? ""}`;
-      return update === "tool_call" || update === "tool_call_update";
+      // A tool call counts once it runs, not while it waits for permission
+      // (which may be refused or canceled).
+      const data = event.data as { sessionUpdate?: unknown; status?: unknown };
+      return (
+        (data?.sessionUpdate === "tool_call" ||
+          data?.sessionUpdate === "tool_call_update") &&
+        (data.status === "in_progress" || data.status === "completed")
+      );
     }
     default:
       return false;
@@ -10244,6 +10249,12 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
     const message = `This agent turn could not run: ${(err as Error)?.message ?? err}`;
+    // Whether anything ran before it threw is not known here.
+    const outcome = turnOutcomeOf({
+      terminalState: "error",
+      failure: turnFailureOf(err),
+      error: message,
+    });
     logger.warn("queued acp job execution failed", {
       op_id: job.op_id,
       err,
@@ -10257,8 +10268,9 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       state: "error",
       error: message,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+      outcome,
     });
-    reportFailedAgentMessageTurn(job, request, message);
+    reportFailedAgentMessageTurn(job, request, message, outcome);
   }
 }
 

@@ -988,6 +988,9 @@ export function claimNextQueuedAcpJobForThread({
               started_at = ?,
               updated_at = ?,
               error = NULL,
+              -- Each attempt ends with its own outcome, never a resent
+              -- attempt's earlier one.
+              outcome_json = NULL,
               worker_id = ?,
               worker_bundle_version = ?
           WHERE op_id = ?

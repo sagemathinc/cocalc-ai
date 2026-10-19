@@ -44,7 +44,7 @@ export type TurnOutcome = {
       state: "failed";
       failure: TurnFailure;
       /** Any tool ran before it ended, so it may have changed something.
-       * Absent when the host lost track of the turn (a restart, a stop). */
+       * Absent when it is not known (e.g. the host lost track of it). */
       tool_ran?: boolean;
     }
   | {
@@ -175,7 +175,8 @@ export function turnOutcomeOf(opts: {
   failure?: TurnFailure;
   code?: string;
   error?: string;
-  toolRan: boolean;
+  /** Undefined when it is not known. */
+  toolRan?: boolean;
 }): TurnOutcome {
   if (opts.terminalState === "completed")
     return { version: 1, state: "completed" };
@@ -185,7 +186,7 @@ export function turnOutcomeOf(opts: {
       version: 1,
       state: "canceled",
       by: "person",
-      tool_ran: opts.toolRan,
+      ...(opts.toolRan !== undefined ? { tool_ran: opts.toolRan } : {}),
       ...(detail ? { detail } : {}),
     };
   const signal = opts.failure ?? turnFailureFromCode(opts.code);
@@ -193,7 +194,7 @@ export function turnOutcomeOf(opts: {
     version: 1,
     state: "failed",
     failure: signal ?? turnFailureFromText(opts.error ?? ""),
-    tool_ran: opts.toolRan,
+    ...(opts.toolRan !== undefined ? { tool_ran: opts.toolRan } : {}),
     classified_by: signal ? "signal" : "text",
     ...(detail ? { detail } : {}),
   };

@@ -359,6 +359,17 @@ describe("acp job queue ordering", () => {
     expect(
       JSON.parse(getAcpJobByOpId(queued.op_id)?.outcome_json ?? "null"),
     ).toEqual(outcome);
+    // A resent attempt starts without the earlier attempt's outcome.
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET state = 'queued' WHERE op_id = ?")
+      .run(queued.op_id);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-outcome",
+    });
+    expect(getAcpJobByOpId(queued.op_id)?.outcome_json).toBeNull();
   });
 
   it("terminally fences queued and running work for one stopped project", () => {
