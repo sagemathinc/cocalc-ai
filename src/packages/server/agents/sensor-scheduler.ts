@@ -250,6 +250,9 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   // Wakes held earlier that this run's wake includes.
   let combinedRuns: string[] = [];
   let missingNow: SensorConnector[] = [];
+  // This run is a watcher giving up after its check kept failing.
+  let failedOut = false;
+  let deliveryStarted = false;
   try {
     await db.query(
       // Database time, comparable with approved_at when the wake executes.
@@ -294,6 +297,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       };
       summary = wake.summary;
       finished = true;
+      failedOut = true;
       return sensorWakePrompt({
         title: spec.title,
         sensor_id: row.sensor_id,
@@ -569,6 +573,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       throw err;
     }
     let delivered;
+    deliveryStarted = true;
     try {
       delivered = await host.api.deliverAgentSensorWake({
         account_id: row.approved_by,
@@ -622,7 +627,15 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     await settleCombined(run_id, true);
   } catch (err) {
     error = errorText(err);
+    // Nothing was sent: a watcher giving up must try again.
+    if (failedOut && !deliveryStarted) finished = false;
   } finally {
+    // A give-up wake that was not sent (not_sent, over the wake limit, an
+    // error before sending) is neither a check failure, which would pause the
+    // watcher, nor a success, which would reset the count: the next failed
+    // check tries to give up again.
+    const keepFailures = failedOut && !finished;
+    if (keepFailures) failed = false;
     await finishRun(row, {
       run_id,
       started,
@@ -636,6 +649,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       pause,
       finished,
       connectors,
+      keepFailures,
     });
   }
 }
@@ -764,11 +778,17 @@ async function finishRun(
     pause: string | undefined;
     finished: boolean;
     connectors: SensorConnector[];
+    /** Neither count this run as a failure nor reset the count. */
+    keepFailures?: boolean;
   },
 ): Promise<void> {
   const db = agentStore();
   let pause = r.pause;
-  const failures = r.failed ? row.consecutive_failures + 1 : 0;
+  const failures = r.keepFailures
+    ? row.consecutive_failures
+    : r.failed
+      ? row.consecutive_failures + 1
+      : 0;
   if (!pause && failures >= SENSOR_LIMITS.maxConsecutiveFailures)
     pause = `Paused after ${failures} failed runs in a row. Last error: ${r.error ?? r.outcome}`;
   await db

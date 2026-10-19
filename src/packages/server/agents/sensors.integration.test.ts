@@ -1253,6 +1253,58 @@ describeDb("agent sensors", () => {
     });
   });
 
+  test("a give-up wake the host did not send is tried again, not paused", async () => {
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+    })) as any;
+    host.runAgentSensor.mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stdout: "",
+      stderr: "unknown flag: --json\n",
+    });
+    for (let i = 0; i < 4; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    host.deliverAgentSensorWake.mockResolvedValueOnce({
+      not_sent: "the agent's thread is unavailable",
+    });
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+    expect(paused).toHaveLength(0);
+    const state = async () =>
+      (
+        await getPool().query(
+          "SELECT status, pause_reason, consecutive_failures, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+          [ci.sensor.sensor_id],
+        )
+      ).rows[0];
+    // Still waiting, with its failures neither reset nor counted.
+    expect(await state()).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      consecutive_failures: 4,
+    });
+    expect((await state()).next_run_at).not.toBeNull();
+    // The next failed check gives up again, and this time it is sent.
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+    expect(host.deliverAgentSensorWake.mock.calls[1][0].prompt).toMatch(
+      /Gave up: .*failed 5 times in a row/,
+    );
+    expect(paused).toHaveLength(0);
+    expect(await state()).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+  });
+
   test("a watcher paused by a person gives back its place", async () => {
     limits.sensor_max_active_watchers = 1;
     const first = (await fileWatch()).sensor;
