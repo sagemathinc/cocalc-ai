@@ -46,7 +46,7 @@ board on the project host, is the only thing that writes the file:
 
 import {
   BOARD_EDITABLE_LIMIT,
-  BOARD_RECORD_LIMIT,
+  BOARD_HOST_RECORD_LIMIT,
 } from "@cocalc/util/board/names";
 
 export interface BoardLib {
@@ -133,7 +133,8 @@ export interface BoardManagerOptions {
 const MAX_SAVE_ATTEMPTS = 3;
 
 type Parsed =
-  { ok: true; doc: any; records: any[] } | { ok: false; status: BoardStatus };
+  | { ok: true; doc: any; records: any[] }
+  | { ok: false; status: BoardStatus };
 
 export class BoardManager {
   private readonly lib: BoardLib;
@@ -181,7 +182,7 @@ export class BoardManager {
     this.saveDelayMs = opts.saveDelayMs ?? 1000;
     this.loadIntervalMs = opts.loadIntervalMs ?? 250;
     this.maxBytes = opts.maxBytes ?? BOARD_EDITABLE_LIMIT;
-    this.maxRecords = opts.maxRecords ?? BOARD_RECORD_LIMIT;
+    this.maxRecords = opts.maxRecords ?? BOARD_HOST_RECORD_LIMIT;
     this.hardMaxBytes = opts.hardMaxBytes ?? 2 * this.maxBytes;
     this.hardMaxRecords = opts.hardMaxRecords ?? 2 * this.maxRecords;
     this.log = opts.log ?? (() => {});
@@ -322,7 +323,7 @@ export class BoardManager {
   private tooManyRecords(count: number): BoardStatus {
     return {
       state: "too-large",
-      message: `the board has ${count} records, over the ${this.maxRecords} a board can be edited with`,
+      message: `the board has ${count} records, over the ${this.maxRecords} a board can be edited with here, so it opens read-only`,
     };
   }
 

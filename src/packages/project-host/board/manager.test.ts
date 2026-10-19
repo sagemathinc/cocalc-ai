@@ -21,7 +21,9 @@ import { uuid } from "@cocalc/util/misc";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
 import {
+  BOARD_HOST_RECORD_LIMIT,
   BOARD_PRIMARY_KEYS,
+  BOARD_RECORD_LIMIT,
   BOARD_STRING_COLS,
 } from "@cocalc/util/board/names";
 import { BoardManager, type BoardFile } from "./manager";
@@ -882,6 +884,8 @@ describe("the record limit is checked before writing", () => {
       },
       recordsToString,
       saveDelayMs: 60_000,
+      // The protocol's limit, not the host's lower default.
+      maxRecords: BOARD_RECORD_LIMIT,
     });
     try {
       await manager.start();
@@ -924,4 +928,28 @@ test("a document grown past what a host keeps retires its manager", async () => 
   } finally {
     await t.cleanup();
   }
+});
+
+test("by default a host edits boards up to its own record limit", async () => {
+  const board = (records: number) =>
+    canonical({
+      ...BOARD,
+      nodes: Array.from({ length: records - 1 }, (_, i) => ({
+        id: `n${i}`,
+        text: "",
+        x: 0,
+        y: 0,
+      })),
+      edges: [],
+    });
+  const at = await setup(board(BOARD_HOST_RECORD_LIMIT), {
+    manager: { maxRecords: undefined },
+  });
+  expect(at.manager.getStatus().state).toBe("ok");
+  await at.cleanup();
+  const over = await setup(board(BOARD_HOST_RECORD_LIMIT + 1), {
+    manager: { maxRecords: undefined },
+  });
+  expect(over.manager.getStatus()).toMatchObject({ state: "too-large" });
+  await over.cleanup();
 });
