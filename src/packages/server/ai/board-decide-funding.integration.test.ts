@@ -958,12 +958,28 @@ describe("site-funded board decide", () => {
         microusd: 1,
       });
       const took = Date.now() - started;
-      jest.restoreAllMocks();
       await next.release();
       expect(took).toBeLessThan(PENDING_SETTLE_BUDGET_MS + 3000);
       expect(await rowsOf(requestId)).toEqual([
         { tag: "board-decide-calling", cost: 2 },
       ]);
+      // daybreak2: past the backoff, the next reservation doesn't start
+      // another remote settle for the row while the first is in flight
+      const calls = () =>
+        (
+          reservations.finishSiteFundedSpeechGlobal as jest.Mock
+        ).mock.calls.filter(([o]: any[]) => o.requestId === requestId).length;
+      expect(calls()).toBe(1);
+      require("./board-decide-funding").resetPendingSettleBackoffForTests();
+      const after = await funding.reserve({
+        board: BOARD_KEY,
+        accountId: acct,
+        requestId: uuid(),
+        microusd: 1,
+      });
+      await after.release();
+      expect(calls()).toBe(1);
+      jest.restoreAllMocks();
     });
 
     it("a stale hold never called is still released at no cost", async () => {

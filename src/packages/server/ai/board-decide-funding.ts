@@ -525,14 +525,26 @@ async function holdRow(
 // account in this process (a concurrent reservation shares it); a row
 // attempted in the last PENDING_SETTLE_BACKOFF_MS is skipped; the pass
 // stops at its first failure, so an outage costs a request at most one
-// attempt; and it stops waiting after PENDING_SETTLE_BUDGET_MS, so a slow
-// site pool can't stall admission (an abandoned settle may still finish:
-// it is idempotent, and the row stays CALLING until a pass confirms it).
+// attempt; and it waits at most PENDING_SETTLE_BUDGET_MS in all for the
+// site pool (a remote-wait budget; its own SELECT and UPDATE are outside
+// it), so a slow site pool can't stall admission. A remote settle it stops
+// waiting for stays registered here until it really ends (daybreak2):
+// no pass starts another for that row meanwhile, and at most
+// MAX_SETTLES_IN_FLIGHT are in flight in this process. The row stays
+// CALLING until a pass confirms its settle; settling is idempotent.
 // Rows not reached stay CALLING for a later pass.
 export const PENDING_SETTLE_BATCH = 3;
 export const PENDING_SETTLE_BACKOFF_MS = 30_000;
 export const PENDING_SETTLE_BUDGET_MS = 2_000;
+export const MAX_SETTLES_IN_FLIGHT = 100;
 const settling = new Map<string, Promise<void>>();
+// Remote settles in flight, by request id, until each really ends.
+const settlesInFlight = new Map<string, Promise<void>>();
+
+/** For tests. */
+export function pendingSettlesInFlightForTests(): number {
+  return settlesInFlight.size;
+}
 const settleAttempts = new RecentTimes({
   windowMs: PENDING_SETTLE_BACKOFF_MS,
   maxKeys: 10_000,
@@ -577,19 +589,27 @@ async function settlePendingBatch(accountId: string): Promise<void> {
   for (const row of pending) {
     const requestId = `${row.funded_event_id}`;
     const costMicrousd = Number(row.cost_microusd);
+    // One remote settle per row at a time, whoever stopped waiting for it.
+    if (settlesInFlight.has(requestId)) continue;
+    if (settlesInFlight.size >= MAX_SETTLES_IN_FLIGHT) return;
     if (!settleAttempts.take(requestId, Date.now(), 1)) continue;
     const left = deadline - Date.now();
     if (left <= 0) return;
     try {
+      const settle = finishSiteFundedSpeechGlobal({
+        requestId,
+        status: "committed",
+        costMicrousd,
+        chargeIfClosed: true,
+      });
+      settlesInFlight.set(requestId, settle);
+      settle
+        .catch(() => undefined)
+        .finally(() => settlesInFlight.delete(requestId));
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
-          finishSiteFundedSpeechGlobal({
-            requestId,
-            status: "committed",
-            costMicrousd,
-            chargeIfClosed: true,
-          }),
+          settle,
           new Promise((_, reject) => {
             timer = setTimeout(
               () => reject(new Error("pending settlement over budget")),
