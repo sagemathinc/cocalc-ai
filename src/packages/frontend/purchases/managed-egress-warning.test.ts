@@ -9,6 +9,7 @@ import {
   MANAGED_EGRESS_SEVERE_THRESHOLD,
   MANAGED_EGRESS_WARNING_THRESHOLD,
   getManagedEgressWindowWarnings,
+  managedEgressUpgradeHelps,
 } from "./managed-egress-warning";
 
 function makeDetails({
@@ -163,5 +164,18 @@ describe("getManagedEgressWindowWarnings", () => {
     // 0 limit, no traffic: nothing to show
     details.usage_status.managed_control_plane_egress_7d_bytes = 0;
     expect(getManagedEgressWindowWarnings(details)).toEqual([]);
+  });
+
+  it("offers the upgrade whenever a shared-pool warning is shown, even behind a control-plane one", () => {
+    const details = makeDetails({ limit7d: 1000, used7d: 900 });
+    details.usage_status = {
+      ...details.usage_status!,
+      managed_control_plane_egress_7d_bytes: 95_000_000_000,
+      managed_control_plane_egress_7d_limit_bytes: 100_000_000_000,
+    };
+    const warnings = getManagedEgressWindowWarnings(details);
+    expect(warnings.map((w) => w.pool)).toEqual(["control-plane", "shared"]);
+    expect(managedEgressUpgradeHelps(warnings)).toBe(true);
+    expect(managedEgressUpgradeHelps(warnings.slice(0, 1))).toBe(false);
   });
 });

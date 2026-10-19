@@ -39,6 +39,8 @@ export interface ManagedEgressNoticeInput {
   limit: number;
   blocked: boolean;
   resets_at?: Date;
+  // the time the notice is for (default: now); fixes the day of its id
+  now?: Date;
 }
 
 // A notice is due when blocked (whatever the limit, including 0), or at 90%
@@ -173,7 +175,7 @@ export async function notifyManagedEgressLimit(
           {
             target_account_id: account_id,
             target_home_bay_id,
-            notification_id: managedEgressNotificationId(key),
+            notification_id: managedEgressNotificationId(key, input.now),
             dedupe_key: key,
             summary_json: summary,
           },

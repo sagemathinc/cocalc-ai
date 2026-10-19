@@ -2020,19 +2020,23 @@ describe("managed egress notices", () => {
   // The bay that evaluates an egress policy (e.g. the one owning the
   // project's host) is often not the account's home bay. The notice must
   // still reach the account's own notification list.
+  //
+  // A notice's id depends on its UTC day: every send and lookup here uses
+  // this one instant, so a run across midnight cannot mix two days' ids.
+  const NOW = new Date().toISOString();
   const notifyOn = async (bay, account) =>
     await runInBay(
       cluster,
       bay,
       `const { notifyManagedEgressLimit } = server("notifications/managed-egress.js");
-       return await notifyManagedEgressLimit(${JSON.stringify({
+       return await notifyManagedEgressLimit({ ...${JSON.stringify({
          account_id: account.account_id,
          pool: "shared",
          window: "7d",
          used: 2100,
          limit: 2000,
          blocked: true,
-       })});`,
+       })}, now: new Date(${JSON.stringify(NOW)}) });`,
     );
 
   // This notice's own outbox rows: earlier scenarios leave other
@@ -2044,7 +2048,8 @@ describe("managed egress notices", () => {
       `const getPool = require("@cocalc/database/pool").default;
        const { managedEgressNotificationId } = server("notifications/managed-egress.js");
        const id = managedEgressNotificationId(
-         "managed-egress:shared:7d:blocked:" + ${JSON.stringify(account.account_id)});
+         "managed-egress:shared:7d:blocked:" + ${JSON.stringify(account.account_id)},
+         new Date(${JSON.stringify(NOW)}));
        const { rows } = await getPool().query(
          "SELECT target_home_bay_id, published_at IS NOT NULL AS published FROM notification_target_outbox WHERE target_account_id=$1 AND notification_id=$2",
          [${JSON.stringify(account.account_id)}, id]);
@@ -2111,9 +2116,10 @@ describe("managed egress notices", () => {
         bay,
         `const { notifyManagedEgressLimit, managedEgressNotificationId } =
            server("notifications/managed-egress.js");
-         const sent = await notifyManagedEgressLimit(${JSON.stringify(input)});
+         const now = new Date(${JSON.stringify(NOW)});
+         const sent = await notifyManagedEgressLimit({ ...${JSON.stringify(input)}, now });
          return { sent, id: managedEgressNotificationId(
-           "managed-egress:control-plane:5h:blocked:" + ${JSON.stringify(bob.account_id)}) };`,
+           "managed-egress:control-plane:5h:blocked:" + ${JSON.stringify(bob.account_id)}, now) };`,
       );
     const fromSeed = await send(SEED);
     const fromHome = await send(ATTACHED);

@@ -186,6 +186,14 @@ export function getManagedEgressWindowWarnings(
   return warnings;
 }
 
+// A membership upgrade raises the shared pool only (not browser control
+// traffic): offer it whenever any shown warning is about the shared pool.
+export function managedEgressUpgradeHelps(
+  warnings: Pick<ManagedEgressWindowWarning, "pool">[],
+): boolean {
+  return warnings.some((warning) => warning.pool === "shared");
+}
+
 export function renderManagedEgressBreakdown(
   label: string,
   breakdown?: Record<string, number>,
@@ -310,7 +318,7 @@ export const ManagedEgressWarning: React.FC<{
     primary != null && primary.severity !== "blocked"
       ? `${primary.pool}:${primary.window}:${primary.severity}`
       : undefined;
-  const controlPlane = primary?.pool === "control-plane";
+  const upgradeHelps = managedEgressUpgradeHelps(warnings);
   const dismissed =
     primaryWarningKey != null && dismissedWarningKey === primaryWarningKey;
   if (!account_id || !is_logged_in || primary == null || dismissed) {
@@ -399,7 +407,7 @@ export const ManagedEgressWarning: React.FC<{
           >
             Open membership details
           </Button>,
-          ...(controlPlane
+          ...(!upgradeHelps
             ? []
             : [
                 <Button
