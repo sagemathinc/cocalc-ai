@@ -38,13 +38,31 @@ const PASS_THROUGH = new Set([
   ts.SyntaxKind.CommaToken,
 ]);
 
+// `Promise.all(...)` and friends: the combinator's name, else undefined.
+function promiseCombinator(call: ts.CallExpression): string | undefined {
+  const callee = call.expression;
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Promise" &&
+    ["all", "allSettled", "race", "any"].includes(callee.name.text)
+  )
+    return callee.name.text;
+  return undefined;
+}
+
 // Whether a publish call's promise can reject with nothing to handle it.
 // Follow the promise up: through parentheses, type assertions, method calls
-// on it (`.then`, `.catch`, ...), a branch of ?:, and the right side of
-// && || ?? and comma. It is handed to someone else if it ends up awaited,
-// returned, assigned, stored or passed as an argument. Anywhere else (void,
-// a bare statement, a condition, the left of a comma, ...) it is thrown
-// away, which is fine only if its last method call was `.catch(...)`.
+// on it (`.then`, `.catch`, ...), a branch of ?:, the right side of && ?? ||
+// and comma, array and object literals, and Promise.all/race/any. It is
+// handed to someone else if it ends up awaited, returned, assigned or passed
+// to a function. Anywhere else (void, a bare statement, a condition, the
+// left of a comma, ...) it is thrown away, which is fine only if its last
+// method call was `.catch(...)`.
+//
+// This is a guard for how this code base fires and forgets publishes, not a
+// full escape analysis: a promise handed to a function or stored is trusted
+// to be handled there.
 function isUnhandled(call: ts.CallExpression): boolean {
   let n: ts.Node = call;
   let last: string | undefined;
@@ -75,12 +93,23 @@ function isUnhandled(call: ts.CallExpression): boolean {
     ) {
       n = p;
     } else if (
+      ts.isArrayLiteralExpression(p) ||
+      ts.isSpreadElement(p) ||
+      ts.isObjectLiteralExpression(p)
+    ) {
+      // A container holds the promise only as long as the container is kept.
+      n = p;
+    } else if (ts.isPropertyAssignment(p) && p.initializer === n) {
+      n = p;
+    } else if (ts.isCallExpression(p) && promiseCombinator(p) != null) {
+      // Promise.all/race/any reject when it does; allSettled never rejects.
+      if (promiseCombinator(p) === "allSettled") return false;
+      last = undefined;
+      n = p;
+    } else if (
       ts.isAwaitExpression(p) ||
       ts.isReturnStatement(p) ||
       ts.isYieldExpression(p) ||
-      ts.isArrayLiteralExpression(p) ||
-      ts.isSpreadElement(p) ||
-      ts.isPropertyAssignment(p) ||
       (ts.isArrowFunction(p) && p.body === n) ||
       (ts.isVariableDeclaration(p) && p.initializer === n) ||
       (ts.isBinaryExpression(p) &&
@@ -186,6 +215,24 @@ describe("fire-and-forget LRO publishes", () => {
         ].join("\n"),
       ),
     ).toEqual([1, 2, 3, 4, 5, 6, 13]);
+  });
+
+  it("follows the promise through containers and Promise.all", () => {
+    expect(
+      uncaughtPublishes(
+        [
+          "void Promise.all([publishLroEvent({})]);",
+          "[publishLroEvent({})];",
+          "void { p: publishLroSummary({}) };",
+          "Promise.race([...[publishLroEvent({})]]).then(() => {});",
+          "void Promise.all([publishLroEvent({})]).catch(() => {});",
+          "await Promise.all([publishLroEvent({})]);",
+          "const ps = [publishLroEvent({})];",
+          "void Promise.allSettled([publishLroEvent({})]);",
+          "return Promise.any([publishLroEvent({})]);",
+        ].join("\n"),
+      ),
+    ).toEqual([1, 2, 3, 4]);
   });
 
   it("always handle rejection", () => {
