@@ -584,6 +584,11 @@ function watchOutput(server: RunningApp): void {
 
   child.on("error", (err) => {
     server.spawnError = err;
+    // A process that never spawned emits no "exit".
+    if (child.pid == null) {
+      server.ready = false;
+      void clearRunningServicePort(server.id);
+    }
   });
 
   child.on("exit", (code, signal) => {
@@ -1038,7 +1043,14 @@ export async function statusApp(id: string): Promise<AppStatus> {
 export async function waitForAppState(
   id: string,
   target: "running" | "stopped",
-  opts?: { timeout?: number; interval?: number },
+  opts?: {
+    timeout?: number;
+    interval?: number;
+    // Give up once the service has exited or failed to spawn. Only for a
+    // caller that just started it: otherwise a retained earlier crash would
+    // hide a restart by another request.
+    failFast?: boolean;
+  },
 ): Promise<boolean> {
   const timeout = opts?.timeout ?? 30000;
   const interval = opts?.interval ?? 500;
@@ -1049,8 +1061,11 @@ export async function waitForAppState(
       if (s.state === "running" && s.ready === true) {
         return true;
       }
-      // Nothing restarts a service that already failed: stop waiting.
-      if (s.state === "stopped" && (s.spawnError != null || s.exit != null)) {
+      if (
+        opts?.failFast &&
+        s.state === "stopped" &&
+        (s.spawnError != null || s.exit != null)
+      ) {
         return false;
       }
     } else if (s.state === "stopped") {
@@ -1085,7 +1100,11 @@ export async function ensureRunning(
   await startApp(id, {
     preferredPort: opts?.preferredPort,
   });
-  const ok = await waitForAppState(id, "running", opts);
+  const ok = await waitForAppState(id, "running", {
+    timeout: opts?.timeout,
+    interval: opts?.interval,
+    failFast: true,
+  });
   const status = await statusApp(id);
   if (!ok) {
     const failure =

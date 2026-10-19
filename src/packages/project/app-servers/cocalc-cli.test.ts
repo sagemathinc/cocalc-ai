@@ -5,58 +5,72 @@
 
 import {
   BUNDLED_COCALC_CLI_JS,
+  BUNDLED_NODE,
   appStartFailure,
   resolveAppCommand,
 } from "./cocalc-cli";
 
 describe("resolveAppCommand", () => {
-  const execPath = "/opt/cocalc/bin/node";
   const args = ["project", "browser", "serve"];
+  const bundled = {
+    exec: BUNDLED_NODE,
+    args: [BUNDLED_COCALC_CLI_JS, ...args],
+  };
 
-  test("runs the bundled CLI with this node, not cocalc on the PATH", () => {
+  test("runs the bundled CLI with the bundled node, not cocalc on the PATH", () => {
     expect(
       resolveAppCommand(
         { exec: "cocalc", args },
-        {
-          env: { COCALC_CLI_BIN: "/home/user/.local/bin/cocalc" },
-          execPath,
-          exists: () => true,
-        },
+        { env: {}, exists: () => true },
       ),
-    ).toEqual({ exec: execPath, args: [BUNDLED_COCALC_CLI_JS, ...args] });
+    ).toEqual(bundled);
   });
 
-  test("falls back to COCALC_CLI_BIN without the bundled CLI (Lite)", () => {
-    const js = "/lite/cli/dist/bin/cocalc.js";
-    const exists = (path: string) => path !== BUNDLED_COCALC_CLI_JS;
+  test("the bundled wrappers also resolve to the bundled node", () => {
+    for (const bin of [
+      "/opt/cocalc/bin2/cocalc",
+      "/opt/cocalc/bin2/cocalc-cli",
+    ]) {
+      expect(
+        resolveAppCommand(
+          { exec: "cocalc", args },
+          { env: { COCALC_CLI_BIN: bin }, exists: () => true },
+        ),
+      ).toEqual(bundled);
+    }
+  });
+
+  test("an explicit COCALC_CLI_BIN (Lite) wins, also inside a project", () => {
+    const js = "/home/user/cocalc/src/packages/cli/dist/bin/cocalc.js";
     expect(
       resolveAppCommand(
         { exec: "cocalc", args },
-        { env: { COCALC_CLI_BIN: js }, execPath, exists },
+        { env: { COCALC_CLI_BIN: js }, exists: () => true },
       ),
-    ).toEqual({ exec: execPath, args: [js, ...args] });
+    ).toEqual({ exec: js, args });
+    // ... and is ignored if it does not exist.
     expect(
       resolveAppCommand(
         { exec: "cocalc", args },
-        { env: { COCALC_CLI_BIN: "/lite/bin/cocalc" }, execPath, exists },
+        { env: { COCALC_CLI_BIN: js }, exists: (path) => path !== js },
       ),
-    ).toEqual({ exec: "/lite/bin/cocalc", args });
+    ).toEqual(bundled);
   });
 
   test("keeps the PATH lookup when no CLI is known", () => {
     expect(
       resolveAppCommand(
         { exec: "cocalc", args },
-        { env: {}, execPath, exists: () => false },
+        { env: {}, exists: (path) => path !== BUNDLED_NODE },
       ),
     ).toEqual({ exec: "cocalc", args });
   });
 
   test("leaves other commands alone", () => {
     const command = { exec: "jupyter", args: ["lab"] };
-    expect(
-      resolveAppCommand(command, { env: {}, execPath, exists: () => true }),
-    ).toBe(command);
+    expect(resolveAppCommand(command, { env: {}, exists: () => true })).toBe(
+      command,
+    );
   });
 });
 

@@ -36,6 +36,7 @@ import {
   upsertAppSpec,
   waitForAppState,
 } from "./control";
+import { appIdForRunningServicePort } from "./state";
 
 const SERVICE_SCRIPT = `
 const http = require("http");
@@ -593,6 +594,13 @@ describe("app server agent workflows", () => {
     const logs = await appLogs(id);
     expect(logs.state).toBe("stopped");
     expect(logs.stderr).toContain("boot-fail");
+
+    // A plain wait still polls: another request may restart the app.
+    const started = Date.now();
+    expect(
+      await waitForAppState(id, "running", { timeout: 400, interval: 50 }),
+    ).toBe(false);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(350);
   });
 
   test("a missing command fails at once and says so", async () => {
@@ -611,5 +619,16 @@ describe("app server agent workflows", () => {
     await expect(
       ensureRunning(id, { timeout: 30_000, interval: 100 }),
     ).rejects.toThrow(/command not found: cocalc-no-such-command/);
+
+    // It never spawned, so no "exit": its port must not stay mapped to it.
+    const status = await statusApp(id);
+    expect(status.state).toBe("stopped");
+    expect(status.port).toBeGreaterThan(0);
+    let mapped = await appIdForRunningServicePort(status.port!);
+    for (let i = 0; mapped != null && i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      mapped = await appIdForRunningServicePort(status.port!);
+    }
+    expect(mapped).toBeUndefined();
   });
 });
