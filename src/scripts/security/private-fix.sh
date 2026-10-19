@@ -53,30 +53,57 @@ new_branch() { # <branch>
   echo "created $branch from public main $(git rev-parse --short "$PUBLIC_MAIN") in the private repo"
 }
 
-# Same normalization as pre-push-guard.sh, so namespaces match.
-normalize_url() {
-  local u=${1,,}
-  u=${u#*://}
-  [[ $u == *@* ]] && u=${u#*@}
-  [[ $u != /* ]] && u=${u/:/\/}
-  [[ $u =~ ^([^/]+)/[0-9]+/(.*)$ ]] && u="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-  u=${u%/}
-  u=${u%.git}
-  echo "${u%/}"
+# Same URL rules as pre-push-guard.sh (keep in sync).
+# The official private repos, trusted only in the supported GitHub transport
+# forms (GitHub owner/repo names are case-insensitive):
+#   git@github.com:sagemathinc/<repo>[.git]
+#   ssh://git@github.com[:22]/sagemathinc/<repo>[.git]
+#   ssh://git@ssh.github.com:443/sagemathinc/<repo>[.git]
+#   https://github.com/sagemathinc/<repo>[.git][/]
+# where <repo> is cocalc-ai-private, cocalc-ai-content-security or an advisory
+# fork cocalc-ai-ghsa-xxxx-xxxx-xxxx.  Any other URL is private only if it is
+# exactly (string equality) one of the `git config cocalc.privateUrl` values.
+is_private_url() {
+  local u=${1,,} extra
+  local repo='sagemathinc/cocalc-ai-(private|content-security|ghsa-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4})(\.git)?'
+  if [[ $u =~ ^git@github\.com:${repo}$ ]] ||
+    [[ $u =~ ^ssh://git@github\.com(:22)?/${repo}$ ]] ||
+    [[ $u =~ ^ssh://git@ssh\.github\.com:443/${repo}$ ]] ||
+    [[ $u =~ ^https://github\.com/${repo}/?$ ]]; then
+    return 0
+  fi
+  while IFS= read -r extra; do
+    [ -n "$extra" ] && [ "$1" = "$extra" ] && return 0
+  done < <(git config --get-all cocalc.privateUrl 2>/dev/null)
+  return 1
+}
+
+# Ref namespace for a source: the hash of its exact URL.
+url_key() {
+  printf '%s' "$1" | git hash-object --stdin
 }
 
 retire_remote() { # <remote name>
-  local name=$1 url key ref n=0
+  local name=$1 url key ref value n=0
   url=$(git remote get-url "$name") || die "no remote '$name'"
-  key=$(printf '%s' "$(normalize_url "$url")" | git hash-object --stdin)
+  is_private_url "$url" || die "$name ($url) is not a recognized private repo; refusing to retire it"
+  key=$(url_key "$url")
   while read -r ref; do
-    git update-ref "refs/cocalc-guard/retired/$key/${ref#refs/remotes/$name/}" "$ref"
+    git update-ref "refs/cocalc-guard/retired/$key/tracking/${ref#refs/remotes/$name/}" "$ref"
     n=$((n + 1))
   done < <(git for-each-ref --format='%(refname)' "refs/remotes/$name/")
   while read -r ref; do
-    git update-ref "refs/cocalc-guard/retired/$key/${ref#refs/cocalc-guard/src/$key/}" "$ref"
+    git update-ref "refs/cocalc-guard/retired/$key/guard/${ref#refs/cocalc-guard/src/$key/}" "$ref"
     n=$((n + 1))
   done < <(git for-each-ref --format='%(refname)' "refs/cocalc-guard/src/$key/")
+  [ $n -gt 0 ] || die "no refs of $name to keep (never fetched?); fetch it first, or remove it by hand if it never held private work"
+  git for-each-ref --format='update refs/cocalc-guard/seen/%(objectname) %(objectname)' \
+    "refs/cocalc-guard/retired/$key/" | git update-ref --stdin
+  while read -r value; do
+    if [ "$value" = "$url" ]; then
+      git config --fixed-value --unset-all cocalc.privateUrl "$value"
+    fi
+  done < <(git config --get-all cocalc.privateUrl 2>/dev/null)
   git remote remove "$name"
   echo "retired remote $name ($url): kept $n ref(s) under refs/cocalc-guard/retired/$key/ as private"
 }

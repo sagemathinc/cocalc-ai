@@ -2,10 +2,10 @@
 # Git pre-push hook: never publish undisclosed private security work by
 # accident.  See README.md in this directory.
 #
-# Pushes to a known private repository are always allowed: on GitHub,
-# sagemathinc/cocalc-ai-private, sagemathinc/cocalc-ai-content-security and
-# security-advisory forks sagemathinc/cocalc-ai-ghsa-xxxx-xxxx-xxxx (in any URL
-# form), plus any URL listed with `git config --add cocalc.privateUrl <url>`.
+# Pushes to a known private repository are always allowed: the official
+# private repos on GitHub in the supported transport forms (see
+# is_private_url), plus any URL that exactly equals a
+# `git config --add cocalc.privateUrl <url>` value.
 # Every other destination (the public repo, forks, other hosts, local paths)
 # is refused if
 #   - the pushed source or destination branch is a private branch name
@@ -27,30 +27,33 @@ PUBLIC_URL=${COCALC_PUBLIC_URL:-git@github.com:sagemathinc/cocalc-ai.git}
 PRIVATE_URL=${COCALC_PRIVATE_URL:-git@github.com:sagemathinc/cocalc-ai-private.git}
 GUARD_REFS=refs/cocalc-guard
 
-# host/path in lower case, without scheme, user, port, ".git" or slashes at
-# the ends.  Handles scp-like (host:path), ssh://host:port/path, https and
-# local paths.
-normalize_url() {
-  local u=${1,,}
-  u=${u#*://}
-  [[ $u == *@* ]] && u=${u#*@}
-  [[ $u != /* ]] && u=${u/:/\/}
-  [[ $u =~ ^([^/]+)/[0-9]+/(.*)$ ]] && u="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-  u=${u%/}
-  u=${u%.git}
-  echo "${u%/}"
-}
-
+# The official private repos, trusted only in the supported GitHub transport
+# forms (GitHub owner/repo names are case-insensitive):
+#   git@github.com:sagemathinc/<repo>[.git]
+#   ssh://git@github.com[:22]/sagemathinc/<repo>[.git]
+#   ssh://git@ssh.github.com:443/sagemathinc/<repo>[.git]
+#   https://github.com/sagemathinc/<repo>[.git][/]
+# where <repo> is cocalc-ai-private, cocalc-ai-content-security or an advisory
+# fork cocalc-ai-ghsa-xxxx-xxxx-xxxx.  Any other URL is private only if it is
+# exactly (string equality) one of the `git config cocalc.privateUrl` values.
 is_private_url() {
-  local u extra
-  u=$(normalize_url "$1")
-  if [[ $u =~ ^(ssh\.)?github\.com/sagemathinc/cocalc-ai-(private|content-security|ghsa-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4})$ ]]; then
+  local u=${1,,} extra
+  local repo='sagemathinc/cocalc-ai-(private|content-security|ghsa-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4})(\.git)?'
+  if [[ $u =~ ^git@github\.com:${repo}$ ]] ||
+    [[ $u =~ ^ssh://git@github\.com(:22)?/${repo}$ ]] ||
+    [[ $u =~ ^ssh://git@ssh\.github\.com:443/${repo}$ ]] ||
+    [[ $u =~ ^https://github\.com/${repo}/?$ ]]; then
     return 0
   fi
-  while read -r extra; do
-    [ -n "$extra" ] && [ "$u" = "$(normalize_url "$extra")" ] && return 0
+  while IFS= read -r extra; do
+    [ -n "$extra" ] && [ "$1" = "$extra" ] && return 0
   done < <(git config --get-all cocalc.privateUrl 2>/dev/null)
   return 1
+}
+
+# Ref namespace for a source: the hash of its exact URL.
+url_key() {
+  printf '%s' "$1" | git hash-object --stdin
 }
 
 is_private_branch() { # <branch name without refs/heads/>
@@ -94,11 +97,10 @@ done <<<"$updates"
 sources=()
 seen=" "
 add_source() { # <url>
-  # Dedupe by exact normalized URL; name the ref namespace by its hash, so
+  # Dedupe by exact URL; the ref namespace is the hash of that URL, so
   # different URLs never share a namespace.
-  local normalized key
-  normalized=$(normalize_url "$1")
-  key=$(printf '%s' "$normalized" | git hash-object --stdin)
+  local key
+  key=$(url_key "$1")
   [[ $seen == *" $key "* ]] && return
   seen+="$key "
   sources+=("$key|$1")
@@ -127,7 +129,7 @@ done < <(git for-each-ref --format='%(refname)' refs/heads)
 has_private_work=0
 if [ ${#private_remote_refs[@]} -gt 0 ] || [ ${#local_private_branches[@]} -gt 0 ] ||
   [ -n "$(git config --get-all cocalc.privateUrl 2>/dev/null)" ] ||
-  [ -n "$(git for-each-ref --count=1 "$GUARD_REFS/src/" "$GUARD_REFS/retired/")" ]; then
+  [ -n "$(git for-each-ref --count=1 "$GUARD_REFS/src/" "$GUARD_REFS/retired/" "$GUARD_REFS/seen/")" ]; then
   has_private_work=1
 fi
 
@@ -137,7 +139,7 @@ for source in "${sources[@]}"; do
   key=${source%%|*}
   url=${source#*|}
   (
-    git fetch -q --no-tags --prune --no-write-fetch-head "$url" "+refs/heads/*:$GUARD_REFS/src/$key/*" 2>"$tmp/$key.err"
+    git fetch -q --no-tags --no-write-fetch-head "$url" "+refs/heads/*:$GUARD_REFS/src/$key/*" 2>"$tmp/$key.err"
     echo $? >"$tmp/$key.rc"
   ) &
 done
@@ -152,6 +154,11 @@ for source in "${sources[@]}"; do
     failed+=("$url")
   fi
 done
+# Private refs are never pruned, and every private tip ever seen is archived by
+# object id, so deleting or force-pushing a private branch early cannot erase
+# the evidence.  (Commits that later become public are subtracted below.)
+git for-each-ref --format="update $GUARD_REFS/seen/%(objectname) %(objectname)" \
+  "$GUARD_REFS/src/" "$GUARD_REFS/retired/" | git update-ref --stdin
 if [ ${#failed[@]} -gt 0 ] && [ $has_private_work = 1 ]; then
   refuse "cannot fetch ${failed[*]} to check for private commits; refusing (fail closed). If a private repo was deleted (e.g. a published advisory fork), retire its remote with: src/scripts/security/private-fix.sh retire-remote <name>"
 fi
@@ -160,7 +167,7 @@ if [ $has_private_work = 1 ] && [ $status = 0 ]; then
   if ! git fetch -q --no-tags --prune --no-write-fetch-head "$PUBLIC_URL" "+refs/heads/*:$GUARD_REFS/public/*" 2>/dev/null; then
     refuse "cannot fetch $PUBLIC_URL to check what is already public; refusing (fail closed)."
   else
-    if ! private=$(git rev-list --glob="$GUARD_REFS/src/*" --glob="$GUARD_REFS/retired/*" "${private_remote_refs[@]}" \
+    if ! private=$(git rev-list --glob="$GUARD_REFS/src/*" --glob="$GUARD_REFS/retired/*" --glob="$GUARD_REFS/seen/*" "${private_remote_refs[@]}" \
       "${local_private_branches[@]}" --not --glob="$GUARD_REFS/public/*" | sort); then
       refuse "could not list private commits; refusing (fail closed)."
     else

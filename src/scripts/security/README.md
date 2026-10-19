@@ -34,12 +34,14 @@ This installs the push guard in the clone's common git directory, so it covers e
 - refuses if `core.hooksPath` is set, because Git would then ignore that directory;
 - only ever replaces a hook it installed itself.
 
-The guard allows any push to a known private repo. These are, on GitHub in any URL form:
+The guard allows any push to a known private repo. These are:
 
-- `sagemathinc/cocalc-ai-private`;
-- `sagemathinc/cocalc-ai-content-security`;
-- advisory forks `sagemathinc/cocalc-ai-ghsa-xxxx-xxxx-xxxx`;
-- any URL added with `git config --add cocalc.privateUrl <url>`.
+- `sagemathinc/cocalc-ai-private`, `sagemathinc/cocalc-ai-content-security` and advisory forks `sagemathinc/cocalc-ai-ghsa-xxxx-xxxx-xxxx`, in the supported GitHub forms only:
+  - `git@github.com:…`;
+  - `ssh://git@github.com[:22]/…`;
+  - `ssh://git@ssh.github.com:443/…`;
+  - `https://github.com/…`.
+- any URL exactly equal to a `git config --add cocalc.privateUrl <url>` value. There is no URL normalization, so a different user, port, suffix or scheme is not trusted.
 
 Other `cocalc-ai-*` repos are not trusted; `cocalc-ai-doc`, for example, is public. For every other destination (the public repo, forks, other hosts, local paths) the guard refuses:
 

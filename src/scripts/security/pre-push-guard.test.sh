@@ -56,6 +56,21 @@ for url in "$T/pub.git" git@github.com:sagemathinc/cocalc-ai.git ssh://git@githu
   check 1 "private branch name refused -> $url" "$url" refs/heads/main "$C0" refs/heads/security/topic
 done
 check 1 "private source branch name refused" "$T/pub.git" refs/heads/security/local "$LOCAL" refs/heads/fix/innocent
+# Trust is by exact URL (configured) or a supported GitHub form (official).
+git config --add cocalc.privateUrl "ssh://alice@example.test:2222/team/repo.git"
+git config --add cocalc.privateUrl "$T/private-repository.git"
+for url in "ssh://bob@example.test:3333/team/repo.git" "$T/private-repository" \
+  "evil://github.com/sagemathinc/cocalc-ai-private.git" "ssh://git@github.com:2222/sagemathinc/cocalc-ai-private.git" \
+  "ssh://mallory@github.com/sagemathinc/cocalc-ai-private.git" "git@github.com:sagemathinc/cocalc-ai-private.git.evil"; do
+  check 1 "look-alike of a private URL is not trusted: $url" "$url" refs/heads/security/local "$LOCAL" refs/heads/security/local
+done
+check 0 "configured private URL, exact match" "ssh://alice@example.test:2222/team/repo.git" refs/heads/security/local "$LOCAL" refs/heads/security/local
+git config --unset-all cocalc.privateUrl
+git config cocalc.privateUrl "$T/priv.git"
+for url in git@github.com:SageMathInc/Cocalc-AI-Private.git https://github.com/sagemathinc/cocalc-ai-private/ \
+  ssh://git@github.com:22/sagemathinc/cocalc-ai-private; do
+  check 0 "supported GitHub form of the private repo: $url" "$url" refs/heads/security/local "$LOCAL" refs/heads/security/local
+done
 for url in "$T/priv.git" git@github.com:sagemathinc/cocalc-ai-private.git \
   https://GitHub.com/SageMathInc/cocalc-ai-ghsa-abcd-1234-wxyz \
   ssh://git@ssh.github.com:443/sagemathinc/cocalc-ai-content-security.git; do
@@ -141,10 +156,39 @@ git config cocalc.privateUrl "$T/old.git" # stand-in for the GitHub allowlist
 git branch -q neutral4 "$OLD"
 rm -rf "$T/old.git"
 check 1 "deleted private repo still configured: fail closed" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok
-git config --unset cocalc.privateUrl
 bash "$here/private-fix.sh" retire-remote old >/dev/null
+[ -z "$(git config --get-all cocalc.privateUrl)" ] && { pass=$((pass + 1)); echo "ok    retire-remote removes the matching cocalc.privateUrl"; } || { fail=$((fail + 1)); echo "FAIL  retire-remote left cocalc.privateUrl"; }
 check 1 "after retire-remote: its commit is still private" "$T/pub.git" refs/heads/neutral4 "$OLD" refs/heads/fix/innocent
 check 0 "after retire-remote: public commits push normally" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok
+# retire-remote refuses non-private remotes and remotes with nothing to keep.
+git remote add pubremote "$T/pub.git"
+bash "$here/private-fix.sh" retire-remote pubremote >/dev/null 2>&1 && { fail=$((fail + 1)); echo "FAIL  retired a non-private remote"; } || { pass=$((pass + 1)); echo "ok    retire-remote refuses a non-private remote"; }
+git init -q --bare "$T/empty.git" && git remote add empty "$T/empty.git" && git config --add cocalc.privateUrl "$T/empty.git"
+bash "$here/private-fix.sh" retire-remote empty >/dev/null 2>&1 && { fail=$((fail + 1)); echo "FAIL  retired a remote with no refs"; } || { pass=$((pass + 1)); echo "ok    retire-remote refuses a remote with no refs to keep"; }
+git remote | grep -qx empty && { pass=$((pass + 1)); echo "ok    the refused remote is still configured"; } || { fail=$((fail + 1)); echo "FAIL  refused remote was removed"; }
+git remote remove empty; git remote remove pubremote; git config --unset-all cocalc.privateUrl
+
+# Local paths are case-sensitive: Private.git is private, private.git is not.
+git init -q --bare "$T/Private.git" && git init -q --bare "$T/private.git"
+git push -q "$T/private.git" "$(git rev-parse HEAD):refs/heads/main"
+CASESECRET=$(commit "secret in Private.git")
+git push -q "$T/Private.git" "$CASESECRET:refs/heads/security/topic"
+git reset -q --hard HEAD~1
+git config cocalc.privateUrl "$T/Private.git"
+git branch -q neutral5 "$CASESECRET"
+check 1 "case-distinct local path is not treated as the private repo" "$T/private.git" refs/heads/neutral5 "$CASESECRET" refs/heads/fix/innocent
+
+# Deleting or force-pushing a private branch early does not erase the evidence.
+check 1 "private commit (first run caches it)" "$T/pub.git" refs/heads/neutral5 "$CASESECRET" refs/heads/fix/innocent
+git push -q "$T/Private.git" :refs/heads/security/topic
+check 1 "after the private branch was deleted" "$T/pub.git" refs/heads/neutral5 "$CASESECRET" refs/heads/fix/innocent
+FORCED=$(commit "secret 2")
+git push -q "$T/Private.git" "$FORCED:refs/heads/security/t2"
+git reset -q --hard HEAD~1
+git branch -q neutral6 "$FORCED"
+check 1 "private commit before a force-push" "$T/pub.git" refs/heads/neutral6 "$FORCED" refs/heads/fix/innocent
+git push -q -f "$T/Private.git" "$(git rev-parse HEAD):refs/heads/security/t2"
+check 1 "after the private branch was force-pushed away" "$T/pub.git" refs/heads/neutral6 "$FORCED" refs/heads/fix/innocent
 
 # install-hooks.sh
 inst() { # <expect> <desc>
