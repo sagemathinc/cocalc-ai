@@ -28,6 +28,7 @@ import { ensureAccountUsageWindowsForEvent } from "@cocalc/server/membership/usa
 import { AI_USAGE_UNITS_PER_DOLLAR } from "./usage-units";
 import { ensureExactAIUsageSchema } from "./save-response";
 import { getAIUsageStatus } from "./usage-status";
+import { RecentTimes } from "@cocalc/util/recent-times";
 import {
   finishSiteFundedSpeechGlobal,
   reserveSiteFundedSpeechGlobal,
@@ -518,14 +519,52 @@ async function holdRow(
 // call is still running), the site pool is charged that cost, late if its
 // hold already expired or was released, and only once that is confirmed
 // is the row COMMITTED. A failure leaves it CALLING, for the next pass.
+//
+// Bounded work on the request path (daybreak2): at most
+// PENDING_SETTLE_BATCH rows a pass, oldest first; one pass at a time per
+// account in this process (a concurrent reservation shares it); a row
+// attempted in the last PENDING_SETTLE_BACKOFF_MS is skipped; the pass
+// stops at its first failure, so an outage costs a request at most one
+// attempt; and it stops waiting after PENDING_SETTLE_BUDGET_MS, so a slow
+// site pool can't stall admission (an abandoned settle may still finish:
+// it is idempotent, and the row stays CALLING until a pass confirms it).
+// Rows not reached stay CALLING for a later pass.
+export const PENDING_SETTLE_BATCH = 3;
+export const PENDING_SETTLE_BACKOFF_MS = 30_000;
+export const PENDING_SETTLE_BUDGET_MS = 2_000;
+const settling = new Map<string, Promise<void>>();
+const settleAttempts = new RecentTimes({
+  windowMs: PENDING_SETTLE_BACKOFF_MS,
+  maxKeys: 10_000,
+});
+
+/** For tests. */
+export function resetPendingSettleBackoffForTests(): void {
+  settleAttempts.clear();
+}
+
 async function settlePendingCalls(accountId: string): Promise<void> {
+  const running = settling.get(accountId);
+  if (running) return await running;
+  const pass = settlePendingBatch(accountId);
+  settling.set(accountId, pass);
+  try {
+    await pass;
+  } finally {
+    settling.delete(accountId);
+  }
+}
+
+async function settlePendingBatch(accountId: string): Promise<void> {
   let pending: { funded_event_id: string; cost_microusd: string }[];
   try {
     ({ rows: pending } = await getPool().query(
       `SELECT funded_event_id, cost_microusd FROM ai_usage_log
        WHERE account_id=$1 AND tag=$2
-         AND time < NOW() - ($3::BIGINT * INTERVAL '1 millisecond')`,
-      [accountId, CALLING_TAG, RESERVATION_TTL_MS],
+         AND time < NOW() - ($3::BIGINT * INTERVAL '1 millisecond')
+       ORDER BY time, funded_event_id
+       LIMIT $4`,
+      [accountId, CALLING_TAG, RESERVATION_TTL_MS, PENDING_SETTLE_BATCH],
     ));
   } catch (err) {
     logger.error("board decide pending settlements not read", {
@@ -534,16 +573,33 @@ async function settlePendingCalls(accountId: string): Promise<void> {
     });
     return;
   }
+  const deadline = Date.now() + PENDING_SETTLE_BUDGET_MS;
   for (const row of pending) {
     const requestId = `${row.funded_event_id}`;
     const costMicrousd = Number(row.cost_microusd);
+    if (!settleAttempts.take(requestId, Date.now(), 1)) continue;
+    const left = deadline - Date.now();
+    if (left <= 0) return;
     try {
-      await finishSiteFundedSpeechGlobal({
-        requestId,
-        status: "committed",
-        costMicrousd,
-        chargeIfClosed: true,
-      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          finishSiteFundedSpeechGlobal({
+            requestId,
+            status: "committed",
+            costMicrousd,
+            chargeIfClosed: true,
+          }),
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("pending settlement over budget")),
+              left,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
       await getPool().query(
         `UPDATE ai_usage_log SET tag=$4,
            input=CASE WHEN input='[board-decide]' THEN input
@@ -558,6 +614,7 @@ async function settlePendingCalls(accountId: string): Promise<void> {
         costMicrousd,
         err: `${err}`,
       });
+      return; // the rest wait for a later pass
     }
   }
 }

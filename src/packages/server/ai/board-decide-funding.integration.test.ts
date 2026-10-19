@@ -730,6 +730,8 @@ describe("site-funded board decide", () => {
         { tag: "board-decide-calling", cost: 2 },
       ]);
       failing = false;
+      // past the per-row backoff
+      require("./board-decide-funding").resetPendingSettleBackoffForTests();
       const again = await funding.reserve({
         board: BOARD_KEY,
         accountId: acct,
@@ -848,6 +850,119 @@ describe("site-funded board decide", () => {
       ]);
       expect(await globalHolds(pendingId)).toEqual([
         { status: "committed", committed: 2 },
+      ]);
+    });
+
+    // daybreak2: the pending pass is bounded work on the request path.
+    it("the pending pass is bounded: one attempt while failing, then batches drain", async () => {
+      const { PENDING_SETTLE_BATCH } = require("./board-decide-funding");
+      const n = PENDING_SETTLE_BATCH + 2;
+      const ids: string[] = [];
+      const realFinish = reservations.finishSiteFundedSpeechGlobal;
+      let failing = true;
+      const attempts: string[] = [];
+      jest
+        .spyOn(reservations, "finishSiteFundedSpeechGlobal")
+        .mockImplementation(async (o: any) => {
+          if (ids.includes(o.requestId)) {
+            attempts.push(o.requestId);
+            if (failing) throw new Error("seed bay unreachable");
+          }
+          return await realFinish(o);
+        });
+      for (let i = 0; i < n; i++) {
+        const id = uuid();
+        ids.push(id);
+        const r = await called(id);
+        await r.commit(2);
+      }
+      await getPool().query(
+        `UPDATE ai_usage_log SET time = time - INTERVAL '6 minutes'
+         WHERE account_id=$1 AND funded_event_id = ANY($2::UUID[])`,
+        [acct, ids],
+      );
+      const pendingCount = async () =>
+        Number(
+          (
+            await getPool().query(
+              `SELECT COUNT(*) AS n FROM ai_usage_log
+               WHERE account_id=$1 AND tag='board-decide-calling'`,
+              [acct],
+            )
+          ).rows[0].n,
+        );
+      const reserveOnce = async () =>
+        await (
+          await funding.reserve({
+            board: BOARD_KEY,
+            accountId: acct,
+            requestId: uuid(),
+            microusd: 1,
+          })
+        ).release();
+      expect(await pendingCount()).toBe(n);
+      // still failing: one attempt for the whole pass, not n
+      attempts.length = 0;
+      await reserveOnce();
+      expect(attempts).toHaveLength(1);
+      expect(await pendingCount()).toBe(n);
+      // and the row just tried is not tried again by the next request
+      // within the backoff: that one tries the next row only
+      await reserveOnce();
+      expect(attempts).toHaveLength(2);
+      expect(new Set(attempts).size).toBe(2);
+      // recovered (and past the backoff): a batch a reservation, until drained
+      failing = false;
+      require("./board-decide-funding").resetPendingSettleBackoffForTests();
+      attempts.length = 0;
+      await reserveOnce();
+      expect(attempts).toHaveLength(PENDING_SETTLE_BATCH);
+      expect(await pendingCount()).toBe(n - PENDING_SETTLE_BATCH);
+      await reserveOnce();
+      expect(await pendingCount()).toBe(0);
+      jest.restoreAllMocks();
+      for (const id of ids) {
+        expect(await globalHolds(id)).toEqual([
+          { status: "committed", committed: 2 },
+        ]);
+      }
+    });
+
+    it("a site pool that doesn't answer can't stall admission", async () => {
+      const { PENDING_SETTLE_BUDGET_MS } = require("./board-decide-funding");
+      const requestId = uuid();
+      const r = await called(requestId);
+      jest
+        .spyOn(reservations, "finishSiteFundedSpeechGlobal")
+        .mockRejectedValue(new Error("seed bay unreachable"));
+      await r.commit(2);
+      jest.restoreAllMocks();
+      await getPool().query(
+        `UPDATE ai_usage_log SET time = time - INTERVAL '6 minutes'
+         WHERE account_id=$1 AND funded_event_id=$2`,
+        [acct, requestId],
+      );
+      const realFinish = reservations.finishSiteFundedSpeechGlobal;
+      jest
+        .spyOn(reservations, "finishSiteFundedSpeechGlobal")
+        .mockImplementation(async (o: any) =>
+          o.requestId === requestId
+            ? await new Promise(() => {}) // never answers
+            : await realFinish(o),
+        );
+      const started = Date.now();
+      const next = await funding.reserve({
+        board: BOARD_KEY,
+        accountId: acct,
+        requestId: uuid(),
+        microusd: 1,
+      });
+      const took = Date.now() - started;
+      jest.restoreAllMocks();
+      await next.release();
+      expect(took).toBeLessThan(PENDING_SETTLE_BUDGET_MS + 3000);
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide-calling", cost: 2 },
       ]);
     });
 
