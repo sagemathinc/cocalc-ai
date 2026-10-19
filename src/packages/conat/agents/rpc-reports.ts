@@ -105,13 +105,9 @@ export function agentRpcReportForVersion(
 ): AgentRpcTurnFailureReport | undefined {
   if (version >= AGENT_RPC_REPORT_VERSION) return report;
   const { resets_at: _r, tool_ran, ...v1 } = report;
-  // The recipient ran tools: the old "did not act" would invite a duplicate.
-  if (tool_ran === true) return undefined;
-  // Unknown: as such reports always were (an older recipient host never
-  // says), only for the kinds it knew.
-  if (tool_ran === undefined)
-    return V1_KINDS.includes(report.kind) ? v1 : undefined;
-  // Nothing ran, so its old "you can send it again" is true.
+  // Only when nothing ran is the old text ("did not act ... you can send
+  // it again") true; otherwise it would invite a duplicate.
+  if (tool_ran !== false) return undefined;
   if (V1_KINDS.includes(report.kind)) return v1;
   return {
     ...v1,
@@ -120,7 +116,6 @@ export function agentRpcReportForVersion(
       `${KIND_TEXT[report.kind]}${report.detail ? `: ${report.detail}` : ""}`,
     ),
   };
-  return undefined;
 }
 
 const KIND_TEXT: Record<AgentRpcTurnFailureKind, string> = {
@@ -220,6 +215,10 @@ export function agentRpcReportText(
   else if (report.tool_ran === false || report.kind === "canceled")
     lines.push(
       `${B} had not started working on it, so it is safe to send it again.`,
+    );
+  else
+    lines.push(
+      `It is not known whether ${B} had started working on it, so check before you send it again.`,
     );
   lines.push(
     `This report is from CoCalc, not from ${B}. You can send it again${report.resets_at ? " after the reset" : ""}, send it to another agent, rephrase it, or do without.`,

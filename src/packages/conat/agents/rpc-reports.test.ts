@@ -131,6 +131,9 @@ test("how it ended, the limit's reset and whether resending is safe", () => {
     "@B",
   );
   expect(lost).not.toMatch(/safe to send|check what it did/);
+  expect(lost).toContain(
+    "It is not known whether @B had started working on it, so check before you send it again.",
+  );
 });
 
 test.each<[TurnOutcome, string | undefined]>([

@@ -4183,6 +4183,20 @@ describe("the agent that sent a message is told how its turn ended", () => {
     expect(first).toBeTruthy();
   });
 
+  it("a chain whose last attempt has no outcome yet keeps its tool use", () => {
+    const { request } = agentRequest();
+    const [, last] = chain(request, [true, false]);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET outcome_json = NULL WHERE op_id = ?")
+      .run(last.op_id);
+    acpTestInternals.reportFailedAgentMessageTurn(
+      getAcpJobByOpId(last.op_id),
+      decodeAcpJobRequest(last),
+      "lost",
+    );
+    expect(reports()[0].report.tool_ran).toBe(true);
+  });
+
   it("a cancel of a message a fence already canceled reports nothing", async () => {
     const { request } = agentRequest();
     const job = enqueueAcpJob(request);

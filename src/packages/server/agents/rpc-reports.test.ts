@@ -168,7 +168,8 @@ function report(overrides: any = {}) {
 
 beforeEach(() => {
   remoteSender = false;
-  senderReportVersion = undefined;
+  // A's host is current unless a test says otherwise.
+  senderReportVersion = 2;
   claimExecution.mockReset().mockResolvedValue(true);
   assertHost.mockClear();
   enqueueExternal.mockReset();
@@ -252,18 +253,20 @@ describe("B's host reports the failed turn", () => {
       ),
     ).rejects.toThrow(/must be upgraded/);
     expect(deliverAgentRpcReport).not.toHaveBeenCalled();
-    // An old kind is sent without the new fields when nothing ran, and as
-    // it always was when that is not known (older recipient hosts never say).
-    for (const tool_ran of [false, undefined]) {
-      deliverAgentRpcReport.mockClear();
-      await reportRpcTurnFailure(
-        fromHost(report({ kind: "limit", resets_at: 123, tool_ran })),
-      );
-      const sent = deliverAgentRpcReport.mock.calls[0][0].report;
-      expect(sent.kind).toBe("limit");
-      expect(sent).not.toHaveProperty("resets_at");
-      expect(sent).not.toHaveProperty("tool_ran");
-    }
+    // An old kind is sent without the new fields when nothing ran.
+    deliverAgentRpcReport.mockClear();
+    await reportRpcTurnFailure(
+      fromHost(report({ kind: "limit", resets_at: 123, tool_ran: false })),
+    );
+    const old = deliverAgentRpcReport.mock.calls[0][0].report;
+    expect(old.kind).toBe("limit");
+    expect(old).not.toHaveProperty("resets_at");
+    expect(old).not.toHaveProperty("tool_ran");
+    // Held when that is not known, even an old kind (an older recipient
+    // host never says; the old text would claim B did not act).
+    await expect(
+      reportRpcTurnFailure(fromHost(report({ kind: "limit" }))),
+    ).rejects.toThrow(/must be upgraded/);
     // A new kind whose tool use is not known is held.
     await expect(
       reportRpcTurnFailure(fromHost(report({ kind: "host-lost" }))),

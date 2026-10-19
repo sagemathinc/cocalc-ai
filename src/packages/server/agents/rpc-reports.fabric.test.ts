@@ -52,7 +52,11 @@ const mockDeliver = jest.fn();
 jest.mock("./store", () => ({
   agentStore: () => ({
     get: async (agent_id: string) => mockIdentities.get(agent_id),
-    query: async () => ({ rows: [{ host_id: aHost, state: "running" }] }),
+    // A's host is current: it advertises the report version it renders.
+    query: async (sql: string) =>
+      sql.includes("agent_rpc_report_version")
+        ? { rows: [{ version: "2" }] }
+        : { rows: [{ host_id: aHost, state: "running" }] },
   }),
 }));
 jest.mock("./access", () => ({

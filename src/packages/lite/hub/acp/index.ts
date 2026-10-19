@@ -10334,7 +10334,7 @@ function reportFailedAgentMessageTurn(
     request,
     error: `${error ?? ""}`.trim() || undefined,
     outcome,
-    ...(outcome ? { tool_ran: chainToolRan(toolRan) ?? null } : {}),
+    tool_ran: chainToolRan(toolRan) ?? null,
     turn_started_at: started,
   });
   if (report)
