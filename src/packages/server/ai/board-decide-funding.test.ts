@@ -11,9 +11,20 @@
 
 const mockConnect = jest.fn();
 const mockPoolQuery = jest.fn(async () => ({ rows: [] }));
+const mockPendingQuery = jest.fn(async (..._args: unknown[]) => ({
+  rows: [] as unknown[],
+}));
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: () => ({ connect: mockConnect, query: mockPoolQuery }),
+  default: () => ({
+    connect: mockConnect,
+    // The pending-settlement pass at the start of reserve has its own
+    // stand-in (no pending calls), so these tests see only their queries.
+    query: (text: string, params?: unknown[]) =>
+      /SELECT funded_event_id, cost_microusd/.test(text)
+        ? mockPendingQuery(text, params)
+        : (mockPoolQuery as any)(text, params),
+  }),
 }));
 const mockReserveGlobal = jest.fn();
 const mockFinishGlobal = jest.fn();

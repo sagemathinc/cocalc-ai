@@ -681,6 +681,176 @@ describe("site-funded board decide", () => {
       ]);
     });
 
+    // daybreak2: an update that finds no row is retried, not taken as done.
+    it("marking it settled that changes no row is retried", async () => {
+      const requestId = uuid();
+      const r = await called(requestId);
+      const real = pool.query.bind(pool);
+      let missed = false;
+      jest
+        .spyOn(pool, "query")
+        .mockImplementation(async (text: any, params?: any) => {
+          if (
+            !missed &&
+            typeof text === "string" &&
+            /UPDATE ai_usage_log SET/.test(text) &&
+            /tag = ANY/.test(text) &&
+            params?.[3] === "board-decide"
+          ) {
+            missed = true;
+            return { rows: [] }; // as if the row weren't there yet
+          }
+          return await real(text, params);
+        });
+      await r.commit(2);
+      jest.restoreAllMocks();
+      expect(missed).toBe(true);
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide", cost: 2 },
+      ]);
+    });
+
+    // astra (CORR-E31-1): a site-pool settle that fails on the stale pass
+    // too leaves the row pending, and a later pass settles it.
+    it("the stale pass's site-pool settle fails too: a later pass settles it", async () => {
+      const requestId = uuid();
+      const r = await called(requestId);
+      const realFinish = reservations.finishSiteFundedSpeechGlobal;
+      let failing = true;
+      jest
+        .spyOn(reservations, "finishSiteFundedSpeechGlobal")
+        .mockImplementation(async (o: any) => {
+          if (failing && o.requestId === requestId)
+            throw new Error("seed bay unreachable");
+          return await realFinish(o);
+        });
+      await r.commit(2);
+      await finishStale(requestId); // the stale pass fails as well
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide-calling", cost: 2 },
+      ]);
+      failing = false;
+      const again = await funding.reserve({
+        board: BOARD_KEY,
+        accountId: acct,
+        requestId: uuid(),
+        microusd: 1,
+      });
+      await again.release();
+      jest.restoreAllMocks();
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide", cost: 2 },
+      ]);
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "committed", committed: 2 },
+      ]);
+    });
+
+    // astra (CORR-E31-2): both holds past their 5 minutes, in the real
+    // order: another reservation expires the site-pool hold first. The
+    // pending row is then charged late, never a silent no-op.
+    it("the site-pool hold expired first: charged late, then committed", async () => {
+      const requestId = uuid();
+      const r = await called(requestId);
+      jest
+        .spyOn(reservations, "finishSiteFundedSpeechGlobal")
+        .mockRejectedValue(new Error("seed bay unreachable"));
+      await r.commit(2);
+      jest.restoreAllMocks();
+      await getPool().query(
+        `UPDATE ai_usage_log SET time = time - INTERVAL '6 minutes'
+         WHERE account_id=$1 AND funded_event_id=$2`,
+        [acct, requestId],
+      );
+      await getPool().query(
+        `UPDATE site_ai_speech_reservations
+         SET expires_at = NOW() - INTERVAL '1 second' WHERE request_id=$1`,
+        [requestId],
+      );
+      // another account's reservation expires it
+      const other = uuid();
+      await getPool().query(
+        `INSERT INTO accounts(account_id, created, email_address)
+         VALUES($1, NOW(), $2)`,
+        [other, `${other}@example.com`],
+      );
+      const theirs = await funding.reserve({
+        board: BOARD_KEY,
+        accountId: other,
+        requestId: uuid(),
+        microusd: 1,
+      });
+      await theirs.release();
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "expired", committed: 0 },
+      ]);
+      const next = await funding.reserve({
+        board: BOARD_KEY,
+        accountId: acct,
+        requestId: uuid(),
+        microusd: 1,
+      });
+      await next.release();
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "committed", committed: 2 },
+      ]);
+      expect(await rowsOf(requestId)).toEqual([
+        { tag: "board-decide", cost: 2 },
+      ]);
+    });
+
+    // astra (CORR-E31-1): the reservation recovered after a lost COMMIT
+    // reply settles pending calls like any other.
+    it("a reservation recovered from a lost COMMIT reply settles pending calls too", async () => {
+      const pendingId = uuid();
+      const r = await called(pendingId);
+      jest
+        .spyOn(reservations, "finishSiteFundedSpeechGlobal")
+        .mockRejectedValue(new Error("seed bay unreachable"));
+      await r.commit(2);
+      jest.restoreAllMocks();
+      await getPool().query(
+        `UPDATE ai_usage_log SET time = time - INTERVAL '6 minutes'
+         WHERE account_id=$1 AND funded_event_id=$2`,
+        [acct, pendingId],
+      );
+      // the next reservation's own COMMIT applies, then its reply is lost
+      const realConnect = pool.connect.bind(pool);
+      let fired = false;
+      jest.spyOn(pool, "connect").mockImplementation(async () => {
+        const c = await realConnect();
+        const query = c.query.bind(c);
+        let inserted = false;
+        c.query = async (text: any, ...rest: any[]) => {
+          if (typeof text === "string") {
+            if (/^\s*INSERT INTO ai_usage_log/.test(text)) inserted = true;
+            if (inserted && !fired && /^\s*COMMIT/.test(text)) {
+              fired = true;
+              await query(text, ...rest);
+              throw new Error("COMMIT reply lost");
+            }
+          }
+          return await query(text, ...rest);
+        };
+        return c;
+      });
+      const recovered = await funding.reserve({
+        board: BOARD_KEY,
+        accountId: acct,
+        requestId: uuid(),
+        microusd: 1,
+      });
+      jest.restoreAllMocks();
+      expect(fired).toBe(true);
+      await recovered.release();
+      expect(await rowsOf(pendingId)).toEqual([
+        { tag: "board-decide", cost: 2 },
+      ]);
+      expect(await globalHolds(pendingId)).toEqual([
+        { status: "committed", committed: 2 },
+      ]);
+    });
+
     it("a stale hold never called is still released at no cost", async () => {
       const requestId = uuid();
       await funding.reserve({

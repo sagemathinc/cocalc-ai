@@ -2413,6 +2413,8 @@ export interface BayOpsFinishSiteFundedSpeechRequest {
   requestId: string;
   status: "committed" | "released";
   costMicrousd?: number;
+  /** Charge a hold already expired or released (a paid call's settlement). */
+  chargeIfClosed?: boolean;
 }
 
 export interface BayOpsCommercialOrdersRequest {

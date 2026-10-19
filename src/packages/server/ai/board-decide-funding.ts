@@ -88,6 +88,10 @@ export function siteFundedDecideFunding({
         throw new Error("microusd must be a positive safe integer");
       }
       await ensureExactAIUsageSchema();
+      // This account's paid calls whose site-pool charge isn't confirmed
+      // yet are settled first (each retried by every reservation until it
+      // is), so none is left with only one side charged.
+      await settlePendingCalls(accountId);
       await ensureAccountUsageWindowsForEvent({ account_id: accountId });
       const status = await getAIUsageStatus({ account_id: accountId });
       if (
@@ -142,10 +146,12 @@ export function siteFundedDecideFunding({
       // 1. the row records the cost, still CALLING (the global pending);
       // 2. the global hold is settled (idempotent: a settled one is left);
       // 3. the row becomes COMMITTED.
-      // Each step is retried. If one still fails, nothing is lost: a stale
-      // CALLING row is finished by the account's next reservation (charged
-      // at the cost it records, its global hold settled), and the call's
-      // answer stands: it is paid for, so it is not refused.
+      // Each step is retried. If one still fails, nothing is lost: the row
+      // stays CALLING, already charging the account its cost, until every
+      // later reservation of the account (settlePendingCalls) has the site
+      // pool charged it too, late if its hold expired, and only then
+      // makes it COMMITTED. The call's answer stands: it is paid for, so it
+      // is not refused.
       const accountUpdate = async (
         set: string,
         params: unknown[],
@@ -213,6 +219,7 @@ export function siteFundedDecideFunding({
                 requestId,
                 status: "committed",
                 costMicrousd: Math.min(costMicrousd, microusd),
+                chargeIfClosed: true,
               }),
             );
             globalSettled = true;
@@ -302,9 +309,6 @@ export function siteFundedDecideFunding({
       };
       let client: PoolClient | undefined;
       let broken = false;
-      // Stale CALLING holds charged in this transaction, whose global holds
-      // are settled once it commits.
-      let finishing: { requestId: string; costMicrousd: number }[] = [];
       let committing = false;
       try {
         const db = await getPool().connect();
@@ -333,27 +337,6 @@ export function siteFundedDecideFunding({
             RESERVATION_TTL_MS,
           ],
         );
-        // A stale CALLING hold's provider may have run (its settlement
-        // didn't finish): it is charged, at the cost it records (the call's,
-        // or else the reserved upper bound), never released. Its global
-        // hold is settled after this transaction.
-        const unsettled = await db.query(
-          `UPDATE ai_usage_log SET input=$3, tag=$4
-           WHERE account_id=$1 AND tag=$2
-             AND time < NOW() - ($5::BIGINT * INTERVAL '1 millisecond')
-           RETURNING funded_event_id, cost_microusd`,
-          [
-            accountId,
-            CALLING_TAG,
-            "[board-decide-unsettled]",
-            COMMITTED_TAG,
-            RESERVATION_TTL_MS,
-          ],
-        );
-        finishing = unsettled.rows.map((r) => ({
-          requestId: `${r.funded_event_id}`,
-          costMicrousd: Number(r.cost_microusd),
-        }));
         await db.query(
           `DELETE FROM ai_usage_log
            WHERE account_id=$1 AND tag=$2 AND time < NOW() - INTERVAL '1 hour'`,
@@ -506,21 +489,6 @@ export function siteFundedDecideFunding({
       } finally {
         client?.release(broken ? true : undefined);
       }
-      for (const f of finishing) {
-        // Idempotent: a global hold already settled (or expired) is left.
-        await finishSiteFundedSpeechGlobal({
-          requestId: f.requestId,
-          status: "committed",
-          costMicrousd: f.costMicrousd,
-        }).catch((err) =>
-          logger.error("board decide stale settlement: site pool not settled", {
-            accountId,
-            requestId: f.requestId,
-            costMicrousd: f.costMicrousd,
-            err: `${err}`,
-          }),
-        );
-      }
       return reservation();
     },
   };
@@ -541,5 +509,55 @@ async function holdRow(
     return rows.length === 1 ? "present" : "absent";
   } catch {
     return "unknown";
+  }
+}
+
+// A CALLING hold row means: the provider may have run, the account is
+// charged its cost (the call's, or else the reserved upper bound), and
+// the site pool's charge isn't confirmed. Once its 5 minutes pass (no
+// call is still running), the site pool is charged that cost, late if its
+// hold already expired or was released, and only once that is confirmed
+// is the row COMMITTED. A failure leaves it CALLING, for the next pass.
+async function settlePendingCalls(accountId: string): Promise<void> {
+  let pending: { funded_event_id: string; cost_microusd: string }[];
+  try {
+    ({ rows: pending } = await getPool().query(
+      `SELECT funded_event_id, cost_microusd FROM ai_usage_log
+       WHERE account_id=$1 AND tag=$2
+         AND time < NOW() - ($3::BIGINT * INTERVAL '1 millisecond')`,
+      [accountId, CALLING_TAG, RESERVATION_TTL_MS],
+    ));
+  } catch (err) {
+    logger.error("board decide pending settlements not read", {
+      accountId,
+      err: `${err}`,
+    });
+    return;
+  }
+  for (const row of pending) {
+    const requestId = `${row.funded_event_id}`;
+    const costMicrousd = Number(row.cost_microusd);
+    try {
+      await finishSiteFundedSpeechGlobal({
+        requestId,
+        status: "committed",
+        costMicrousd,
+        chargeIfClosed: true,
+      });
+      await getPool().query(
+        `UPDATE ai_usage_log SET tag=$4,
+           input=CASE WHEN input='[board-decide]' THEN input
+                      ELSE '[board-decide-unsettled]' END
+         WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
+        [accountId, requestId, CALLING_TAG, COMMITTED_TAG],
+      );
+    } catch (err) {
+      logger.error("board decide pending settlement failed; retried later", {
+        accountId,
+        requestId,
+        costMicrousd,
+        err: `${err}`,
+      });
+    }
   }
 }

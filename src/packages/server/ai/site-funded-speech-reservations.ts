@@ -178,10 +178,15 @@ export async function finishSiteFundedSpeechGlobalLocal({
   requestId,
   status,
   costMicrousd = 0,
+  chargeIfClosed = false,
 }: {
   requestId: string;
   status: "committed" | "released";
   costMicrousd?: number;
+  /** For a call known to have been paid (board decide's settlement): a
+   * hold already expired or released is charged late, rather than left
+   * as a no-op, so the charge exists when this returns. Off for speech. */
+  chargeIfClosed?: boolean;
 }): Promise<void> {
   if (!Number.isSafeInteger(costMicrousd) || costMicrousd < 0) {
     throw new Error("costMicrousd must be a nonnegative safe integer");
@@ -213,12 +218,38 @@ export async function finishSiteFundedSpeechGlobalLocal({
     const row = reservation.rows[0];
     if (!row) throw new Error("speech global reservation was not found");
     if (row.status !== "active") {
+      if (
+        chargeIfClosed &&
+        status === "committed" &&
+        (row.status === "expired" || row.status === "released")
+      ) {
+        // Its reserved amount already left the period; the charge is
+        // added now (at most the hold, as for an active one).
+        const late = Math.min(costMicrousd, integer(row.reserved_microusd));
+        await client.query(
+          `UPDATE site_ai_speech_reservations SET status='committed',
+             committed_microusd=$2, completed_at=NOW()
+           WHERE request_id=$1`,
+          [requestId, late],
+        );
+        await client.query(
+          `UPDATE site_ai_funding_periods SET
+             committed_microusd=committed_microusd+$3, updated_at=NOW()
+           WHERE pool_id=$1 AND period_start=$2`,
+          [SITE_AI_GLOBAL_POOL_ID, row.period_start, late],
+        );
+      }
       await client.query("COMMIT");
       return;
     }
     const reservedMicrousd = integer(row.reserved_microusd);
     if (status === "committed" && costMicrousd > reservedMicrousd) {
-      throw new Error("speech settlement exceeds its global reservation");
+      // A paid call's settlement charges at most its hold (any excess is
+      // recorded separately); speech's is refused.
+      if (!chargeIfClosed) {
+        throw new Error("speech settlement exceeds its global reservation");
+      }
+      costMicrousd = reservedMicrousd;
     }
     await client.query(
       `UPDATE site_ai_speech_reservations SET status=$2,
