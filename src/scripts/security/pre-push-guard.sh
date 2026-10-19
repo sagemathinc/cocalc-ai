@@ -13,8 +13,11 @@
 #   - it would push a private commit: one on a branch of the private repo, of
 #     another private remote or cocalc.privateUrl repo, or a local or tracking
 #     branch with a private name, that is not on any branch of the public repo,
-#   - or a commit with the same tree or patch-id as such a private commit
-#     (rewritten private work: cherry-pick, amend, rebase, squash).
+#   - or a commit with the same tree or patch-id as such a private commit, or
+#     whose patch-id (or the pushed branch's combined patch since it forked
+#     from public main) equals a private branch's combined patch: rewritten
+#     private work (cherry-pick, amend, rebase, squash), unless that content
+#     is already public under another commit id.
 # Pushes that only delete branches are always allowed.
 # All of those branch lists are fetched fresh on every such push; commits of
 # retired private remotes (private-fix.sh retire-remote) count as private too.
@@ -89,26 +92,93 @@ patch_ids() {
   awk 'NR == FNR { w[$1] = 1; next } ($1 in w) { print }' <(echo "$want") "$cache" | sort -u -k1,1
 }
 
-# Trees and patch-ids of the private commits ($private), computed once per run,
-# minus those of public commits since the oldest private commit (content that
-# was already disclosed under other commit ids, e.g. by a squash or rebase).
-# Private commits that change nothing relative to their first parent (merges,
-# empty commits) contribute no tree.
+# Patch-id of the combined change base..tip (what a squash of that range
+# produces), "-" if empty.  Cached under the key "<base>..<tip>".
+range_patch_id() { # <base> <tip>
+  local cache key pid
+  cache=$(git rev-parse --path-format=absolute --git-common-dir)/cocalc-guard-patch-ids
+  key="$1..$2"
+  pid=$(awk -v k="$key" '$1 == k { print $2; exit }' "$cache" 2>/dev/null)
+  if [ -z "$pid" ]; then
+    pid=$({ echo "commit $2"; git diff -p "$1" "$2"; } | git patch-id --stable | awk '{ print $1 }')
+    pid=${pid:--}
+    echo "$key $pid" >>"$cache"
+  fi
+  echo "$pid"
+}
+
+# Trees and patch-ids of the private commits ($private), computed once per run:
+# $tmp/private-trees (trees of private commits that change something relative
+# to their first parent) and $tmp/private-patch-ids ("<oid> <patch-id>").
 load_private_signatures() {
   [ -e "$tmp/private-trees" ] && return
-  local oldest
-  git log --no-walk --format='%H %T %P %ct' --stdin <<<"$private" >"$tmp/private-commits"
+  git log --no-walk --format='%H %T %P' --stdin <<<"$private" >"$tmp/private-commits"
   awk '{ print $3 }' "$tmp/private-commits" | grep -E '^[0-9a-f]{40}$' | sort -u |
     git log --no-walk --format='%H %T' --stdin >"$tmp/parent-trees" 2>/dev/null
   awk 'NR == FNR { pt[$1] = $2; next } !($3 in pt) || pt[$3] != $2 { print $2 }' \
-    "$tmp/parent-trees" "$tmp/private-commits" | sort -u >"$tmp/private-trees-all"
-  oldest=$(awk '{ print $NF }' "$tmp/private-commits" | sort -n | head -1)
-  git rev-list --glob="$GUARD_REFS/public/*" --since=$((oldest - 86400)) >"$tmp/public-window"
-  git log --no-walk --format='%T' --stdin <"$tmp/public-window" | sort -u >"$tmp/public-trees"
-  comm -23 "$tmp/private-trees-all" "$tmp/public-trees" >"$tmp/private-trees"
-  patch_ids <"$tmp/public-window" | awk '$2 != "-" { print $2 }' | sort -u >"$tmp/public-patch-ids"
-  patch_ids <<<"$private" | awk '$2 != "-" { print $2 }' | sort -u |
-    comm -23 - "$tmp/public-patch-ids" >"$tmp/private-patch-ids"
+    "$tmp/parent-trees" "$tmp/private-commits" | sort -u >"$tmp/private-trees"
+  patch_ids <<<"$private" | awk '$2 != "-"' >"$tmp/private-patch-ids"
+  # Combined change of each private branch since it forked from public main,
+  # so a squash of several private commits onto any base is recognized.
+  local tip base pid
+  git rev-parse --verify -q "$GUARD_REFS/public/main" >/dev/null || return 0
+  {
+    git for-each-ref --format='%(objectname)' "$GUARD_REFS/src/" "$GUARD_REFS/retired/" "$GUARD_REFS/seen/"
+    for ref in "${local_private_branches[@]}"; do git rev-parse "$ref"; done
+    for r in "${private_remote_refs[@]}"; do git for-each-ref --format='%(objectname)' "refs/remotes/${r#--remotes=}/"; done
+  } | sort -u | comm -12 - <(echo "$private") |
+    while read -r tip; do
+      base=$(git merge-base "$GUARD_REFS/public/main" "$tip") || continue
+      [ -n "$base" ] && [ "$base" != "$tip" ] || continue
+      pid=$(range_patch_id "$base" "$tip")
+      [ "$pid" != "-" ] && echo "$base..$tip $pid"
+    done >>"$tmp/private-patch-ids"
+}
+
+# Pushed commits ($1: newline-separated oids) whose tree or patch-id equals
+# that of an undisclosed private commit, unless that tree or patch already
+# exists anywhere in public history (disclosed under another commit id).
+rewritten_private_work() {
+  local pushed=$1 tip=$2 hits="" pid oid base
+  # Same tree as a private commit, and no public commit has that tree.
+  local tree_hits
+  tree_hits=$(git log --no-walk --format='%T %H' --stdin <<<"$pushed" |
+    awk 'NR == FNR { t[$1] = 1; next } ($1 in t)' "$tmp/private-trees" -)
+  if [ -n "$tree_hits" ]; then
+    [ -e "$tmp/public-trees" ] ||
+      git log --glob="$GUARD_REFS/public/*" --format='%T' | sort -u >"$tmp/public-trees"
+    hits+=$(awk 'NR == FNR { pub[$1] = 1; next } !($1 in pub) { print $2 }' "$tmp/public-trees" - <<<"$tree_hits")$'\n'
+  fi
+  # Same patch-id as a private commit, and no public commit touching the same
+  # files has that patch-id.
+  while read -r oid pid; do
+    [ -n "$pid" ] && [ "$pid" != "-" ] || continue
+    awk -v p="$pid" '$2 == p { found = 1 } END { exit !found }' "$tmp/private-patch-ids" || continue
+    if [ ! -e "$tmp/pid-public-$pid" ]; then
+      local files=()
+      mapfile -t files < <(awk -v p="$pid" '$2 == p { print $1 }' "$tmp/private-patch-ids" |
+        while read -r c; do
+          if [[ $c == *..* ]]; then git diff --name-only "$c"; else git diff-tree --no-commit-id --name-only -r --root "$c"; fi
+        done | sort -u)
+      if [ ${#files[@]} -gt 0 ] &&
+        git log --glob="$GUARD_REFS/public/*" --format='%H' -- "${files[@]}" | patch_ids |
+        awk -v p="$pid" '$2 == p { found = 1 } END { exit !found }'; then
+        echo public >"$tmp/pid-public-$pid"
+      else
+        echo private >"$tmp/pid-public-$pid"
+      fi
+    fi
+    [ "$(cat "$tmp/pid-public-$pid")" = private ] && hits+="$oid"$'\n'
+  done < <(
+    patch_ids <<<"$pushed"
+    # The pushed branch's combined change since it forked from public main
+    # (several commits that together recreate private work).
+    if git rev-parse --verify -q "$GUARD_REFS/public/main" >/dev/null; then
+      base=$(git merge-base "$GUARD_REFS/public/main" "$tip") &&
+        [ -n "$base" ] && [ "$base" != "$tip" ] && echo "$tip $(range_patch_id "$base" "$tip")"
+    fi
+  )
+  echo "$hits" | grep . | sort -u
 }
 
 remote_url=${2:-}
@@ -215,8 +285,13 @@ done
 # Private refs are never pruned, and every private tip ever seen is archived by
 # object id, so deleting or force-pushing a private branch early cannot erase
 # the evidence.  (Commits that later become public are subtracted below.)
+# That includes the tips of private-named local and tracking branches and of
+# private remotes' tracking branches, so deleting or renaming one after the
+# guard has seen it does not erase the evidence either.
+archive_patterns=("$GUARD_REFS/src/" "$GUARD_REFS/retired/" "${local_private_branches[@]}")
+for r in "${private_remote_refs[@]}"; do archive_patterns+=("refs/remotes/${r#--remotes=}/"); done
 if ! git for-each-ref --format="update $GUARD_REFS/seen/%(objectname) %(objectname)" \
-  "$GUARD_REFS/src/" "$GUARD_REFS/retired/" | sort -u | git update-ref --stdin; then
+  "${archive_patterns[@]}" | sort -u | git update-ref --stdin; then
   refuse "could not archive private tips under $GUARD_REFS/seen; refusing (fail closed)."
 fi
 if [ ${#failed[@]} -gt 0 ] && [ $has_private_work = 1 ]; then
@@ -234,6 +309,13 @@ if [ $has_private_work = 1 ] && [ $status = 0 ]; then
       while read -r local_ref local_sha remote_ref _remote_sha; do
         [ -z "$local_ref" ] && continue
         [ "$local_sha" = "$zero" ] && continue # deleting a remote branch
+        # Analyze the commit the pushed object peels to (annotated tags
+        # included).  A blob or tree pushed directly, or a tag of one, cannot
+        # be checked: refuse it.
+        if ! local_sha=$(git rev-parse -q --verify "$local_sha^{commit}"); then
+          refuse "refusing to push $local_ref -> $remote_ref to $remote_url: it is not a commit (or a tag of one), so it cannot be checked for private content."
+          continue
+        fi
         # Commits this push would add that are not already public ...
         if ! pushed=$(git rev-list "$local_sha" --not --glob="$GUARD_REFS/public/*" | sort); then
           refuse "could not analyze $local_ref; refusing (fail closed)."
@@ -252,13 +334,8 @@ if [ $has_private_work = 1 ] && [ $status = 0 ]; then
         # patch-id (git patch-id --stable) as a private commit.
         [ -n "$private" ] || continue
         load_private_signatures
-        rewritten=$(
-          git log --no-walk --format='%T %H' --stdin <<<"$pushed" | awk 'NR == FNR { t[$1] = 1; next } ($1 in t) { print $2 }' "$tmp/private-trees" -
-          git log --no-walk -p --no-merges --format='commit %H' --stdin <<<"$pushed" | git patch-id --stable |
-            awk 'NR == FNR { p[$1] = 1; next } ($1 in p) { print $2 }' "$tmp/private-patch-ids" -
-        )
+        rewritten=$(rewritten_private_work "$pushed" "$local_sha")
         if [ -n "$rewritten" ]; then
-          rewritten=$(echo "$rewritten" | sort -u)
           refuse "refusing to push $local_ref -> $remote_ref to $remote_url: $(echo "$rewritten" | wc -l) commit(s) have the same content (tree or patch) as undisclosed private commits, e.g.:"
           echo "$rewritten" | head -5 | while read -r c; do echo "  $(git log -1 --format='%h %s' "$c")" >&2; done
         fi

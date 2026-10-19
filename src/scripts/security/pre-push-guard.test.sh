@@ -243,6 +243,72 @@ check 0 "unrelated new commit is allowed" "$T/pub2.git" refs/heads/main "$UN" re
 git push -q "$T/pub2.git" "$RW:refs/heads/disclosed"
 check 0 "rewrite of private work already disclosed under another commit id" "$T/pub2.git" refs/heads/main "$RB" refs/heads/main "$E2" "$P2"
 
+# Private-named local and tracking branches are archived when observed, so
+# deleting them afterwards does not erase the evidence.
+git init -q "$T/obs" && cd "$T/obs" || exit 1
+git fetch -q "$T/pub.git" main && git reset -q --hard FETCH_HEAD && OBASE=$(git rev-parse HEAD)
+OSECRET=$(commit "secret on a local private branch")
+git branch -q security/local "$OSECRET" && git branch -q neutral "$OSECRET"
+OTRACK=$(commit "secret on a URL-less remote's tracking branch")
+git update-ref refs/remotes/nourl/security/t "$OTRACK" && git branch -q neutral2 "$OTRACK"
+git reset -q --hard "$OBASE"
+check 0 "observation run (public commit)" "$T/pub.git" refs/heads/x "$OBASE" refs/heads/fix/ok
+git branch -q -D security/local
+git update-ref -d refs/remotes/nourl/security/t
+check 1 "local private branch deleted after observation" "$T/pub.git" refs/heads/neutral "$OSECRET" refs/heads/fix/innocent
+check 1 "private-named tracking ref deleted after observation" "$T/pub.git" refs/heads/neutral2 "$OTRACK" refs/heads/fix/innocent
+
+# Non-commit objects pushed directly (blob, tree, or a tag of one) are refused;
+# an annotated tag of a commit is checked as that commit.
+cd "$T/work" || exit 1
+check 1 "blob pushed as a tag" "$T/pub.git" refs/tags/blob-leak "$(git rev-parse "$PRIV:"$(git ls-tree --name-only "$PRIV" | head -1) 2>/dev/null || git hash-object -w --stdin <<<TOP-SECRET)" refs/tags/blob-leak
+check 1 "tree pushed as a tag" "$T/pub.git" refs/tags/tree-leak "$(git rev-parse "$PRIV^{tree}")" refs/tags/tree-leak
+git tag -a -m "annotated, private" ann-private "$PRIV"
+check 1 "annotated tag of a private commit" "$T/pub.git" refs/tags/ann-private "$(git rev-parse ann-private)" refs/tags/ann-private
+git tag -a -m "annotated, public" ann-public "$C0"
+check 0 "annotated tag of a public commit" "$T/pub.git" refs/tags/ann-public "$(git rev-parse ann-public)" refs/tags/ann-public
+git tag -a -m "tag of a blob" ann-blob "$(git hash-object -w --stdin <<<TOP-SECRET)"
+check 1 "annotated tag of a blob" "$T/pub.git" refs/tags/ann-blob "$(git rev-parse ann-blob)" refs/tags/ann-blob
+
+# Several private commits squashed onto a newer public main: new tree and a
+# combined patch-id (Codex/@review repro).
+git init -q --bare "$T/pub4.git" && git init -q --bare "$T/priv4.git"
+git init -q "$T/sq" && cd "$T/sq" || exit 1
+E4="COCALC_PUBLIC_URL=$T/pub4.git"
+P4="COCALC_PRIVATE_URL=$T/priv4.git"
+echo base >a && echo base >b && git add a b && git commit -q -m base && B4=$(git rev-parse HEAD)
+git push -q "$T/pub4.git" HEAD:refs/heads/main && git push -q "$T/priv4.git" HEAD:refs/heads/main
+echo one >>a && git commit -q -am "private 1" && echo two >>a && git commit -q -am "private 2" && PT4=$(git rev-parse HEAD)
+git push -q "$T/priv4.git" HEAD:refs/heads/security/multi
+git reset -q --hard "$B4"
+echo public >>b && git commit -q -am "public moves on" && git push -q "$T/pub4.git" HEAD:refs/heads/main
+git merge -q --squash "$PT4" >/dev/null 2>&1 && git commit -q -m "squash onto newer main" && SQ4=$(git rev-parse HEAD)
+check 1 "multi-commit private squash onto a newer public main" "$T/pub4.git" refs/heads/main "$SQ4" refs/heads/main "$E4" "$P4"
+# The same change recreated as two different public-looking commits.
+git reset -q --hard HEAD~1
+echo one >>a && git commit -q -am "step A" && echo two >>a && git commit -q -am "step B" && RE4=$(git rev-parse HEAD)
+check 1 "private change recreated as several new commits (combined patch)" "$T/pub4.git" refs/heads/main "$RE4" refs/heads/main "$E4" "$P4"
+
+# Content public long ago (2020) under another commit id stays allowed, even
+# if a newer private commit has the same content (tree and patch-id cases).
+git init -q --bare "$T/pub3.git" && git init -q --bare "$T/priv3.git"
+git init -q "$T/old" && cd "$T/old" || exit 1
+E3="COCALC_PUBLIC_URL=$T/pub3.git"
+P3="COCALC_PRIVATE_URL=$T/priv3.git"
+echo base >f && git add f && git commit -q -m base && B3=$(git rev-parse HEAD)
+git push -q "$T/pub3.git" HEAD:refs/heads/main && git push -q "$T/priv3.git" HEAD:refs/heads/main
+echo fix >>f && GIT_AUTHOR_DATE=2020-01-01T00:00:00Z GIT_COMMITTER_DATE=2020-01-01T00:00:00Z git commit -q -am "old public fix"
+git push -q "$T/pub3.git" HEAD:refs/heads/disclosed-2020
+git reset -q --hard "$B3"
+echo fix >>f && git commit -q -am "same change, private, 2026" && git push -q "$T/priv3.git" HEAD:refs/heads/security/x
+git reset -q --hard "$B3"
+echo fix >>f && git commit -q -am "innocent third copy" && I3=$(git rev-parse HEAD)
+check 0 "content public since 2020 under another commit id" "$T/pub3.git" refs/heads/main "$I3" refs/heads/main "$E3" "$P3"
+git reset -q --hard "$B3"
+echo other >g && git add g && git commit -q -m "public moves on" && git push -q "$T/pub3.git" HEAD:refs/heads/main
+echo fix >>f && git commit -q -am "same patch on a newer base" && I4=$(git rev-parse HEAD)
+check 0 "patch public since 2020 under another commit id (different tree)" "$T/pub3.git" refs/heads/main "$I4" refs/heads/main "$E3" "$P3"
+
 # install-hooks.sh
 inst() { # <expect> <desc>
   local rc
