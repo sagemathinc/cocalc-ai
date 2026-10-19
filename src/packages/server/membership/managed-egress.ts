@@ -8,6 +8,7 @@ import getLogger from "@cocalc/backend/logger";
 import LRU from "lru-cache";
 import {
   foldEgressSubjects,
+  MAX_OPEN_SUBJECT_KEYS,
   MAX_ROLLUP_SUBJECT_KEYS,
   mergeTopEgressSubjects,
   OTHER_KEY,
@@ -134,8 +135,6 @@ type OpenBucketSubjects = {
   bySubject: Record<string, number>;
 };
 const openBucketSubjects = new Map<string, OpenBucketSubjects>();
-// Safety bound per open bucket (a sample has at most ~65 keys per socket).
-const MAX_OPEN_BUCKET_SUBJECT_KEYS = 4096;
 const BUCKET_MS = 60_000;
 
 function addOpenBucketSubjects(
@@ -154,9 +153,9 @@ function addOpenBucketSubjects(
     if (!subject || !(bytes > 0) || !Number.isFinite(bytes)) continue;
     open.bySubject[subject] = (open.bySubject[subject] ?? 0) + bytes;
   }
-  if (Object.keys(open.bySubject).length > MAX_OPEN_BUCKET_SUBJECT_KEYS) {
+  if (Object.keys(open.bySubject).length > MAX_OPEN_SUBJECT_KEYS) {
     open.bySubject = Object.fromEntries(
-      foldEgressSubjects(open.bySubject, MAX_OPEN_BUCKET_SUBJECT_KEYS).map(
+      foldEgressSubjects(open.bySubject, MAX_OPEN_SUBJECT_KEYS).map(
         ({ subject, bytes }) => [subject, bytes],
       ),
     );

@@ -99,48 +99,55 @@ it("accumulates more subjects than any sample reports, folding only beyond the b
   expect(stored.reduce((t, { bytes }) => t + bytes, 0)).toBe(expected);
 });
 
-it("keeps a subject that is small in every sample but largest over the minute, even past the bucket cap", async () => {
-  const { reportedTopEgressSubjects } =
-    await import("@cocalc/conat/core/egress-attribution");
-  const account_id = randomUUID();
-  // a finished minute: its attribution is written on the next flush
-  const minute = Date.parse("2026-10-19T18:47:00.000Z");
-  let expectedTotal = 0;
-  for (let i = 0; i < 12; i++) {
-    const top_subjects = [{ subject: "recurring", bytes: 10 }];
-    for (let j = 0; j < 255; j++) {
-      top_subjects.push({ subject: `once-${i}-${j}`, bytes: 100 });
+it.each([255, 256])(
+  "keeps a subject that is small in every sample but largest over the minute, with %i one-offs per sample",
+  async (oneOffs) => {
+    const { reportedTopEgressSubjects } =
+      await import("@cocalc/conat/core/egress-attribution");
+    const { __test__: hub } =
+      await import("@cocalc/server/conat/socketio/managed-egress");
+    const account_id = randomUUID();
+    // a finished minute: its attribution is written on the next flush
+    const minute = Date.parse("2026-10-19T18:47:00.000Z");
+    let expectedTotal = 0;
+    for (let i = 0; i < 12; i++) {
+      // the sample as the hub records it (all sockets' subjects together)
+      const bySubject: Record<string, number> = { recurring: 10 };
+      for (let j = 0; j < oneOffs; j++) {
+        bySubject[`once-${i}-${j}`] = 100;
+      }
+      const top_subjects = hub.sampleTopSubjects(bySubject);
+      expectedTotal += 10 + oneOffs * 100;
+      await __test__.recordManagedProjectEgressRollup({
+        account_id,
+        category: "control-plane-conat",
+        bytes: 10 + oneOffs * 100,
+        metadata: { browser_ids: [`b${i}`], top_subjects },
+        occurred_at: new Date(minute + i * 5000),
+      });
     }
-    expectedTotal += 10 + 255 * 100;
-    await __test__.recordManagedProjectEgressRollup({
-      account_id,
-      category: "control-plane-conat",
-      bytes: 10 + 255 * 100,
-      metadata: { browser_ids: [`b${i}`], top_subjects },
-      occurred_at: new Date(minute + i * 5000),
-    });
-  }
-  await __test__.flushManagedEgressRollups();
-  const { rows } = await getPool().query(
-    `SELECT bytes, event_count, metadata_sample FROM ${__test__.ROLLUP_TABLE}
+    await __test__.flushManagedEgressRollups();
+    const { rows } = await getPool().query(
+      `SELECT bytes, event_count, metadata_sample FROM ${__test__.ROLLUP_TABLE}
       WHERE account_id=$1`,
-    [account_id],
-  );
-  expect(rows).toHaveLength(1);
-  expect(Number(rows[0].bytes)).toBe(expectedTotal);
-  expect(rows[0].event_count).toBe(12);
-  expect(rows[0].metadata_sample.browser_ids).toEqual(["b0"]);
-  const stored: { subject: string; bytes: number }[] =
-    rows[0].metadata_sample.top_subjects;
-  expect(stored).toHaveLength(MAX_ROLLUP_SUBJECT_KEYS);
-  expect(stored.find(({ subject }) => subject === "recurring")).toEqual({
-    subject: "recurring",
-    bytes: 120,
-  });
-  expect(stored.reduce((t, { bytes }) => t + bytes, 0)).toBe(expectedTotal);
-  const reported = reportedTopEgressSubjects(stored);
-  expect(reported.filter(({ subject }) => subject !== "(other)")[0]).toEqual({
-    subject: "recurring",
-    bytes: 120,
-  });
-});
+      [account_id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0].bytes)).toBe(expectedTotal);
+    expect(rows[0].event_count).toBe(12);
+    expect(rows[0].metadata_sample.browser_ids).toEqual(["b0"]);
+    const stored: { subject: string; bytes: number }[] =
+      rows[0].metadata_sample.top_subjects;
+    expect(stored).toHaveLength(MAX_ROLLUP_SUBJECT_KEYS);
+    expect(stored.find(({ subject }) => subject === "recurring")).toEqual({
+      subject: "recurring",
+      bytes: 120,
+    });
+    expect(stored.reduce((t, { bytes }) => t + bytes, 0)).toBe(expectedTotal);
+    const reported = reportedTopEgressSubjects(stored);
+    expect(reported.filter(({ subject }) => subject !== "(other)")[0]).toEqual({
+      subject: "recurring",
+      bytes: 120,
+    });
+  },
+);

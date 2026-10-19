@@ -133,6 +133,12 @@ export function diffEgressBySubject(
 // many (beyond it, the smallest are summed under OTHER_KEY, so totals are
 // kept).  A minute of samples from one hub has at most 12 x 10 subjects.
 export const MAX_ROLLUP_SUBJECT_KEYS = 256;
+// Subjects kept while a minute is still being summed: per sample (all of an
+// account's sockets) and per open minute bucket.  Only a sample or minute
+// with more distinct subjects than this (an account with ~60+ sockets, each
+// at its own 64-key cap) folds early; the stored bucket is folded to
+// MAX_ROLLUP_SUBJECT_KEYS once, by exact totals.
+export const MAX_OPEN_SUBJECT_KEYS = 4096;
 // Subjects shown per event when rollups are read.
 export const MAX_REPORTED_TOP_SUBJECTS = 20;
 
