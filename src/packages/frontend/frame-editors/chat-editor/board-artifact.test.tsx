@@ -13,10 +13,21 @@ import {
 import BoardArtifact from "./board-artifact";
 import { boardFrameUrl, isBoardPath } from "./board-artifact-frame";
 
+// The card reads only with the file service's capped read.
+const readRegularFile = jest.fn();
 const readFile = jest.fn();
 const stat = jest.fn();
 const open_file = jest.fn().mockResolvedValue(undefined);
-const actions = { fs: () => ({ stat, readFile }), open_file };
+const actions = {
+  fs: () => ({ stat, readFile, readRegularFile }),
+  open_file,
+};
+const LIMIT = 16 * 1024 * 1024;
+function efbig() {
+  return Object.assign(new Error("EFBIG: file exceeds read limit"), {
+    code: "EFBIG",
+  });
+}
 const PROJECT = "22222222-2222-4222-8222-222222222222";
 jest.mock("@cocalc/frontend/project/context", () => ({
   useProjectContext: () => ({ actions, project_id: PROJECT }),
@@ -88,7 +99,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockDecideEnabled = undefined;
   stat.mockResolvedValue({ size: 100 });
-  readFile.mockResolvedValue(TEXT);
+  readRegularFile.mockResolvedValue(TEXT);
 });
 
 test("the frame is sandboxed and loads Sagebrush's frame page", async () => {
@@ -111,7 +122,8 @@ test("says which site receives the board", async () => {
 
 test("posts the saved board when the frame is ready", async () => {
   const { frame, posted } = await renderBoard();
-  expect(readFile).toHaveBeenCalledWith(PATH);
+  expect(readRegularFile).toHaveBeenCalledWith(PATH, { maxBytes: LIMIT });
+  expect(readFile).not.toHaveBeenCalled();
   // Nothing is posted before the frame says it listens.
   expect(posted).not.toHaveBeenCalled();
   fromFrame(frame, READY);
@@ -127,7 +139,7 @@ test("posts the saved board when the frame is ready", async () => {
 });
 
 test("decodes a file read as bytes", async () => {
-  readFile.mockResolvedValue(Buffer.from('{"title":"Größe"}'));
+  readRegularFile.mockResolvedValue(Buffer.from('{"title":"Größe"}'));
   const { frame, posted } = await renderBoard();
   fromFrame(frame, READY);
   expect(posted.mock.calls[0][0].text).toBe('{"title":"Größe"}');
@@ -174,7 +186,9 @@ test("a later document in the same frame gets nothing", async () => {
 test("Refresh reads the file again and posts it to a new frame", async () => {
   const { frame, posted } = await renderBoard();
   fromFrame(frame, READY);
-  readFile.mockResolvedValue('{"format":"sagebrush-board","version":1,"x":2}');
+  readRegularFile.mockResolvedValue(
+    '{"format":"sagebrush-board","version":1,"x":2}',
+  );
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   const second = await waitFor(() => {
     const f = screen.getByTitle(TITLE) as HTMLIFrameElement;
@@ -189,8 +203,26 @@ test("Refresh reads the file again and posts it to a new frame", async () => {
   expect(posted).toHaveBeenCalledTimes(1);
 });
 
-test("refuses a board over the preview limit without reading it", async () => {
-  stat.mockResolvedValue({ size: 17 * 1024 * 1024 });
+test("refuses a board the file service finds over the preview limit", async () => {
+  readRegularFile.mockRejectedValue(efbig());
+  render(<BoardArtifact path={PATH} frameUrl={FRAME} />);
+  expect(
+    await screen.findByText(/exceeds the 16 MiB preview limit/),
+  ).toBeInTheDocument();
+  expect(screen.queryByTitle(TITLE)).toBeNull();
+  expect(readRegularFile).toHaveBeenCalledWith(PATH, { maxBytes: LIMIT });
+});
+
+test("a board that grows after a stat is never read in full", async () => {
+  // A stat would see the small board; it grows before the read. Only the
+  // capped read can refuse it: an uncapped read would return all of it.
+  const grown = "x".repeat(LIMIT + 1);
+  stat.mockResolvedValue({ size: 100 });
+  readFile.mockResolvedValue(grown);
+  readRegularFile.mockImplementation(async (_path, { maxBytes }) => {
+    if (grown.length > maxBytes) throw efbig();
+    return grown;
+  });
   render(<BoardArtifact path={PATH} frameUrl={FRAME} />);
   expect(
     await screen.findByText(/exceeds the 16 MiB preview limit/),
@@ -199,13 +231,26 @@ test("refuses a board over the preview limit without reading it", async () => {
   expect(readFile).not.toHaveBeenCalled();
 });
 
-test("refuses a board that grew past the limit after the size check", async () => {
-  readFile.mockResolvedValue("x".repeat(16 * 1024 * 1024 + 1));
+test("still refuses an over-limit result from the file service", async () => {
+  readRegularFile.mockResolvedValue("x".repeat(LIMIT + 1));
   render(<BoardArtifact path={PATH} frameUrl={FRAME} />);
   expect(
     await screen.findByText(/exceeds the 16 MiB preview limit/),
   ).toBeInTheDocument();
   expect(screen.queryByTitle(TITLE)).toBeNull();
+});
+
+test("shows any other read error as it is", async () => {
+  readRegularFile.mockRejectedValue(
+    Object.assign(new Error("capped regular-file reads are not supported"), {
+      code: "ENOTSUP",
+    }),
+  );
+  render(<BoardArtifact path={PATH} frameUrl={FRAME} />);
+  expect(
+    await screen.findByText(/capped regular-file reads are not supported/),
+  ).toBeInTheDocument();
+  expect(readFile).not.toHaveBeenCalled();
 });
 
 test("keeps Open in project", async () => {
@@ -409,7 +454,7 @@ describe("the answers bootstrap (board-host-protocol.md)", () => {
       "1a2b3c4d-0000-4000-8000-000000000002",
       "1a2b3c4d-0000-4000-8000-000000000003",
     ];
-    beforeEach(() => readFile.mockResolvedValue(QBOARD));
+    beforeEach(() => readRegularFile.mockResolvedValue(QBOARD));
     const card = (answering: boolean) => (
       <BoardArtifact
         path={PATH}

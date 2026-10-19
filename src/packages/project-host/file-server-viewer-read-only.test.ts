@@ -62,6 +62,51 @@ describe("viewer read-only filesystem boundary", () => {
     }
   });
 
+  itOnLinux(
+    "caps a viewer's readRegularFile within the viewer's own limit",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "cocalc-viewer-"));
+      try {
+        await writeFile(join(root, "public.txt"), "abcd");
+        await writeFile(join(root, "private.txt"), "secret");
+        await writeFile(
+          join(root, "big.txt"),
+          Buffer.alloc(8 * 1024 * 1024 + 1),
+        );
+        const viewerFs = createViewerReadOnlyFilesystem({
+          fs: new SandboxedFilesystem(root),
+          readPolicy: {
+            rules: [
+              { action: "include", path: "public.txt" },
+              { action: "include", path: "big.txt" },
+            ],
+          },
+        });
+        await expect(
+          viewerFs.readRegularFile!("public.txt", {
+            maxBytes: 4,
+            encoding: "utf8",
+          }),
+        ).resolves.toBe("abcd");
+        await expect(
+          viewerFs.readRegularFile!("public.txt", { maxBytes: 3 }),
+        ).rejects.toMatchObject({ code: "EFBIG" });
+        // A caller's larger cap does not lift the viewer's 8 MiB.
+        await expect(
+          viewerFs.readRegularFile!("big.txt", { maxBytes: 16 * 1024 * 1024 }),
+        ).rejects.toMatchObject({ code: "EFBIG" });
+        await expect(
+          viewerFs.readRegularFile!("private.txt", { maxBytes: 100 }),
+        ).rejects.toMatchObject({ code: "EACCES" });
+        await expect(
+          viewerFs.readRegularFile!("public.txt", {} as any),
+        ).rejects.toThrow("invalid regular-file read limit");
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("authorizes the canonical identity supplied by an opened handle", () => {
     expect(
       assertViewerCanonicalPathAllowed({

@@ -10,7 +10,9 @@ import { FileArtifact, fileArtifactPreviewSupported } from "./file-artifact";
 const readFile = jest.fn();
 const stat = jest.fn();
 const open_file = jest.fn().mockResolvedValue(undefined);
-const actions = { fs: () => ({ stat, readFile }), open_file };
+// A board's card reads with the capped read; other previews with readFile.
+const readRegularFile = jest.fn();
+const actions = { fs: () => ({ stat, readFile, readRegularFile }), open_file };
 let mockRole = "collaborator";
 jest.mock("@cocalc/frontend/project/use-project-host-authed-url", () => ({
   useProjectHostAuthedUrl: ({ url }) => url,
@@ -293,6 +295,7 @@ test("a board waits for the site's settings and goes only where they say", async
     file: { path: "/home/user/plan.board.json" },
   };
   readFile.mockResolvedValue('{"format":"sagebrush-board","version":1}');
+  readRegularFile.mockResolvedValue('{"format":"sagebrush-board","version":1}');
   const view = () => <FileArtifact artifact={board} historical={false} />;
   mockCustomize = {
     _is_configured: false,
@@ -305,6 +308,7 @@ test("a board waits for the site's settings and goes only where they say", async
   await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
   expect(document.querySelector("iframe")).toBeNull();
   expect(readFile).not.toHaveBeenCalled();
+  expect(readRegularFile).not.toHaveBeenCalled();
 
   // This site turned live boards off: shown as text, no frame.
   mockCustomize = { _is_configured: true, sagebrush_origin: "" };
@@ -332,6 +336,7 @@ test("a card whose site setting changes answers the new renderer", async () => {
     file: { path: "/home/user/plan.board.json" },
   };
   readFile.mockResolvedValue('{"format":"sagebrush-board","version":1}');
+  readRegularFile.mockResolvedValue('{"format":"sagebrush-board","version":1}');
   const view = () => <FileArtifact artifact={board} historical={false} />;
   const title = "Sagebrush board: plan.board.json";
   const ready = (frame: HTMLIFrameElement) =>

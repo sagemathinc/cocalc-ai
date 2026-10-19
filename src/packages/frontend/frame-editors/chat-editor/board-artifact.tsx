@@ -154,10 +154,17 @@ export default function BoardArtifact({
         const tooLarge = Error(
           `The board exceeds the ${BOARD_PREVIEW_LIMIT / 1024 / 1024} MiB preview limit. Open the file to see it.`,
         );
-        const stat = await fs.stat(path);
-        if (stat.size > BOARD_PREVIEW_LIMIT) throw tooLarge;
-        // The file can grow between stat and read: check what was read.
-        const raw = await fs.readFile(path);
+        // The file service caps the read on the opened file, so a board
+        // that grows while it is read is refused there, not buffered here.
+        let raw: string | Buffer;
+        try {
+          raw = await fs.readRegularFile(path, {
+            maxBytes: BOARD_PREVIEW_LIMIT,
+          });
+        } catch (err) {
+          if (err?.code === "EFBIG") throw tooLarge;
+          throw err;
+        }
         const bytes =
           typeof raw === "string"
             ? new TextEncoder().encode(raw)

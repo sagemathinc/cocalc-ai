@@ -234,6 +234,81 @@ describe("filesystem explicit routing", () => {
     server.close();
   });
 
+  it.each(["fsServer", "fsReadOnlyServer"])(
+    "%s forwards readRegularFile's cap, and never falls back to an uncapped read",
+    async (name) => {
+      const mod = await import("./fs");
+      const readRegularFile = jest.fn(async () => "ok");
+      const readFile = jest.fn(async () => "uncapped");
+      let filesystem: any = { readRegularFile, readFile };
+      let handlers: any;
+      const client = {
+        service: jest.fn(async (_subject, svc) => {
+          handlers = svc;
+          return { close: jest.fn() };
+        }),
+      } as any;
+      const server = await (name === "fsServer"
+        ? mod.fsServer({
+            service: "fs-capped-test",
+            client,
+            fs: async () => filesystem,
+            jupyter: {} as any,
+          })
+        : mod.fsReadOnlyServer({
+            service: "fs-capped-test",
+            client,
+            fs: async () => filesystem,
+          }));
+      const self = {
+        subject:
+          "fs-capped-test.project-00000000-0000-4000-8000-000000000000.account-11111111-1111-4111-8111-111111111111",
+      };
+      await expect(
+        handlers.readRegularFile.call(self, "a.board.json", {
+          maxBytes: 16,
+          encoding: "utf8",
+          extra: 1,
+        }),
+      ).resolves.toBe("ok");
+      expect(readRegularFile).toHaveBeenCalledWith("a.board.json", {
+        maxBytes: 16,
+        encoding: "utf8",
+      });
+      // A filesystem without capped reads is refused, not read in full.
+      server.close();
+      filesystem = { readFile };
+      let handlers2: any;
+      client.service = jest.fn(async (_subject, svc) => {
+        handlers2 = svc;
+        return { close: jest.fn() };
+      });
+      const server2 = await (name === "fsServer"
+        ? mod.fsServer({
+            service: "fs-capped-test2",
+            client,
+            fs: async () => filesystem,
+            jupyter: {} as any,
+          })
+        : mod.fsReadOnlyServer({
+            service: "fs-capped-test2",
+            client,
+            fs: async () => filesystem,
+          }));
+      await expect(
+        handlers2.readRegularFile.call(
+          {
+            subject: self.subject.replace("fs-capped-test", "fs-capped-test2"),
+          },
+          "a.board.json",
+          { maxBytes: 16 },
+        ),
+      ).rejects.toMatchObject({ code: "ENOTSUP" });
+      expect(readFile).not.toHaveBeenCalled();
+      server2.close();
+    },
+  );
+
   it("exposes realpath on read-only filesystem service", async () => {
     const { fsReadOnlyServer } = await import("./fs");
     const realpath = jest.fn(async (path: string) => `/resolved${path}`);
