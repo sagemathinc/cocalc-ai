@@ -45,8 +45,8 @@ async function signOut(req, res): Promise<void> {
       await recordAccountRevocation(account_id, Date.now());
     } else {
       // Each cookie's session homed on this bay, for whichever account it
-      // belongs to. A session homed on another bay is not ended here (as
-      // before); there are no multibay deployments yet.
+      // belongs to. TODO: ending a session homed on another bay needs routing
+      // through the account-local inter-bay API.
       for (const hash of getRememberMeHashes(req)) {
         await endSignInSession({ session_hash: hash });
       }
