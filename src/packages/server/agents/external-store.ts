@@ -345,9 +345,13 @@ export class ExternalAgentStore {
         )
       ).rows;
       if (!rows.length) return null;
-      const row = await this.active(db, account, installation, controls);
-      if (row.secret_hash !== secret_hash)
+      // The secret hash is fixed at enrollment: check it before saying
+      // anything about the installation's state (e.g. inactive).
+      if (
+        (await this.row(db, account, installation)).secret_hash !== secret_hash
+      )
         throw new Error("external_approval_conflict");
+      const row = await this.active(db, account, installation, controls);
       return this.public(row);
     });
   }

@@ -44,6 +44,10 @@ const CHALLENGE_TTL_MS = 8 * 60 * 60_000;
 // An external agent's enrollment link waits for a person to open it, sign in
 // and choose a network; 15 minutes was often too short.
 export const EXTERNAL_AGENT_CHALLENGE_TTL_MS = 60 * 60_000;
+// Enrollment-status errors for an installation that exists for this request
+// (its secret matched) but can no longer be used.
+const EXTERNAL_INSTALLATION_ENDED =
+  /external_credential_inactive|external_credential_revoked_or_paused|external_identity_unavailable/;
 const PENDING_CLI_LOGIN_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
 const CLI_LOGIN_START_IP_LIMIT_10M = 20;
 const CLI_LOGIN_START_IP_LIMIT_DAY = 100;
@@ -1037,11 +1041,17 @@ export async function getCliAuthApprovalInfo({
       );
       if (installation) state = "approved";
     } catch (err) {
-      // The approval itself still checks; the page just can't tell early.
-      logger.warn("external enrollment status for approval info failed", {
-        challenge_id: row.id,
-        err: `${err}`,
-      });
+      if (EXTERNAL_INSTALLATION_ENDED.test(`${err}`)) {
+        // Approved earlier (the secret matched), since revoked or expired:
+        // approving again cannot revive it.
+        state = "canceled";
+      } else {
+        // The approval itself still checks; the page just can't tell early.
+        logger.warn("external enrollment status for approval info failed", {
+          challenge_id: row.id,
+          err: `${err}`,
+        });
+      }
     }
   }
   return {

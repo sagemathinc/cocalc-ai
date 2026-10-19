@@ -200,6 +200,13 @@ describeDb(
         request.challenge_id,
         secret_hash,
       );
+      // Approved, then revoked or expired: the request is over.
+      mockEnrollmentStatus.mockRejectedValueOnce(
+        new Error("external_credential_inactive"),
+      );
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "canceled" });
       // If the home bay can't be asked, the page still opens (as pending).
       mockEnrollmentStatus.mockRejectedValue(new Error("home bay unreachable"));
       expect(

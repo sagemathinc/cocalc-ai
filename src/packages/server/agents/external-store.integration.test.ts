@@ -120,6 +120,29 @@ describeDb("network-bound external agents", () => {
     );
   });
 
+  test("enrollment status checks the secret before saying an installation is inactive", async () => {
+    const { options } = enrollment();
+    await store.enroll(account, "human-session", options);
+    expect(
+      await store.enrollmentStatus(
+        account,
+        options.installation_id,
+        options.secret_hash,
+      ),
+    ).toMatchObject({ installation_id: options.installation_id });
+    await store.revoke(account, options.installation_id);
+    await expect(
+      store.enrollmentStatus(account, options.installation_id, "b".repeat(64)),
+    ).rejects.toThrow("external_approval_conflict");
+    await expect(
+      store.enrollmentStatus(
+        account,
+        options.installation_id,
+        options.secret_hash,
+      ),
+    ).rejects.toThrow("external_credential_inactive");
+  });
+
   test("bounded inbox is network-bound, idempotent, and acknowledged", async () => {
     const { options } = enrollment();
     const installation = await store.enroll(account, "human-session", options);

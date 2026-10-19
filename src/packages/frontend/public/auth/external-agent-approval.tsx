@@ -72,7 +72,7 @@ export function ExternalAgentApproval({
     state === "approved" || state === "redeemed"
       ? "It was already approved."
       : state === "canceled"
-        ? "It was canceled."
+        ? "It was canceled, or the access it granted was revoked or has expired."
         : remainingMs <= 0
           ? `It expired at ${expiresLabel}.`
           : undefined;
