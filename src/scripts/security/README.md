@@ -48,7 +48,7 @@ Other `cocalc-ai-*` repos are not trusted; `cocalc-ai-doc`, for example, is publ
 - a source or destination branch named `security/*`, `ghsa*` or `release/*security*`;
 - a commit that is on a private branch but on no branch of the public repo. Private branches are those of the private repo, of other private remotes, and local or remote-tracking branches with private names (even for a remote without a URL);
 - rewritten private work: cherry-picks, amends, rebases, and squashes of several commits onto a newer base. These are commits with the same tree or the same patch-id (`git patch-id --stable`) as a private commit, or a commit or pushed branch whose patch-id equals a private branch's combined change since it forked from public main. Content already public as an individual public commit (same tree or same patch-id), under another commit id, doesn't count. Combined ranges of public branches are not compared, so a squash whose combined change matches only a public multi-commit series is refused, conservatively. A partial cherry-pick (only some hunks) or a hand-retyped change is not detected;
-- anything that isn't a commit or a tag of one, such as a blob or tree pushed directly, which can't be checked.
+- anything that isn't a commit: blobs and trees pushed directly, and annotated tag objects. A tag message is new content that could describe an undisclosed vulnerability, even for a tag of a public commit. Lightweight tags of commits are fine.
 
 Pushes that only delete branches are always allowed, with no analysis.
 

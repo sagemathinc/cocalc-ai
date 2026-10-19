@@ -332,10 +332,16 @@ esac
 while read -r local_ref local_sha remote_ref _remote_sha; do
   [ -z "$local_ref" ] && continue
   [ "$local_sha" = "$zero" ] && continue
-  # Only commits (or tags of commits) can be checked; refuse anything else
-  # (blobs, trees, tags of them) for every non-private destination.
-  if ! git rev-parse -q --verify "$local_sha^{commit}" >/dev/null; then
-    refuse "refusing to push $local_ref -> $remote_ref to $remote_url: it is not a commit (or a tag of one), so it cannot be checked for private content."
+  # Only commits can be checked.  Refuse anything else for every non-private
+  # destination: blobs, trees, and annotated tag objects (a tag message is new
+  # content that could describe an undisclosed vulnerability, even when the
+  # tag points at a public commit).  Lightweight tags of commits are fine.
+  if ! obj_type=$(git cat-file -t "$local_sha"); then
+    refuse "could not inspect $local_sha ($local_ref); refusing (fail closed)."
+  elif [ "$obj_type" = tag ]; then
+    refuse "refusing to push $local_ref -> $remote_ref to $remote_url: annotated tag objects carry a message that cannot be checked; push a lightweight tag, or disclose deliberately with disclose.sh."
+  elif [ "$obj_type" != commit ]; then
+    refuse "refusing to push $local_ref -> $remote_ref to $remote_url: it is a $obj_type, not a commit, so it cannot be checked for private content."
   fi
   for ref in "$local_ref" "$remote_ref"; do
     if [[ $ref == refs/heads/* ]] && is_private_branch "${ref#refs/heads/}"; then

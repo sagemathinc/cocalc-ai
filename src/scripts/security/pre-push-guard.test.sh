@@ -293,8 +293,11 @@ check 1 "blob pushed as a tag" "$T/pub.git" refs/tags/blob-leak "$(git rev-parse
 check 1 "tree pushed as a tag" "$T/pub.git" refs/tags/tree-leak "$(git rev-parse "$PRIV^{tree}")" refs/tags/tree-leak
 git tag -a -m "annotated, private" ann-private "$PRIV"
 check 1 "annotated tag of a private commit" "$T/pub.git" refs/tags/ann-private "$(git rev-parse ann-private)" refs/tags/ann-private
-git tag -a -m "annotated, public" ann-public "$C0"
-check 0 "annotated tag of a public commit" "$T/pub.git" refs/tags/ann-public "$(git rev-parse ann-public)" refs/tags/ann-public
+git tag -a -m "SECRET: the exploit works by ..." ann-public "$C0"
+check 1 "annotated tag of a public commit (secret in the tag message)" "$T/pub.git" refs/tags/ann-public "$(git rev-parse ann-public)" refs/tags/ann-public
+git tag light-public "$C0"
+check 0 "lightweight tag of a public commit" "$T/pub.git" refs/tags/light-public "$(git rev-parse light-public)" refs/tags/light-public
+check 0 "annotated tag with the deliberate disclosure override" "$T/pub.git" refs/tags/ann-public "$(git rev-parse ann-public)" refs/tags/ann-public COCALC_DISCLOSE=1
 git tag -a -m "tag of a blob" ann-blob "$(git hash-object -w --stdin <<<TOP-SECRET)"
 check 1 "annotated tag of a blob" "$T/pub.git" refs/tags/ann-blob "$(git rev-parse ann-blob)" refs/tags/ann-blob
 
