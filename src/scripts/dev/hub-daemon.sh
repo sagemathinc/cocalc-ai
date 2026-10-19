@@ -1071,7 +1071,8 @@ ensure_local_software_artifacts() {
   local need_tools_bundle=0
   [ -f "$source_root/project-host/build/bundle-linux.tar.xz" ] || need_project_host_bundle=1
   [ -f "$source_root/project/build/bundle-linux.tar.xz" ] || need_project_bundle=1
-  if ! have_local_tools_bundle "$source_root"; then
+  # Tools served from HUB_TOOLS_SOFTWARE_BASE_URL are never built here.
+  if [ -z "$HUB_TOOLS_SOFTWARE_BASE_URL" ] && ! have_local_tools_bundle "$source_root"; then
     need_tools_bundle=1
   fi
 
