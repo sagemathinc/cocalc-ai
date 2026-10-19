@@ -147,7 +147,8 @@ test("the question and options come from the board file, not the message", async
       request_id: "33333333-3333-4333-8333-333333333333",
       question: JSON.parse(BOARD),
       answer: "sure it is",
-      board: { project_id: PROJECT, path: "/home/user/work/q.board.json" },
+      // the board's one key (HOME made relative), for the per-board limits
+      board: { project_id: PROJECT, path: "work/q.board.json" },
     },
   ]);
 });
@@ -360,6 +361,14 @@ test("one call in flight per board, taken before the file is read", async () => 
     code: 429,
   });
   expect(reads).toHaveLength(1);
+  // and under its other name, HOME made absolute (Codex on #1134)
+  const alias = PATH.startsWith("/home/user/")
+    ? PATH.slice("/home/user/".length)
+    : `/home/user/${PATH}`;
+  await expect(
+    boardDecideForBoard(opts({ path: alias }), d),
+  ).rejects.toMatchObject({ code: 429 });
+  expect(reads).toHaveLength(1);
   // another board is not held up
   const other = boardDecideForBoard(
     opts({
@@ -413,7 +422,7 @@ test("a link to the board shares its hourly bucket", async () => {
 
 // Codex on #1134: the hourly count per board holds across hub replicas, in
 // the funding on the account's home bay; the board goes there as resolved.
-test("the home bay is told the board as the filesystem resolved it", async () => {
+test("the home bay is told the board by its one key, as the filesystem resolved it", async () => {
   const { d, calls } = deps({
     files: { realpath: async () => "/home/user/work/q.board.json" },
   });
@@ -427,7 +436,8 @@ test("the home bay is told the board as the filesystem resolved it", async () =>
   expect(calls).toHaveLength(1);
   expect(calls[0].board).toEqual({
     project_id: opts().project_id,
-    path: "/home/user/work/q.board.json",
+    // the board's one key: HOME made relative, the link resolved
+    path: "work/q.board.json",
   });
 });
 
@@ -487,7 +497,7 @@ test("hourly records of inactive boards are reclaimed", async () => {
     });
   const keys = () => boardDecideRecentKeysForTests();
   const has = (i: number) =>
-    keys().some((k) => k.endsWith(`/b${i}.board.json`));
+    keys().some((k) => k.endsWith(`\nb${i}.board.json`));
   for (let i = 0; i < 5; i++) await boardDecideForBoard(board(i), d);
   expect(keys()).toHaveLength(5);
   // an hour later, many other boards

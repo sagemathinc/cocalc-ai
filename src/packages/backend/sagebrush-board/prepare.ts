@@ -14,6 +14,7 @@ import {
   BOARD_DECIDE_REQUEST_LIMITS,
   boardPostedName,
   boardTextDigest,
+  canonicalBoardKey,
   isBoardDecideBinding,
   isPlainBoardPath,
 } from "@cocalc/util/sagebrush-board";
@@ -49,8 +50,13 @@ export async function prepareBoardDecideFromFiles(
   if (!isPlainBoardPath(path) || !isBoardDecideBinding(revision, sha256)) {
     throw codedError("Invalid request.", 400);
   }
-  const resolved_path = await files.realpath(path);
-  const text = await files.readBoard(resolved_path, BOARD_FILE_LIMIT);
+  const real = await files.realpath(path);
+  // One key per file, however it was named: the realpath's HOME alias
+  // (`/home/user/x`) and its project-relative form (`x`) are the same
+  // board for every per-board limit (Codex on #1134).
+  const resolved_path = canonicalBoardKey(real);
+  if (resolved_path == null) throw codedError("Invalid request.", 400);
+  const text = await files.readBoard(real, BOARD_FILE_LIMIT);
   // What was read can't be more than the limit (the read stops there);
   // checked again here all the same.
   if (new TextEncoder().encode(text).byteLength > BOARD_FILE_LIMIT) {

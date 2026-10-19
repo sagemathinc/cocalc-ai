@@ -193,7 +193,7 @@ describe("end to end through the bound call", () => {
         answer: "only 1 and 7 divide it",
         board: {
           project_id: PROJECT,
-          path: "/home/user/work/primes.board.json",
+          path: "work/primes.board.json",
         },
       },
     ]);

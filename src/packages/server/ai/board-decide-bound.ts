@@ -39,6 +39,7 @@
 import { DECIDE_LIMITS, type DecideResult } from "./board-decide";
 import {
   isBoardDecideBinding,
+  canonicalBoardKey,
   isPlainBoardPath,
 } from "@cocalc/util/sagebrush-board";
 import type {
@@ -175,7 +176,9 @@ export async function boardDecideForBoard(
   // One in flight per board path as asked, taken before the file's server
   // is asked to read it (HARD-CAD-2); that server bounds its own reads per
   // project and in total (backend/sagebrush-board/service.ts).
-  const key = `${account_id}\n${project_id}\n${path}`;
+  // Keyed by the path's canonical form (HOME aliases made relative), so
+  // its spellings share one slot; links are only known once it's read.
+  const key = `${account_id}\n${project_id}\n${canonicalBoardKey(path) ?? path}`;
   if (inFlight.has(key)) {
     throw codedError("An answer on this board is already being checked.", 429);
   }

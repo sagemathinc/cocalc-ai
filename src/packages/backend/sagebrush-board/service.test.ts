@@ -119,7 +119,8 @@ describe("the board, read and checked where it is", () => {
       }),
     );
     expect(out).toEqual({
-      resolved_path: "/home/user/work/q.board.json",
+      // the board's one key: HOME made relative (Codex on #1134)
+      resolved_path: "work/q.board.json",
       request: {
         id: ID,
         prompt: "Is 7 prime?",
@@ -267,6 +268,46 @@ describe("the board, read and checked where it is", () => {
 // daybreak2, LIMITS-R6-1: the board is read through the project's sandbox
 // from one opened handle, at most limit + 1 bytes, so a file swapped or grown
 // after any size check is never read whole.
+// Codex on #1134: every spelling of one file is one board for the
+// per-board limits; two files are two.
+describe("one key per board file, through a real sandbox", () => {
+  let dir = "";
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "board-decide-key-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("HOME aliases and links name one board; another file is another", async () => {
+    const { mkdir, symlink } = await import("node:fs/promises");
+    await mkdir(join(dir, "work"));
+    await writeFile(join(dir, "work", "q.board.json"), BOARD);
+    await writeFile(join(dir, "other.board.json"), BOARD);
+    await symlink("work/q.board.json", join(dir, "link.board.json"));
+    const sandbox = new SandboxedFilesystem(dir, {
+      homeAliases: ["/home/user"],
+    } as any);
+    const key = async (path: string) =>
+      (
+        await prepareBoardDecideFromFiles(
+          sandboxBoardFiles(sandbox as any),
+          opts({ path, message: message({ name: path.split("/").pop() }) }),
+        )
+      ).resolved_path;
+    for (const spelling of [
+      "work/q.board.json",
+      "/home/user/work/q.board.json",
+      "link.board.json",
+      "/home/user/link.board.json",
+    ]) {
+      expect(await key(spelling)).toBe("work/q.board.json");
+    }
+    expect(await key("other.board.json")).toBe("other.board.json");
+    expect(await key("/home/user/other.board.json")).toBe("other.board.json");
+  });
+});
+
 describe("the capped read, through a real sandbox", () => {
   let dir = "";
   beforeEach(async () => {

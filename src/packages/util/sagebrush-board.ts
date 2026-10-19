@@ -5,6 +5,8 @@
 
 import { sha256 } from "@noble/hashes/sha2";
 import { v5 } from "uuid";
+import path from "path";
+import { projectRuntimeHomeRelativePath } from "./project-runtime";
 
 // What CoCalc's board card posts to a Sagebrush frame, computed the same
 // way by the card and by the server that checks a board's decide request
@@ -43,6 +45,30 @@ export function isPlainBoardPath(path: unknown): path is string {
   if (!isBoardPath(path) || path.includes("\0")) return false;
   const parts = (path.startsWith("/") ? path.slice(1) : path).split("/");
   return parts.every((p) => p !== "" && p !== "." && p !== "..");
+}
+
+/** A board file's one identity, as a key (the per-board limits): the
+ * path normalized, and one under the project's HOME (`/home/user/x`, or
+ * the legacy `/root/x`) made relative to it (`x`), since the file server
+ * names the same file either way (Codex on #1134). Other absolute paths
+ * (`/tmp/x`) are other files and stay as they are. Undefined for a path
+ * that is HOME itself or escapes it. Given the file server's realpath it is
+ * exact (links resolved); given a path as asked, it is the same up to
+ * links. */
+export function canonicalBoardKey(p: string): string | undefined {
+  if (typeof p !== "string" || p === "") return undefined;
+  const normalized = path.posix.normalize(p.replace(/\\/g, "/"));
+  const key = projectRuntimeHomeRelativePath(normalized) ?? normalized;
+  if (
+    key === "" ||
+    key === "." ||
+    key === "/" ||
+    key === ".." ||
+    key.startsWith("../")
+  ) {
+    return undefined;
+  }
+  return key.replace(/^(\.\/)+/, "").replace(/\/+$/, "");
 }
 
 /** A board decide call's revision (the card's label) and SHA-256 (of the

@@ -4,7 +4,12 @@
  */
 
 import { sha256 } from "@noble/hashes/sha2";
-import { boardPostedName, boardTextDigest, uuidV5 } from "./sagebrush-board";
+import {
+  boardPostedName,
+  boardTextDigest,
+  canonicalBoardKey,
+  uuidV5,
+} from "./sagebrush-board";
 
 test("the posted name is the file's basename", () => {
   expect(boardPostedName("/home/user/a/q.board.json")).toBe("q.board.json");
@@ -122,5 +127,36 @@ test("the browser build of uuid v5 makes the same ids, without crypto", () => {
     expect(
       browserV5(`board-answers\n${thread}\n${submission}`, BOARD_NAMESPACE),
     ).toBe(id);
+  }
+});
+
+// Codex on #1134: one key per board file, for the per-board limits.
+test("canonicalBoardKey: HOME aliases are made relative; other files stay apart", () => {
+  for (const p of [
+    "work/q.board.json",
+    "/home/user/work/q.board.json",
+    "/root/work/q.board.json",
+    "./work/q.board.json",
+    "work//q.board.json",
+    "work/x/../q.board.json",
+    "/home/user//work/./q.board.json",
+  ]) {
+    expect(canonicalBoardKey(p)).toBe("work/q.board.json");
+  }
+  expect(canonicalBoardKey("other.board.json")).toBe("other.board.json");
+  expect(canonicalBoardKey("/tmp/q.board.json")).toBe("/tmp/q.board.json");
+  // out of HOME by "..": another absolute file, not HOME's
+  expect(canonicalBoardKey("/home/user/../q.board.json")).toBe(
+    "/home/q.board.json",
+  );
+  for (const p of [
+    "",
+    ".",
+    "/",
+    "/home/user",
+    "/home/user/",
+    "../q.board.json",
+  ]) {
+    expect(canonicalBoardKey(p)).toBeUndefined();
   }
 });
