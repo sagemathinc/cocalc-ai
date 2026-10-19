@@ -454,6 +454,12 @@ describe("canonicalPathWithinDir on a real sandboxed filesystem", () => {
     expect(created).toEqual(["p", "p", "p"]);
     expect(await check({ ...opts, dir: "/" })).toBe(true);
     expect(created).toHaveLength(3);
+    // Idle projects are dropped once they expire.
+    await check({ ...opts, project_id: "q" });
+    expect(check.cacheSize()).toBe(2);
+    t = 5000;
+    await check({ ...opts, project_id: "r" });
+    expect(check.cacheSize()).toBe(1);
   });
 
   it("is what the host passes to the handler", () => {

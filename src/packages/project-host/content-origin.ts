@@ -216,12 +216,27 @@ export function createContentPathChecker({
   createFs: (project_id: string) => Promise<CanonicalFs>;
   ttlMs?: number;
   now?: () => number;
-}): (opts: { project_id: string; path: string; dir: string }) => Promise<boolean> {
+}): ((opts: {
+  project_id: string;
+  path: string;
+  dir: string;
+}) => Promise<boolean>) & { cacheSize: () => number } {
   const cache = new Map<string, { fs: Promise<CanonicalFs>; expires: number }>();
-  return async ({ project_id, path, dir }) => {
+  const check = async ({
+    project_id,
+    path,
+    dir,
+  }: {
+    project_id: string;
+    path: string;
+    dir: string;
+  }) => {
     if (dir === "/") return true;
     let entry = cache.get(project_id);
     if (entry == null || entry.expires <= now()) {
+      for (const [id, old] of cache) {
+        if (old.expires <= now()) cache.delete(id);
+      }
       const fs = createFs(project_id);
       entry = { fs, expires: now() + ttlMs };
       cache.set(project_id, entry);
@@ -231,6 +246,7 @@ export function createContentPathChecker({
     }
     return await canonicalPathWithinDir({ fs: await entry.fs, path, dir });
   };
+  return Object.assign(check, { cacheSize: () => cache.size });
 }
 
 export interface ContentOriginHandlerOptions {
