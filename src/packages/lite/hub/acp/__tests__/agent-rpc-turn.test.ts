@@ -12,6 +12,7 @@ import {
 import { agentRpcTurnSummary } from "@cocalc/conat/agents/rpc-turn";
 import { agentRpcTurnState } from "../agent-rpc-turn";
 
+const NETWORK = "88888888-8888-4888-8888-888888888888";
 const ACCOUNT = "00000000-1000-4000-8000-000000000001";
 const PROJECT = "00000000-1000-4000-8000-000000000000";
 const sender = {
@@ -27,10 +28,12 @@ function job({
   attempt_id,
   source = sender,
   account_id = ACCOUNT,
+  agent_network_id = NETWORK,
 }: {
   attempt_id?: string;
   source?: typeof sender;
   account_id?: string;
+  agent_network_id?: string;
 }) {
   const message = randomUUID();
   return enqueueAcpJob({
@@ -55,7 +58,7 @@ function job({
               target,
               target_path: "/tmp/agent-rpc-turn.chat",
               target_thread_id: "thread-1",
-              agent_network_id: "88888888-8888-4888-8888-888888888888",
+              agent_network_id,
               network_generation: "99999999-9999-4999-8999-999999999999",
               account_generation: 1,
               configured_delivery: "queued",
@@ -85,13 +88,18 @@ const set = (op_id: string, fields: Record<string, unknown>) => {
     );
 };
 
-const inspect = (attempt_id: string, source = sender, account = ACCOUNT) =>
+const inspect = (
+  attempt_id: string,
+  source = sender,
+  account = ACCOUNT,
+  agent_network_id = NETWORK,
+) =>
   agentRpcTurnState(
     source,
     {
       version: 3,
       attempt_id,
-      agent_network_id: "88888888-8888-4888-8888-888888888888",
+      agent_network_id,
       target,
     } as any,
     account,
@@ -284,5 +292,19 @@ describe("what became of the turn an agent message started", () => {
     ).toBeUndefined();
     expect(inspect(attempt, sender, randomUUID())).toBeUndefined();
     expect(inspect(randomUUID())).toBeUndefined();
+  });
+
+  it("only the turn sent in that Agent Network", () => {
+    const attempt = randomUUID();
+    const other = "77777777-7777-4777-8777-777777777777";
+    const mine = job({ attempt_id: attempt });
+    const theirs = job({ attempt_id: attempt, agent_network_id: other });
+    set(theirs.op_id, { state: "running", started_at: theirs.created_at });
+    expect(inspect(attempt)).toMatchObject({ state: "queued" });
+    expect(inspect(attempt, sender, ACCOUNT, other)).toMatchObject({
+      state: "running",
+      queued_at: theirs.created_at,
+    });
+    expect(mine.op_id).not.toBe(theirs.op_id);
   });
 });

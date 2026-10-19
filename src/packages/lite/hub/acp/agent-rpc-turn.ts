@@ -37,6 +37,8 @@ function sentBy(
   return (
     !!execution &&
     execution.attempt_id === attempt.attempt_id &&
+    // An attempt ID is unique only within its Agent Network.
+    execution.agent_network_id === attempt.agent_network_id &&
     agentRpcSourceKey(execution.source) === agentRpcSourceKey(source) &&
     agentRpcSourceKey(execution.target) === agentRpcSourceKey(attempt.target)
   );
