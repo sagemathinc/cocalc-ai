@@ -134,6 +134,18 @@ NPTREE=$(cd "$T/noprivate" && git rev-parse "HEAD^{tree}")
 (cd "$T/noprivate" && printf 'refs/tags/t %s refs/tags/t %s\n' "$NPTREE" "$Z" | COCALC_PRIVATE_URL=$T/missing.git bash "$H" origin "$T/pub.git" >/dev/null 2>&1) &&
   { fail=$((fail + 1)); echo "FAIL  tree push allowed in a clone without private state"; } ||
   { pass=$((pass + 1)); echo "ok    tree refused in a clone without private state"; }
+# First run, no prior private state: the private fetch stores refs but exits
+# nonzero (partial failure). The guard must still analyze and fail closed.
+mkdir -p "$T/pfbin"
+printf '#!/bin/sh\nif [ "$1" = fetch ]; then case "$*" in *%s*) %s "$@"; exit 1 ;; esac; fi\nexec %s "$@"\n' \
+  "$T/privP.git" "$REALGIT_RETIRE" "$REALGIT_RETIRE" >"$T/pfbin/git"
+chmod +x "$T/pfbin/git"
+git init -q --bare "$T/privP.git"
+git init -q "$T/partial" && cd "$T/partial" || exit 1
+git fetch -q "$T/pub.git" main && git reset -q --hard FETCH_HEAD
+PSEC=$(commit "secret seen only through a partially failing fetch") && git push -q "$T/privP.git" "$PSEC:refs/heads/security/p"
+git reset -q --hard HEAD~1 && git branch -q neutral "$PSEC"
+check 1 "first run, private fetch stores refs but exits nonzero: fail closed" "$T/pub.git" refs/heads/neutral "$PSEC" refs/heads/fix/innocent COCALC_PRIVATE_URL="$T/privP.git" PATH="$T/pfbin:$PATH"
 # An unrelated clone with no private work is not blocked by the outage.
 git init -q "$T/outsider" && cd "$T/outsider" && git commit -q --allow-empty -m o
 check 0 "clone without private work: private repo unreachable" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok COCALC_PRIVATE_URL=$T/missing.git

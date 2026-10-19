@@ -475,6 +475,12 @@ if ! git for-each-ref --format="update $GUARD_REFS/seen/%(objectname) %(objectna
   "${archive_patterns[@]}" | sort -u | git update-ref --stdin; then
   refuse "could not archive private tips under $GUARD_REFS/seen; refusing (fail closed)."
 fi
+# Recompute after all fetches and archiving: a fetch that failed may still
+# have stored private refs (e.g. one ref lock failure), so a first run in a
+# clone with no prior private state must not skip analysis.
+git for-each-ref --count=1 "$GUARD_REFS/src/" "$GUARD_REFS/retired/" "$GUARD_REFS/seen/" >"$tmp/guard-now" ||
+  fail_closed "could not read the guard's refs"
+[ -s "$tmp/guard-now" ] && has_private_work=1
 if [ ${#failed[@]} -gt 0 ] && [ $has_private_work = 1 ]; then
   refuse "cannot fetch ${failed[*]} to check for private commits; refusing (fail closed). If a private repo was deleted (e.g. a published advisory fork), retire its remote with: src/scripts/security/private-fix.sh retire-remote <name>"
 fi
