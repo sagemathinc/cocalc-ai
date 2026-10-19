@@ -184,11 +184,14 @@ git push -q "$T/Private.git" :refs/heads/security/topic
 check 1 "after the private branch was deleted" "$T/pub.git" refs/heads/neutral5 "$CASESECRET" refs/heads/fix/innocent
 FORCED=$(commit "secret 2")
 git push -q "$T/Private.git" "$FORCED:refs/heads/security/t2"
+git push -q "$T/Private.git" "$FORCED:refs/heads/security/t2-same-tip" # two branches, one tip
 git reset -q --hard HEAD~1
 git branch -q neutral6 "$FORCED"
 check 1 "private commit before a force-push" "$T/pub.git" refs/heads/neutral6 "$FORCED" refs/heads/fix/innocent
 git push -q -f "$T/Private.git" "$(git rev-parse HEAD):refs/heads/security/t2"
+git push -q -f "$T/Private.git" "$(git rev-parse HEAD):refs/heads/security/t2-same-tip"
 check 1 "after the private branch was force-pushed away" "$T/pub.git" refs/heads/neutral6 "$FORCED" refs/heads/fix/innocent
+[ -n "$(git for-each-ref "refs/cocalc-guard/seen/$FORCED")" ] && { pass=$((pass + 1)); echo "ok    tip shared by two private branches is archived"; } || { fail=$((fail + 1)); echo "FAIL  shared tip not archived"; }
 
 # install-hooks.sh
 inst() { # <expect> <desc>

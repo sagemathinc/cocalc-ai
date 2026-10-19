@@ -98,7 +98,8 @@ retire_remote() { # <remote name>
   done < <(git for-each-ref --format='%(refname)' "refs/cocalc-guard/src/$key/")
   [ $n -gt 0 ] || die "no refs of $name to keep (never fetched?); fetch it first, or remove it by hand if it never held private work"
   git for-each-ref --format='update refs/cocalc-guard/seen/%(objectname) %(objectname)' \
-    "refs/cocalc-guard/retired/$key/" | git update-ref --stdin
+    "refs/cocalc-guard/retired/$key/" | sort -u | git update-ref --stdin ||
+    die "could not archive the refs of $name; not removing it"
   while read -r value; do
     if [ "$value" = "$url" ]; then
       git config --fixed-value --unset-all cocalc.privateUrl "$value"

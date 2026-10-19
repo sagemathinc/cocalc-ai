@@ -157,8 +157,10 @@ done
 # Private refs are never pruned, and every private tip ever seen is archived by
 # object id, so deleting or force-pushing a private branch early cannot erase
 # the evidence.  (Commits that later become public are subtracted below.)
-git for-each-ref --format="update $GUARD_REFS/seen/%(objectname) %(objectname)" \
-  "$GUARD_REFS/src/" "$GUARD_REFS/retired/" | git update-ref --stdin
+if ! git for-each-ref --format="update $GUARD_REFS/seen/%(objectname) %(objectname)" \
+  "$GUARD_REFS/src/" "$GUARD_REFS/retired/" | sort -u | git update-ref --stdin; then
+  refuse "could not archive private tips under $GUARD_REFS/seen; refusing (fail closed)."
+fi
 if [ ${#failed[@]} -gt 0 ] && [ $has_private_work = 1 ]; then
   refuse "cannot fetch ${failed[*]} to check for private commits; refusing (fail closed). If a private repo was deleted (e.g. a published advisory fork), retire its remote with: src/scripts/security/private-fix.sh retire-remote <name>"
 fi
