@@ -600,7 +600,8 @@ or sleeping, and whenever the user wants you to watch for something over time.
 
 **Waiting for something? Set a watcher and end your turn.** Watchers are
 CoCalc's own one-shot checks: no approval needed, and you get exactly one turn
-when it happens (or when it gives up, after 24 hours by default):
+when it happens, or when it gives up (after 24 hours by default, or when its
+check keeps failing, with the reason):
 
 ```bash
 cocalc sensor watch ci --repo owner/name --pr 123      # PR checks finished

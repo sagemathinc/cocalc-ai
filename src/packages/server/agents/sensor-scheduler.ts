@@ -284,6 +284,23 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         wake,
       });
     };
+    const giveUpAfterFailures = (
+      reason: string,
+      log: string | null,
+    ): string => {
+      const wake: SensorWake = {
+        summary: `Gave up: "${spec.title}" failed ${row.consecutive_failures + 1} times in a row. Last error: ${reason}`,
+        data: log ? { output: log } : undefined,
+      };
+      summary = wake.summary;
+      finished = true;
+      return sensorWakePrompt({
+        title: spec.title,
+        sensor_id: row.sensor_id,
+        ran_at: started,
+        wake,
+      });
+    };
     const changed = async () => {
       pause = await changedReason(row);
       outcome = "skipped";
@@ -411,6 +428,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       } finally {
         await lease.release();
       }
+      let wake: SensorWake | undefined;
       if (missingNow.length > 0) prompt = giveUpWatcher();
       else {
         exit_code = result.exit_code;
@@ -418,19 +436,28 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         if (result.timed_out) {
           outcome = "timeout";
           error = `The script ran longer than ${timeout_seconds} seconds.`;
-          return;
-        }
-        if (exit_code !== 0) {
+        } else if (exit_code !== 0) {
           error = `The script exited with code ${exit_code}.`;
-          return;
+        } else {
+          try {
+            wake = parseSensorWake(result.stdout);
+          } catch (err) {
+            error = errorText(err);
+          }
         }
-        let wake;
-        try {
-          wake = parseSensorWake(result.stdout);
-        } catch (err) {
-          error = errorText(err);
-          return;
+        if (error != null) {
+          // A watcher whose check keeps failing would pause, which an agent
+          // waiting on it never hears about. On the failure that would pause
+          // it, it gives up instead and tells its agent why.
+          if (
+            !watch ||
+            row.consecutive_failures + 1 < SENSOR_LIMITS.maxConsecutiveFailures
+          )
+            return;
+          prompt = giveUpAfterFailures(error, output);
         }
+      }
+      if (prompt == null) {
         failed = false;
         if (!watch) {
           // While an earlier wake still waits for the agent, hold this one;

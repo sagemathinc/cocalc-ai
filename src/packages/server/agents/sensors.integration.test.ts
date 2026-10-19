@@ -1206,6 +1206,53 @@ describeDb("agent sensors", () => {
     });
   });
 
+  test("a watcher whose check keeps failing gives up and tells its agent why", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+    })) as any;
+    // As on 2026-10-19: the image's gh had no `pr checks --json`.
+    host.runAgentSensor.mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stdout: "",
+      stderr: "unknown flag: --json\n",
+    });
+    for (let i = 0; i < 4; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    // Until the last allowed failure it just tries again.
+    expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    const delivered = host.deliverAgentSensorWake.mock.calls.map(
+      (call: any[]) => call[0],
+    );
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].prompt).toMatch(
+      /Gave up: .*failed 5 times in a row\. Last error: The script exited with code 1\./,
+    );
+    expect(delivered[0].prompt).toContain("unknown flag: --json");
+    // Not paused, so nobody is asked to resume what cannot be resumed.
+    expect(paused).toHaveLength(0);
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+    // Done, so its place is free again.
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
   test("a watcher paused by a person gives back its place", async () => {
     limits.sensor_max_active_watchers = 1;
     const first = (await fileWatch()).sensor;
