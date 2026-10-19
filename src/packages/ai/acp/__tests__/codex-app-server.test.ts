@@ -1922,6 +1922,94 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("marks a declined command's exit, so it does not count as run", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-declined-1" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-declined-1" } });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-declined-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/started", {
+              threadId: "thr-declined-1",
+              turnId: "turn-declined-1",
+              item: {
+                type: "commandExecution",
+                id: "cmd-declined-1",
+                command: "rm -rf build",
+                cwd: "/tmp/project",
+                processId: null,
+                status: "inProgress",
+                commandActions: [],
+                aggregatedOutput: null,
+                exitCode: null,
+                durationMs: null,
+              },
+            });
+            fake.sendNotification("item/completed", {
+              threadId: "thr-declined-1",
+              turnId: "turn-declined-1",
+              item: {
+                type: "commandExecution",
+                id: "cmd-declined-1",
+                command: "rm -rf build",
+                cwd: "/tmp/project",
+                processId: null,
+                status: "declined",
+                commandActions: [],
+                aggregatedOutput: null,
+                exitCode: null,
+                durationMs: null,
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-declined-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+    const agent = new CodexAppServerAgent();
+    const events: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "clean up",
+      stream: async (payload) => {
+        if (payload?.type === "event" && payload.event?.type === "terminal")
+          events.push(payload.event);
+      },
+      config: { workingDirectory: "/tmp/project" } as any,
+    });
+    expect(events.map((event) => event.phase)).toEqual(["start", "exit"]);
+    expect(events[1]).toMatchObject({
+      terminalId: "cmd-declined-1",
+      declined: true,
+    });
+  });
+
   it("streams completed image-generation metadata without raw image data", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
