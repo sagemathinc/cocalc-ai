@@ -48,6 +48,7 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { outputLimitBytes } from "@cocalc/jupyter/execute/output-budget";
 import { sha1 } from "@cocalc/util/misc";
 import { blobifyOutputData } from "@cocalc/jupyter/util/blobify-output";
+import { cellRecordsAreGeneratedPlaceholder } from "@cocalc/jupyter/ipynb/placeholder";
 import { join } from "path";
 import {
   isActiveJupyterRuntimeCellState,
@@ -2901,9 +2902,26 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.setState({ runProgress: total > 0 ? (100 * ran) / total : 100 });
   };
 
-  // Whether this client has seen the notebook with real content (more than
-  // the generated empty cell). See ensureThereIsACell.
+  // Whether this client has seen the notebook with real content (anything
+  // but the generated empty cell). Seeded from the loaded notebook before
+  // change handling starts (noteNotebookContent), and updated on changes.
   private sawNotebookContent = false;
+
+  noteNotebookContent = (): void => {
+    if (this.sawNotebookContent) return;
+    try {
+      const cells = this.syncdb?.get({ type: "cell" });
+      if (
+        cells != null &&
+        cells.size > 0 &&
+        !cellRecordsAreGeneratedPlaceholder(cells)
+      ) {
+        this.sawNotebookContent = true;
+      }
+    } catch {
+      // not ready
+    }
+  };
 
   ensureThereIsACell = () => {
     if (this._state !== "ready") {
@@ -2911,16 +2929,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
     const cells = this.store.get("cells");
     if (cells != null && cells.size > 0) {
-      if (!this.sawNotebookContent) {
-        const only = cells.size === 1 ? cells.first() : undefined;
-        if (
-          only == null ||
-          only.get("id") !== "alpha" ||
-          `${only.get("input") ?? ""}`.trim() !== ""
-        ) {
-          this.sawNotebookContent = true;
-        }
-      }
+      this.noteNotebookContent();
       return;
     }
     if (cells == null || cells.size === 0) {

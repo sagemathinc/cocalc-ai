@@ -141,30 +141,46 @@ describe("file events", () => {
 });
 
 describe("saving", () => {
-  it("ask the project host not to replace content when saving the placeholder, and load the file it refused to replace", async () => {
+  it("never write the placeholder; load the file when it has content", async () => {
     const actions = createActions();
     actions.hasUnsavedChanges = true;
     actions.toIpynb = jest.fn(async () => ({
       cells: [{ cell_type: "code", source: "", outputs: [] }],
     }));
-    actions.syncdb.fs.jupyterSaveIpynb = jest.fn(async (_p, ipynb) => ({
-      bytes: 0,
-      converted: false,
-      ipynb,
-      skipped: "disk_has_content",
-    }));
 
     await actions.saveIpynb();
 
-    expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledWith(
-      "Lab 3.ipynb",
-      expect.anything(),
-      { onlyIfNoContent: true },
-    );
+    expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
     expect(actions.setToIpynb).toHaveBeenCalledWith(LAB);
   });
 
-  it("save real content unconditionally", async () => {
+  it("never write the placeholder; nothing to save when the file is empty", async () => {
+    const actions = createActions();
+    actions.hasUnsavedChanges = true;
+    actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "" }] }));
+    actions.syncdb.fs.readFile = jest.fn(async () => Buffer.from(""));
+
+    await actions.saveIpynb();
+
+    expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
+    expect(actions.hasUnsavedChanges).toBe(false);
+  });
+
+  it("never write the placeholder over a partially written file", async () => {
+    const actions = createActions();
+    actions.hasUnsavedChanges = true;
+    actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "" }] }));
+    actions.syncdb.fs.readFile = jest.fn(async () =>
+      Buffer.from(LAB_TEXT.slice(0, 30)),
+    );
+
+    await actions.saveIpynb();
+
+    expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
+  });
+
+  it("save real content", async () => {
     const actions = createActions({ cells: [{ ...ALPHA, input: "y = 2" }] });
     actions.hasUnsavedChanges = true;
     actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "y = 2" }] }));
@@ -177,7 +193,7 @@ describe("saving", () => {
     );
   });
 
-  it("save an emptied notebook unconditionally after every cell was deleted", async () => {
+  it("save an emptied notebook after every cell was deleted", async () => {
     const actions = createActions({ settings: { has_had_content: true } });
     actions.hasUnsavedChanges = true;
     actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "" }] }));
@@ -252,7 +268,7 @@ describe("opening", () => {
 });
 
 describe("ensureThereIsACell", () => {
-  function withCells(actions, cells: object[]) {
+  function storeCells(actions, cells: object[]) {
     actions.store = {
       get: (key) =>
         key === "cells"
@@ -261,13 +277,35 @@ describe("ensureThereIsACell", () => {
     };
   }
 
-  it("records durably that every cell was deleted after content was seen", () => {
-    const actions = createActions();
+  it("records durably when the first change after loading deletes the only real cell", async () => {
+    // Loaded with one real cell; change handling has not run yet.
+    const actions = createActions({
+      cells: [{ ...ALPHA, id: "c1", input: "x" }],
+    });
     actions._set = jest.fn();
     actions.set_trust_notebook = jest.fn();
-    withCells(actions, [{ ...ALPHA, id: "c1", input: "x = 1" }]);
+    actions.isClosed = jest
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    actions.noteOpenInitPhase = jest.fn();
+    actions.maybeLogFirstVisibleCell = jest.fn();
+    await actions.watchIpynb(); // seeds from the loaded notebook, then exits
+    storeCells(actions, []);
     actions.ensureThereIsACell();
-    withCells(actions, []);
+
+    expect(actions._set).toHaveBeenCalledWith(
+      { type: "settings", has_had_content: true },
+      false,
+    );
+  });
+
+  it("uses the same test as the placeholder classifier (a tagged empty cell is content)", () => {
+    const actions = createActions({ cells: [{ ...ALPHA, tags: { x: true } }] });
+    actions._set = jest.fn();
+    actions.set_trust_notebook = jest.fn();
+    actions.noteNotebookContent();
+    storeCells(actions, []);
     actions.ensureThereIsACell();
 
     expect(actions._set).toHaveBeenCalledWith(
@@ -277,12 +315,13 @@ describe("ensureThereIsACell", () => {
   });
 
   it("does not mark a notebook that was empty from the start", () => {
-    const actions = createActions();
+    const actions = createActions({ cells: [] });
     actions._set = jest.fn();
     actions.set_trust_notebook = jest.fn();
-    withCells(actions, []);
+    actions.noteNotebookContent();
+    storeCells(actions, []);
     actions.ensureThereIsACell();
-    withCells(actions, [ALPHA]);
+    storeCells(actions, [ALPHA]);
     actions.ensureThereIsACell();
 
     expect(actions._set).not.toHaveBeenCalledWith(

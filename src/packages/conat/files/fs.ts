@@ -158,19 +158,9 @@ export interface JupyterImportIpynbResult {
   ipynb: object;
 }
 
-export interface JupyterSaveIpynbOptions {
-  // Write only if the file has no notebook content (missing, empty, or itself
-  // an empty notebook); an unparsable file counts as content. Used when the
-  // client's live notebook is only the generated placeholder, so it can never
-  // replace a file that has content (for example one just copied in).
-  onlyIfNoContent?: boolean;
-}
-
 export interface JupyterSaveIpynbResult extends JupyterImportIpynbResult {
   bytes: number;
   converted: boolean;
-  // Set when onlyIfNoContent refused to write because the file has content.
-  skipped?: "disk_has_content";
   // The file as written: its sha1 and modification time, so that whoever
   // saved can record the save and no client mistakes it for an external edit.
   sha1?: string;
@@ -187,7 +177,6 @@ export interface FilesystemJupyterHandlers {
     path: string;
     ipynb: object;
     fs: Filesystem;
-    options?: JupyterSaveIpynbOptions;
   }) => Promise<JupyterSaveIpynbResult>;
 }
 
@@ -310,7 +299,6 @@ export interface Filesystem {
   jupyterSaveIpynb?: (
     path: string,
     ipynb: object,
-    options?: JupyterSaveIpynbOptions,
   ) => Promise<JupyterSaveIpynbResult>;
   // Signal interest in a file so the backend can keep a shared watcher alive.
   // active=false drops interest immediately; otherwise the backend prunes stale
@@ -930,17 +918,12 @@ export async function fsServer({
           ipynb,
         });
       },
-      async jupyterSaveIpynb(
-        path: string,
-        ipynb: object,
-        options?: JupyterSaveIpynbOptions,
-      ) {
+      async jupyterSaveIpynb(path: string, ipynb: object) {
         const result = await jupyter.saveIpynb({
           subject: this.subject!,
           path,
           ipynb,
           fs: await fs(this.subject),
-          options,
         });
         void reportMutation(this.subject, "jupyterSaveIpynb", path);
         return result;

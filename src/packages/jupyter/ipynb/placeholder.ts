@@ -57,3 +57,28 @@ export function ipynbTextHasContent(text: string): boolean {
     return true;
   }
 }
+
+// The same test on the live notebook's raw syncdb cell records (an
+// immutable List of Maps), without exporting it: exactly one record, the
+// generated "alpha" cell, with no input, output, attachments, tags, slide or
+// metadata. Whether the notebook ever had content is a separate, durable
+// fact (settings.has_had_content).
+export function cellRecordsAreGeneratedPlaceholder(cells: any): boolean {
+  if (cells == null || cells.size !== 1) return false;
+  const cell = cells.first?.();
+  if (cell == null) return false;
+  const hasEntries = (key: string) => {
+    const value = cell.get(key);
+    return value != null && (value.size ?? Object.keys(value).length) > 0;
+  };
+  return (
+    cell.get("id") === "alpha" &&
+    `${cell.get("input") ?? ""}`.trim() === "" &&
+    (cell.get("cell_type") ?? "code") === "code" &&
+    cell.get("slide") == null &&
+    !hasEntries("output") &&
+    !hasEntries("attachments") &&
+    !hasEntries("tags") &&
+    !hasEntries("metadata")
+  );
+}

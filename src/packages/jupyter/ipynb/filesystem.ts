@@ -8,7 +8,6 @@ import { sha1 } from "@cocalc/util/misc";
 import type {
   Filesystem,
   JupyterImportIpynbResult,
-  JupyterSaveIpynbOptions,
   JupyterSaveIpynbResult,
 } from "@cocalc/conat/files/fs";
 import {
@@ -17,7 +16,6 @@ import {
   type LoadedBlob,
   type SavedBlob,
 } from "./blob-attachments";
-import { ipynbTextHasContent } from "./placeholder";
 
 const logger = getLogger("jupyter:ipynb:filesystem");
 
@@ -211,22 +209,6 @@ async function importIpynb(
   return { ipynb: liveIpynb };
 }
 
-async function fileHasNotebookContent(
-  fs: Filesystem,
-  path: string,
-): Promise<boolean> {
-  let raw;
-  try {
-    raw = await fs.readFile(path);
-  } catch (err) {
-    if ((err as any)?.code === "ENOENT") return false;
-    // Unknown state: refuse rather than risk replacing content.
-    return true;
-  }
-  const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : `${raw}`;
-  return ipynbTextHasContent(text);
-}
-
 async function readPreviousIpynb(
   fs: Filesystem,
   path: string,
@@ -266,14 +248,12 @@ export async function saveJupyterIpynb({
   ipynb,
   fs,
   blobStore,
-  options,
 }: {
   project_id: string;
   path: string;
   ipynb: object;
   fs: Filesystem;
   blobStore: JupyterFilesystemBlobStore;
-  options?: JupyterSaveIpynbOptions;
 }): Promise<JupyterSaveIpynbResult> {
   validateIpynbPath(path);
   const input = validateIpynb(ipynb);
@@ -298,18 +278,6 @@ export async function saveJupyterIpynb({
         `portable ipynb is too large (${bytes} bytes; max ${MAX_JUPYTER_IPYNB_RPC_BYTES})`,
         "E2BIG",
       );
-    }
-    // Checked immediately before the write, in this process, so the window
-    // against another writer is a local read-then-write rather than a client
-    // round trip.
-    if (options?.onlyIfNoContent && (await fileHasNotebookContent(fs, path))) {
-      logger.debug("refused to replace notebook content", { project_id, path });
-      return {
-        ipynb: liveIpynb,
-        bytes: 0,
-        converted: false,
-        skipped: "disk_has_content",
-      };
     }
     await fs.writeFile(path, serialized, true);
     let mtimeMs: number | undefined;

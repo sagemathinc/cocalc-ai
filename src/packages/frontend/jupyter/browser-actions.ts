@@ -116,6 +116,7 @@ import {
   refineInitialWatchSourceDecision,
 } from "./watch-policy";
 import {
+  cellRecordsAreGeneratedPlaceholder,
   ipynbTextHasContent,
   isPlaceholderIpynb,
 } from "@cocalc/jupyter/ipynb/placeholder";
@@ -4667,28 +4668,10 @@ export class JupyterActions extends JupyterActions0 {
   // content, which keeps the previous behavior.
   private rtcIsGeneratedPlaceholder = (): boolean => {
     try {
-      const cells = this.syncdb.get({ type: "cell" });
-      if (cells == null || cells.size !== 1) return false;
-      const cell = cells.first();
-      const hasEntries = (key: string) => {
-        const value = cell.get(key);
-        return value != null && (value.size ?? Object.keys(value).length) > 0;
-      };
-      if (
-        cell.get("id") !== "alpha" ||
-        `${cell.get("input") ?? ""}`.trim() !== "" ||
-        (cell.get("cell_type") ?? "code") !== "code" ||
-        cell.get("slide") != null ||
-        hasEntries("output") ||
-        hasEntries("attachments") ||
-        hasEntries("tags") ||
-        hasEntries("metadata")
-      ) {
-        return false;
-      }
       return (
+        cellRecordsAreGeneratedPlaceholder(this.syncdb.get({ type: "cell" })) &&
         this.syncdb.get_one({ type: "settings" })?.get("has_had_content") !==
-        true
+          true
       );
     } catch {
       return false;
@@ -4742,22 +4725,26 @@ export class JupyterActions extends JupyterActions0 {
       });
       return;
     }
-    const result = savingPlaceholder
-      ? await this.syncdb.fs.jupyterSaveIpynb!(this.path, ipynb, {
-          onlyIfNoContent: true,
-        })
-      : await this.syncdb.fs.jupyterSaveIpynb!(this.path, ipynb);
-    if (this.isClosed()) return;
-    if (result.skipped === "disk_has_content") {
-      // The project host refused to replace a file with content by the
-      // placeholder (checked right before writing): load the file instead.
-      this.runDebug("ipynb.save.skipped.placeholder_over_content");
-      await this.loadFromDisk({
-        expectedRtcVersion: snapshotVersion,
-        replacingPlaceholder: true,
-      });
+    if (savingPlaceholder) {
+      // The generated empty cell carries no work, so it is never written: a
+      // write could replace a file that another writer (e.g. a course
+      // assignment copy) is filling in, however the check is ordered. Load the
+      // file if it has content; otherwise there is nothing to save.
+      this.runDebug("ipynb.save.skipped.placeholder");
+      const read = await this.readIpynbFromDisk().catch(() => undefined);
+      if (this.isClosed()) return;
+      if (read != null && read.bytes > 0 && ipynbTextHasContent(read.text)) {
+        await this.loadFromDisk({
+          diskRead: read,
+          expectedRtcVersion: snapshotVersion,
+          replacingPlaceholder: true,
+        });
+      } else if (this.getRtcVersion() === snapshotVersion) {
+        this.markIpynbSaved();
+      }
       return;
     }
+    const result = await this.syncdb.fs.jupyterSaveIpynb!(this.path, ipynb);
     // Recorded even if the notebook changed meanwhile: the file is then older
     // than the live notebook, which must never import it.
     this.recordIpynbSave(result);
@@ -4990,6 +4977,7 @@ export class JupyterActions extends JupyterActions0 {
     // Captured before classifying, so an edit of the placeholder made while
     // the file is read and converted aborts the initial load.
     const versionBeforeCheck = this.getRtcVersion();
+    this.noteNotebookContent();
     // The generated empty cell does not count as content: it must not win
     // over a file with content (it exists when the file was read while still
     // empty, e.g. just as a course assignment was being copied).
@@ -5095,6 +5083,9 @@ export class JupyterActions extends JupyterActions0 {
       this.maybeLogFirstVisibleCell("rtc");
     }
     if (done()) return;
+    // Whether the notebook has content now, before change handling starts, so
+    // deleting its only cell is recorded (see ensureThereIsACell).
+    this.noteNotebookContent();
     // if no kernel, let use select one:
     this.initKernel();
     // now that we've loaded from disk if necessary we can

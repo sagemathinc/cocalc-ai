@@ -6,7 +6,6 @@
 import type {
   Filesystem,
   JupyterImportIpynbResult,
-  JupyterSaveIpynbOptions,
   JupyterSaveIpynbResult,
 } from "@cocalc/conat/files/fs";
 import {
@@ -59,13 +58,11 @@ export async function saveJupyterIpynb({
   path,
   ipynb,
   fs,
-  options,
 }: {
   project_id: string;
   path: string;
   ipynb: object;
   fs: Filesystem;
-  options?: JupyterSaveIpynbOptions;
 }): Promise<JupyterSaveIpynbResult> {
   return await saveFilesystemJupyterIpynb({
     project_id,
@@ -73,6 +70,5 @@ export async function saveJupyterIpynb({
     ipynb,
     fs,
     blobStore,
-    options,
   });
 }

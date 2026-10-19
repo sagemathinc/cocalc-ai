@@ -3,8 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { saveJupyterIpynb } from "./filesystem";
-import { ipynbTextHasContent, isPlaceholderIpynb } from "./placeholder";
+import { fromJS, List } from "immutable";
+import {
+  cellRecordsAreGeneratedPlaceholder,
+  ipynbTextHasContent,
+  isPlaceholderIpynb,
+} from "./placeholder";
 
 const PLACEHOLDER = {
   cells: [{ cell_type: "code", source: "", outputs: [], metadata: {} }],
@@ -68,97 +72,31 @@ describe("ipynbTextHasContent", () => {
   });
 });
 
-function memoryFs(files: Record<string, string>, readError?: Error) {
-  return {
-    files,
-    readFile: jest.fn(async (path: string) => {
-      if (readError) throw readError;
-      if (!(path in files)) {
-        throw Object.assign(new Error("missing"), { code: "ENOENT" });
-      }
-      return Buffer.from(files[path]);
-    }),
-    writeFile: jest.fn(async (path: string, data: string) => {
-      files[path] = data;
-    }),
-    stat: jest.fn(async (path: string) => {
-      if (!(path in files)) {
-        throw Object.assign(new Error("missing"), { code: "ENOENT" });
-      }
-      return { size: files[path].length, mtimeMs: 1 };
-    }),
-  } as any;
-}
+describe("cellRecordsAreGeneratedPlaceholder", () => {
+  const ALPHA = { type: "cell", id: "alpha", pos: 0, input: "" };
+  const records = (...cells: object[]) => List(cells.map((c) => fromJS(c)));
 
-const blobStore = {
-  loadBlob: jest.fn(async () => undefined),
-  saveBlob: jest.fn(async () => {
-    throw Error("no blobs expected");
-  }),
-} as any;
-
-describe("saveJupyterIpynb onlyIfNoContent", () => {
-  const save = (fs, path = "a.ipynb") =>
-    saveJupyterIpynb({
-      project_id: "00000000-0000-4000-8000-000000000001",
-      path,
-      ipynb: PLACEHOLDER,
-      fs,
-      blobStore,
-      options: { onlyIfNoContent: true },
-    });
-
-  it("refuses to replace a file with content", async () => {
-    const fs = memoryFs({ "a.ipynb": JSON.stringify(LAB) });
-    const result = await save(fs);
-    expect(result.skipped).toBe("disk_has_content");
-    expect(fs.writeFile).not.toHaveBeenCalled();
-    expect(JSON.parse(fs.files["a.ipynb"])).toEqual(LAB);
-  });
-
-  it("refuses when the file was written after the client decided to save", async () => {
-    // The client saw an empty file; the course copy lands before the save
-    // reaches the project host. The check happens there, right before writing.
-    const fs = memoryFs({ "a.ipynb": "" });
-    fs.files["a.ipynb"] = JSON.stringify(LAB);
-    const result = await save(fs);
-    expect(result.skipped).toBe("disk_has_content");
-    expect(fs.writeFile).not.toHaveBeenCalled();
-  });
-
-  it("refuses when the file is partially written (does not parse)", async () => {
-    const fs = memoryFs({ "a.ipynb": JSON.stringify(LAB).slice(0, 50) });
-    expect((await save(fs)).skipped).toBe("disk_has_content");
-    expect(fs.writeFile).not.toHaveBeenCalled();
-  });
-
-  it("refuses when the file cannot be read", async () => {
-    const fs = memoryFs({ "a.ipynb": "" }, new Error("EIO"));
-    expect((await save(fs)).skipped).toBe("disk_has_content");
-    expect(fs.writeFile).not.toHaveBeenCalled();
+  it("recognizes the generated empty cell", () => {
+    expect(cellRecordsAreGeneratedPlaceholder(records(ALPHA))).toBe(true);
+    expect(
+      cellRecordsAreGeneratedPlaceholder(records({ ...ALPHA, output: {} })),
+    ).toBe(true);
   });
 
   it.each([
-    ["missing", {}],
-    ["empty", { "a.ipynb": "" }],
-    ["itself an empty notebook", { "a.ipynb": JSON.stringify(PLACEHOLDER) }],
-  ])("writes when the file is %s", async (_label, files) => {
-    const fs = memoryFs({ ...files });
-    const result = await save(fs);
-    expect(result.skipped).toBeUndefined();
-    expect(fs.writeFile).toHaveBeenCalledTimes(1);
-  });
-
-  it("writes normally without the option", async () => {
-    const fs = memoryFs({ "a.ipynb": JSON.stringify(LAB) });
-    const result = await saveJupyterIpynb({
-      project_id: "00000000-0000-4000-8000-000000000001",
-      path: "a.ipynb",
-      ipynb: PLACEHOLDER,
-      fs,
-      blobStore,
-    });
-    expect(result.skipped).toBeUndefined();
-    expect(fs.writeFile).toHaveBeenCalledTimes(1);
+    ["no cells", []],
+    ["two cells", [ALPHA, { ...ALPHA, id: "b" }]],
+    ["another id", [{ ...ALPHA, id: "c1" }]],
+    ["input", [{ ...ALPHA, input: "x" }]],
+    ["markdown", [{ ...ALPHA, cell_type: "markdown" }]],
+    ["output", [{ ...ALPHA, output: { 0: { text: "1" } } }]],
+    ["attachments", [{ ...ALPHA, attachments: { "a.png": {} } }]],
+    ["tags", [{ ...ALPHA, tags: { exercise: true } }]],
+    ["a slide type", [{ ...ALPHA, slide: "slide" }]],
+    ["metadata", [{ ...ALPHA, metadata: { nbgrader: {} } }]],
+  ])("treats %s as content", (_label, cells) => {
+    expect(
+      cellRecordsAreGeneratedPlaceholder(records(...(cells as object[]))),
+    ).toBe(false);
   });
 });
