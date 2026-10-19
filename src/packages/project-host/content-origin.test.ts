@@ -507,6 +507,19 @@ describe("canonicalPathWithinDir on a real sandboxed filesystem", () => {
   it("is what the host passes to the handler", () => {
     const main = readFileSync(join(__dirname, "main.ts"), "utf8");
     expect(main).toMatch(/realPathWithinDir: projectRealPathWithinDir,/);
+    // Revocation: per project (epoch) and per account.
+    expect(main).toMatch(/currentEpoch: projectContentEpoch,/);
+    expect(main).toMatch(/observeEpoch: observeProjectContentEpoch,/);
+    expect(main).toMatch(/accountRevokedBeforeMs: getAccountRevokedBeforeMs,/);
+    // The epoch reaches the host's project row on both paths from the hub:
+    // the immediate push and the catch-up sync.
+    const master = readFileSync(join(__dirname, "master.ts"), "utf8");
+    expect(master).toMatch(
+      /async updateProjectUsers\(\{[^}]*content_epoch,[^}]*\}\) \{\s*await updateProjectUsers\(\{[^}]*content_epoch,/,
+    );
+    expect(master).toMatch(
+      /\.\.\.\(row\?\.content_epoch == null\s*\? \{\}\s*: \{ content_epoch: Number\(row\.content_epoch\) \}\)/,
+    );
     // Both file routes let browsers revalidate instead of re-downloading.
     expect(main.match(/^\s*conditional: true,$/gm)?.length).toBe(2);
     const fileServer = readFileSync(join(__dirname, "file-server.ts"), "utf8");

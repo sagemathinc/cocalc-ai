@@ -211,7 +211,7 @@ export async function issueProjectContentUrlLocal({
 export interface RevokedProjectContentLinks {
   content_epoch: number;
   // Whether the project's host has the new epoch.  If not, it catches up at
-  // its next sync, or at once when it sees a newly issued link.
+  // its next poll of project changes, or at once when it sees a new link.
   host_synced: boolean;
 }
 
@@ -232,7 +232,10 @@ export async function revokeProjectContentLinksLocal({
   const localBayId = getConfiguredBayId();
   const { rows } = await getPool().query<{ content_epoch: string | number }>(
     `UPDATE projects
-        SET content_epoch = COALESCE(content_epoch, 0) + 1
+        SET content_epoch = COALESCE(content_epoch, 0) + 1,
+            -- the cursor of hosts' catch-up sync, so a failed push below is
+            -- re-delivered at the host's next poll
+            last_edited = NOW()
       WHERE project_id = $1
         AND deleted IS NOT true
         AND COALESCE(owning_bay_id, $3) = $3

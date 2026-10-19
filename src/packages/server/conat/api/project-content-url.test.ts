@@ -265,6 +265,11 @@ describe("revokeProjectContentLinksLocal", () => {
 
   it("bumps the epoch, pushes it to the host, and new links carry it", async () => {
     await expect(revoke()).resolves.toEqual({ content_epoch: 1, host_synced: true });
+    // It also moves the hosts' catch-up cursor, so a failed push is re-sent.
+    const update = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("UPDATE projects"),
+    );
+    expect(update?.[0]).toMatch(/last_edited = NOW\(\)/);
     expect(syncHost).toHaveBeenCalledWith(PROJECT);
     const result = await issue();
     if (!("url" in result)) throw new Error("unavailable");

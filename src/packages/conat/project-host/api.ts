@@ -1290,6 +1290,8 @@ export interface HostRegistryApi {
       project_id: string;
       users: any;
       runtime_lifecycle_revision: number;
+      // Content-origin revocation counter; absent from older hubs.
+      content_epoch?: number;
       updated_ms: number;
     }>;
     next_since_ms: number;
@@ -1304,6 +1306,8 @@ export interface HostRegistryApi {
       project_id: string;
       users: any;
       runtime_lifecycle_revision: number;
+      // Content-origin revocation counter; absent from older hubs.
+      content_epoch?: number;
       updated_ms: number;
     }>;
     as_of_ms: number;

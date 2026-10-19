@@ -2324,6 +2324,7 @@ export async function startMasterRegistration({
       project_id: string;
       users: any;
       runtime_lifecycle_revision: number;
+      content_epoch?: number;
       updated_ms: number;
     }>,
   ): Promise<number> => {
@@ -2338,6 +2339,10 @@ export async function startMasterRegistration({
           runtime_lifecycle_revision: Number(
             row?.runtime_lifecycle_revision ?? 0,
           ),
+          // Re-delivers a revocation whose immediate push failed.
+          ...(row?.content_epoch == null
+            ? {}
+            : { content_epoch: Number(row.content_epoch) }),
         });
         applied += 1;
       } catch (err) {

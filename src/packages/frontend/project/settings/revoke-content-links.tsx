@@ -28,7 +28,7 @@ export function RevokeContentLinksButton({ project_id }: { project_id: string })
         message.success("Content links revoked.");
       } else {
         message.warning(
-          "Content links revoked. The project's host couldn't be reached; it applies the revocation when it reconnects or sees a new link.",
+          "Content links revoked. The project's host couldn't be reached right now; it applies the revocation at its next sync with the hub.",
         );
       }
     } catch (err) {

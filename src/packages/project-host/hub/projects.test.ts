@@ -480,6 +480,23 @@ describe("project host start ordering", () => {
     expect(upsertProject).not.toHaveBeenCalled();
   });
 
+  it("stores the content-origin revocation counter with the users, only when sent", async () => {
+    const { resetProjectRuntimeLifecycleForTesting } =
+      await import("../runtime-lifecycle");
+    resetProjectRuntimeLifecycleForTesting();
+    getProject.mockReturnValue({ image: DEFAULT_PROJECT_IMAGE });
+    const { updateProjectUsers } = await import("./projects");
+    const users = { member: { group: "owner" } };
+    await updateProjectUsers({ project_id, users, content_epoch: 4 });
+    expect(upsertProject).toHaveBeenLastCalledWith({
+      project_id,
+      users,
+      content_epoch: 4,
+    });
+    await updateProjectUsers({ project_id, users });
+    expect(upsertProject).toHaveBeenLastCalledWith({ project_id, users });
+  });
+
   it("avoids project ports occupied by non-listening TCP sockets", async () => {
     const { parseOccupiedPortOffsetsFromProcNet } = await import("./projects");
     const procNet = [
