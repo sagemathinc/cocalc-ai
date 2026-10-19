@@ -25,6 +25,11 @@ import DefaultMath from "@cocalc/frontend/components/math/ssr";
 import { MathJaxConfig } from "@cocalc/util/mathjax-config";
 import { decodeHTML } from "entities";
 import {
+  URL_REJECTED,
+  applyUrlTransform,
+  applyUrlTransformToSrcset,
+} from "@cocalc/frontend/lib/url-transform";
+import {
   enforceHtmlSafetyFloor,
   isAllowedHtmlTag,
   isDocumentContainerHtmlTag,
@@ -34,7 +39,7 @@ import {
   shouldDropHtmlTagContents,
 } from "./sanitize-html";
 
-const URL_ATTRIBS = ["src", "href", "data"];
+const URL_ATTRIBS = ["src", "srcset", "href", "data"];
 const MATH_SKIP_TAGS = new Set<string>(MathJaxConfig.tex2jax.skipTags);
 
 export default function HTML({
@@ -46,8 +51,14 @@ export default function HTML({
   style?: React.CSSProperties;
   inline?: boolean;
 }) {
-  const { urlTransform, AnchorTagComponent, noSanitize, MathComponent } =
-    useFileContext();
+  const {
+    urlTransform,
+    AnchorTagComponent,
+    noSanitize,
+    allowSafeStyles,
+    MathComponent,
+  } = useFileContext();
+  const sanitizeOptions = { safeStyles: !!allowSafeStyles };
   if (inline && isStandaloneDocumentHtmlTag(value)) {
     // Markdown parsers classify a prose token such as `<body>` as inline HTML.
     // Mounting React's singleton document elements below a span corrupts the
@@ -78,11 +89,13 @@ export default function HTML({
         // Do NOT convert Text to math inside a pre/code tree environment.
         return;
       }
+      // The parser already decoded entities in text, so data is the text as
+      // displayed.  Decoding it again would turn &amp;lt; into a tag.
       const { data } = domNode;
       if (MathComponent != null) {
-        return <MathComponent data={decodeHTML(data)} />;
+        return <MathComponent data={data} />;
       }
-      return <DefaultMath data={decodeHTML(data)} />;
+      return <DefaultMath data={data} />;
     }
 
     try {
@@ -93,6 +106,19 @@ export default function HTML({
       // span/div wrapper. This applies in trusted mode too: noSanitize may
       // retain styling, but it cannot change the host document structure.
       if (isDocumentMetadataHtmlTag(name)) {
+        if (name.toLowerCase() === "head") {
+          // Nothing in a head renders, except inline math (Sage and others
+          // emit it there), which is typeset below as anywhere else.
+          const math = (children ?? []).filter(
+            (c) =>
+              c instanceof Element &&
+              c.name.toLowerCase() === "script" &&
+              (c.attribs?.type ?? "").toLowerCase().startsWith("math/tex"),
+          );
+          return (
+            <React.Fragment>{domToReact(math as any, options)}</React.Fragment>
+          );
+        }
         return React.createElement(React.Fragment);
       }
       if (isDocumentContainerHtmlTag(name)) {
@@ -134,7 +160,18 @@ export default function HTML({
       if (AnchorTagComponent != null && name == "a") {
         const sanitizedAttribs = noSanitize
           ? attribs
-          : sanitizeHtmlAttributes(name, attribs, urlTransform);
+          : sanitizeHtmlAttributes(
+              name,
+              attribs,
+              urlTransform,
+              sanitizeOptions,
+            );
+        if (!noSanitize && typeof sanitizedAttribs.style === "string") {
+          // a vetted style (allowSafeStyles), as the object React expects
+          (sanitizedAttribs as any).style = attributesToProps({
+            style: sanitizedAttribs.style,
+          }).style;
+        }
         return (
           <AnchorTagComponent {...sanitizedAttribs}>
             {domToReact(children as any, options)}
@@ -143,7 +180,7 @@ export default function HTML({
       }
 
       if (!noSanitize) {
-        if (!isAllowedHtmlTag(name)) {
+        if (!isAllowedHtmlTag(name, attribs, sanitizeOptions)) {
           if (shouldDropHtmlTagContents(name)) {
             return React.createElement(React.Fragment);
           }
@@ -154,7 +191,7 @@ export default function HTML({
           );
         }
         const props = attributesToProps(
-          sanitizeHtmlAttributes(name, attribs, urlTransform),
+          sanitizeHtmlAttributes(name, attribs, urlTransform, sanitizeOptions),
         );
         return React.createElement(
           name,
@@ -168,25 +205,47 @@ export default function HTML({
       if (noSanitize && urlTransform != null && attribs != null) {
         // since we did not sanitize the HTML (which also does urlTransform),
         // we have to do the urlTransform here instead.
+        // Rejection is decided with the element's tag (so, e.g., a transform
+        // that rejects all images works here too).  A URL that is not
+        // rejected is transformed without a tag, as it always has been here.
+        const transform = (url: string) =>
+          applyUrlTransform(urlTransform, url, name) == null
+            ? URL_REJECTED
+            : urlTransform(url);
+        let transformed: Record<string, string> | undefined = undefined;
         for (const attrib of URL_ATTRIBS) {
-          if (attribs[attrib] != null) {
-            const x = urlTransform(attribs[attrib]);
-            if (x != null) {
-              const props = attributesToProps(attribs);
-              props[attrib] = x;
-              return React.createElement(
-                name,
-                props,
-                children && children?.length > 0
-                  ? domToReact(children as any, options)
-                  : undefined,
-              );
-            }
+          const value = attribs[attrib];
+          if (value == null) continue;
+          const x =
+            attrib === "srcset"
+              ? applyUrlTransformToSrcset(transform, value)
+              : applyUrlTransform(transform, value);
+          if (x === value) continue;
+          transformed ??= { ...attribs };
+          if (x == null) {
+            // rejected by urlTransform
+            delete transformed[attrib];
+          } else {
+            transformed[attrib] = x;
           }
+        }
+        if (transformed != null) {
+          return React.createElement(
+            name,
+            attributesToProps(transformed),
+            children && children?.length > 0
+              ? domToReact(children as any, options)
+              : undefined,
+          );
         }
       }
     } catch (err) {
       console.log("WARNING -- issue parsing HTML", err);
+      if (!noSanitize) {
+        // Fail closed: returning undefined would render the node with its
+        // unsanitized attributes.
+        return React.createElement(React.Fragment);
+      }
     }
   };
 

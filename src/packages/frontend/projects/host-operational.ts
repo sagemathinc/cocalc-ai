@@ -3,7 +3,9 @@ import { COMPUTE_STATES } from "@cocalc/util/compute-states";
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const DEFAULT_RECOVERY_ESTIMATE_MS = 3 * 60 * 1000;
 const STALE_OUTAGE_START_MS = 30 * 60 * 1000;
-export const HOST_UNAVAILABLE_BANNER_GRACE_MS = 5_000;
+// Routine project-host restarts and rollouts reconnect within ~15 s; only
+// unconfirmed disconnects longer than this show the reconnect banner.
+export const HOST_UNAVAILABLE_BANNER_GRACE_MS = 30_000;
 
 type HostInfoLike = {
   get?: (key: string) => any;
@@ -77,18 +79,24 @@ function timestamp(value: unknown): number | undefined {
 export function hostUnavailableBannerDelay({
   candidate,
   recoveryActive,
+  confirmedByHost = false,
   unavailableSince,
   now = Date.now(),
   graceMs = HOST_UNAVAILABLE_BANNER_GRACE_MS,
 }: {
   candidate: boolean;
   recoveryActive: boolean;
+  // host_info itself reports the host unavailable (e.g. off or starting),
+  // as opposed to only a lost routed connection to a host reported running.
+  confirmedByHost?: boolean;
   unavailableSince?: string;
   now?: number;
   graceMs?: number;
 }): number | undefined {
   if (!candidate) return;
-  if (recoveryActive) return 0;
+  // The grace period is for unconfirmed disconnects only; a recovery or an
+  // outage the server reports is shown right away.
+  if (recoveryActive || confirmedByHost) return 0;
   const unavailableAt = timestamp(unavailableSince);
   const elapsed = unavailableAt == null ? 0 : Math.max(0, now - unavailableAt);
   return Math.max(0, graceMs - elapsed);

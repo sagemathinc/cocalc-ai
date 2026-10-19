@@ -8,11 +8,8 @@ mathjax.
 */
 
 import "katex/dist/katex.min.css";
-import { math_escape, math_unescape } from "@cocalc/util/markdown-utils";
-import { remove_math, replace_math } from "@cocalc/util/mathjax-utils";
-import { latexMathToHtml } from "@cocalc/frontend/misc/math-to-html";
-import { replace_all } from "@cocalc/util/misc";
-import { replaceMathBracketDelims } from "./util";
+import { latexMathToHtmlOrError } from "@cocalc/frontend/misc/math-to-html";
+import { hasMath, KaTeXHtml, MathSegments, splitMath } from "./segments";
 
 interface Props {
   data: string;
@@ -20,20 +17,18 @@ interface Props {
 }
 
 export default function DefaultMath({ data }: Props) {
-  data = replaceMathBracketDelims(data);
-  const [text, math] = remove_math(math_escape(data));
-  if (math.length == 0) {
+  const segments = splitMath(data);
+  if (!hasMath(segments)) {
     // no math
-    return <>{data}</>;
+    return <>{segments.map(({ value }) => value).join("")}</>;
   }
-  for (let i = 0; i < math.length; i++) {
-    math[i] = latexMathToHtml(math[i]);
+  return <MathSegments segments={segments} renderMath={renderMath} />;
+}
+
+function renderMath(math: string) {
+  const { __html, err } = latexMathToHtmlOrError(math);
+  if (err) {
+    return <span style={{ color: "#ff6666" }}>{err}</span>;
   }
-  // Substitute processed math back in.
-  const __html = replace_all(
-    math_unescape(replace_math(text, math)),
-    "\\$",
-    "$",
-  );
-  return <span dangerouslySetInnerHTML={{ __html }}></span>;
+  return <KaTeXHtml __html={__html} />;
 }

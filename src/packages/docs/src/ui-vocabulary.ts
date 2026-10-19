@@ -86,6 +86,11 @@ const API_KEY_SCOPE = "frontend/components/api-key-scope-editor.tsx";
 const AGENT_ATTACHMENT = "frontend/chat/agent-file-attachment.tsx";
 const NETWORK_APPROVAL = "frontend/agents/network-approval.tsx";
 const AGENTS_OVERVIEW = "frontend/agents/agents-overview.tsx";
+const GENERIC_COMMANDS =
+  "frontend/frame-editors/frame-tree/commands/generic-commands.tsx";
+const LATEX_BUILD_COMMAND =
+  "frontend/frame-editors/latex-editor/build-command.tsx";
+const LATEX_ENGINES = "apps/document-build/src/latex/commands.ts";
 
 const doc = (name: string): string => `docs/src/content/${name}.ts`;
 const entries = (name: string): string => `docs/src/entries/${name}.ts`;
@@ -267,6 +272,12 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [bold("ai", "Show in sidebar")],
   },
   {
+    id: "agents.page.set-payment-method",
+    label: "Set payment method…",
+    anchors: [def(AGENTS_OVERVIEW, "> Set payment method… </Button>")],
+    usedIn: [bold("ai", "Set payment method…")],
+  },
+  {
     id: "agents.overview.mine",
     // Rendered with its count, as "Mine (N)".
     label: "Mine",
@@ -372,6 +383,28 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("ai", "Start agent")],
   },
+  // Without a way to pay for the chosen runtime, the start button's tooltip
+  // and accessible name ask for that sign-in instead.
+  ...(
+    [
+      [
+        "codex",
+        "Sign in with ChatGPT to start",
+        ': "Sign in with ChatGPT to start"',
+      ],
+      ["claude", "Connect Claude to start", '? "Connect Claude to start"'],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `agents.new.sign-in-to-start.${key}`,
+      label,
+      anchors: [
+        def(WORKSPACE_PAGE, text),
+        ren(WORKSPACE_PAGE, "signInRequired ? signInLabel"),
+      ],
+      usedIn: [bold("ai", label)],
+    }),
+  ),
   {
     id: "agents.new.create-without-task",
     label: "Create agent without a task",
@@ -434,6 +467,18 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ),
     ],
     usedIn: [bold("ai", "My first project")],
+  },
+  {
+    id: "agents.new.runtime.codex",
+    label: "Codex",
+    anchors: [
+      def(
+        "frontend/agents/new-agent-runtime-select.tsx",
+        '{ value: "codex-native", label: "Codex" }',
+      ),
+      ren(WORKSPACE_PAGE, "<NewAgentRuntimeSelect"),
+    ],
+    usedIn: [{ file: doc("ai"), text: "the runtime menu starts at **Codex**" }],
   },
   {
     id: "agents.new.runtime.claude",
@@ -1414,6 +1459,125 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       bold("research-specialist", "Build Log"),
     ],
   },
+  // The LaTeX editor's build controls (latex/build-papers)
+  {
+    id: "latex.output.build-tab",
+    label: "Build",
+    anchors: [
+      msg(
+        COMMON,
+        "editor.build_control_and_log.title.short",
+        'defaultMessage: "Build"',
+      ),
+      ren(
+        "frontend/frame-editors/latex-editor/output.tsx",
+        "intl.formatMessage(editor.build_control_and_log_title_short)",
+      ),
+    ],
+    usedIn: [
+      { file: doc("files"), text: "The **Build** tab in the output panel" },
+    ],
+  },
+  {
+    id: "latex.build.engine-menu",
+    label: "Engine...",
+    anchors: [
+      def(LATEX_BUILD_COMMAND, 'placeholder="Engine..."'),
+      ren(LATEX_BUILD_COMMAND, "options={engineOptions()}"),
+    ],
+    usedIn: [bold("files", "Engine...")],
+  },
+  ...(
+    [
+      ["pdflatex", "PDFLaTeX", 'LATEX_ENGINES = [ "PDFLaTeX",'],
+      ["xelatex", "XeLaTeX", '"XeLaTeX",'],
+      ["luatex", "LuaTex", '"LuaTex",'],
+      ["shell-escape", "PDFLaTeX (shell-escape)", '"PDFLaTeX (shell-escape)",'],
+      [
+        "no-output-dir",
+        "(no output dir)",
+        'export const NO_OUTPUT_DIR = "(no output dir)";',
+      ],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `latex.build.engine.${key}`,
+      label,
+      anchors: [
+        def(LATEX_ENGINES, text),
+        ren(LATEX_BUILD_COMMAND, "options={engineOptions()}"),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
+  ...(
+    [
+      ["hardcoded", "Hardcoded build-command", "Hardcoded build-command"],
+      ["rescan", "Rescan", '<Icon name="reload" /> Rescan'],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `latex.build.${key}`,
+      label,
+      anchors: [def(LATEX_BUILD_COMMAND, text)],
+      usedIn: [bold("files", label)],
+    }),
+  ),
+  // The log tab of each build stage.
+  ...(["Knitr", "SageTex", "PythonTeX"] as const).map(
+    (label): UiVocabularyEntry => ({
+      id: `latex.build.log.${label.toLowerCase()}`,
+      label,
+      anchors: [
+        def(
+          "frontend/frame-editors/latex-editor/types.ts",
+          `label: "${label}"`,
+        ),
+        ren(
+          "frontend/frame-editors/latex-editor/build.tsx",
+          "const title = BUILD_SPECS[stage].label;",
+        ),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
+  ...(
+    [
+      ["force-build", "Force Build", "command.generic.force_build.label"],
+      ["clean", "Delete Aux Files", "command.generic.clean.label"],
+    ] as const
+  ).map(
+    ([key, label, messageId]): UiVocabularyEntry => ({
+      id: `latex.build.${key}`,
+      label,
+      anchors: [msg(GENERIC_COMMANDS, messageId, `defaultMessage: "${label}"`)],
+      usedIn: [bold("files", label)],
+    }),
+  ),
+  // The menu beside the Build button labels its items itself; there Delete
+  // Aux Files is called Clean.
+  ...(
+    [
+      ["force-build", "Force Build"],
+      ["clean", "Clean"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `latex.build.menu.${key}`,
+      label,
+      anchors: [
+        def(
+          "frontend/frame-editors/latex-editor/output-control-build.tsx",
+          `key: "${key}", label: "${label}",`,
+        ),
+        ren(
+          LATEX_BUILD_COMMAND,
+          "<BuildControls actions={actions} narrow={true} />",
+        ),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
   {
     id: "course.no-matching-license",
     label: "No matching site license found",
@@ -1456,7 +1620,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   },
   {
     // The heading that tells the first-run new-agent form, which has no
-    // runtime choice, from the full form.
+    // name or project choice, from the full form.
     id: "claude.first-run-form",
     label: "What would you like to work on?",
     anchors: [
@@ -1529,6 +1693,46 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     text: ".filter(isISODate) .sort();",
     reason:
       'The Local snapshots status date comes from the newest date-named (scheduled) snapshot only, while Find searches every retained snapshot. The Files guide (docs/src/content/files.ts, "Find a retained file when its path is unknown") says so. If the filter only moved, point this fact at its new location. If the date starts counting other snapshots, update that paragraph, then this fact.',
+  },
+  {
+    id: "latex.directive.builds-use-it",
+    file: "apps/document-build/src/latex/config.ts",
+    kind: "present",
+    text: "if (directives.cocalc != null) { return { build_command: sanitizeLatexBuildCommand( directives.cocalc,",
+    reason:
+      'Every build reads a "% !TeX cocalc = ..." line from the document and uses its command before the saved one. The LaTeX guide (docs/src/content/files.ts, "Choose how the document builds") says builds use that command while the line is present. If the check only moved, point this fact at its new location; otherwise update that bullet, then this fact.',
+  },
+  {
+    id: "latex.directive.saved-as-command",
+    file: "frontend/frame-editors/latex-editor/actions.ts",
+    kind: "present",
+    text: "this.set_build_command(cocalc_cmd); this.setState({ build_command_hardcoded: true });",
+    reason:
+      'When the editor reads a "% !TeX cocalc = ..." line, it saves its command as the document\'s build command, which stays after the line is removed and the document is rescanned. The LaTeX guide (docs/src/content/files.ts, "Choose how the document builds") says so. If the code only moved, point this fact at its new location; otherwise update that bullet, then this fact.',
+  },
+  {
+    id: "cli.install.site-release",
+    file: "hub/servers/app/cli-distribution.ts",
+    kind: "present",
+    text: "const site = await r.site(); const { text, manifest } = await r.manifest(site.manifest);",
+    reason:
+      'When a site serves CLI releases, its /cli/install.sh is generated for the release the site currently serves, the one its /cli/site.json names; that installer has no release channel to choose. The CLI guide (docs/src/content/cli.ts, "Step 1: Install on your own computer") says the Unix installer installs that release. If the code only moved, point this fact at its new location; otherwise update that paragraph, then this fact.',
+  },
+  {
+    id: "cli.install.standalone-fallback",
+    file: "hub/servers/app/cli-distribution.ts",
+    kind: "present",
+    text: 'res.type("text/plain; charset=utf-8").send(legacyInstallScript());',
+    reason:
+      'A site that serves no CLI releases, whose /cli/site.json returns 404, answers /cli/install.sh with a short script that runs the standalone installer. The CLI guide (docs/src/content/cli.ts, "Step 1: Install on your own computer") says so. If the code only moved, point this fact at its new location; otherwise update that paragraph, then this fact.',
+  },
+  {
+    id: "cli.install.standalone-default-channel",
+    file: "cli/install.sh",
+    kind: "present",
+    text: 'CHANNEL="${COCALC_CLI_CHANNEL:-latest}"',
+    reason:
+      'The standalone installer, which /cli/install.sh runs on a site that serves no CLI releases, installs the latest channel unless COCALC_CLI_CHANNEL names another. The CLI guide (docs/src/content/cli.ts, "Step 1: Install on your own computer") says it defaults to the latest channel. If the default only moved, point this fact at its new location; otherwise update that paragraph, then this fact.',
   },
 ];
 

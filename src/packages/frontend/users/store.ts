@@ -9,7 +9,7 @@ import LRU from "lru-cache";
 import { chatBotName, isChatBot } from "@cocalc/frontend/account/chatbot";
 import { Store, redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { cmp } from "@cocalc/util/misc";
+import { cmp, isValidUUID } from "@cocalc/util/misc";
 import { actions } from "./actions";
 import { displayNameFromUserRecord } from "./display-name";
 import { UsersState } from "./types";
@@ -88,6 +88,11 @@ export class UsersStore extends Store<UsersState> {
     if (user != null) {
       // known collaborator so easy - already loaded as part of the users table.
       return user.getIn(["profile", "image"]);
+    }
+    // Senders such as the agent harness ("acp-harness") are not accounts;
+    // querying them makes postgres reject the id as a uuid.
+    if (!isValidUUID(account_id)) {
+      return undefined;
     }
     // Not known collaborator, so do a database query... unless we already did
     // one for this account recently.

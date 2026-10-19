@@ -26,6 +26,13 @@ import {
   PUBLIC_TYPE,
   PUBLIC_WEIGHT,
 } from "@cocalc/frontend/public/theme";
+import {
+  getPublicHomeDeploymentChoice,
+  getPublicHomeDeploymentComparison,
+  getPublicHomeDeploymentRange,
+  PUBLIC_PRODUCTS_PAGE_LINK,
+  PUBLIC_WHERE_TO_RUN_CONTACT,
+} from "@cocalc/util/public-products-content";
 import { publicHomeTitle } from "@cocalc/util/public-site-metadata";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -183,6 +190,21 @@ const DIFFERENCE_SIGNALS = [
   { icon: "disk-snapshot", label: "Recovery paths" },
 ] satisfies Array<{ icon: IconName; label: string }>;
 
+interface Differentiator {
+  accent: string;
+  body: string;
+  ctaHref: string;
+  ctaLabel: string;
+  details: ReadonlyArray<{
+    body: string;
+    title: string;
+  }>;
+  eyebrow: string;
+  icon: IconName;
+  modalBody: string;
+  title: string;
+}
+
 const DIFFERENTIATORS = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
@@ -246,45 +268,37 @@ const DIFFERENTIATORS = [
       "CoCalc keeps history, TimeTravel, snapshots, backups, and project context together so teams can return to useful states and continue with less guesswork.",
     title: "Practical recovery",
   },
-  {
+] satisfies Differentiator[];
+
+// The last card describes Where to run CoCalc: its paths, its comparison and
+// its contact line. It names only the ways to run CoCalc that the public
+// pages show, so it is read at render time.
+function operatingModelDifferentiator(): Differentiator {
+  return {
     accent: COLORS.GRAY_M,
-    body: "Review different product paths when infrastructure, governance, or support needs shape the decision.",
-    ctaHref: "products",
-    ctaLabel: "Review product paths",
+    body: "See where CoCalc runs and who operates it when infrastructure or support needs shape the decision.",
+    ctaHref: PUBLIC_PRODUCTS_PAGE_LINK.href,
+    ctaLabel: PUBLIC_PRODUCTS_PAGE_LINK.label,
     details: [
       {
-        body: "Choose hosted, local, single-VM, or organization-operated deployment.",
+        body: getPublicHomeDeploymentChoice(),
         title: "Match where it runs",
       },
       {
-        body: "Compare upgrades, data boundaries, licensing, governance, and support.",
+        body: getPublicHomeDeploymentComparison(),
         title: "Keep ownership clear",
       },
       {
-        body: "Use the product comparison for procurement, security, platform, and support questions.",
+        body: PUBLIC_WHERE_TO_RUN_CONTACT.body,
         title: "Route the next conversation",
       },
     ],
     eyebrow: "Choose where it runs",
     icon: "cloud",
-    modalBody:
-      "CoCalc product paths are choices about where the workspace runs and who operates it, from hosted CoCalc.ai through local, single-VM, private, and enterprise deployments.",
+    modalBody: getPublicHomeDeploymentRange(),
     title: "Operating model choice",
-  },
-] satisfies Array<{
-  accent: string;
-  body: string;
-  ctaHref: string;
-  ctaLabel: string;
-  details: ReadonlyArray<{
-    body: string;
-    title: string;
-  }>;
-  eyebrow: string;
-  icon: IconName;
-  modalBody: string;
-  title: string;
-}>;
+  };
+}
 
 function accessibleAccentTextColor(accent: string): string {
   if (accent === COLORS.RUN) return publicAccent(COLORS.ANTD_GREEN_D);
@@ -553,8 +567,8 @@ function AgentDefinitionSection() {
 
 function DifferenceSection() {
   const [activeTitle, setActiveTitle] = useState<string | null>(null);
-  const activeItem =
-    DIFFERENTIATORS.find((item) => item.title === activeTitle) ?? null;
+  const items = [...DIFFERENTIATORS, operatingModelDifferentiator()];
+  const activeItem = items.find((item) => item.title === activeTitle) ?? null;
 
   return (
     <>
@@ -614,7 +628,7 @@ function DifferenceSection() {
             gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
           }}
         >
-          {DIFFERENTIATORS.map((item) => (
+          {items.map((item) => (
             <button
               aria-haspopup="dialog"
               className="cocalc-public-home-card-link cocalc-public-home-difference-card"
@@ -741,8 +755,8 @@ function PathSection({
           </Title>
           <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
             {isCocalcAiLaunchpadSite(config)
-              ? "Start with CoCalc.ai, review the product paths, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision."
-              : "Review the product paths, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision."}
+              ? "Start with CoCalc.ai, see where to run CoCalc, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision."
+              : "See where to run CoCalc, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision."}
           </Paragraph>
           {trustHref ? (
             <Paragraph
@@ -771,7 +785,9 @@ function PathSection({
           >
             {authenticated ? "Open projects" : getPublicSignUpLabel(config)}
           </Button>
-          <Button href={appPath("products")}>Review product paths</Button>
+          <Button href={appPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}>
+            {PUBLIC_PRODUCTS_PAGE_LINK.label}
+          </Button>
           <Button href={appPath("support")}>Review support and sales</Button>
         </div>
       </div>

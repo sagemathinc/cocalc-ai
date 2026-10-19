@@ -24,6 +24,7 @@ import {
   harnessRuntimeFromDraft,
   qualifiedHarnessRuntime,
 } from "../harness-profile";
+import { listClaudeCredentials } from "../claude-payment-status";
 import {
   createMemoryPaymentApiForTests,
   resetPaymentSelectionStoreForTests,
@@ -136,7 +137,7 @@ test("qualified Claude profiles contain only trusted catalog identity", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.85.1",
+    revision: "0.93.0",
     cwd: "/home/user",
     executionPolicy: "full-access",
     credentialMode: "project-managed",
@@ -1113,4 +1114,66 @@ test("an agent thread's config button stays a button without compact (an agents 
   expect(
     screen.queryByRole("button", { name: "Load model and mode options" }),
   ).toBeNull();
+});
+
+test("the payment list shows the latest subscription usage, not the usage when it first opened", async () => {
+  const getStore = jest
+    .spyOn(redux, "getStore")
+    .mockReturnValue(accountStore as any);
+  const id = "00000000-0000-4000-8000-000000000001";
+  const subscription = (weekUsed: number) => ({
+    id,
+    kind: "claude-subscription-home-v1",
+    revoked: null,
+    metadata: {
+      plan: "max",
+      claude_usage: {
+        observed_at: new Date().toISOString(),
+        windows: {
+          seven_day: {
+            utilization: weekUsed,
+            resets_at: Math.floor(Date.now() / 1000) + 86_400,
+          },
+        },
+      },
+    },
+  });
+  const list = jest
+    .spyOn(webapp_client.conat_client.hub.system, "listExternalCredentials")
+    .mockResolvedValue([subscription(0.99)] as any);
+  seedPaymentSelectionForTests({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+    selection: {
+      version: 1,
+      provider: "claude-code",
+      mode: "account-subscription",
+      credential_id: id,
+    },
+  });
+  try {
+    render(
+      <HarnessRuntimeSummary
+        runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
+        projectId="project-a"
+        threadKey="thread-a"
+      />,
+    );
+    const group = await screen.findByRole("radiogroup", {
+      name: "Claude credential",
+    });
+    await waitFor(() => expect(group).toHaveTextContent("99%"));
+    // A later turn changed the usage; the footer reloads the shared list
+    // (as when its payment popover opens). The mounted settings follow.
+    list.mockResolvedValue([subscription(0.09)] as any);
+    await act(async () => {
+      await listClaudeCredentials(true);
+    });
+    await waitFor(() => expect(group).toHaveTextContent("9%"));
+    expect(group).not.toHaveTextContent("99%");
+  } finally {
+    list.mockRestore();
+    getStore.mockRestore();
+  }
 });

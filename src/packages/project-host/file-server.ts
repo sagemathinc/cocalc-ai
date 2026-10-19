@@ -9,6 +9,7 @@ import {
   preserveSnapshotHistory,
 } from "./snapshot-restore-history";
 import { dirname, join } from "node:path";
+import { writeManagedAuthorizedKeysFile } from "./managed-authorized-keys";
 import { tmpdir } from "node:os";
 import {
   chmod,
@@ -17,7 +18,6 @@ import {
   mkdtemp,
   readFile,
   readdir,
-  rename,
   rm,
   stat,
   writeFile,
@@ -177,7 +177,6 @@ import {
   withProjectVolumeLifecycleLock,
   type ProjectVolumeLifecycleLock,
 } from "./project-volume-lifecycle";
-import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { requireManagedSshKeyAccount } from "./ssh/managed-key-account";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
@@ -5988,13 +5987,6 @@ export async function writeManagedAuthorizedKeys(
   project_id: string,
   keys?: string,
 ): Promise<void> {
-  const content = (keys ?? "").trim();
-  const formatted = content
-    ? content.endsWith("\n")
-      ? content
-      : `${content}\n`
-    : "";
-  if (!formatted) return;
   let vol;
   try {
     vol = await getVolume(project_id);
@@ -6005,20 +5997,7 @@ export async function writeManagedAuthorizedKeys(
     });
     return;
   }
-  const managedPath = join(vol.path, INTERNAL_SSH_CONFIG, "authorized_keys");
-  const managedDir = join(vol.path, INTERNAL_SSH_CONFIG);
-  await mkdir(managedDir, { recursive: true, mode: 0o700 });
-  await chmod(managedDir, 0o700).catch(() => {});
-  const tmpPath = join(managedDir, `.tmp-authorized_keys-${randomUUID()}`);
-  try {
-    await writeFile(tmpPath, formatted, { mode: 0o600 });
-    await chmod(tmpPath, 0o600).catch(() => {});
-    await rename(tmpPath, managedPath);
-    await chmod(managedPath, 0o600).catch(() => {});
-  } catch (err) {
-    await rm(tmpPath, { force: true }).catch(() => {});
-    throw err;
-  }
+  await writeManagedAuthorizedKeysFile(vol.path, keys);
 }
 
 export function closeFileServer() {

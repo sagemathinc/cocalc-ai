@@ -15,6 +15,8 @@ import {
   managedVmProjectAccessNeedsSync,
   managedVmProjectAccessKeyFingerprint,
   managedVmProjectConfigShouldBeEnabled,
+  projectAccessSyncBackingOff,
+  projectAccessSyncBackoffMs,
   providerComputeInstanceIsExpected,
   providerRuntimePublicAddressStatus,
   providerStartDisposition,
@@ -295,6 +297,53 @@ describe("managed VM project SSH config reconciliation", () => {
         [{ ...access[0], state: "pending" }],
       ),
     ).toBe(true);
+  });
+
+  it("backs off a project grant whose sync keeps failing", () => {
+    expect(projectAccessSyncBackoffMs(0)).toBe(60_000);
+    expect(projectAccessSyncBackoffMs(1)).toBe(60_000);
+    expect(projectAccessSyncBackoffMs(3)).toBe(4 * 60_000);
+    expect(projectAccessSyncBackoffMs(50)).toBe(30 * 60_000);
+
+    const now = Date.parse("2026-10-18T05:00:00Z");
+    const key = "ssh-ed25519 AAAA project-a";
+    const degraded = (failures: number, agoMs: number) =>
+      ({
+        project_id: "project-a",
+        ssh_public_key: key,
+        state: "degraded",
+        revoked_at: null,
+        updated_at: new Date(now - agoMs),
+        metadata: { sync_failures: failures },
+      }) as any;
+    const vm = {
+      metadata: {
+        project_ssh_public_keys: [key],
+        project_ssh_provider_key_fingerprint:
+          managedVmProjectAccessKeyFingerprint([degraded(1, 0)]),
+      },
+    };
+    // Failed 3 times, 2 minutes ago: waits until 4 minutes have passed.
+    expect(projectAccessSyncBackingOff(degraded(3, 2 * 60_000), now)).toBe(
+      true,
+    );
+    expect(
+      managedVmProjectAccessNeedsSync(vm, [degraded(3, 2 * 60_000)], { now }),
+    ).toBe(false);
+    expect(
+      managedVmProjectAccessNeedsSync(vm, [degraded(3, 5 * 60_000)], { now }),
+    ).toBe(true);
+    // Backoff never hides a key change or a grant in another state.
+    expect(
+      managedVmProjectAccessNeedsSync(
+        { metadata: { project_ssh_public_keys: [] } },
+        [degraded(3, 0)],
+        { now },
+      ),
+    ).toBe(true);
+    expect(
+      projectAccessSyncBackingOff({ ...degraded(3, 0), state: "pending" }, now),
+    ).toBe(false);
   });
 });
 

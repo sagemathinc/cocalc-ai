@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -33,6 +33,130 @@ test("rocket invokes generated JavaScript CLIs through Node", () => {
 test("rocket safely formats missing child-process output", () => {
   assert.equal(__test__.trimCommandOutput(undefined), "");
   assert.equal(__test__.trimCommandOutput("first\nsecond\n"), "first\nsecond");
+});
+
+test("rocket redacts cookie headers, pairs and values", () => {
+  const auth = "remember_me=sha512$0123456789abcdef$1000$session-secret-value";
+  const affinity = "cocalc_bay_frontdoor_worker=1.affinity-secret-value";
+  const value = "sha512$0123456789abcdef$1000$session-secret-value";
+  const text = `--cookie ${auth}; ${affinity} | value ${value} | ${affinity}`;
+  const redacted = __test__.redactSecrets(text, [
+    `${auth}; ${affinity}`,
+    auth,
+    affinity,
+  ]);
+  assert.doesNotMatch(redacted, /session-secret-value|affinity-secret-value/);
+  assert.match(redacted, /--cookie <redacted>/);
+  // A short value is not treated as a secret everywhere it appears.
+  assert.equal(__test__.redactSecrets("worker 1 ok", ["w=1"]), "worker 1 ok");
+});
+
+// A fake CLI that records its arguments and standard input in <dir>/argv.json
+// and <dir>/stdin, then runs `body` (which may use the `stdin` variable).
+function writeFakeCli(dir: string, body: string): string {
+  const cliPath = join(dir, "fake-cli.js");
+  writeFileSync(
+    cliPath,
+    [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const stdin = fs.readFileSync(0, 'utf8');",
+      "fs.writeFileSync(path.join(__dirname, 'argv.json'), JSON.stringify(process.argv.slice(2)));",
+      "fs.writeFileSync(path.join(__dirname, 'stdin'), stdin);",
+      body,
+    ].join("\n"),
+  );
+  return cliPath;
+}
+
+const SECRET_PATTERN =
+  /session-secret-value|affinity-secret-value|remember_me=/;
+
+test("rocket host route probe never reports the auth cookie", async () => {
+  // A CLI that echoes its arguments and the cookie it read, then fails, the
+  // way a timed-out or failing probe does: Node then reports
+  // "Command failed: <command line>".
+  const dir = mkdtempSync(join(tmpdir(), "rocket-probe-"));
+  const cliPath = writeFakeCli(
+    dir,
+    "process.stderr.write(process.argv.slice(2).join(' ') + ' ' + stdin); process.exit(1);",
+  );
+  const authCookie =
+    "remember_me=sha512$0123456789abcdef$1000$session-secret-value";
+  const affinityCookie = "cocalc_bay_frontdoor_worker=1.affinity-secret-value";
+  const probe = await __test__.runHostRouteProbe({
+    cliPath,
+    api: "https://example.invalid",
+    authCookie,
+    affinityCookie,
+    workerId: 1,
+    host: { host_id: "00000000-0000-4000-8000-000000000000", name: "h" },
+    rpcTimeout: "5s",
+    requestTimeoutMs: 10_000,
+  });
+  assert.equal(probe.ok, false);
+  assert.match(probe.error ?? "", /Command failed/);
+  assert.match(probe.error ?? "", /<redacted>/);
+  assert.doesNotMatch(probe.error ?? "", SECRET_PATTERN);
+  // The cookie reached the child over stdin, never on its command line.
+  const argv = JSON.parse(readFileSync(join(dir, "argv.json"), "utf8"));
+  assert.doesNotMatch(argv.join(" "), SECRET_PATTERN);
+  assert.deepEqual(
+    argv.slice(
+      argv.indexOf("--cookie-file"),
+      argv.indexOf("--cookie-file") + 2,
+    ),
+    ["--cookie-file", "-"],
+  );
+  assert.equal(
+    readFileSync(join(dir, "stdin"), "utf8"),
+    `${authCookie}; ${affinityCookie}`,
+  );
+});
+
+test("rocket host list passes the cookie on stdin and redacts JSON errors", async () => {
+  const authCookie =
+    "remember_me=sha512$0123456789abcdef$1000$session-secret-value";
+  const options = {
+    api: "https://example.invalid",
+    authCookie,
+    hostLimit: 10,
+    siteFundedOnly: false,
+    allHosts: false,
+    requestTimeoutMs: 10_000,
+  };
+
+  // Exit status 0 with {ok: false} and an error that echoes the cookie.
+  const failing = mkdtempSync(join(tmpdir(), "rocket-hosts-"));
+  const failingCli = writeFakeCli(
+    failing,
+    "process.stdout.write(JSON.stringify({ ok: false, error: { message: 'rejected ' + stdin } }));",
+  );
+  await assert.rejects(
+    __test__.listHostsForRouteHealth({ ...options, cliPath: failingCli }),
+    (err: Error) => {
+      assert.match(err.message, /host list failed: rejected <redacted>/);
+      assert.doesNotMatch(err.message, SECRET_PATTERN);
+      return true;
+    },
+  );
+  const argv = JSON.parse(readFileSync(join(failing, "argv.json"), "utf8"));
+  assert.doesNotMatch(argv.join(" "), SECRET_PATTERN);
+  assert.ok(argv.includes("--cookie-file"));
+  assert.equal(readFileSync(join(failing, "stdin"), "utf8"), authCookie);
+
+  // The same path succeeds when the CLI accepts the cookie from stdin.
+  const working = mkdtempSync(join(tmpdir(), "rocket-hosts-"));
+  const workingCli = writeFakeCli(
+    working,
+    `process.stdout.write(JSON.stringify({ ok: stdin === ${JSON.stringify(
+      authCookie,
+    )}, data: [{ host_id: "h1", name: "one", status: "online" }] }));`,
+  );
+  assert.deepEqual(
+    await __test__.listHostsForRouteHealth({ ...options, cliPath: workingCli }),
+    [{ host_id: "h1", name: "one", status: "online" }],
+  );
 });
 
 function createProgram({

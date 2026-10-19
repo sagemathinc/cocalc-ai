@@ -13,6 +13,7 @@ import {
   UNSUPPORTED_CAPABILITY_TERMS,
 } from "@cocalc/util/public-copy-guards";
 import "@cocalc/util/public-site-metadata-docs";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import PublicApp from "../app";
 import { FEATURE_PAGES } from "../features/catalog";
 import PublicHomeApp from "../home/app";
@@ -130,6 +131,32 @@ describe.each(HOSTS)("rendered overpromise canary on $site", ({ dns }) => {
     if (path !== "pricing") {
       expect(text).not.toMatch(DOLLAR_AMOUNT);
     }
+  });
+});
+
+// The hidden products' pages stay in the code for their return, so their copy
+// is checked with their switches on. The CoCalc Plus page is shown, so the
+// canary above renders it.
+describe("rendered overpromise canary for returning products", () => {
+  beforeEach(() => {
+    for (const id of ["launchpad", "rocket"] as const) {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+    }
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each([
+    ["products/cocalc-launchpad", "CoCalc Launchpad"],
+    ["products/cocalc-rocket", "CoCalc Rocket"],
+  ])("keeps unsupported claims off %s", async (path, name) => {
+    const { container } = await renderPublicPath(path);
+    const text = container.textContent ?? "";
+
+    // The product's own page, not the redirect.
+    expect(container.querySelector("h1")?.textContent).toBe(name);
+    expect(text).not.toMatch(OVERPROMISE_TERMS);
+    expect(text).not.toMatch(STALE_AGENT_PHRASES);
+    expect(text).not.toMatch(DOLLAR_AMOUNT);
   });
 });
 

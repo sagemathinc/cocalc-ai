@@ -54,12 +54,12 @@ export const CLAUDE_CODE_QUALIFICATION: QualifiedHarnessCandidate = {
   protocolVersion: 1,
   package: {
     name: "@agentclientprotocol/claude-agent-acp",
-    version: "0.85.1",
+    version: "0.93.0",
     integrity:
-      "sha512-XpBAh6m98ib0R1yu0fC7OOZNk2n/KxA6ykH1QXSr/dYJGDgm4ILr4lprlvEBDxFytzVEpup24Mjkv0qZPmMsMQ==",
-    gitHead: "686c0c99b3b89217b74d1f5de8272e7c9ef1aab4",
+      "sha512-Uec78bLVFgzXrJMxzg8b5r3WkgIEeo+yv2MrQBTAEXFK5E4Jzzd1XPbN3Khsd9EFIewWkbVOZ5PeStdPykaCHQ==",
+    gitHead: "dbf386d8d35d2bc30f17f11f15d1a4305c9d391f",
     node: ">=22",
-    supersededVersions: ["0.81.1"],
+    supersededVersions: ["0.81.1", "0.85.1"],
   },
   launch: {
     binary: "claude-agent-acp",

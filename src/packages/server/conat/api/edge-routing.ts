@@ -195,6 +195,18 @@ async function executeSplitByProject(
     bucket.push(id);
   }
   // All here: run the call as it is. Otherwise one part per bay.
+  if (route.maxPerBay != null) {
+    for (const [bay_id, project_ids] of byBay) {
+      if (project_ids.length > route.maxPerBay) {
+        throw Object.assign(
+          new Error(
+            `at most ${route.maxPerBay} project(s) on one bay may be given in one call to '${call.name}' (${bay_id} has ${project_ids.length})`,
+          ),
+          { code: 400 },
+        );
+      }
+    }
+  }
   const allHere = merged.size === 0 && byBay.size === 1 && byBay.has(here);
   const [opts, ...rest] = call.args;
   const parts: [string, string[], HubApiCall][] = allHere

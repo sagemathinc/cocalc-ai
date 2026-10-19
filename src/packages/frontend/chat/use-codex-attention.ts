@@ -44,6 +44,22 @@ function deliverAttention(
   });
 }
 
+/**
+ * Records the server's "actionable" list holds: pending requests, late sync
+ * questions, and async answers saved but not delivered (to retry). Once one
+ * leaves that list it is looked up again, so a retried answer is not kept as
+ * a stale card.
+ */
+function stillNeedsPerson(record: AcpAttentionRecord): boolean {
+  return (
+    record.state === "pending" ||
+    (record.state === "stale" &&
+      (record.source_kind === "codex_sync_question" ||
+        (record.source_kind === "codex_async_question" &&
+          record.response_submitted_at != null)))
+  );
+}
+
 export function pendingAttentionByThread(
   records: readonly AcpAttentionRecord[],
 ): Map<string, number> {
@@ -102,9 +118,7 @@ export function useCodexAttentionSummary(opts: {
         const missingQuestions = recordsRef.current.filter(
           (record) =>
             record.attention_kind === "question" &&
-            (record.state === "pending" ||
-              (record.state === "stale" &&
-                record.source_kind === "codex_sync_question")) &&
+            stillNeedsPerson(record) &&
             !actionableIds.has(record.attention_id),
         );
         // Resolve only questions observed in this open chat, once they leave the
@@ -143,11 +157,7 @@ export function useCodexAttentionSummary(opts: {
             ...recordsRef.current.filter(
               (record) =>
                 record.attention_kind === "question" &&
-                record.state !== "pending" &&
-                !(
-                  record.state === "stale" &&
-                  record.source_kind === "codex_sync_question"
-                ) &&
+                !stillNeedsPerson(record) &&
                 record.response_submitted_at != null,
             ),
           ].slice(0, MAX_RETAINED_RESPONSES);

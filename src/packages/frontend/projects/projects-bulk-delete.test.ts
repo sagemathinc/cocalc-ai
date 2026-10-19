@@ -90,4 +90,69 @@ describe("runLeaveOrDeleteProjectsSequentially", () => {
 
     expect(submitted).toEqual(["p1"]);
   });
+
+  it("asks for fresh auth when a project's result says it is needed", async () => {
+    const submitted: string[] = [];
+    await expect(
+      runLeaveOrDeleteProjectsSequentially({
+        project_ids: ["p1", "p2"],
+        submitProject: async (project_id) => {
+          submitted.push(project_id);
+          return [
+            {
+              project_id,
+              action: "error",
+              error: "fresh auth is required",
+              code: "fresh_auth_required",
+            },
+          ];
+        },
+        waitForQueuedDelete: async () => undefined,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    expect(submitted).toEqual(["p1"]);
+  });
+
+  it("keeps an unknown outcome's code on its result", async () => {
+    const { results } = await runLeaveOrDeleteProjectsSequentially({
+      project_ids: ["p1"],
+      submitProject: async (project_id) => [
+        {
+          project_id,
+          action: "error",
+          error: "outcome unknown",
+          code: "OUTCOME_UNKNOWN",
+        },
+      ],
+      waitForQueuedDelete: async () => undefined,
+    });
+    expect(results).toEqual([
+      {
+        project_id: "p1",
+        action: "error",
+        error: "outcome unknown",
+        code: "OUTCOME_UNKNOWN",
+      },
+    ]);
+  });
+
+  it("keeps the code of a thrown unknown outcome", async () => {
+    const { results } = await runLeaveOrDeleteProjectsSequentially({
+      project_ids: ["p1"],
+      submitProject: async () => {
+        throw Object.assign(new Error("outcome unknown"), {
+          code: "OUTCOME_UNKNOWN",
+        });
+      },
+      waitForQueuedDelete: async () => undefined,
+    });
+    expect(results).toEqual([
+      {
+        project_id: "p1",
+        action: "error",
+        error: "Error: outcome unknown",
+        code: "OUTCOME_UNKNOWN",
+      },
+    ]);
+  });
 });

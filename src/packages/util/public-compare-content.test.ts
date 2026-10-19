@@ -2,10 +2,34 @@ import {
   getPublicCompareSections,
   PUBLIC_COMPARE_COCALC_AI_COLLABORATION_BULLET,
   PUBLIC_COMPARE_COLLABORATION_BULLET,
+  PUBLIC_COMPARE_DEPLOYMENT_BULLET,
 } from "./public-compare-content";
 import { getPublicFeaturePage } from "./public-feature-pages";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "./public-product-availability";
 
 const COCALC_AI = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+
+// The operating-boundary bullet while Launchpad and Rocket are hidden; CoCalc
+// Plus and Star are both a local installation.
+const HIDDEN_PRODUCTS_DEPLOYMENT_BULLET =
+  "You need a hosted service, or a local or single-VM installation";
+
+afterEach(() => jest.restoreAllMocks());
+
+function showAllProducts() {
+  for (const id of ["plus", "launchpad", "rocket"] as const) {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+  }
+}
+
+// The record's bullets as this site shows them while products are hidden.
+function hiddenProductBullets(bullets?: readonly string[]) {
+  return bullets?.map((bullet) =>
+    bullet === PUBLIC_COMPARE_DEPLOYMENT_BULLET
+      ? HIDDEN_PRODUCTS_DEPLOYMENT_BULLET
+      : bullet,
+  );
+}
 
 function cocalcBullets(config?: { cocalc_product?: string; dns?: string }) {
   return getPublicCompareSections(config).find(
@@ -32,10 +56,12 @@ describe("Compare page content", () => {
     )?.bullets;
 
     expect(cocalcBullets(COCALC_AI)).toEqual(
-      registry?.map((bullet) =>
-        bullet === PUBLIC_COMPARE_COLLABORATION_BULLET
-          ? PUBLIC_COMPARE_COCALC_AI_COLLABORATION_BULLET
-          : bullet,
+      hiddenProductBullets(
+        registry?.map((bullet) =>
+          bullet === PUBLIC_COMPARE_COLLABORATION_BULLET
+            ? PUBLIC_COMPARE_COCALC_AI_COLLABORATION_BULLET
+            : bullet,
+        ),
       ),
     );
     expect(
@@ -49,8 +75,28 @@ describe("Compare page content", () => {
       { cocalc_product: "rocket", dns: "cocalc.ai" },
       { cocalc_product: "rocket", dns: "cocalc.example.com" },
     ]) {
-      expect(cocalcBullets(config)).toEqual(registry);
+      expect(cocalcBullets(config)).toEqual(hiddenProductBullets(registry));
     }
+  });
+
+  it("names only the ways to run CoCalc that the public pages show", () => {
+    expect(
+      getPublicFeaturePage("compare")?.sections?.flatMap(
+        ({ bullets }) => bullets ?? [],
+      ),
+    ).toContain(PUBLIC_COMPARE_DEPLOYMENT_BULLET);
+    expect(cocalcBullets(COCALC_AI)).toContain(
+      HIDDEN_PRODUCTS_DEPLOYMENT_BULLET,
+    );
+    expect(JSON.stringify(cocalcBullets(COCALC_AI))).not.toContain(
+      "private deployment",
+    );
+
+    // With every product shown, the record's bullet is shown as written.
+    showAllProducts();
+    expect(cocalcBullets(COCALC_AI)).toContain(
+      PUBLIC_COMPARE_DEPLOYMENT_BULLET,
+    );
   });
 
   it("drops the collaboration bullet on CoCalc Plus", () => {

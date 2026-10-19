@@ -48,6 +48,11 @@ You can configure it again through **+ > CoCalc access**.
 - **List my projects** lets the agent discover projects by name and read their
   basic listing information. This does not itself allow reading their files.
 - **Create projects** permits the supported project-creation operation.
+- **Read and manage my notifications** lets the agent list your notifications
+  and mark, save or archive them, so you can ask it what came in while you were
+  away. It cannot create notifications or change your notification settings.
+  Because everyone in the agent's project can use its credential during a turn,
+  this applies only while that project has no other collaborators.
 - **Read-only files** allows reading permitted files without changing them or
   running commands in that project. Choose **Whole project**, or restrict access
   to named directories. Hidden and protected paths remain excluded.

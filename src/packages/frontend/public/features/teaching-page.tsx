@@ -13,6 +13,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import { PUBLIC_PRODUCTS_PAGE_LINK } from "@cocalc/util/public-products-content";
 import { FEATURE_ACCENTS } from "./feature-accents";
 import {
   BulletList,
@@ -355,7 +356,10 @@ export default function TeachingFeaturePage({
               href: appPath("features/jupyter-notebook"),
               label: "Jupyter notebooks",
             },
-            { href: appPath("products"), label: "Compare operating models" },
+            {
+              href: appPath(PUBLIC_PRODUCTS_PAGE_LINK.href),
+              label: PUBLIC_PRODUCTS_PAGE_LINK.label,
+            },
             ...(helpEmail
               ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
               : []),

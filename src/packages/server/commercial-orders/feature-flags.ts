@@ -66,6 +66,7 @@ export const COMMERCIAL_ACTION_CAPABILITIES = {
   voidInvoice: "visible",
   reconcileInvoice: "reconciliation",
   retryStripeEvent: "reconciliation",
+  resolveProviderOperation: "reconciliation",
   recordManualPayment: "manualSettlement",
   issueManualInvoice: "manualSettlement",
   provision: "fulfillment",

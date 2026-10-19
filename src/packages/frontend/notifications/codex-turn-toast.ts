@@ -373,45 +373,6 @@ function showNativeCodexNotification(opts: {
   notification.onclose = () => nativeNotifications.delete(opts.notificationId);
 }
 
-export function showLocalCodexTurnCompletionToast(opts: {
-  account_id: string;
-  project_id: string;
-  path: string;
-  thread_id: string;
-  thread_label?: string;
-  agent_label?: string;
-  newest_message_date?: string;
-  stable_source_id?: string;
-}): void {
-  const agent = `${opts.agent_label ?? ""}`.trim() || "Agent";
-  const stableSourceId = `${opts.stable_source_id ?? ""}`.trim();
-  const threadLabel = `${opts.thread_label ?? ""}`.trim() || "this chat";
-  const messageDate = Number(opts.newest_message_date ?? "");
-  const fallbackId = `${opts.project_id}:${opts.path}:${opts.newest_message_date ?? ""}`;
-  void showCodexTurnCompletionToastBestEffort({
-    account_id: opts.account_id,
-    row: {
-      notification_id: stableSourceId || fallbackId,
-      kind: "account_notice",
-      project_id: opts.project_id,
-      summary: {
-        origin_label: "Codex",
-        notice_type: "codex_turn_completion",
-        title: `${agent} turn finished`,
-        agent_label: agent,
-        path: opts.path,
-        thread_id: opts.thread_id,
-        thread_label: threadLabel,
-        stable_source_id: stableSourceId || undefined,
-        local_delivery: true,
-        fragment_id: Number.isFinite(messageDate)
-          ? `chat=${Math.floor(messageDate)}`
-          : undefined,
-      },
-    },
-  }).catch((err) => logger.warn("Unable to deliver Codex notification", err));
-}
-
 export async function showCodexTurnCompletionToastBestEffort(opts: {
   account_id: string;
   row: Pick<

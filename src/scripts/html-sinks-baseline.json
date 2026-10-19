@@ -1,0 +1,185 @@
+{
+  "src/packages/assets/misc/talk-20121004/ui/default/slides.js": {
+    "innerHTML assignment": 2
+  },
+  "src/packages/assets/threejs/r73/Detector.js": {
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/account/terminal-settings.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/agents/library-artifact-view.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/app/render.tsx": {
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/chat/git-commit/untrusted-static-markdown.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/chat/readonly-artifacts.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/client/idle.ts": {
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/components/html-ssr.tsx": {
+    "noSanitize": 6
+  },
+  "src/packages/frontend/components/html.tsx": {
+    "dangerouslySetInnerHTML": 2
+  },
+  "src/packages/frontend/components/iconfont.cn/iconfont-2.js": {
+    "document.write": 1,
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/components/iconfont.cn/iconfont-3.js": {
+    "document.write": 1,
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/components/iconfont.cn/iconfont.js": {
+    "document.write": 1,
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/components/math/segments.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/components/sanitize-html.ts": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/customize/terms-of-service.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/editors/slate/elements/code-block/index.tsx": {
+    "dangerouslySetInnerHTML": 2
+  },
+  "src/packages/frontend/editors/slate/elements/code-block/public-viewer.tsx": {
+    "dangerouslySetInnerHTML": 2
+  },
+  "src/packages/frontend/editors/slate/elements/image/index.tsx": {
+    "noSanitize": 2
+  },
+  "src/packages/frontend/editors/slate/elements/link/index.tsx": {
+    "noSanitize": 2
+  },
+  "src/packages/frontend/editors/slate/elements/references/editable.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/editors/slate/markdown-to-slate/util.ts": {
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/frame-editors/chat-editor/file-artifact.tsx": {
+    "noSanitize": 3
+  },
+  "src/packages/frontend/frame-editors/chat-editor/foreign-artifact-source.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/frame-editors/chat-editor/github-pr-artifact.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/frame-editors/chat-editor/notebook-artifact.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/frame-editors/chat-editor/workbench.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/frame-editors/html-editor/iframe-html.tsx": {
+    "srcDoc": 2
+  },
+  "src/packages/frontend/frame-editors/html-editor/rendered-html.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/frame-editors/latex-editor/pdfjs-text.tsx": {
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/frame-editors/latex-editor/rich-edit/formula-agent.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/frame-editors/latex-editor/rich-edit/widgets/math.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/frame-editors/latex-editor/rich-edit/widgets/render-inline.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/frame-editors/time-travel-editor/git-revision-content.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/jquery-plugins/misc.ts": {
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/jupyter/browser-actions.ts": {
+    "document.write": 1
+  },
+  "src/packages/frontend/jupyter/nbviewer/export.ts": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/jupyter/nbviewer/public-cell-output.tsx": {
+    "dangerouslySetInnerHTML": 1,
+    "srcDoc": 1
+  },
+  "src/packages/frontend/jupyter/notebook-file-context.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/jupyter/output-messages/active-output-group.tsx": {
+    "innerHTML assignment": 1,
+    "srcDoc": 1
+  },
+  "src/packages/frontend/jupyter/output-messages/autosized-iframe.tsx": {
+    "srcDoc": 2
+  },
+  "src/packages/frontend/jupyter/output-messages/html-output.tsx": {
+    "noSanitize": 1,
+    "srcDoc": 2
+  },
+  "src/packages/frontend/jupyter/output-messages/mime-types/iframe-html.tsx": {
+    "srcDoc": 2
+  },
+  "src/packages/frontend/jupyter/status.tsx": {
+    "dangerouslySetInnerHTML": 4
+  },
+  "src/packages/frontend/jupyter/trust-fidelity.browser-test.mjs": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/jupyter/widgets/manager.ts": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/lib/file-context.ts": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/markdown/component.tsx": {
+    "dangerouslySetInnerHTML": 3
+  },
+  "src/packages/frontend/markdown/markdown-input/main.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/misc/misc.ts": {
+    "innerHTML assignment": 1
+  },
+  "src/packages/frontend/project/page/content.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/public-viewer/renderers/ipynb.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/public-viewer/viewer-file-context.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/public/auth/sso-views.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/public/policies/trust.tsx": {
+    "srcDoc": 1
+  },
+  "src/packages/frontend/public/support/tickets-view.tsx": {
+    "dangerouslySetInnerHTML": 1
+  },
+  "src/packages/frontend/purchases/export.tsx": {
+    "document.write": 1
+  },
+  "src/packages/hub/servers/express-app.ts": {
+    "innerHTML assignment": 1
+  },
+  "src/packages/static/src/webapp-error.ts": {
+    "innerHTML assignment": 1
+  }
+}

@@ -3101,7 +3101,12 @@ export interface System {
     account_id?: string;
     project_id?: string;
     host_id?: string;
-  }) => Promise<{ url: string }>;
+  }) => Promise<{
+    url: string;
+    // Only for project hosts: the browser origins (site and bays) allowed to
+    // use project-host cookies.
+    browser_origins?: string[];
+  }>;
 
   testR2Credentials: (opts: {
     account_id?: string;

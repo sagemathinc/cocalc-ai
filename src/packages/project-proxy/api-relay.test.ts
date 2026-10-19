@@ -1,6 +1,10 @@
 import { createServer, request, type Server } from "node:http";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import {
+  connect as connectSocket,
+  type AddressInfo,
+  type Socket,
+} from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { createApiRelayMeter } from "./api-relay-meter";
@@ -548,6 +552,82 @@ describe("streaming quota enforcement", () => {
             ([r]) => r.close && r.sent + r.received === limit,
           ),
         ).toBe(true);
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  // 2026-10-16: on a busy prod host the router died with an uncaught
+  // "read ECONNRESET" every minute or two whenever a project's relayed
+  // WebSocket reset, dropping every connection through it.
+  it.each(["while admission is pending", "while streaming"])(
+    "survives a downstream connection reset %s",
+    async (phase) => {
+      const f = await fixture();
+      let releaseRoute!: () => void;
+      if (phase === "while admission is pending") {
+        const gate = new Promise<void>((done) => {
+          releaseRoute = done;
+        });
+        (f.hubUrl as jest.Mock).mockImplementation(async () => {
+          await gate;
+          return `${f.upstreamUrl}/base`;
+        });
+      }
+      let upstreamClosed: Promise<unknown> | undefined;
+      f.upstream.on("upgrade", (_req, socket) => {
+        upstreamClosed = new Promise((done) => socket.once("close", done));
+        socket.on("error", () => {});
+        socket.on("end", () => socket.end());
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+        );
+      });
+      const relaySockets: Socket[] = [];
+      f.server.prependListener("upgrade", (_req, socket) =>
+        relaySockets.push(socket as Socket),
+      );
+      try {
+        const { port } = f.server.address() as AddressInfo;
+        const client = connectSocket(port, "127.0.0.1");
+        client.on("error", () => {});
+        await once(client, "connect");
+        client.write(
+          [
+            `GET ${hubPath}/conat/?EIO=4&transport=websocket HTTP/1.1`,
+            `Host: 127.0.0.1:${port}`,
+            "Connection: Upgrade",
+            "Upgrade: websocket",
+            ...Object.entries(sourceHeaders).map(([k, v]) => `${k}: ${v}`),
+            "",
+            "",
+          ].join("\r\n"),
+        );
+        if (phase === "while streaming") {
+          const [chunk] = await once(client, "data");
+          expect(chunk.toString()).toMatch(/^HTTP\/1\.1 101/);
+        } else {
+          while (f.hubUrl.mock.calls.length === 0) await delay(5);
+        }
+        expect(relaySockets).toHaveLength(1);
+        const relaySocket = relaySockets[0];
+        // Not events.once: it would reject on the very "error" under test.
+        const relayClosed = new Promise((done) =>
+          relaySocket.once("close", done),
+        );
+        // A real TCP RST: the relay side reads ECONNRESET.
+        client.resetAndDestroy();
+        await relayClosed;
+        releaseRoute?.();
+        if (phase === "while streaming") await upstreamClosed;
+        else await delay(50);
+        // The relay is still serving.
+        const response = await fetch(`${f.url}${hubPath}/api/v2/ping`, {
+          headers: sourceHeaders,
+        });
+        expect(response.status).toBe(200);
+        await response.text();
       } finally {
         await f.close();
       }

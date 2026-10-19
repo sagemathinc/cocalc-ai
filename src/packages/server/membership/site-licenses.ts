@@ -194,6 +194,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "manager-updated",
   "manager-removed",
   "site-license-updated",
+  "site-license-owner-transferred",
   "pool-created",
   "pool-updated",
   "pool-archived",
@@ -211,8 +212,6 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "seat-affiliation-reverified",
   "seat-released-after-reverification-grace",
 ]);
-
-let schemaEnsured: Promise<void> | undefined;
 
 function getQueryClient(client?: PoolClient): Queryable {
   return client ?? getPool();
@@ -235,320 +234,22 @@ async function withLocalSiteLicenseTransaction<T>(
   }
 }
 
-export async function ensureSiteLicenseSchema(
+// Site-license transactions used to begin with schema DDL that took an ACCESS
+// EXCLUSIVE lock on site_licenses until commit. That serialized them with each
+// other, which several flows rely on (manager changes, archiving a pool while
+// a seat is assigned, ...), and it also blocked every plain reader. This
+// transaction-scoped advisory lock keeps exactly the serialization without
+// blocking readers. Outside a transaction (no client) there is nothing to
+// serialize, as before.
+const SITE_LICENSE_TRANSACTION_LOCK_KEY = "7151100011";
+
+export async function serializeSiteLicenseTransaction(
   client?: PoolClient,
 ): Promise<void> {
-  if (client == null) {
-    schemaEnsured ??= ensureSiteLicenseSchemaWithClient(getPool());
-    await schemaEnsured;
-    return;
-  }
-  await ensureSiteLicenseSchemaWithClient(client);
-}
-
-async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
-  const seedBayId = getSiteLicenseSeedBayId();
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_licenses (
-      id UUID PRIMARY KEY,
-      name TEXT NOT NULL,
-      organization_name TEXT NOT NULL,
-      bay_id TEXT NOT NULL,
-      owner_account_id UUID,
-      allowed_domains TEXT[],
-      custom_terms_url TEXT,
-      custom_policy_url TEXT,
-      terms_version_label TEXT,
-      renewal_policy TEXT,
-      overage_policy TEXT,
-      starts_at TIMESTAMPTZ,
-      expires_at TIMESTAMPTZ,
-      metadata JSONB,
-      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await db.query(
-    "ALTER TABLE site_licenses ADD COLUMN IF NOT EXISTS bay_id TEXT",
-  );
-  await db.query(
-    "ALTER TABLE site_licenses ALTER COLUMN owner_account_id DROP NOT NULL",
-  );
-  await db.query(
-    `
-      UPDATE site_licenses
-         SET bay_id = $1
-       WHERE bay_id IS DISTINCT FROM $1
-    `,
-    [seedBayId],
-  );
-  await db.query("ALTER TABLE site_licenses ALTER COLUMN bay_id SET NOT NULL");
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_licenses_bay_id_idx ON site_licenses (bay_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_licenses_owner_account_id_idx ON site_licenses (owner_account_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_licenses_updated_idx ON site_licenses (updated)",
-  );
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_license_domains (
-      site_license_id UUID NOT NULL,
-      domain TEXT NOT NULL,
-      starts_at TIMESTAMPTZ,
-      expires_at TIMESTAMPTZ,
-      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (site_license_id, domain)
-    )
-  `);
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_domains_domain_idx ON site_license_domains (domain)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_domains_active_idx ON site_license_domains (expires_at, starts_at)",
-  );
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_license_domain_locks (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL
-    )
-  `);
-  await db.query(
-    "INSERT INTO site_license_domain_locks (id, name) VALUES (1, 'site-license-domain-write-lock') ON CONFLICT (id) DO NOTHING",
-  );
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_license_managers (
-      id UUID PRIMARY KEY,
-      site_license_id UUID NOT NULL,
-      account_id UUID NOT NULL,
-      role TEXT NOT NULL,
-      created_by_account_id UUID,
-      revoked_at TIMESTAMPTZ,
-      metadata JSONB,
-      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_managers_site_license_id_idx ON site_license_managers (site_license_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_managers_account_id_idx ON site_license_managers (account_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_managers_revoked_at_idx ON site_license_managers (revoked_at)",
-  );
-  await db.query(`
-    UPDATE site_licenses s
-       SET owner_account_id = owner_rows.account_id,
-           updated = NOW()
-      FROM (
-        SELECT DISTINCT ON (site_license_id) site_license_id, account_id
-          FROM site_license_managers
-         WHERE role = 'owner'
-           AND revoked_at IS NULL
-         ORDER BY site_license_id, created ASC
-      ) owner_rows
-     WHERE s.id = owner_rows.site_license_id
-       AND s.owner_account_id IS NULL
-  `);
-  await db.query(`
-    UPDATE site_license_managers
-       SET role = 'viewer',
-           updated = NOW()
-     WHERE role = 'owner'
-       AND revoked_at IS NULL
-  `);
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_license_pool_requests (
-      id UUID PRIMARY KEY,
-      site_license_id UUID NOT NULL,
-      package_id UUID NOT NULL,
-      account_id UUID NOT NULL,
-      matched_email_address TEXT NOT NULL,
-      canonical_identity VARCHAR(320) NOT NULL,
-      requested_membership_class TEXT NOT NULL,
-      state TEXT NOT NULL,
-      requester_note TEXT,
-      reviewer_account_id UUID,
-      review_note TEXT,
-      requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      reviewed_at TIMESTAMPTZ,
-      expires_at TIMESTAMPTZ,
-      metadata JSONB,
-      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_pool_requests_site_license_id_idx ON site_license_pool_requests (site_license_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_pool_requests_package_id_idx ON site_license_pool_requests (package_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_pool_requests_account_id_idx ON site_license_pool_requests (account_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_pool_requests_canonical_identity_idx ON site_license_pool_requests (canonical_identity)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_pool_requests_state_idx ON site_license_pool_requests (state)",
-  );
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_license_audit_log (
-      id UUID PRIMARY KEY,
-      site_license_id UUID NOT NULL,
-      action TEXT NOT NULL,
-      actor_account_id UUID,
-      target_account_id UUID,
-      package_id UUID,
-      request_id UUID,
-      metadata JSONB,
-      created TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_audit_log_site_license_id_idx ON site_license_audit_log (site_license_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_audit_log_created_idx ON site_license_audit_log (created)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_audit_log_action_idx ON site_license_audit_log (action)",
-  );
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_license_external_claim_pools (
-      id UUID PRIMARY KEY,
-      slug TEXT,
-      site_license_id UUID NOT NULL,
-      package_id UUID NOT NULL,
-      name TEXT NOT NULL,
-      issuer TEXT NOT NULL,
-      audience TEXT NOT NULL DEFAULT 'cocalc.ai.site-license-claim',
-      default_membership_class TEXT,
-      allow_membership_class_override BOOLEAN NOT NULL DEFAULT FALSE,
-      default_membership_duration_days INTEGER,
-      default_membership_expires_at TIMESTAMPTZ,
-      allow_membership_expires_at_override BOOLEAN NOT NULL DEFAULT FALSE,
-      min_membership_duration_days INTEGER,
-      max_membership_duration_days INTEGER,
-      max_membership_expires_at TIMESTAMPTZ,
-      default_rootfs_id TEXT,
-      max_claims INTEGER,
-      max_claims_per_account INTEGER,
-      starts_at TIMESTAMPTZ,
-      expires_at TIMESTAMPTZ,
-      disabled_at TIMESTAMPTZ,
-      metadata JSONB,
-      created_by_account_id UUID,
-      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_site_license_id_idx ON site_license_external_claim_pools (site_license_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_package_id_idx ON site_license_external_claim_pools (package_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_issuer_idx ON site_license_external_claim_pools (issuer)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_disabled_at_idx ON site_license_external_claim_pools (disabled_at)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_external_claim_pools_expires_at_idx ON site_license_external_claim_pools (expires_at)",
-  );
-  await db.query(
-    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_pools_slug_unique_idx ON site_license_external_claim_pools (site_license_id, issuer, slug) WHERE slug IS NOT NULL",
-  );
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_license_external_claim_keys (
-      id UUID PRIMARY KEY,
-      pool_id UUID NOT NULL,
-      kid TEXT NOT NULL UNIQUE,
-      alg TEXT NOT NULL,
-      public_key_jwk JSONB,
-      public_key_pem TEXT,
-      starts_at TIMESTAMPTZ,
-      expires_at TIMESTAMPTZ,
-      revoked_at TIMESTAMPTZ,
-      created_by_account_id UUID,
-      metadata JSONB,
-      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  for (const constraint of [
-    "site_license_external_claim_keys_check",
-    "site_license_external_claim_keys_check1",
-    "site_license_external_claim_keys_check2",
-    "site_license_external_claim_keys_one_public_key",
-  ]) {
-    await db.query(
-      `ALTER TABLE site_license_external_claim_keys DROP CONSTRAINT IF EXISTS ${constraint}`,
-    );
-  }
-  await db.query(
-    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_keys_pool_kid_idx ON site_license_external_claim_keys (pool_id, kid)",
-  );
-  await db.query(
-    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_keys_kid_idx ON site_license_external_claim_keys (kid)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_external_claim_keys_revoked_at_idx ON site_license_external_claim_keys (revoked_at)",
-  );
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS site_license_external_claim_consumptions (
-      id UUID PRIMARY KEY,
-      pool_id UUID NOT NULL,
-      site_license_id UUID NOT NULL,
-      package_id UUID NOT NULL,
-      jti TEXT NOT NULL,
-      token_hash TEXT NOT NULL,
-      issuer TEXT NOT NULL,
-      kid TEXT,
-      account_id UUID NOT NULL,
-      status TEXT NOT NULL,
-      side_effect_key TEXT NOT NULL,
-      assignment_id UUID,
-      membership_grant_id UUID,
-      membership_class TEXT NOT NULL,
-      membership_expires_at TIMESTAMPTZ,
-      rootfs_id TEXT,
-      external_subject TEXT,
-      token_expires_at TIMESTAMPTZ,
-      error_code TEXT,
-      error_message TEXT,
-      retry_count INTEGER NOT NULL DEFAULT 0,
-      last_retry_at TIMESTAMPTZ,
-      metadata JSONB,
-      consumed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await db.query(
-    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_consumptions_pool_jti_idx ON site_license_external_claim_consumptions (pool_id, jti)",
-  );
-  await db.query(
-    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_consumptions_token_hash_idx ON site_license_external_claim_consumptions (token_hash)",
-  );
-  await db.query(
-    "CREATE UNIQUE INDEX IF NOT EXISTS site_license_external_claim_consumptions_side_effect_key_idx ON site_license_external_claim_consumptions (side_effect_key)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_external_claim_consumptions_account_id_idx ON site_license_external_claim_consumptions (account_id)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_external_claim_consumptions_status_idx ON site_license_external_claim_consumptions (status)",
-  );
-  await db.query(
-    "CREATE INDEX IF NOT EXISTS site_license_ext_claim_cons_membership_grant_ix ON site_license_external_claim_consumptions (membership_grant_id)",
-  );
+  if (client == null) return;
+  await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [
+    SITE_LICENSE_TRANSACTION_LOCK_KEY,
+  ]);
 }
 
 function normalizeMetadata(
@@ -1260,7 +961,7 @@ async function listSiteLicenseAuditEvents({
   limit?: number;
   client?: PoolClient;
 }): Promise<SiteLicenseAuditEvent[]> {
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<RawSiteLicenseAuditEvent>(
     `SELECT *
      FROM site_license_audit_log
@@ -1766,7 +1467,7 @@ async function getSiteLicense(
   site_license_id: string,
   client?: PoolClient,
 ): Promise<SiteLicenseRecord> {
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<RawSiteLicenseRecord>(
     `SELECT *
      FROM site_licenses
@@ -1803,7 +1504,7 @@ async function listSiteLicenseManagers(
   site_license_id: string,
   client?: PoolClient,
 ): Promise<SiteLicenseManager[]> {
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<RawSiteLicenseManager>(
     `SELECT *
      FROM site_license_managers
@@ -1954,7 +1655,7 @@ async function assertSiteLicenseManager({
   write?: boolean;
   client?: PoolClient;
 }): Promise<void> {
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   if (await isAdmin(account_id, client)) {
     return;
   }
@@ -2007,7 +1708,7 @@ async function listSiteLicensePoolRequests({
   states?: SiteLicensePoolRequestState[];
   client?: PoolClient;
 }): Promise<SiteLicensePoolRequest[]> {
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(
     client,
   ).query<RawSiteLicensePoolRequest>(
@@ -2027,7 +1728,7 @@ async function getRequestById(
   request_id: string,
   client?: PoolClient,
 ): Promise<SiteLicensePoolRequest> {
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(
     client,
   ).query<RawSiteLicensePoolRequest>(
@@ -2050,7 +1751,7 @@ async function countPendingRequestsByPackage({
   site_license_id: string;
   client?: PoolClient;
 }): Promise<Map<string, number>> {
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<{
     package_id: string;
     count: number;
@@ -2638,7 +2339,7 @@ export async function listSiteLicenseIdsWithAffiliationReverification({
   limit?: number;
   client?: PoolClient;
 } = {}): Promise<string[]> {
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<{ id: string }>(
     `SELECT s.id
        FROM site_licenses s
@@ -2703,7 +2404,7 @@ export async function listSiteLicenseOverviews({
   client?: PoolClient;
 }): Promise<SiteLicenseOverview[]> {
   const normalizedAccountId = normalizeAccountId(account_id);
-  await ensureSiteLicenseSchema(client);
+  await serializeSiteLicenseTransaction(client);
   const queryClient = getQueryClient(client);
   const rows = admin
     ? await (async () => {
@@ -3010,7 +2711,7 @@ export async function cleanupSiteLicenseAccessForAccountDeletionOnSeed({
   const accountId = normalizeAccountId(account_id);
   await beginMembershipRecipientDeletion(accountId);
   const cleanupWithClient = async (dbClient: PoolClient) => {
-    await ensureSiteLicenseSchema(dbClient);
+    await serializeSiteLicenseTransaction(dbClient);
     const { rows: assignmentRows } = await dbClient.query<{
       package_id: string;
     }>(
@@ -3234,39 +2935,69 @@ async function getSiteLicenseOverviewWithoutAuthorization({
   );
 }
 
-export async function adminProvisionSiteLicense({
-  actor_account_id,
-  owner_account_id,
-  name,
-  organization_name,
-  allowed_domains,
-  pools,
-  custom_terms_url,
-  custom_policy_url,
-  terms_version_label,
-  renewal_policy,
-  overage_policy,
-  starts_at,
-  expires_at,
-  metadata,
-  trusted_admin = false,
-}: {
-  actor_account_id: string;
-  owner_account_id?: string | null;
-  name: string;
-  organization_name: string;
-  allowed_domains: string[];
-  pools: SiteLicensePoolConfig[];
-  custom_terms_url?: string | null;
-  custom_policy_url?: string | null;
-  terms_version_label?: string | null;
-  renewal_policy?: string | null;
-  overage_policy?: string | null;
-  starts_at?: Date | string | null;
-  expires_at?: Date | string | null;
-  metadata?: Record<string, unknown> | null;
-  trusted_admin?: boolean;
-}): Promise<SiteLicenseOverview> {
+// Errors from adminProvisionSiteLicense thrown before its transaction tried to
+// commit: nothing was written, so callers may record a definite failure rather
+// than an indeterminate outcome.
+const provisionRejectedBeforeCommit = new WeakSet<object>();
+
+export function isSiteLicenseProvisionRejected(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err != null &&
+    provisionRejectedBeforeCommit.has(err)
+  );
+}
+
+export async function adminProvisionSiteLicense(
+  opts: Parameters<typeof provisionSiteLicense>[0],
+): Promise<SiteLicenseOverview> {
+  const progress = { commitAttempted: false };
+  try {
+    return await provisionSiteLicense(opts, progress);
+  } catch (err) {
+    if (!progress.commitAttempted && typeof err === "object" && err != null) {
+      provisionRejectedBeforeCommit.add(err);
+    }
+    throw err;
+  }
+}
+
+async function provisionSiteLicense(
+  {
+    actor_account_id,
+    owner_account_id,
+    name,
+    organization_name,
+    allowed_domains,
+    pools,
+    custom_terms_url,
+    custom_policy_url,
+    terms_version_label,
+    renewal_policy,
+    overage_policy,
+    starts_at,
+    expires_at,
+    metadata,
+    trusted_admin = false,
+  }: {
+    actor_account_id: string;
+    owner_account_id?: string | null;
+    name: string;
+    organization_name: string;
+    allowed_domains: string[];
+    pools: SiteLicensePoolConfig[];
+    custom_terms_url?: string | null;
+    custom_policy_url?: string | null;
+    terms_version_label?: string | null;
+    renewal_policy?: string | null;
+    overage_policy?: string | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    metadata?: Record<string, unknown> | null;
+    trusted_admin?: boolean;
+  },
+  progress: { commitAttempted: boolean },
+): Promise<SiteLicenseOverview> {
   const actorAccountId = normalizeAccountId(actor_account_id);
   if (!trusted_admin && !(await isAdmin(actorAccountId))) {
     throw Error("must be an admin");
@@ -3289,7 +3020,7 @@ export async function adminProvisionSiteLicense({
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    await ensureSiteLicenseSchema(client);
+    await serializeSiteLicenseTransaction(client);
     await assertSiteLicensePoolMembershipClassesAvailable(
       normalizedPools,
       client,
@@ -3416,6 +3147,7 @@ export async function adminProvisionSiteLicense({
       site_license_id,
       client,
     });
+    progress.commitAttempted = true;
     await client.query("COMMIT");
     return overview;
   } catch (err) {
@@ -3546,6 +3278,12 @@ export async function archiveSiteLicensePool({
       client,
     );
     await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    // Seat assignment locks this package row too, so no seat can be assigned
+    // between the check below and the archive.
+    await client.query(
+      "SELECT id FROM membership_packages WHERE id=$1 FOR UPDATE",
+      [packageId],
+    );
     const assignments = await listMembershipPackageAssignments({
       package_id: packageId,
       include_revoked: true,
@@ -3601,6 +3339,18 @@ export async function archiveSiteLicensePool({
   });
 }
 
+// Changes that read the license owner and write rows owned by it (adding a
+// pool, transferring ownership) serialize on the license row, so a pool can
+// never be created for a previous owner.
+async function lockSiteLicenseRow(
+  site_license_id: string,
+  client: PoolClient,
+): Promise<void> {
+  await client.query("SELECT id FROM site_licenses WHERE id=$1 FOR UPDATE", [
+    site_license_id,
+  ]);
+}
+
 export async function addSiteLicensePool({
   actor_account_id,
   site_license_id,
@@ -3613,6 +3363,7 @@ export async function addSiteLicensePool({
   const actorAccountId = normalizeAccountId(actor_account_id);
   const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
   return await withLocalSiteLicenseTransaction(async (client) => {
+    await lockSiteLicenseRow(siteLicenseId, client);
     const siteLicense = await getSiteLicense(siteLicenseId, client);
     await assertSiteLicenseAdmin({ account_id: actorAccountId });
     const [normalizedPool] = normalizePools([pool]);
@@ -3716,6 +3467,7 @@ export async function updateSiteLicense({
   starts_at,
   expires_at,
   metadata,
+  owner_account_id,
 }: {
   actor_account_id: string;
   site_license_id: string;
@@ -3730,12 +3482,51 @@ export async function updateSiteLicense({
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
   metadata?: Record<string, unknown>;
+  // Transfer ownership of the license and every one of its pools.
+  owner_account_id?: string;
 }): Promise<SiteLicenseOverview> {
   const actorAccountId = normalizeAccountId(actor_account_id);
   const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
+  const nextOwnerAccountId =
+    owner_account_id === undefined
+      ? undefined
+      : normalizeAccountId(owner_account_id, "owner_account_id");
+  if (nextOwnerAccountId) {
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    await assertTargetAccountExists(nextOwnerAccountId);
+  }
   return await withLocalSiteLicenseTransaction(async (client) => {
+    await lockSiteLicenseRow(siteLicenseId, client);
     const current = await getSiteLicense(siteLicenseId, client);
     await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    const previousOwnerAccountId = current.owner_account_id ?? null;
+    const ownerChanged =
+      nextOwnerAccountId != null &&
+      nextOwnerAccountId !== previousOwnerAccountId;
+    if (ownerChanged) {
+      // The pools are membership packages owned by the license owner; they
+      // must move with the license, or the owner could not manage them.
+      await client.query(
+        "UPDATE site_licenses SET owner_account_id=$2, updated=NOW() WHERE id=$1",
+        [siteLicenseId, nextOwnerAccountId],
+      );
+      await client.query(
+        `UPDATE membership_packages SET owner_account_id=$2, updated=NOW()
+          WHERE kind='site' AND metadata->>'site_license_id'=$1`,
+        [siteLicenseId, nextOwnerAccountId],
+      );
+      await recordSiteLicenseAuditEvent({
+        site_license_id: siteLicenseId,
+        action: "site-license-owner-transferred",
+        actor_account_id: actorAccountId,
+        target_account_id: nextOwnerAccountId,
+        metadata: {
+          previous_owner_account_id: previousOwnerAccountId,
+          owner_account_id: nextOwnerAccountId,
+        },
+        client,
+      });
+    }
     const nextAllowedDomains =
       allowed_domains === undefined
         ? current.allowed_domains
@@ -3846,6 +3637,7 @@ export async function updateSiteLicense({
           starts_at,
           expires_at,
           metadata,
+          owner_account_id,
         })
           .filter(([, value]) => value !== undefined)
           .map(([field]) => field),
@@ -3889,6 +3681,8 @@ export async function setSiteLicenseManager({
   await assertSiteLicenseAdmin({ account_id: actorAccountId });
   await assertTargetAccountExists(targetAccountId);
   return await withLocalSiteLicenseTransaction(async (client) => {
+    // Serializes the check-then-insert below with other manager changes.
+    await lockSiteLicenseRow(siteLicenseId, client);
     const { rows } = await client.query<RawSiteLicenseManager>(
       `SELECT *
          FROM site_license_managers
@@ -3953,6 +3747,7 @@ export async function removeSiteLicenseManager({
   );
   await assertSiteLicenseAdmin({ account_id: actorAccountId });
   return await withLocalSiteLicenseTransaction(async (client) => {
+    await lockSiteLicenseRow(siteLicenseId, client);
     const { rows } = await client.query<RawSiteLicenseManager>(
       `SELECT *
          FROM site_license_managers

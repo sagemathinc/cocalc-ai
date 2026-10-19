@@ -48,7 +48,8 @@ Table({
           crm_organization_id: null,
           name: null,
           organization_name: null,
-          bay_id: null,
+          // bay_id is set by provisioning (the seed bay) and is not
+          // writable through user queries.
           owner_account_id: null,
           allowed_domains: null,
           custom_terms_url: null,
@@ -82,6 +83,7 @@ Table({
     },
     bay_id: {
       type: "string",
+      not_null: true,
       desc: "Seed control-plane bay that owns this site license.",
     },
     owner_account_id: {
@@ -907,5 +909,69 @@ Table({
       type: "timestamp",
       desc: "Last updated time.",
     },
+  },
+});
+
+// Seed-global index of active license and pool domains, used to reject
+// overlapping site licenses. (Created by server code until Oct 2026, with
+// TIMESTAMPTZ columns; declared here with the same types.)
+Table({
+  name: "site_license_domains",
+  rules: {
+    primary_key: ["site_license_id", "domain"],
+    pg_custom_indexes: [
+      { name: "site_license_domains_domain_idx", query: "(domain)" },
+      {
+        name: "site_license_domains_active_idx",
+        query: "(expires_at, starts_at)",
+      },
+    ],
+  },
+  fields: {
+    site_license_id: {
+      type: "uuid",
+      not_null: true,
+      desc: "Site license claiming this domain.",
+    },
+    domain: {
+      type: "string",
+      not_null: true,
+      desc: "Normalized institutional email domain.",
+    },
+    starts_at: {
+      type: "timestamp",
+      pg_type: "TIMESTAMPTZ",
+      desc: "When the claim on this domain starts.",
+    },
+    expires_at: {
+      type: "timestamp",
+      pg_type: "TIMESTAMPTZ",
+      desc: "When the claim on this domain ends.",
+    },
+    created: {
+      type: "timestamp",
+      pg_type: "TIMESTAMPTZ",
+      not_null: true,
+      pg_default: "now()",
+      desc: "Creation time.",
+    },
+    updated: {
+      type: "timestamp",
+      pg_type: "TIMESTAMPTZ",
+      not_null: true,
+      pg_default: "now()",
+      desc: "Last updated time.",
+    },
+  },
+});
+
+// A single row (id=1, inserted by startup schema sync) that domain-index
+// writers lock FOR UPDATE to serialize overlap checks.
+Table({
+  name: "site_license_domain_locks",
+  rules: { primary_key: "id" },
+  fields: {
+    id: { type: "integer", not_null: true, desc: "Lock row id (always 1)." },
+    name: { type: "string", not_null: true, desc: "Lock name." },
   },
 });

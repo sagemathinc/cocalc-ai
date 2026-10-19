@@ -11,6 +11,13 @@ import getCustomize from "@cocalc/database/settings/customize";
 import { capitalize } from "@cocalc/util/misc";
 import { slugURL } from "@cocalc/util/news";
 import {
+  HIDDEN_PUBLIC_PRODUCT_REDIRECT_STATUS,
+  isPublicProductShown,
+  PUBLIC_PRODUCTS,
+  PUBLIC_PRODUCTS_PATH,
+  type PublicProduct,
+} from "@cocalc/util/public-product-availability";
+import {
   CHANNELS_DESCRIPTIONS,
   PUBLIC_NEWS_CHANNELS,
   type Channel,
@@ -34,6 +41,28 @@ function redirectCompatibilityPreserveSearch(
       : "";
     const target = typeof getTarget === "function" ? getTarget(req) : getTarget;
     res.redirect(307, joinUrlPath(basePath, target) + search);
+  };
+}
+
+// A product's page, or, while the public pages hide the product, a temporary
+// redirect to the products page that keeps the query string. The product
+// returns at the same address when its switch in public-product-availability
+// is turned on, so the redirect is cached for no longer than a page.
+function serveProductPage(product: PublicProduct) {
+  return function (req: Request, res: Response): void {
+    if (isPublicProductShown(product.id)) {
+      servePublicShell(req, res);
+      return;
+    }
+    const search = req.url.includes("?")
+      ? req.url.slice(req.url.indexOf("?"))
+      : "";
+    res.setHeader("Cache-Control", "public, max-age=10, must-revalidate");
+    res.vary("Host");
+    res.redirect(
+      HIDDEN_PUBLIC_PRODUCT_REDIRECT_STATUS,
+      joinUrlPath(basePath, PUBLIC_PRODUCTS_PATH) + search,
+    );
   };
 }
 
@@ -221,15 +250,14 @@ export default function initPublicContent(router: Router): void {
     "/news/:slug/:timestamp/",
     "/products",
     "/products/",
-    "/products/cocalc-star",
-    "/products/cocalc-star/",
-    "/products/cocalc-launchpad",
-    "/products/cocalc-launchpad/",
-    "/products/cocalc-plus",
-    "/products/cocalc-plus/",
-    "/products/cocalc-rocket",
-    "/products/cocalc-rocket/",
   ];
 
   router.get(contentPaths, servePublicShell);
+
+  for (const product of PUBLIC_PRODUCTS) {
+    router.get(
+      [`/products/${product.slug}`, `/products/${product.slug}/`],
+      serveProductPage(product),
+    );
+  }
 }

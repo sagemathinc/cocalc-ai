@@ -888,6 +888,7 @@ export type SiteLicenseAuditAction =
   | "manager-updated"
   | "manager-removed"
   | "site-license-updated"
+  | "site-license-owner-transferred"
   | "pool-created"
   | "pool-updated"
   | "pool-archived"
@@ -1860,6 +1861,7 @@ export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
     overage_policy?: string | null;
     starts_at?: Date | string | null;
     expires_at?: Date | string | null;
+    owner_account_id?: string;
   }) => Promise<SiteLicenseOverview>;
   addSiteLicensePool: (opts?: {
     account_id?: string;

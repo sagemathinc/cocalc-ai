@@ -44,6 +44,12 @@ export type HubApiRoute =
         error: string,
         code?: string | number,
       ) => Record<string, unknown>;
+      /**
+       * At most this many projects on any one bay per call, for methods that
+       * work through them one at a time: more is refused before any part
+       * runs, so a part always finishes within the call's time.
+       */
+      maxPerBay?: number;
     };
 
 export type CollabInviteRouteKey = { invite_id?: string; token?: string };
@@ -77,6 +83,24 @@ const hiddenProjects: HubApiRoute = {
   errorResult: (project_id, error) => ({ project_id, success: false, error }),
 };
 
+// Leaving or deleting is destructive and done one project at a time, so a
+// call takes at most one project per bay (the UI sends one project per
+// call).
+export const MAX_LEAVE_OR_DELETE_PER_BAY = 1;
+
+const leftOrDeletedProjects: HubApiRoute = {
+  owner: "projects",
+  key: (args) => args?.[0]?.project_ids,
+  // The code says, e.g., that the outcome is unknown or fresh auth is needed.
+  errorResult: (project_id, error, code) => ({
+    project_id,
+    action: "error",
+    error,
+    ...(code != null ? { code } : {}),
+  }),
+  maxPerBay: MAX_LEAVE_OR_DELETE_PER_BAY,
+};
+
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // A board's decide call runs where its project lives: there it is
   // authorized and the project's file server reads the board, so the board
@@ -91,6 +115,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // Hiding is per account, but stored in each project's users map.
   "projects.setProjectHidden": projectFromOpts,
   "projects.setProjectsHidden": hiddenProjects,
+  // Each bay leaves, transfers or deletes its own projects; fresh auth asks
+  // the caller's home bay.
+  "projects.leaveOrDeleteProjects": leftOrDeletedProjects,
   // Host placement and moves run where the project, its runtime slot and its
   // operations live; fresh auth for a move asks the caller's home bay.
   "projects.moveProject": projectFromOpts,
@@ -147,6 +174,12 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.startCourseSecretCleanup": courseProjectFromOpts,
   "projects.getCourseSecretSyncStatus": courseProjectFromOpts,
   "projects.revokeCourseSecretPolicy": courseProjectFromOpts,
+  // Course managers are the course project's collaborators, known on its
+  // bay; that bay grants them access to student projects on other bays.
+  "projects.ensureCourseManagerAccess": courseProjectFromOpts,
+  "projects.repairAcceptedCourseStudentInviteAccounts": courseProjectFromOpts,
+  // Sending an assignment patch grants the course's managers access first.
+  "projects.sendCourseAssignmentPatch": courseProjectFromOpts,
   // A document's edit history (TimeTravel) lives with its project.
   "sync.history": projectFromOpts,
   "sync.purgeHistory": projectFromOpts,

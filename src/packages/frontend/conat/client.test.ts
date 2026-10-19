@@ -4127,6 +4127,7 @@ describe("ConatClient routed project-host reconnect", () => {
       },
     );
     const resetProjectHostRuntime = jest.fn();
+    const reconnectProjectHostRuntime = jest.fn();
 
     jest.resetModules();
 
@@ -4147,7 +4148,10 @@ describe("ConatClient routed project-host reconnect", () => {
         getActions: jest.fn(() => ({
           ensure_host_info: ensureHostInfo,
         })),
-        getProjectActions: jest.fn(() => ({ resetProjectHostRuntime })),
+        getProjectActions: jest.fn(() => ({
+          resetProjectHostRuntime,
+          reconnectProjectHostRuntime,
+        })),
       },
     }));
 
@@ -4236,6 +4240,10 @@ describe("ConatClient routed project-host reconnect", () => {
     const reconnectSpy = jest
       .spyOn(client, "reconnect")
       .mockImplementation(() => undefined);
+    const resourceReconnects = jest.spyOn(
+      client.reconnectCoordinator,
+      "requestResourceReconnects",
+    );
 
     client.getOrCreateRoutedHubClient({
       host_id: "host-1",
@@ -4256,7 +4264,20 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
     expect(close1).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].host_session_id).toBe("session-2");
-    expect(resetProjectHostRuntime).toHaveBeenCalledWith();
+    // A restart at the same address reconnects the open editors in place
+    // rather than rebuilding them.
+    expect(reconnectProjectHostRuntime).toHaveBeenCalledWith();
+    expect(resetProjectHostRuntime).not.toHaveBeenCalled();
+    // Only the restarted host's projects, and not forced: a forced pass would
+    // rebuild healthy editors' changefeeds while the user types.
+    const sessionPass = resourceReconnects.mock.calls
+      .map(([request]: any) => request)
+      .find((request) => request?.reason === "project_host_session_changed");
+    expect(sessionPass).toBeDefined();
+    expect(sessionPass.force).toBeFalsy();
+    expect([...sessionPass.projectIds]).toEqual([
+      "00000000-0000-4000-8000-000000000001",
+    ]);
     jest.advanceTimersByTime(50);
     expect(reconnectSpy).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].client).toBe(routedClient1);
@@ -4480,6 +4501,1192 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(connect2).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].client).toBe(routedClient1);
     expect(client.routedHubClients["host-1"].host_session_id).toBe("session-1");
+
+    jest.useRealTimers();
+  });
+
+  it("does not re-authenticate during a short host restart, only once failures last 10 s", async () => {
+    jest.useFakeTimers();
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+          connect: jest.fn(),
+          disconnect: jest.fn(),
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
+    };
+
+    const connect1 = jest.fn();
+    const close1 = jest.fn();
+    const eventHandlers1: Record<string, Function> = {};
+    const routedClient1 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn((event: string, cb: Function) => {
+        eventHandlers1[event] = cb;
+      }),
+      connect: connect1,
+      close: close1,
+      request: jest.fn(),
+    };
+
+    const connect2 = jest.fn();
+    const close2 = jest.fn();
+    const routedClient2 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: connect2,
+      close: close2,
+      request: jest.fn(),
+    };
+
+    let hostInfo = immutable.Map({
+      "host-1": immutable.Map({
+        bay_id: "bay-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+        updated_at: Date.now(),
+      }),
+    });
+    const ensureHostInfo = jest.fn(async () => hostInfo.get("host-1"));
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: hostInfo,
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    let routedCreates = 0;
+    const connectToConat = jest.fn((opts?: any) => {
+      if (opts?.address === "http://hub") {
+        return hubClient;
+      }
+      routedCreates += 1;
+      return routedCreates === 1 ? routedClient1 : routedClient2;
+    });
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: connectToConat,
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    await jest.advanceTimersByTimeAsync(200);
+    connect1.mockClear();
+    connect2.mockClear();
+    const invalidate = jest.spyOn(client, "invalidateProjectHostToken");
+
+    // A host restart: four quick failed reconnects within ~5 s.  Retries are
+    // short at first, and none of them costs a new sign-in.
+    const fail = async (ms: number) => {
+      eventHandlers1.disconnected?.();
+      await jest.advanceTimersByTimeAsync(ms);
+    };
+    await fail(800);
+    await fail(1_100);
+    await fail(1_600);
+    await fail(1_600);
+    expect(connect1).toHaveBeenCalledTimes(4);
+    expect(invalidate).not.toHaveBeenCalled();
+
+    // Still failing after 10 s: now refresh the host token.
+    await fail(2_100);
+    await fail(2_100);
+    await fail(3_100);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+
+    jest.useRealTimers();
+  });
+
+  it("does not count time offline toward re-authenticating", async () => {
+    jest.useFakeTimers();
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+          connect: jest.fn(),
+          disconnect: jest.fn(),
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
+    };
+
+    const connect1 = jest.fn();
+    const close1 = jest.fn();
+    const eventHandlers1: Record<string, Function> = {};
+    const routedClient1 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn((event: string, cb: Function) => {
+        eventHandlers1[event] = cb;
+      }),
+      connect: connect1,
+      close: close1,
+      request: jest.fn(),
+    };
+
+    const connect2 = jest.fn();
+    const close2 = jest.fn();
+    const routedClient2 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: connect2,
+      close: close2,
+      request: jest.fn(),
+    };
+
+    let hostInfo = immutable.Map({
+      "host-1": immutable.Map({
+        bay_id: "bay-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+        updated_at: Date.now(),
+      }),
+    });
+    const ensureHostInfo = jest.fn(async () => hostInfo.get("host-1"));
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: hostInfo,
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    let routedCreates = 0;
+    const connectToConat = jest.fn((opts?: any) => {
+      if (opts?.address === "http://hub") {
+        return hubClient;
+      }
+      routedCreates += 1;
+      return routedCreates === 1 ? routedClient1 : routedClient2;
+    });
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: connectToConat,
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    await jest.advanceTimersByTimeAsync(200);
+    connect1.mockClear();
+    connect2.mockClear();
+    const invalidate = jest.spyOn(client, "invalidateProjectHostToken");
+
+    const setOnline = (online: boolean) =>
+      Object.defineProperty(window.navigator, "onLine", {
+        configurable: true,
+        get: () => online,
+      });
+    const fail = async (ms: number) => {
+      eventHandlers1.disconnected?.();
+      await jest.advanceTimersByTimeAsync(ms);
+    };
+    try {
+      // The browser is offline for 20 s: attempts wait for it to come back.
+      setOnline(false);
+      await fail(20_000);
+      setOnline(true);
+      window.dispatchEvent(new Event("online"));
+      await jest.advanceTimersByTimeAsync(100);
+      // Then a few quick failures: they must not count the offline time.
+      await fail(1_100);
+      await fail(1_600);
+      await fail(1_600);
+      expect(invalidate).not.toHaveBeenCalled();
+      // Failing for 10 s while online does.
+      await fail(2_100);
+      await fail(2_100);
+      await fail(3_100);
+      expect(invalidate).toHaveBeenCalledTimes(1);
+    } finally {
+      setOnline(true);
+    }
+
+    jest.useRealTimers();
+  });
+
+  it("does not count a short offline spell between retries toward re-authenticating", async () => {
+    jest.useFakeTimers();
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+          connect: jest.fn(),
+          disconnect: jest.fn(),
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
+    };
+
+    const connect1 = jest.fn();
+    const close1 = jest.fn();
+    const eventHandlers1: Record<string, Function> = {};
+    const routedClient1 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn((event: string, cb: Function) => {
+        eventHandlers1[event] = cb;
+      }),
+      connect: connect1,
+      close: close1,
+      request: jest.fn(),
+    };
+
+    const connect2 = jest.fn();
+    const close2 = jest.fn();
+    const routedClient2 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: connect2,
+      close: close2,
+      request: jest.fn(),
+    };
+
+    let hostInfo = immutable.Map({
+      "host-1": immutable.Map({
+        bay_id: "bay-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+        updated_at: Date.now(),
+      }),
+    });
+    const ensureHostInfo = jest.fn(async () => hostInfo.get("host-1"));
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: hostInfo,
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    let routedCreates = 0;
+    const connectToConat = jest.fn((opts?: any) => {
+      if (opts?.address === "http://hub") {
+        return hubClient;
+      }
+      routedCreates += 1;
+      return routedCreates === 1 ? routedClient1 : routedClient2;
+    });
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: connectToConat,
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    await jest.advanceTimersByTimeAsync(200);
+    connect1.mockClear();
+    connect2.mockClear();
+    const invalidate = jest.spyOn(client, "invalidateProjectHostToken");
+
+    const setOnline = (online: boolean) =>
+      Object.defineProperty(window.navigator, "onLine", {
+        configurable: true,
+        get: () => online,
+      });
+    const fail = async (ms: number) => {
+      eventHandlers1.disconnected?.();
+      await jest.advanceTimersByTimeAsync(ms);
+    };
+    try {
+      // Eight seconds of failures while online...
+      await fail(800);
+      await fail(1_100);
+      await fail(1_600);
+      await fail(1_600);
+      await fail(2_100);
+      // ...then the browser goes offline and back between two retries, so
+      // every retry callback sees it online.
+      window.dispatchEvent(new Event("offline"));
+      window.dispatchEvent(new Event("online"));
+      // Two more failures (over 10 s since the first, ~5 s since it came
+      // back online): the clock restarted when it came back.
+      await fail(2_100);
+      await fail(3_100);
+      expect(invalidate).not.toHaveBeenCalled();
+      // Ten seconds of failing after coming back online re-authenticates.
+      await fail(5_100);
+      await fail(5_100);
+      expect(invalidate).toHaveBeenCalledTimes(1);
+    } finally {
+      setOnline(true);
+    }
+
+    jest.useRealTimers();
+  });
+
+  it("does not count an offline spell during a routing refresh toward re-authenticating", async () => {
+    jest.useFakeTimers();
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+          connect: jest.fn(),
+          disconnect: jest.fn(),
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
+    };
+
+    const connect1 = jest.fn();
+    const close1 = jest.fn();
+    const eventHandlers1: Record<string, Function> = {};
+    const routedClient1 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn((event: string, cb: Function) => {
+        eventHandlers1[event] = cb;
+      }),
+      connect: connect1,
+      close: close1,
+      request: jest.fn(),
+    };
+
+    const connect2 = jest.fn();
+    const close2 = jest.fn();
+    const routedClient2 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: connect2,
+      close: close2,
+      request: jest.fn(),
+    };
+
+    let hostInfo = immutable.Map({
+      "host-1": immutable.Map({
+        bay_id: "bay-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+        updated_at: Date.now(),
+      }),
+    });
+    let hold: Promise<void> = Promise.resolve();
+    const ensureHostInfo = jest.fn(async () => {
+      await hold;
+      return hostInfo.get("host-1");
+    });
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: hostInfo,
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    let routedCreates = 0;
+    const connectToConat = jest.fn((opts?: any) => {
+      if (opts?.address === "http://hub") {
+        return hubClient;
+      }
+      routedCreates += 1;
+      return routedCreates === 1 ? routedClient1 : routedClient2;
+    });
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: connectToConat,
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    await jest.advanceTimersByTimeAsync(200);
+    connect1.mockClear();
+    connect2.mockClear();
+    const invalidate = jest.spyOn(client, "invalidateProjectHostToken");
+
+    const setOnline = (online: boolean) =>
+      Object.defineProperty(window.navigator, "onLine", {
+        configurable: true,
+        get: () => online,
+      });
+    const fail = async (ms: number) => {
+      eventHandlers1.disconnected?.();
+      await jest.advanceTimersByTimeAsync(ms);
+    };
+    try {
+      // About seven seconds of failures while online...
+      await fail(800);
+      await fail(1_100);
+      await fail(1_600);
+      await fail(1_600);
+      await fail(2_100);
+      // ...then the next retry's routing refresh stalls, and the browser goes
+      // offline and back while it is pending.
+      let release!: () => void;
+      hold = new Promise<void>((resolve) => (release = resolve));
+      eventHandlers1.disconnected?.();
+      await jest.advanceTimersByTimeAsync(2_100);
+      expect(ensureHostInfo).toHaveBeenCalled();
+      window.dispatchEvent(new Event("offline"));
+      window.dispatchEvent(new Event("online"));
+      // Over 10 s since the first failure, but under 2 s since it came back.
+      await jest.advanceTimersByTimeAsync(1_500);
+      release();
+      await jest.advanceTimersByTimeAsync(50);
+      expect(invalidate).not.toHaveBeenCalled();
+    } finally {
+      setOnline(true);
+    }
+
+    jest.useRealTimers();
+  });
+
+  it("does not re-authenticate while the browser is still offline after a routing refresh", async () => {
+    jest.useFakeTimers();
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+          connect: jest.fn(),
+          disconnect: jest.fn(),
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
+    };
+
+    const connect1 = jest.fn();
+    const close1 = jest.fn();
+    const eventHandlers1: Record<string, Function> = {};
+    const routedClient1 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn((event: string, cb: Function) => {
+        eventHandlers1[event] = cb;
+      }),
+      connect: connect1,
+      close: close1,
+      request: jest.fn(),
+    };
+
+    const connect2 = jest.fn();
+    const close2 = jest.fn();
+    const routedClient2 = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: connect2,
+      close: close2,
+      request: jest.fn(),
+    };
+
+    let hostInfo = immutable.Map({
+      "host-1": immutable.Map({
+        bay_id: "bay-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+        updated_at: Date.now(),
+      }),
+    });
+    let hold: Promise<void> = Promise.resolve();
+    const ensureHostInfo = jest.fn(async () => {
+      await hold;
+      return hostInfo.get("host-1");
+    });
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: hostInfo,
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    let routedCreates = 0;
+    const connectToConat = jest.fn((opts?: any) => {
+      if (opts?.address === "http://hub") {
+        return hubClient;
+      }
+      routedCreates += 1;
+      return routedCreates === 1 ? routedClient1 : routedClient2;
+    });
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: connectToConat,
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    await jest.advanceTimersByTimeAsync(200);
+    connect1.mockClear();
+    connect2.mockClear();
+    const invalidate = jest.spyOn(client, "invalidateProjectHostToken");
+
+    const setOnline = (online: boolean) =>
+      Object.defineProperty(window.navigator, "onLine", {
+        configurable: true,
+        get: () => online,
+      });
+    const fail = async (ms: number) => {
+      eventHandlers1.disconnected?.();
+      await jest.advanceTimersByTimeAsync(ms);
+    };
+    try {
+      // About seven seconds of failures while online...
+      await fail(800);
+      await fail(1_100);
+      await fail(1_600);
+      await fail(1_600);
+      await fail(2_100);
+      // ...then the next retry's routing refresh stalls, and the browser goes
+      // offline while it is pending.
+      let release!: () => void;
+      hold = new Promise<void>((resolve) => (release = resolve));
+      eventHandlers1.disconnected?.();
+      await jest.advanceTimersByTimeAsync(2_100);
+      expect(ensureHostInfo).toHaveBeenCalled();
+      setOnline(false);
+      window.dispatchEvent(new Event("offline"));
+      // Over 10 s since the first failure, and still offline when the
+      // refresh completes.
+      await jest.advanceTimersByTimeAsync(1_500);
+      release();
+      await jest.advanceTimersByTimeAsync(50);
+      expect(invalidate).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(invalidate).not.toHaveBeenCalled();
+    } finally {
+      setOnline(true);
+    }
 
     jest.useRealTimers();
   });

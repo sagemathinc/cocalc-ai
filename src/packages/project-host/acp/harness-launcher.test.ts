@@ -169,7 +169,7 @@ test("a host whose tools lack Claude Code rejects before starting anything", asy
         version: 2,
         kind: "acp",
         id: "claude-code",
-        revision: "0.85.1",
+        revision: "0.93.0",
         cwd: "/home/user",
         credentialMode: "project-managed",
         executionPolicy: "full-access",
@@ -188,7 +188,7 @@ test("account credentials are exposed only through a revocable relay mount", asy
       version: 2,
       kind: "acp",
       id: "claude-code",
-      revision: "0.85.1",
+      revision: "0.93.0",
       cwd: "/home/user",
       credentialMode: "project-managed",
       executionPolicy: "full-access",
@@ -220,7 +220,7 @@ test("account credentials are exposed only through a revocable relay mount", asy
     `mount:${join(__dirname, "..", "qualified-harness", "index.js")}:/opt/cocalc/acp/qualified-harness-entry.js:true`,
   );
   expect(args).not.toContain("short-lived-token");
-  expect(args.slice(-3)).toEqual(["claude-code", "0.85.1", "account-api-key"]);
+  expect(args.slice(-3)).toEqual(["claude-code", "0.93.0", "account-api-key"]);
   await handle.stop();
   expect(mockRelayClose).toHaveBeenCalledTimes(1);
   expect(mockRm).toHaveBeenCalledWith("/host-relay", {
@@ -275,7 +275,7 @@ test.each([undefined, "00000000-0000-4000-8000-000000000009"])(
         version: 2 as const,
         kind: "acp" as const,
         id: "claude-code" as const,
-        revision: "0.85.1",
+        revision: "0.93.0",
         cwd: "/home/user",
         credentialMode: "project-managed" as const,
         executionPolicy: "full-access" as const,
@@ -302,7 +302,7 @@ test("qualified profiles resolve only through the trusted entry point", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.85.1",
+    revision: "0.93.0",
     cwd: "/home/user",
     credentialMode: "project-managed",
     executionPolicy: "full-access",
@@ -311,7 +311,7 @@ test("qualified profiles resolve only through the trusted entry point", () => {
   expect(command.args).toEqual([
     "/opt/cocalc/acp/qualified-harness-entry.js",
     "claude-code",
-    "0.85.1",
+    "0.93.0",
     "project-secret",
   ]);
   expect(command.args.join(" ")).not.toContain("ANTHROPIC_API_KEY");
@@ -411,7 +411,7 @@ test("Claude in a project without internet access gets only the Anthropic proxy"
       version: 2,
       kind: "acp",
       id: "claude-code",
-      revision: "0.85.1",
+      revision: "0.93.0",
       cwd: "/home/user",
       credentialMode: "project-managed",
       executionPolicy: "full-access",

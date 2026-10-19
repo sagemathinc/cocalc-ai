@@ -22,6 +22,7 @@ import "@cocalc/util/public-site-metadata-docs";
 import type { PublicRoute } from "../routes";
 import { PUBLIC_SITEMAP_PATHS } from "../sitemap-paths";
 import { getFeatureIndexPages } from "../features/catalog";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 
 type PublicProductsRoute = Extract<PublicRoute, { section: "products" }>;
 
@@ -52,8 +53,10 @@ beforeEach(() => {
     .forEach((element) => element.remove());
 });
 
+afterEach(() => jest.restoreAllMocks());
+
 describe("public route metadata", () => {
-  it("frames the five product paths for public previews", () => {
+  it("frames the product paths for public previews", () => {
     const products = getPublicRouteMetadata(
       {
         route: { view: "products" },
@@ -61,22 +64,12 @@ describe("public route metadata", () => {
       },
       { site_name: "CoCalc" },
     );
-    expect(products.title).toBe("Ways to Run CoCalc | CoCalc");
-    expect(products.description).toContain("hosted CoCalc.ai");
-    expect(products.description).toContain("CoCalc Plus");
-    expect(products.description).toContain("CoCalc Star");
-    expect(products.description).toContain("CoCalc Launchpad");
-    expect(products.description).toContain("CoCalc Rocket");
-
-    const plus = getPublicRouteMetadata(
-      {
-        route: { view: "products-cocalc-plus" },
-        section: "products",
-      },
-      { site_name: "CoCalc" },
+    expect(products.title).toBe("Where to run CoCalc | CoCalc");
+    expect(products.description).toBe(
+      "Run your agents on CoCalc.ai, or on a computer or server you control with CoCalc Star. CoCalc Star is free of charge, and you operate it.",
     );
-    expect(plus.description).toContain("project model");
-    expect(plus.description).not.toContain("workspace model");
+    // Search results cut descriptions at about 160 characters.
+    expect(products.description.length).toBeLessThanOrEqual(160);
 
     const star = getPublicRouteMetadata(
       {
@@ -89,25 +82,83 @@ describe("public route metadata", () => {
     expect(star.description).toContain("one Docker container");
     expect(star.description).toContain("macOS, Windows, or Linux");
 
-    const launchpad = getPublicRouteMetadata(
+    const plus = getPublicRouteMetadata(
       {
-        route: { view: "products-cocalc-launchpad" },
+        route: { view: "products-cocalc-plus" },
         section: "products",
       },
       { site_name: "CoCalc" },
     );
-    expect(launchpad.description).toContain("customer-operated");
-    expect(launchpad.description).toContain("private deployment");
+    expect(plus.title).toBe("CoCalc Plus | CoCalc");
+    expect(plus.canonicalPath).toBe("/products/cocalc-plus");
+    expect(plus.description).toBe(
+      "CoCalc Plus runs CoCalc on your own computer, for your own projects.",
+    );
+    // No agent or provider in a page title or description.
+    expect(`${plus.title} ${plus.description}`).not.toMatch(
+      /Codex|Claude|OpenAI|ChatGPT/,
+    );
 
-    const rocket = getPublicRouteMetadata(
-      {
-        route: { view: "products-cocalc-rocket" },
-        section: "products",
-      },
-      { site_name: "CoCalc" },
+    // Hidden products' pages redirect to the products page and take its
+    // metadata.
+    for (const view of [
+      "products-cocalc-launchpad",
+      "products-cocalc-rocket",
+    ]) {
+      expect(
+        getPublicRouteMetadata(
+          { route: { view }, section: "products" },
+          { site_name: "CoCalc" },
+        ),
+      ).toEqual(products);
+    }
+  });
+
+  it("gives the Plus page the products page's metadata once Plus is hidden again", () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+    const metadata = (view: string) =>
+      getPublicRouteMetadata(
+        { route: { view }, section: "products" },
+        { site_name: "CoCalc" },
+      );
+    expect(metadata("products-cocalc-plus")).toEqual(metadata("products"));
+  });
+
+  it("describes a hidden product's page from its return copy once it is shown", () => {
+    for (const id of ["plus", "launchpad", "rocket"] as const) {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+    }
+    const metadata = (view: string) =>
+      getPublicRouteMetadata(
+        { route: { view }, section: "products" },
+        { site_name: "CoCalc" },
+      );
+
+    const plus = metadata("products-cocalc-plus");
+    expect(plus.title).toBe("CoCalc Plus | CoCalc");
+    expect(plus.canonicalPath).toBe("/products/cocalc-plus");
+    expect(plus.description).toBe(
+      "CoCalc Plus runs CoCalc on your own computer, for your own projects.",
     );
-    expect(rocket.description).toContain("customer-operated");
+    const launchpad = metadata("products-cocalc-launchpad");
+    expect(launchpad.title).toBe("CoCalc Launchpad | CoCalc");
+    expect(launchpad.description).toContain("private CoCalc site");
+    const rocket = metadata("products-cocalc-rocket");
+    expect(rocket.title).toBe("CoCalc Rocket | CoCalc");
     expect(rocket.description).toContain("private-cloud");
+    for (const { description } of [
+      plus,
+      launchpad,
+      rocket,
+      metadata("products-cocalc-star"),
+      metadata("products"),
+    ]) {
+      // Search results cut descriptions at about 160 characters.
+      expect(description.length).toBeLessThanOrEqual(160);
+      // The agents and their providers are named on the page, not in its
+      // description.
+      expect(description).not.toMatch(/Codex|Claude|OpenAI|ChatGPT/);
+    }
   });
 
   it("keeps teaching, support, pricing, and auth metadata public-facing", () => {

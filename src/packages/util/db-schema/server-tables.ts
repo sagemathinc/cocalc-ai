@@ -42,6 +42,7 @@ import "./computers";
 import "./compute-resource-events";
 import "./compute-resource-work";
 import "./compute-revenue-analytics-state";
+import "./admin-alert-state";
 import "./compute-revenue-daily";
 import "./compute-site-funded-usage";
 import "./compute-usage-daily";

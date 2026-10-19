@@ -533,18 +533,21 @@ export type BootstrapScripts = {
   projectHostCurrent: string;
   projectHostBin: string;
   projectHostVersion: string;
+  projectHostFallbackManifestUrl: string;
   containerRuntimeUrl: string;
   containerRuntimeSha256: string;
   containerRuntimeRoot: string;
   containerRuntimeDir: string;
   containerRuntimeRemote: string;
   containerRuntimeVersion: string;
+  containerRuntimeFallbackManifestUrl: string;
   projectBundleUrl: string;
   projectBundleSha256: string;
   projectBundlesRoot: string;
   projectBundleDir: string;
   projectBundleRemote: string;
   projectBundleVersion: string;
+  projectBundleFallbackManifestUrl: string;
   toolsManifestUrl: string;
   toolsUrl: string;
   toolsSha256: string;
@@ -552,6 +555,7 @@ export type BootstrapScripts = {
   toolsDir: string;
   toolsRemote: string;
   toolsVersion: string;
+  toolsFallbackManifestUrl: string;
   tunnel?: CloudflareTunnel;
   cloudflaredConfig?: {
     enabled: boolean;
@@ -769,6 +773,31 @@ function observedBootstrapArtifactVersions(
   return versions;
 }
 
+function installedBootstrapArtifactVersions(
+  row: ProjectHostRow,
+): Partial<
+  Record<Exclude<BootstrapManagedArtifact, "bootstrap-environment">, string[]>
+> {
+  const versions: Partial<
+    Record<Exclude<BootstrapManagedArtifact, "bootstrap-environment">, string[]>
+  > = {};
+  for (const artifact of observedRuntimeArtifactsFromMetadata(row as any)) {
+    if (
+      artifact.artifact !== "project-host" &&
+      artifact.artifact !== "container-runtime" &&
+      artifact.artifact !== "project-bundle" &&
+      artifact.artifact !== "tools"
+    ) {
+      continue;
+    }
+    const installed = new Set(artifact.installed_versions ?? []);
+    const current = `${artifact.current_version ?? ""}`.trim();
+    if (current) installed.add(current);
+    versions[artifact.artifact] = [...installed].filter(Boolean);
+  }
+  return versions;
+}
+
 function chooseBootstrapArtifactVersion({
   host_id,
   artifact,
@@ -841,12 +870,15 @@ async function resolveBootstrapArtifactBundle({
   softwareBaseUrl,
   artifact,
   desiredVersion,
+  installedVersions,
   targetOs,
   targetArch,
 }: {
   softwareBaseUrl: string;
   artifact: Exclude<BootstrapManagedArtifact, "bootstrap-environment">;
   desiredVersion?: string;
+  // Version directories the host last reported as installed.
+  installedVersions?: string[];
   targetOs: SoftwareOs;
   targetArch: SoftwareArch;
 }): Promise<{
@@ -854,7 +886,14 @@ async function resolveBootstrapArtifactBundle({
   url: string;
   sha256?: string;
   version: string;
+  // Set when a kept installed version can't be downloaded: the host uses
+  // this manifest if the version directory turns out to be missing.
+  fallbackManifestUrl?: string;
 }> {
+  const manifestUrl =
+    artifact === "tools" || artifact === "container-runtime"
+      ? `${softwareBaseUrl}/${artifact}/latest-${targetOs}-${targetArch}.json`
+      : `${softwareBaseUrl}/${artifact === "project-bundle" ? "project" : "project-host"}/latest-${targetOs}.json`;
   const version = `${desiredVersion ?? ""}`.trim();
   if (version) {
     const url = versionedSoftwareArtifactUrl({
@@ -873,6 +912,26 @@ async function resolveBootstrapArtifactBundle({
         version,
       };
     }
+    if (installedVersions?.includes(version)) {
+      // The host already has the desired version (e.g. a build that was
+      // installed directly or since pruned from the store). Bootstrap reuses
+      // an existing version directory without downloading, so keep it rather
+      // than silently moving the host to whatever "latest" is on reboot.
+      logger.warn(
+        "bootstrap host: desired artifact bundle is unavailable but already installed; keeping it",
+        {
+          artifact,
+          desired_version: version,
+          software_base_url: softwareBaseUrl,
+        },
+      );
+      return {
+        manifestUrl: "",
+        url,
+        version,
+        fallbackManifestUrl: manifestUrl,
+      };
+    }
     logger.warn(
       "bootstrap host: desired artifact bundle is unavailable; falling back to latest manifest",
       {
@@ -884,10 +943,6 @@ async function resolveBootstrapArtifactBundle({
       },
     );
   }
-  const manifestUrl =
-    artifact === "tools" || artifact === "container-runtime"
-      ? `${softwareBaseUrl}/${artifact}/latest-${targetOs}-${targetArch}.json`
-      : `${softwareBaseUrl}/${artifact === "project-bundle" ? "project" : "project-host"}/latest-${targetOs}.json`;
   const resolved = await resolveSoftwareArtifact(manifestUrl, {
     os: targetOs,
     ...(artifact === "tools" || artifact === "container-runtime"
@@ -1020,6 +1075,7 @@ export async function buildBootstrapScripts(
     row.id,
   );
   const observedArtifactVersions = observedBootstrapArtifactVersions(row);
+  const installedArtifactVersions = installedBootstrapArtifactVersions(row);
   const gcpProjectId =
     normalizeGcpProjectId(
       runtime?.metadata?.gcp_project_id ?? runtime?.metadata?.project_id,
@@ -1036,6 +1092,7 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions["project-host"],
       observedVersion: observedArtifactVersions["project-host"],
     }),
+    installedVersions: installedArtifactVersions["project-host"],
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -1053,6 +1110,7 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions["container-runtime"],
       observedVersion: observedArtifactVersions["container-runtime"],
     }),
+    installedVersions: installedArtifactVersions["container-runtime"],
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -1069,6 +1127,7 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions["project-bundle"],
       observedVersion: observedArtifactVersions["project-bundle"],
     }),
+    installedVersions: installedArtifactVersions["project-bundle"],
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -1086,6 +1145,9 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions.tools,
       observedVersion: observedArtifactVersions.tools,
     }),
+    // Not for tools: bootstrap installs root-run binaries (rustic, bees) from
+    // the tools archive and requires its checksum, which an unserved version
+    // doesn't have. Tools keep the latest-manifest fallback.
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -1449,18 +1511,24 @@ export async function buildBootstrapScripts(
     projectHostCurrent,
     projectHostBin,
     projectHostVersion,
+    projectHostFallbackManifestUrl:
+      resolvedHostBundle.fallbackManifestUrl ?? "",
     containerRuntimeUrl,
     containerRuntimeSha256,
     containerRuntimeRoot,
     containerRuntimeDir,
     containerRuntimeRemote,
     containerRuntimeVersion,
+    containerRuntimeFallbackManifestUrl:
+      resolvedContainerRuntime.fallbackManifestUrl ?? "",
     projectBundleUrl,
     projectBundleSha256,
     projectBundlesRoot,
     projectBundleDir,
     projectBundleRemote,
     projectBundleVersion,
+    projectBundleFallbackManifestUrl:
+      resolvedProjectBundle.fallbackManifestUrl ?? "",
     toolsManifestUrl,
     toolsUrl,
     toolsSha256,
@@ -1468,6 +1536,7 @@ export async function buildBootstrapScripts(
     toolsDir,
     toolsRemote,
     toolsVersion,
+    toolsFallbackManifestUrl: resolvedTools.fallbackManifestUrl ?? "",
     tunnel,
     cloudflaredConfig,
   };
@@ -1678,7 +1747,8 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
     "root": "${scripts.projectHostBundlesRoot}",
     "dir": "${scripts.projectHostBundleDir}",
     "current": "${scripts.projectHostCurrent}",
-    "version": "${scripts.projectHostVersion}"
+    "version": "${scripts.projectHostVersion}",
+    "fallback_manifest_url": "${scripts.projectHostFallbackManifestUrl}"
   },
   "container_runtime_bundle": {
     "url": "${scripts.containerRuntimeUrl}",
@@ -1687,7 +1757,8 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
     "root": "${scripts.containerRuntimeRoot}",
     "dir": "${scripts.containerRuntimeDir}",
     "current": "${scripts.containerRuntimeRoot}/current",
-    "version": "${scripts.containerRuntimeVersion}"
+    "version": "${scripts.containerRuntimeVersion}",
+    "fallback_manifest_url": "${scripts.containerRuntimeFallbackManifestUrl}"
   },
   "project_bundle": {
     "url": "${scripts.projectBundleUrl}",
@@ -1696,7 +1767,8 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
     "root": "${scripts.projectBundlesRoot}",
     "dir": "${scripts.projectBundleDir}",
     "current": "${scripts.projectBundlesRoot}/current",
-    "version": "${scripts.projectBundleVersion}"
+    "version": "${scripts.projectBundleVersion}",
+    "fallback_manifest_url": "${scripts.projectBundleFallbackManifestUrl}"
   },
   "tools_bundle": {
     "manifest_url": "${scripts.toolsManifestUrl}",
@@ -1706,7 +1778,8 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
     "root": "${scripts.toolsRoot}",
     "dir": "${scripts.toolsDir}",
     "current": "${scripts.toolsRoot}/current",
-    "version": "${scripts.toolsVersion}"
+    "version": "${scripts.toolsVersion}",
+    "fallback_manifest_url": "${scripts.toolsFallbackManifestUrl}"
   },
   "cloudflared": ${cloudflaredJson}
 }

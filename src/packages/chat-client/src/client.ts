@@ -3,6 +3,7 @@
  * License: MS-RSL – see LICENSE.md for details
  */
 
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import {
   buildThreadConfigRecord,
   CHAT_PRIMARY_KEYS,
@@ -61,9 +62,7 @@ export interface CreateHeadlessChatClientOptions {
   ackBackoffMs?: number;
   codexCompletionNotificationDefault?: boolean;
   activityLoadPolicy?:
-    | "recent"
-    | "live-preview-only"
-    | "live-preview-and-guidance-history";
+    "recent" | "live-preview-only" | "live-preview-and-guidance-history";
 }
 
 export class CoCalcHeadlessChatClient implements HeadlessChatClient {
@@ -203,6 +202,7 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
   async sendToExistingCodexThread(opts: {
     thread_id: string;
     text: string;
+    user_locale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }> {
     if (!this.sendPipeline) throw new Error("Chat is not ready.");
     return await this.sendPipeline.send(opts);
@@ -211,6 +211,7 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
   async sendGuidanceToCodexThread(opts: {
     thread_id: string;
     text: string;
+    user_locale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }> {
     if (!this.sendPipeline) throw new Error("Chat is not ready.");
     return await this.sendPipeline.sendGuidance(opts);

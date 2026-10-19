@@ -14,8 +14,10 @@
 
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -803,6 +805,74 @@ describe("hiding projects across bays", () => {
   });
 });
 
+describe("leaving projects across bays", () => {
+  // leaver, homed on the seed, collaborates on a project on each bay and
+  // leaves both in one call. The call runs once per bay with that bay's
+  // project; the attached bay records the part forwarded to it, after asking
+  // the seed (leaver's home) for fresh auth. Own accounts: projects count
+  // against each account's limit.
+  let leaver;
+  const member = async (bay, project_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT users -> $2::text ->> 'group' AS grp FROM projects WHERE project_id=$1",
+         [${JSON.stringify(project_id)}, ${JSON.stringify(leaver.account_id)}]);
+       return rows[0]?.grp ?? null;`,
+    );
+  const forwardedLeaves = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.leaveOrDeleteProjects' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(leaver.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("leaves a project on each bay, each on its own bay", async () => {
+    leaver = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "leaver",
+    });
+    leaver.client = await client(leaver);
+    const seedOwner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "seed-owner",
+    });
+    seedOwner.client = await client(seedOwner);
+    const attachedOwner = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "attached-owner",
+    });
+    attachedOwner.client = await client(attachedOwner);
+    const local = await createProject(seedOwner.client, "leave-seed");
+    const remote = await createProject(attachedOwner.client, "leave-attached");
+    await invite(seedOwner, leaver, local);
+    await invite(attachedOwner, leaver, remote);
+    assert.equal(await owningBay(remote), ATTACHED);
+    assert.equal(await member(ATTACHED, remote), "collaborator");
+    assert.equal(await member(SEED, local), "collaborator");
+
+    const before = await forwardedLeaves();
+    assert.deepEqual(
+      await leaver.client.call("projects.leaveOrDeleteProjects", {
+        project_ids: [local, remote],
+      }),
+      [
+        { project_id: local, action: "removed_self" },
+        { project_id: remote, action: "removed_self" },
+      ],
+    );
+    assert.equal(await forwardedLeaves(), before + 1);
+    assert.equal(await member(ATTACHED, remote), null);
+    assert.equal(await member(SEED, local), null);
+  });
+});
+
 describe("bulk project stop across bays", () => {
   // carol, homed on the seed, stops a project on each bay in one call. Each
   // project's stop is its own call, forwarded to the project's bay when it is
@@ -898,6 +968,81 @@ describe("course reconfiguration across bays", () => {
       ["canceled", "succeeded"].includes(seen?.status),
       `status ${seen?.status}`,
     );
+  });
+});
+
+describe("course manager access across bays", () => {
+  // bob's project, on the attached bay, is the course; alice, a collaborator
+  // homed on the seed, asks for the course's managers to be added to a
+  // student project on the seed. The call runs on the course's bay, which
+  // reads the managers there and vouches for them to the seed (as itself:
+  // the seed accepts that only from the course's owning bay).
+  let studentProject;
+  const forwardedCalls = async (name = "projects.ensureCourseManagerAccess") =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const t = await getPool().query("SELECT to_regclass('hub_api_forwarded_calls') AS t");
+       if (t.rows[0].t == null) return 0; // nothing forwarded to this bay yet
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$3 AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}, ${JSON.stringify(name)}]);
+       return rows[0].n;`,
+    );
+
+  it("adds the course's managers to a student project on the other bay", async () => {
+    assert.ok(alice.project && bob.project, "needs both projects");
+    const student = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "course-student",
+    });
+    student.client = await client(student);
+    studentProject = await createProject(student.client, "student");
+    // Link it to bob's course, as the course tooling does.
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE projects SET course=$2::jsonb WHERE project_id=$1",
+         [${JSON.stringify(studentProject)}, JSON.stringify({ project_id: ${JSON.stringify(bob.project)}, type: "student" })]);`,
+    );
+    const before = await forwardedCalls();
+    const [result] = await alice.client.call(
+      "projects.ensureCourseManagerAccess",
+      { course_project_id: bob.project, project_ids: [studentProject] },
+    );
+    assert.equal(result.project_id, studentProject);
+    assert.equal(result.error, undefined, JSON.stringify(result));
+    assert.ok(result.added_account_ids.includes(bob.account_id));
+    assert.equal(await forwardedCalls(), before + 1);
+    const group = await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT users -> $2::text ->> 'group' AS grp FROM projects WHERE project_id=$1",
+         [${JSON.stringify(studentProject)}, ${JSON.stringify(bob.account_id)}]);
+       return rows[0]?.grp ?? null;`,
+    );
+    assert.equal(group, "collaborator");
+  });
+
+  it("sends an assignment patch from the course project's bay", async () => {
+    assert.ok(studentProject, "needs the student project");
+    const name = "projects.sendCourseAssignmentPatch";
+    const before = await forwardedCalls(name);
+    const result = await alice.client.call(name, {
+      course_project_id: bob.project,
+      assignment_id: "multibay-patch",
+      src_base_path: "hw",
+      dest_base_path: "hw",
+      relative_paths: ["notes.md"],
+      dests: [{ student_id: "student-1", student_project_id: studentProject }],
+    });
+    assert.ok(result?.op_id, JSON.stringify(result));
+    assert.equal(await forwardedCalls(name), before + 1);
   });
 });
 
@@ -1271,6 +1416,221 @@ describe("admin entitlement overrides across bays", () => {
       }),
       /must be an admin/,
     );
+  });
+});
+
+describe("sensor budgets on the account's home bay", () => {
+  // carol is homed on the attached bay; her watchers are set from the seed,
+  // as when one of her agents works in a project the seed owns. The budget
+  // calls cross the real fabric and are counted only on her home bay.
+  let carol;
+  let project_id;
+  const agent_id = randomUUID();
+  // Runs the budget calls on the seed, as the sensor code does, and returns
+  // each outcome (an error's message instead of throwing).
+  const fromSeed = (calls) =>
+    runInBay(
+      cluster,
+      SEED,
+      `const { sensorBudget } = server("agents/cocalc-connector-routing.js");
+       const out = [];
+       for (const [method, opts] of ${JSON.stringify(calls)}) {
+         try {
+           out.push({ ok: true, r: (await sensorBudget[method](opts)) ?? null });
+         } catch (err) {
+           out.push({ ok: false, error: String(err?.message ?? err) });
+         }
+       }
+       return out;`,
+    );
+  const watcher = () => ({
+    account_id: carol.account_id,
+    project_id,
+    agent_id,
+    sensor_id: randomUUID(),
+    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+
+  before(async () => {
+    carol = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "carol",
+    });
+    // alice's own project: a new one would use up her project limit, which
+    // later scenarios need.
+    project_id = alice.project;
+    assert.equal(await owningBay(project_id), SEED);
+    // Two wakes a day: the watcher cap against churn is then 4 x 2 = 8.
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { setAccountEntitlementOverrideLocal } = server("membership/entitlement-overrides.js");
+       await setAccountEntitlementOverrideLocal({
+         account_id: ${JSON.stringify(carol.account_id)},
+         actor_account_id: ${JSON.stringify(carol.account_id)},
+         override: { usage_limits: { sensor_max_wakes_per_day: { mode: "set", value: 2 } } },
+         reason: "multibay sensor budget test",
+       });`,
+    );
+  });
+
+  it("counts watchers set from another bay on the home bay, capped only against churn", async () => {
+    // Set and released (never fired) eight times: more than the two wakes,
+    // which watchers no longer use up until they fire.
+    const calls = [];
+    for (let i = 0; i < 8; i++) {
+      const w = watcher();
+      calls.push(["reserveWatcher", w]);
+      calls.push([
+        "releaseWatcher",
+        { account_id: w.account_id, sensor_id: w.sensor_id },
+      ]);
+    }
+    calls.push(["reserveWatcher", watcher()]);
+    const out = await fromSeed(calls);
+    assert.deepEqual(
+      out.slice(0, 16).map((o) => o.ok),
+      Array(16).fill(true),
+      JSON.stringify(out),
+    );
+    assert.equal(out[16].ok, false);
+    assert.match(out[16].error, /at most 8 watchers a day/);
+    assert.deepEqual(await countsFor(ATTACHED), { watch: 8 });
+    assert.deepEqual(await countsFor(SEED), {});
+  });
+
+  it("refuses a watcher on the home bay once the day's wakes are spent", async () => {
+    const wake = () => ({
+      account_id: carol.account_id,
+      project_id,
+      agent_id,
+      sensor_id: randomUUID(),
+      run_id: randomUUID(),
+    });
+    const out = await fromSeed([
+      ["reserveWake", wake()],
+      ["reserveWake", wake()],
+      ["reserveWake", wake()],
+      ["reserveWatcher", watcher()],
+    ]);
+    assert.deepEqual(
+      out.slice(0, 3).map((o) => o.r?.reserved),
+      [true, true, false],
+      JSON.stringify(out),
+    );
+    // Checked before the churn cap: it could never wake the agent.
+    assert.equal(out[3].ok, false);
+    assert.match(out[3].error, /used all 2 wakes/);
+    assert.deepEqual(await countsFor(ATTACHED), { wake: 2, watch: 8 });
+    assert.deepEqual(await countsFor(SEED), {});
+  });
+
+  async function countsFor(bay) {
+    return await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT kind, count(*)::int AS n FROM agent_sensor_events WHERE account_id=$1 GROUP BY kind ORDER BY kind",
+         [${JSON.stringify(carol.account_id)}]);
+       return Object.fromEntries(rows.map((r) => [r.kind, r.n]));`,
+    );
+  }
+});
+
+describe("site-license ownership transfer across bays", () => {
+  // Site licenses and their pools live on the seed. An admin homed on the
+  // attached bay transfers a seed license owned by alice (seed) to bob
+  // (attached), through the public API and the inter-bay seed client.
+  let admin;
+  let site_license_id;
+
+  async function seedOwners() {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const id = ${JSON.stringify(site_license_id)};
+       const license = await getPool().query(
+         "SELECT owner_account_id::text AS owner FROM site_licenses WHERE id=$1::uuid", [id]);
+       const pools = await getPool().query(
+         "SELECT owner_account_id::text AS owner FROM membership_packages WHERE kind='site' AND metadata->>'site_license_id'=$1::text ORDER BY created", [id]);
+       return { license: license.rows[0]?.owner ?? null, pools: pools.rows.map((r) => r.owner) };`,
+    );
+  }
+
+  it("lets an admin homed on the attached bay transfer a seed license and its pools", async () => {
+    admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "zara",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    site_license_id = await runInBay(
+      cluster,
+      SEED,
+      `const { createTestMembershipTier } = server("purchases/test-data.js");
+       const { adminProvisionSiteLicense } = server("membership/site-licenses.js");
+       const tier = "multibay-site-" + ${JSON.stringify(randomUUID().slice(0, 8))};
+       await createTestMembershipTier({ id: tier, priority: 10, price_yearly: 100 });
+       const pool = (pool_name, seat_count) => ({
+         pool_name, membership_class: tier, seat_count, requires_approval: false,
+         verification_policy: "email-domain", exclusive_group: "teaching" });
+       const overview = await adminProvisionSiteLicense({
+         actor_account_id: ${JSON.stringify(alice.account_id)},
+         owner_account_id: ${JSON.stringify(alice.account_id)},
+         name: "Multibay Transfer Campus",
+         organization_name: "Multibay University",
+         allowed_domains: ["multibay-transfer-" + ${JSON.stringify(randomUUID().slice(0, 8))} + ".edu"],
+         pools: [pool("Students", 10), pool("Instructors", 2)],
+         trusted_admin: true,
+       });
+       return overview.site_license.id;`,
+    );
+    assert.deepEqual(await seedOwners(), {
+      license: alice.account_id,
+      pools: [alice.account_id, alice.account_id],
+    });
+
+    const overview = await admin.client.call("purchases.updateSiteLicense", {
+      site_license_id,
+      owner_account_id: bob.account_id,
+    });
+    assert.equal(overview.site_license.owner_account_id, bob.account_id);
+    assert.deepEqual(await seedOwners(), {
+      license: bob.account_id,
+      pools: [bob.account_id, bob.account_id],
+    });
+    const read = await admin.client.call("purchases.getSiteLicenseOverview", {
+      site_license_id,
+    });
+    assert.equal(read.site_license.owner_account_id, bob.account_id);
+    assert.ok(
+      read.recent_audit_events.some(
+        (event) =>
+          event.action === "site-license-owner-transferred" &&
+          event.metadata?.previous_owner_account_id === alice.account_id &&
+          event.metadata?.owner_account_id === bob.account_id,
+      ),
+    );
+  });
+
+  it("refuses an ownership transfer by a non-admin on the attached bay", async () => {
+    await assert.rejects(
+      bob.client.call("purchases.updateSiteLicense", {
+        site_license_id,
+        owner_account_id: alice.account_id,
+      }),
+      /admin/,
+    );
+    assert.equal((await seedOwners()).license, bob.account_id);
   });
 });
 
@@ -1757,5 +2117,72 @@ describe("an agent's own network name across bays", () => {
       discover(randomUUID()),
       /expired, revoked, or invalid/,
     );
+  });
+});
+
+describe("CLI logout across bays", () => {
+  // `cocalc auth logout` must end the profile's session where it lives: on
+  // the account's home bay, which issued the cookie.
+  it("revokes the session on the profile's home bay", async () => {
+    const carol = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "carol",
+    });
+    const session = await new AccountClient(cluster, carol).signIn();
+    session.close();
+    const sessions = () =>
+      runInBay(
+        cluster,
+        ATTACHED,
+        `const { getRememberMeHashFromCookieValue } = server("auth/remember-me.js");
+         const getPool = require("@cocalc/database/pool").default;
+         const hash = getRememberMeHashFromCookieValue(${JSON.stringify(session.cookie)});
+         const { rows } = await getPool().query(
+           "SELECT count(*)::int AS n FROM remember_me WHERE hash = $1::CHAR(127)",
+           [hash.slice(0, 127)],
+         );
+         return rows[0].n;`,
+      );
+    assert.equal(await sessions(), 1);
+
+    const dir = mkdtempSync(path.join(tmpdir(), "multibay-logout-"));
+    const config = path.join(dir, "config.json");
+    writeFileSync(
+      config,
+      JSON.stringify({
+        current_profile: "carol",
+        profiles: {
+          carol: {
+            api: cluster.url(ATTACHED),
+            cookie: `remember_me=${session.cookie}`,
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    // A clean CLI environment: no ambient credentials or API defaults.
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("COCALC_")),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(SRC, "packages/cli/dist/bin/cocalc.js"),
+        "--json",
+        "auth",
+        "logout",
+      ],
+      {
+        env: { ...env, HOME: dir, COCALC_CLI_CONFIG: config },
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.data.removed, "carol");
+    assert.equal(output.data.server_session, "revoked");
+    assert.equal(await sessions(), 0);
+    assert.deepEqual(JSON.parse(readFileSync(config, "utf8")).profiles, {});
   });
 });

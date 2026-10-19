@@ -1,4 +1,5 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { browserAgentUserLocale } from "./agent-user-locale";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import {
@@ -566,6 +567,7 @@ export async function processAcpLLM({
       actions,
       thread_id,
     ),
+    userLocale: browserAgentUserLocale(),
   });
   chatMetadata.thread_title = actions.getThreadMetadata?.(thread_id, {
     threadId: thread_id,

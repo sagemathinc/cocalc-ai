@@ -8,6 +8,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { CodeBlock } from "@cocalc/frontend/public/common";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_PRODUCTS_PAGE_LINK } from "@cocalc/util/public-products-content";
 import { COLORS } from "@cocalc/util/theme";
 import {
   PUBLIC_COLORS,
@@ -395,7 +396,10 @@ kill "$SERVER_PID"`}
                 href: `${GUIDE_BASE}/rootfs-management/`,
                 label: "Environment image guide",
               },
-              { href: appPath("products"), label: "Compare operating models" },
+              {
+                href: appPath(PUBLIC_PRODUCTS_PAGE_LINK.href),
+                label: PUBLIC_PRODUCTS_PAGE_LINK.label,
+              },
               ...(helpEmail
                 ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
                 : []),

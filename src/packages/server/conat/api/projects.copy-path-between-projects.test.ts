@@ -17,6 +17,8 @@ let listCollaboratorsMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let resolveProjectBaysMock: jest.Mock;
 let assertCollabBatchMock: jest.Mock;
+let assertCurrentProjectOwnershipMock: jest.Mock;
+let remoteEnsureCourseManagerAccessMock: jest.Mock;
 
 const COURSE_PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const STUDENT_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
@@ -94,11 +96,21 @@ jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "local-bay"),
 }));
 
+// The course project is owned here (course methods are routed to its bay).
+jest.mock("@cocalc/server/inter-bay/project-control", () => ({
+  __esModule: true,
+  assertCurrentProjectOwnership: (...args: any[]) =>
+    assertCurrentProjectOwnershipMock(...args),
+}));
+
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
-  getInterBayBridge: jest.fn(() => {
-    throw new Error("inter-bay bridge should not be used in this test");
-  }),
+  getInterBayBridge: jest.fn(() => ({
+    projectCollabInvite: () => ({
+      ensureCourseManagerAccess: (...args: any[]) =>
+        remoteEnsureCourseManagerAccessMock(...args),
+    }),
+  })),
 }));
 
 jest.mock("@cocalc/server/project-host/control", () => ({
@@ -209,6 +221,10 @@ describe("projects.copyPathBetweenProjects", () => {
         added_account_ids: [],
       })),
     );
+    assertCurrentProjectOwnershipMock = jest.fn(async () => undefined);
+    remoteEnsureCourseManagerAccessMock = jest.fn(async () => {
+      throw new Error("inter-bay bridge should not be used in this test");
+    });
     listCollaboratorsMock = jest.fn(async () => [
       { account_id: "acct-1", group: "collaborator" },
     ]);
@@ -764,5 +780,47 @@ describe("projects.copyPathBetweenProjects", () => {
     ).rejects.toThrow("relative paths must stay inside the assignment");
 
     expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it("grants course manager access only on the course project's bay", async () => {
+    assertCurrentProjectOwnershipMock = jest.fn(async () => {
+      throw new Error("stale project routing");
+    });
+    const { ensureCourseManagerAccess } = await import("./projects");
+    await expect(
+      ensureCourseManagerAccess({
+        account_id: "acct-1",
+        course_project_id: COURSE_PROJECT_ID,
+        project_ids: [STUDENT_PROJECT_ID],
+      }),
+    ).rejects.toThrow("stale project routing");
+    expect(assertCurrentProjectOwnershipMock).toHaveBeenCalledWith({
+      project_id: COURSE_PROJECT_ID,
+    });
+    expect(ensureCourseManagerAccessLocalMock).not.toHaveBeenCalled();
+  });
+
+  it("vouches for the course's managers to a student project's bay as itself", async () => {
+    resolveProjectBaysMock = jest.fn(
+      async (projectIds: string[]) =>
+        new Map(projectIds.map((id) => [id, { bay_id: "student-bay" }])),
+    );
+    remoteEnsureCourseManagerAccessMock = jest.fn(async ({ project_ids }) =>
+      project_ids.map((project_id) => ({ project_id, added_account_ids: [] })),
+    );
+    const { ensureCourseManagerAccess } = await import("./projects");
+    await ensureCourseManagerAccess({
+      account_id: "acct-1",
+      course_project_id: COURSE_PROJECT_ID,
+      project_ids: [STUDENT_PROJECT_ID],
+    });
+    expect(remoteEnsureCourseManagerAccessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source_bay_id: "local-bay",
+        course_project_id: COURSE_PROJECT_ID,
+        project_ids: [STUDENT_PROJECT_ID],
+        manager_account_ids: ["acct-1"],
+      }),
+    );
   });
 });

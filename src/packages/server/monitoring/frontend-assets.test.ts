@@ -48,7 +48,7 @@ test("parses current and previous safe content-addressed assets", () => {
 
 test("counts shared retained assets once while preserving the unique limit", () => {
   const assets = Array.from(
-    { length: 6000 },
+    { length: 10001 },
     (_, i) => `chunk-${i}-0123456789abcdef.js`,
   );
   expect(
@@ -62,7 +62,29 @@ test("counts shared retained assets once while preserving the unique limit", () 
       schema: 1,
       builds: [{ assets }, { assets: assets.map((asset) => `other-${asset}`) }],
     }),
-  ).toThrow("frontend asset history exceeds 10000 files");
+  ).toThrow("frontend asset history exceeds 11000 files");
+});
+
+test("frontend asset history cap is 11000 unique files (prod had 10067)", () => {
+  const chunk = (i: number) => `chunk-${i}-0123456789abcdef.js`;
+  const prod = Array.from({ length: 10067 }, (_, i) => chunk(i));
+  expect(
+    parseFrontendAssetHistory({
+      schema: 1,
+      builds: [{ assets: prod.slice(0, 1115) }, { assets: prod }],
+    }).assets,
+  ).toHaveLength(10067);
+  const atCap = Array.from({ length: 11000 }, (_, i) => chunk(i));
+  expect(
+    parseFrontendAssetHistory({ schema: 1, builds: [{ assets: atCap }] })
+      .assets,
+  ).toHaveLength(11000);
+  expect(() =>
+    parseFrontendAssetHistory({
+      schema: 1,
+      builds: [{ assets: atCap }, { assets: [chunk(11000)] }],
+    }),
+  ).toThrow("frontend asset history exceeds 11000 files");
 });
 
 test("retries and reports unavailable retained assets", async () => {

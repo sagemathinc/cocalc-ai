@@ -320,6 +320,9 @@ export async function createProjectHostProxyHandlers() {
               host?.public_url ||
               (await targetForProject(parsed.project_id))
             ).replace(/\/+$/, "");
+      // A client gone during the lookups must not open an upstream that
+      // nothing will close (proxy.ws only cleans up on a later close).
+      if (socket.destroyed) return;
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err) {
       logger.debug("proxy upgrade error", { err: `${err}`, url: req?.url });

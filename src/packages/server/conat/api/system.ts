@@ -326,7 +326,11 @@ import {
   releaseProjectAppPrivateHostname as releaseProjectAppPrivateHostnameRaw,
   reserveProjectAppPrivateHostname as reserveProjectAppPrivateHostnameRaw,
 } from "@cocalc/server/app-private-hostnames";
-import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
+import {
+  getBayPublicOrigin,
+  getClusterBayPublicOrigins,
+  getSiteBrowserOrigins,
+} from "@cocalc/server/bay-public-origin";
 import { conat } from "@cocalc/backend/conat";
 import {
   createInterBayAccountLocalClient,
@@ -351,6 +355,7 @@ import {
   getUxLatencySlaThresholdsFromSettings,
   getUxLatencySummary as getUxLatencySummary0,
   recordUxLatencyEvent as recordUxLatencyEvent0,
+  type UxLatencySlaThresholds,
 } from "@cocalc/server/monitoring/ux-latency";
 import {
   DEFAULT_ADMIN_ALERT_WINDOW_HOURS,
@@ -1943,6 +1948,91 @@ function uxLatencyMetric({
   );
 }
 
+export interface UxLatencyHealthAssessment {
+  metric: string;
+  segment?: string;
+  p95_ms: number | null;
+  count: number;
+  min_samples: number;
+  warning_ms: number;
+  critical_ms: number;
+  level: LaunchHealthLevel;
+}
+
+// The browser-observed latency SLAs behind the "ux-latency" launch health
+// check. Each metric is "unknown" until it has min_samples samples; callers
+// that act on the level (such as the fleet rollout gate) may ask for more.
+export function uxLatencyHealthAssessments({
+  summary,
+  sla,
+  min_samples = 1,
+}: {
+  summary?: UxLatencySummary;
+  sla: UxLatencySlaThresholds;
+  min_samples?: number;
+}): UxLatencyHealthAssessment[] {
+  const specs: Array<{
+    metric: string;
+    segment?: string;
+    warning_ms: number;
+    min_samples?: number;
+  }> = [
+    {
+      metric: "project_start_running",
+      segment: "warm_provisioned",
+      warning_ms: sla.project_start_warm_p95_ms,
+      min_samples: 10,
+    },
+    {
+      metric: "project_terminal_ready",
+      warning_ms: sla.project_terminal_ready_p95_ms,
+    },
+    {
+      metric: "project_jupyter_ready",
+      warning_ms: sla.project_jupyter_ready_p95_ms,
+    },
+    {
+      metric: "project_exec_ready",
+      segment: "warm",
+      warning_ms: sla.project_exec_ready_p95_ms,
+    },
+    {
+      metric: UX_LATENCY_HEALTH_METRICS.fileVisible,
+      warning_ms: sla.file_open_visible_p95_ms,
+    },
+    {
+      metric: UX_LATENCY_HEALTH_METRICS.fileSyncReady,
+      warning_ms: sla.file_open_sync_ready_p95_ms,
+    },
+  ];
+  return specs.map((spec) => {
+    const row = uxLatencyMetric({
+      summary,
+      metric: spec.metric,
+      segment: spec.segment,
+    });
+    const minSamples = Math.max(1, spec.min_samples ?? 1, min_samples);
+    const p95 = row?.p95_ms ?? null;
+    const count = row?.count ?? 0;
+    return {
+      metric: spec.metric,
+      ...(spec.segment ? { segment: spec.segment } : {}),
+      p95_ms: p95,
+      count,
+      min_samples: minSamples,
+      warning_ms: spec.warning_ms,
+      critical_ms: spec.warning_ms * 2,
+      level: classifyLatencyP95Health({
+        p95,
+        sample_count: count,
+        min_samples: minSamples,
+        warning_ms: spec.warning_ms,
+        critical_ms: spec.warning_ms * 2,
+      }),
+    };
+  });
+}
+
 function launchHealthKillSwitches(
   settings: Record<string, any> | undefined,
 ): LaunchHealthKillSwitches {
@@ -2310,40 +2400,11 @@ export async function getLaunchHealth({
         : backups.bay_backup.enabled
           ? "warning"
           : "warning";
-  const latencyLevel = worstLaunchHealthLevel([
-    classifyLatencyP95Health({
-      p95: lifecycleP95,
-      sample_count: lifecycleMetric?.count,
-      min_samples: 10,
-      warning_ms: sla.project_start_warm_p95_ms,
-      critical_ms: sla.project_start_warm_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: terminalP95,
-      warning_ms: sla.project_terminal_ready_p95_ms,
-      critical_ms: sla.project_terminal_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: jupyterP95,
-      warning_ms: sla.project_jupyter_ready_p95_ms,
-      critical_ms: sla.project_jupyter_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: execP95,
-      warning_ms: sla.project_exec_ready_p95_ms,
-      critical_ms: sla.project_exec_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: fileVisibleP95,
-      warning_ms: sla.file_open_visible_p95_ms,
-      critical_ms: sla.file_open_visible_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: fileSyncReadyP95,
-      warning_ms: sla.file_open_sync_ready_p95_ms,
-      critical_ms: sla.file_open_sync_ready_p95_ms * 2,
-    }),
-  ]);
+  const latencyLevel = worstLaunchHealthLevel(
+    uxLatencyHealthAssessments({ summary: latency, sla }).map(
+      (assessment) => assessment.level,
+    ),
+  );
 
   const checks: LaunchHealthCheck[] = [
     launchHealthCheck({
@@ -8258,7 +8319,7 @@ export async function getPublicSiteUrl({
   account_id?: string;
   project_id?: string;
   host_id?: string;
-}): Promise<{ url: string }> {
+}): Promise<{ url: string; browser_origins?: string[] }> {
   if (!account_id && !project_id && !host_id) {
     throw Error("must be signed in");
   }
@@ -8273,7 +8334,33 @@ export async function getPublicSiteUrl({
   if (basePath?.length) {
     url = `${url.replace(/\/+$/, "")}${basePath.startsWith("/") ? "" : "/"}${basePath}`;
   }
-  return { url: url.replace(/\/+$/, "") };
+  url = url.replace(/\/+$/, "");
+  if (!host_id) return { url };
+  return { url, browser_origins: await getBrowserOriginsForProjectHosts(url) };
+}
+
+// The complete list, or undefined if any lookup failed: project hosts replace
+// their list only with a complete one and otherwise keep the last good list.
+async function getBrowserOriginsForProjectHosts(
+  url: string,
+): Promise<string[] | undefined> {
+  const origins = new Set<string>([new URL(url).origin]);
+  try {
+    for (const site of await getSiteBrowserOrigins()) {
+      origins.add(site);
+    }
+    for (const origin of Object.values(
+      await getClusterBayPublicOrigins({ strict: true }),
+    )) {
+      origins.add(origin);
+    }
+  } catch (err) {
+    logger.warn("unable to list bay public origins for project hosts", {
+      err: `${err}`,
+    });
+    return undefined;
+  }
+  return [...origins];
 }
 
 function clean(v?: string): string | undefined {

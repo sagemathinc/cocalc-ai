@@ -24,6 +24,7 @@ import {
   listCommercialOrderEvents,
   listCommercialOrders,
   reviseCommercialOrder,
+  resolveCommercialProviderOperation,
   retryCommercialStripeEvent,
   updateCommercialOrder,
   updateCommercialBillingDetails,
@@ -225,6 +226,8 @@ export async function dispatchCommercialSeedRequest(
     }
     case "retryStripeEvent":
       return await retryCommercialStripeEvent(opts);
+    case "resolveProviderOperation":
+      return await resolveCommercialProviderOperation(opts);
     case "backfill":
       return await backfillCommercialOrders(opts);
     default:

@@ -1846,6 +1846,8 @@ export interface AccountLocalUpdateSiteLicenseRequest {
   overage_policy?: string | null;
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
+  // Admin only: transfer ownership of the license and its pools.
+  owner_account_id?: string;
 }
 
 export interface AccountLocalAddSiteLicensePoolRequest {
@@ -2493,13 +2495,19 @@ export interface ProjectCollabInviteRespondRequest {
   trusted_product_access_checked?: boolean;
 }
 
+// Sent by the course project's owning bay, which has checked the caller's
+// access to the course: source_bay_id is the authenticated calling bay
+// (typed services enforce that), and the receiving bay accepts the request
+// only if that bay owns the course project.
 export interface ProjectAcceptedCourseStudentInviteAccountRepairRequest {
+  source_bay_id: string;
   account_id: string;
   course_project_id: string;
   students: CourseStudentInviteAccountRepairInput[];
 }
 
 export interface ProjectEnsureCourseManagerAccessRequest {
+  source_bay_id: string;
   account_id: string;
   course_project_id: string;
   course_path?: string;
@@ -2558,24 +2566,6 @@ export interface ProjectCourseManagedProjectState {
   description: string | null;
   env: ProjectEnv | null;
 }
-
-export interface ProjectLeaveOrDeleteProjectsRequest {
-  account_id: string;
-  project_ids: string[];
-}
-
-export type ProjectLeaveOrDeleteProjectsResult = {
-  project_id: string;
-  action:
-    | "removed_self"
-    | "transferred"
-    | "hard_deleted"
-    | "hard_delete_queued"
-    | "error";
-  new_owner_account_id?: string;
-  op_id?: string;
-  error?: string;
-};
 
 export type ProjectControlMethod =
   | "create"
@@ -3006,7 +2996,6 @@ export type ProjectCollabInviteMethod =
   | "usage"
   | "remove-collaborator"
   | "set-project-user-role"
-  | "leave-or-delete-projects"
   | "set-project-metadata"
   | "set-manage-users-owner-only"
   | "set-deletion-protection"
@@ -4445,6 +4434,7 @@ export interface InterBayAccountLocalApi
     scope_revision: number;
     issuance_sequence: string;
     expire_ms?: number;
+    connector_source_project_id?: string | null;
   } | null>;
   getApiKeyIssuanceWatermark: (opts: { account_id: string }) => Promise<string>;
   requestApiKeyAction: (opts: {
@@ -5028,9 +5018,6 @@ export interface InterBayProjectCollabInviteApi {
   getCourseManagedProjectStates: (
     opts: ProjectCourseManagedProjectStatesRequest,
   ) => Promise<ProjectCourseManagedProjectState[]>;
-  leaveOrDeleteProjects: (
-    opts: ProjectLeaveOrDeleteProjectsRequest,
-  ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
   respond: (
     opts: ProjectCollabInviteRespondRequest,
   ) => Promise<ProjectCollabInviteWire>;
@@ -12356,15 +12343,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "get-course-managed-project-states",
     }),
   });
-  const leaveOrDeleteProjectsClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "leave-or-delete-projects",
-    }),
-  });
   const respondClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "respond">
   >({
@@ -12388,8 +12366,6 @@ export function createInterBayProjectCollabInviteClient({
       await getCourseManagedProjectStatesClient.getCourseManagedProjectStates(
         opts,
       ),
-    leaveOrDeleteProjects: async (opts) =>
-      await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
     respond: async (opts) => await respondClient.respond(opts),
   };
 }
@@ -12529,20 +12505,6 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         getCourseManagedProjectStates: async (opts) =>
           await impl.getCourseManagedProjectStates(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "leave-or-delete-projects",
-      }),
-      impl: {
-        leaveOrDeleteProjects: async (opts) =>
-          await impl.leaveOrDeleteProjects(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({

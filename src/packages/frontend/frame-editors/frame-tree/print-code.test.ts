@@ -14,7 +14,8 @@ jest.mock("@cocalc/frontend/codemirror/static", () => ({
   },
 }));
 
-import { renderPrintableCodeMarkup } from "./print-code";
+import { print_code, renderPrintableCodeMarkup } from "./print-code";
+import { PASSIVE_DOCUMENT_CSP } from "@cocalc/frontend/misc/print-document";
 
 describe("renderPrintableCodeMarkup", () => {
   it("preserves plain CodeMirror options while forcing the printable theme", () => {
@@ -33,5 +34,30 @@ describe("renderPrintableCodeMarkup", () => {
     expect(html).toContain("CodeMirror-linenumber");
     expect(html).toContain("white-space:pre");
     expect(html).not.toContain("cm-s-cocalc-light");
+  });
+});
+
+describe("print_code", () => {
+  it("writes a passive document with an escaped title", () => {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const w = iframe.contentWindow!;
+    // jsdom's frame windows lack "closed", which popup() checks.
+    Object.defineProperty(w, "closed", { value: false, configurable: true });
+    const open = jest.spyOn(window, "open").mockReturnValue(w);
+    try {
+      print_code({
+        value: "x = 1 </pre><img src=x onerror=alert(1)>",
+        options: { mode: "python" },
+        path: "dir/<img src=x onerror=alert(1)>.py",
+      });
+    } finally {
+      open.mockRestore();
+    }
+    const doc = w.document;
+    expect(doc.head.firstElementChild?.outerHTML).toBe(PASSIVE_DOCUMENT_CSP);
+    expect(doc.title).toBe("<img src=x onerror=alert(1)>.py");
+    expect(doc.querySelector("img")).toBeNull();
+    expect(doc.body.textContent).toContain("x = 1 </pre><img");
   });
 });

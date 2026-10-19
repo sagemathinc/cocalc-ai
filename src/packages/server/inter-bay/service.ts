@@ -399,6 +399,7 @@ import {
   reserveProjectRuntimeSlotLocal,
   startProjectRuntimeSlotHeartbeat,
 } from "@cocalc/server/projects/runtime-slots";
+import { assertSentByCourseBay } from "@cocalc/server/inter-bay/course-access";
 import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
@@ -575,7 +576,6 @@ import {
   getCourseManagedProjectStatesLocal,
   reconcileCourseManagedProjectLocal,
 } from "@cocalc/server/projects/course/reconcile-managed-project";
-import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
   assertOwnershipRecipientLocal,
   getOwnershipUsageCountLocal,
@@ -2677,25 +2677,33 @@ async function startProjectCollabInviteService(): Promise<void> {
     deleteInbox: async ({ invite_id }) => {
       await deleteProjectedCollabInviteDirect(invite_id);
     },
-    repairAcceptedCourseStudentInviteAccounts: async (opts) =>
-      await repairAcceptedCourseStudentInviteAccountsLocal({
+    repairAcceptedCourseStudentInviteAccounts: async ({
+      source_bay_id,
+      ...opts
+    }) => {
+      await assertSentByCourseBay({
+        source_bay_id,
+        course_project_id: opts.course_project_id,
+      });
+      return await repairAcceptedCourseStudentInviteAccountsLocal({
         ...opts,
         trustedCourseAccess: true,
-      }),
-    ensureCourseManagerAccess: async (opts) =>
-      await ensureCourseManagerAccessLocal({
+      });
+    },
+    ensureCourseManagerAccess: async ({ source_bay_id, ...opts }) => {
+      await assertSentByCourseBay({
+        source_bay_id,
+        course_project_id: opts.course_project_id,
+      });
+      return await ensureCourseManagerAccessLocal({
         ...opts,
         trustedCourseAccess: true,
-      }),
+      });
+    },
     reconcileCourseManagedProject: async (opts) =>
       await reconcileCourseManagedProjectLocal(opts),
     getCourseManagedProjectStates: async (opts) =>
       await getCourseManagedProjectStatesLocal(opts),
-    leaveOrDeleteProjects: async ({ account_id, project_ids }) =>
-      await leaveOrDeleteProjectsForAccount({
-        account_id,
-        project_ids,
-      }),
     respond: async ({
       account_id,
       invite_id,

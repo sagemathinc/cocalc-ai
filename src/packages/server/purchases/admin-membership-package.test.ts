@@ -246,6 +246,63 @@ describe("admin membership package purchase", () => {
     expect(mockGetStripe).not.toHaveBeenCalled();
   });
 
+  it("gives the owner the seat of an admin-created educator term", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+      [admin_account_id],
+    );
+    const educatorClass = `educator-term-${uuid()}`;
+    await createTestMembershipTier({
+      id: educatorClass,
+      priority: 25,
+      team_visible: false,
+      course_store_visible: false,
+      instructor_purchase_visible: true,
+      instructor_term_price: 80,
+      instructor_term_days: 120,
+    });
+    const options: AdminMembershipPackagePurchaseOptions = {
+      admin_account_id,
+      user_account_id,
+      product: {
+        type: "membership-package",
+        kind: "team",
+        membership_class: educatorClass,
+        seat_count: 1,
+        metadata: { educator_term: true },
+      },
+      price: 0,
+      source: "free",
+      reason: "complimentary educator term",
+      idempotency_key: uuid(),
+    };
+    const created = await adminCreateMembershipPackagePurchase(options);
+    const { rows } = await getPool().query(
+      "SELECT account_id, revoked_at FROM membership_package_assignments WHERE package_id=$1",
+      [created.package_id],
+    );
+    expect(rows).toEqual([{ account_id: user_account_id, revoked_at: null }]);
+    const membership = await resolveMembershipForAccount(user_account_id);
+    expect(membership.class).toBe(educatorClass);
+    // A retry neither assigns a second seat nor fails.
+    expect(await adminCreateMembershipPackagePurchase(options)).toMatchObject({
+      package_id: created.package_id,
+      existing: true,
+    });
+    expect(
+      (
+        await getPool().query(
+          "SELECT count(*)::int AS n FROM membership_package_assignments WHERE package_id=$1",
+          [created.package_id],
+        )
+      ).rows[0].n,
+    ).toBe(1);
+  });
+
   it("rejects paid, public, disabled, unknown and non-fixed-term Instructor package requests without side effects", async () => {
     const admin_account_id = uuid();
     const user_account_id = uuid();

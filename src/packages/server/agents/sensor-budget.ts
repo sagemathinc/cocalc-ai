@@ -32,6 +32,13 @@ const DEFAULT_MAX_ACTIVE = 20;
  */
 const WATCHER_SLACK_MS = 3_600_000;
 
+/**
+ * Watchers an account may set per day, per wake of its daily budget: a cap
+ * against churn only. Most watchers fire once, so this leaves room for those
+ * that are deleted or given up on before they fire.
+ */
+export const WATCHERS_PER_WAKE = 4;
+
 export const NO_SENSORS =
   "Your membership does not include agent sensors. Upgrade your membership to use them.";
 
@@ -167,8 +174,11 @@ export async function releaseSensorWakeAtHome({
 
 /**
  * Count a new watcher against the account's limits: a few active at once,
- * and no more set per day than the account may be woken. It stays active
- * until released, or until a while after it expires if a release is lost.
+ * and only while the account still has wakes left today. A watcher costs a
+ * turn only when it fires, and that wake is reserved from the daily budget
+ * then, so setting one is not limited by that budget itself, only by a
+ * generous cap against churn. It stays active until released, or until a
+ * while after it expires if a release is lost.
  */
 export async function reserveSensorWatcherAtHome(
   opts: SensorWatcherBudgetRequest,
@@ -192,13 +202,18 @@ export async function reserveSensorWatcherAtHome(
       active: string;
       agent_active: string;
       recent: string;
+      wakes: string;
     }>(
       `SELECT
-         count(*) FILTER (WHERE released_at IS NULL AND expires_at > now()) AS active,
-         count(*) FILTER (WHERE released_at IS NULL AND expires_at > now()
-                          AND agent_id=$2) AS agent_active,
-         count(*) FILTER (WHERE created > now() - interval '1 day') AS recent
-       FROM agent_sensor_events WHERE account_id=$1 AND kind='watch'`,
+         count(*) FILTER (WHERE kind='watch' AND released_at IS NULL
+                          AND expires_at > now()) AS active,
+         count(*) FILTER (WHERE kind='watch' AND released_at IS NULL
+                          AND expires_at > now() AND agent_id=$2) AS agent_active,
+         count(*) FILTER (WHERE kind='watch'
+                          AND created > now() - interval '1 day') AS recent,
+         count(*) FILTER (WHERE kind='wake'
+                          AND created > now() - interval '1 day') AS wakes
+       FROM agent_sensor_events WHERE account_id=$1`,
       [opts.account_id, opts.agent_id],
     );
     if (Number(counts[0]?.active) >= limits.maxWatchers)
@@ -211,9 +226,16 @@ export async function reserveSensorWatcherAtHome(
         `at most ${limits.maxWatchersPerAgent} watchers may be active at once for this agent. ` +
           (await activeWatchersText(client, opts.account_id, opts.agent_id)),
       );
-    if (Number(counts[0]?.recent) >= limits.maxWakesPerDay)
+    // Refused now rather than set: with no wake left it could fire but never
+    // wake the agent, which ended its turn to wait for it.
+    if (Number(counts[0]?.wakes) >= limits.maxWakesPerDay)
       throw new Error(
-        `this account may set at most ${limits.maxWakesPerDay} watchers a day`,
+        `this account's agents have used all ${limits.maxWakesPerDay} wakes of the last 24 hours, so a watcher could not wake you; wait in the foreground instead`,
+      );
+    const maxCreated = limits.maxWakesPerDay * WATCHERS_PER_WAKE;
+    if (Number(counts[0]?.recent) >= maxCreated)
+      throw new Error(
+        `this account may set at most ${maxCreated} watchers a day`,
       );
     await client.query(
       `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id,

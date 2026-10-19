@@ -40,7 +40,7 @@ import time
 import urllib.parse
 import urllib.request
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -1613,6 +1613,10 @@ class BundleSpec:
     current: str
     version: str | None = None
     manifest_url: str | None = None
+    # Used only when the desired version is neither installed nor downloadable
+    # (the server keeps a desired version the store no longer serves when the
+    # host reported it as installed, but that report can be stale).
+    fallback_manifest_url: str | None = None
 
 
 COCALC_INSTALL_ROOT = Path("/opt/cocalc")
@@ -1954,6 +1958,7 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             current=_ensure_str(bundle_host.get("current"), "project_host_bundle.current"),
             version=bundle_host.get("version"),
             manifest_url=bundle_host.get("manifest_url") or None,
+            fallback_manifest_url=bundle_host.get("fallback_manifest_url") or None,
         ),
         project_bundle=BundleSpec(
             url=_ensure_str(bundle_project.get("url"), "project_bundle.url"),
@@ -1964,6 +1969,7 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             current=_ensure_str(bundle_project.get("current"), "project_bundle.current"),
             version=bundle_project.get("version"),
             manifest_url=bundle_project.get("manifest_url") or None,
+            fallback_manifest_url=bundle_project.get("fallback_manifest_url") or None,
         ),
         tools_bundle=BundleSpec(
             url=_ensure_str(bundle_tools.get("url"), "tools_bundle.url"),
@@ -1974,6 +1980,7 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             current=_ensure_str(bundle_tools.get("current"), "tools_bundle.current"),
             version=bundle_tools.get("version"),
             manifest_url=bundle_tools.get("manifest_url") or None,
+            fallback_manifest_url=bundle_tools.get("fallback_manifest_url") or None,
         ),
         cloudflared=CloudflaredSpec(
             enabled=_ensure_bool(cloudflared.get("enabled"), "cloudflared.enabled"),
@@ -2026,6 +2033,10 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
                 ),
                 version=bundle_container_runtime.get("version"),
                 manifest_url=bundle_container_runtime.get("manifest_url") or None,
+                fallback_manifest_url=bundle_container_runtime.get(
+                    "fallback_manifest_url"
+                )
+                or None,
             )
             if bundle_container_runtime
             else None
@@ -2602,6 +2613,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "root": cfg.project_host_bundle.root,
             "dir": cfg.project_host_bundle.dir,
             "current": cfg.project_host_bundle.current,
+            "fallback_manifest_url": cfg.project_host_bundle.fallback_manifest_url,
         },
         "project_bundle": {
             "url": cfg.project_bundle.url,
@@ -2611,6 +2623,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "root": cfg.project_bundle.root,
             "dir": cfg.project_bundle.dir,
             "current": cfg.project_bundle.current,
+            "fallback_manifest_url": cfg.project_bundle.fallback_manifest_url,
         },
         "tools_bundle": {
             "url": cfg.tools_bundle.url,
@@ -2621,6 +2634,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "dir": cfg.tools_bundle.dir,
             "current": cfg.tools_bundle.current,
             "manifest_url": cfg.tools_bundle.manifest_url,
+            "fallback_manifest_url": cfg.tools_bundle.fallback_manifest_url,
         },
         "cloudflared": {
             "enabled": cfg.cloudflared.enabled,
@@ -2644,6 +2658,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "dir": cfg.container_runtime_bundle.dir,
             "current": cfg.container_runtime_bundle.current,
             "manifest_url": cfg.container_runtime_bundle.manifest_url,
+            "fallback_manifest_url": cfg.container_runtime_bundle.fallback_manifest_url,
         }
     return state
 
@@ -6683,6 +6698,7 @@ PROJECT_IO_POLICY_HELPER="/usr/local/libexec/cocalc-project-io-policy"
 # This state is needed when cgroups are reconstructed at boot, before each
 # project has necessarily restarted and reported its authoritative class.
 PROJECT_IO_CLASS_STATE_DIR="/var/lib/cocalc/project-io-classes"
+PROJECT_IO_CLASS_STATE_RETENTION_DAYS="90"
 PROJECT_STORAGE_WORKER_MEMORY_MAX="$((2 * 1024 * 1024 * 1024))"
 PROJECT_STORAGE_WORKER_MEMORY_HIGH="$((1 * 1024 * 1024 * 1024))"
 PROJECT_PROCESS_OOM_SCORE_ADJ="500"
@@ -7556,21 +7572,43 @@ apply_existing_project_io_policy() {
 }
 
 normalize_project_io_class_state() {
+  # Runs under the host-wide cgroup lock, once per state file: there is one
+  # file for every project that ever ran here, so the loop must not fork (prod
+  # hosts had 2k-29k files; with three forks each, a busy 2-vCPU host took
+  # five minutes and hit the 300 s reconcile timeout), and must not rewrite
+  # valid files, so that a file's mtime is when its project last set it.
   local state_file project_id io_class
+  local uuid_re='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  local -a stale=()
   mkdir -p "$PROJECT_IO_CLASS_STATE_DIR"
   for state_file in "${PROJECT_IO_CLASS_STATE_DIR}"/*; do
     [ -f "$state_file" ] || continue
     project_id="${state_file##*/}"
-    if ! is_project_uuid "$project_id"; then
+    if ! [[ "$project_id" =~ $uuid_re ]]; then
       rm -f -- "$state_file"
       continue
     fi
-    io_class="$(cat "$state_file")"
+    io_class=""
+    read -r io_class < "$state_file" || true
     case "$io_class" in
       standard|member|premium) ;;
-      *) io_class="standard" ;;
+      *) printf '%s\n' "standard" > "$state_file" ;;
     esac
-    printf '%s\n' "$io_class" > "$state_file"
+  done
+  # Forget projects that have not set their class for a long time and have no
+  # cgroup here now. A project's next start writes its class again; until then
+  # its storage workers get the lowest class. Reconciling a live cgroup
+  # rewrites its file, so running projects stay fresh.
+  while IFS= read -r -d '' state_file; do
+    project_id="${state_file##*/}"
+    [ -d "${PROJECT_POOL_CGROUP_DEFAULT}/project-${project_id}" ] && continue
+    [ -d "${PROJECT_STARTUP_CGROUP_DEFAULT}/project-${project_id}" ] && continue
+    stale+=("$state_file")
+  done < <(find "$PROJECT_IO_CLASS_STATE_DIR" -maxdepth 1 -type f \
+    -mtime "+${PROJECT_IO_CLASS_STATE_RETENTION_DAYS}" -print0)
+  local i
+  for ((i = 0; i < ${#stale[@]}; i += 1000)); do
+    rm -f -- "${stale[@]:i:1000}"
   done
 }
 
@@ -11763,8 +11801,28 @@ def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleS
             f"bootstrap: reusing existing bundle version={bundle.version or desired_dir.name} root={bundle.root}",
         )
     else:
-        download_file(cfg, bundle.url, bundle.remote)
-        verify_sha256(cfg, bundle.remote, bundle.sha256)
+        try:
+            if bundle.fallback_manifest_url and not bundle.sha256:
+                # A kept version the store no longer serves: there is no
+                # checksum to verify a download against, so don't try one.
+                raise RuntimeError("no checksum for a kept version that is not installed")
+            download_file(cfg, bundle.url, bundle.remote)
+            verify_sha256(cfg, bundle.remote, bundle.sha256)
+        except Exception as err:
+            if not bundle.fallback_manifest_url:
+                raise
+            log_line(
+                cfg,
+                f"bootstrap: desired bundle version={bundle.version} is not installed and could not be downloaded ({err}); falling back to {bundle.fallback_manifest_url}",
+            )
+            return extract_bundle_unlocked(
+                cfg,
+                replace(
+                    bundle,
+                    manifest_url=bundle.fallback_manifest_url,
+                    fallback_manifest_url=None,
+                ),
+            )
         if desired_dir.exists():
             shutil.rmtree(desired_dir)
         desired_dir.mkdir(parents=True, exist_ok=True)

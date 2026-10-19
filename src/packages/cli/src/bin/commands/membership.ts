@@ -1369,6 +1369,10 @@ export function registerMembershipCommand(
     .option("--organization-name <name>", "organization name")
     .option("--starts-at <iso>", "explicit start time")
     .option("--expires-at <iso>", "explicit expiry time")
+    .option(
+      "--owner <account>",
+      "admin: transfer ownership of the license and its pools to this account",
+    )
     .action(
       async (
         siteLicenseId: string,
@@ -1378,6 +1382,7 @@ export function registerMembershipCommand(
           organizationName?: string;
           startsAt?: string;
           expiresAt?: string;
+          owner?: string;
         },
         command: Command,
       ) => {
@@ -1401,14 +1406,27 @@ export function registerMembershipCommand(
               opts.name === undefined &&
               opts.organizationName === undefined &&
               opts.startsAt === undefined &&
-              opts.expiresAt === undefined
+              opts.expiresAt === undefined &&
+              opts.owner === undefined
             ) {
               throw new Error("at least one update option is required");
+            }
+            const owner_account_id =
+              opts.owner === undefined
+                ? undefined
+                : await resolveTargetAccountIdentifier(
+                    ctx,
+                    resolveAccountByIdentifier,
+                    opts.owner,
+                  );
+            if (opts.owner !== undefined && !owner_account_id) {
+              throw new Error("--owner must name an account");
             }
             return serializeSiteLicenseOverview(
               await ctx.hub.purchases.updateSiteLicense({
                 account_id: ctx.accountId,
                 site_license_id,
+                owner_account_id,
                 allowed_domains,
                 name:
                   opts.name === undefined ? undefined : `${opts.name}`.trim(),

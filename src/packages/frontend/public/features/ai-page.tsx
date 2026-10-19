@@ -17,6 +17,10 @@ import {
   publicFeatureHref,
   type PublicFeatureSection,
 } from "@cocalc/util/public-feature-pages";
+import {
+  getPublicAiOperatingModels,
+  PUBLIC_PRODUCTS_PAGE_LINK,
+} from "@cocalc/util/public-products-content";
 import type { PublicRouteMetadataConfig } from "@cocalc/util/public-site-metadata";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
@@ -744,20 +748,8 @@ function ComputeSection({
 }
 
 function OperatingModelSection() {
-  const models = [
-    {
-      body: "Managed hosted projects for individuals and teams.",
-      title: "Hosted CoCalc.ai",
-    },
-    {
-      body: "Use Plus on your own computer, or run a shared Star site in one Docker container.",
-      title: "CoCalc Plus or Star",
-    },
-    {
-      body: "Customer-operated private deployment paths for teams and institutions.",
-      title: "Launchpad or Rocket",
-    },
-  ] as const;
+  // Only the products the public pages show.
+  const models = getPublicAiOperatingModels();
 
   return (
     <PublicSection>
@@ -772,20 +764,20 @@ function OperatingModelSection() {
               level={2}
               style={{ margin: "8px 0 0" }}
             >
-              Choose who runs the workspace.
+              Choose who runs CoCalc.
             </Title>
             <Paragraph style={{ margin: "12px 0 18px" }}>
               Start with the operating model, then evaluate the product path,
               collaboration features, support, and infrastructure it includes.
             </Paragraph>
-            <Button href={appPath("products")}>
-              Compare ways to run CoCalc
+            <Button href={appPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}>
+              {PUBLIC_PRODUCTS_PAGE_LINK.label}
             </Button>
           </Col>
           <Col xs={24} lg={15}>
             <Row gutter={[16, 20]}>
               {models.map(({ body, title }) => (
-                <Col key={title} xs={24} md={8}>
+                <Col key={title} xs={24} md={models.length > 2 ? 8 : 12}>
                   <article className="feature-ai-operating-card">
                     <CardTitle>{title}</CardTitle>
                     <Paragraph style={{ margin: "8px 0 0" }}>{body}</Paragraph>
@@ -913,10 +905,10 @@ export default function AIFeaturePage({
                 ),
               },
               {
-                href: appPath("products"),
+                href: appPath(PUBLIC_PRODUCTS_PAGE_LINK.href),
                 label: (
                   <span className="feature-ai-related-link-label-separated">
-                    Deployment paths
+                    {PUBLIC_PRODUCTS_PAGE_LINK.label}
                   </span>
                 ),
               },

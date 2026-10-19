@@ -563,6 +563,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: "previews local reconciliation state without provider mutation",
   },
+  "commercialOrders.resolveProviderOperation": {
+    decision: "fresh-auth-required",
+    reason:
+      "resolves an indeterminate commercial provider operation as failed, releasing its fence",
+  },
   "commercialOrders.retryStripeEvent": {
     decision: "fresh-auth-required",
     reason: "requeues a failed or dead-lettered Stripe reconciliation event",

@@ -6,6 +6,13 @@
 import React, { CSSProperties } from "react";
 import type { RenderLeafProps } from "./slate-react";
 import { startswith } from "@cocalc/util/misc";
+import { sanitizeStyleDeclaration } from "@cocalc/frontend/components/sanitize-presentation";
+
+const MARK_STYLES: [string, string][] = [
+  ["color:", "color"],
+  ["font-family:", "fontFamily"],
+  ["font-size:", "fontSize"],
+];
 
 // CODE_STYLE -- copied from GitHub
 const CODE_STYLE = {
@@ -49,23 +56,21 @@ const Leaf: React.FC<RenderLeafProps> = React.memo(
     if (leaf.tt) {
       children = <span style={{ fontFamily: "monospace" }}>{children}</span>;
     }
-    // check for colors, fonts, etc.
+    // check for colors, fonts, etc.  The values come from the document
+    // (e.g., <span style="color:..."> in Markdown), so they get the same
+    // checks as any inline style (no var(), url(), escapes, ...).
     for (const mark in leaf) {
       if (!leaf[mark]) continue; // only if it is true
-      if (startswith(mark, "color:")) {
-        children = (
-          <span style={{ color: mark.split(":")[1] }}>{children}</span>
-        );
-      }
-      if (startswith(mark, "font-family:")) {
-        children = (
-          <span style={{ fontFamily: mark.split(":")[1] }}>{children}</span>
-        );
-      }
-      if (startswith(mark, "font-size:")) {
-        children = (
-          <span style={{ fontSize: mark.split(":")[1] }}>{children}</span>
-        );
+      for (const [prefix, property] of MARK_STYLES) {
+        if (startswith(mark, prefix)) {
+          const value = sanitizeStyleDeclaration(
+            prefix.slice(0, -1),
+            mark.slice(prefix.length),
+          );
+          if (value != null) {
+            children = <span style={{ [property]: value }}>{children}</span>;
+          }
+        }
       }
     }
     if (leaf.search) {

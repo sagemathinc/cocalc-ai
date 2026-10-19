@@ -8,8 +8,10 @@ import type { ReactNode } from "react";
 import { Button } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { usePublicConfig } from "@cocalc/frontend/public/config";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
+import { describesPublicPlus } from "@cocalc/util/public-product-availability";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 // The one shared copyable-code component lives in ../common; re-export it so
@@ -78,6 +80,13 @@ export function FeatureImage({
       }}
     />
   );
+}
+
+// A sentence about CoCalc Plus, after the sentence before it. It shows only
+// where describesPublicPlus allows, as in the crawler fallback: while the
+// public pages show Plus, and on a CoCalc Plus install.
+export function PlusSentence({ children }: { children: string }) {
+  return describesPublicPlus(usePublicConfig()) ? <> {children}</> : null;
 }
 
 export function BulletList({ items }: { items: ReactNode[] }) {

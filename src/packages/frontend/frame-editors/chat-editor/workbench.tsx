@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { URL_REJECTED } from "@cocalc/frontend/lib/url-transform";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactFeedback, ArtifactRecord } from "@cocalc/chat";
@@ -672,7 +673,7 @@ function WorkbenchDocument(props: WorkbenchProps) {
             disableMarkdownCodebar: true,
             urlTransform: (url, tag) =>
               tag?.toLowerCase() === "img"
-                ? ""
+                ? URL_REJECTED
                 : context.urlTransform?.(url, tag),
           }}
         >

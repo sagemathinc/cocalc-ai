@@ -219,6 +219,13 @@ import { startExamWatchdog } from "./exam/controller";
 import { getExamUsageAccountId } from "./exam/usage";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { startGcpPreemptionWatcher } from "./gcp-preemption";
+import {
+  checkAmbientCookieRequest,
+  classifyProjectRoute,
+  corsOrigin,
+  persistHubBrowserOrigins,
+  setHubBrowserOrigins,
+} from "./browser-origin-policy";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -532,12 +539,7 @@ export async function main(
     if (!/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
       return false;
     }
-    try {
-      const parsed = new URL(req.url ?? "/", "http://project-host.local");
-      return parsed.pathname.includes(`/${project_id}/files/`);
-    } catch {
-      return false;
-    }
+    return classifyProjectRoute(req, project_id) === "file";
   };
   const getReadOnlyProjectFileDownloadContext = ({
     req,
@@ -554,7 +556,7 @@ export async function main(
     if (!account_id) return;
     try {
       const parsed = new URL(req.url ?? "/", "http://project-host.local");
-      if (!parsed.pathname.includes(`/${project_id}/files/`)) return;
+      if (classifyProjectRoute(req, project_id) !== "file") return;
       if (parsed.searchParams.get("viewer") !== "1") return;
       const share_id = `${parsed.searchParams.get("share") ?? ""}`.trim();
       if (share_id) {
@@ -591,7 +593,7 @@ export async function main(
       const parsed = new URL(req.url ?? "/", "http://project-host.local");
       return (
         parsed.searchParams.has("download") &&
-        parsed.pathname.includes(`/${project_id}/files/`)
+        classifyProjectRoute(req, project_id) === "file"
       );
     } catch {
       return false;
@@ -605,7 +607,7 @@ export async function main(
       const parsed = new URL(req.url ?? "/", "http://project-host.local");
       return (
         parsed.pathname.startsWith(`/${project_id}/`) &&
-        !parsed.pathname.includes(`/${project_id}/files/`)
+        classifyProjectRoute(req, project_id) !== "file"
       );
     } catch {
       return false;
@@ -673,18 +675,19 @@ export async function main(
     req: IncomingMessage,
     res: ServerResponse,
   ) => {
-    const origin = `${req.headers.origin ?? ""}`.trim();
+    res.setHeader("Vary", "Origin");
+    const origin = corsOrigin(req);
     if (!origin) return;
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Expose-Headers", DOWNLOAD_ERROR_HEADER);
-    res.setHeader("Vary", "Origin");
   };
   const setProjectUploadCorsHeaders = (
     req: IncomingMessage,
     res: ServerResponse,
   ) => {
-    const origin = `${req.headers.origin ?? ""}`.trim();
+    res.setHeader("Vary", "Origin");
+    const origin = corsOrigin(req);
     if (!origin) return;
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -695,17 +698,15 @@ export async function main(
       requestedHeaders || "Content-Type, Cache-Control, X-Requested-With",
     );
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Vary", "Origin");
   };
   const setBrowserSessionCorsHeaders = (
     req: IncomingMessage,
     res: express.Response,
   ) => {
-    const origin = `${req.headers.origin ?? ""}`.trim();
-    if (origin) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Vary", "Origin");
-    }
+    res.setHeader("Vary", "Origin");
+    const origin = corsOrigin(req);
+    if (!origin) return;
+    res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader(
       "Access-Control-Allow-Headers",
@@ -971,6 +972,11 @@ export async function main(
   });
   app.post(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, (req, res) => {
     setBrowserSessionCorsHeaders(req, res);
+    // Refuse foreign pages before any cookie is issued or cleared.
+    if (!checkAmbientCookieRequest(req, "bootstrap")) {
+      res.status(403).json({ error: "cross-site request refused" });
+      return;
+    }
     const authHeader = `${req.headers.authorization ?? ""}`;
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
     if (!match?.[1]?.trim()) {
@@ -1105,9 +1111,8 @@ export async function main(
         await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
       }
       const authContext = getProjectHostHttpAuthContext(req);
-      const isProjectFileRoute = `${req.url ?? ""}`.includes(
-        `/${project_id}/files/`,
-      );
+      const isProjectFileRoute =
+        classifyProjectRoute(req, project_id) === "file";
       if (res && isProjectUploadRoute) {
         if (authContext?.actor !== "account") {
           res.statusCode = 403;
@@ -1423,12 +1428,28 @@ export async function main(
       });
     },
   });
-  try {
-    const { url } = await hubApi.system.getPublicSiteUrl({ host_id: hostId });
-    process.env.COCALC_SITE_URL = url;
-  } catch (err) {
-    logger.warn("unable to resolve public CoCalc site URL", { err: `${err}` });
-  }
+  // The site URL and the browser origins allowed to use project-host cookies.
+  // Refreshed periodically so bay changes don't need a host restart; a failed
+  // or empty refresh keeps the last known-good origins.
+  const refreshPublicSiteUrl = async () => {
+    try {
+      const { url, browser_origins } = await hubApi.system.getPublicSiteUrl({
+        host_id: hostId,
+      });
+      process.env.COCALC_SITE_URL = url;
+      setHubBrowserOrigins(browser_origins ?? []);
+      // For the host's other processes, e.g. a conat router the host agent
+      // respawns without this process's environment.
+      persistHubBrowserOrigins({ site_url: url, browser_origins });
+    } catch (err) {
+      logger.warn("unable to resolve public CoCalc site URL", {
+        err: `${err}`,
+      });
+    }
+  };
+  await refreshPublicSiteUrl();
+  const publicSiteUrlTimer = setInterval(refreshPublicSiteUrl, 10 * 60_000);
+  publicSiteUrlTimer.unref?.();
   const stopReconciler = startReconciler(undefined, {
     reconcileProjectCgroup: async ({ project_id, run_quota, force }) =>
       await reconcileProjectCgroup({
@@ -1523,6 +1544,7 @@ export async function main(
     sharedBrowserService?.close?.();
     masterRegistration?.stop();
     stopReconciler?.();
+    clearInterval(publicSiteUrlTimer);
     stopDataPermissionHardener?.();
     stopRuntimeConformanceMonitor?.();
     stopRuntimePostureMonitor?.();

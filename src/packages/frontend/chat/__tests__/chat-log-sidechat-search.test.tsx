@@ -298,6 +298,40 @@ describe("ChatLog sidechat search jumps", () => {
     );
   });
 
+  it("jumps to an attention card once, not again on every new message", async () => {
+    const attentionRecord = {
+      attention_id: "attention-jump",
+    } as AcpAttentionRecord;
+    const message = (date: number) => [
+      `${date}`,
+      { date, sender_id: "acct-1", history: [{ content: `m${date}` }] },
+    ];
+    const props = (dates: number[], token: number) => ({
+      messages: new Map(dates.map(message) as any) as any,
+      account_id: "acct-1",
+      user_map: undefined,
+      mode: "standalone" as const,
+      sortedDates: dates.map(String),
+      attentionRecords: [attentionRecord],
+      activityJumpAttentionId: "attention-jump",
+      activityJumpToken: token,
+    });
+    const centered = () =>
+      mockScrollToIndex.mock.calls.filter(([arg]) => arg?.align === "center");
+    const view = render(<MessageList {...props([1000], 1)} />);
+    await waitFor(() => expect(centered()).toHaveLength(1));
+
+    // New messages arrive while the reader is elsewhere: no jump back.
+    view.rerender(<MessageList {...props([1000, 2000], 1)} />);
+    view.rerender(<MessageList {...props([1000, 2000, 3000], 1)} />);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(centered()).toHaveLength(1);
+
+    // A new jump (for example the notification clicked again) applies.
+    view.rerender(<MessageList {...props([1000, 2000, 3000], 2)} />);
+    await waitFor(() => expect(centered()).toHaveLength(2));
+  });
+
   it("does not carry bottom retries across a thread switch after explicit navigation", () => {
     jest.useFakeTimers();
     const scrollToBottomRef = { current: undefined as any };

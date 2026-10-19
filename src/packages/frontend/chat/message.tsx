@@ -841,7 +841,10 @@ export default function Message({
 
   const localGitBrowserOpen =
     onOpenGitBrowser == null && openCommitHash != null;
-  const anyOverlayOpen = isActivityDrawerOpen || localGitBrowserOpen;
+  // The focus view counts too: while it is open the log must not follow new
+  // output, which scrolls this row away, unmounts it, and closes the view.
+  const anyOverlayOpen =
+    isActivityDrawerOpen || localGitBrowserOpen || showZenMessage;
   const overlayKey = `${project_id ?? "no-project"}:${path ?? "no-path"}:${date}`;
 
   useEffect(() => {
@@ -2062,11 +2065,13 @@ export default function Message({
       });
     }
 
-    overflowItems.push({
-      key: "focus",
-      label: "Focus message",
-      onClick: () => openZenMessage(),
-    });
+    if (!footer) {
+      overflowItems.push({
+        key: "focus",
+        label: "Focus message",
+        onClick: () => openZenMessage(),
+      });
+    }
 
     if (acpPrompt.trim()) {
       overflowItems.push({
@@ -2161,6 +2166,18 @@ export default function Message({
         </Tooltip>,
       );
     }
+    buttons.push(
+      <Tooltip key="focus" placement="bottom" title="Focus message">
+        <Button
+          aria-label="Focus message"
+          aria-haspopup="dialog"
+          icon={<Icon name="expand-arrows" />}
+          onClick={openZenMessage}
+          style={CODEX_FOOTER_BUTTON_STYLE}
+          type="text"
+        />
+      </Tooltip>,
+    );
     buttons.push(
       <span key="more">{renderCodexOverflowMenu({ footer: true })}</span>,
     );

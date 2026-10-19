@@ -26,6 +26,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { resolveProjectHostBootstrapMasterConatServer } from "./master-conat-server";
 import { createApiRelayMeter } from "@cocalc/project-proxy/api-relay-meter";
+import { persistedBrowserOrigins } from "./browser-origin-policy";
 
 const logger = getLogger("project-host:api-relay");
 
@@ -177,7 +178,10 @@ export function attachProjectApiRelay({
       if (cached) return cached;
       // The host's master may be a different bay from the caller's home bay.
       const url = await resolveApiRelayHubUrl(requestedUrl, {
-        siteUrl: process.env.COCALC_SITE_URL,
+        // A router respawned by the host agent lacks the app's runtime
+        // COCALC_SITE_URL; the app also persists it.
+        siteUrl:
+          process.env.COCALC_SITE_URL || persistedBrowserOrigins().site_url,
         masterUrl: resolveProjectHostBootstrapMasterConatServer(),
         hostId,
         masterClient,

@@ -214,11 +214,25 @@ export function AgentsOverview(props: Props) {
     view_only: agent.collaborator_access === "view",
     shared: agent,
   }));
+  const paymentFor = (item: OverviewItem) => {
+    const thread_id = item.mine?.thread_id ?? item.shared?.thread_id;
+    return thread_id && !payments.loading
+      ? agentPaymentSummary(payments, {
+          project_id: item.project_id,
+          thread_id,
+          runtime: item.mine?.runtime ?? item.shared?.runtime,
+          payment: item.mine?.payment,
+        })
+      : undefined;
+  };
   const visible = (items: OverviewItem[]) =>
     sortAgents(
       filterAgents(items, search, (item) => [
         projectTitle(item.project_id),
         item.created_by ? personName(item.created_by) : "",
+        // How it is paid, e.g. a subscription's name: filter by it, select
+        // all, then switch them to another payment method.
+        paymentFor(item) ?? "",
       ]),
       sort,
     );
@@ -257,17 +271,6 @@ export function AgentsOverview(props: Props) {
     }
     anchor.current = id;
   }
-  const paymentFor = (item: OverviewItem) => {
-    const thread_id = item.mine?.thread_id ?? item.shared?.thread_id;
-    return thread_id && !payments.loading
-      ? agentPaymentSummary(payments, {
-          project_id: item.project_id,
-          thread_id,
-          runtime: item.mine?.runtime ?? item.shared?.runtime,
-          payment: item.mine?.payment,
-        })
-      : undefined;
-  };
   const paymentTargets = selectedAgents.map((agent) => ({
     project_id: agent.endpoint.project_id,
     thread_id: agent.thread_id,

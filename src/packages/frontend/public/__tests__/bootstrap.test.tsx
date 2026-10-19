@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { act, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 
 import { UNPUBLISHED_TEAM_PROFILE_SLUGS } from "@cocalc/util/public-about-content";
 
@@ -61,6 +61,32 @@ describe("public bootstrap", () => {
         name: "Meet the People Behind CoCalc",
       }),
     ).not.toBeNull();
+  });
+
+  it("opens a static-shell target for a hidden product's page at the products page, with its query string", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      `/static/public.html?target=${encodeURIComponent(
+        "/products/cocalc-rocket?ref=old-link",
+      )}`,
+    );
+
+    await act(async () => {
+      await init();
+    });
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Where to run CoCalc",
+      }),
+    ).not.toBeNull();
+    await waitFor(() =>
+      expect(window.location.pathname + window.location.search).toBe(
+        "/products?ref=old-link",
+      ),
+    );
   });
 
   it("keeps a published page's address", async () => {

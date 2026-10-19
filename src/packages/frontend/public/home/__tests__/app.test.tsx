@@ -4,6 +4,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import PublicHomeApp from "../app";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import { PUBLIC_COLORS, publicAccent } from "../../theme";
 import {
   getPublicHomeHighlights,
@@ -404,13 +405,13 @@ describe("PublicHomeApp", () => {
       within(
         screen.getByRole("dialog", { name: "Operating model choice" }),
       ).getByRole("link", {
-        name: "Review product paths",
+        name: "Where to run CoCalc",
       }),
     ).toHaveAttribute("href", "/products");
     expect(
       within(
         screen.getByRole("dialog", { name: "Operating model choice" }),
-      ).getByText(/where the workspace runs and who operates it/i),
+      ).getByText(/where CoCalc runs and who operates it/i),
     ).not.toBeNull();
     expect(
       within(
@@ -420,12 +421,16 @@ describe("PublicHomeApp", () => {
     expect(
       within(
         screen.getByRole("dialog", { name: "Operating model choice" }),
-      ).getByText(/upgrades, data boundaries/i),
+      ).getByText(
+        "Compare who runs it, the price, Codex, internet access, and recovery.",
+      ),
     ).not.toBeNull();
     expect(
       within(
         screen.getByRole("dialog", { name: "Operating model choice" }),
-      ).getByText(/procurement, security, platform/i),
+      ).getByText(
+        "For a larger private deployment, or for support, talk with us.",
+      ),
     ).not.toBeNull();
 
     const path = screen.getByRole("region", { name: "Next step" });
@@ -437,7 +442,7 @@ describe("PublicHomeApp", () => {
       within(path).getByRole("link", { name: "Start on CoCalc.ai" }),
     ).toHaveAttribute("href", "/auth/sign-up");
     expect(
-      within(path).getByRole("link", { name: "Review product paths" }),
+      within(path).getByRole("link", { name: "Where to run CoCalc" }),
     ).toHaveAttribute("href", "/products");
     expect(
       within(path).getByRole("link", {
@@ -631,5 +636,90 @@ describe("PublicHomeApp", () => {
         },
       ),
     ).toHaveAttribute("href", "/policies/trust");
+  });
+});
+
+// The Operating model choice card names only the ways to run CoCalc that the
+// public pages show. It reads the product switches when it renders, so it
+// follows a switch that changes.
+describe("PublicHomeApp ways to run CoCalc", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function openOperatingModelChoice(): {
+    dialog: HTMLElement;
+    kinds: string;
+  } {
+    render(
+      <PublicHomeApp
+        config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.ai",
+          is_launchpad: true,
+          site_name: "CoCalc",
+        }}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /Operating model choice/i }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Operating model choice",
+    });
+    // The lines that name kinds of deployment: the dialog's lead and the
+    // "Match where it runs" detail.
+    const kinds = [
+      dialog.querySelector(".ant-modal-body p")?.textContent,
+      within(dialog).getByText("Match where it runs").nextElementSibling
+        ?.textContent,
+    ].join(" ");
+    return { dialog, kinds };
+  }
+
+  it("names only hosted, local and single-VM deployment while Launchpad and Rocket are hidden", () => {
+    const { dialog, kinds } = openOperatingModelChoice();
+
+    expect(
+      within(dialog).getByText(
+        "CoCalc product paths are choices about where CoCalc runs and who operates it, from hosted CoCalc.ai through local and single-VM deployments.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(dialog).getByText(
+        "Choose hosted, local, or single-VM deployment.",
+      ),
+    ).not.toBeNull();
+    expect(kinds).not.toMatch(/private|enterprise|organization-operated/i);
+    expect(dialog.textContent).not.toMatch(/\b(Plus|Launchpad|Rocket)\b/);
+  });
+
+  it("names every kind of deployment once every product is shown", () => {
+    for (const id of ["plus", "launchpad", "rocket"] as const) {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+    }
+    const { dialog } = openOperatingModelChoice();
+
+    expect(
+      within(dialog).getByText(
+        "CoCalc product paths are choices about where CoCalc runs and who operates it, from hosted CoCalc.ai through local, single-VM, private, and enterprise deployments.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(dialog).getByText(
+        "Choose hosted, local, single-VM, or organization-operated deployment.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("describes Where to run CoCalc without its comparison once Star is hidden", () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "star", false);
+    const { dialog, kinds } = openOperatingModelChoice();
+
+    expect(
+      within(dialog).getByText(
+        "See who runs CoCalc.ai and which terms apply to it.",
+      ),
+    ).not.toBeNull();
+    expect(dialog.textContent).not.toMatch(/Star|Compare who runs it/);
+    expect(kinds).not.toMatch(/local|single-VM/);
   });
 });

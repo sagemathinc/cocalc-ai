@@ -215,6 +215,202 @@ describePglite("commercial order store", () => {
     ).toHaveLength(1);
   });
 
+  it("resolves an indeterminate provider operation as failed, releasing its fence", async () => {
+    const created = await store.createCommercialOrder(request());
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve resolve fixture",
+    });
+    const reserve = (key: string) =>
+      store.reserveCommercialProviderOperation({
+        order_id: approved.id,
+        expected_version: approved.version,
+        operation: "provision-site-license",
+        idempotency_key: key,
+        request: { allow_before_payment: true },
+        exclusive: true,
+      });
+    const { operation } = await reserve(`provision-${randomUUID()}`);
+    await store.setCommercialProviderOperationStatus({
+      id: operation.id,
+      status: "indeterminate",
+      error: "site license domain overlaps",
+    });
+    // The fence: a new provisioning attempt is refused.
+    await expect(reserve(`provision-${randomUUID()}`)).rejects.toThrow(
+      "is indeterminate",
+    );
+    const resolveRequest = {
+      account_id: actor,
+      id: approved.id,
+      operation_id: operation.id,
+      resolution: "failed" as const,
+      evidence: "rejected by domain-overlap validation before any write",
+      reason: "release the fence of a rejected provision",
+      source: "cli" as const,
+      expected_version: approved.version,
+      idempotency_key: `resolve-${randomUUID()}`,
+    };
+    await expect(
+      store.resolveCommercialProviderOperation({
+        ...resolveRequest,
+        evidence: "short",
+      }),
+    ).rejects.toThrow("evidence");
+    await expect(
+      store.resolveCommercialProviderOperation({
+        ...resolveRequest,
+        resolution: "succeeded" as any,
+      }),
+    ).rejects.toThrow("only be resolved as failed");
+    await expect(
+      store.resolveCommercialProviderOperation({
+        ...resolveRequest,
+        expected_version: approved.version + 5,
+      }),
+    ).rejects.toThrow();
+
+    // A site license associated with the order means it may have been written.
+    expect(
+      (
+        await pool.query(
+          "SELECT to_regclass('site_licenses') IS NULL AS absent",
+        )
+      ).rows[0].absent,
+    ).toBe(true);
+    await pool.query(
+      "CREATE TABLE site_licenses (id uuid PRIMARY KEY, metadata jsonb)",
+    );
+    const licenseId = randomUUID();
+    await pool.query(
+      "INSERT INTO site_licenses (id, metadata) VALUES ($1, $2)",
+      [licenseId, { commercial_order_id: approved.id }],
+    );
+    await expect(
+      store.resolveCommercialProviderOperation(resolveRequest),
+    ).rejects.toThrow(`site license ${licenseId} is associated`);
+    // A session's empty temporary table must not shadow the real one.
+    await pool.query(
+      "CREATE TEMP TABLE site_licenses (id uuid PRIMARY KEY, metadata jsonb)",
+    );
+    await expect(
+      store.resolveCommercialProviderOperation(resolveRequest),
+    ).rejects.toThrow(`site license ${licenseId} is associated`);
+    await pool.query("DROP TABLE pg_temp.site_licenses");
+    // This minimal table only exists for this check; later tests query the
+    // real site_licenses schema when the table is present.
+    await pool.query("DROP TABLE public.site_licenses");
+
+    const resolved =
+      await store.resolveCommercialProviderOperation(resolveRequest);
+    expect(resolved.version).toBe(approved.version + 1);
+    const after = await store.getCommercialProviderOperationByIdempotencyKey(
+      operation.idempotency_key,
+    );
+    expect(after?.status).toBe("failed");
+    expect(after?.last_error).toContain("resolved as failed by an admin");
+    expect(after?.result).toMatchObject({
+      admin_resolution: {
+        previous_status: "indeterminate",
+        previous_error: "site license domain overlaps",
+      },
+    });
+    // A retry admitted before the resolution cannot reopen the operation.
+    await expect(
+      store.setCommercialProviderOperationStatus({
+        id: operation.id,
+        status: "remote_started",
+      }),
+    ).rejects.toThrow("resolved by an admin and is final");
+    expect(
+      (
+        await store.getCommercialProviderOperationByIdempotencyKey(
+          operation.idempotency_key,
+        )
+      )?.status,
+    ).toBe("failed");
+    // An exact replay returns the order without a second change.
+    expect(
+      (await store.resolveCommercialProviderOperation(resolveRequest)).version,
+    ).toBe(resolved.version);
+    const events = await store.listCommercialOrderEvents({
+      id: approved.id,
+      reason: "inspect resolve audit",
+    });
+    const resolvedEvents = events.events.filter(
+      ({ event_type }) => event_type === "provider-operation-resolved",
+    );
+    expect(resolvedEvents).toHaveLength(1);
+    expect(resolvedEvents[0].metadata).toMatchObject({
+      operation_before: {
+        id: operation.id,
+        status: "indeterminate",
+        last_error: "site license domain overlaps",
+      },
+      operation_after: { id: operation.id, status: "failed" },
+    });
+    // The fence is released, and a failed operation cannot be resolved again.
+    await expect(
+      store.resolveCommercialProviderOperation({
+        ...resolveRequest,
+        expected_version: resolved.version,
+        idempotency_key: `resolve-${randomUUID()}`,
+      }),
+    ).rejects.toThrow("only an indeterminate provider operation");
+    const next = await store.reserveCommercialProviderOperation({
+      order_id: approved.id,
+      expected_version: resolved.version,
+      operation: "provision-site-license",
+      idempotency_key: `provision-${randomUUID()}`,
+      request: { allow_before_payment: true },
+      exclusive: true,
+    });
+    expect(next.operation.status).toBe("reserved");
+  });
+
+  it("refuses to resolve provider operations of other kinds", async () => {
+    const created = await store.createCommercialOrder(request());
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve kind fixture",
+    });
+    const { operation } = await store.reserveCommercialProviderOperation({
+      order_id: approved.id,
+      expected_version: approved.version,
+      operation: "end-site-license",
+      idempotency_key: `end-${randomUUID()}`,
+      request: {},
+    });
+    await store.setCommercialProviderOperationStatus({
+      id: operation.id,
+      status: "indeterminate",
+    });
+    await expect(
+      store.resolveCommercialProviderOperation({
+        account_id: actor,
+        id: approved.id,
+        operation_id: operation.id,
+        resolution: "failed",
+        evidence: "pools were checked and nothing changed",
+        reason: "try to resolve an end-site-license operation",
+        source: "cli",
+        expected_version: approved.version,
+        idempotency_key: `resolve-${randomUUID()}`,
+      }),
+    ).rejects.toThrow("of kind end-site-license cannot be resolved");
+    expect(
+      (
+        await store.getCommercialProviderOperationByIdempotencyKey(
+          operation.idempotency_key,
+        )
+      )?.status,
+    ).toBe("indeterminate");
+  });
+
   it("rejects shared commercial Stripe customers and terminal orders", async () => {
     const customer = `cus_shared_${randomUUID()}`;
     const one = await store.createCommercialOrder(

@@ -216,8 +216,7 @@ export function getAcpAttentionBySource(opts: {
        WHERE project_id = ? AND source_kind = ? AND source_id = ? LIMIT 1`,
     )
     .get(opts.project_id, opts.source_kind, opts.source_id) as
-    | AcpAttentionRow
-    | undefined;
+    AcpAttentionRow | undefined;
   return row ? toStoredRecord(row) : undefined;
 }
 
@@ -247,8 +246,7 @@ export function upsertAcpAttention(opts: {
        WHERE project_id = ? AND source_kind = ? AND source_id = ? LIMIT 1`,
     )
     .get(opts.project_id, opts.source_kind, opts.source_id) as
-    | AcpAttentionRow
-    | undefined;
+    AcpAttentionRow | undefined;
   if (existing) {
     return toStoredRecord(existing);
   }
@@ -287,8 +285,7 @@ export function upsertAcpAttention(opts: {
        WHERE project_id = ? AND path = ? AND thread_id = ? AND created_at >= ?`,
     )
     .get(opts.project_id, opts.path, opts.thread_id, createdSince) as
-    | { count?: number }
-    | undefined;
+    { count?: number } | undefined;
   if (
     Number(recentlyCreatedThread?.count ?? 0) >=
     MAX_CREATED_PER_THREAD_PER_MINUTE
@@ -312,8 +309,7 @@ export function upsertAcpAttention(opts: {
        WHERE project_id = ? AND path = ? AND thread_id = ? AND state = 'pending'`,
     )
     .get(opts.project_id, opts.path, opts.thread_id) as
-    | { count?: number }
-    | undefined;
+    { count?: number } | undefined;
   if (Number(pendingThread?.count ?? 0) >= MAX_PENDING_PER_THREAD) {
     throw new Error("Too many pending Codex attention requests in this thread");
   }
@@ -325,8 +321,7 @@ export function upsertAcpAttention(opts: {
            AND state = 'pending'`,
       )
       .get(opts.project_id, opts.thread_id, opts.turn_id) as
-      | { count?: number }
-      | undefined;
+      { count?: number } | undefined;
     if (Number(pendingTurn?.count ?? 0) >= MAX_PENDING_PER_TURN) {
       throw new Error("Too many pending Codex attention requests in this turn");
     }
@@ -385,8 +380,10 @@ export function listAcpAttention(opts: {
     args.push(opts.thread_id);
   }
   if (opts.state === "actionable") {
+    // Still needs the person: pending requests, late sync questions, and
+    // async answers that were saved but could not be delivered (retry).
     clauses.push(
-      "(state = 'pending' OR (state = 'stale' AND source_kind = 'codex_sync_question'))",
+      `(state = 'pending' OR (state = 'stale' AND (source_kind = 'codex_sync_question' OR (source_kind = 'codex_async_question' AND response_submitted_at IS NOT NULL))))`,
     );
   } else if (opts.state !== "all") {
     clauses.push("state = ?");

@@ -276,6 +276,16 @@ export function createApiRelay({
       if (bodyBytes > limits.httpBodyBytes)
         reject(413, "API relay request is too large");
     };
+    if (websocket) {
+      // Node's HTTP server leaves an upgraded socket without an error
+      // listener, and piping does not forward errors: a peer reset
+      // (ECONNRESET) would be an uncaught exception that kills the router
+      // and every connection through it. Listen before any await.
+      socket.on("error", (err) => {
+        onError?.(err);
+        cancel("downstream failed");
+      });
+    }
     try {
       if (closed) fail(503, "API relay is stopping");
       // Claimed project IDs are untrusted here; rotating one must not reset

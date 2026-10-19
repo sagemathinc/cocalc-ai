@@ -86,7 +86,18 @@ export default function CellInput({
     >
       <InputPrompt exec_count={cell["exec_count"]} type={cell["cell_type"]} />
       {cell["cell_type"] == "markdown" ? (
-        <Markdown value={value} />
+        // Clips what notebook styles paint beyond their box, as the live
+        // notebook's Markdown cells do (jupyter/cell-input.tsx).
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            wordWrap: "break-word",
+            overflow: "auto",
+          }}
+        >
+          <Markdown value={value} />
+        </div>
       ) : (
         <div style={{ overflow: "hidden", flex: 1 }}>
           {editing && editable && (
