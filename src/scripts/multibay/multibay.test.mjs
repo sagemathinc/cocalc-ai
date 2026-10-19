@@ -958,9 +958,10 @@ describe("host reads across bays", () => {
   });
 
   it("waits as long as the caller asked for a slow read", async () => {
-    // The log read is held up 25 s on the host's bay: longer than the
-    // default forwarding budget covers (two 12 s attempts, a repeat waiting
-    // 9 s), within the 90 s this call asks for.
+    // The log read is held up on the host's bay well past what the default
+    // forwarding budget covers (two 12 s attempts, a repeat waiting 9 s), and
+    // within the 120 s this call asks for. A snippet takes a while to start,
+    // so the lock is held for 60 s and the read starts once it is seen.
     const locked = runInBay(
       cluster,
       ATTACHED,
@@ -969,12 +970,12 @@ describe("host reads across bays", () => {
        try {
          await db.query("BEGIN");
          await db.query("LOCK TABLE cloud_vm_log IN ACCESS EXCLUSIVE MODE");
-         await db.query("SELECT pg_sleep(25)");
+         await db.query("SELECT pg_sleep(60)");
          await db.query("COMMIT");
        } finally {
          db.release();
        }`,
-      { timeoutMs: 120_000 },
+      { timeoutMs: 180_000 },
     );
     try {
       await eventually(
@@ -987,14 +988,18 @@ describe("host reads across bays", () => {
                "SELECT 1 FROM pg_locks WHERE relation = 'cloud_vm_log'::regclass AND mode = 'AccessExclusiveLock' AND granted");
              return rows.length > 0;`,
           ),
-        { what: "the lock on the attached bay's log" },
+        {
+          timeoutMs: 90_000,
+          intervalMs: 1_000,
+          what: "the lock on the attached bay's log",
+        },
       );
       const started = Date.now();
       const log = await alice.client.call("hosts.getHostLog", {
         id: host_id,
-        timeout: 90_000,
+        timeout: 120_000,
       });
-      assert.ok(Date.now() - started > 10_000, "the read was held up");
+      assert.ok(Date.now() - started > 25_000, "the read was held up");
       assert.deepEqual(
         log.map(({ vm_id, action }) => ({ vm_id, action })),
         [{ vm_id: host_id, action: "create" }],
