@@ -83,6 +83,14 @@ export function siteFundedDecideFunding({
         requestId,
         reservedMicrousd: microusd,
       });
+      // The global hold is keyed by the request id, durably: a finished id
+      // was refused above (409). An active one returned as created:false is
+      // this same request still in flight, here or on another replica:
+      // refused, so only its creator calls the provider and settles the
+      // hold. The per-process check (board-decide.ts) is only a fast path.
+      if (!global.created) {
+        throw codedError("This answer is already being checked.", 409);
+      }
       const client = await getPool().connect();
       try {
         await client.query("BEGIN");

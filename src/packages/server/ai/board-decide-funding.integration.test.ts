@@ -8,7 +8,12 @@ import { after, before } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
 import { getAIUsageStatus } from "./usage-status";
 import { siteFundedDecideFunding } from "./board-decide-funding";
-import { DECIDE_LIMITS } from "./board-decide";
+import {
+  boardDecide,
+  DECIDE_LIMITS,
+  resetBoardDecideStateForTests,
+  type DecideProvider,
+} from "./board-decide";
 
 jest.mock("./usage-status", () => ({ getAIUsageStatus: jest.fn() }));
 
@@ -25,6 +30,18 @@ beforeAll(async () => {
 });
 
 afterAll(after);
+
+async function globalHolds(requestId: string) {
+  const { rows } = await getPool().query(
+    `SELECT status, committed_microusd FROM site_ai_speech_reservations
+     WHERE request_id=$1`,
+    [requestId],
+  );
+  return rows.map((r) => ({
+    status: r.status,
+    committed: Number(r.committed_microusd),
+  }));
+}
 
 async function rows(requestId: string) {
   const { rows } = await getPool().query(
@@ -135,5 +152,103 @@ describe("site-funded board decide", () => {
     await expect(
       funding.reserve({ accountId, requestId: uuid(), microusd: 1 }),
     ).rejects.toMatchObject({ code: 403 });
+  });
+
+  // A request id in flight is refused by its durable global hold, not only
+  // by the per-process map: two calls with the same id, at once (as on two
+  // replicas), make one reservation, and only it settles the site hold.
+  it("the same request id at once: one reservation, settled once", async () => {
+    const requestId = uuid();
+    const [a, b] = await Promise.allSettled([
+      funding.reserve({ accountId, requestId, microusd: 2 }),
+      funding.reserve({ accountId, requestId, microusd: 2 }),
+    ]);
+    const won = [a, b].filter((r) => r.status === "fulfilled");
+    const lost = [a, b].filter((r) => r.status === "rejected");
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect((lost[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: 409,
+    });
+    expect(await globalHolds(requestId)).toEqual([
+      { status: "active", committed: 0 },
+    ]);
+    await (won[0] as PromiseFulfilledResult<any>).value.commit(1);
+    expect(await globalHolds(requestId)).toEqual([
+      { status: "committed", committed: 1 },
+    ]);
+    expect(await rows(requestId)).toEqual([{ tag: "board-decide", cost: 1 }]);
+  });
+
+  it("a replay while the first call is active, its local guard forgotten, is refused", async () => {
+    const requestId = uuid();
+    const question = {
+      prompt: "Which?",
+      options: [{ name: "yes" }, { name: "no" }],
+    };
+    let finish!: () => void;
+    const decide = jest.fn(
+      () =>
+        new Promise<any>((resolve) => {
+          finish = () =>
+            resolve({
+              options: [
+                { name: "yes", p: 0.9 },
+                { name: "no", p: 0.1 },
+              ],
+              confidence: 0.9,
+              costMicrousd: 1,
+            });
+        }),
+    );
+    const provider: DecideProvider = {
+      maxCostMicrousd: () => 2,
+      decide,
+    } as any;
+    resetBoardDecideStateForTests();
+    const first = boardDecide({
+      accountId,
+      requestId,
+      question,
+      answer: "yes",
+      provider,
+      funding,
+    });
+    while (decide.mock.calls.length === 0) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    // As if this process had evicted the id, or the replay reached
+    // another replica.
+    resetBoardDecideStateForTests();
+    await expect(
+      boardDecide({
+        accountId,
+        requestId,
+        question,
+        answer: "yes",
+        provider,
+        funding,
+      }),
+    ).rejects.toMatchObject({ code: 409 });
+    expect(decide).toHaveBeenCalledTimes(1);
+    finish();
+    await expect(first).resolves.toBeDefined();
+    expect(await globalHolds(requestId)).toEqual([
+      { status: "committed", committed: 1 },
+    ]);
+    expect(await rows(requestId)).toEqual([{ tag: "board-decide", cost: 1 }]);
+    // And once finished, the id is still refused.
+    resetBoardDecideStateForTests();
+    await expect(
+      boardDecide({
+        accountId,
+        requestId,
+        question,
+        answer: "yes",
+        provider,
+        funding,
+      }),
+    ).rejects.toMatchObject({ code: 409 });
+    expect(decide).toHaveBeenCalledTimes(1);
   });
 });
