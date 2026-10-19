@@ -68,14 +68,24 @@ export function isCliConnector(value: unknown): value is CliConnector {
 }
 
 /**
- * What the user lets agents do on Cloudflare. Each preset maps to cf OAuth
- * scopes; cf's default (about 481 scopes, the whole account) is never used.
+ * What the user lets agents do on Cloudflare. Each preset maps to Cloudflare
+ * OAuth scopes; cf's default (about 481 scopes, the whole account) is never
+ * used. These are the scope IDs of Cloudflare's OAuth clients (shown in
+ * parentheses on a client's scopes in the dashboard), not wrangler's older
+ * names such as "workers:write": a client rejects any scope it was not
+ * registered with (invalid_scope).
  */
 export const CLOUDFLARE_SCOPE_PRESETS = {
   workers: {
     label: "Workers & sites",
     // No DNS: custom domains need the DNS preset too, chosen explicitly.
-    scopes: ["workers:write", "workers_scripts:write", "workers_routes:write"],
+    // Workers Admin, not Workers Editor: deploying a new Worker needs it.
+    scopes: [
+      "workers-scripts.admin",
+      "workers-kv-storage.write",
+      "workers-routes.write",
+      "page.write",
+    ],
   },
   r2: {
     label: "R2 storage",
@@ -88,13 +98,16 @@ export const CLOUDFLARE_SCOPE_PRESETS = {
   },
   dns: {
     label: "DNS (also needed for custom domains)",
-    scopes: ["zone.read", "dns_records:read", "dns_records:edit"],
+    scopes: ["zone.read", "dns.read", "dns.write"],
   },
 } as const;
 export type CloudflareScopePreset = keyof typeof CLOUDFLARE_SCOPE_PRESETS;
 
 /** Scopes always requested so the connection can show who and where it is. */
-export const CLOUDFLARE_BASE_SCOPES = ["account:read", "user:read"] as const;
+export const CLOUDFLARE_BASE_SCOPES = [
+  "account-settings.read",
+  "user-details.read",
+] as const;
 
 export function cloudflareScopes(presets: readonly string[]): string[] {
   const scopes = new Set<string>(CLOUDFLARE_BASE_SCOPES);

@@ -190,9 +190,19 @@ export default function HTML({
             </React.Fragment>
           );
         }
-        const props = attributesToProps(
-          sanitizeHtmlAttributes(name, attribs, urlTransform, sanitizeOptions),
+        const sanitized = sanitizeHtmlAttributes(
+          name,
+          attribs,
+          urlTransform,
+          sanitizeOptions,
         );
+        if (name.toLowerCase() === "iframe" && !sanitized.src) {
+          // Only vetted embeds keep their src.  An iframe without one would
+          // be an empty, unsandboxed about:blank frame in this page's origin
+          // (sanitizing also drops the floor's sandbox): render nothing.
+          return React.createElement(React.Fragment);
+        }
+        const props = attributesToProps(sanitized);
         return React.createElement(
           name,
           props,

@@ -16,7 +16,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
+import type {
+  HarnessBinding,
+  HarnessProcess,
+  HarnessTurnPublicationContext,
+} from "@cocalc/ai/acp/harness";
 import { mountArg } from "@cocalc/backend/podman";
 import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
@@ -76,6 +80,29 @@ const logger = getLogger("project-host:acp:claude-subscription-controller");
 export const CLAUDE_CONTROLLER_BASE_IMAGE = normalizeRootfsImageName(
   DEFAULT_PROJECT_IMAGE,
 );
+
+/**
+ * The publication values of the turn running in this controller's
+ * conversation, for a project command: the CLI's defaults for `artifact
+ * publish`. Cleared between turns, and for a context of another
+ * conversation, so a command never publishes as the wrong message.
+ */
+export function turnPublicationEnv(
+  conversation: { path: string; threadId: string },
+  context: HarnessTurnPublicationContext | undefined,
+): Record<string, string> {
+  const current =
+    context &&
+    context.path === conversation.path &&
+    context.thread_id === conversation.threadId &&
+    Number.isFinite(Date.parse(context.message_date))
+      ? context
+      : undefined;
+  return {
+    COCALC_CODEX_MESSAGE_DATE: current?.message_date ?? "",
+    COCALC_WORKBENCH: current?.workbench ? "1" : "",
+  };
+}
 
 export async function ensureClaudeTranscriptDirectory(options: {
   projectHome: string;
@@ -363,6 +390,9 @@ ${skill}
   let created = false;
   let launched = false;
   let toolBridge: ClaudeProjectToolBridge | undefined;
+  // The running turn's; every project command gets it (see
+  // turnPublicationEnv), so it survives the agent compacting its context.
+  let turnPublication: HarnessTurnPublicationContext | undefined;
   let cliLease:
     | RenewableCliLease<
         NonNullable<Awaited<ReturnType<typeof createProjectCliTokenLease>>>
@@ -515,6 +545,9 @@ ${skill}
       leasedProjectExecutor({
         leases,
         envFor: cliEnvFor,
+        // The turn that asked for the command, even if it ends before the
+        // command gets its lease.
+        admissionEnv: () => turnPublicationEnv(conversation!, turnPublication),
         execute: (env, script, cwd, signal, options) =>
           sandboxExec({
             project_id: projectId,
@@ -609,6 +642,9 @@ ${skill}
       setAsyncQuestionHandler: toolBridge
         ? (handler) => toolBridge!.setAsyncQuestionHandler(handler)
         : undefined,
+      setTurnPublicationContext: (context) => {
+        turnPublication = context;
+      },
       // A lease issued after a fence has no connector turn until the next turn.
       beginConnectorTurn: async (chat) =>
         await leases.current?.beginConnectorTurn(chat),

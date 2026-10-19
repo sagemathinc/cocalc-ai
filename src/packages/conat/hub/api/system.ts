@@ -3377,6 +3377,9 @@ export interface System {
     category: ManagedProjectEgressCategory;
     allowed: boolean;
     blocked_by?: "5h" | "7d";
+    // When the blocking window is back under its limit (an ISO string once
+    // serialized), if known.
+    blocked_until?: Date | string;
     managed_egress_5h_bytes?: number;
     managed_egress_7d_bytes?: number;
     egress_5h_bytes?: number;

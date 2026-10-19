@@ -559,6 +559,80 @@ export async function getManagedEgressCategoryUsageForAccount(opts: {
   };
 }
 
+// For a rolling window over minute rollups: the earliest time, with no new
+// traffic, at which the window's usage is back at or under `limit`.
+export function computeRollingWindowBlockedUntil({
+  buckets,
+  windowMs,
+  limit,
+}: {
+  buckets: { bucket_start: Date; bytes: number }[];
+  windowMs: number;
+  limit: number;
+}): Date | undefined {
+  const sorted = [...buckets].sort(
+    (a, b) => a.bucket_start.getTime() - b.bucket_start.getTime(),
+  );
+  const total = sorted.reduce((sum, { bytes }) => sum + bytes, 0);
+  if (total <= limit) return undefined;
+  let agedOut = 0;
+  for (const { bucket_start, bytes } of sorted) {
+    agedOut += bytes;
+    if (total - agedOut <= limit) {
+      // A bucket stops counting once it is older than the window.
+      return new Date(bucket_start.getTime() + windowMs + 1000);
+    }
+  }
+  return undefined;
+}
+
+export async function getManagedEgressCategoryBlockedUntil(opts: {
+  account_id: string;
+  category: ManagedProjectEgressCategory;
+  window: "5h" | "7d";
+  limit: number;
+  now?: Date;
+}): Promise<Date | undefined> {
+  const end = opts.now ?? new Date();
+  const windowMs =
+    opts.window === "5h" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const start = new Date(end.getTime() - windowMs);
+  const { rows } = await getPool().query<{
+    bucket_start: Date;
+    bytes: string | number;
+  }>(
+    `
+      SELECT bucket_start, SUM(bytes) AS bytes
+      FROM ${ROLLUP_TABLE}
+      WHERE account_id = $1
+        AND category = $2
+        AND bucket_start >= $3
+        AND bucket_start < $4
+      GROUP BY bucket_start
+    `,
+    [opts.account_id, opts.category, start, end],
+  );
+  const buckets = rows.map((row) => ({
+    bucket_start: new Date(row.bucket_start),
+    bytes: Math.max(0, Number(row.bytes) || 0),
+  }));
+  for (const entry of pendingRollups.values()) {
+    if (
+      entry.account_id === opts.account_id &&
+      entry.category === opts.category &&
+      entry.bucket_start >= start &&
+      entry.bucket_start < end
+    ) {
+      buckets.push({ bucket_start: entry.bucket_start, bytes: entry.bytes });
+    }
+  }
+  return computeRollingWindowBlockedUntil({
+    buckets,
+    windowMs,
+    limit: opts.limit,
+  });
+}
+
 function formatDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return "";
   const totalMinutes = Math.ceil(ms / 60000);

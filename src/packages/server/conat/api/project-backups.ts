@@ -25,7 +25,7 @@ import {
   assertProjectOwnerCanIncreaseAccountStorage,
   getProjectBackupLimit,
 } from "@cocalc/server/membership/project-limits";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
 import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
 import { assertProjectRuntimeCapability } from "@cocalc/server/launchpad/project-runtime";
@@ -153,12 +153,13 @@ async function assertManagedBackupAllowed({
   if (policy.allowed) {
     return;
   }
-  const lines = [
-    "Managed backup upload limit reached for this account.",
-    "New backups, including scheduled backups and moves that require a backup, are temporarily blocked until the egress usage window resets.",
-    ...formatManagedEgressPolicyDetails(policy),
-  ];
-  throw new Error(lines.join("\n"));
+  const message = formatManagedEgressBlockedMessage({
+    category: policy.category ?? "",
+    policy,
+    blocked:
+      "New backups, including scheduled backups and moves that require a backup, are blocked.",
+  });
+  throw new Error(message);
 }
 
 function lroResponse({

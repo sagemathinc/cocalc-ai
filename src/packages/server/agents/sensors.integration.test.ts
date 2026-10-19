@@ -99,6 +99,7 @@ import {
 } from "./sensors";
 import {
   claimDueSensors,
+  removeDoneWatchers,
   runClaimedSensor,
   setSensorDispatchHookForTests,
   setSensorIssueHookForTests,
@@ -275,6 +276,56 @@ describeDb("agent sensors", () => {
     expect(rows[0]).toEqual({ status: "active", pause_reason: null });
     limits.sensor_max_wakes_per_day = 0;
     await expect(watch()).rejects.toThrow(/membership/);
+  });
+
+  test("paused watchers are removed a day after they would have given up", async () => {
+    const watch = async () =>
+      (
+        (await agentSensorRequest(run, agent, {
+          action: "sensor",
+          op: "watch",
+          watch: {
+            type: "at",
+            at: new Date(Date.now() + 3_600_000).toISOString(),
+            note: "check CI",
+          },
+        })) as any
+      ).sensor;
+    const pausedAt = async (sensor_id: string, expiresAgoMs: number) =>
+      await getPool().query(
+        `UPDATE agent_sensors SET status='paused',
+           spec=jsonb_set(spec, '{expires_at}', to_jsonb($2::text))
+         WHERE sensor_id=$1`,
+        [sensor_id, new Date(Date.now() - expiresAgoMs).toISOString()],
+      );
+    const gaveUp = await watch();
+    const recent = await watch();
+    const active = await watch();
+    const revised = await watch();
+    await pausedAt(gaveUp.sensor_id, 2 * 86_400_000);
+    // Gave up only an hour ago: still listed for a day.
+    await pausedAt(recent.sensor_id, 3_600_000);
+    // Gave up long ago, but a replacement awaits review: kept.
+    await pausedAt(revised.sensor_id, 2 * 86_400_000);
+    await getPool().query(
+      "UPDATE agent_sensors SET pending_spec=spec WHERE sensor_id=$1",
+      [revised.sensor_id],
+    );
+    await removeDoneWatchers();
+    const { rows } = await getPool().query(
+      "SELECT sensor_id FROM agent_sensors WHERE sensor_id = ANY($1)",
+      [
+        [
+          gaveUp.sensor_id,
+          recent.sensor_id,
+          active.sensor_id,
+          revised.sensor_id,
+        ],
+      ],
+    );
+    expect(rows.map(({ sensor_id }) => sensor_id).sort()).toEqual(
+      [recent.sensor_id, active.sensor_id, revised.sensor_id].sort(),
+    );
   });
 
   test("a change keeps the approved version running until approved", async () => {

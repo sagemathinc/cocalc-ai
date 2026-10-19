@@ -4062,6 +4062,11 @@ export async function repairAcceptedCourseStudentInviteAccounts({
   if (!Array.isArray(students)) {
     throw new Error("students must be an array");
   }
+  // Routed to the course project's owning bay (see routes), which alone may
+  // vouch for access to the course to other bays.
+  await (
+    await projectControlHandlers()
+  ).assertCurrentProjectOwnership({ project_id: course_project_id });
   await assertCollabAllowRemoteProjectAccess({
     account_id,
     project_id: course_project_id,
@@ -4138,6 +4143,7 @@ export async function repairAcceptedCourseStudentInviteAccounts({
       ...(await getInterBayBridge()
         .projectCollabInvite(bay_id)
         .repairAcceptedCourseStudentInviteAccounts({
+          source_bay_id: getConfiguredBayId(),
           account_id,
           course_project_id,
           students: remoteStudents,
@@ -4186,6 +4192,12 @@ export async function ensureCourseManagerAccess({
   if (!isValidUUID(course_project_id)) {
     throw new Error("invalid course_project_id");
   }
+  // Routed to the course project's owning bay (see routes): its managers are
+  // read here, where the course lives, and only this bay may vouch for them
+  // to the bays of the student projects.
+  await (
+    await projectControlHandlers()
+  ).assertCurrentProjectOwnership({ project_id: course_project_id });
   await assertCollabAllowRemoteProjectAccess({
     account_id,
     project_id: course_project_id,
@@ -4247,6 +4259,7 @@ export async function ensureCourseManagerAccess({
       .projectCollabInvite(bay_id)
       .ensureCourseManagerAccess({
         ...common,
+        source_bay_id: getConfiguredBayId(),
         project_ids: remoteProjectIds,
       })) {
       resultsByProjectId.set(result.project_id, result);

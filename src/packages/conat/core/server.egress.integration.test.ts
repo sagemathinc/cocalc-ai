@@ -353,4 +353,75 @@ describe("core server authenticated browser egress integration", () => {
     projectClient.close();
     await server.close();
   });
+
+  it("attributes browser egress to normalized subjects, and replies to the request subject", async () => {
+    const server = init({
+      port: 0,
+      getUser: async (socket) => makeUserFromHandshake(socket),
+    });
+    const browser = connect({
+      address: server.address(),
+      noCache: true,
+      auth: { account_id: "browser-account", browser_id: "browser-attr" },
+    });
+    const service = connect({
+      address: server.address(),
+      noCache: true,
+      auth: { hub_id: "hub-1" },
+    });
+    await Promise.all([
+      browser.waitUntilSignedIn({ timeout: 5000 }),
+      service.waitUntilSignedIn({ timeout: 5000 }),
+    ]);
+
+    const projectId = "9f6f3b0e-6f47-4a59-8a8a-0b6d7c1b2a33";
+    const pushSubject = `egress.attr.${projectId}.changes`;
+    const pushSub = await browser.subscribe(pushSubject);
+    const apiSubject = `egress.attr.${projectId}.history`;
+    const apiSub = await service.subscribe(apiSubject);
+
+    const pushPayload = randomBytes(50_000).toString("base64url");
+    await service.publish(pushSubject, pushPayload);
+    expect((await pushSub.next()).value?.data).toBe(pushPayload);
+
+    const replyPayload = randomBytes(120_000).toString("base64url");
+    const responding = (async () => {
+      const { value: mesg } = await apiSub.next();
+      await mesg.respond(replyPayload);
+    })();
+    const response = await browser.request(apiSubject, "load");
+    await responding;
+    expect(response.data).toBe(replyPayload);
+
+    const attributed = await waitFor("subject attribution", () => {
+      const current = findSocketByBrowserId(
+        server.getStatsSnapshot(),
+        "browser-attr",
+      );
+      const bySubject = current?.stats.egress_by_subject ?? {};
+      return (bySubject["reply:egress.attr.*.history"] ?? 0) >
+        Buffer.byteLength(replyPayload) &&
+        (bySubject["egress.attr.*.changes"] ?? 0) >
+          Buffer.byteLength(pushPayload)
+        ? bySubject
+        : undefined;
+    });
+    // Everything the socket received is accounted for under some key.
+    const stats = findSocketByBrowserId(
+      server.getStatsSnapshot(),
+      "browser-attr",
+    )!.stats;
+    expect(
+      Object.values(stats.egress_by_subject ?? {}).reduce((a, b) => a + b, 0),
+    ).toBe(stats.egress?.bytes);
+    expect(Object.keys(attributed).some((key) => key.includes(projectId))).toBe(
+      false,
+    );
+
+    pushSub.close();
+    apiSub.close();
+    browser.close();
+    service.close();
+    await server.close();
+  });
 });

@@ -87,6 +87,15 @@ export interface HarnessProcess {
    */
   beginConnectorTurn?(chat: AcpChatContext): Promise<string | void>;
   endConnectorTurn?(): Promise<void>;
+  /**
+   * The running turn's publication context, or undefined between turns. A
+   * launcher whose processes outlive turns (the Claude controller) gives it
+   * to every project command, so a turn can publish even after the agent's
+   * context lost the prompt that carried it.
+   */
+  setTurnPublicationContext?(
+    context: HarnessTurnPublicationContext | undefined,
+  ): void;
   /** Launcher must terminate the execution boundary, including descendants. */
   stop(): Promise<void>;
   /**
@@ -100,6 +109,14 @@ export type HarnessAsyncQuestionHandler = (input: unknown) => Promise<{
   question_id: string;
   status: "pending";
 }>;
+
+/** Where an artifact a turn publishes goes: its chat, thread and message. */
+export interface HarnessTurnPublicationContext {
+  path: string;
+  thread_id: string;
+  message_date: string;
+  workbench: boolean;
+}
 
 export interface HarnessBinding {
   projectId: string;
@@ -452,6 +469,13 @@ export class AcpHarnessClient {
   /** Revoke the current turn's CoCalc connector credential. */
   async endConnectorTurn(): Promise<void> {
     await this.process.endConnectorTurn?.();
+  }
+
+  /** The running turn's publication context, for the launcher's commands. */
+  setTurnPublicationContext(
+    context: HarnessTurnPublicationContext | undefined,
+  ): void {
+    this.process.setTurnPublicationContext?.(context);
   }
 
   get controls(): HarnessSessionControls {

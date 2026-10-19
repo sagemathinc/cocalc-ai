@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { Command } from "commander";
 
-import { registerAccountCommand } from "./account";
+import { managedEgressWarnings, registerAccountCommand } from "./account";
 
 test("manual API keys accept canonical scope files and list stored scopes without secrets", async () => {
   const directory = mkdtempSync(join(tmpdir(), "api-key-scope-"));
@@ -1037,4 +1037,69 @@ test("account repair-membership forwards write and clear-stale flags", async () 
     dry_run: false,
     clear_stale: true,
   });
+});
+
+test("account membership warns at 90% of each egress pool and names blocks", () => {
+  assert.deepEqual(
+    managedEgressWarnings({
+      usage: {
+        managed_egress_5h_bytes: 100,
+        managed_control_plane_egress_7d_bytes: 89_000_000_000,
+        managed_control_plane_egress_7d_limit_bytes: 100_000_000_000,
+      } as any,
+      usageLimits: { egress_5h_bytes: 1000 },
+    }),
+    [],
+  );
+  const warnings = managedEgressWarnings({
+    usage: {
+      managed_egress_5h_bytes: 950,
+      managed_control_plane_egress_7d_bytes: 108_000_000_000,
+      managed_control_plane_egress_7d_limit_bytes: 100_000_000_000,
+    } as any,
+    usageLimits: { egress_5h_bytes: 1000 },
+  });
+  assert.equal(warnings.length, 2);
+  assert.match(
+    warnings[0],
+    /^Managed network traffic is at .*\(95%\) in the 5h window/,
+  );
+  assert.match(
+    warnings[1],
+    /^Browser control traffic limit reached: .*\(108%\) in the 7d window\. Signing in from a browser .* contact support/,
+  );
+});
+
+test("account membership egress warnings handle a 0 limit and the exact-limit boundary", () => {
+  const blocked = managedEgressWarnings({
+    usage: {
+      managed_control_plane_egress_5h_bytes: 5_000_000,
+      managed_control_plane_egress_5h_limit_bytes: 0,
+    } as any,
+    usageLimits: {},
+  });
+  assert.equal(blocked.length, 1);
+  assert.match(
+    blocked[0],
+    /^Browser control traffic limit reached: .* limit of 0/,
+  );
+  assert.doesNotMatch(blocked[0], /Infinity|NaN/);
+  // no traffic under a 0 limit: nothing to say
+  assert.deepEqual(
+    managedEgressWarnings({
+      usage: {
+        managed_control_plane_egress_5h_bytes: 0,
+        managed_control_plane_egress_5h_limit_bytes: 0,
+      } as any,
+      usageLimits: {},
+    }),
+    [],
+  );
+  // exactly at the limit is not blocked (the server blocks only above it)
+  const atLimit = managedEgressWarnings({
+    usage: { managed_egress_5h_bytes: 1000 } as any,
+    usageLimits: { egress_5h_bytes: 1000 },
+  });
+  assert.equal(atLimit.length, 1);
+  assert.match(atLimit[0], /is at .*\(100%\).* Over the limit/);
 });

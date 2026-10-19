@@ -1,3 +1,4 @@
+import { selectThreadByUser } from "./select-thread-by-user";
 import { useEffect, useRef } from "react";
 import { Alert, Button, Space } from "antd";
 import { readArtifact, validateArtifactFeedback } from "@cocalc/chat";
@@ -67,7 +68,7 @@ export function useArtifactFeedbackDraft({
           text: serialized,
         });
         knownDrafts.current.set(targetKey, serialized);
-        actions.setSelectedThread?.(feedback.thread_id);
+        selectThreadByUser(actions, feedback.thread_id);
       }
     };
     actions.stageArtifactFeedback = stage;

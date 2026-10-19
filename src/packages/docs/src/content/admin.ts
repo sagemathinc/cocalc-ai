@@ -2185,13 +2185,23 @@ Administrator, Administrator or OAuth Client Write role), and set:
 - **Token authentication method:** \`client_secret_basic\`.
 - **Redirect URL:** \`https://<your site>/settings/connectors\`, exactly
   (including any base path your site uses).
-- **Scopes:** mark \`account:read\` and \`user:read\` required. Add these as
-  optional, so users can choose: \`workers:write\`, \`workers_scripts:write\`,
-  \`workers_routes:write\` (Workers & sites); \`workers-r2.read\`,
-  \`workers-r2.write\`, \`workers-r2-bucket-item.read\`,
-  \`workers-r2-bucket-item.write\` (R2 storage); \`zone.read\`,
-  \`dns_records:read\`, \`dns_records:edit\` (DNS). Include \`offline_access\`
-  if it is offered: CoCalc refuses sign-ins without a refresh token.
+- **Scopes:** in the dashboard each scope shows its ID in parentheses.
+  Mark **Account Settings Read** (\`account-settings.read\`) and **User
+  Details Read** (\`user-details.read\`) required. Add these as optional, so
+  users can choose:
+  - Workers & sites: **Workers Admin** (\`workers-scripts.admin\`; Workers
+    Editor cannot create a new Worker), **Workers KV Storage Write**
+    (\`workers-kv-storage.write\`), **Workers Routes Write**
+    (\`workers-routes.write\`), **Pages Write** (\`page.write\`);
+  - R2 storage: **Workers R2 Storage Read/Write** (\`workers-r2.read\`,
+    \`workers-r2.write\`), **Workers R2 Storage Bucket Item Read/Write**
+    (\`workers-r2-bucket-item.read\`, \`workers-r2-bucket-item.write\`);
+  - DNS: **Zone Read** (\`zone.read\`), **DNS Read** (\`dns.read\`), **DNS
+    Write** (\`dns.write\`).
+
+  Cloudflare adds \`offline_access\` (a refresh token) by itself; CoCalc
+  refuses sign-ins without one. A scope missing from the client makes every
+  sign-in fail with \`invalid_scope\`.
 
 Save the **Client ID** and **Client Secret**; Cloudflare shows the secret only
 once.
