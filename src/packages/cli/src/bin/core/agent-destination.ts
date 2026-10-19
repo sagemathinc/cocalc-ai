@@ -6,6 +6,7 @@ import {
   type AgentEndpoint,
   type AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
+import { externalAgentHandle } from "@cocalc/conat/agents/external";
 import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import { readIdentityCredential, sendIdentityMessage } from "./agent-message";
 
@@ -21,6 +22,10 @@ export interface ResolvedAgentDestination {
   delivery_mode?: AgentNetworkDiscovery["peers"][number]["networks"][number]["delivery_mode"];
   project_title?: string;
 }
+
+const isUuid = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
 export function matchesAgentNetwork(
   network: AgentNetworkDiscovery["peers"][number]["networks"][number],
@@ -56,7 +61,17 @@ export function resolveAgentName(
   requestedNetwork?: string,
 ): ResolvedAgentDestination {
   const name = input.trim().replace(/^@/, "");
-  if (!/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name))
+  // A peer's member id, or an external agent's full label (what discovery
+  // shows for it), name it too.
+  const byId: boolean = isUuid(name as unknown);
+  const byLabel =
+    !byId &&
+    directory.peers.some(
+      ({ member }) =>
+        member.kind === "external" &&
+        member.label.trim().toLowerCase() === name.toLowerCase(),
+    );
+  if (!byId && !byLabel && !/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name))
     throw new Error("Use an exact lowercase agent name, such as reviewer");
   // A selected mention remains pinned even if the account directory changes.
   const selected = references.filter((ref) => ref.name === name);
@@ -64,9 +79,15 @@ export function resolveAgentName(
     // Names are resolved from the current account-home network directory.
   }
   const peers = directory.peers.filter(({ member }) =>
-    member.kind === "registered"
-      ? member.name === name
-      : member.label.trim().toLowerCase() === name,
+    byId
+      ? member.member_id === name ||
+        (member.kind === "registered" && member.endpoint.agent_id === name)
+      : byLabel
+        ? member.kind === "external" &&
+          member.label.trim().toLowerCase() === name.toLowerCase()
+        : member.kind === "registered"
+          ? member.name === name
+          : externalAgentHandle(member.label) === name,
   );
   const pinned = selected.map((ref) => ref.target);
   const matches = pinned.length
@@ -160,9 +181,12 @@ function peerName({ member }: Peer): string {
   return (member.kind === "registered" ? member.name : member.label) ?? "";
 }
 
-const isUuid = (value: unknown): value is string =>
-  typeof value === "string" &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+/** The @name to send to: a registered agent's name, an external's handle. */
+export function peerHandle({ member }: Peer): string | undefined {
+  return member.kind === "registered"
+    ? member.name
+    : externalAgentHandle(member.label);
+}
 
 /**
  * Read one --targets entry: a peer name, or the target in any of the shapes
@@ -245,7 +269,8 @@ export function resolveBroadcastTargets(
           ? peer.member.member_id === p.member_id ||
             (peer.member.kind === "registered" &&
               peer.member.endpoint.agent_id === p.member_id)
-          : peerName(peer).trim().toLowerCase() === p.name.toLowerCase(),
+          : peerName(peer).trim().toLowerCase() === p.name.toLowerCase() ||
+            peerHandle(peer) === p.name.replace(/^@/, "").toLowerCase(),
     );
     if (matches.length === 0)
       throw new Error(
