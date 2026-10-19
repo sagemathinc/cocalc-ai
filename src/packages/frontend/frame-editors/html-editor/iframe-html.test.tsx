@@ -254,6 +254,26 @@ describe("IFrameHTML without a content origin", () => {
     },
   );
 
+  it("gives a viewer only the safe preview, never Trusted mode, and doesn't ask again", async () => {
+    issueMock.mockResolvedValue({ unavailable: "no-access" });
+    const project_id = freshProject();
+    set_local_storage(`${project_id}:/home/user/a.html:trust`, "true");
+    for (let i = 0; i < 2; i++) {
+      const view = renderFrame(project_id);
+      await waitFor(() =>
+        expect(
+          screen.getByTitle("Rendered preview of /home/user/a.html").getAttribute("srcdoc"),
+        ).toBe("<p>hi</p>"),
+      );
+      expect(screen.queryByRole("switch")).toBeNull();
+      expect(authedUrlMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ url: expect.any(String) }),
+      );
+      view.unmount();
+    }
+    expect(issueMock).toHaveBeenCalledTimes(1);
+  });
+
   it("doesn't ask again for a project whose origin is off", async () => {
     issueMock.mockResolvedValue({ unavailable: "off" });
     const project_id = freshProject();

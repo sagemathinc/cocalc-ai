@@ -17,6 +17,9 @@ export type ProjectContentUrlState =
   | { status: "unavailable" }
   // Asking failed (retried soon): show only the safe preview meanwhile.
   | { status: "error" }
+  // The site has a content origin but this account (e.g. a viewer) gets no
+  // links: only the safe preview, never Trusted mode on the host origin.
+  | { status: "no-access" }
   | { status: "ready"; url: string };
 
 // Don't ask again for a while once a project's content origin is off.
@@ -31,7 +34,10 @@ export function errorRetryDelayMs(failures: number): number {
     ERROR_RETRY_MS * 2 ** Math.max(0, failures - 1),
   );
 }
-const unavailableUntil = new Map<string, number>();
+const unavailableUntil = new Map<
+  string,
+  { until: number; status: "unavailable" | "no-access" }
+>();
 
 // When to re-issue a link: an hour before it expires, or halfway for a
 // short one.
@@ -61,8 +67,13 @@ export function useProjectContentUrl({
   }, [project_id, path]);
 
   useEffect(() => {
-    if (!enabled || (unavailableUntil.get(project_id) ?? 0) > Date.now()) {
+    if (!enabled) {
       setState({ status: "unavailable" });
+      return;
+    }
+    const known = unavailableUntil.get(project_id);
+    if (known != null && known.until > Date.now()) {
+      setState({ status: known.status });
       return;
     }
     let canceled = false;
@@ -81,8 +92,13 @@ export function useProjectContentUrl({
         if (canceled) return;
         failures.current = 0;
         if (!("url" in result)) {
-          unavailableUntil.set(project_id, Date.now() + UNAVAILABLE_RETRY_MS);
-          setState({ status: "unavailable" });
+          const status =
+            result.unavailable === "no-access" ? "no-access" : "unavailable";
+          unavailableUntil.set(project_id, {
+            until: Date.now() + UNAVAILABLE_RETRY_MS,
+            status,
+          });
+          setState({ status });
           return;
         }
         setState((prev) =>
