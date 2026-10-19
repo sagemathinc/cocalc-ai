@@ -879,6 +879,8 @@ PODMAN_STALE_BOOT_ERROR_PATTERNS = (
         r"cannot re-exec process to join the existing user namespace", re.IGNORECASE
     ),
     re.compile(r"cannot join.*user namespace", re.IGNORECASE),
+    # setns into the namespace of a stale pause.pid that names a reused PID.
+    re.compile(r"cannot set user namespace(?! mode)", re.IGNORECASE),
     re.compile(r"failed to reexec", re.IGNORECASE),
     re.compile(r"invalid internal status", re.IGNORECASE),
 )
@@ -6764,6 +6766,57 @@ deny() {
   exit 2
 }
 
+# Rootless Podman joins the user namespace of the process named in
+# libpod/tmp/pause.pid. This runtime directory is on persistent storage, so
+# after a reboot or a new container the PID can belong to an unrelated process
+# of the runtime user; Podman then exits with "cannot set user namespace"
+# instead of starting a new pause process. Keep pause.pid only while it names
+# this runtime's live Podman pause process: same user, another user namespace,
+# and _PODMAN_PAUSE=1 plus XDG_RUNTIME_DIR=<this runtime dir> in its
+# environment (the runtime user has a second runtime dir for project-host).
+# Podman publishes pause.pid before the new pause process has set its
+# environment, so wait briefly for it before deleting. This runs as the
+# runtime user, so neither the checks nor the unlink have more authority than
+# the owner of the runtime tree.
+STALE_PODMAN_PAUSE_PID_CHECK='
+pause_pid_file="$1"
+runtime_dir="$2"
+[ -f "$pause_pid_file" ] || exit 0
+pid="$(head -c 32 -- "$pause_pid_file" 2>/dev/null)"
+case "$pid" in
+  ""|*[!0-9]*) pid="" ;;
+esac
+pause_environment() {
+  tr "\\0" "\\n" <"/proc/$pid/environ" 2>/dev/null >"$environment" || return 1
+  grep -qx "_PODMAN_PAUSE=1" "$environment" &&
+    grep -qxF "XDG_RUNTIME_DIR=$runtime_dir" "$environment"
+}
+if [ -n "$pid" ] &&
+   [ "$(stat -c %u "/proc/$pid" 2>/dev/null)" = "$(id -u)" ] &&
+   [ -n "$(readlink "/proc/$pid/ns/user" 2>/dev/null)" ] &&
+   [ "$(readlink "/proc/$pid/ns/user" 2>/dev/null)" != "$(readlink /proc/self/ns/user)" ]; then
+  environment="$(mktemp)"
+  attempt=0
+  while [ "$attempt" -lt 20 ]; do
+    if pause_environment; then
+      rm -f -- "$environment"
+      exit 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  rm -f -- "$environment"
+fi
+rm -f -- "$pause_pid_file"
+'
+
+drop_stale_podman_pause_pid() {
+  local runtime_dir="$1" podman_user="$2"
+  /usr/bin/sudo -u "$podman_user" -H /usr/bin/env -i PATH=/usr/bin:/bin \\
+    /bin/bash -c "$STALE_PODMAN_PAUSE_PID_CHECK" bash \\
+    "${runtime_dir}/libpod/tmp/pause.pid" "$runtime_dir" || true
+}
+
 run_rootfs_podman_as_user() {
   local podman_user="$1"
   local runtime_uid runtime_dir podman_bin
@@ -6774,6 +6827,7 @@ run_rootfs_podman_as_user() {
   fi
   runtime_uid="$(id -u -- "$podman_user")"
   runtime_dir="/mnt/cocalc/data/tmp/cocalc-podman-runtime-${runtime_uid}"
+  drop_stale_podman_pause_pid "$runtime_dir" "$podman_user"
   runtime_env=(
     "XDG_RUNTIME_DIR=${runtime_dir}"
     "COCALC_PODMAN_RUNTIME_DIR=${runtime_dir}"
@@ -12572,7 +12626,7 @@ podman_ps_once() {
 }
 
 podman_runtime_namespace_error() {
-  grep -qiE 'cannot re-exec process to join the existing user namespace|cannot join.*user namespace|failed to reexec|invalid internal status' <<< "$1"
+  grep -qiE 'cannot re-exec process to join the existing user namespace|cannot join.*user namespace|cannot set user namespace($|[^ ]| [^m])|failed to reexec|invalid internal status' <<< "$1"
 }
 
 project_host_app_running() {

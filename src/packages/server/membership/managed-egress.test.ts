@@ -707,3 +707,64 @@ describe("managed egress history", () => {
     ]);
   });
 });
+
+describe("computeRollingWindowBlockedUntil", () => {
+  const windowMs = 5 * 60 * 60 * 1000;
+  const at = (iso: string) => new Date(iso);
+
+  it("is undefined when usage is within the limit", async () => {
+    const { computeRollingWindowBlockedUntil } =
+      await import("./managed-egress");
+    expect(
+      computeRollingWindowBlockedUntil({
+        buckets: [{ bucket_start: at("2026-10-18T20:00:00Z"), bytes: 10 }],
+        windowMs,
+        limit: 10,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns when enough of the oldest usage leaves the window", async () => {
+    const { computeRollingWindowBlockedUntil } =
+      await import("./managed-egress");
+    // 30 bytes against a limit of 15: the two oldest buckets (unsorted on
+    // input) must age out, so the block lifts when the 20:01 bucket leaves.
+    expect(
+      computeRollingWindowBlockedUntil({
+        buckets: [
+          { bucket_start: at("2026-10-18T21:00:00Z"), bytes: 10 },
+          { bucket_start: at("2026-10-18T20:00:00Z"), bytes: 10 },
+          { bucket_start: at("2026-10-18T20:01:00Z"), bytes: 10 },
+        ],
+        windowMs,
+        limit: 15,
+      })?.toISOString(),
+    ).toBe("2026-10-19T01:01:01.000Z");
+  });
+});
+
+describe("mergeMetadataSamples", () => {
+  it("sums top_subjects across samples and keeps the first sample's other fields", async () => {
+    const { mergeMetadataSamples } = await import("./managed-egress");
+    expect(
+      mergeMetadataSamples(
+        { browser_ids: ["a"], top_subjects: [{ subject: "x", bytes: 5 }] },
+        {
+          browser_ids: ["b"],
+          top_subjects: [
+            { subject: "x", bytes: 7 },
+            { subject: "y", bytes: 20 },
+          ],
+        },
+      ),
+    ).toEqual({
+      browser_ids: ["a"],
+      top_subjects: [
+        { subject: "y", bytes: 20 },
+        { subject: "x", bytes: 12 },
+      ],
+    });
+    expect(mergeMetadataSamples(undefined, { a: 1 })).toEqual({ a: 1 });
+    expect(mergeMetadataSamples({ a: 1 }, { a: 2 })).toEqual({ a: 1 });
+  });
+});

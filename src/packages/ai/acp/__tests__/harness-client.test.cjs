@@ -659,6 +659,7 @@ function adapter(
   validateAuthority,
   subscription = false,
   connector,
+  processExtras = {},
 ) {
   let launches = 0;
   const launchedSessions = [];
@@ -726,6 +727,7 @@ function adapter(
               endConnectorTurn: connector.end,
             }
           : {}),
+        ...processExtras,
       };
     },
     attention,
@@ -1090,6 +1092,49 @@ test("a Claude limit rejection is the failure of the turn it ended", async (t) =
       failure.resets_at > before && failure.resets_at <= before + 3_700_000,
     );
   }
+});
+
+test("each turn gives its publication context to the process, and takes it back after", async (t) => {
+  const contexts = [];
+  const { agent, request } = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    undefined,
+    false,
+    undefined,
+    { setTurnPublicationContext: (context) => contexts.push(context) },
+  );
+  const chat = {
+    ...request.chat,
+    message_date: "2026-10-19T04:24:28.000Z",
+  };
+  await agent.evaluate({ ...request, chat });
+  await agent.evaluate({
+    ...request,
+    chat: {
+      ...chat,
+      message_date: "2026-10-19T05:00:00.000Z",
+      workbench: false,
+    },
+  });
+  assert.deepEqual(contexts, [
+    {
+      path: "a.chat",
+      thread_id: "conversation-a",
+      message_date: "2026-10-19T04:24:28.000Z",
+      workbench: true,
+    },
+    undefined,
+    {
+      path: "a.chat",
+      thread_id: "conversation-a",
+      message_date: "2026-10-19T05:00:00.000Z",
+      workbench: false,
+    },
+    undefined,
+  ]);
 });
 
 const textChunk = (text, messageId) => ({

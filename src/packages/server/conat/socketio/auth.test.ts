@@ -1850,3 +1850,67 @@ describe("cookie origin policy on hub sockets", () => {
     ).resolves.toMatchObject({ account_id });
   });
 });
+
+describe("connected browser sessions count as used", () => {
+  const { connectedSessionCount } = jest.requireActual(
+    "@cocalc/server/auth/session-expiry",
+  );
+  const { EventEmitter } = jest.requireActual("events");
+
+  function browserSocket() {
+    const socket = new EventEmitter() as any;
+    socket.connected = true;
+    socket.handshake = {
+      auth: { browser_id: "browser123" },
+      headers: { cookie: "remember_me=token" },
+    };
+    return socket;
+  }
+
+  beforeEach(() => {
+    (getAccountIdFromRememberMe as jest.Mock).mockReset();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReset();
+    getHubManagedEgressBlockedMessageMock.mockReset();
+  });
+
+  it("tracks an admitted socket until it disconnects", async () => {
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash-a");
+    (getAccountIdFromRememberMe as jest.Mock).mockResolvedValue(account_id);
+    const socket = browserSocket();
+    await getUser(socket);
+    expect(connectedSessionCount("hash-a")).toBe(1);
+    // Revalidating the same socket does not count it twice.
+    await getUser(socket, undefined, { revalidation: true });
+    expect(connectedSessionCount("hash-a")).toBe(1);
+    socket.connected = false;
+    socket.emit("disconnect");
+    expect(connectedSessionCount("hash-a")).toBe(0);
+  });
+
+  it("never tracks a socket that closed while it was authenticating", async () => {
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash-b");
+    const socket = browserSocket();
+    (getAccountIdFromRememberMe as jest.Mock).mockImplementation(async () => {
+      // The transport closes during the check; its disconnect has fired.
+      socket.connected = false;
+      socket.emit("disconnect");
+      return account_id;
+    });
+    await getUser(socket);
+    expect(connectedSessionCount("hash-b")).toBe(0);
+  });
+
+  it("never tracks a socket rejected after its cookie is checked", async () => {
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash-c");
+    (getAccountIdFromRememberMe as jest.Mock).mockResolvedValue(account_id);
+    getHubManagedEgressBlockedMessageMock.mockReturnValue(
+      "interactive blocked",
+    );
+    const socket = browserSocket();
+    await expect(getUser(socket)).rejects.toMatchObject({
+      message: "interactive blocked",
+    });
+    expect(connectedSessionCount("hash-c")).toBe(0);
+    expect(socket.listenerCount("disconnect")).toBe(0);
+  });
+});

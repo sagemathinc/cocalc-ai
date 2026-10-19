@@ -16,6 +16,16 @@ type Queryable = Pick<PoolClient, "query">;
 
 export const RENEWAL_ATTEMPT_LEASE_MS = 2 * 60 * 1000;
 const RENEWAL_ATTEMPT_RETRY_MS = 60 * 1000;
+// When automatic payment needs the customer (declined card, or the bank
+// requires authentication), the open payment stays payable and membership
+// benefits continue for this long after the paid-through boundary.
+export const RENEWAL_PAYMENT_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+// How often to recheck a payment that is waiting for the customer.
+export const RENEWAL_CUSTOMER_ACTION_RECHECK_MS = 6 * 60 * 60 * 1000;
+
+export function renewalGraceEndsAt(period_end: Date | string): Date {
+  return new Date(new Date(period_end).valueOf() + RENEWAL_PAYMENT_GRACE_MS);
+}
 
 function queryable(client?: Queryable): Queryable {
   return client ?? getPool();
@@ -401,6 +411,49 @@ export async function releaseSubscriptionRenewalAttempt({
       WHERE id=$1
         AND state='processing'`,
     [attempt_id, RENEWAL_ATTEMPT_RETRY_MS, `${error}`],
+  );
+}
+
+// Keep the attempt open, with its Stripe payment, until the customer acts or
+// the grace period ends. Returns whether the customer still has to be sent
+// the action-needed notice (it is retried on every recheck until delivery is
+// recorded with markSubscriptionRenewalCustomerNotified).
+export async function deferSubscriptionRenewalAttemptForCustomer({
+  attempt_id,
+  error,
+}: {
+  attempt_id: string;
+  error: unknown;
+}): Promise<{ deferred: boolean; needsNotice: boolean }> {
+  const { rows } = await getPool().query<{ needs_notice: boolean }>(
+    `UPDATE subscription_renewal_attempts
+        SET state='scheduled',
+            lease_expires_at=NULL,
+            next_attempt_at=NOW() + ($2 * INTERVAL '1 millisecond'),
+            customer_action_required_at=COALESCE(customer_action_required_at, NOW()),
+            last_error=$3,
+            updated_at=NOW()
+      WHERE id=$1
+        AND state='processing'
+      RETURNING customer_action_notified_at IS NULL AS needs_notice`,
+    [attempt_id, RENEWAL_CUSTOMER_ACTION_RECHECK_MS, `${error}`],
+  );
+  if (!rows[0]) {
+    return { deferred: false, needsNotice: false };
+  }
+  return { deferred: true, needsNotice: !!rows[0].needs_notice };
+}
+
+export async function markSubscriptionRenewalCustomerNotified({
+  attempt_id,
+}: {
+  attempt_id: string;
+}): Promise<void> {
+  await getPool().query(
+    `UPDATE subscription_renewal_attempts
+        SET customer_action_notified_at=NOW(), updated_at=NOW()
+      WHERE id=$1 AND customer_action_notified_at IS NULL`,
+    [attempt_id],
   );
 }
 

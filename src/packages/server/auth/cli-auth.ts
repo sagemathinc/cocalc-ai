@@ -6,6 +6,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import basePath from "@cocalc/backend/base-path";
+import getLogger from "@cocalc/backend/logger";
 import { conatPassword } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
@@ -37,7 +38,16 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { validateExternalAgentLabel } from "@cocalc/conat/agents/external";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 
+const logger = getLogger("server:auth:cli-auth");
+
 const CHALLENGE_TTL_MS = 8 * 60 * 60_000;
+// An external agent's enrollment link waits for a person to open it, sign in
+// and choose a network; 15 minutes was often too short.
+export const EXTERNAL_AGENT_CHALLENGE_TTL_MS = 60 * 60_000;
+// Enrollment-status errors for an installation that exists for this request
+// (its secret matched) but can no longer be used.
+const EXTERNAL_INSTALLATION_ENDED =
+  /external_credential_inactive|external_credential_revoked|external_identity_unavailable|account_disabled/;
 const PENDING_CLI_LOGIN_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
 const CLI_LOGIN_START_IP_LIMIT_10M = 20;
 const CLI_LOGIN_START_IP_LIMIT_DAY = 100;
@@ -349,7 +359,10 @@ async function insertChallengeWithDb({
 }): Promise<{ id: string; expire: Date }> {
   const id = randomUUID();
   const expire = new Date(
-    Date.now() + (kind === "external-agent" ? 15 * 60_000 : CHALLENGE_TTL_MS),
+    Date.now() +
+      (kind === "external-agent"
+        ? EXTERNAL_AGENT_CHALLENGE_TTL_MS
+        : CHALLENGE_TTL_MS),
   );
   await db.query(
     `
@@ -1002,6 +1015,8 @@ export async function getCliAuthApprovalInfo({
   auth_client: CliAuthClientKind;
   state: CliAuthChallengeStatus;
   expires_at: Date;
+  /** Time left by the server's clock, so a page need not trust its own. */
+  expires_in_ms: number;
   external?: { label: string; origin_bay_id: string };
 }> {
   const row = await getChallengeRow(cleanChallengeId(challenge_id));
@@ -1011,6 +1026,34 @@ export async function getCliAuthApprovalInfo({
   const isPendingLogin =
     row.kind !== "elevate" && row.account_id === PENDING_CLI_LOGIN_ACCOUNT_ID;
   const label = isPendingLogin ? {} : await getAccountLabel(row.account_id);
+  // An external enrollment's row stays pending; whether it was approved
+  // lives in the account's installation (as getCliAuthChallengeStatus reads
+  // it), so the approval page can say so instead of offering the form again.
+  let state: CliAuthChallengeStatus = row.status;
+  if (row.kind === "external-agent" && !isPendingLogin && state === "pending") {
+    try {
+      const { installation } = await (
+        await import("@cocalc/server/agents/external")
+      ).externalEnrollmentStatus(
+        row.account_id,
+        row.id,
+        `${row.metadata?.secret_hash ?? ""}`,
+      );
+      if (installation) state = "approved";
+    } catch (err) {
+      if (EXTERNAL_INSTALLATION_ENDED.test(`${err}`)) {
+        // Approved earlier (the secret matched), since revoked or expired:
+        // approving again cannot revive it.
+        state = "canceled";
+      } else {
+        // The approval itself still checks; the page just can't tell early.
+        logger.warn("external enrollment status for approval info failed", {
+          challenge_id: row.id,
+          err: `${err}`,
+        });
+      }
+    }
+  }
   return {
     challenge_id: row.id,
     kind: row.kind,
@@ -1024,8 +1067,9 @@ export async function getCliAuthApprovalInfo({
     requested_duration: row.requested_duration ?? null,
     elevated_login: row.metadata?.elevated_login === true,
     auth_client: cleanAuthClientKind(row.metadata?.auth_client),
-    state: row.status,
+    state,
     expires_at: new Date(row.expire),
+    expires_in_ms: Math.max(0, new Date(row.expire).getTime() - Date.now()),
     ...(row.kind === "external-agent"
       ? {
           external: {

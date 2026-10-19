@@ -1004,4 +1004,39 @@ describe("site settings dangerous-session auth", () => {
       source_bay_id: "attached-a",
     });
   });
+
+  it("refuses session limits out of range or with idle above the lifetime", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => undefined);
+    const { setSiteSettings } = await import("./system");
+    const save = (settings: { name: string; value: string }[]) =>
+      setSiteSettings({ account_id: ACCOUNT_ID, browser_id: "b", settings });
+
+    await save([{ name: "session_max_lifetime_days", value: "30" }]);
+    // The saved 30-day lifetime counts: a 45-day idle timeout cannot be saved.
+    await expect(
+      save([{ name: "session_idle_timeout_days", value: "45" }]),
+    ).rejects.toThrow("at most its maximum lifetime");
+    await expect(
+      save([{ name: "session_max_lifetime_days", value: "400" }]),
+    ).rejects.toThrow("from 1 to 365");
+    await expect(
+      save([{ name: "session_idle_timeout_days", value: "0" }]),
+    ).rejects.toThrow("from 1 to 365");
+    // Both at once are checked as they will be.
+    await expect(
+      save([
+        { name: "session_idle_timeout_days", value: "90" },
+        { name: "session_max_lifetime_days", value: "120" },
+      ]),
+    ).resolves.toMatchObject({ count: 2 });
+    expect(
+      dbMock.set_server_setting.mock.calls
+        .map(([{ name, value }]) => `${name}=${value}`)
+        .filter((x) => x.startsWith("session_")),
+    ).toEqual([
+      "session_max_lifetime_days=30",
+      "session_idle_timeout_days=90",
+      "session_max_lifetime_days=120",
+    ]);
+  });
 });

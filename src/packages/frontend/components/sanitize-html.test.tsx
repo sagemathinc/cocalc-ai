@@ -51,6 +51,25 @@ describe("HTML SSR sanitization", () => {
   });
 });
 
+describe("iframes on the sanitized path", () => {
+  it.each([
+    '<iframe src="https://example.com/page"></iframe>',
+    '<iframe srcdoc="<p>hello</p>"></iframe>',
+    "<iframe></iframe>",
+    '<iframe src="data:text/html,hello"></iframe>',
+  ])("renders no frame for an unvetted %s", (html) => {
+    expect(renderHtml(`<p>before</p>${html}<p>after</p>`)).toBe(
+      "<div><p>before</p><p>after</p></div>",
+    );
+  });
+
+  it("keeps a vetted embed", () => {
+    expect(
+      renderHtml('<iframe src="https://www.youtube.com/embed/abc"></iframe>'),
+    ).toContain('<iframe src="https://www.youtube.com/embed/abc">');
+  });
+});
+
 describe("safety floor (applies even when noSanitize is set)", () => {
   function renderTrusted(value: string, inline = false): string {
     // noSanitize: true is what project/page/content.tsx sets for every editor

@@ -266,6 +266,14 @@ export class HarnessAgent implements AcpAgent {
           "rejected",
           "ACP prompt interrupted before submission",
         );
+      const turnChat = request.chat;
+      if (turnChat?.path && turnChat.thread_id && turnChat.message_date)
+        client.setTurnPublicationContext({
+          path: turnChat.path,
+          thread_id: turnChat.thread_id,
+          message_date: turnChat.message_date,
+          workbench: turnChat.workbench !== false,
+        });
       if (request.chat && isQualifiedClaudeCodeProfile(this.binding.profile)) {
         // The agent's scoped CoCalc connector credential lives only as long
         // as this turn (as for Codex); it is revoked in finally. Only the
@@ -425,6 +433,7 @@ export class HarnessAgent implements AcpAgent {
       });
       this.attentionContext = undefined;
       this.limitRejection = undefined;
+      this.client?.setTurnPublicationContext(undefined);
       this.busy = false;
     }
   }

@@ -1,4 +1,8 @@
-import { is_https_or_loopback_url, site_settings_conf } from "./site-defaults";
+import {
+  is_https_or_loopback_url,
+  sessionLimitSettingsError,
+  site_settings_conf,
+} from "./site-defaults";
 
 describe("sagebrush_origin", () => {
   const conf = site_settings_conf.sagebrush_origin;
@@ -23,5 +27,33 @@ describe("sagebrush_origin", () => {
     expect(valid("javascript:alert(1)")).toBe(false);
     expect(valid("not a url")).toBe(false);
     expect(is_https_or_loopback_url("")).toBe(false);
+  });
+});
+
+describe("sign-in session limits", () => {
+  const valid = site_settings_conf.session_idle_timeout_days.valid as (
+    val: string,
+  ) => boolean;
+
+  test("are whole days from 1 to 365", () => {
+    expect(valid("1")).toBe(true);
+    expect(valid("365")).toBe(true);
+    expect(valid("0")).toBe(false);
+    expect(valid("366")).toBe(false);
+    expect(valid("2.5")).toBe(false);
+    expect(valid("x")).toBe(false);
+    expect(site_settings_conf.session_max_lifetime_days.valid).toBe(valid);
+  });
+
+  test("keep the idle timeout at most the maximum lifetime", () => {
+    const check = (idle: string, max: string) =>
+      sessionLimitSettingsError({
+        session_idle_timeout_days: idle,
+        session_max_lifetime_days: max,
+      });
+    expect(check("14", "60")).toBeUndefined();
+    expect(check("60", "60")).toBeUndefined();
+    expect(check("90", "60")).toMatch(/at most its maximum lifetime/);
+    expect(check("14", "400")).toMatch(/from 1 to 365/);
   });
 });

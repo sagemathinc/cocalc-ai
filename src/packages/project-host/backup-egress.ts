@@ -7,7 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import type { ManagedProjectEgressCategory } from "@cocalc/conat/hub/api/system";
 import { hubApi } from "@cocalc/lite/hub/api";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 
 import {
   isProjectHostManagedEgressEnforced,
@@ -75,14 +75,15 @@ export async function checkManagedBackupAllowedBestEffort({
     if (policy.allowed) {
       return { allowed: true };
     }
-    const lines = [
-      "Managed backup upload limit reached for this account.",
-      "New backups, including scheduled backups and moves that require a backup, are temporarily blocked until the egress usage window resets.",
-      ...formatManagedEgressPolicyDetails(policy),
-    ];
+    const message = formatManagedEgressBlockedMessage({
+      category: policy.category ?? "",
+      policy,
+      blocked:
+        "New backups, including scheduled backups and moves that require a backup, are blocked.",
+    });
     return {
       allowed: false,
-      message: lines.join("\n"),
+      message,
     };
   } catch (err) {
     logger.warn("unable to evaluate managed backup egress policy", {

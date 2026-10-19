@@ -57,7 +57,6 @@ import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/tr
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
 import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
-import { DEFAULT_MAX_AGE_MS } from "@cocalc/server/auth/set-sign-in-cookies";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import {
   deleteClusterAccountApiKeyDirectoryEntryDirect,
@@ -489,10 +488,8 @@ export async function createLocalCliLoginSession({
   ip_address,
   user_agent,
 }: AccountLocalCreateCliLoginSessionRequest): Promise<AccountLocalCreateCliLoginSessionResult> {
-  const { value, hash, expire } = await createRememberMeCookie(
-    account_id,
-    DEFAULT_MAX_AGE_MS / 1000,
-  );
+  // The site's idle timeout and maximum lifetime apply to CLI sessions too.
+  const { value, hash, expire } = await createRememberMeCookie(account_id);
   const requestedFreshAuthUntil = fresh_auth_until
     ? new Date(fresh_auth_until)
     : null;

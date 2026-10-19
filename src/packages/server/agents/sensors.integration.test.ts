@@ -37,9 +37,11 @@ const lease = {
   missing: [] as string[],
   issued: [] as any[],
   released: 0,
+  fail: "",
 };
 jest.mock("./sensor-credentials", () => ({
   issueSensorRunCredentials: async (opts: any) => {
+    if (lease.fail) throw new Error(lease.fail);
     lease.issued.push(opts);
     return {
       credentials: {
@@ -59,6 +61,8 @@ jest.mock("./sensor-credentials", () => ({
 // Budgets live on the approver's home bay; here that is this database. Every
 // call is recorded, to show which account's home is asked.
 const budget = { calls: [] as string[], failRelease: false };
+// Connectors the account gave the agent, as its home bay reports them.
+const grants = { github: true, fail: "" };
 jest.mock("./cocalc-connector-routing", () => {
   const home = jest.requireActual("./sensor-budget");
   const call =
@@ -74,6 +78,12 @@ jest.mock("./cocalc-connector-routing", () => {
       releaseWake: call("releaseWake", home.releaseSensorWakeAtHome),
       reserveWatcher: call("reserveWatcher", home.reserveSensorWatcherAtHome),
       releaseWatcher: call("releaseWatcher", home.releaseSensorWatcherAtHome),
+    },
+    sensorConnectors: {
+      hasCli: async (opts: any) => {
+        if (grants.fail) throw new Error(grants.fail);
+        return opts.connector === "github" && grants.github;
+      },
     },
   };
 });
@@ -94,6 +104,7 @@ import {
 } from "./sensors";
 import {
   claimDueSensors,
+  removeDoneWatchers,
   runClaimedSensor,
   setSensorDispatchHookForTests,
   setSensorIssueHookForTests,
@@ -136,6 +147,9 @@ describeDb("agent sensors", () => {
     access.denied.clear();
     for (const key of Object.keys(limits)) delete limits[key];
     lease.missing = [];
+    lease.fail = "";
+    grants.github = true;
+    grants.fail = "";
     lease.issued = [];
     lease.released = 0;
     budget.calls = [];
@@ -269,6 +283,56 @@ describeDb("agent sensors", () => {
     expect(rows[0]).toEqual({ status: "active", pause_reason: null });
     limits.sensor_max_wakes_per_day = 0;
     await expect(watch()).rejects.toThrow(/membership/);
+  });
+
+  test("paused watchers are removed a day after they would have given up", async () => {
+    const watch = async () =>
+      (
+        (await agentSensorRequest(run, agent, {
+          action: "sensor",
+          op: "watch",
+          watch: {
+            type: "at",
+            at: new Date(Date.now() + 3_600_000).toISOString(),
+            note: "check CI",
+          },
+        })) as any
+      ).sensor;
+    const pausedAt = async (sensor_id: string, expiresAgoMs: number) =>
+      await getPool().query(
+        `UPDATE agent_sensors SET status='paused',
+           spec=jsonb_set(spec, '{expires_at}', to_jsonb($2::text))
+         WHERE sensor_id=$1`,
+        [sensor_id, new Date(Date.now() - expiresAgoMs).toISOString()],
+      );
+    const gaveUp = await watch();
+    const recent = await watch();
+    const active = await watch();
+    const revised = await watch();
+    await pausedAt(gaveUp.sensor_id, 2 * 86_400_000);
+    // Gave up only an hour ago: still listed for a day.
+    await pausedAt(recent.sensor_id, 3_600_000);
+    // Gave up long ago, but a replacement awaits review: kept.
+    await pausedAt(revised.sensor_id, 2 * 86_400_000);
+    await getPool().query(
+      "UPDATE agent_sensors SET pending_spec=spec WHERE sensor_id=$1",
+      [revised.sensor_id],
+    );
+    await removeDoneWatchers();
+    const { rows } = await getPool().query(
+      "SELECT sensor_id FROM agent_sensors WHERE sensor_id = ANY($1)",
+      [
+        [
+          gaveUp.sensor_id,
+          recent.sensor_id,
+          active.sensor_id,
+          revised.sensor_id,
+        ],
+      ],
+    );
+    expect(rows.map(({ sensor_id }) => sensor_id).sort()).toEqual(
+      [recent.sensor_id, active.sensor_id, revised.sensor_id].sort(),
+    );
   });
 
   test("a change keeps the approved version running until approved", async () => {
@@ -1065,7 +1129,56 @@ describeDb("agent sensors", () => {
     );
   });
 
-  test("a watcher paused because its connector is off gives back its place", async () => {
+  test("a ci watcher is refused when the agent has no GitHub connector", async () => {
+    grants.github = false;
+    await expect(
+      agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
+      }),
+    ).rejects.toThrow(/GitHub connector.*gh pr checks/);
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM agent_sensors WHERE agent_id=$1",
+      [agent.agent_id],
+    );
+    expect(rows).toHaveLength(0);
+    // Other watchers need no connector.
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a ci watcher whose connector was turned off gives up and wakes its agent, not the person", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
+    })) as any;
+    grants.github = false;
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    // Nothing ran with credentials, and nobody is asked to resume it.
+    expect(lease.issued).toHaveLength(0);
+    expect(paused).toHaveLength(0);
+    const delivered = host.deliverAgentSensorWake.mock.calls.map(
+      (call: any[]) => call[0],
+    );
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].prompt).toMatch(/Gave up: .*needs GitHub/);
+    const { rows } = await getPool().query(
+      "SELECT status, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({ status: "active", next_run_at: null });
+    // Done, so its place is free again.
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a watcher whose connector is lost when its token is issued also gives up, not pauses", async () => {
     limits.sensor_max_active_watchers = 1;
     const ci = (await agentSensorRequest(run, agent, {
       action: "sensor",
@@ -1073,19 +1186,231 @@ describeDb("agent sensors", () => {
       watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
     })) as any;
     await expect(fileWatch()).rejects.toThrow(/at most 1 watchers/);
+    // The grant was still there for the check, but no token came back.
     lease.missing = ["github"];
     await makeDue(ci.sensor.sensor_id);
     await runDue();
+    expect(host.runAgentSensor).not.toHaveBeenCalled();
+    expect(paused).toHaveLength(0);
+    const delivered = host.deliverAgentSensorWake.mock.calls.map(
+      (call: any[]) => call[0],
+    );
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].prompt).toMatch(/Gave up: .*needs GitHub/);
     const { rows } = await getPool().query(
-      "SELECT status, pause_reason FROM agent_sensors WHERE sensor_id=$1",
+      "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
       [ci.sensor.sensor_id],
     );
-    expect(rows[0]).toMatchObject({ status: "paused" });
-    expect(rows[0].pause_reason).toMatch(/uses GitHub/);
-    // A watcher can never be resumed, so its place is free again.
+    expect(rows[0]).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+    // Done, so its place is free again.
     lease.missing = [];
     await expect(fileWatch()).resolves.toMatchObject({
       sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a watcher whose check keeps failing gives up and tells its agent why", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+    })) as any;
+    // As on 2026-10-19: the image's gh had no `pr checks --json`.
+    host.runAgentSensor.mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stdout: "",
+      stderr: "unknown flag: --json\n",
+    });
+    for (let i = 0; i < 4; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    // Until the last allowed failure it just tries again.
+    expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    const delivered = host.deliverAgentSensorWake.mock.calls.map(
+      (call: any[]) => call[0],
+    );
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].prompt).toMatch(
+      /Gave up: .*failed 5 times in a row\. Last error: The script exited with code 1\./,
+    );
+    expect(delivered[0].prompt).toContain("unknown flag: --json");
+    // Not paused, so nobody is asked to resume what cannot be resumed.
+    expect(paused).toHaveLength(0);
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+    // Done, so its place is free again.
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a watcher whose check cannot even run gives up the same way", async () => {
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+    })) as any;
+    host.runAgentSensor.mockRejectedValue(
+      new Error("container failed to start"),
+    );
+    for (let i = 0; i < 4; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+    expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toMatch(
+      /Gave up: .*failed 5 times in a row\. Last error: .*container failed to start/,
+    );
+    expect(paused).toHaveLength(0);
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+  });
+
+  test.each([
+    ["the connector check", () => (grants.fail = "home bay unreachable")],
+    ["issuing credentials", () => (lease.fail = "home bay unreachable")],
+  ])(
+    "a watcher whose setup fails (%s) gives up the same way",
+    async (_what, breakIt) => {
+      const ci = (await agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+      })) as any;
+      breakIt();
+      for (let i = 0; i < 4; i++) {
+        await makeDue(ci.sensor.sensor_id);
+        await runDue();
+      }
+      expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+      expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+      expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toMatch(
+        /Gave up: .*failed 5 times in a row\. Last error: .*home bay unreachable/,
+      );
+      expect(paused).toHaveLength(0);
+      const { rows } = await getPool().query(
+        "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+        [ci.sensor.sensor_id],
+      );
+      expect(rows[0]).toMatchObject({
+        status: "active",
+        pause_reason: null,
+        next_run_at: null,
+      });
+    },
+  );
+
+  test("a give-up wake the host did not send is tried again, not paused", async () => {
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+    })) as any;
+    host.runAgentSensor.mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stdout: "",
+      stderr: "unknown flag: --json\n",
+    });
+    for (let i = 0; i < 4; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    host.deliverAgentSensorWake.mockResolvedValueOnce({
+      not_sent: "the agent's thread is unavailable",
+    });
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+    expect(paused).toHaveLength(0);
+    const state = async () =>
+      (
+        await getPool().query(
+          "SELECT status, pause_reason, consecutive_failures, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+          [ci.sensor.sensor_id],
+        )
+      ).rows[0];
+    // Still waiting, with its failures neither reset nor counted.
+    expect(await state()).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      consecutive_failures: 4,
+    });
+    expect((await state()).next_run_at).not.toBeNull();
+    // The next failed check gives up again, and this time it is sent.
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+    expect(host.deliverAgentSensorWake.mock.calls[1][0].prompt).toMatch(
+      /Gave up: .*failed 5 times in a row/,
+    );
+    expect(paused).toHaveLength(0);
+    expect(await state()).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+  });
+
+  test("a give-up wake whose delivery is ambiguous leaves the watcher done, not paused", async () => {
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+    })) as any;
+    host.runAgentSensor.mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stdout: "",
+      stderr: "unknown flag: --json\n",
+    });
+    for (let i = 0; i < 4; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    host.deliverAgentSensorWake.mockRejectedValueOnce(new Error("timeout"));
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+    // The turn may be queued, so it is not tried again, and nobody is asked
+    // to resume it.
+    expect(paused).toHaveLength(0);
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
     });
   });
 
