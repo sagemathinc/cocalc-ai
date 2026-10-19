@@ -5,7 +5,8 @@
 #
 # Pushes <commit> (normally the tip of the deployed release branch, so the
 # public history has exactly the code that ran on prod) to the public branch
-# disclose/<name> and opens a PR into public main.  Without --yes it only
+# disclose/<name> and opens a PR into public main.  Running it with --yes IS
+# the disclosure: the push makes the commits public.  Without --yes it only
 # checks and shows what would be published.
 set -euo pipefail
 
@@ -69,7 +70,7 @@ body=$(mktemp)
   echo "$commits"
   echo '```'
   echo
-  echo "It merges cleanly onto main (git merge-tree). Merging it is the disclosure; no further deploy is needed."
+  echo "It merges cleanly onto main (git merge-tree). Pushing this branch already disclosed the fix; merging puts it on main for self-hosted builds. No further deploy is needed."
 } >"$body"
 
 COCALC_DISCLOSE=1 git push -q "$PUBLIC_URL" "$sha:refs/heads/disclose/$name"
