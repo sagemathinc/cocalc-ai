@@ -71,6 +71,28 @@ export function fileETag({ size, mtime }: { size: number; mtime: Date }): string
   return `W/"${size.toString(36)}-${mtime.valueOf().toString(36)}"`;
 }
 
+// RFC 9110 §13.1.5: a range is served only if If-Range still matches;
+// otherwise the whole file is sent, so a cached partial copy is never
+// completed with bytes of a newer version.  Entity tags need a strong match,
+// which our weak ones never are; a date must equal Last-Modified exactly.
+export function ifRangeMatches({
+  headers,
+  mtime,
+}: {
+  headers?: Record<string, unknown>;
+  mtime?: unknown;
+}): boolean {
+  const ifRange = headers?.["if-range"];
+  if (typeof ifRange !== "string") return true;
+  const value = ifRange.trim();
+  if (value.startsWith('"') || value.startsWith("W/")) return false;
+  return (
+    mtime instanceof Date &&
+    Number.isFinite(mtime.valueOf()) &&
+    value === mtime.toUTCString()
+  );
+}
+
 // RFC 9110: If-None-Match (weak comparison) wins; otherwise
 // If-Modified-Since, at the one-second resolution of HTTP dates.
 export function isNotModified({
@@ -288,7 +310,12 @@ export async function handleFileDownload({
       }).stat(path);
       if (typeof stat.size === "number" && Number.isSafeInteger(stat.size)) {
         res.setHeader("Accept-Ranges", "bytes");
-        const parsedRange = parseByteRange(req.headers?.range, stat.size);
+        const parsedRange = parseByteRange(
+          revalidate && !ifRangeMatches({ headers: req.headers, mtime: stat.mtime })
+            ? undefined
+            : req.headers?.range,
+          stat.size,
+        );
         if (parsedRange === "unsatisfiable") {
           res.statusCode = 416;
           res.setHeader("Content-Range", `bytes */${stat.size}`);

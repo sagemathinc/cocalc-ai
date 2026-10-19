@@ -620,6 +620,25 @@ describe("handleFileDownload", () => {
       expect(mockFsStat).not.toHaveBeenCalled();
     });
 
+    it("honors If-Range: a stale validator gets the whole file, a current date gets the range", async () => {
+      const stale = await get("/project-1/files/home/user/a.png", {
+        range: "bytes=0-1",
+        "if-range": etag,
+      });
+      expect(stale.statusCode).not.toBe(206);
+      expect(stale.headers["Content-Length"]).toBe(1234);
+      const oldDate = await get("/project-1/files/home/user/a.png", {
+        range: "bytes=0-1",
+        "if-range": "Mon, 19 Oct 2026 02:00:00 GMT",
+      });
+      expect(oldDate.statusCode).not.toBe(206);
+      const current = await get("/project-1/files/home/user/a.png", {
+        range: "bytes=0-1",
+        "if-range": mtime.toUTCString(),
+      });
+      expect(current.statusCode).toBe(206);
+    });
+
     it("serves ranges in full rather than answering 304", async () => {
       const res = await get("/project-1/files/home/user/a.png", {
         "if-none-match": etag,
