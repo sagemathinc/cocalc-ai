@@ -409,7 +409,7 @@ export async function runSessionMaintenance({
   try {
     const locked = (
       await client.query(
-        "SELECT pg_try_advisory_lock(hashtextextended('session-expiry-maintenance',0)) AS locked",
+        "SELECT pg_try_advisory_lock(hashtext('session-expiry-maintenance')) AS locked",
       )
     ).rows[0]?.locked;
     if (!locked) return {};
@@ -507,7 +507,7 @@ export async function runSessionMaintenance({
       };
     } finally {
       await client.query(
-        "SELECT pg_advisory_unlock(hashtextextended('session-expiry-maintenance',0))",
+        "SELECT pg_advisory_unlock(hashtext('session-expiry-maintenance'))",
       );
     }
   } catch (err) {
