@@ -116,12 +116,15 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
   // On sites with a content origin the saved file is shown there, with its
   // scripts and relative images, and the Trusted switch goes away.
+  // Only HTML files: the rst, wiki and qmd views also use this frame.
   const content = useProjectContentUrl({
     project_id,
     path,
-    enabled: mode != "rmd",
+    enabled: mode != "rmd" && /\.html?$/i.test(path),
   });
   const isolated = content.status == "ready";
+  // Trusted mode (the host origin) only where there is no content origin.
+  const showTrustSwitch = content.status == "unavailable";
   const [trust0, setTrust0] = useState<boolean>(isTrusted(props));
   const trust = trust0 && content.status == "unavailable";
   const trustedSrc = useProjectHostAuthedUrl({
@@ -216,6 +219,21 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
     },
     [tab_is_visible],
   );
+
+  // A click inside a cross-origin frame is invisible here, but focus moves
+  // into the frame, so the window blurs.
+  useEffect(() => {
+    if (!isolated) return;
+    const onBlur = () => {
+      setTimeout(() => {
+        if (iframe.current != null && document.activeElement === iframe.current) {
+          click_iframe();
+        }
+      }, 0);
+    };
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, [isolated]);
 
   useEffect(
     function () {
@@ -387,7 +405,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   // the cocalc-editor-div is needed for a safari hack only
   return (
     <div style={STYLE} className={"cocalc-editor-div smc-vfill"} ref={rootEl}>
-      {!isolated && (
+      {showTrustSwitch && (
         <div>
           <Tooltip
             title={

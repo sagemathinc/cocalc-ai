@@ -24,21 +24,27 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     },
   },
 }));
+const authedUrlMock = jest.fn(({ url }: { url?: string }) => url);
 jest.mock("@cocalc/frontend/project/use-project-host-authed-url", () => ({
-  useProjectHostAuthedUrl: ({ url }: { url?: string }) => url,
+  useProjectHostAuthedUrl: (opts: { url?: string }) => authedUrlMock(opts),
 }));
 jest.mock("../frame-tree/hooks", () => ({
   use_font_size_scaling: () => 1,
 }));
 
+import { set_local_storage } from "@cocalc/frontend/misc/local-storage";
 import { CONTENT_FRAME_SANDBOX, IFrameHTML } from "./iframe-html";
 import { refreshDelayMs } from "@cocalc/frontend/project/use-project-content-url";
 
 const CONTENT_URL =
   "https://p.h-h.usercontent.example/_c/cap/files/home/user/a.html";
 
-function renderFrame(project_id: string, mode?: "rmd") {
-  const actions = { set_error: jest.fn(), set_active_id: jest.fn() };
+function renderFrame(
+  project_id: string,
+  mode?: "rmd",
+  path = "/home/user/a.html",
+  actions = { set_error: jest.fn(), set_active_id: jest.fn() },
+) {
   return render(
     <IFrameHTML
       id="f1"
@@ -46,7 +52,7 @@ function renderFrame(project_id: string, mode?: "rmd") {
       editor_state={ImmutableMap() as any}
       is_fullscreen={false}
       project_id={project_id}
-      path="/home/user/a.html"
+      path={path}
       reload={7}
       font_size={14}
       tab_is_visible
@@ -65,6 +71,8 @@ function freshProject(): string {
 }
 
 beforeEach(() => {
+  jest.useRealTimers();
+  authedUrlMock.mockClear();
   issueMock.mockReset();
   readFileMock.mockReset();
   readFileMock.mockResolvedValue(Buffer.from("<p>hi</p>"));
@@ -92,17 +100,75 @@ describe("IFrameHTML on a site with a content origin", () => {
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
-  it("never lets the content frame navigate the app's tab", () => {
-    expect(CONTENT_FRAME_SANDBOX).not.toMatch(/allow-top-navigation/);
+  it("keeps the page's own origin and scripts but never lets it navigate the app's tab", () => {
+    const flags = CONTENT_FRAME_SANDBOX.split(/\s+/);
+    expect(flags).toEqual(
+      expect.arrayContaining(["allow-scripts", "allow-same-origin"]),
+    );
+    expect(flags.filter((flag) => flag.startsWith("allow-top-navigation"))).toEqual([]);
+  });
+
+  it("doesn't also load a trusted host-origin URL for a file trusted before", async () => {
+    const project_id = freshProject();
+    set_local_storage(`${project_id}:/home/user/a.html:trust`, "true");
+    issueMock.mockResolvedValue({
+      url: CONTENT_URL,
+      expires_at: Date.now() + 24 * 3600 * 1000,
+    });
+    renderFrame(project_id);
+    await waitFor(() =>
+      expect(
+        screen.getByTitle("Rendered preview of /home/user/a.html").getAttribute("src"),
+      ).toBe(`${CONTENT_URL}?param=7`),
+    );
+    expect(authedUrlMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ url: expect.any(String) }),
+    );
+  });
+
+  it("re-issues the link before it expires", async () => {
+    jest.useFakeTimers();
+    const second = CONTENT_URL.replace("/cap/", "/cap2/");
+    issueMock
+      .mockResolvedValueOnce({ url: CONTENT_URL, expires_at: Date.now() + 120_000 })
+      .mockResolvedValueOnce({ url: second, expires_at: Date.now() + 24 * 3600_000 });
+    renderFrame(freshProject());
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    const frame = () => screen.getByTitle("Rendered preview of /home/user/a.html");
+    expect(frame().getAttribute("src")).toBe(`${CONTENT_URL}?param=7`);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(61_000);
+    });
+    expect(issueMock).toHaveBeenCalledTimes(2);
+    expect(frame().getAttribute("src")).toBe(`${second}?param=7`);
+  });
+
+  it("makes the frame active when focus moves into it", async () => {
+    issueMock.mockResolvedValue({
+      url: CONTENT_URL,
+      expires_at: Date.now() + 24 * 3600 * 1000,
+    });
+    const actions = { set_error: jest.fn(), set_active_id: jest.fn() };
+    renderFrame(freshProject(), undefined, "/home/user/a.html", actions);
+    const frame = await waitFor(() => {
+      const el = screen.getByTitle("Rendered preview of /home/user/a.html");
+      expect(el.getAttribute("src")).toBe(`${CONTENT_URL}?param=7`);
+      return el as HTMLIFrameElement;
+    });
+    frame.focus();
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(actions.set_active_id).toHaveBeenCalledWith("f1");
   });
 });
 
 describe("IFrameHTML without a content origin", () => {
-  it.each([
-    ["the origin is off", () => issueMock.mockResolvedValue({ unavailable: "off" })],
-    ["the hub call fails", () => issueMock.mockRejectedValue(new Error("old hub"))],
-  ])("falls back to the sandboxed preview and the switch when %s", async (_label, setup) => {
-    setup();
+  it("falls back to the sandboxed preview and the switch when the origin is off", async () => {
+    issueMock.mockResolvedValue({ unavailable: "off" });
     renderFrame(freshProject());
     const frame = await waitFor(() => {
       const el = screen.getByTitle("Rendered preview of /home/user/a.html");
@@ -115,6 +181,35 @@ describe("IFrameHTML without a content origin", () => {
     expect(frame.getAttribute("src")).toBeNull();
     expect(screen.getByRole("switch")).toBeTruthy();
   });
+
+  it("shows only the safe preview, with no switch, when asking fails, and asks again", async () => {
+    jest.useFakeTimers();
+    const project_id = freshProject();
+    set_local_storage(`${project_id}:/home/user/a.html:trust`, "true");
+    issueMock.mockRejectedValue(new Error("network"));
+    renderFrame(project_id);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    const frame = screen.getByTitle("Rendered preview of /home/user/a.html");
+    expect(frame.getAttribute("srcdoc")).toBe("<p>hi</p>");
+    expect(frame.getAttribute("src")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(31_000);
+    });
+    expect(issueMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([["/home/user/notes.rst"], ["/home/user/page.wiki"], ["/home/user/doc.qmd"]])(
+    "keeps %s on the old path",
+    async (path) => {
+      await act(async () => {
+        renderFrame(freshProject(), undefined, path);
+      });
+      expect(issueMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("doesn't ask again for a project whose origin is off", async () => {
     issueMock.mockResolvedValue({ unavailable: "off" });

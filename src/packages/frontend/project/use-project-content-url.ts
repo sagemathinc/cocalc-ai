@@ -15,10 +15,13 @@ export type ProjectContentUrlState =
   | { status: "loading" }
   // The content origin can't serve this project: use the old behavior.
   | { status: "unavailable" }
+  // Asking failed (retried soon): show only the safe preview meanwhile.
+  | { status: "error" }
   | { status: "ready"; url: string };
 
 // Don't ask again for a while once a project's content origin is off.
 const UNAVAILABLE_RETRY_MS = 5 * 60 * 1000;
+const ERROR_RETRY_MS = 30 * 1000;
 const unavailableUntil = new Map<string, number>();
 
 // When to re-issue a link: an hour before it expires, or halfway for a
@@ -80,8 +83,10 @@ export function useProjectContentUrl({
           refreshDelayMs(result.expires_at),
         );
       } catch {
-        // An error (for example a viewer, or an old hub) falls back too.
-        if (!canceled) setState({ status: "unavailable" });
+        // For example a viewer, an old hub, or a network error.
+        if (canceled) return;
+        setState({ status: "error" });
+        timer = setTimeout(() => setGeneration((n) => n + 1), ERROR_RETRY_MS);
       }
     })();
     return () => {
