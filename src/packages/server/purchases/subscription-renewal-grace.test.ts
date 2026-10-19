@@ -27,6 +27,7 @@ const mockCancelPaymentIntent = jest.fn();
 const mockProcessFailure = jest.fn();
 const mockProcessPaymentIntents = jest.fn();
 const mockSend = jest.fn();
+const mockCreateSubscriptionPayment = jest.fn();
 
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
@@ -40,7 +41,7 @@ jest.mock("@cocalc/server/stripe/connection", () => ({
 
 jest.mock("./stripe/create-subscription-payment", () => ({
   __esModule: true,
-  default: jest.fn(),
+  default: (...args: any[]) => mockCreateSubscriptionPayment(...args),
   processSubscriptionRenewalFailure: (...args: any[]) =>
     mockProcessFailure(...args),
 }));
@@ -77,7 +78,10 @@ beforeAll(async () => {
 }, 15000);
 afterAll(after);
 
-async function setupDueRenewal(periodEnd: Date) {
+async function setupDueRenewal(
+  periodEnd: Date,
+  { bound = true }: { bound?: boolean } = {},
+) {
   const account_id = uuid();
   await createTestAccount(account_id);
   const { subscription_id } = await createTestMembershipSubscription(
@@ -86,6 +90,9 @@ async function setupDueRenewal(periodEnd: Date) {
   );
   await scheduleMissingSubscriptionRenewalAttempts();
   const payment_intent_id = `pi_${uuid().replaceAll("-", "")}`;
+  if (!bound) {
+    return { account_id, subscription_id, payment_intent_id };
+  }
   await getPool().query(
     `UPDATE subscription_renewal_attempts
         SET payment_intent_id=$2, stripe_invoice_id='in_test'
@@ -98,6 +105,7 @@ async function setupDueRenewal(periodEnd: Date) {
 async function attemptRow(subscription_id: number) {
   const { rows } = await getPool().query(
     `SELECT a.state, a.customer_action_required_at IS NOT NULL AS waiting,
+            a.customer_action_notified_at IS NOT NULL AS notified,
             EXTRACT(EPOCH FROM (a.next_attempt_at - NOW())) * 1000 AS next_in_ms,
             a.last_error, s.status
        FROM subscription_renewal_attempts a
@@ -125,6 +133,7 @@ describe("subscription renewal grace period", () => {
       mockProcessFailure,
       mockProcessPaymentIntents,
       mockSend,
+      mockCreateSubscriptionPayment,
     ]) {
       m.mockReset();
     }
@@ -153,6 +162,7 @@ describe("subscription renewal grace period", () => {
           state: "scheduled",
           status: "active",
           waiting: true,
+          notified: true,
         }),
       );
       // Rechecked later, not every minute.
@@ -259,5 +269,82 @@ describe("subscription renewal grace period", () => {
     expect(mockCancelPaymentIntent).not.toHaveBeenCalled();
     expect(mockProcessFailure).toHaveBeenCalledTimes(1);
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("includes the payment link when the payment was created in this run", async () => {
+    const { subscription_id, payment_intent_id } = await setupDueRenewal(
+      dayjs().subtract(1, "minute").toDate(),
+      { bound: false },
+    );
+    // Like the real implementation, creating the payment binds the payment
+    // intent and its invoice to the attempt in the database.
+    mockCreateSubscriptionPayment.mockImplementation(async () => {
+      await getPool().query(
+        `UPDATE subscription_renewal_attempts
+            SET payment_intent_id=$2, stripe_invoice_id='in_new'
+          WHERE subscription_id=$1`,
+        [subscription_id, payment_intent_id],
+      );
+      return { payment_intent_id };
+    });
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "requires_action",
+    });
+
+    await runWorker();
+
+    expect(mockRetrieveInvoice).toHaveBeenCalledWith("in_new");
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0][0].body).toContain(
+      "https://invoice.example/pay",
+    );
+  });
+
+  it("retries the notice on the next recheck when sending fails", async () => {
+    const { subscription_id, payment_intent_id } = await setupDueRenewal(
+      dayjs().subtract(1, "hour").toDate(),
+    );
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "requires_payment_method",
+    });
+    mockSend.mockRejectedValueOnce(new Error("mail is down"));
+
+    await runWorker();
+    expect(await attemptRow(subscription_id)).toEqual(
+      expect.objectContaining({ waiting: true, notified: false }),
+    );
+
+    const recheck = () =>
+      getPool().query(
+        "UPDATE subscription_renewal_attempts SET next_attempt_at=NOW() WHERE subscription_id=$1",
+        [subscription_id],
+      );
+    await recheck();
+    await runWorker();
+    expect(await attemptRow(subscription_id)).toEqual(
+      expect.objectContaining({ waiting: true, notified: true }),
+    );
+    expect(mockSend).toHaveBeenCalledTimes(2);
+
+    await recheck();
+    await runWorker();
+    expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not hold an authorized payment awaiting capture", async () => {
+    const { payment_intent_id } = await setupDueRenewal(
+      dayjs().subtract(1, "minute").toDate(),
+    );
+    mockRetrievePaymentIntent.mockResolvedValue({
+      id: payment_intent_id,
+      status: "requires_capture",
+    });
+
+    await runWorker();
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockProcessFailure).toHaveBeenCalledTimes(1);
   });
 });

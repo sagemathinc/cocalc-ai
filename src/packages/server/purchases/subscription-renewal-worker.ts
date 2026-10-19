@@ -18,6 +18,7 @@ import {
   claimDueSubscriptionRenewalAttempts,
   deferSubscriptionRenewalAttemptForCustomer,
   getSubscriptionRenewalAttempt,
+  markSubscriptionRenewalCustomerNotified,
   releaseSubscriptionRenewalAttempt,
   renewalGraceEndsAt,
   scheduleMissingSubscriptionRenewalAttempts,
@@ -60,6 +61,12 @@ async function renewalConfiguration(): Promise<{
   };
 }
 
+// Statuses where the customer can still complete the open payment (enter a
+// new card or authenticate with their bank) from the hosted invoice.
+function needsCustomerAction(status: string): boolean {
+  return status === "requires_action" || status === "requires_payment_method";
+}
+
 function isTerminalAutomaticFailure(status: string): boolean {
   return (
     status === "canceled" ||
@@ -92,25 +99,31 @@ async function finishFromStripe({
     );
   }
   if (
-    paymentIntent.status !== "canceled" &&
+    needsCustomerAction(paymentIntent.status) &&
     Date.now() < renewalGraceEndsAt(attempt.period_end).valueOf()
   ) {
     // A declined card or a bank asking the customer to authenticate is not a
     // reason to end the membership immediately: leave the payment open (the
     // customer can complete it from the invoice), keep benefits during the
-    // grace period, and tell the customer once.
-    const { deferred, firstTime } =
+    // grace period, and make sure the customer is told.
+    const { deferred, needsNotice } =
       await deferSubscriptionRenewalAttemptForCustomer({
         attempt_id: attempt.id,
         error: `Stripe payment ${payment_intent_id} is ${paymentIntent.status}`,
       });
-    if (deferred && firstTime) {
-      await sendRenewalPaymentActionNotice({ attempt }).catch((err) =>
+    if (deferred && needsNotice) {
+      // Retried on every recheck until delivery is recorded.
+      try {
+        await sendRenewalPaymentActionNotice({ attempt_id: attempt.id });
+        await markSubscriptionRenewalCustomerNotified({
+          attempt_id: attempt.id,
+        });
+      } catch (err) {
         logger.warn("unable to send renewal payment action notice", {
           attempt_id: attempt.id,
           err: `${err}`,
-        }),
-      );
+        });
+      }
     }
     return;
   }
@@ -131,23 +144,23 @@ async function hostedInvoiceUrl(
   stripe_invoice_id?: string,
 ): Promise<string | undefined> {
   if (!stripe_invoice_id) return;
-  try {
-    const stripe = await getConn();
-    const invoice = await stripe.invoices.retrieve(stripe_invoice_id);
-    return invoice.hosted_invoice_url ?? undefined;
-  } catch (err) {
-    logger.warn("unable to load renewal invoice", {
-      stripe_invoice_id,
-      err: `${err}`,
-    });
-  }
+  // Errors propagate so the notice is retried with its payment link.
+  const stripe = await getConn();
+  const invoice = await stripe.invoices.retrieve(stripe_invoice_id);
+  return invoice.hosted_invoice_url ?? undefined;
 }
 
 async function sendRenewalPaymentActionNotice({
-  attempt,
+  attempt_id,
 }: {
-  attempt: SubscriptionRenewalAttempt;
+  attempt_id: string;
 }): Promise<void> {
+  // Reload: on a first attempt the payment and invoice were created and bound
+  // after this attempt was claimed.
+  const attempt = await getSubscriptionRenewalAttempt({ attempt_id });
+  if (attempt == null || attempt.state !== "scheduled") {
+    return;
+  }
   const { site_name } = await getServerSettings();
   const graceEnd = formatRenewalDate(renewalGraceEndsAt(attempt.period_end));
   const invoiceUrl = await hostedInvoiceUrl(attempt.stripe_invoice_id);

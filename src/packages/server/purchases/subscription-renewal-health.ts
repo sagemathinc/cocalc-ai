@@ -102,11 +102,14 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
         AND s.current_period_end=a.period_end
       WHERE a.state IN ('scheduled','processing')
         AND a.not_before <= NOW() - ($1 * INTERVAL '1 minute')
-        -- Waiting for the customer during the grace period is expected,
-        -- not an operational delay.
+        -- Waiting for the customer during the grace period is expected, not
+        -- an operational delay, as long as they were notified and the
+        -- periodic recheck is not overdue.
         AND NOT (
           a.customer_action_required_at IS NOT NULL AND
-          a.not_before > NOW() - ($2 * INTERVAL '1 millisecond')
+          a.customer_action_notified_at IS NOT NULL AND
+          a.not_before > NOW() - ($2 * INTERVAL '1 millisecond') AND
+          a.next_attempt_at > NOW() - ($1 * INTERVAL '1 minute')
         )
       ORDER BY a.not_before, a.subscription_id`,
     [warningMinutes, RENEWAL_PAYMENT_GRACE_MS],

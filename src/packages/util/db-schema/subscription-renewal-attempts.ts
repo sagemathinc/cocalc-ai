@@ -32,6 +32,7 @@ export interface SubscriptionRenewalAttempt {
   payment_intent_id?: string;
   last_error?: string;
   customer_action_required_at?: Date | null;
+  customer_action_notified_at?: Date | null;
   created_at: Date;
   updated_at: Date;
   completed_at?: Date;
@@ -147,7 +148,11 @@ Table({
     },
     customer_action_required_at: {
       type: "timestamp",
-      desc: "When automatic payment first needed the customer (declined card or required authentication). The payment stays open during the grace period and the customer was notified.",
+      desc: "When automatic payment first needed the customer (declined card or required authentication). The payment stays open during the grace period.",
+    },
+    customer_action_notified_at: {
+      type: "timestamp",
+      desc: "When the customer was successfully sent the action-needed notice for this attempt. Null while it still has to be (re)sent.",
     },
     created_at: {
       type: "timestamp",

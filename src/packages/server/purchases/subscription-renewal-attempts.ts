@@ -415,39 +415,46 @@ export async function releaseSubscriptionRenewalAttempt({
 }
 
 // Keep the attempt open, with its Stripe payment, until the customer acts or
-// the grace period ends. Returns whether this is the first time the attempt
-// needed the customer, so the caller notifies them once.
+// the grace period ends. Returns whether the customer still has to be sent
+// the action-needed notice (it is retried on every recheck until delivery is
+// recorded with markSubscriptionRenewalCustomerNotified).
 export async function deferSubscriptionRenewalAttemptForCustomer({
   attempt_id,
   error,
 }: {
   attempt_id: string;
   error: unknown;
-}): Promise<{ deferred: boolean; firstTime: boolean }> {
-  const { rows } = await getPool().query<{ first_time: boolean }>(
-    `WITH previous AS (
-       SELECT id, customer_action_required_at IS NULL AS first_time
-         FROM subscription_renewal_attempts
-        WHERE id=$1
-          AND state='processing'
-        FOR UPDATE
-     )
-     UPDATE subscription_renewal_attempts a
+}): Promise<{ deferred: boolean; needsNotice: boolean }> {
+  const { rows } = await getPool().query<{ needs_notice: boolean }>(
+    `UPDATE subscription_renewal_attempts
         SET state='scheduled',
             lease_expires_at=NULL,
             next_attempt_at=NOW() + ($2 * INTERVAL '1 millisecond'),
-            customer_action_required_at=COALESCE(a.customer_action_required_at, NOW()),
+            customer_action_required_at=COALESCE(customer_action_required_at, NOW()),
             last_error=$3,
             updated_at=NOW()
-       FROM previous
-      WHERE a.id=previous.id
-      RETURNING previous.first_time`,
+      WHERE id=$1
+        AND state='processing'
+      RETURNING customer_action_notified_at IS NULL AS needs_notice`,
     [attempt_id, RENEWAL_CUSTOMER_ACTION_RECHECK_MS, `${error}`],
   );
   if (!rows[0]) {
-    return { deferred: false, firstTime: false };
+    return { deferred: false, needsNotice: false };
   }
-  return { deferred: true, firstTime: !!rows[0].first_time };
+  return { deferred: true, needsNotice: !!rows[0].needs_notice };
+}
+
+export async function markSubscriptionRenewalCustomerNotified({
+  attempt_id,
+}: {
+  attempt_id: string;
+}): Promise<void> {
+  await getPool().query(
+    `UPDATE subscription_renewal_attempts
+        SET customer_action_notified_at=NOW(), updated_at=NOW()
+      WHERE id=$1 AND customer_action_notified_at IS NULL`,
+    [attempt_id],
+  );
 }
 
 export async function completeSubscriptionRenewalAttempt({
