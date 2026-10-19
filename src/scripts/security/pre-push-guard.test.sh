@@ -153,10 +153,13 @@ git push -q "$T/old.git" "$OLD:refs/heads/main"
 git reset -q --hard HEAD~1
 git remote add old "$T/old.git" && git fetch -q old
 git config cocalc.privateUrl "$T/old.git" # stand-in for the GitHub allowlist
+git config --add cocalc.privateUrl "$T/old.git" # duplicate value
 git branch -q neutral4 "$OLD"
 rm -rf "$T/old.git"
 check 1 "deleted private repo still configured: fail closed" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok
 bash "$here/private-fix.sh" retire-remote old >/dev/null
+rc=$?
+[ $rc = 0 ] && ! git remote | grep -qx old && { pass=$((pass + 1)); echo "ok    retire-remote succeeds and removes the remote (duplicate config values)"; } || { fail=$((fail + 1)); echo "FAIL  retire-remote rc=$rc or remote left behind"; }
 [ -z "$(git config --get-all cocalc.privateUrl)" ] && { pass=$((pass + 1)); echo "ok    retire-remote removes the matching cocalc.privateUrl"; } || { fail=$((fail + 1)); echo "FAIL  retire-remote left cocalc.privateUrl"; }
 check 1 "after retire-remote: its commit is still private" "$T/pub.git" refs/heads/neutral4 "$OLD" refs/heads/fix/innocent
 check 0 "after retire-remote: public commits push normally" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok

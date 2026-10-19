@@ -100,12 +100,14 @@ retire_remote() { # <remote name>
   git for-each-ref --format='update refs/cocalc-guard/seen/%(objectname) %(objectname)' \
     "refs/cocalc-guard/retired/$key/" | sort -u | git update-ref --stdin ||
     die "could not archive the refs of $name; not removing it"
-  while read -r value; do
-    if [ "$value" = "$url" ]; then
-      git config --fixed-value --unset-all cocalc.privateUrl "$value"
-    fi
-  done < <(git config --get-all cocalc.privateUrl 2>/dev/null)
+  # Remove the remote first, while any cocalc.privateUrl still marks it
+  # private; then drop the exactly matching config values (all duplicates) in
+  # one step.  A failed cleanup only leaves a conservative entry behind.
   git remote remove "$name"
+  if git config --get-all cocalc.privateUrl 2>/dev/null | grep -qxF -- "$url"; then
+    git config --fixed-value --unset-all cocalc.privateUrl "$url" ||
+      echo "private-fix: could not remove cocalc.privateUrl $url; remove it by hand" >&2
+  fi
   echo "retired remote $name ($url): kept $n ref(s) under refs/cocalc-guard/retired/$key/ as private"
 }
 
