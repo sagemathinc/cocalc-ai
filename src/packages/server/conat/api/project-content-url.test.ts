@@ -133,10 +133,10 @@ describe("issueProjectContentUrlLocal", () => {
   });
 
   it.each([["viewer"], [null], ["student"]])(
-    "refuses an account in group %p",
+    "issues nothing to an account in group %p",
     async (group) => {
       projectRows[0].group = group;
-      await expect(issue()).rejects.toThrow("not authorized");
+      await expect(issue()).resolves.toEqual({ unavailable: "no-access" });
     },
   );
 
@@ -250,6 +250,7 @@ describe("contentDirForFile", () => {
     );
     expect(contentDirForFile("//home//user/a.html")).toBe("/home/user");
     expect(contentDirForFile("/a.html")).toBe("/");
+    expect(() => contentDirForFile("x/a.html")).toThrow("invalid path");
     expect(() => contentDirForFile("/home/user/../a.html")).toThrow("invalid path");
   });
 });
@@ -259,16 +260,17 @@ describe("encodeContentFilePath", () => {
     expect(encodeContentFilePath("/home/user/x#1?.html")).toBe(
       "home/user/x%231%3F.html",
     );
-    expect(encodeContentFilePath("a//b/")).toBe("a/b");
+    expect(encodeContentFilePath("/a//b/")).toBe("a/b");
   });
 
   it.each([
     ["empty", ""],
     ["root", "/"],
-    ["a parent segment", "a/../b"],
-    ["a dot segment", "./a"],
-    ["NUL", "a\0b"],
-    ["too long", "x".repeat(5000)],
+    ["a parent segment", "/a/../b"],
+    ["a dot segment", "/./a"],
+    ["NUL", "/a\0b"],
+    ["relative", "home/user/a.html"],
+    ["too long", `/${"x".repeat(5000)}`],
   ])(
     "rejects %s",
     (_label, path) => {

@@ -26,7 +26,9 @@ instead of throwing, so the frontend can fall back to today's behavior:
   - "host-not-ready": the host has no content DNS record for this domain,
     or doesn't report serving it (old software, or a missing env line);
   - "other-bay": the project or its host belongs to another bay (the
-    capability must be signed with that bay's key; not wired up yet).
+    capability must be signed with that bay's key; not wired up yet);
+  - "no-access": the account isn't an owner or collaborator (viewers have
+    restricted read policies a folder link would bypass).
 */
 
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
@@ -58,7 +60,8 @@ export type ProjectContentUrlUnavailable =
   | "off"
   | "no-host"
   | "host-not-ready"
-  | "other-bay";
+  | "other-bay"
+  | "no-access";
 
 export type ProjectContentUrl =
   | { url: string; expires_at: number }
@@ -68,7 +71,12 @@ const MAX_PATH_LENGTH = 4096;
 
 function contentPathSegments(path: unknown): string[] {
   const raw = `${path ?? ""}`;
-  if (raw.length > MAX_PATH_LENGTH || raw.includes("\0")) {
+  // Relative paths would silently mean the filesystem root.
+  if (
+    !raw.startsWith("/") ||
+    raw.length > MAX_PATH_LENGTH ||
+    raw.includes("\0")
+  ) {
     throw new Error("invalid path");
   }
   const segments = raw.split("/").filter((segment) => segment !== "");
@@ -145,7 +153,7 @@ export async function issueProjectContentUrlLocal({
   // The host makes the same check on every request; viewers have restricted
   // read policies that a whole-project capability would bypass.
   if (!isProjectCollaboratorGroup(project.group)) {
-    throw new Error("not authorized for project content");
+    return { unavailable: "no-access" };
   }
   const host_id = project.host_id;
   if (!host_id) return { unavailable: "no-host" };

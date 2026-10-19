@@ -2499,7 +2499,14 @@ export interface Hosts {
     path: string;
   }) => Promise<
     | { url: string; expires_at: number }
-    | { unavailable: "off" | "no-host" | "host-not-ready" | "other-bay" }
+    | {
+        unavailable:
+          | "off"
+          | "no-host"
+          | "host-not-ready"
+          | "other-bay"
+          | "no-access";
+      }
   >;
   issueProjectHostAgentAuthToken: (opts: {
     host_id?: string;
