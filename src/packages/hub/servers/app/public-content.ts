@@ -25,6 +25,7 @@ import {
 } from "@cocalc/util/types/news";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { servePublicShell } from "./public-shell";
+import { initPublicPolicyMarkdown } from "./public-policy-markdown";
 
 function redirectCompatibility(target: string) {
   return function (_req: Request, res: Response): void {
@@ -218,6 +219,8 @@ export default function initPublicContent(router: Router): void {
       res.status(500).json({ error: `${err}` });
     }
   });
+
+  initPublicPolicyMarkdown(router);
 
   const contentPaths = [
     "/about",

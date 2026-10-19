@@ -12,8 +12,8 @@ import {
 } from "react";
 
 import { Typography } from "antd";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { appBasePath } from "../../customize/app-base-path";
+import { PUBLIC_COLORS } from "../theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Paragraph, Text, Title } = Typography;
