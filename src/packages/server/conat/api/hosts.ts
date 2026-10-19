@@ -1245,8 +1245,9 @@ async function markHostDeprovisioned(row: any, action: string) {
     hasDns,
     deleteHostDns,
     releaseHostContentDns,
-    alertAdmin: async ({ subject, body }) =>
-      await adminAlert({ subject, body, dedupMinutes: 60, dedupBySubject: true }),
+    alertAdmin: async ({ subject, body }) => {
+      await adminAlert({ subject, body, dedupMinutes: 60, dedupBySubject: true });
+    },
     logWarn: (message, payload) => logger.warn(message, payload),
     updateHostDeprovisionedRecord: async ({ row, nextMetadata }) => {
       await pool().query(
