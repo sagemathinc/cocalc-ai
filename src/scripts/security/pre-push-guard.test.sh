@@ -124,6 +124,16 @@ git config cocalc.privateUrl "$T/priv.git"
 git branch -q -D security/local neutral
 git config --unset cocalc.privateUrl
 check 1 "fail closed: private repo unreachable, cached private refs" "$T/pub.git" refs/heads/x "$C0" refs/heads/fix/ok COCALC_PRIVATE_URL=$T/missing.git
+# Blobs and trees are refused even in a clone with no private state at all.
+git init -q "$T/noprivate" && (cd "$T/noprivate" && git commit -q --allow-empty -m np) || exit 1
+NPBLOB=$(cd "$T/noprivate" && git hash-object -w --stdin <<<TOP-SECRET)
+NPTREE=$(cd "$T/noprivate" && git rev-parse "HEAD^{tree}")
+(cd "$T/noprivate" && printf 'refs/tags/b %s refs/tags/b %s\n' "$NPBLOB" "$Z" | COCALC_PRIVATE_URL=$T/missing.git bash "$H" origin "$T/pub.git" >/dev/null 2>&1) &&
+  { fail=$((fail + 1)); echo "FAIL  blob push allowed in a clone without private state"; } ||
+  { pass=$((pass + 1)); echo "ok    blob refused in a clone without private state"; }
+(cd "$T/noprivate" && printf 'refs/tags/t %s refs/tags/t %s\n' "$NPTREE" "$Z" | COCALC_PRIVATE_URL=$T/missing.git bash "$H" origin "$T/pub.git" >/dev/null 2>&1) &&
+  { fail=$((fail + 1)); echo "FAIL  tree push allowed in a clone without private state"; } ||
+  { pass=$((pass + 1)); echo "ok    tree refused in a clone without private state"; }
 # An unrelated clone with no private work is not blocked by the outage.
 git init -q "$T/outsider" && cd "$T/outsider" && git commit -q --allow-empty -m o
 check 0 "clone without private work: private repo unreachable" "$T/pub.git" refs/heads/x "$(git rev-parse HEAD)" refs/heads/fix/ok COCALC_PRIVATE_URL=$T/missing.git
@@ -357,6 +367,20 @@ U8=$(commit "second secret, force-pushed away") && git branch -q neutral8 "$U8" 
 check 0 "push to the private repo (records the commit)" "$T/priv7.git" refs/heads/security/t8 "$U8" refs/heads/security/t8 "$E7" "$P7"
 git push -q "$T/priv7.git" "$U8:refs/heads/security/t8" && git push -q -f "$T/priv7.git" "$B7:refs/heads/security/t8"
 check 1 "private branch force-pushed away before any public check" "$T/pub7.git" refs/heads/neutral8 "$U8" refs/heads/fix/innocent "$E7" "$P7"
+
+# Squash of only a PREFIX (P1+P2) of a private series P1 -> P2 -> P3 onto a
+# newer public main.
+git init -q --bare "$T/pub8.git" && git init -q --bare "$T/priv8.git"
+git init -q "$T/pre" && cd "$T/pre" || exit 1
+E8="COCALC_PUBLIC_URL=$T/pub8.git"
+P8="COCALC_PRIVATE_URL=$T/priv8.git"
+echo base >a && echo base >b && git add a b && git commit -q -m base && B8=$(git rev-parse HEAD)
+git push -q "$T/pub8.git" HEAD:refs/heads/main && git push -q "$T/priv8.git" HEAD:refs/heads/main
+echo p1 >>a && git commit -q -am P1 && echo p2 >>a && git commit -q -am P2 && P2_8=$(git rev-parse HEAD)
+echo p3 >>a && git commit -q -am P3 && git push -q "$T/priv8.git" HEAD:refs/heads/security/series
+git reset -q --hard "$B8" && echo pub >>b && git commit -q -am "public moves on" && git push -q "$T/pub8.git" HEAD:refs/heads/main
+git merge -q --squash "$P2_8" >/dev/null 2>&1 && git commit -q -m "squash of P1+P2 only" && SQ8=$(git rev-parse HEAD)
+check 1 "squash of a prefix (P1+P2) of a private series onto a newer main" "$T/pub8.git" refs/heads/main "$SQ8" refs/heads/main "$E8" "$P8"
 
 # Several private commits squashed onto a newer public main: new tree and a
 # combined patch-id (Codex/@review repro).

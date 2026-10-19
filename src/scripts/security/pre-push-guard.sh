@@ -150,6 +150,7 @@ fork_point() { # <commit>
   return 1
 }
 
+
 # Trees and patch-ids of the private commits ($private), computed once per run:
 # $tmp/private-trees (trees of private commits that change something relative
 # to their first parent) and $tmp/private-patch-ids ("<oid> <patch-id>" and
@@ -157,7 +158,7 @@ fork_point() { # <commit>
 # it forked from public main).  $tmp/sig-ok marks a complete load.
 load_private_signatures() {
   [ -e "$tmp/sig-ok" ] && return 0
-  local tip base pid
+  local tip base pid key
   printf '%s\n' "$private" | awk 'NF' >"$tmp/private-oids" || return 1
   git log --no-walk --format='%H %T %P' --stdin <"$tmp/private-oids" >"$tmp/private-commits" || return 1
   awk '$3 ~ /^[0-9a-f]{40}$/ { print $3 }' "$tmp/private-commits" | sort -u >"$tmp/parents" || return 1
@@ -170,24 +171,36 @@ load_private_signatures() {
   patch_ids "$tmp/private-oids" "$tmp/private-pids-all" || return 1
   awk '$2 != "-"' "$tmp/private-pids-all" >"$tmp/private-patch-ids" || return 1
   require_public_main || return 1
-  {
-    (
-      git for-each-ref --format='%(objectname)' "$GUARD_REFS/src/" "$GUARD_REFS/retired/" "$GUARD_REFS/seen/" || exit 1
-      for ref in "${local_private_branches[@]}"; do git rev-parse "$ref" || exit 1; done
-      for r in "${private_remote_refs[@]}"; do
-        git for-each-ref --format='%(objectname)' "refs/remotes/${r#--remotes=}/" || exit 1
-      done
-    ) >"$tmp/tips-raw" || return 1
-    sort -u "$tmp/tips-raw" >"$tmp/tips-sorted" || return 1
-    sort -u "$tmp/private-oids" >"$tmp/private-sorted" || return 1
-    comm -12 "$tmp/tips-sorted" "$tmp/private-sorted" >"$tmp/private-tips" || return 1
-    while read -r tip; do
-      base=$(fork_point "$tip") || return 1
-      [ -n "$base" ] && [ "$base" != "$tip" ] || continue
-      pid=$(range_patch_id "$base" "$tip") || return 1
-      [ "$pid" = "-" ] || echo "$base..$tip $pid" >>"$tmp/private-patch-ids" || return 1
-    done <"$tmp/private-tips"
-  }
+  # Combined change from the fork point to EVERY private commit (not only
+  # branch tips), so squashing any prefix of a private series is recognized.
+  # Fork points ("fp:<oid> <base>") and range patch-ids ("<base>..<tip> <pid>")
+  # are cached by commit id; lookups are batched (one pass over the cache).
+  local cache
+  cache=$(patch_cache) || return 1
+  sort -u "$tmp/private-oids" >"$tmp/private-sorted" || return 1
+  awk 'NR == FNR { w["fp:" $1] = 1; next } ($1 in w) && !seen[$1]++ { print substr($1, 4), $2 }' \
+    "$tmp/private-sorted" "$cache" >"$tmp/fp-known" || return 1
+  awk '{ print $1 }' "$tmp/fp-known" | sort -u >"$tmp/fp-known-oids" || return 1
+  comm -23 "$tmp/private-sorted" "$tmp/fp-known-oids" >"$tmp/fp-missing" || return 1
+  : >"$tmp/fp-new" || return 1
+  while read -r tip; do
+    base=$(fork_point "$tip") || return 1
+    echo "$tip ${base:--}" >>"$tmp/fp-new" || return 1
+  done <"$tmp/fp-missing"
+  awk '{ print "fp:" $1, $2 }' "$tmp/fp-new" >>"$cache" || return 1
+  cat "$tmp/fp-known" "$tmp/fp-new" | awk '$2 != "-" && $1 != $2 { print $2 ".." $1 }' | sort -u >"$tmp/ranges" || return 1
+  awk 'NR == FNR { w[$1] = 1; next } ($1 in w) && !seen[$1]++' "$tmp/ranges" "$cache" >"$tmp/range-known" || return 1
+  awk '{ print $1 }' "$tmp/range-known" | sort -u >"$tmp/range-known-keys" || return 1
+  comm -23 "$tmp/ranges" "$tmp/range-known-keys" >"$tmp/range-missing" || return 1
+  : >"$tmp/range-new" || return 1
+  while read -r key; do
+    { echo "commit ${key#*..}" && git diff -p "${key%%..*}" "${key#*..}"; } >"$tmp/range-diff" || return 1
+    git patch-id --stable <"$tmp/range-diff" >"$tmp/range-pid" || return 1
+    pid=$(awk '{ print $1; exit }' "$tmp/range-pid") || return 1
+    echo "$key ${pid:--}" >>"$tmp/range-new" || return 1
+  done <"$tmp/range-missing"
+  cat "$tmp/range-new" >>"$cache" || return 1
+  cat "$tmp/range-known" "$tmp/range-new" | awk '$2 != "-"' >>"$tmp/private-patch-ids" || return 1
   : >"$tmp/sig-ok"
 }
 
@@ -322,6 +335,11 @@ esac
 while read -r local_ref local_sha remote_ref _remote_sha; do
   [ -z "$local_ref" ] && continue
   [ "$local_sha" = "$zero" ] && continue
+  # Only commits (or tags of commits) can be checked; refuse anything else
+  # (blobs, trees, tags of them) for every non-private destination.
+  if ! git rev-parse -q --verify "$local_sha^{commit}" >/dev/null; then
+    refuse "refusing to push $local_ref -> $remote_ref to $remote_url: it is not a commit (or a tag of one), so it cannot be checked for private content."
+  fi
   for ref in "$local_ref" "$remote_ref"; do
     if [[ $ref == refs/heads/* ]] && is_private_branch "${ref#refs/heads/}"; then
       refuse "refusing to push $local_ref -> $remote_ref to $remote_url: '${ref#refs/heads/}' is a private branch name."
