@@ -2035,14 +2035,19 @@ describe("managed egress notices", () => {
        })});`,
     );
 
+  // This notice's own outbox rows: earlier scenarios leave other
+  // notifications for the same accounts.
   const outbox = async (bay, account) =>
     await runInBay(
       cluster,
       bay,
       `const getPool = require("@cocalc/database/pool").default;
+       const { managedEgressNotificationId } = server("notifications/managed-egress.js");
+       const id = managedEgressNotificationId(
+         "managed-egress:shared:7d:blocked:" + ${JSON.stringify(account.account_id)});
        const { rows } = await getPool().query(
-         "SELECT target_home_bay_id, published_at IS NOT NULL AS published FROM notification_target_outbox WHERE target_account_id=$1",
-         [${JSON.stringify(account.account_id)}]);
+         "SELECT target_home_bay_id, published_at IS NOT NULL AS published FROM notification_target_outbox WHERE target_account_id=$1 AND notification_id=$2",
+         [${JSON.stringify(account.account_id)}, id]);
        return rows;`,
     );
 
