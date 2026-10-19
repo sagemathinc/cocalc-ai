@@ -591,6 +591,7 @@ async function syncAccountRevocationsFromMaster() {
           rows?: Array<{
             account_id: string;
             revoked_before_ms: number;
+            content_revoked_before_ms?: number;
             updated_ms: number;
           }>;
           next_cursor_updated_ms?: number;
@@ -635,6 +636,7 @@ async function syncAccountRevocationsFromMaster() {
       upsertAccountRevocation({
         account_id: row.account_id,
         revoked_before_ms: row.revoked_before_ms,
+        content_revoked_before_ms: row.content_revoked_before_ms,
         updated_ms: row.updated_ms,
       });
     }

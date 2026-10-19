@@ -250,7 +250,8 @@ export interface ContentOriginHandlerOptions {
   // missed.
   observeEpoch?: (opts: { project_id: string; epoch: number }) => void;
   // Links issued at or before this time (ms) were revoked for the account:
-  // "sign out everywhere", a ban or a deletion.
+  // "sign out everywhere", a ban or a deletion, or (content links only) a
+  // password change or "sign out other sessions".
   accountRevokedBeforeMs: (account_id: string) => number | undefined;
   // Whether path, with symlinks resolved, is still inside dir (also
   // resolved).  Only members can create symlinks in a project, but a

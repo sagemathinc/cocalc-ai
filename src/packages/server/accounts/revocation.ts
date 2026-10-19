@@ -1,6 +1,9 @@
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
+import getLogger from "@cocalc/backend/logger";
 import { recordAccountSecurityState } from "./security-state";
+
+const logger = getLogger("server:accounts:revocation");
 
 let ensured = false;
 
@@ -17,6 +20,12 @@ async function ensureTable() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS account_revocations_updated_idx
     ON account_revocations(updated_at, account_id)
+  `);
+  // Content-origin links only (trust-free step 6): revoked on password change
+  // and "sign out other sessions", which leave host sessions alone.
+  await pool.query(`
+    ALTER TABLE account_revocations
+    ADD COLUMN IF NOT EXISTS content_revoked_before TIMESTAMP
   `);
   ensured = true;
 }
@@ -49,6 +58,46 @@ export async function recordAccountRevocation(
   });
 }
 
+// Every content-origin link of the account issued before now stops working;
+// sessions are untouched (the current browser just re-issues its links).
+export async function recordContentRevocation(
+  account_id: string,
+  content_revoked_before_ms = Date.now(),
+): Promise<void> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("invalid account_id");
+  }
+  await ensureTable();
+  await getPool().query(
+    `
+      INSERT INTO account_revocations(account_id, revoked_before, content_revoked_before, updated_at)
+      VALUES($1::UUID, to_timestamp(0), $2::TIMESTAMP, NOW())
+      ON CONFLICT (account_id) DO UPDATE SET
+        content_revoked_before = GREATEST(
+          COALESCE(account_revocations.content_revoked_before, to_timestamp(0)),
+          EXCLUDED.content_revoked_before
+        ),
+        updated_at = NOW()
+    `,
+    [account_id, new Date(content_revoked_before_ms)],
+  );
+}
+
+// For password changes and "sign out other sessions": the change has already
+// happened, so a failure to record the revocation is logged, not thrown.
+export async function revokeContentLinksBestEffort(
+  account_id: string,
+): Promise<void> {
+  try {
+    await recordContentRevocation(account_id);
+  } catch (err) {
+    logger.warn("could not revoke content links", {
+      account_id,
+      err: `${err}`,
+    });
+  }
+}
+
 export async function listAccountRevocationsSince({
   cursor_updated_ms = 0,
   cursor_account_id = "",
@@ -61,6 +110,7 @@ export async function listAccountRevocationsSince({
   Array<{
     account_id: string;
     revoked_before_ms: number;
+    content_revoked_before_ms: number;
     updated_ms: number;
   }>
 > {
@@ -74,12 +124,14 @@ export async function listAccountRevocationsSince({
     await pool.query<{
       account_id: string;
       revoked_before_ms: string | number;
+      content_revoked_before_ms: string | number | null;
       updated_ms: string | number;
     }>(
       `
         SELECT
           account_id::text AS account_id,
           FLOOR(EXTRACT(EPOCH FROM revoked_before) * 1000)::bigint AS revoked_before_ms,
+          FLOOR(EXTRACT(EPOCH FROM content_revoked_before) * 1000)::bigint AS content_revoked_before_ms,
           FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_ms
         FROM account_revocations
         WHERE
@@ -94,6 +146,7 @@ export async function listAccountRevocationsSince({
   return rows.map((row) => ({
     account_id: row.account_id,
     revoked_before_ms: Number(row.revoked_before_ms) || 0,
+    content_revoked_before_ms: Number(row.content_revoked_before_ms) || 0,
     updated_ms: Number(row.updated_ms) || 0,
   }));
 }
