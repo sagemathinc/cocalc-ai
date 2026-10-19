@@ -90,9 +90,11 @@ done <<<"$updates"
 sources=()
 seen=" "
 add_source() { # <url>
-  local key
-  key=$(normalize_url "$1")
-  key=${key//[^a-z0-9._-]/_}
+  # Dedupe by exact normalized URL; name the ref namespace by its hash, so
+  # different URLs never share a namespace.
+  local normalized key
+  normalized=$(normalize_url "$1")
+  key=$(printf '%s' "$normalized" | git hash-object --stdin)
   [[ $seen == *" $key "* ]] && return
   seen+="$key "
   sources+=("$key|$1")

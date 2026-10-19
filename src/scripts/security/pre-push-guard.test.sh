@@ -85,6 +85,17 @@ check 1 "commit on an additional private remote with a stale tracking ref" "$T/p
 fh=$(git rev-parse FETCH_HEAD)
 check 0 "public commit (FETCH_HEAD check)" "$T/pub.git" refs/heads/x "$C0" refs/heads/fix/ok
 [ "$(git rev-parse FETCH_HEAD)" = "$fh" ] && { pass=$((pass + 1)); echo "ok    guard leaves FETCH_HEAD alone"; } || { fail=$((fail + 1)); echo "FAIL  guard changed FETCH_HEAD"; }
+# Two private URLs that a lossy key would conflate: a/b.git and a_b.git.
+mkdir -p "$T/a" && git init -q --bare "$T/a/b.git" && git init -q --bare "$T/a_b.git"
+git push -q "$T/a/b.git" "$C0:refs/heads/main"
+SECRET2=$(commit "secret only on a_b")
+git push -q "$T/a_b.git" "$SECRET2:refs/heads/security/topic"
+git reset -q --hard "$C0"
+git config --add cocalc.privateUrl "$T/a/b.git"
+git config --add cocalc.privateUrl "$T/a_b.git"
+git fetch -q "$T/a_b.git" refs/heads/security/topic && git branch -q neutral3 FETCH_HEAD
+check 1 "secret on the second of two similar private URLs" "$T/pub.git" refs/heads/neutral3 "$SECRET2" refs/heads/fix/innocent
+git branch -q -D neutral3
 git config --add cocalc.privateUrl "$T/unreachable.git"
 check 1 "fail closed: an additional private repo cannot be fetched" "$T/pub.git" refs/heads/x "$C0" refs/heads/fix/ok
 git config --unset-all cocalc.privateUrl
