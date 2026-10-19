@@ -3921,7 +3921,11 @@ describe("the agent that sent a message is told how its turn ended", () => {
           type: "harness",
           source: "acp",
           kind: "update",
-          data: { sessionUpdate: "tool_call", toolCallId: "t1" },
+          data: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t1",
+            status: "in_progress",
+          },
         },
       });
       // Claude confirms the cancellation a person asked for.
