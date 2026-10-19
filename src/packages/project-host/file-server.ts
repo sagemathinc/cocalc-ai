@@ -5248,12 +5248,13 @@ export async function initFsServer({
           project_id: projectIdFromSubject(subject),
           ipynb,
         }),
-      saveIpynb: async ({ subject, path, ipynb, fs }) =>
+      saveIpynb: async ({ subject, path, ipynb, fs, options }) =>
         await saveJupyterIpynb({
           project_id: projectIdFromSubject(subject),
           path,
           ipynb,
           fs,
+          options,
         }),
     },
   });

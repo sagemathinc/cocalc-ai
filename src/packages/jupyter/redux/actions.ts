@@ -2901,12 +2901,36 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.setState({ runProgress: total > 0 ? (100 * ran) / total : 100 });
   };
 
+  // Whether this client has seen the notebook with real content (more than
+  // the generated empty cell). See ensureThereIsACell.
+  private sawNotebookContent = false;
+
   ensureThereIsACell = () => {
     if (this._state !== "ready") {
       return;
     }
     const cells = this.store.get("cells");
+    if (cells != null && cells.size > 0) {
+      if (!this.sawNotebookContent) {
+        const only = cells.size === 1 ? cells.first() : undefined;
+        if (
+          only == null ||
+          only.get("id") !== "alpha" ||
+          `${only.get("input") ?? ""}`.trim() !== ""
+        ) {
+          this.sawNotebookContent = true;
+        }
+      }
+      return;
+    }
     if (cells == null || cells.size === 0) {
+      if (this.sawNotebookContent) {
+        // Every cell was deleted. Record that, shared and durable, so the
+        // empty cell created below is not mistaken for the placeholder of a
+        // notebook whose file has not been loaded yet (which would let that
+        // file's older content come back).
+        this._set({ type: "settings", has_had_content: true }, false);
+      }
       this._set({
         type: "cell",
         // by using the same id across clients we solve the problem of multiple
