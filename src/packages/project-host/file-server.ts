@@ -5257,23 +5257,32 @@ export async function initFsServer({
           fs,
         }),
     },
-    board: {
-      open: async ({ subject, path, fs }) =>
-        await openBoard({
-          client,
-          project_id: projectIdFromSubject(subject),
-          path,
-          fs,
-        }),
-      save: async ({ subject, path, fs }) =>
-        await saveBoard({
-          client,
-          project_id: projectIdFromSubject(subject),
-          path,
-          fs,
-        }),
-    },
+    // Board editing is off unless the host enables it: until the persist
+    // server bounds a board's live history itself, the host's limits are
+    // checked only after a change is applied (see board/manager.ts).
+    board: boardEditingEnabled()
+      ? {
+          open: async ({ subject, path, fs }) =>
+            await openBoard({
+              client,
+              project_id: projectIdFromSubject(subject),
+              path,
+              fs,
+            }),
+          save: async ({ subject, path, fs }) =>
+            await saveBoard({
+              client,
+              project_id: projectIdFromSubject(subject),
+              path,
+              fs,
+            }),
+        }
+      : undefined,
   });
+}
+
+function boardEditingEnabled(): boolean {
+  return process.env.COCALC_PROJECT_HOST_BOARD_EDITING === "1";
 }
 
 const fileDownloadReadServers = new Map<string, Promise<void>>();
