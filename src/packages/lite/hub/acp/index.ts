@@ -8067,12 +8067,16 @@ function isToolEvent(payload?: AcpStreamPayload | null): boolean {
       return true;
     case "harness": {
       // A tool call counts once it runs, not while it waits for permission
-      // (which may be refused or canceled).
+      // (which may be refused or canceled). "failed" ran too: it may have
+      // changed something before it failed, and an agent need not report
+      // in_progress first.
       const data = event.data as { sessionUpdate?: unknown; status?: unknown };
       return (
         (data?.sessionUpdate === "tool_call" ||
           data?.sessionUpdate === "tool_call_update") &&
-        (data.status === "in_progress" || data.status === "completed")
+        (data.status === "in_progress" ||
+          data.status === "completed" ||
+          data.status === "failed")
       );
     }
     default:

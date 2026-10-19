@@ -57,6 +57,8 @@ describe("classifying by text, the last resort", () => {
     ["Claude AI usage limit reached|1792400000", "limit"],
     ["429 Too Many Requests", "limit"],
     ["Claude is not signed in.", "sign-in"],
+    // Only a failed sign-in: being signed in is not one.
+    ["Already signed in; request failed", "error"],
     ["401 Unauthorized", "sign-in"],
     ["This request was flagged by our cybersecurity filter", "refused"],
     ["The model timed out", "timeout"],

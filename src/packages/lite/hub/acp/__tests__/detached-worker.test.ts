@@ -456,9 +456,22 @@ it.each([
     { state: "failed", failure: { kind: "error" }, tool_ran: false },
     false,
   ],
+  [
+    "a turn whose tool call failed (it may have changed something)",
+    () => new Error("boom"),
+    { state: "failed", failure: { kind: "error" }, tool_ran: true },
+    true,
+    "failed",
+  ],
 ] as const)(
   "records how a queued turn ended, from %s",
-  async (_name, failWith, expected, runsTool = true) => {
+  async (
+    _name,
+    failWith,
+    expected,
+    runsTool: boolean = true,
+    toolStatus: string = "in_progress",
+  ) => {
     const previousEnabled = process.env.COCALC_ACP_HARNESSES;
     process.env.COCALC_ACP_HARNESSES = "1";
     setHarnessLauncher(async () => {
@@ -540,7 +553,7 @@ it.each([
             data: {
               sessionUpdate: "tool_call_update",
               toolCallId: "t1",
-              status: "in_progress",
+              status: toolStatus,
             },
           },
         });

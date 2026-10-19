@@ -156,7 +156,7 @@ export function turnFailureFromText(text: string): TurnFailure {
         : "credential",
     };
   if (
-    /sign[- ]?in|signed (?:out|in)|log ?in|unauthori[sz]ed|authenticat|expired token|token expired|api key|401|403/.test(
+    /sign[- ]?in|signed out|not signed in|log ?in|unauthori[sz]ed|authenticat|expired token|token expired|api key|401|403/.test(
       t,
     )
   )
