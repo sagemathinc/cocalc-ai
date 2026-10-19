@@ -234,7 +234,10 @@ Replace the board's file with text, only if it is exactly expected:
    the board sweeps it (sweepSideFiles): deleted if it still holds what was
    set aside (its name has the hash), else kept as a conflict copy. So a
    writer that held the old file open and wrote to it after step 3 is not
-   lost; it is surfaced at the next save.
+   lost if it lands before the next save's sweep reads the aside; it is
+   surfaced then. A write through such a descriptor after that read may be
+   lost (the sweep deletes the old file), as with any rename-based save
+   (editors, git checkout): programs should reopen the path.
 
 What remains: between steps 2 and 4 (two in-process syscalls) the board's
 name is absent; a reader then sees no file, and a delete in that instant
@@ -264,8 +267,8 @@ export async function replaceBoardFile({
   let holdingAside = false;
   let placed = false;
   activeAsides.add(aside);
-  await fs.writeFile(tmp, text);
   try {
+    await fs.writeFile(tmp, text);
     try {
       const mode = (await fs.lstat(path)).mode & 0o7777;
       await fs.chmod(tmp, mode);
@@ -673,10 +676,12 @@ export function sweepBoards(now?: number): void {
 // ENOSYS, and no manager is ever created) unless the host enables board
 // editing with COCALC_PROJECT_HOST_BOARD_EDITING=1.
 //
-// Invariant: no host enables this before the persist server enforces its
-// own bounds on board streams. Until then a board's limits are checked only
-// after a change has been applied to its syncdb, and its history is
-// replayed on open before any check (see the PR's "known gap").
+// DEPLOYMENT INVARIANT: COCALC_PROJECT_HOST_BOARD_EDITING stays unset on
+// every host until a server-enforced persist policy for board streams is
+// deployed and validated there. Until then a board's limits are checked
+// only after a change has been applied to its syncdb, and its history is
+// replayed on open before any check. That policy must bound direct stream
+// clients and their configuration, not only this manager's checks.
 export function boardHandlers({
   client,
   projectIdOf,

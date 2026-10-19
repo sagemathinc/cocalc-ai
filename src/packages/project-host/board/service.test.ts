@@ -40,15 +40,13 @@ test("records survive the syncdb's string, in either order", () => {
   expect(lib.canonical(lib.fromRecords(back as any))).toBe(lib.canonical(doc));
 });
 
-test("board editing is off unless the host enables it", () => {
+test('board editing is off unless the host enables it with exactly "1"', () => {
   const opts = { client: {} as any, projectIdOf: (s: string) => s };
-  expect(boardHandlers({ ...opts, env: {} })).toBeUndefined();
-  expect(
-    boardHandlers({
-      ...opts,
-      env: { COCALC_PROJECT_HOST_BOARD_EDITING: "true" },
-    }),
-  ).toBeUndefined();
+  for (const value of [undefined, "", "0", "true", "yes", " 1", "1 ", "01"]) {
+    const env =
+      value === undefined ? {} : { COCALC_PROJECT_HOST_BOARD_EDITING: value };
+    expect(boardHandlers({ ...opts, env })).toBeUndefined();
+  }
   const handlers = boardHandlers({
     ...opts,
     env: { COCALC_PROJECT_HOST_BOARD_EDITING: "1" },

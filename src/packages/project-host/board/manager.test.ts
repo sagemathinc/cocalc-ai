@@ -29,8 +29,10 @@ import {
   BOARD_STRING_COLS,
 } from "@cocalc/util/board/names";
 import { BoardManager, type BoardFile } from "./manager";
+import { fsServer } from "@cocalc/conat/files/fs";
 import {
   type ReplaceHooks,
+  boardHandlers,
   closeBoards,
   fileOf,
   openBoard,
@@ -1005,3 +1007,72 @@ test("by default a host edits boards up to its own record limit", async () => {
   expect(over.manager.getStatus()).toMatchObject({ state: "too-large" });
   await over.cleanup();
 });
+
+test.each([
+  ["unset", {}],
+  ["empty", { COCALC_PROJECT_HOST_BOARD_EDITING: "" }],
+  ["0", { COCALC_PROJECT_HOST_BOARD_EDITING: "0" }],
+  ["true", { COCALC_PROJECT_HOST_BOARD_EDITING: "true" }],
+  [" 1", { COCALC_PROJECT_HOST_BOARD_EDITING: " 1" }],
+])(
+  "with board editing off (%s), a direct boardOpen or a large write starts nothing",
+  async (_name, env) => {
+    const project_id = uuid();
+    // The writable file service as a project host builds it, gate off.
+    const service = `fs-gated-${uuid().slice(0, 8)}`;
+    const server = await fsServer({
+      service,
+      client: connect(),
+      fs: async () => localFs(project_id),
+      jupyter: {
+        importIpynb: async () => ({ ipynb: {} }),
+        saveIpynb: async () => ({ bytes: 0, converted: false }),
+      } as any,
+      board: boardHandlers({
+        client: connect(),
+        projectIdOf: () => project_id,
+        env,
+      }),
+    });
+    const files: any = connect().fs({
+      project_id,
+      service: fileserver.service,
+    });
+    const gated: any = connect().fs({ project_id, service });
+    await files.writeFile("gated.board.json", canonical(BOARD));
+    const writer = await openBoardSyncdb({
+      client: connect(),
+      project_id,
+      path: "gated.board.json",
+      service: fileserver.service,
+    });
+    try {
+      for (const call of ["boardOpen", "boardSave"]) {
+        await expect(gated[call]("gated.board.json")).rejects.toMatchObject({
+          code: "ENOSYS",
+        });
+      }
+      // A client writing an oversized change to the board's stream: no host
+      // replica exists to apply it.
+      // (Over the host's hard limits: 1,600 records, about 6.4 MB.)
+      for (let i = 0; i < 1_600; i++) {
+        writer.set({
+          type: "item",
+          page: "",
+          id: `x${i}`,
+          text: "x".repeat(4_000),
+        });
+      }
+      writer.commit();
+      await writer.save();
+      await expect(gated.boardOpen("gated.board.json")).rejects.toMatchObject({
+        code: "ENOSYS",
+      });
+      expect(openBoardCount()).toBe(0);
+    } finally {
+      await writer.close();
+      (server as any)?.close?.();
+    }
+  },
+  120_000,
+);
