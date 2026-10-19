@@ -58,13 +58,20 @@ function answers(over: Record<string, unknown> = {}) {
 }
 
 test("one release: the package pinned exactly, installed, and paired with the CLI", () => {
-  for (const pkg of ["frontend", "server"]) {
+  // the card (frontend) and the board's reader (backend, where the
+  // project's files are served); the hub (server) reads no board
+  for (const pkg of ["frontend", "backend"]) {
     expect(
       readJson(pkg, "package.json").dependencies[
         "@sagemathinc/sagebrush-board"
       ],
     ).toBe(BOARD_PACKAGE);
   }
+  expect(
+    readJson("server", "package.json").dependencies[
+      "@sagemathinc/sagebrush-board"
+    ],
+  ).toBeUndefined();
   const installed = readJson(
     "frontend",
     "node_modules",
