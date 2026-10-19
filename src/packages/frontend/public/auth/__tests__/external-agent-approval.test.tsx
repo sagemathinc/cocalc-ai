@@ -189,3 +189,26 @@ test("the page counts the server's time left down and closes when it runs out", 
     jest.useRealTimers();
   }
 });
+
+test("the form closes exactly when the server's time runs out, not at the next tick", () => {
+  jest.useFakeTimers();
+  try {
+    render(
+      <ExternalAgentApproval {...props} expiresInMs={5_000} state="pending" />,
+    );
+    act(() => {
+      jest.advanceTimersByTime(4_900);
+    });
+    expect(
+      screen.queryByText("This enrollment request is no longer open."),
+    ).toBeNull();
+    act(() => {
+      jest.advanceTimersByTime(200);
+    });
+    expect(
+      screen.getByText("This enrollment request is no longer open."),
+    ).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
+});

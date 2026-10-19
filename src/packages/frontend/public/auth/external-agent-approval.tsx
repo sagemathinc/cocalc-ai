@@ -56,13 +56,20 @@ export function ExternalAgentApproval({
   const [elapsed, setElapsed] = useState(0);
   const hasExpiry = expiresInMs != null && Number.isFinite(expiresInMs);
   useEffect(() => {
-    if (!hasExpiry) return;
-    const timer = setInterval(
-      () => setElapsed(performance.now() - loadedAt),
-      15_000,
+    if (expiresInMs == null || !hasExpiry) return;
+    const tick = () => setElapsed(performance.now() - loadedAt);
+    // Coarse updates for the countdown, and one exactly at expiry so the form
+    // closes when the request does.
+    const timer = setInterval(tick, 15_000);
+    const atExpiry = setTimeout(
+      tick,
+      Math.max(0, expiresInMs - (performance.now() - loadedAt)),
     );
-    return () => clearInterval(timer);
-  }, [hasExpiry, loadedAt]);
+    return () => {
+      clearInterval(timer);
+      clearTimeout(atExpiry);
+    };
+  }, [expiresInMs, hasExpiry, loadedAt]);
   const remainingMs =
     expiresInMs != null && hasExpiry ? expiresInMs - elapsed : Infinity;
   // Shown in the browser's own time, whatever its clock says.
