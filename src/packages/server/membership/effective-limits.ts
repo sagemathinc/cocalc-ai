@@ -93,6 +93,12 @@ export function normalizeMembershipEffectiveLimits(
     ),
     egress_5h_bytes: normalizeNonNegativeInteger(usageLimits?.egress_5h_bytes),
     egress_7d_bytes: normalizeNonNegativeInteger(usageLimits?.egress_7d_bytes),
+    control_plane_egress_5h_bytes: normalizeNonNegativeInteger(
+      usageLimits?.control_plane_egress_5h_bytes,
+    ),
+    control_plane_egress_7d_bytes: normalizeNonNegativeInteger(
+      usageLimits?.control_plane_egress_7d_bytes,
+    ),
     cpu_5h_seconds: normalizeNonNegativeNumber(usageLimits?.cpu_5h_seconds),
     cpu_7d_seconds: normalizeNonNegativeNumber(usageLimits?.cpu_7d_seconds),
     egress_policy: normalizeEgressPolicy(usageLimits?.egress_policy),

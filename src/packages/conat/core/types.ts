@@ -37,6 +37,8 @@ export interface ConnectionStats {
   send: { messages: number; bytes: number };
   recv: { messages: number; bytes: number };
   egress?: { messages: number; bytes: number };
+  // egress bytes by normalized subject (see core/egress-attribution.ts)
+  egress_by_subject?: Record<string, number>;
   subs: number;
   connected?: number; // time connected
   active?: number;

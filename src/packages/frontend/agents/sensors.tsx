@@ -545,7 +545,7 @@ function SensorCard({
               aria-expanded={logOpen}
               onClick={() => setLogOpen(!logOpen)}
             >
-              {logOpen ? "Hide run log" : "Run log"}
+              {logOpen ? "Hide log" : "Show log"}
             </Button>
           )}
         </Space>
@@ -693,6 +693,19 @@ function SchedulePromptForm({
   );
 }
 
+/**
+ * A sensor that will never run again: a watcher that fired, gave up or was
+ * paused (watchers cannot be resumed), or a rejected proposal. A sensor with
+ * a pending proposal is never finished: that awaits the person's review.
+ * Finished ones are removed after a day; until then they stay out of the way.
+ */
+export function sensorFinished(sensor: AgentSensor): boolean {
+  if (sensor.pending_spec != null) return false;
+  if (sensor.status === "done" || sensor.status === "rejected") return true;
+  const spec = sensor.spec as { kind?: string } | null;
+  return sensor.status === "paused" && spec?.kind === "watch";
+}
+
 export function AgentSensorsModal({
   agent,
   open,
@@ -709,6 +722,9 @@ export function AgentSensorsModal({
   refresh: () => Promise<void> | void;
 }) {
   const [creating, setCreating] = useState(false);
+  const [showFinished, setShowFinished] = useState(false);
+  const current = sensors?.filter((sensor) => !sensorFinished(sensor));
+  const finished = sensors?.filter((sensor) => sensorFinished(sensor)) ?? [];
   return (
     <Modal
       open={open}
@@ -754,7 +770,12 @@ export function AgentSensorsModal({
           description={`@${agent.name} has no sensors yet. Schedule a prompt, or ask it to watch for something.`}
         />
       )}
-      {sensors?.map((sensor) => (
+      {sensors && sensors.length > 0 && current?.length === 0 && (
+        <p style={{ color: UI_COLORS.secondary }}>
+          Nothing is watching or scheduled for @{agent.name} right now.
+        </p>
+      )}
+      {current?.map((sensor) => (
         <SensorCard
           key={sensor.sensor_id}
           agent={agent}
@@ -762,6 +783,27 @@ export function AgentSensorsModal({
           onChanged={() => void refresh()}
         />
       ))}
+      {finished.length > 0 && (
+        <Button
+          type="link"
+          style={{ paddingInline: 0 }}
+          aria-expanded={showFinished}
+          onClick={() => setShowFinished((value) => !value)}
+        >
+          {showFinished
+            ? "Hide finished"
+            : `Show ${finished.length} finished (fired, given up or rejected)`}
+        </Button>
+      )}
+      {showFinished &&
+        finished.map((sensor) => (
+          <SensorCard
+            key={sensor.sensor_id}
+            agent={agent}
+            sensor={sensor}
+            onChanged={() => void refresh()}
+          />
+        ))}
     </Modal>
   );
 }

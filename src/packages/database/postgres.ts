@@ -14,7 +14,6 @@ import type { CB } from "@cocalc/util/types/database";
 
 import type { BlobStore } from "./filesystem-bucket";
 import {
-  delete_remember_me,
   get_remember_me_message,
   invalidate_all_remember_me,
   SignedInMessage,
@@ -1269,8 +1268,8 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     return runWithCb(opts.cb, () => touch(this, opts));
   }
 
-  // Invalidate all outstanding remember me cookies for the given account by
-  // deleting them from the remember_me key:value store.
+  // Sign the given account out everywhere: delete its remember me cookies and
+  // revoke its auth sessions, inside the account rehome fence.
   async invalidate_all_remember_me(
     opts: PgMethodOpts<"invalidate_all_remember_me">,
   ) {
@@ -1299,10 +1298,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     } else {
       opts.cb();
     }
-  }
-
-  async delete_remember_me(opts: PgMethodOpts<"delete_remember_me">) {
-    return runWithCb(opts.cb, () => delete_remember_me(this, opts));
   }
 
   async get_personal_user() {

@@ -48,6 +48,7 @@ import {
 import { parseLsofListenOutput, parseSsOutput } from "./listen-parsers";
 import { listAppTemplates as listAppTemplatesFromCatalog } from "./template-catalog";
 import { resolveProxyListenPort } from "../servers/proxy/config";
+import { appStartFailure, resolveAppCommand } from "./cocalc-cli";
 export { listAppTemplatesFromCatalog as listAppTemplates };
 
 const logger = getLogger("app-servers:control");
@@ -583,6 +584,11 @@ function watchOutput(server: RunningApp): void {
 
   child.on("error", (err) => {
     server.spawnError = err;
+    // A process that never spawned emits no "exit".
+    if (child.pid == null) {
+      server.ready = false;
+      void clearRunningServicePort(server.id);
+    }
   });
 
   child.on("exit", (code, signal) => {
@@ -867,8 +873,10 @@ export async function startApp(
   });
   const localUrl = getProxyUrl(port);
   const appBaseUrl = localUrl;
-  const cmd = spec.command.exec;
-  const args = spec.command.args ?? [];
+  const { exec: cmd, args } = resolveAppCommand({
+    exec: spec.command.exec,
+    args: spec.command.args ?? [],
+  });
   logger.debug("start app", {
     id: spec.id,
     cmd,
@@ -1035,7 +1043,14 @@ export async function statusApp(id: string): Promise<AppStatus> {
 export async function waitForAppState(
   id: string,
   target: "running" | "stopped",
-  opts?: { timeout?: number; interval?: number },
+  opts?: {
+    timeout?: number;
+    interval?: number;
+    // Give up once the service has exited or failed to spawn. Only for a
+    // caller that just started it: otherwise a retained earlier crash would
+    // hide a restart by another request.
+    failFast?: boolean;
+  },
 ): Promise<boolean> {
   const timeout = opts?.timeout ?? 30000;
   const interval = opts?.interval ?? 500;
@@ -1045,6 +1060,13 @@ export async function waitForAppState(
     if (target === "running") {
       if (s.state === "running" && s.ready === true) {
         return true;
+      }
+      if (
+        opts?.failFast &&
+        s.state === "stopped" &&
+        (s.spawnError != null || s.exit != null)
+      ) {
+        return false;
       }
     } else if (s.state === "stopped") {
       return true;
@@ -1078,11 +1100,25 @@ export async function ensureRunning(
   await startApp(id, {
     preferredPort: opts?.preferredPort,
   });
-  const ok = await waitForAppState(id, "running", opts);
+  const ok = await waitForAppState(id, "running", {
+    timeout: opts?.timeout,
+    interval: opts?.interval,
+    failFast: true,
+  });
   const status = await statusApp(id);
   if (!ok) {
+    const failure =
+      spec.kind === "service" && status.state === "stopped"
+        ? appStartFailure({
+            exec: spec.command.exec,
+            spawnError: status.spawnError,
+            exit: status.exit,
+          })
+        : undefined;
     throw new Error(
-      `timed out waiting for app '${id}' to become ready` +
+      (failure
+        ? `app '${id}' failed to start: ${failure}`
+        : `timed out waiting for app '${id}' to become ready`) +
         (status.stderr && status.stderr.length > 0
           ? `: ${status.stderr.toString().trim()}`
           : ""),

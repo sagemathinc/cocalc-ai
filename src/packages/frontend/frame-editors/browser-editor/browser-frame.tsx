@@ -103,7 +103,8 @@ export function BrowserFrame({
         await resolveProjectHomeDirectory(project_id),
       );
       const id = sharedBrowserFileAppId(file);
-      // `serve` runs the CLI on the project's PATH and needs no credentials.
+      // The project runs `cocalc` as its bundled CLI, not whatever is first
+      // on the PATH; `serve` needs no credentials.
       const api = webapp_client.conat_client.projectApi({ project_id });
       await api.apps.upsertAppSpec(
         sharedBrowserAppSpec({

@@ -51,7 +51,7 @@ function isSafeInternalFileUrl(value: string): boolean {
   }
 }
 
-function isSafeSlateLinkUrl(value: string): boolean {
+export function isSafeSlateLinkUrl(value: string): boolean {
   return isSafeHtmlUrl(value) || isSafeInternalFileUrl(value);
 }
 

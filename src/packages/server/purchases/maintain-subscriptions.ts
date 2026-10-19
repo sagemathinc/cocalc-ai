@@ -37,8 +37,15 @@ PAYMENT FOLLOW-UP:
     operational failure, not customer nonpayment, and is surfaced to admins by
     the aggregate renewal health alert.
 
-  - A terminal automatic payment failure cancels the subscription and stops
-    membership benefits. The user can resume it later with a new renewal period.
+  - If automatic payment needs the customer (declined card, or the bank asks
+    them to authenticate), the payment stays open and payable from its hosted
+    invoice, membership benefits continue, and the customer is told once.
+    This grace period lasts RENEWAL_PAYMENT_GRACE_MS (7 days) after the
+    paid-through boundary; the payment is rechecked every few hours.
+
+  - A payment that is canceled, or still unpaid when the grace period ends,
+    cancels the subscription and stops membership benefits. The user can
+    resume it later with a new renewal period.
 
   - In particular, if a user doesn't pay their monthly subscription for 90 days (say),
     then their membership benefits would have not worked during the last 90 days and we didn't
