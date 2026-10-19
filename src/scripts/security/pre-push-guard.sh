@@ -171,24 +171,21 @@ load_private_signatures() {
   patch_ids "$tmp/private-oids" "$tmp/private-pids-all" || return 1
   awk '$2 != "-"' "$tmp/private-pids-all" >"$tmp/private-patch-ids" || return 1
   require_public_main || return 1
-  # Combined change from the fork point to EVERY private commit (not only
-  # branch tips), so squashing any prefix of a private series is recognized.
-  # Fork points ("fp:<oid> <base>") and range patch-ids ("<base>..<tip> <pid>")
-  # are cached by commit id; lookups are batched (one pass over the cache).
+  # Combined change from the current public boundary to EVERY private commit
+  # (not only branch tips), so squashing any part of a private series is
+  # recognized.  One topological pass over the private commits, excluding
+  # everything on ANY public branch: a commit's boundary is its first parent
+  # if that parent is public, else the parent's boundary.  It is recomputed
+  # each run, so disclosing a prefix (e.g. P1 of P1-P2-P3) moves the boundary.
+  # Range patch-ids ("<base>..<tip> <pid>") are content-addressed and cached.
   local cache
   cache=$(patch_cache) || return 1
-  sort -u "$tmp/private-oids" >"$tmp/private-sorted" || return 1
-  awk 'NR == FNR { w["fp:" $1] = 1; next } ($1 in w) && !seen[$1]++ { print substr($1, 4), $2 }' \
-    "$tmp/private-sorted" "$cache" >"$tmp/fp-known" || return 1
-  awk '{ print $1 }' "$tmp/fp-known" | sort -u >"$tmp/fp-known-oids" || return 1
-  comm -23 "$tmp/private-sorted" "$tmp/fp-known-oids" >"$tmp/fp-missing" || return 1
-  : >"$tmp/fp-new" || return 1
-  while read -r tip; do
-    base=$(fork_point "$tip") || return 1
-    echo "$tip ${base:--}" >>"$tmp/fp-new" || return 1
-  done <"$tmp/fp-missing"
-  awk '{ print "fp:" $1, $2 }' "$tmp/fp-new" >>"$cache" || return 1
-  cat "$tmp/fp-known" "$tmp/fp-new" | awk '$2 != "-" && $1 != $2 { print $2 ".." $1 }' | sort -u >"$tmp/ranges" || return 1
+  {
+    cat "$tmp/private-oids" && echo "--not" && echo "--glob=$GUARD_REFS/public/*"
+  } >"$tmp/boundary-args" || return 1
+  git rev-list --reverse --topo-order --parents --stdin <"$tmp/boundary-args" >"$tmp/private-topo" || return 1
+  awk 'NF >= 2 { base[$1] = ($2 in base) ? base[$2] : $2; print base[$1] ".." $1 }' \
+    "$tmp/private-topo" | sort -u >"$tmp/ranges" || return 1
   awk 'NR == FNR { w[$1] = 1; next } ($1 in w) && !seen[$1]++' "$tmp/ranges" "$cache" >"$tmp/range-known" || return 1
   awk '{ print $1 }' "$tmp/range-known" | sort -u >"$tmp/range-known-keys" || return 1
   comm -23 "$tmp/ranges" "$tmp/range-known-keys" >"$tmp/range-missing" || return 1

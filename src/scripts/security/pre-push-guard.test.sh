@@ -382,6 +382,24 @@ git reset -q --hard "$B8" && echo pub >>b && git commit -q -am "public moves on"
 git merge -q --squash "$P2_8" >/dev/null 2>&1 && git commit -q -m "squash of P1+P2 only" && SQ8=$(git rev-parse HEAD)
 check 1 "squash of a prefix (P1+P2) of a private series onto a newer main" "$T/pub8.git" refs/heads/main "$SQ8" refs/heads/main "$E8" "$P8"
 
+# Warm cache, then P1 of P1-P2-P3 is disclosed (published as-is) and public
+# main moves on; a squash of the remaining P2+P3 must still be recognized.
+git init -q --bare "$T/pub9.git" && git init -q --bare "$T/priv9.git"
+git init -q "$T/disc" && cd "$T/disc" || exit 1
+E9="COCALC_PUBLIC_URL=$T/pub9.git"
+P9="COCALC_PRIVATE_URL=$T/priv9.git"
+echo base >a && echo base >b && echo base >c && git add a b c && git commit -q -m base && B9=$(git rev-parse HEAD)
+git push -q "$T/pub9.git" HEAD:refs/heads/main && git push -q "$T/priv9.git" HEAD:refs/heads/main
+echo p1 >>a && git commit -q -am P1 && P1_9=$(git rev-parse HEAD)
+echo p2 >>b && git commit -q -am P2 && echo p3 >>b && git commit -q -am P3 && P3_9=$(git rev-parse HEAD)
+git push -q "$T/priv9.git" HEAD:refs/heads/security/series
+git reset -q --hard "$B9" && echo x >d && git add d && git commit -q -m warm && WARM=$(git rev-parse HEAD)
+check 0 "warm-up run (unrelated commit)" "$T/pub9.git" refs/heads/x "$WARM" refs/heads/fix/warm "$E9" "$P9"
+git push -q "$T/pub9.git" "$P1_9:refs/heads/main"
+git reset -q --hard "$P1_9" && echo pub >>c && git commit -q -am "public moves on" && git push -q "$T/pub9.git" HEAD:refs/heads/main
+git merge -q --squash "$P3_9" >/dev/null 2>&1 && git commit -q -m "squash of the remaining P2+P3" && SQ9=$(git rev-parse HEAD)
+check 1 "after P1 is disclosed: squash of the remaining P2+P3 (warm cache)" "$T/pub9.git" refs/heads/main "$SQ9" refs/heads/main "$E9" "$P9"
+
 # Several private commits squashed onto a newer public main: new tree and a
 # combined patch-id (Codex/@review repro).
 git init -q --bare "$T/pub4.git" && git init -q --bare "$T/priv4.git"
