@@ -62,15 +62,23 @@ describe("auth session ownership writes", () => {
     ).rejects.toThrow("current browser session not found");
   });
 
-  it("scopes single-session revocation to the owning account", async () => {
-    const { revokeAuthSession } = await import("./auth-sessions");
+  it("ends one session's cookie and auth session together, scoped to its account", async () => {
+    const { endSignInSession } = await import("./auth-sessions");
 
-    await revokeAuthSession({ account_id, session_hash });
+    await endSignInSession({ account_id, session_hash });
 
+    const sql = queryMock.mock.calls.map(([sql]) => `${sql}`);
+    const del = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("DELETE FROM remember_me"),
+    );
     const update = queryMock.mock.calls.find(([sql]) =>
       `${sql}`.includes("UPDATE account_auth_sessions"),
     );
+    expect(del?.[0]).toContain("AND account_id = $2::UUID");
+    expect(del?.[1]).toEqual([session_hash, account_id]);
     expect(update?.[0]).toContain("AND account_id = $2::UUID");
     expect(update?.[1]).toEqual([session_hash, account_id]);
+    // Both inside the one fenced transaction (the mock runs fn once).
+    expect(sql.filter((q) => q.includes("remember_me")).length).toBe(1);
   });
 });

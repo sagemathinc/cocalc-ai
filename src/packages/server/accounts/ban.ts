@@ -1,8 +1,7 @@
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
 import { recordAccountSecurityState } from "@cocalc/server/accounts/security-state";
-import { revokeAllAuthSessions } from "@cocalc/server/auth/auth-sessions";
-import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
+import { endAllSignInSessions } from "@cocalc/server/auth/auth-sessions";
 import getLogger from "@cocalc/backend/logger";
 import { clearIsBannedCache } from "./is-banned";
 import { stopRunningProjectsForBannedAccount } from "./stop-banned-projects";
@@ -31,8 +30,7 @@ export async function banUser(account_id: string): Promise<void> {
     },
   });
   clearIsBannedCache(account_id);
-  await deleteAllRememberMe(account_id);
-  await revokeAllAuthSessions(account_id);
+  await endAllSignInSessions(account_id);
   // Revoke host-level persistent sessions/tokens issued before this ban.
   await recordAccountRevocation(account_id, revokedBeforeMs, { banned: true });
   // Best-effort: immediately stop active runtime containers owned or sponsored

@@ -484,17 +484,53 @@ export async function setSessionFreshAuth({
   });
 }
 
-export async function revokeAuthSession({
-  account_id,
+// Ending sign-in sessions deletes their remember_me rows (the cookie stops
+// working) and revokes their auth sessions together, in one transaction
+// inside the account rehome fence. Both rows move with the account when it is
+// rehomed, so neither may change while a rehome copies them: a delete that
+// landed after the copy read the rows would bring the session back on the
+// new bay.
+
+async function sessionAccountId(
+  session_hash: string,
+): Promise<string | undefined> {
+  const { rows } = await getPool().query(
+    `
+      SELECT account_id FROM remember_me WHERE hash = $1::CHAR(127)
+      UNION ALL
+      SELECT account_id FROM account_auth_sessions
+       WHERE session_hash = $1::CHAR(127)
+      LIMIT 1
+    `,
+    [session_hash],
+  );
+  return rows[0]?.account_id ?? undefined;
+}
+
+// End one sign-in session. Without account_id, the session's own account.
+export async function endSignInSession({
   session_hash,
+  account_id,
 }: {
-  account_id: string;
   session_hash: string;
+  account_id?: string;
 }): Promise<void> {
+  const hash = `${session_hash ?? ""}`.trim().slice(0, 127);
+  if (!hash) return;
+  const owner = account_id ?? (await sessionAccountId(hash));
+  if (!owner) return;
   await withAccountRehomeWriteFence({
-    account_id,
-    action: "revoke auth session",
+    account_id: owner,
+    action: "end sign-in session",
     fn: async (db) => {
+      await db.query(
+        `
+          DELETE FROM remember_me
+           WHERE hash = $1::CHAR(127)
+             AND account_id = $2::UUID
+        `,
+        [hash, owner],
+      );
       await db.query(
         `
           UPDATE account_auth_sessions
@@ -502,17 +538,20 @@ export async function revokeAuthSession({
            WHERE session_hash = $1::CHAR(127)
              AND account_id = $2::UUID
         `,
-        [session_hash, account_id],
+        [hash, owner],
       );
     },
   });
 }
 
-export async function revokeAllAuthSessions(account_id: string): Promise<void> {
+export async function endAllSignInSessions(account_id: string): Promise<void> {
   await withAccountRehomeWriteFence({
     account_id,
-    action: "revoke all auth sessions",
+    action: "end all sign-in sessions",
     fn: async (db) => {
+      await db.query("DELETE FROM remember_me WHERE account_id = $1::UUID", [
+        account_id,
+      ]);
       await db.query(
         `
           UPDATE account_auth_sessions
@@ -526,17 +565,27 @@ export async function revokeAllAuthSessions(account_id: string): Promise<void> {
   });
 }
 
-export async function revokeOtherAuthSessions({
+export async function endOtherSignInSessions({
   account_id,
   keep_session_hash,
 }: {
   account_id: string;
   keep_session_hash: string;
 }): Promise<void> {
+  const keep = `${keep_session_hash ?? ""}`.trim().slice(0, 127);
+  if (!keep) throw new Error("keep_session_hash is required");
   await withAccountRehomeWriteFence({
     account_id,
-    action: "revoke other auth sessions",
+    action: "end other sign-in sessions",
     fn: async (db) => {
+      await db.query(
+        `
+          DELETE FROM remember_me
+           WHERE account_id = $1::UUID
+             AND hash <> $2::CHAR(127)
+        `,
+        [account_id, keep],
+      );
       await db.query(
         `
           UPDATE account_auth_sessions
@@ -545,7 +594,7 @@ export async function revokeOtherAuthSessions({
              AND session_hash <> $2::CHAR(127)
              AND revoked_at IS NULL
         `,
-        [account_id, keep_session_hash],
+        [account_id, keep],
       );
     },
   });
