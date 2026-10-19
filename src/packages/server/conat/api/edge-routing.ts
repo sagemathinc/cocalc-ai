@@ -47,11 +47,14 @@ const logger = getLogger("server:conat:api:edge-routing");
 
 export type HubApiCall = Omit<ForwardedHubApiCall, "source_bay_id" | "call_id">;
 
-// A forwarded call gets two attempts with the same call id, within the
-// caller's own hub call timeout, so the caller hears the outcome (or that it
-// is unknown) from this bay rather than timing out itself. That timeout is
-// 30 s unless the call asks for longer (args[0].timeout, as hub API clients
-// send it), up to 30 min: a slow host read, say.
+// A forwarded call gets two attempts with the same call id, so a lost reply
+// is recovered without running the call twice. Their budget is the caller's
+// own timeout when it asks for longer than 30 s (args[0].timeout, as hub API
+// clients send it), up to 30 min: a slow host read, say. Otherwise it is
+// 30 s, the forwarding window from before budgets followed the caller. That
+// floor can outlast a caller with a shorter timeout (ordinary hub calls
+// default to 15 s), which then times out itself while the owning bay may
+// still finish the call.
 const FORWARD_ATTEMPTS = 2;
 const DEFAULT_FORWARD_BUDGET_MS = 30_000;
 const MAX_FORWARD_BUDGET_MS = 30 * 60_000;
@@ -72,7 +75,7 @@ function clampBudgetMs(ms: unknown): number {
   );
 }
 
-/** How long a forwarded call may take in all: the caller's own timeout. */
+/** How long a forwarded call may take in all (see above). */
 export function forwardBudgetMs(args: any[]): number {
   return clampBudgetMs(args?.[0]?.timeout);
 }
