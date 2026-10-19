@@ -166,9 +166,13 @@ describeDb(
 
     test("the approval page learns an enrollment was approved from the installation", async () => {
       const request = await start();
-      expect(
-        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
-      ).toMatchObject({ kind: "external-agent", state: "pending" });
+      const first = await getCliAuthApprovalInfo({
+        challenge_id: request.challenge_id,
+      });
+      expect(first).toMatchObject({ kind: "external-agent", state: "pending" });
+      // Time left by the server's clock, for pages whose clock is off.
+      expect(first.expires_in_ms).toBeGreaterThan(55 * 60_000);
+      expect(first.expires_in_ms).toBeLessThanOrEqual(60 * 60_000);
       await claimExternalAgentLoginChallenge(request.challenge_id, account);
       expect(
         await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),

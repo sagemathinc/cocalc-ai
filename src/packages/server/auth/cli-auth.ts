@@ -1011,6 +1011,8 @@ export async function getCliAuthApprovalInfo({
   auth_client: CliAuthClientKind;
   state: CliAuthChallengeStatus;
   expires_at: Date;
+  /** Time left by the server's clock, so a page need not trust its own. */
+  expires_in_ms: number;
   external?: { label: string; origin_bay_id: string };
 }> {
   const row = await getChallengeRow(cleanChallengeId(challenge_id));
@@ -1057,6 +1059,7 @@ export async function getCliAuthApprovalInfo({
     auth_client: cleanAuthClientKind(row.metadata?.auth_client),
     state,
     expires_at: new Date(row.expire),
+    expires_in_ms: Math.max(0, new Date(row.expire).getTime() - Date.now()),
     ...(row.kind === "external-agent"
       ? {
           external: {

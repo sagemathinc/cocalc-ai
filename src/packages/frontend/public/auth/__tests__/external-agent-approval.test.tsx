@@ -1,5 +1,5 @@
 /** @jest-environment jsdom */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
 import { ExternalAgentApproval } from "../external-agent-approval";
@@ -95,13 +95,7 @@ test("signed-out visitors cannot enumerate or approve networks", () => {
 });
 
 test("an expired request says so as soon as the page opens, with no form", async () => {
-  render(
-    <ExternalAgentApproval
-      {...props}
-      expiresAt={new Date(Date.now() - 60_000).toISOString()}
-      state="pending"
-    />,
-  );
+  render(<ExternalAgentApproval {...props} expiresInMs={0} state="pending" />);
   expect(
     await screen.findByText("This enrollment request is no longer open."),
   ).toBeTruthy();
@@ -116,7 +110,7 @@ test("an already approved request is not offered again", async () => {
   render(
     <ExternalAgentApproval
       {...props}
-      expiresAt={new Date(Date.now() + 30 * 60_000).toISOString()}
+      expiresInMs={30 * 60_000}
       state="redeemed"
     />,
   );
@@ -128,7 +122,7 @@ test("the page shows when the request expires, and warns when it is soon", async
   const { unmount } = render(
     <ExternalAgentApproval
       {...props}
-      expiresAt={new Date(Date.now() + 50 * 60_000).toISOString()}
+      expiresInMs={50 * 60_000}
       state="pending"
     />,
   );
@@ -142,7 +136,7 @@ test("the page shows when the request expires, and warns when it is soon", async
   render(
     <ExternalAgentApproval
       {...props}
-      expiresAt={new Date(Date.now() + 4 * 60_000).toISOString()}
+      expiresInMs={4 * 60_000}
       state="pending"
     />,
   );
@@ -151,4 +145,47 @@ test("the page shows when the request expires, and warns when it is soon", async
       /This request expires at .*\(in about 4 minutes\)\./,
     ),
   ).toBeTruthy();
+});
+
+test("a browser clock far ahead of the server's still offers a fresh request", async () => {
+  const now = jest
+    .spyOn(Date, "now")
+    .mockReturnValue(Date.now() + 2 * 3600_000);
+  try {
+    render(
+      <ExternalAgentApproval
+        {...props}
+        expiresInMs={50 * 60_000}
+        state="pending"
+      />,
+    );
+    expect(
+      await screen.findByRole("combobox", { name: "Agent Network" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("This enrollment request is no longer open."),
+    ).toBeNull();
+  } finally {
+    now.mockRestore();
+  }
+});
+
+test("the page counts the server's time left down and closes when it runs out", () => {
+  jest.useFakeTimers();
+  try {
+    render(
+      <ExternalAgentApproval {...props} expiresInMs={60_000} state="pending" />,
+    );
+    expect(
+      screen.queryByText("This enrollment request is no longer open."),
+    ).toBeNull();
+    act(() => {
+      jest.advanceTimersByTime(75_000);
+    });
+    expect(
+      screen.getByText("This enrollment request is no longer open."),
+    ).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
 });

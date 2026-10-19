@@ -26,7 +26,7 @@ export function ExternalAgentApproval({
   originBayId,
   isAuthenticated,
   accountLabel,
-  expiresAt,
+  expiresInMs,
   state,
 }: {
   challengeId: string;
@@ -34,8 +34,9 @@ export function ExternalAgentApproval({
   originBayId: string;
   isAuthenticated: boolean;
   accountLabel?: string;
-  /** When the enrollment request (not the credential) expires. */
-  expiresAt?: string;
+  /** Server time left on the enrollment request (not the credential) when
+   * the page loaded. */
+  expiresInMs?: number;
   state?: "pending" | "approved" | "redeemed" | "canceled";
 }) {
   const [directory, setDirectory] = useState<AgentNetworkDirectory>();
@@ -49,25 +50,34 @@ export function ExternalAgentApproval({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     origin,
   });
-  const [now, setNow] = useState(() => Date.now());
-  const expiresMs = expiresAt ? Date.parse(expiresAt) : NaN;
+  // The server's time left, counted down with the browser's monotonic clock:
+  // the browser's wall clock may be off from the server's.
+  const [loadedAt] = useState(() => performance.now());
+  const [elapsed, setElapsed] = useState(0);
+  const hasExpiry = expiresInMs != null && Number.isFinite(expiresInMs);
   useEffect(() => {
-    if (!Number.isFinite(expiresMs)) return;
-    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    if (!hasExpiry) return;
+    const timer = setInterval(
+      () => setElapsed(performance.now() - loadedAt),
+      15_000,
+    );
     return () => clearInterval(timer);
-  }, [expiresMs]);
+  }, [hasExpiry, loadedAt]);
+  const remainingMs =
+    expiresInMs != null && hasExpiry ? expiresInMs - elapsed : Infinity;
+  // Shown in the browser's own time, whatever its clock says.
+  const expiresLabel = hasExpiry ? timeLabel(Date.now() + remainingMs) : "";
   // Say so as soon as the page opens, not after the form is filled out.
   const closedReason =
     state === "approved" || state === "redeemed"
       ? "It was already approved."
       : state === "canceled"
         ? "It was canceled."
-        : Number.isFinite(expiresMs) && now >= expiresMs
-          ? `It expired at ${timeLabel(expiresMs)}.`
+        : remainingMs <= 0
+          ? `It expired at ${expiresLabel}.`
           : undefined;
   const closed = closedReason != null;
-  const expiresSoon =
-    Number.isFinite(expiresMs) && expiresMs - now <= EXPIRY_WARNING_MS;
+  const expiresSoon = remainingMs <= EXPIRY_WARNING_MS;
   const selectedNetwork = directory?.networks.find(
     ({ agent_network_id }) => agent_network_id === selected,
   );
@@ -141,13 +151,13 @@ export function ExternalAgentApproval({
         />
       ) : (
         !approved &&
-        Number.isFinite(expiresMs) && (
+        hasExpiry && (
           <Alert
             type={expiresSoon ? "warning" : "info"}
             role="note"
-            title={`This request expires at ${timeLabel(expiresMs)}${
+            title={`This request expires at ${expiresLabel}${
               expiresSoon
-                ? ` (in about ${Math.max(1, Math.ceil((expiresMs - now) / 60_000))} minutes)`
+                ? ` (in about ${Math.max(1, Math.ceil(remainingMs / 60_000))} minutes)`
                 : ""
             }.`}
           />

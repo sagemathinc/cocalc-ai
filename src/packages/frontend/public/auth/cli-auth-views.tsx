@@ -96,6 +96,8 @@ type ChallengeInfo = {
   auth_client?: "cli" | "mobile";
   state: "pending" | "approved" | "redeemed" | "canceled";
   expires_at: string;
+  /** Server time left on the request when this was read. */
+  expires_in_ms?: number;
 };
 
 type CliElevationFreshAuthStatus = {
@@ -364,7 +366,7 @@ export function PublicCliLoginApprovalView({
         originBayId={info.external.origin_bay_id}
         isAuthenticated={isAuthenticated}
         accountLabel={currentCliLoginAccountLabel(info)}
-        expiresAt={info.expires_at}
+        expiresInMs={info.expires_in_ms}
         state={info.state}
       />
     );
