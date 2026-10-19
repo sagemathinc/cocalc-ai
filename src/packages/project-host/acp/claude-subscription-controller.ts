@@ -538,7 +538,6 @@ ${skill}
       };
       applyProjectRuntimeCliEnv(env, accountId);
       if (lease.connectorContainerPath) lease.applyCliConnectorEnv(env);
-      Object.assign(env, turnPublicationEnv(conversation!, turnPublication));
       return env;
     };
     toolBridge = await createClaudeProjectToolBridge(
@@ -546,6 +545,9 @@ ${skill}
       leasedProjectExecutor({
         leases,
         envFor: cliEnvFor,
+        // The turn that asked for the command, even if it ends before the
+        // command gets its lease.
+        admissionEnv: () => turnPublicationEnv(conversation!, turnPublication),
         execute: (env, script, cwd, signal, options) =>
           sandboxExec({
             project_id: projectId,

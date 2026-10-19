@@ -109,16 +109,24 @@ export function createRenewableCliLease<L extends ClosableLease>(
 export function leasedProjectExecutor<L extends ClosableLease>({
   leases,
   envFor,
+  admissionEnv,
   execute,
 }: {
   leases: RenewableCliLease<L>;
   envFor: (lease: L) => Record<string, string>;
+  /**
+   * Taken when the command is admitted, before waiting for a lease: values
+   * that belong to the moment it was asked for (the running turn's), which
+   * may change before the lease arrives.
+   */
+  admissionEnv?: () => Record<string, string>;
   execute: (
     env: Record<string, string>,
     ...args: Parameters<ProjectJobExecutor>
   ) => Promise<SandboxExecResult>;
 }): ProjectJobExecutor {
   return async (script, cwd, signal, options) => {
+    const admitted = admissionEnv?.() ?? {};
     let lease: L;
     try {
       lease = await leases.acquire();
@@ -148,10 +156,16 @@ export function leasedProjectExecutor<L extends ClosableLease>({
     };
     let result: SandboxExecResult;
     try {
-      result = await execute(envFor(lease), script, cwd, signal, {
-        ...options,
-        onCleanupConfirmed: confirmed,
-      });
+      result = await execute(
+        { ...envFor(lease), ...admitted },
+        script,
+        cwd,
+        signal,
+        {
+          ...options,
+          onCleanupConfirmed: confirmed,
+        },
+      );
     } catch (error) {
       await fence();
       throw error;
