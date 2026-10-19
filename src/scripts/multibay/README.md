@@ -24,6 +24,19 @@ parent.
   creation on a chosen home bay, `runInBay` for server-side setup in a bay's
   own environment, and `eventually` for asynchronous convergence.
 - `multibay.test.mjs`: the scenarios.
+- `board-decide-fake.cjs` and `bin/cocalc-hub-server`: a fake OpenRouter
+  Decisions endpoint for the board-decide scenario, so no real provider is
+  called. Test tree only, and no production code reads a switch for it.
+  - `cluster.mjs` puts `bin/` first on its hubs' `PATH`. The shim there
+    appends `--require board-decide-fake.cjs` to the `NODE_OPTIONS` that
+    `packages/hub/bin/start.sh` sets.
+  - The preload does nothing without `MULTIBAY_BOARD_DECIDE_FAKE=1`, which
+    only `cluster.mjs` sets. With it, it throws unless the hub's `HOST` is
+    loopback.
+  - It answers only a POST to the exact Decisions URL, and logs each call to
+    the cluster's `board-decide-fake.log`.
+- Each bay serves its workspace projects' files from its own
+  `data/<bay>/projects` (`COCALC_PROJECT_PATH`), as a deployed bay does.
 - `fuzz/`: the fuzzer (Layer 1 of
   `src/.agents/multibay-fuzzing-plan-2026-10-05.md`). Seeded random
   operations and faults on the same cluster, checked against a reference
