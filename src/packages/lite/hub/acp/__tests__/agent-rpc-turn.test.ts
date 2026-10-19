@@ -9,6 +9,7 @@ import {
   enqueueAcpJob,
   listQueuedAcpJobs,
 } from "../../sqlite/acp-jobs";
+import { agentRpcTurnSummary } from "@cocalc/conat/agents/rpc-turn";
 import { agentRpcTurnState } from "../agent-rpc-turn";
 
 const ACCOUNT = "00000000-1000-4000-8000-000000000001";
@@ -116,6 +117,7 @@ describe("what became of the turn an agent message started", () => {
       state: "queued",
       queued_at: mine.created_at,
       ahead_in_queue: 2,
+      tool_ran: false,
     });
     set(mine.op_id, { state: "running", started_at: mine.created_at + 5 });
     expect(inspect(attempt)).toEqual({
@@ -140,6 +142,7 @@ describe("what became of the turn an agent message started", () => {
       started_at: mine.created_at + 5,
       ended_at: mine.created_at + 9,
       outcome,
+      tool_ran: false,
     });
   });
 
@@ -191,7 +194,85 @@ describe("what became of the turn an agent message started", () => {
         failure: { kind: "error" },
         tool_ran: true,
       },
+      tool_ran: true,
     });
+  });
+
+  it("an earlier attempt's tools count when the last never started", () => {
+    const attempt = randomUUID();
+    const first = job({ attempt_id: attempt });
+    set(first.op_id, {
+      state: "error",
+      started_at: first.created_at + 1,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "host-lost" },
+        tool_ran: true,
+      },
+    });
+    const next = job({ attempt_id: attempt });
+    set(next.op_id, {
+      state: "canceled",
+      created_at: first.created_at + 2,
+      recovery_parent_op_id: first.op_id,
+      outcome_json: { version: 1, state: "never-started", reason: "canceled" },
+    });
+    const turn = inspect(attempt)!;
+    expect(turn).toMatchObject({ state: "ended", tool_ran: true });
+    expect(agentRpcTurnSummary(turn)).toMatch(/It had run tools/);
+  });
+
+  it("a continuation waiting to resume is not an untouched turn", () => {
+    const attempt = randomUUID();
+    const first = job({ attempt_id: attempt });
+    set(first.op_id, {
+      state: "error",
+      started_at: first.created_at + 1,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "host-lost" },
+        tool_ran: true,
+      },
+    });
+    const next = job({ attempt_id: attempt });
+    set(next.op_id, {
+      created_at: first.created_at + 2,
+      recovery_parent_op_id: first.op_id,
+    });
+    const turn = inspect(attempt)!;
+    expect(turn).toMatchObject({
+      state: "queued",
+      started_at: first.created_at + 1,
+      tool_ran: true,
+    });
+    expect(agentRpcTurnSummary(turn)).toMatch(
+      /^Started .*; interrupted and waiting to resume\. It had run tools/,
+    );
+  });
+
+  it("counts the turns ahead in the order the scheduler takes them", () => {
+    const attempt = randomUUID();
+    const older = job({});
+    const mine = job({ attempt_id: attempt });
+    const later = job({});
+    const notDue = job({});
+    // Older normal job, my turn sent immediately: mine goes first.
+    set(older.op_id, { created_at: 1000 });
+    set(mine.op_id, { created_at: 2000, priority: 1, updated_at: 2000 });
+    set(later.op_id, { created_at: 3000, priority: 1, updated_at: 3000 });
+    // Would go first, but is not due yet.
+    set(notDue.op_id, {
+      created_at: 500,
+      priority: 1,
+      updated_at: 9000,
+      available_at: Date.now() + 3_600_000,
+    });
+    // The later immediate job was sent after mine, so it runs first.
+    expect(inspect(attempt)).toMatchObject({ ahead_in_queue: 1 });
+    set(later.op_id, { priority: 0 });
+    expect(inspect(attempt)).toMatchObject({ ahead_in_queue: 0 });
   });
 
   it("only for the agent that sent it, in its account", () => {

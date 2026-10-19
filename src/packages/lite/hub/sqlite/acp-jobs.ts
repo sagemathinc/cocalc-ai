@@ -496,18 +496,31 @@ export function listAcpJobsForAgentRpcAttempt({
     .all(account_id, attempt_id) as AcpJobRow[];
 }
 
-/** Turns queued ahead of this one in its conversation. */
+/** Turns queued ahead of this one in its conversation, in the order the
+ * scheduler takes them (only those already due can go first). */
 export function countQueuedAcpJobsAhead(job: AcpJobRow): number {
   ensureInit();
   const row = getAcpDatabase()
     .prepare(
-      `SELECT COUNT(*) AS n FROM ${TABLE}
-       WHERE project_id = ? AND path = ? AND thread_id = ?
-         AND state = 'queued' AND op_id <> ? AND created_at <= ?`,
+      `WITH ranked AS (
+         SELECT op_id,
+                ROW_NUMBER() OVER (ORDER BY ${THREAD_QUEUE_ORDER}, rowid ASC)
+                  AS position
+         FROM ${TABLE}
+         WHERE project_id = ? AND path = ? AND thread_id = ?
+           AND state = 'queued'
+           AND (op_id = ? OR available_at IS NULL OR available_at <= ?)
+       )
+       SELECT position - 1 AS n FROM ranked WHERE op_id = ?`,
     )
-    .get(job.project_id, job.path, job.thread_id, job.op_id, job.created_at) as
-    | { n?: number }
-    | undefined;
+    .get(
+      job.project_id,
+      job.path,
+      job.thread_id,
+      job.op_id,
+      Date.now(),
+      job.op_id,
+    ) as { n?: number } | undefined;
   return Number(row?.n ?? 0);
 }
 

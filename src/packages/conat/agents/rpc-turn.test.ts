@@ -68,6 +68,39 @@ describe("a turn's state, as inspect reports it", () => {
       },
       "Ended: it completed.",
     ],
+    [
+      {
+        state: "queued",
+        queued_at: T,
+        started_at: T + 60_000,
+        ahead_in_queue: 1,
+        tool_ran: true,
+      },
+      "Started 2026-10-19T05:01:00.000Z; interrupted and waiting to resume behind 1 other turn(s). It had run tools, so check what it did before resending.",
+    ],
+    [
+      {
+        state: "queued",
+        held: true,
+        queued_at: T,
+        started_at: T + 60_000,
+        tool_ran: false,
+      },
+      "Started 2026-10-19T05:01:00.000Z; interrupted and held: the recipient's project is restarting; it resumes when the project runs again. It had not run any tools.",
+    ],
+    [
+      { state: "running", queued_at: T, started_at: T, tool_ran: true },
+      "Running since 2026-10-19T05:00:00.000Z; it has not ended. It had run tools, so check what it did before resending.",
+    ],
+    [
+      {
+        state: "ended",
+        queued_at: T,
+        outcome: { version: 1, state: "never-started", reason: "canceled" },
+        tool_ran: true,
+      },
+      "Ended: someone in the recipient's project canceled it before it ran. It had run tools, so check what it did before resending.",
+    ],
   ])("%j", (turn, text) => {
     validateAgentRpcTurnState(turn);
     expect(agentRpcTurnSummary(turn)).toBe(text);
@@ -80,6 +113,7 @@ describe("a turn's state, as inspect reports it", () => {
       { state: "queued" },
       { state: "queued", queued_at: T, ahead_in_queue: -1 },
       { state: "running", queued_at: T, started_at: "soon" },
+      { state: "running", queued_at: T, tool_ran: "yes" },
       { state: "ended", queued_at: T, outcome: { version: 1, state: "won" } },
     ])
       expect(() => validateAgentRpcTurnState(bad)).toThrow(

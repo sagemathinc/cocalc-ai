@@ -67,9 +67,17 @@ export function agentRpcTurnState(
   const first = jobs[0];
   const last = jobs[jobs.length - 1];
   const started = jobs.find((job) => job.started_at != null)?.started_at;
+  // A job still waiting to start has run nothing; a running one is unknown.
+  const attempts = jobs.map((job) =>
+    job.state === "queued" && job.started_at == null
+      ? false
+      : toolRanOf(parseTurnOutcome(job.outcome_json)),
+  );
+  const tool_ran = chainToolRan(attempts);
   const base = {
     queued_at: first.created_at,
     ...(started != null ? { started_at: started } : {}),
+    ...(tool_ran !== undefined ? { tool_ran } : {}),
   };
   if (last.state === "queued")
     return {
@@ -88,10 +96,7 @@ export function agentRpcTurnState(
     ...(last.finished_at != null ? { ended_at: last.finished_at } : {}),
     ...(outcome
       ? {
-          outcome: withChainToolRan(
-            outcome,
-            jobs.map((job) => toolRanOf(parseTurnOutcome(job.outcome_json))),
-          ),
+          outcome: withChainToolRan(outcome, attempts),
         }
       : {}),
   };
