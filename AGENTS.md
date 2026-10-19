@@ -136,6 +136,20 @@ EOF
 - Run `pnpm -C src prettier --write <file>` on modified files as needed.
 - For frontend changes, also run `pnpm -C src lint:frontend`. Treat frontend lint failures the same way as test or typecheck failures.
 
+## Pull Requests
+
+- End every PR body you open with an owner line, so the human and other agents
+  know whom to ask about it, across sites and projects:
+
+  ```
+  Owner: @<agent-name> on <site>, project <project title> (<first 8 of project id>)
+  ```
+
+  For example `Owner: @ops0 on alpha.cocalc.ai, project ops (c3337130)`. Your
+  name is in `cocalc agent whoami`; the site is the host of `$COCALC_SITE_URL`.
+- If you take over another agent's PR, update its owner line.
+- A PR opened by a person may say `Owner: <GitHub handle>`.
+
 ## Docs
 
 - Architecture/docs: `docs/`
