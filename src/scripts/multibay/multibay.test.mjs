@@ -958,10 +958,13 @@ describe("host reads across bays", () => {
   });
 
   it("waits as long as the caller asked for a slow read", async () => {
-    // The log read is held up on the host's bay well past what the default
-    // forwarding budget covers (two 12 s attempts, a repeat waiting 9 s), and
-    // within the 120 s this call asks for. A snippet takes a while to start,
-    // so the lock is held for 60 s and the read starts once it is seen.
+    // The log read is held up 26 s on the host's bay: past what the default
+    // forwarding budget covers (two 12 s attempts, a repeat waiting 9 s),
+    // within the 120 s this call asks for, and within the bay's own 30 s
+    // statement timeout. A snippet takes a while to start, so the lock is
+    // held for 90 s and the read starts 26 s before it is released.
+    const HOLD_MS = 90_000;
+    const BLOCKED_MS = 26_000;
     const locked = runInBay(
       cluster,
       ATTACHED,
@@ -969,37 +972,41 @@ describe("host reads across bays", () => {
        const db = await getPool().connect();
        try {
          await db.query("BEGIN");
+         await db.query("SET LOCAL statement_timeout = 0");
          await db.query("LOCK TABLE cloud_vm_log IN ACCESS EXCLUSIVE MODE");
-         await db.query("SELECT pg_sleep(60)");
+         await db.query("SELECT pg_sleep($1)", [${HOLD_MS / 1000}]);
          await db.query("COMMIT");
        } finally {
          db.release();
        }`,
-      { timeoutMs: 180_000 },
+      { timeoutMs: HOLD_MS + 90_000 },
     );
     try {
-      await eventually(
+      // How long the lock has been held, once it is.
+      const { held_ms } = await eventually(
         async () =>
           await runInBay(
             cluster,
             ATTACHED,
             `const getPool = require("@cocalc/database/pool").default;
              const { rows } = await getPool().query(
-               "SELECT 1 FROM pg_locks WHERE relation = 'cloud_vm_log'::regclass AND mode = 'AccessExclusiveLock' AND granted");
-             return rows.length > 0;`,
+               "SELECT (EXTRACT(EPOCH FROM now() - a.xact_start) * 1000)::BIGINT AS held_ms FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE l.relation = 'cloud_vm_log'::regclass AND l.mode = 'AccessExclusiveLock' AND l.granted");
+             return rows[0] ? { held_ms: Number(rows[0].held_ms) } : null;`,
           ),
-        {
-          timeoutMs: 90_000,
-          intervalMs: 1_000,
-          what: "the lock on the attached bay's log",
-        },
+        { timeoutMs: 45_000, what: "the lock on the attached bay's log" },
       );
+      const releaseAt = Date.now() - held_ms + HOLD_MS;
+      assert.ok(
+        releaseAt - Date.now() > BLOCKED_MS,
+        "the lock was seen in time",
+      );
+      await sleep(releaseAt - BLOCKED_MS - Date.now());
       const started = Date.now();
       const log = await alice.client.call("hosts.getHostLog", {
         id: host_id,
         timeout: 120_000,
       });
-      assert.ok(Date.now() - started > 25_000, "the read was held up");
+      assert.ok(Date.now() - started > 22_000, "the read was held up");
       assert.deepEqual(
         log.map(({ vm_id, action }) => ({ vm_id, action })),
         [{ vm_id: host_id, action: "create" }],
