@@ -399,7 +399,7 @@ test("a watcher shows what it waits for, and is done once it fired", () => {
   expect(within(card).queryByRole("button", { name: "Run now" })).toBeNull();
 });
 
-test("current sensors come first; finished ones are behind a toggle", () => {
+test("current sensors come first; finished ones are behind a toggle", async () => {
   const watch = (
     title: string,
     status: AgentSensor["status"],
@@ -448,4 +448,18 @@ test("current sensors come first; finished ones are behind a toggle", () => {
   fireEvent.click(screen.getByRole("button", { name: /Show 2 finished/ }));
   expect(shown()).toHaveLength(4);
   expect(shown().slice(2)).toEqual(["Sensor Paused", "Sensor Fired"]);
+
+  // By keyboard: the toggle is a real button that keeps focus while the
+  // cards it shows or hides come and go below it.
+  const toggle = screen.getByRole("button", { name: "Hide finished" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  toggle.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(shown()).toHaveLength(2);
+  const show = screen.getByRole("button", { name: /Show 2 finished/ });
+  expect(show).toHaveAttribute("aria-expanded", "false");
+  expect(show).toHaveFocus();
+  await userEvent.keyboard(" ");
+  expect(shown()).toHaveLength(4);
+  expect(screen.getByRole("button", { name: "Hide finished" })).toHaveFocus();
 });
