@@ -4164,6 +4164,25 @@ describe("the agent that sent a message is told how its turn ended", () => {
     },
   );
 
+  it("a continuation stopped before it started keeps its chain's tool use", () => {
+    const { request } = agentRequest();
+    const [first, queued] = chain(request, [true, undefined]);
+    // The project stopped while the continuation was still queued.
+    acpTestInternals.reportFailedAgentMessageTurn(
+      queued,
+      decodeAcpJobRequest(queued),
+      "stopped",
+      { version: 1, state: "never-started", reason: "project-stopped" },
+    );
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      kind: "project-stopped",
+      tool_ran: true,
+    });
+    expect(first).toBeTruthy();
+  });
+
   it("a cancel of a message a fence already canceled reports nothing", async () => {
     const { request } = agentRequest();
     const job = enqueueAcpJob(request);

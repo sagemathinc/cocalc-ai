@@ -244,14 +244,30 @@ describe("B's host reports the failed turn", () => {
     expect(sent.kind).toBe("error");
     expect(sent.detail).toMatch(/canceled your message before it ran/);
     expect(sent).not.toHaveProperty("tool_ran");
-    // An old kind is sent without the new fields.
+    // Any kind is held once B ran tools, an old one too.
     deliverAgentRpcReport.mockClear();
-    await reportRpcTurnFailure(
-      fromHost(report({ kind: "limit", resets_at: 123, tool_ran: true })),
-    );
-    expect(deliverAgentRpcReport.mock.calls[0][0].report).not.toHaveProperty(
-      "resets_at",
-    );
+    await expect(
+      reportRpcTurnFailure(
+        fromHost(report({ kind: "limit", resets_at: 123, tool_ran: true })),
+      ),
+    ).rejects.toThrow(/must be upgraded/);
+    expect(deliverAgentRpcReport).not.toHaveBeenCalled();
+    // An old kind is sent without the new fields when nothing ran, and as
+    // it always was when that is not known (older recipient hosts never say).
+    for (const tool_ran of [false, undefined]) {
+      deliverAgentRpcReport.mockClear();
+      await reportRpcTurnFailure(
+        fromHost(report({ kind: "limit", resets_at: 123, tool_ran })),
+      );
+      const sent = deliverAgentRpcReport.mock.calls[0][0].report;
+      expect(sent.kind).toBe("limit");
+      expect(sent).not.toHaveProperty("resets_at");
+      expect(sent).not.toHaveProperty("tool_ran");
+    }
+    // A new kind whose tool use is not known is held.
+    await expect(
+      reportRpcTurnFailure(fromHost(report({ kind: "host-lost" }))),
+    ).rejects.toThrow(/must be upgraded/);
   });
 
   test("through A's project bay when A is elsewhere", async () => {

@@ -52,6 +52,9 @@ export function noteAgentMessageTurnFailed(opts: {
   error?: string;
   /** How the turn ended, when the host knows (turn-outcome.ts). */
   outcome?: TurnOutcome;
+  /** Whether tools ran, over the whole recovery chain when the caller knows
+   * it (null: not known); otherwise taken from the outcome. */
+  tool_ran?: boolean | null;
   turn_started_at?: number | null;
   now?: number;
 }): AgentRpcTurnFailureReport | undefined {
@@ -77,11 +80,13 @@ export function noteAgentMessageTurnFailed(opts: {
   const failure = outcome?.state === "failed" ? outcome.failure : undefined;
   const resets_at = failure?.kind === "limit" ? failure.resets_at : undefined;
   const tool_ran =
-    outcome?.state === "failed" || outcome?.state === "canceled"
-      ? outcome.tool_ran
-      : outcome?.state === "never-started"
-        ? false
-        : undefined;
+    opts.tool_ran !== undefined
+      ? (opts.tool_ran ?? undefined)
+      : outcome?.state === "failed" || outcome?.state === "canceled"
+        ? outcome.tool_ran
+        : outcome?.state === "never-started"
+          ? false
+          : undefined;
   const report: AgentRpcTurnFailureReport = {
     version: 1,
     report_id: randomUUID(),

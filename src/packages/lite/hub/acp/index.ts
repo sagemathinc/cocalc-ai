@@ -10277,24 +10277,16 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
 function toolRanOf(outcome: TurnOutcome | undefined): boolean | undefined {
   return outcome?.state === "failed" || outcome?.state === "canceled"
     ? outcome.tool_ran
-    : undefined;
-}
-
-/** For the sender: tools ran if any attempt ran them; none ran only if no
- * attempt did and every attempt is known. */
-function withChainToolRan(
-  outcome: TurnOutcome,
-  attempts: (boolean | undefined)[],
-): TurnOutcome {
-  if (outcome.state !== "failed" && outcome.state !== "canceled")
-    return outcome;
-  const { tool_ran: _, ...rest } = outcome;
-  const tool_ran = attempts.includes(true)
-    ? true
-    : attempts.every((ran) => ran === false)
+    : outcome?.state === "never-started"
       ? false
       : undefined;
-  return (tool_ran === undefined ? rest : { ...rest, tool_ran }) as TurnOutcome;
+}
+
+/** For the sender: tools ran if any attempt ran them; none ran only if every
+ * attempt is known not to have. */
+function chainToolRan(attempts: (boolean | undefined)[]): boolean | undefined {
+  if (attempts.includes(true)) return true;
+  return attempts.every((ran) => ran === false) ? false : undefined;
 }
 
 function reportSupersededRecovery(job: AcpJobRow): void {
@@ -10341,7 +10333,8 @@ function reportFailedAgentMessageTurn(
     op_id: root,
     request,
     error: `${error ?? ""}`.trim() || undefined,
-    outcome: outcome && withChainToolRan(outcome, toolRan),
+    outcome,
+    ...(outcome ? { tool_ran: chainToolRan(toolRan) ?? null } : {}),
     turn_started_at: started,
   });
   if (report)

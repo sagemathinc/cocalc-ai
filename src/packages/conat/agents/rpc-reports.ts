@@ -105,16 +105,21 @@ export function agentRpcReportForVersion(
 ): AgentRpcTurnFailureReport | undefined {
   if (version >= AGENT_RPC_REPORT_VERSION) return report;
   const { resets_at: _r, tool_ran, ...v1 } = report;
-  if (V1_KINDS.includes(report.kind)) return v1;
+  // The recipient ran tools: the old "did not act" would invite a duplicate.
+  if (tool_ran === true) return undefined;
+  // Unknown: as such reports always were (an older recipient host never
+  // says), only for the kinds it knew.
+  if (tool_ran === undefined)
+    return V1_KINDS.includes(report.kind) ? v1 : undefined;
   // Nothing ran, so its old "you can send it again" is true.
-  if (tool_ran === false)
-    return {
-      ...v1,
-      kind: "error",
-      detail: agentRpcReportDetail(
-        `${KIND_TEXT[report.kind]}${report.detail ? `: ${report.detail}` : ""}`,
-      ),
-    };
+  if (V1_KINDS.includes(report.kind)) return v1;
+  return {
+    ...v1,
+    kind: "error",
+    detail: agentRpcReportDetail(
+      `${KIND_TEXT[report.kind]}${report.detail ? `: ${report.detail}` : ""}`,
+    ),
+  };
   return undefined;
 }
 
