@@ -38,6 +38,9 @@ import { validateExternalAgentLabel } from "@cocalc/conat/agents/external";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 
 const CHALLENGE_TTL_MS = 8 * 60 * 60_000;
+// An external agent's enrollment link waits for a person to open it, sign in
+// and choose a network; 15 minutes was often too short.
+export const EXTERNAL_AGENT_CHALLENGE_TTL_MS = 60 * 60_000;
 const PENDING_CLI_LOGIN_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
 const CLI_LOGIN_START_IP_LIMIT_10M = 20;
 const CLI_LOGIN_START_IP_LIMIT_DAY = 100;
@@ -349,7 +352,10 @@ async function insertChallengeWithDb({
 }): Promise<{ id: string; expire: Date }> {
   const id = randomUUID();
   const expire = new Date(
-    Date.now() + (kind === "external-agent" ? 15 * 60_000 : CHALLENGE_TTL_MS),
+    Date.now() +
+      (kind === "external-agent"
+        ? EXTERNAL_AGENT_CHALLENGE_TTL_MS
+        : CHALLENGE_TTL_MS),
   );
   await db.query(
     `

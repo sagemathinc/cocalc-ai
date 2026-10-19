@@ -44,12 +44,10 @@ describeDb(
     });
     beforeEach(async () => {
       await getPool().query("DELETE FROM account_cli_auth_challenges");
-      mockEnrollmentStatus
-        .mockReset()
-        .mockResolvedValue({
-          installation: null,
-          api_url: "https://home.test",
-        });
+      mockEnrollmentStatus.mockReset().mockResolvedValue({
+        installation: null,
+        api_url: "https://home.test",
+      });
     });
 
     test("start is unbound to an account and stores only poll and credential hashes", async () => {
@@ -67,9 +65,9 @@ describeDb(
         label: "Security agent",
       });
       expect(JSON.stringify(row)).not.toContain(request.poll_token);
-      expect(
-        new Date(request.expires_at).getTime() - Date.now(),
-      ).toBeLessThanOrEqual(900_000);
+      const ttl = new Date(request.expires_at).getTime() - Date.now();
+      expect(ttl).toBeLessThanOrEqual(60 * 60_000);
+      expect(ttl).toBeGreaterThan(55 * 60_000);
       expect(request.approval_url).toBe(
         `https://origin.test/auth/cli-login/${request.challenge_id}`,
       );

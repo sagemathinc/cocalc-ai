@@ -93,3 +93,62 @@ test("signed-out visitors cannot enumerate or approve networks", () => {
   ).toBeNull();
   expect(api).not.toHaveBeenCalled();
 });
+
+test("an expired request says so as soon as the page opens, with no form", async () => {
+  render(
+    <ExternalAgentApproval
+      {...props}
+      expiresAt={new Date(Date.now() - 60_000).toISOString()}
+      state="pending"
+    />,
+  );
+  expect(
+    await screen.findByText("This enrollment request is no longer open."),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(/It expired at .*Run the enrollment command/),
+  ).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Agent Network" })).toBeNull();
+  expect(api).not.toHaveBeenCalled();
+});
+
+test("an already approved request is not offered again", async () => {
+  render(
+    <ExternalAgentApproval
+      {...props}
+      expiresAt={new Date(Date.now() + 30 * 60_000).toISOString()}
+      state="redeemed"
+    />,
+  );
+  expect(await screen.findByText(/It was already approved\./)).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Agent Network" })).toBeNull();
+});
+
+test("the page shows when the request expires, and warns when it is soon", async () => {
+  const { unmount } = render(
+    <ExternalAgentApproval
+      {...props}
+      expiresAt={new Date(Date.now() + 50 * 60_000).toISOString()}
+      state="pending"
+    />,
+  );
+  expect(
+    await screen.findByText(/^This request expires at [^(]*\.$/),
+  ).toBeTruthy();
+  expect(
+    await screen.findByRole("combobox", { name: "Agent Network" }),
+  ).toBeTruthy();
+  unmount();
+  render(
+    <ExternalAgentApproval
+      {...props}
+      expiresAt={new Date(Date.now() + 4 * 60_000).toISOString()}
+      state="pending"
+    />,
+  );
+  expect(
+    await screen.findByText(
+      /This request expires at .*\(in about 4 minutes\)\./,
+    ),
+  ).toBeTruthy();
+});

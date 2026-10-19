@@ -364,6 +364,8 @@ export function PublicCliLoginApprovalView({
         originBayId={info.external.origin_bay_id}
         isAuthenticated={isAuthenticated}
         accountLabel={currentCliLoginAccountLabel(info)}
+        expiresAt={info.expires_at}
+        state={info.state}
       />
     );
   }
