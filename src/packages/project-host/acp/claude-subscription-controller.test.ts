@@ -8,6 +8,7 @@ import {
   claudeSubscriptionContainerArgs,
   cleanupClaudeSubscriptionController,
   ensureClaudeTranscriptDirectory,
+  turnPublicationEnv,
 } from "./claude-subscription-controller";
 import { mountArg } from "@cocalc/backend/podman";
 import {
@@ -415,4 +416,43 @@ test("Claude Code's own file memory is off; CoCalc agent memory is used", () => 
   const memory = args.indexOf("CLAUDE_CODE_DISABLE_AUTO_MEMORY=1");
   expect(args[memory - 1]).toBe("--env");
   expect(memory).toBeLessThan(args.indexOf("--rootfs"));
+});
+
+describe("the running turn's publication values in every project command", () => {
+  const conversation = { path: "a.chat", threadId: "thread-a" };
+  const turn = {
+    path: "a.chat",
+    thread_id: "thread-a",
+    message_date: "2026-10-19T04:24:28.000Z",
+    workbench: true,
+  };
+
+  test("a command in a turn can publish as that turn's message", () => {
+    // Whatever the agent's context still holds: compaction may have dropped
+    // the prompt that carried these.
+    expect(turnPublicationEnv(conversation, turn)).toEqual({
+      COCALC_CODEX_MESSAGE_DATE: "2026-10-19T04:24:28.000Z",
+      COCALC_WORKBENCH: "1",
+    });
+    expect(
+      turnPublicationEnv(conversation, { ...turn, workbench: false }),
+    ).toEqual({
+      COCALC_CODEX_MESSAGE_DATE: "2026-10-19T04:24:28.000Z",
+      COCALC_WORKBENCH: "",
+    });
+  });
+
+  test("never another conversation's turn, a bad date, or none at all", () => {
+    const none = { COCALC_CODEX_MESSAGE_DATE: "", COCALC_WORKBENCH: "" };
+    expect(turnPublicationEnv(conversation, undefined)).toEqual(none);
+    expect(
+      turnPublicationEnv(conversation, { ...turn, thread_id: "thread-b" }),
+    ).toEqual(none);
+    expect(
+      turnPublicationEnv(conversation, { ...turn, path: "b.chat" }),
+    ).toEqual(none);
+    expect(
+      turnPublicationEnv(conversation, { ...turn, message_date: "soon" }),
+    ).toEqual(none);
+  });
 });
