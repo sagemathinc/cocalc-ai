@@ -13,6 +13,8 @@ import {
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
+const VIEWER_READ_LIMIT = 8 * 1024 * 1024;
+
 function viewerAccessDenied(path: string): NodeJS.ErrnoException {
   const err = new Error(
     `EACCES: permission denied by viewer read policy, open '${path}'`,
@@ -135,6 +137,46 @@ export function createViewerReadOnlyFilesystem({
   fs: ConatFilesystem;
   readPolicy: ProjectViewerReadPolicy;
 }): ConatFilesystem {
+  // Every viewer read is descriptor-anchored: the policy is checked on the
+  // opened file, and the read is capped on it.
+  const readAuthorized = async ({
+    path,
+    maxBytes,
+    encoding,
+    lock,
+  }: {
+    path: string;
+    maxBytes: number;
+    encoding?: string;
+    lock?: number;
+  }) => {
+    const read = (
+      fs as ConatFilesystem & {
+        readRegularFileAuthorized?: (opts: {
+          path: string;
+          authorizeCanonicalIdentity: (identity: string) => void;
+          maxBytes: number;
+          encoding?: string;
+          lock?: number;
+        }) => Promise<string | Buffer>;
+      }
+    ).readRegularFileAuthorized;
+    if (!read) {
+      throw new Error("viewer filesystem requires descriptor-anchored reads");
+    }
+    return await read({
+      path,
+      authorizeCanonicalIdentity: (canonicalIdentity) =>
+        assertViewerCanonicalPathAllowed({
+          canonicalIdentity,
+          readPolicy,
+          path,
+        }),
+      maxBytes,
+      encoding,
+      lock,
+    });
+  };
   return {
     constants: async () => await fs.constants(),
     describeFile: async (path: string) => {
@@ -186,34 +228,23 @@ export function createViewerReadOnlyFilesystem({
       await assertViewerPathAllowed({ fs, readPolicy, path });
       return await fs.lstat(path);
     },
-    readFile: async (path: string, encoding?: string, lock?: number) => {
-      const readAuthorized = (
-        fs as ConatFilesystem & {
-          readRegularFileAuthorized?: (opts: {
-            path: string;
-            authorizeCanonicalIdentity: (identity: string) => void;
-            maxBytes: number;
-            encoding?: string;
-            lock?: number;
-          }) => Promise<string | Buffer>;
-        }
-      ).readRegularFileAuthorized;
-      if (!readAuthorized) {
-        throw new Error("viewer filesystem requires descriptor-anchored reads");
-      }
-      return await readAuthorized({
+    readFile: async (path: string, encoding?: string, lock?: number) =>
+      await readAuthorized({
         path,
-        authorizeCanonicalIdentity: (canonicalIdentity) =>
-          assertViewerCanonicalPathAllowed({
-            canonicalIdentity,
-            readPolicy,
-            path,
-          }),
-        maxBytes: 8 * 1024 * 1024,
+        maxBytes: VIEWER_READ_LIMIT,
         encoding,
         lock,
-      });
-    },
+      }),
+    // A caller's cap within the viewer's own.
+    readRegularFile: async (
+      path: string,
+      { maxBytes, encoding }: { maxBytes: number; encoding?: string },
+    ) =>
+      await readAuthorized({
+        path,
+        maxBytes: Math.min(maxBytes, VIEWER_READ_LIMIT),
+        encoding,
+      }),
     readdir: async (path: string, options?: any) => {
       if (options?.recursive) {
         throw new Error("recursive viewer directory listing is not supported");

@@ -1738,7 +1738,12 @@ export function cancelQueuedRecoveryJobsForThread({
 
 export function enqueueAcpJobCancelingQueuedRecoveries(
   request: AcpJobRequest,
-  opts: Pick<EnqueueAcpJobOptions, "preferred_worker_id"> = {},
+  opts: Pick<EnqueueAcpJobOptions, "preferred_worker_id"> & {
+    /** Runs inside the insert's transaction, before a new job is written:
+     * false refuses the insert (it rolls back). A Sagebrush board submission
+     * uses it to fence its job on its current owner (CORR-0A3-1). */
+    insertGuard?: () => boolean;
+  } = {},
 ): { job: AcpJobRow; canceled: AcpJobRow[] } {
   ensureInit();
   const db = getAcpDatabase();
@@ -1756,6 +1761,11 @@ export function enqueueAcpJobCancelingQueuedRecoveries(
          LIMIT 1`,
       )
       .get(project_id, path, user_message_id);
+    if (opts.insertGuard && !opts.insertGuard()) {
+      throw new Error(
+        "Another attempt is delivering these board answers; this one stopped.",
+      );
+    }
     if (existing == null) {
       canceled = cancelQueuedRecoveryJobsForThreadInDatabase({
         db,
@@ -1765,7 +1775,9 @@ export function enqueueAcpJobCancelingQueuedRecoveries(
         now,
       });
     }
-    job = enqueueAcpJob(request, opts);
+    job = enqueueAcpJob(request, {
+      preferred_worker_id: opts.preferred_worker_id,
+    });
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");

@@ -5,6 +5,7 @@ import {
 import {
   mkdtemp,
   mkdir,
+  open,
   readdir,
   realpath,
   rm,
@@ -15,6 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import {
+  appendFileSync,
   linkSync,
   renameSync,
   rmSync,
@@ -90,6 +92,78 @@ describeIfLinux("authorized regular-file reads", () => {
         }),
       ).rejects.toMatchObject({ code: "EFBIG" });
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describeIfLinux("capped regular-file reads (readRegularFile)", () => {
+  it("reads within the caller's cap, and requires one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cocalc-capped-read-"));
+    try {
+      writeFileSync(join(root, "a.txt"), "abcd");
+      execFileSync("mkfifo", [join(root, "pipe")]);
+      const fs = new SandboxedFilesystem(root);
+      await expect(
+        fs.readRegularFile("a.txt", { maxBytes: 4, encoding: "utf8" }),
+      ).resolves.toBe("abcd");
+      await expect(
+        fs.readRegularFile("a.txt", { maxBytes: 3 }),
+      ).rejects.toMatchObject({ code: "EFBIG" });
+      await expect(
+        fs.readRegularFile("pipe", { maxBytes: 3 }),
+      ).rejects.toMatchObject({ code: "EACCES" });
+      for (const maxBytes of [undefined, 0, -1, 1.5, NaN]) {
+        await expect(
+          fs.readRegularFile("a.txt", { maxBytes } as any),
+        ).rejects.toThrow("invalid regular-file read limit");
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a file that grows after every stat, reading at most cap + 1 bytes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cocalc-capped-read-"));
+    const file = join(root, "board.json");
+    writeFileSync(file, "12345");
+    const probe = await open(file, "r");
+    const FileHandle = Object.getPrototypeOf(probe);
+    await probe.close();
+    const realStat = FileHandle.stat;
+    const realRead = FileHandle.read;
+    let grown = false;
+    let bytesRead = 0;
+    // Each stat sees the small file; it then grows by 1 MiB before the read.
+    const stat = jest
+      .spyOn(FileHandle, "stat")
+      .mockImplementation(async function (this: any, ...args: any[]) {
+        const info = await realStat.apply(this, args);
+        if (!grown) {
+          grown = true;
+          appendFileSync(file, Buffer.alloc(1024 * 1024));
+        }
+        return Object.assign(Object.create(Object.getPrototypeOf(info)), info, {
+          size: 5,
+        });
+      });
+    const read = jest
+      .spyOn(FileHandle, "read")
+      .mockImplementation(async function (this: any, ...args: any[]) {
+        const result = await realRead.apply(this, args);
+        bytesRead += result.bytesRead;
+        return result;
+      });
+    try {
+      const fs = new SandboxedFilesystem(root);
+      await expect(
+        fs.readRegularFile("board.json", { maxBytes: 10 }),
+      ).rejects.toMatchObject({ code: "EFBIG" });
+      expect(grown).toBe(true);
+      expect(bytesRead).toBeLessThanOrEqual(11);
+    } finally {
+      stat.mockRestore();
+      read.mockRestore();
       await rm(root, { recursive: true, force: true });
     }
   });

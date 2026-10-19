@@ -2345,6 +2345,23 @@ export class SandboxedFilesystem {
     }
   };
 
+  // A file service's capped read (Filesystem.readRegularFile): the caller
+  // names the limit, so a missing one is refused, not given the default.
+  readRegularFile = async (
+    path: string,
+    { maxBytes, encoding }: { maxBytes: number; encoding?: string },
+  ): Promise<string | Buffer> => {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+      throw new Error("invalid regular-file read limit");
+    }
+    return await this.readRegularFileAuthorized({
+      path,
+      authorizeCanonicalIdentity: () => {},
+      maxBytes,
+      encoding,
+    });
+  };
+
   readFile = async (
     path: string,
     encoding?: any,

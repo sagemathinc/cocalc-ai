@@ -573,6 +573,9 @@ export async function processAcpLLM({
     threadId: thread_id,
   })?.name;
   chatMetadata.workbench = actions.workbenchEnabled !== false;
+  if (field<boolean>(message, "board_answers") === true) {
+    chatMetadata.board_answers = true;
+  }
   Object.assign(chatMetadata, contextStamp(context));
   let acknowledged = false;
   // Persist the pre-acknowledgement state before waiting for the chat file or

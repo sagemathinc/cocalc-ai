@@ -1542,6 +1542,22 @@ export interface AccountLocalCancelChatSpeechRequest {
   request_id: string;
 }
 
+/** A Sagebrush board's decide call (server/ai/board-decide.ts). */
+export interface AccountLocalBoardDecideRequest {
+  account_id: string;
+  request_id: string;
+  question: { prompt: string; options: { name: string; about?: string }[] };
+  answer: string;
+  /** The board, as the file's server resolved it: the home bay counts the
+   * account's calls per board. */
+  board: { project_id: string; path: string };
+}
+
+export interface BoardDecideResult {
+  options: { name: string; p: number }[];
+  confidence: number;
+}
+
 export interface AccountLocalRedeemVerifyEmailRequest {
   email_address: string;
   token: string;
@@ -2397,6 +2413,8 @@ export interface BayOpsFinishSiteFundedSpeechRequest {
   requestId: string;
   status: "committed" | "released";
   costMicrousd?: number;
+  /** Charge a hold already expired or released (a paid call's settlement). */
+  chargeIfClosed?: boolean;
 }
 
 export interface BayOpsCommercialOrdersRequest {
@@ -2787,6 +2805,7 @@ export type AccountLocalMethod =
   | "transcribe-chat-audio"
   | "synthesize-chat-speech"
   | "cancel-chat-speech"
+  | "board-decide"
   | "redeem-verify-email"
   | "send-email-verification"
   | "admin-verify-email-address"
@@ -4463,6 +4482,9 @@ export interface InterBayAccountLocalApi
   cancelChatSpeech: (
     opts: AccountLocalCancelChatSpeechRequest,
   ) => Promise<{ canceled: boolean }>;
+  boardDecide: (
+    opts: AccountLocalBoardDecideRequest,
+  ) => Promise<BoardDecideResult>;
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
@@ -7149,6 +7171,18 @@ export function createInterBayAccountLocalClient({
       method: "cancel-chat-speech",
     }),
   });
+  const boardDecideClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "boardDecide">
+  >({
+    ...serviceClientOptions({
+      client,
+      timeout: Math.max(timeout ?? 0, 30_000),
+    }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "board-decide",
+    }),
+  });
   const redeemVerifyEmailClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "redeemVerifyEmail">
   >({
@@ -8493,6 +8527,7 @@ export function createInterBayAccountLocalClient({
       await synthesizeChatSpeechClient.synthesizeChatSpeech(opts),
     cancelChatSpeech: async (opts) =>
       await cancelChatSpeechClient.cancelChatSpeech(opts),
+    boardDecide: async (opts) => await boardDecideClient.boardDecide(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
     sendEmailVerification: async (opts) =>
@@ -9326,6 +9361,17 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         cancelChatSpeech: async (opts) => await impl.cancelChatSpeech(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "boardDecide">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "board-decide",
+      }),
+      impl: {
+        boardDecide: async (opts) => await impl.boardDecide(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "redeemVerifyEmail">>({

@@ -102,6 +102,11 @@ const leftOrDeletedProjects: HubApiRoute = {
 };
 
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
+  // A board's decide call runs where its project lives: there it is
+  // authorized and the project's file server reads the board, so the board
+  // never crosses bays. The classification is asked of the account's home
+  // bay explicitly (it holds the AI allowance), with the bounded request.
+  "system.boardDecide": projectFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,

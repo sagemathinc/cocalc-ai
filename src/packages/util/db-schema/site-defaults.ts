@@ -66,6 +66,7 @@ export type SiteSettingsKeys =
   | "site_description"
   | "status_page_url"
   | "sagebrush_origin"
+  | "board_decide_enabled"
   | "account_creation_email_instructions"
   | "sign_in_email_instructions"
   | "help_email"
@@ -594,6 +595,16 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     valid: is_optional_https_or_loopback_url,
     to_val: to_trimmed_str,
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Artifacts",
+  },
+  board_decide_enabled: {
+    name: "Check board answers with an AI model",
+    desc: "Lets a Sagebrush board check a reader's answer in their own words against the question's options (decide), with an AI decision model through OpenRouter (TypeSafe's Jev). The answer and the question's text and options are sent to OpenRouter, with zero data retention; nothing else. Each check counts against the reader's AI allowance. Needs the OpenRouter API key below.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
     tags: ["AI"],
     group: "AI & Agents",
     subgroup: "Artifacts",

@@ -105,6 +105,16 @@ export class MultibayCluster {
     return `http://127.0.0.1:${this.bay(id).port}`;
   }
 
+  /** Where a bay's hub keeps its workspace projects' files. */
+  projectsDir(id) {
+    return path.join(this.bay(id).dataDir, "projects");
+  }
+
+  /** The board-decide fake's call log (board-decide-fake.cjs). */
+  get boardDecideFakeLog() {
+    return path.join(this.dir, "board-decide-fake.log");
+  }
+
   /** Directory holding this bay's Postgres data, secrets and env file. */
   postgresDir(id) {
     return path.join(this.bay(id).dataDir, "postgres");
@@ -123,6 +133,9 @@ export class MultibayCluster {
     const ids = this.cluster.bays.map((b) => b.id).join(",");
     const env = {
       PATH: [
+        // Test only: cocalc-hub-server with the board-decide fake preloaded
+        // (bin/cocalc-hub-server, board-decide-fake.cjs).
+        path.join(SRC, "scripts/multibay/bin"),
         path.join(SRC, "packages/hub/node_modules/.bin"),
         path.join(SRC, "node_modules/.bin"),
         process.env.PATH,
@@ -148,6 +161,12 @@ export class MultibayCluster {
       HUB_CLUSTER_BAY_IDS: ids,
       COCALC_CLUSTER_SEED_BAY_ID: bay.seedBayId,
       COCALC_CLUSTER_SHARED_SECRET: this.sharedSecret,
+      // The board-decide fake answers OpenRouter's Decisions URL in these
+      // hubs only (board-decide-fake.cjs), and logs each call here.
+      MULTIBAY_BOARD_DECIDE_FAKE: "1",
+      MULTIBAY_BOARD_DECIDE_LOG: this.boardDecideFakeLog,
+      // Workspace project files, per bay (served by its hub).
+      COCALC_PROJECT_PATH: this.projectsDir(id),
     };
     if (bay.role === "seed") {
       env.COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE =

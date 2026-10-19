@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Multibay test only: the real cocalc-hub-server, with the board-decide fake
+# (../board-decide-fake.cjs) preloaded. cluster.mjs puts this directory first
+# on its hubs' PATH; packages/hub/bin/start.sh sets NODE_OPTIONS and then runs
+# cocalc-hub-server, so the preload is appended here. The preload itself does
+# nothing without MULTIBAY_BOARD_DECIDE_FAKE=1 and refuses a non-loopback hub.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export NODE_OPTIONS="${NODE_OPTIONS:-} --require ${here}/../board-decide-fake.cjs"
+# The real one: the same PATH without this directory.
+rest=":${PATH}:"
+rest="${rest//:${here}:/:}"
+rest="${rest#:}"
+rest="${rest%:}"
+exec env PATH="$rest" cocalc-hub-server "$@"

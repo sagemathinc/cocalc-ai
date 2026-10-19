@@ -14,6 +14,9 @@ import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
 import type { AgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 
 export interface AcpChatContext {
+  // A Sagebrush board submission, sent by CoCalc's board card: the hub admits
+  // these under a per-(account, thread) bound. Unmarked messages are chat.
+  board_answers?: boolean;
   // Trusted receiving service marks model-authored messages; never bind their refs.
   agent_message?: boolean;
   // Revalidate legacy delivery rows before execution; new work never sets these.

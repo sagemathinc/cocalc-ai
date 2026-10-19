@@ -1,3 +1,8 @@
+import { boardDecideLocal } from "@cocalc/server/ai/board-decide-service";
+import { boardDecideForBoard } from "@cocalc/server/ai/board-decide-bound";
+import { prepareBoardDecide } from "@cocalc/conat/project/board-decide";
+import { boardDecideClient } from "@cocalc/server/ai/board-decide-route";
+import { assertCollab } from "./util";
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import getCustomize from "@cocalc/database/settings/customize";
@@ -7276,6 +7281,38 @@ export async function synthesizeChatSpeech(
         account_id: opts.account_id,
       })
     : await synthesizeChatSpeechLocal(opts);
+}
+
+/** A Sagebrush board's decide call, bound to the posted board. It runs on
+ * the project's owning bay (conat/hub/api/routes.ts), as a collaborator of
+ * the project. The board is read and checked by the server that has the
+ * project's files (its host, or this bay in the workspace runtime), which
+ * sends back only the bounded request. That request is classified on the
+ * account's home bay, where its AI allowance lives. */
+export async function boardDecide(opts: {
+  account_id?: string;
+  project_id: string;
+  path: string;
+  revision: string | null;
+  sha256: string;
+  message: unknown;
+}) {
+  return await boardDecideForBoard(opts, {
+    assertCollab,
+    prepare: async (project_id, prepareOpts) =>
+      await prepareBoardDecide({
+        // routed to the project's host, or this bay in the workspace runtime
+        client: await boardDecideClient(project_id),
+        project_id,
+        ...prepareOpts,
+      }),
+    decide: async (decideOpts) => {
+      const client = await getChatSpeechHomeClient(decideOpts.account_id);
+      return client
+        ? await client.boardDecide(decideOpts)
+        : await boardDecideLocal(decideOpts);
+    },
+  });
 }
 
 export async function cancelChatSpeech(

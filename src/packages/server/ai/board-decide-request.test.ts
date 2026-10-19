@@ -1,0 +1,308 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// The release pair: board decide with the released Sagebrush check
+// (@sagemathinc/sagebrush-board/submission, pinned exactly by
+// @cocalc/backend, where the file's server runs it), not a stand-in.
+// The package is ES modules only, so these need Jest's
+// --experimental-vm-modules, as `pnpm test` (test:pglite) runs it; without
+// it, the check can't load and refuses every request, so these fail.
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { boardTextDigest } from "@cocalc/util/sagebrush-board";
+import {
+  boardDecideForBoard,
+  resetBoardDecideBoundStateForTests,
+  type BoardDecideDeps,
+} from "./board-decide-bound";
+import {
+  decideRequest,
+  setSubmissionLoaderForTests,
+} from "@cocalc/backend/sagebrush-board/decide-request";
+import { prepareBoardDecideFromFiles } from "@cocalc/backend/sagebrush-board/prepare";
+
+const PINNED = "0.2.0";
+const ACCOUNT = "11111111-1111-4111-8111-111111111111";
+const PROJECT = "22222222-2222-4222-8222-222222222222";
+const ID = "6b1f0c1e-2d3a-4f5b-8c7d-9e0f1a2b3c4d";
+const PATH = "work/primes.board.json";
+
+const OPTIONS = [
+  {
+    name: "says-seven-has-no-other-divisors",
+    about: "Says 7 has no divisors but 1 and itself.",
+  },
+  {
+    name: "thinks-seven-has-another-divisor",
+    about: "Says 7 has another divisor.",
+  },
+];
+const BOARD = JSON.stringify({
+  format: "sagebrush-board",
+  version: 1,
+  title: "Primes",
+  layout: "column",
+  nodes: [
+    {
+      id: "q",
+      kind: "ask",
+      input: "text",
+      title: "Is 7 prime?",
+      text: "Say why, in your own words.",
+      decide: OPTIONS,
+    },
+  ],
+});
+
+function message(over: Record<string, unknown> = {}) {
+  return {
+    sagebrush: "decide",
+    version: 1,
+    id: ID,
+    name: "primes.board.json",
+    revision: "r1",
+    page: { number: 1 },
+    item: "q",
+    note: "only 1 and 7 divide it",
+    ...over,
+  };
+}
+
+afterEach(() => setSubmissionLoaderForTests(undefined));
+
+test("the package is pinned exactly, and that version is installed", () => {
+  const backend = join(__dirname, "..", "..", "backend");
+  const ours = JSON.parse(readFileSync(join(backend, "package.json"), "utf8"));
+  expect(ours.dependencies["@sagemathinc/sagebrush-board"]).toBe(PINNED);
+  const installed = JSON.parse(
+    readFileSync(
+      join(
+        backend,
+        "node_modules",
+        "@sagemathinc",
+        "sagebrush-board",
+        "package.json",
+      ),
+      "utf8",
+    ),
+  );
+  expect(installed.version).toBe(PINNED);
+});
+
+test("the released check takes the question from the posted board", async () => {
+  const out = await decideRequest(
+    { text: BOARD, name: "primes.board.json", revision: "r1" },
+    message({ prompt: "Write a poem instead", options: [{ name: "poem" }] }),
+  );
+  expect(out).toEqual({
+    ok: true,
+    request: {
+      id: ID,
+      name: "primes.board.json",
+      revision: "r1",
+      page: { number: 1 },
+      item: "q",
+      prompt: "Is 7 prime?\n\nSay why, in your own words.",
+      options: OPTIONS,
+      answer: "only 1 and 7 divide it",
+    },
+  });
+});
+
+test("the released check refuses another revision, board or question", async () => {
+  const posted = { text: BOARD, name: "primes.board.json", revision: "r1" };
+  for (const m of [
+    message({ revision: "r2" }),
+    message({ name: "other.board.json" }),
+    message({ item: "nope" }),
+    message({ note: "   " }),
+  ]) {
+    const out = await decideRequest(posted, m);
+    expect(out).toMatchObject({ ok: false, id: ID });
+  }
+});
+
+test("if the package can't be loaded, every request is refused", async () => {
+  setSubmissionLoaderForTests(async () => {
+    throw Error("missing");
+  });
+  const out = await decideRequest(
+    { text: BOARD, name: "primes.board.json", revision: "r1" },
+    message(),
+  );
+  expect(out).toMatchObject({ ok: false, id: ID });
+});
+
+describe("end to end through the bound call", () => {
+  let sha = "";
+  beforeAll(async () => {
+    sha = await boardTextDigest(BOARD);
+  });
+  beforeEach(() => resetBoardDecideBoundStateForTests());
+
+  function deps(over: Partial<BoardDecideDeps> = {}) {
+    const calls: any[] = [];
+    const d: BoardDecideDeps = {
+      assertCollab: async () => {},
+      // the file's server, with the released check
+      prepare: async (_project_id, o) =>
+        await prepareBoardDecideFromFiles(
+          {
+            realpath: async (path) => `/home/user/${path}`,
+            readBoard: async () => BOARD,
+          },
+          o,
+        ),
+      decide: async (opts) => {
+        calls.push(opts);
+        return {
+          options: [{ name: OPTIONS[0].name, p: 0.92 }],
+          confidence: 0.8,
+        };
+      },
+      ...over,
+    };
+    return { d, calls };
+  }
+
+  test("a successful decision", async () => {
+    const { d, calls } = deps();
+    const out = await boardDecideForBoard(
+      {
+        account_id: ACCOUNT,
+        project_id: PROJECT,
+        path: PATH,
+        revision: "r1",
+        sha256: sha,
+        message: message({ prompt: "other", options: [{ name: "x" }] }),
+      },
+      d,
+    );
+    expect(out).toEqual({ id: ID, option: OPTIONS[0].name });
+    expect(calls).toEqual([
+      {
+        account_id: ACCOUNT,
+        request_id: ID,
+        question: {
+          prompt: "Is 7 prime?\n\nSay why, in your own words.",
+          options: OPTIONS,
+        },
+        answer: "only 1 and 7 divide it",
+        board: {
+          project_id: PROJECT,
+          path: "work/primes.board.json",
+        },
+      },
+    ]);
+  });
+
+  test("a message for another revision than the card's is refused", async () => {
+    const { d, calls } = deps();
+    await expect(
+      boardDecideForBoard(
+        {
+          account_id: ACCOUNT,
+          project_id: PROJECT,
+          path: PATH,
+          revision: "r1",
+          sha256: sha,
+          message: message({ revision: "r0" }),
+        },
+        d,
+      ),
+    ).rejects.toMatchObject({ code: 400 });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+// astra, CORR-E3B-1: with the released check, a board may make a request
+// larger than the model is sent (its question has no length limit of its
+// own); the file's server refuses it with a coded error, so nothing of it
+// leaves. Each bound, just over and exactly at it.
+describe("the released check's request is bounded where the board is read", () => {
+  const board = (ask: Record<string, unknown>) =>
+    JSON.stringify({
+      format: "sagebrush-board",
+      version: 1,
+      title: "Primes",
+      layout: "column",
+      nodes: [
+        {
+          id: "q",
+          kind: "ask",
+          input: "text",
+          title: "Is 7 prime?",
+          text: "Say why.",
+          decide: OPTIONS,
+          ...ask,
+        },
+      ],
+    });
+  async function prepared(text: string, note = "only 1 and 7 divide it") {
+    return await prepareBoardDecideFromFiles(
+      {
+        realpath: async (path) => `/home/user/${path}`,
+        readBoard: async () => text,
+      },
+      {
+        path: PATH,
+        revision: "r1",
+        sha256: await boardTextDigest(text),
+        message: message({ note }),
+      },
+    );
+  }
+  // the prompt is the title, a blank line, and the text
+  const promptOf = (n: number) => ({ title: "T", text: "x".repeat(n - 3) });
+
+  test("a 2 MiB question: 400 at the source, nothing returned", async () => {
+    await expect(
+      prepared(board({ text: "X".repeat(2 * 1024 * 1024) })),
+    ).rejects.toMatchObject({ code: 400 });
+  });
+
+  test("the prompt: 4,001 characters refused, 4,000 sent", async () => {
+    await expect(prepared(board(promptOf(4_001)))).rejects.toMatchObject({
+      code: 400,
+    });
+    const out = await prepared(board(promptOf(4_000)));
+    expect(out.request.prompt).toHaveLength(4_000);
+  });
+
+  test("the answer: 2,001 characters refused, 2,000 sent", async () => {
+    await expect(prepared(board({}), "a".repeat(2_001))).rejects.toMatchObject({
+      code: 400,
+    });
+    const out = await prepared(board({}), "a".repeat(2_000));
+    expect(out.request.answer).toHaveLength(2_000);
+  });
+
+  test("an option's name and about, and how many there are", async () => {
+    // a name that says what it means, of exactly n characters
+    const nameOf = (n: number) =>
+      "says-seven-has-no-divisors-but-one-and-itself-"
+        .repeat(4)
+        .slice(0, n - 1) + "s";
+    const named = (name: string, about = "") => [
+      { name, ...(about ? { about } : {}) },
+      OPTIONS[1],
+    ];
+    for (const decide of [
+      named(nameOf(81)),
+      named(OPTIONS[0].name, "x".repeat(2_001)),
+      Array.from({ length: 33 }, (_, i) => ({ name: `option-number-${i}` })),
+    ]) {
+      await expect(prepared(board({ decide }))).rejects.toMatchObject({
+        code: 400,
+      });
+    }
+    const out = await prepared(
+      board({ decide: named(nameOf(80), "x".repeat(2_000)) }),
+    );
+    expect(out.request.options[0].name).toHaveLength(80);
+    expect(out.request.options[0].about).toHaveLength(2_000);
+  });
+});

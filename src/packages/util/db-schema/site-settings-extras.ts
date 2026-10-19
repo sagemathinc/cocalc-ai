@@ -69,6 +69,8 @@ const vertexai_enabled = (conf: SiteSettings) =>
 const mistral_enabled = (conf: SiteSettings) => to_bool(conf.mistral_enabled);
 const anthropic_enabled = (conf: SiteSettings) =>
   to_bool(conf.anthropic_enabled);
+const board_decide_enabled = (conf: SiteSettings) =>
+  to_bool(conf.board_decide_enabled);
 const ollama_enabled = (conf: SiteSettings) => to_bool(conf.ollama_enabled);
 const custom_openai_enabled = (conf: SiteSettings) =>
   to_bool(conf.custom_openai_enabled);
@@ -333,6 +335,7 @@ export type SiteSettingsExtrasKeys =
   | "custom_openai_configuration"
   | "mistral_api_key"
   | "anthropic_api_key"
+  | "openrouter_api_key"
   | "salesloft_section"
   | "salesloft_api_key"
   | "google_sso_heading"
@@ -1333,6 +1336,17 @@ export const EXTRAS: SettingsExtras = {
     required_when: [{ key: "anthropic_enabled", equals: "yes" }],
     group: "AI",
     subgroup: "Anthropic",
+  },
+  openrouter_api_key: {
+    name: "OpenRouter API Key",
+    desc: "For checking board answers (decide). Create a key at [OpenRouter](https://openrouter.ai/settings/keys), preferably with a credit limit, and paste it here.",
+    default: "",
+    password: true,
+    show: board_decide_enabled,
+    tags: ["AI"],
+    required_when: [{ key: "board_decide_enabled", equals: "yes" }],
+    group: "AI & Agents",
+    subgroup: "Artifacts",
   },
   ollama_configuration: {
     name: "Ollama Configuration",

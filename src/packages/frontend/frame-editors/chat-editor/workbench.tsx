@@ -39,6 +39,7 @@ import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { FileArtifact } from "./file-artifact";
+import { deliverBoardAnswers } from "./board-answers-deliver";
 import ContextualReply, {
   LocalCommentButton,
 } from "@cocalc/frontend/chat/contextual-reply";
@@ -509,6 +510,21 @@ function WorkbenchDocument(props: WorkbenchProps) {
           artifact={artifact}
           historical={historical}
           localComments={!source}
+          // A Sagebrush board's answers go to this thread's agent: only from
+          // the current view of a chat the viewer may write to.
+          deliverBoardAnswers={
+            chat && !read_only && !historical
+              ? (submission, { stale }) =>
+                  deliverBoardAnswers({
+                    chat,
+                    threadId: artifact.thread_id,
+                    submission,
+                    file: artifact.file?.path,
+                    stale,
+                  })
+              : undefined
+          }
+          revision={latest?.operation_id ?? null}
         />
       </ContextualReply>
     );

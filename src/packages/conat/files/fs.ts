@@ -204,6 +204,29 @@ export interface RemoveDirOptions {
   sudo?: boolean;
 }
 
+export interface ReadRegularFileOptions {
+  maxBytes: number;
+  encoding?: string;
+}
+
+// A file service's readRegularFile: refused where its filesystem has none,
+// rather than falling back to an uncapped read.
+async function readRegularFileOf(
+  filesystem: Filesystem,
+  path: string,
+  options: ReadRegularFileOptions,
+): Promise<string | Buffer> {
+  if (typeof filesystem.readRegularFile !== "function") {
+    throw new ConatError("capped regular-file reads are not supported", {
+      code: "ENOTSUP",
+    });
+  }
+  return await filesystem.readRegularFile(path, {
+    maxBytes: options?.maxBytes,
+    encoding: options?.encoding,
+  });
+}
+
 export interface FileDescription {
   mime: string;
   snippet?: string;
@@ -248,6 +271,14 @@ export interface Filesystem {
     // initializing realtime sync clients.  It makes it so we can have several
     // clients all try to read at the same time, and exactly one wins.
     lock?: number,
+  ) => Promise<string | Buffer>;
+  // Read a regular file of at most maxBytes, from one opened handle, so the
+  // cap holds even if the file grows after any stat: it reads at most
+  // maxBytes + 1 bytes, and above maxBytes fails with code EFBIG. A file
+  // that is not regular fails with code EACCES.
+  readRegularFile?: (
+    path: string,
+    options: ReadRegularFileOptions,
   ) => Promise<string | Buffer>;
   // lockFile is exactly like readFile with the lock parameter, but
   // it lets you lock (or unlock) a file without actually reading it.
@@ -509,6 +540,7 @@ export type ReadOnlyFilesystem = Pick<
   | "getListing"
   | "lstat"
   | "readFile"
+  | "readRegularFile"
   | "readdir"
   | "readlink"
   | "realpath"
@@ -578,6 +610,9 @@ export async function fsReadOnlyServer({
     async readFile(path: string, encoding?, lock?) {
       rejectReadOnlyLock(lock);
       return await (await fs(this.subject)).readFile(path, encoding);
+    },
+    async readRegularFile(path: string, options: ReadRegularFileOptions) {
+      return await readRegularFileOf(await fs(this.subject), path, options);
     },
     async readdir(path: string, options?) {
       const files = await (await fs(this.subject)).readdir(path, options);
@@ -761,6 +796,9 @@ export async function fsServer({
       },
       async readFile(path: string, encoding?, lock?) {
         return await (await fs(this.subject)).readFile(path, encoding, lock);
+      },
+      async readRegularFile(path: string, options: ReadRegularFileOptions) {
+        return await readRegularFileOf(await fs(this.subject), path, options);
       },
       async lockFile(path: string, lock?: number) {
         return await (await fs(this.subject)).lockFile(path, lock);
@@ -971,7 +1009,12 @@ export type FilesystemClient = Omit<
   "stat" | "lstat" | "jupyterImportIpynb" | "jupyterSaveIpynb"
 > &
   FileWriteReceipts &
-  Required<Pick<Filesystem, "jupyterImportIpynb" | "jupyterSaveIpynb">> & {
+  Required<
+    Pick<
+      Filesystem,
+      "jupyterImportIpynb" | "jupyterSaveIpynb" | "readRegularFile"
+    >
+  > & {
     listing: (path: string) => Promise<Listing>;
     stat: (path: string) => Promise<Stats>;
     lstat: (path: string) => Promise<Stats>;

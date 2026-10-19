@@ -462,6 +462,42 @@ describe("use all the standard api functions of fs", () => {
   });
 });
 
+describeIfLinux("capped regular-file reads over conat", () => {
+  for (const unsafeMode of [false, true]) {
+    it(`caps the read on the file server (unsafeMode=${unsafeMode})`, async () => {
+      const server = await createPathFileserver({ unsafeMode });
+      const project_id = uuid();
+      const fs = fsClient({
+        client: conat(),
+        subject: `${server.service}.project-${project_id}`,
+      });
+      await fs.writeFile("a.board.json", "abcd");
+      expect(
+        await fs.readRegularFile("a.board.json", {
+          maxBytes: 4,
+          encoding: "utf8",
+        }),
+      ).toBe("abcd");
+      const bytes = await fs.readRegularFile("a.board.json", { maxBytes: 4 });
+      expect(Buffer.from(bytes as any).toString()).toBe("abcd");
+      await expect(
+        fs.readRegularFile("a.board.json", { maxBytes: 3 }),
+      ).rejects.toMatchObject({ code: "EFBIG" });
+      // The board grows after the client's stat: the read still refuses it.
+      const { size } = await fs.stat("a.board.json");
+      expect(size).toBe(4);
+      await fs.appendFile("a.board.json", "x".repeat(1024 * 1024));
+      await expect(
+        fs.readRegularFile("a.board.json", { maxBytes: size }),
+      ).rejects.toMatchObject({ code: "EFBIG" });
+      await expect(
+        fs.readRegularFile("a.board.json", {} as any),
+      ).rejects.toThrow("invalid regular-file read limit");
+      server.close();
+    });
+  }
+});
+
 describeIfLinux("SECURITY CHECKS: dangerous symlinks can't be followed", () => {
   let server;
   let tempDir;

@@ -272,6 +272,62 @@ describe("processAcpLLM", () => {
     );
   });
 
+  it.each([true, false])(
+    "marks a board submission for the hub's bound (board_answers=%s)",
+    async (board) => {
+      mockSteerAcp.mockResolvedValue({ ok: true, state: "steered" });
+      const acpState = new FakeAcpState();
+      const actions: any = {
+        syncdb: {
+          save: jest.fn().mockResolvedValue(undefined),
+          set: jest.fn(),
+          commit: jest.fn(),
+        },
+        store: {
+          get: (key: string) =>
+            key === "project_id"
+              ? "proj"
+              : key === "path"
+                ? "x.chat"
+                : key === "acpState"
+                  ? acpState
+                  : undefined,
+          setState: jest.fn(),
+        },
+        chatStreams: new Set<string>(),
+        getAllMessages: () => new Map(),
+        getThreadMetadata: jest.fn(() => undefined),
+        getMessagesInThread: jest.fn(() => []),
+        getCodexConfig: jest.fn(() => ({})),
+        sendReply: jest.fn(),
+      };
+      await processAcpLLM({
+        message: {
+          event: "chat",
+          sender_id: "user-1",
+          date: new Date(4900),
+          message_id: "board-msg",
+          thread_id: "thread-49",
+          ...(board ? { board_answers: true } : {}),
+          history: [
+            {
+              author_id: "user-1",
+              content: "answers",
+              date: new Date(4900).toISOString(),
+            },
+          ],
+        } as any,
+        model: "codex-agent",
+        input: "answers",
+        actions,
+        sendMode: "immediate",
+      });
+      const chat = mockSteerAcp.mock.calls[0][0].chat;
+      if (board) expect(chat.board_answers).toBe(true);
+      else expect(chat).not.toHaveProperty("board_answers");
+    },
+  );
+
   it("does not mark steer guidance sent again after its receipt", async () => {
     jest.spyOn(Date, "now").mockReturnValue(4800);
     // The hub saves the receipt (and may finish the turn) before replying.

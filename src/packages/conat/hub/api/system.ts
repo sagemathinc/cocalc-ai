@@ -156,6 +156,7 @@ export const system = {
   transcribeChatAudio: authFirstRequireAccount,
   synthesizeChatSpeech: authFirstRequireAccount,
   cancelChatSpeech: authFirstRequireAccount,
+  boardDecide: authFirstRequireAccount,
   getCodexPaymentSource: authFirstRequireAccountOrHostWithAccountTarget,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
@@ -2947,6 +2948,21 @@ export interface System {
     account_id?: string;
     request_id: string;
   }) => Promise<{ canceled: boolean }>;
+
+  /** A Sagebrush board's decide call: the reader's answer, classified into
+   * one of the options of the question on the posted board file at `path`
+   * (server/ai/board-decide-bound.ts). The question and options are read
+   * from the file, never from `message`. `option` is null when none fits. */
+  boardDecide: (opts: {
+    account_id?: string;
+    project_id: string;
+    path: string;
+    /** The card's revision for the board it posted on this channel. */
+    revision: string | null;
+    /** The SHA-256 of the text the card posted; the file must still be it. */
+    sha256: string;
+    message: unknown;
+  }) => Promise<{ id: string; option: string | null }>;
 
   getCodexPaymentSource: (opts: {
     account_id?: string;

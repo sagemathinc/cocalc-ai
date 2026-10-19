@@ -217,6 +217,7 @@
     "@cocalc/app-document-build": "workspace:*",
     "@cocalc/app-tasks": "workspace:*",
     "@jitl/quickjs-wasmfile-release-asyncify": "0.32.0",
+    "@sagemathinc/sagebrush-board": "0.2.0",
     "immer": "^11.1.0",
     "quickjs-emscripten-core": "0.32.0",
     "vanilla-cookieconsent": "^3.1.0"

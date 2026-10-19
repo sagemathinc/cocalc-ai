@@ -42,6 +42,7 @@ import {
   artifactCatalogFilesystem,
   verifyProvisionedProjectInventoryBatch,
   PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
+  boardDecideFilesystem,
 } from "./file-server";
 import { handleProjectHostUpload } from "./upload";
 import { startArtifactCatalog } from "./artifact-catalog";
@@ -169,6 +170,7 @@ import { initProjectDocumentActivityService } from "./document-activity-service"
 import { initProjectChatSessionService } from "./project-chat-session-service";
 import { initProjectEditJournalService } from "./edit-journal-service";
 import { initProjectArchiveInfoService } from "./archive-info-service";
+import { initBoardDecideService } from "@cocalc/backend/sagebrush-board/service";
 import {
   getProjectHostEventLoopStallStatus,
   startProjectHostEventLoopStallMonitor,
@@ -458,6 +460,11 @@ export async function main(
     await initProjectDocumentActivityService(conatClient);
   const projectArchiveInfoService =
     await initProjectArchiveInfoService(conatClient);
+  // A board's decide request is read and checked here, where its project's
+  // files are; only the bounded request goes back to the hub.
+  const boardDecideService = await initBoardDecideService(conatClient, {
+    projectFilesystem: boardDecideFilesystem,
+  });
   const sharedBrowserService = await initSharedBrowserService(conatClient);
 
   // ACP runs inside project-host in container mode (no env flag needed).
@@ -1533,6 +1540,7 @@ export async function main(
     projectDocumentActivityService?.close?.();
     projectChatSessionService?.close?.();
     projectArchiveInfoService?.close?.();
+    boardDecideService?.close?.();
     sharedBrowserService?.close?.();
     masterRegistration?.stop();
     stopReconciler?.();

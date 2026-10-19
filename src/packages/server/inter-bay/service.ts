@@ -1,3 +1,4 @@
+import { boardDecideLocal } from "@cocalc/server/ai/board-decide-service";
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 /*
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
@@ -1439,6 +1440,7 @@ async function startAccountLocalService(): Promise<void> {
     transcribeChatAudio: async (opts) => await transcribeChatAudioLocal(opts),
     synthesizeChatSpeech: async (opts) => await synthesizeChatSpeechLocal(opts),
     cancelChatSpeech: async (opts) => await cancelChatSpeechLocal(opts),
+    boardDecide: async (opts) => await boardDecideLocal(opts),
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
     },

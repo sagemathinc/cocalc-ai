@@ -2249,3 +2249,156 @@ describe("markThreadRead with UUID keys", () => {
     ).toBe(3);
   });
 });
+
+// Wait (boundedly) for an asynchronous step to have happened, instead of a
+// fixed sleep that a slow machine can outrun.
+async function until(cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 2000 && !cond(); i++) {
+    await new Promise((r) => setTimeout(r, 1));
+  }
+  expect(cond()).toBe(true);
+}
+
+describe("board answers through the real sendChat (astra2, CORR-D1-1)", () => {
+  // The agent's admission, as processAcpLLM records it: "not-sent" when the
+  // hub refused, "queue"/"sent" when it took the message.
+  function boardActions(admission: () => Promise<string>) {
+    const root: any = {
+      event: "chat",
+      message_id: "root",
+      thread_id: "board-thread",
+      date: "2026-01-01T00:00:00.000Z",
+      sender_id: "00000000-1000-4000-8000-000000000001",
+      history: [
+        {
+          content: "Original",
+          date: "2026-01-01T00:00:00.000Z",
+          author_id: "00000000-1000-4000-8000-000000000001",
+        },
+      ],
+    };
+    const messages = new Map<string, any>([["1767225600000", root]]);
+    const actions = makeActions(messages);
+    const { fromJS } = require("immutable");
+    let state: any = { acpState: fromJS({}) };
+    actions.store = {
+      setState: (patch: any) => (state = { ...state, ...patch }),
+      get: (key: string) =>
+        key === "project_id"
+          ? "proj-1"
+          : key === "path"
+            ? "x.chat"
+            : state[key],
+    };
+    actions.isSyncdbReady = () => true;
+    actions.messageCache.upsertLocalMessage.mockImplementation((m: any) =>
+      messages.set(`${new Date(m.date).valueOf()}`, m),
+    );
+    actions.syncdb.save.mockResolvedValue(undefined);
+    actions.processAI = jest.fn(async ({ message }: any) => {
+      const outcome = await admission();
+      actions.store.setState({
+        acpState: actions.store
+          .get("acpState")
+          .set(`message:${message.message_id}`, outcome),
+      });
+    });
+    return actions;
+  }
+  const sub: any = {
+    id: "0d9f3b6e-6a31-4c2f-9d6b-0f6f2c1b7a11",
+    name: "test.board.json",
+    revision: "r1",
+    page: { number: 1 },
+    answers: { q: 1 },
+    notes: { q: "words" },
+    comment: "",
+  };
+  beforeAll(() => {
+    Object.defineProperty(globalThis.crypto, "subtle", {
+      configurable: true,
+      value: require("crypto").webcrypto.subtle,
+    });
+  });
+
+  it("received only after admission; a refused one is sent again", async () => {
+    const {
+      deliverBoardAnswers,
+    } = require("../../frame-editors/chat-editor/board-answers-deliver");
+    let admit!: (s: string) => void;
+    const actions = boardActions(() => new Promise<string>((r) => (admit = r)));
+    const send = () =>
+      deliverBoardAnswers({
+        chat: actions,
+        threadId: "board-thread",
+        submission: sub,
+        stale: false,
+      });
+    let settled: string | undefined;
+    const first = send().then(
+      () => (settled = "received"),
+      () => (settled = "refused"),
+    );
+    await until(() => actions.processAI.mock.calls.length === 1);
+    expect(settled).toBeUndefined(); // saved, not yet admitted
+    admit("not-sent");
+    await first;
+    expect(settled).toBe("refused");
+    // sending again: the same message, dispatched again
+    const second = send();
+    await until(() => actions.processAI.mock.calls.length === 2);
+    admit("queue");
+    await second;
+    expect(actions.processAI).toHaveBeenCalledTimes(2);
+    const ids = new Set(
+      actions.syncdb.set.mock.calls
+        .map(([row]: any) => row?.message_id)
+        .filter((id: any) => id && id !== "root"),
+    );
+    expect(ids.size).toBe(1);
+    // taken: sending again dispatches nothing more
+    await send();
+    expect(actions.processAI).toHaveBeenCalledTimes(2);
+  });
+});
+
+it("a board submission's row carries the mark the hub limits by", () => {
+  const actions = makeActions();
+  actions.isSyncdbReady = () => true;
+  actions.sendChat({
+    input: "answers",
+    boardAnswers: true,
+    skipModelDispatch: true,
+    chatIdentity: {
+      date: "2025-01-01T00:00:00.000Z",
+      message_id: "board",
+      thread_id: "board-thread",
+    },
+  });
+  actions.sendChat({
+    input: "words",
+    skipModelDispatch: true,
+    chatIdentity: {
+      date: "2025-01-01T00:00:01.000Z",
+      message_id: "typed",
+      thread_id: "board-thread",
+    },
+  });
+  const rows = actions.syncdb.set.mock.calls.map(([row]: any) => row);
+  expect(rows.find((r: any) => r.message_id === "board")?.board_answers).toBe(
+    true,
+  );
+  expect(rows.find((r: any) => r.message_id === "typed")).not.toHaveProperty(
+    "board_answers",
+  );
+});
+
+// Codex on #1134: a board submission's row deleted in another tab before
+// its dispatch is a failed dispatch, never one done without the hub.
+it("dispatching a message that is gone fails, without contacting the hub", async () => {
+  const actions = makeActions();
+  actions.processAI = jest.fn();
+  await expect(actions.dispatchChatMessage("gone")).rejects.toThrow(/gone/);
+  expect(actions.processAI).not.toHaveBeenCalled();
+  expect(actions.getAcpMessageState("gone")).toBeUndefined();
+});
