@@ -278,6 +278,16 @@ git config remote.foo/bar.url "$T/nowhere.git"
 git config remote.foo/bar.fetch '+refs/heads/*:refs/remotes/foo/bar/*'
 git update-ref refs/remotes/foo/bar/security/topic "$SL" && git branch -q neutral "$SL"
 check 1 "security/* tracking ref of a remote named foo/bar" "$T/pub.git" refs/heads/neutral "$SL" refs/heads/fix/innocent
+# ... but feature/security/topic on remote "fork", or branch "topic" on remote
+# "foo/security", are not private names.
+git branch -q -D neutral && git update-ref -d refs/remotes/foo/bar/security/topic
+NOTPRIV=$(commit "ordinary work on public forks") && git reset -q --hard HEAD~1
+git config remote.fork.url "$T/nowhere2.git"
+git config remote.foo/security.url "$T/nowhere3.git"
+git update-ref refs/remotes/fork/feature/security/topic "$NOTPRIV"
+git update-ref refs/remotes/foo/security/topic "$NOTPRIV"
+git branch -q neutral "$NOTPRIV"
+check 0 "branch feature/security/topic on remote fork is not private" "$T/pub.git" refs/heads/neutral "$NOTPRIV" refs/heads/fix/ok
 
 # A broken patch-id cache fails closed: a rebased private patch followed by an
 # unrelated commit is only recognizable through the cache-backed patch-ids.
@@ -294,6 +304,26 @@ check 1 "rebased private patch + unrelated commit (cache OK)" "$T/pub5.git" refs
 rm -f .git/cocalc-guard-patch-ids && mkdir .git/cocalc-guard-patch-ids
 check 1 "same, with the patch-id cache broken (fail closed)" "$T/pub5.git" refs/heads/main "$BR5" refs/heads/main "$E5" "$P5"
 rmdir .git/cocalc-guard-patch-ids
+
+# A commit pushed to a private repo is recorded at that push, so deleting or
+# force-pushing the private branch before any public check loses nothing.
+git init -q --bare "$T/pub7.git" && git init -q --bare "$T/priv7.git"
+git init -q "$T/unobs" && cd "$T/unobs" || exit 1
+E7="COCALC_PUBLIC_URL=$T/pub7.git"
+P7="COCALC_PRIVATE_URL=$T/priv7.git"
+git config cocalc.privateUrl "$T/priv7.git"
+B7=$(commit base7) && git push -q "$T/pub7.git" HEAD:refs/heads/main && git push -q "$T/priv7.git" HEAD:refs/heads/main
+U7=$(commit "secret pushed only to private") && git branch -q security/topic "$U7" && git branch -q neutral "$U7"
+git reset -q --hard "$B7"
+check 0 "push to the private repo (records the commit)" "$T/priv7.git" refs/heads/security/topic "$U7" refs/heads/security/topic "$E7" "$P7"
+git push -q "$T/priv7.git" "$U7:refs/heads/security/topic"
+git push -q "$T/priv7.git" :refs/heads/security/topic
+git branch -q -D security/topic
+check 1 "private branch deleted before any public check" "$T/pub7.git" refs/heads/neutral "$U7" refs/heads/fix/innocent "$E7" "$P7"
+U8=$(commit "second secret, force-pushed away") && git branch -q neutral8 "$U8" && git reset -q --hard "$B7"
+check 0 "push to the private repo (records the commit)" "$T/priv7.git" refs/heads/security/t8 "$U8" refs/heads/security/t8 "$E7" "$P7"
+git push -q "$T/priv7.git" "$U8:refs/heads/security/t8" && git push -q -f "$T/priv7.git" "$B7:refs/heads/security/t8"
+check 1 "private branch force-pushed away before any public check" "$T/pub7.git" refs/heads/neutral8 "$U8" refs/heads/fix/innocent "$E7" "$P7"
 
 # Several private commits squashed onto a newer public main: new tree and a
 # combined patch-id (Codex/@review repro).

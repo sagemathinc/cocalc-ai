@@ -243,6 +243,18 @@ rewritten_private_work() {
 
 remote_url=${2:-}
 if is_private_url "$remote_url"; then
+  # Allowed, but record every commit pushed to a private repo first
+  # (refs/cocalc-guard/seen/<oid>), so it stays known as private even if that
+  # private branch is deleted or force-pushed before any public push is checked.
+  zero=0000000000000000000000000000000000000000
+  while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    [ -n "$local_sha" ] && [ "$local_sha" != "$zero" ] || continue
+    commit=$(git rev-parse -q --verify "$local_sha^{commit}") || continue
+    if ! git update-ref "$GUARD_REFS/seen/$commit" "$commit"; then
+      echo "pre-push-guard: could not record $commit as private; refusing (fail closed)." >&2
+      exit 1
+    fi
+  done
   exit 0
 fi
 if [ "${COCALC_DISCLOSE:-0}" = 1 ]; then
@@ -304,18 +316,29 @@ local_private_branches=()
 while read -r ref; do
   is_private_branch "${ref#refs/heads/}" && local_private_branches+=("$ref")
 done < <(git for-each-ref --format='%(refname)' refs/heads)
+mapfile -t remote_names < <(git remote)
 # Private-named tracking branches of ANY remote (refs/remotes/<remote>/security/*
 # etc.) are private too, even if the remote has no URL or an unrecognized one.
 while read -r ref; do
-  # The remote name may contain "/", so test every suffix: conservative.
+  # Branch name = what follows the longest configured remote name (remote
+  # names may contain "/").  For a ref whose remote is no longer configured,
+  # test every suffix: conservative.
   rest=${ref#refs/remotes/}
-  while [[ $rest == */* ]]; do
-    rest=${rest#*/}
-    if is_private_branch "$rest"; then
-      local_private_branches+=("$ref")
-      break
-    fi
+  best=""
+  for name in "${remote_names[@]}"; do
+    if [[ $rest == "$name"/* ]] && [ ${#name} -gt ${#best} ]; then best=$name; fi
   done
+  if [ -n "$best" ]; then
+    is_private_branch "${rest#"$best"/}" && local_private_branches+=("$ref")
+  else
+    while [[ $rest == */* ]]; do
+      rest=${rest#*/}
+      if is_private_branch "$rest"; then
+        local_private_branches+=("$ref")
+        break
+      fi
+    done
+  fi
 done < <(git for-each-ref --format='%(refname)' refs/remotes)
 
 # A clone has private work if it has a private remote, a cocalc.privateUrl,
