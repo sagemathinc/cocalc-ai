@@ -154,15 +154,21 @@ describe("what became of the turn an agent message started", () => {
     });
   });
 
-  it("held while a restart waits for the project to run again", () => {
-    const attempt = randomUUID();
-    const mine = job({ attempt_id: attempt });
-    set(mine.op_id, {
-      state: "canceled",
-      recovery_code: ACP_FENCE_INTENT_RESUME_PENDING,
-    });
-    expect(inspect(attempt)).toMatchObject({ state: "queued", held: true });
-  });
+  it.each(["canceled", "error", "interrupted"])(
+    "held while a restart waits for the project to run again (fenced %s)",
+    (state) => {
+      // Queued when the project stopped: canceled; running: error (ACP) or
+      // interrupted. Either way it resumes.
+      const attempt = randomUUID();
+      const mine = job({ attempt_id: attempt });
+      set(mine.op_id, {
+        state,
+        ...(state === "canceled" ? {} : { started_at: mine.created_at + 1 }),
+        recovery_code: ACP_FENCE_INTENT_RESUME_PENDING,
+      });
+      expect(inspect(attempt)).toMatchObject({ state: "queued", held: true });
+    },
+  );
 
   it("follows a cut-off turn to its continuation, with the chain's tool use", () => {
     const attempt = randomUUID();
