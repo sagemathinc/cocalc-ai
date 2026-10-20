@@ -28,6 +28,7 @@ import {
 import { setConatClient } from "@cocalc/conat/client";
 import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
@@ -507,6 +508,13 @@ export async function main(
   const persistServer = externalPersist
     ? undefined
     : createPersistServer({ client: conatClient });
+  // The board write service (conat/persist/board-policy.ts), beside it.
+  const boardPersistServer = externalPersist
+    ? undefined
+    : createPersistServer({
+        client: conatClient,
+        service: BOARD_WRITE_SERVICE,
+      });
   if (externalPersist) {
     await waitForProjectHostConatPersistReady({ client: conatClient });
   }
@@ -1522,6 +1530,7 @@ export async function main(
     if (closed) return;
     closed = true;
     persistServer?.close?.();
+    boardPersistServer?.close?.();
     fsServer?.close?.();
     // Keep the catalog's exclusive lease until process exit: filesystem calls
     // already in flight may still complete after the service stops accepting.

@@ -23,6 +23,7 @@ import {
   type PublishOptions,
   type Configuration,
   type RecoveryState,
+  type User,
 } from "./core-stream";
 import type {
   CheckpointUpdate,
@@ -80,6 +81,7 @@ export interface DStreamOptions {
   noInventory?: boolean;
 
   service?: string;
+  persistUser?: User;
 
   initPhaseReporter?: CoreStreamInitPhaseReporter;
 }

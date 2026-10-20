@@ -193,6 +193,10 @@ export interface CoreStreamOptions {
   // for sharing cluster state date, where the servers are ephemeral and
   // there is one for each node.
   service?: string;
+  // The identity the persist service is asked as, when it isn't the one the
+  // storage path belongs to: a project host's board manager writes a
+  // project's board stream as the hub (conat/persist/board-policy.ts).
+  persistUser?: User;
 
   initPhaseReporter?: CoreStreamInitPhaseReporter;
 }
@@ -277,6 +281,7 @@ export class CoreStream<T = any> extends EventEmitter {
   // in a project has user {project_id} even if it is being accessed by
   // an account.
   private user: User;
+  private persistUser?: User;
   private storage: StorageOptions;
   private client?: Client;
   private persistClient: PersistStreamClient;
@@ -306,6 +311,7 @@ export class CoreStream<T = any> extends EventEmitter {
     sync,
     client,
     service,
+    persistUser,
     initPhaseReporter,
     bootstrapRetry = true,
   }: CoreStreamOptions) {
@@ -319,6 +325,7 @@ export class CoreStream<T = any> extends EventEmitter {
     this.client = client;
     this.service = service;
     this.user = { account_id, project_id, host_id };
+    this.persistUser = persistUser;
     this.name = name;
     this.storage = {
       path: storagePath({ account_id, project_id, host_id, name }),
@@ -470,7 +477,7 @@ export class CoreStream<T = any> extends EventEmitter {
     }
     this.persistClient = persist({
       client: this.client,
-      user: this.user,
+      user: this.persistUser ?? this.user,
       storage: this.storage,
       service: this.service,
       registerRecoveryWithScheduler: false,
