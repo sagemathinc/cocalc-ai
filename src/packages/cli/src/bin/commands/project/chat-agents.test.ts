@@ -432,3 +432,46 @@ test("no watcher when there is no turn of its own to watch", async () => {
     transport.mock.restore();
   }
 });
+
+test("a watcher that cannot be set leaves the send a success", async () => {
+  const { directory } = peers();
+  const requests: any[] = [];
+  const hub = fakeHub(directory, requests);
+  hub.mock.restore();
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      requests.push(request);
+      if (request.action === "sensor")
+        throw new Error("too many active watchers");
+      if (request.action === "destinations") return directory;
+      return {
+        version: 3,
+        attempt_id: request.attempt_id,
+        agent_network_id: request.agent_network_id,
+        target: request.target,
+        outcome: "accepted",
+        observed_at: Date.now(),
+        chat_effect: "saved",
+      };
+    },
+  );
+  const stderr = mock.method(process.stderr, "write", () => true);
+  const output: any[] = [];
+  try {
+    await topLevel(output).parseAsync(
+      ["agent", "send", "reviewer", "--watch-turn", "Please", "review"],
+      { from: "user" },
+    );
+    assert.equal(output[0].outcome, "accepted");
+    assert.match(
+      output[0].summary,
+      /No watcher was set \(too many active watchers\)/,
+    );
+    assert.match(output[0].summary, /do not send it again/);
+  } finally {
+    stderr.mock.restore();
+    transport.mock.restore();
+  }
+});

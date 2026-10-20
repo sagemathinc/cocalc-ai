@@ -116,8 +116,13 @@ export function registerAgentCommands(
         externalAgent: opts.externalAgent,
         api: globals.api,
       });
+      // The message is sent either way: a watcher that could not be set
+      // must not make it look failed (a retry would send it twice).
       const watched = opts.watchTurn
-        ? await watchSentTurn(sent, globals.api)
+        ? await watchSentTurn(sent, globals.api).catch((err: unknown) => ({
+            summary: `No watcher was set (${(err as Error)?.message ?? err}); the message itself was sent, so do not send it again. Check its turn with agent rpc inspect.`,
+            sensor_id: undefined,
+          }))
         : undefined;
       emitSuccess({ globals }, `${prefix} send`, {
         summary: [agentSendSummary(sent), watched?.summary]
