@@ -607,6 +607,56 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("a slow hold is never decided by the clock", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const timers: { fn: () => void; ms: number }[] = [];
+    const real = global.setTimeout;
+    const spy = jest.spyOn(global, "setTimeout").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+      ...rest: any[]
+    ) => {
+      timers.push({ fn, ms: Number(ms ?? 0) });
+      return real(fn, ms, ...rest);
+    }) as any);
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: { ...baseMetadata, message_id: "msg-slow" },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    try {
+      await writer.waitUntilReady();
+      await writer.handle({
+        type: "error",
+        error: "Claude could not run this request.",
+        failure: { kind: "limit", scope: "credential" },
+      });
+      await writer.handle(null);
+      await flush(writer);
+    } finally {
+      spy.mockRestore();
+    }
+    // The stash's only timer is hours long, and it forgets: it publishes
+    // nothing (no "ended" notice for a hold that is still being queued).
+    const forget = timers.filter(({ ms }) => ms >= 60 * 60_000);
+    expect(forget.length).toBeGreaterThan(0);
+    callHubMock.mockClear();
+    for (const { fn } of forget) fn();
+    await new Promise((resolve) => real(resolve, 10));
+    expect(
+      callHubMock.mock.calls.filter(
+        ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
+      ),
+    ).toHaveLength(0);
+    writer.dispose?.(true);
+  });
+
   it("a usage limit gets the shared paused notice, not a turn error", async () => {
     delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
     const { syncdb } = makeFakeSyncDB();

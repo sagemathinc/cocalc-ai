@@ -2258,15 +2258,17 @@ type StashedLimitNotice = {
 };
 /** A limit notice waits here until the hold is decided. */
 const stashedLimitNotices = new Map<string, StashedLimitNotice>();
-/** Not claimed by then (no queued job decided it): published as ended. */
-const LIMIT_NOTICE_CLAIM_MS = 60_000;
+/** Never decided by then (its worker died): dropped, never guessed. */
+const LIMIT_NOTICE_FORGET_MS = 6 * 60 * 60_000;
 
 function stashLimitNotice(message_id: string, notice: StashedLimitNotice) {
   const previous = stashedLimitNotices.get(message_id);
   if (previous?.timer) clearTimeout(previous.timer);
+  // Decided only by the hold itself (paused, or not held); a hold may take
+  // a while, so this timer only forgets a stash nothing will claim.
   notice.timer = setTimeout(
-    () => void publishLimitNoticeAfterHold(message_id, false),
-    LIMIT_NOTICE_CLAIM_MS,
+    () => stashedLimitNotices.delete(message_id),
+    LIMIT_NOTICE_FORGET_MS,
   );
   notice.timer.unref?.();
   stashedLimitNotices.set(message_id, notice);
@@ -9553,6 +9555,12 @@ async function recoverPendingFailureRecoveryIntents({
         // continuation reports how it ends.
         else if (!held)
           reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
+        // Its limit notice, if this process still has it (a live hold that
+        // failed, recovered here).
+        void publishLimitNoticeAfterHold(
+          request.chat?.message_id,
+          held?.available_at != null,
+        );
         // Last, once its report is durable (a failed write throws, and the
         // next poll tries again; the outbox keeps it to one report).
         clearAcpJobRecoveryIntent(job.op_id);
@@ -10504,6 +10512,14 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         refreshedRequest,
         result.error,
         result.outcome,
+      );
+    // A limit notice still waiting (the turn was not held, e.g. a recovery
+    // code took over): it ended. One still being held is decided by the
+    // recovery poll instead.
+    if (!recoveryPending)
+      void publishLimitNoticeAfterHold(
+        refreshedRequest.chat?.message_id,
+        resumed?.available_at != null,
       );
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
