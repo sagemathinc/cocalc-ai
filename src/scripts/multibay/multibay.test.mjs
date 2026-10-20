@@ -447,7 +447,12 @@ describe("a held sign-in turn asks the account's home bay (I4c)", () => {
   const onHome = async (body) => await runInBay(cluster, ATTACHED, body);
 
   before(async () => {
-    project_id = await createProject(alice.client, "alice-signin-hold");
+    // Its own owner: alice's project limit is needed by later scenarios.
+    const owner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "olive",
+    });
+    project_id = await createProject(await client(owner), "signin-hold");
     assert.equal(await owningBay(project_id), SEED);
     await runInBay(
       cluster,
