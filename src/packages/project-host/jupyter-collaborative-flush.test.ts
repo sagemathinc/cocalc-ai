@@ -18,6 +18,16 @@ jest.mock("./jupyter-ipynb", () => ({
   saveJupyterIpynb: (...args: any[]) => saveJupyterIpynbMock(...args),
 }));
 
+let filesystemMock: any;
+jest.mock("@cocalc/conat/files/fs", () => ({
+  ...jest.requireActual("@cocalc/conat/files/fs"),
+  fsClient: jest.fn(() => filesystemMock),
+}));
+
+jest.mock("@cocalc/conat/sync-doc/sync-client", () => ({
+  SyncClient: jest.fn(() => ({ close: jest.fn() })),
+}));
+
 jest.mock("./jupyter-notebook-contents", () => ({
   jupyterNotebookContents: (...args: any[]) =>
     jupyterNotebookContentsMock(...args),
@@ -206,13 +216,22 @@ describe("collaborative Jupyter collection flush", () => {
         syncClient: {} as any,
       });
 
+    // The file is kept, and still recorded as this collaborative version
+    // with the hash of the bytes kept (collection relies on that record,
+    // e.g. to refuse reusing an older backup).
+    const kept = {
+      path: "assignment/lab3.ipynb",
+      version: "version-1",
+      sha256: createHash("sha256").update(Buffer.from(lab)).digest("hex"),
+      bytes: Buffer.byteLength(lab),
+    };
     documentMock = placeholderDoc({});
-    await expect(flush()).resolves.toBeUndefined();
+    await expect(flush()).resolves.toEqual(expect.objectContaining(kept));
     expect(saveJupyterIpynbMock).not.toHaveBeenCalled();
 
-    // Nor with a notebook that has no cells yet.
+    // Likewise for a notebook that has no cells yet.
     documentMock = { ...placeholderDoc({}), get: jest.fn(() => List()) };
-    await expect(flush()).resolves.toBeUndefined();
+    await expect(flush()).resolves.toEqual(expect.objectContaining(kept));
     expect(saveJupyterIpynbMock).not.toHaveBeenCalled();
 
     // A notebook emptied on purpose is still flushed.
@@ -265,5 +284,52 @@ describe("collaborative Jupyter collection flush", () => {
 
     expect(saveJupyterIpynbMock).toHaveBeenCalledTimes(1);
     expect(result?.version).toBe("version-2");
+  });
+
+  it("reports a kept notebook to collection, so it never reuses an older backup", async () => {
+    // copy.ts disables recent-backup reuse only when the flush reports
+    // source versions; a notebook whose file was kept must be reported too.
+    const { List, fromJS } = require("immutable");
+    const lab = JSON.stringify({
+      cells: [{ cell_type: "markdown", source: ["### Lab 3"], metadata: {} }],
+      metadata: {},
+      nbformat: 4,
+      nbformat_minor: 5,
+    });
+    documentMock = {
+      wait_until_ready: jest.fn(async () => undefined),
+      newestVersion: jest.fn(() => "version-1"),
+      get_doc: jest.fn(() => ({})),
+      get: jest.fn(() =>
+        List([fromJS({ type: "cell", id: "alpha", pos: 0, input: "" })]),
+      ),
+      get_one: jest.fn(() => fromJS({ type: "settings" })),
+      close: jest.fn(async () => undefined),
+    };
+    filesystemMock = {
+      lstat: jest.fn(async (value: string) =>
+        stat(value === "assignment" ? "directory" : "file"),
+      ),
+      readdir: jest.fn(async () => [{ name: "lab3.ipynb" }]),
+      readFile: jest.fn(async () => Buffer.from(lab)),
+    };
+    const { flushJupyterNotebooksToDisk } =
+      await import("./jupyter-collaborative-flush");
+
+    const { notebooks } = await flushJupyterNotebooksToDisk({
+      client: {} as any,
+      project_id: "6f0e5a0c-6a0f-4b5e-9d1e-2a3b4c5d6e7f",
+      paths: ["assignment"],
+      actor_account_id: "instructor",
+    });
+
+    expect(saveJupyterIpynbMock).not.toHaveBeenCalled();
+    expect(notebooks).toEqual([
+      expect.objectContaining({
+        path: "assignment/lab3.ipynb",
+        version: "version-1",
+        sha256: createHash("sha256").update(Buffer.from(lab)).digest("hex"),
+      }),
+    ]);
   });
 });

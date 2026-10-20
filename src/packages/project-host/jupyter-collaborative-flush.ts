@@ -151,32 +151,34 @@ export async function flushJupyterNotebook({
       await delay(STABILITY_DELAY_MS);
       const version = doc.newestVersion();
       if (version == null) return;
-      if (
-        syncdbIsGeneratedPlaceholder(doc) &&
+      // The live notebook may be only the generated empty cell (it was
+      // opened while the file was still empty, e.g. during a course copy).
+      // Then the file is the work: keep it and record it as this version,
+      // unless the notebook is edited meanwhile (support ticket 21023).
+      const placeholder = syncdbIsGeneratedPlaceholder(doc);
+      const keepFile =
+        placeholder &&
         (await notebookFileHasContent(
           (file) => filesystem.readFile(file) as Promise<Buffer | string>,
           notebook_path,
-        ))
-      ) {
-        // The live notebook is only the generated empty cell (it was opened
-        // while the file was still empty, e.g. during a course copy): the
-        // file is the work, so collect it as it is (support ticket 21023),
-        // unless the notebook was edited while the file was read.
-        if (doc.newestVersion() !== version) continue;
-        return;
-      }
-      const contents = jupyterNotebookContents(
-        doc.get_doc() as DBDocument,
-        requestedNotebook,
-      );
-      await saveJupyterIpynb({
-        project_id,
-        path: notebook_path,
-        ipynb: JSON.parse(contents),
-        fs: filesystem,
-      });
-      if (doc.newestVersion() !== version) {
+        ));
+      if (placeholder && doc.newestVersion() !== version) {
         continue;
+      }
+      if (!keepFile) {
+        const contents = jupyterNotebookContents(
+          doc.get_doc() as DBDocument,
+          requestedNotebook,
+        );
+        await saveJupyterIpynb({
+          project_id,
+          path: notebook_path,
+          ipynb: JSON.parse(contents),
+          fs: filesystem,
+        });
+        if (doc.newestVersion() !== version) {
+          continue;
+        }
       }
       const saved = await filesystem.readFile(notebook_path);
       const bytes = Buffer.isBuffer(saved)
