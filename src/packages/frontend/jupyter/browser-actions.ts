@@ -238,6 +238,13 @@ export class JupyterActions extends JupyterActions0 {
   private saveIpynbRequested: boolean = false;
   private optimisticFastOpenToken: number = 0;
   private optimisticFastOpenApplied: boolean = false;
+  // Settles once the open has chosen between the stored (RTC) notebook and
+  // the .ipynb file and applied it (or the first load from disk failed):
+  // until then an empty notebook may just not have been loaded yet.
+  private settleInitialSource: () => void = () => {};
+  private initialSourceSettled: Promise<void> = new Promise((resolve) => {
+    this.settleInitialSource = resolve;
+  });
   private openInitStartedAt?: number;
   private openInitMarks: Record<string, number> = {};
   private openInitSummaryLogged = false;
@@ -1671,7 +1678,9 @@ export class JupyterActions extends JupyterActions0 {
       // Start watch/bootstrap decision before local user heartbeat writes a
       // metadata-only patch, which would otherwise make RTC appear spuriously
       // "newer than disk" at open time.
-      this.watchIpynb(rtcLastChangedMsAtReady);
+      this.watchIpynb(rtcLastChangedMsAtReady).finally(
+        this.settleInitialSource,
+      );
       void this.ensureLiveRunSubscription();
 
       this.set_runtime_user_state({ id: 0, time: Date.now() });
@@ -1916,6 +1925,7 @@ export class JupyterActions extends JupyterActions0 {
       this.exportStartup?.abort();
       this.exportStartup = undefined;
       this.recordJupyterOpenIncomplete("editor_closed");
+      this.settleInitialSource();
       this.unsubscribeAppearance?.();
       this.unsubscribeAppearance = undefined;
       this.reconnectResource?.close();
@@ -2608,9 +2618,10 @@ export class JupyterActions extends JupyterActions0 {
     });
   }
 
-  /* Wait until the syncdb is ready and its cells are in the store. An empty
-     notebook is ready with no cells: none is created until the user starts
-     editing (see createFirstCell).
+  /* Wait until the syncdb is ready, the initial load from the .ipynb file (if
+     any) is done, and the cells are in the store. An empty notebook is ready
+     with no cells: none is created until the user starts editing (see
+     createFirstCell).
 
      If the current state is "closed" there is no way
      it'll ever be ready, so we throw an Error.
@@ -2622,6 +2633,10 @@ export class JupyterActions extends JupyterActions0 {
         break;
       case "closed":
         throw Error("syncdb is closed so will never be ready");
+    }
+    await this.initialSourceSettled;
+    if (this.isClosed()) {
+      throw Error("jupyter actions closed so will never be ready");
     }
     while (
       (this.store.get("cell_list")?.size ?? 0) <= 0 &&
@@ -4893,7 +4908,10 @@ export class JupyterActions extends JupyterActions0 {
     this.noteOpenInitPhase("watch_start");
     this.runDebug("watch.start");
     const done = () => this.isClosed();
-    if (done()) return;
+    if (done()) {
+      this.settleInitialSource();
+      return;
+    }
     const hasRtcCells = this.syncdb.get_one({ type: "cell" }) != null;
     const rtcLastChangedMs =
       typeof rtcLastChangedMsAtReady === "number" &&
@@ -4970,6 +4988,8 @@ export class JupyterActions extends JupyterActions0 {
           } catch (err) {
             this.runDebug("watch.initial_load.failed", { err: `${err}` });
             console.warn(`Issue watching ipynb file`, err);
+            // Retries go on, but readiness does not wait on a broken file.
+            this.settleInitialSource();
             return false;
           }
         },
@@ -4987,6 +5007,7 @@ export class JupyterActions extends JupyterActions0 {
       });
       this.maybeLogFirstVisibleCell("rtc");
     }
+    this.settleInitialSource();
     if (done()) return;
     // if no kernel, let use select one:
     this.initKernel();

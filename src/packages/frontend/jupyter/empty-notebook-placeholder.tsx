@@ -85,7 +85,6 @@ export function EmptyNotebookPlaceholder({
       rows={1}
       aria-label="Empty notebook: click or start typing to add the first cell"
       placeholder="In [ ]:  Click here or start typing to add the first cell."
-      data-testid="jupyter-empty-notebook-placeholder"
       onFocus={() => {
         disabledKeys.current = true;
         frameActions.current?.disable_key_handler();

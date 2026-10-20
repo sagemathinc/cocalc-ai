@@ -33,7 +33,9 @@ function renderPlaceholder() {
   render(<EmptyNotebookPlaceholder actions={actions} />);
   return {
     actions,
-    placeholder: screen.getByTestId("jupyter-empty-notebook-placeholder"),
+    placeholder: screen.getByRole("textbox", {
+      name: "Empty notebook: click or start typing to add the first cell",
+    }),
   };
 }
 
