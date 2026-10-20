@@ -161,11 +161,12 @@ async function setup(
   });
   await manager.start();
   // A second replica, as a browser has.
+  const browserClient = connect();
   const browser = await openBoardSyncdb({
     // Writes as the host does (only the manager writes in production; these
     // replicas stand in for edits the host has admitted).
     writer: true,
-    client: connect(),
+    client: browserClient,
     project_id,
     path,
     service: fileserver.service,
@@ -186,6 +187,9 @@ async function setup(
     await manager.close();
     await browser.close();
     await syncdb.close();
+    // (The server allows 100 connections per user.)
+    browserClient.close();
+    client.close();
   };
   return {
     project_id,
@@ -306,8 +310,13 @@ test("the file is the official version when a board is opened again", async () =
     ...BOARD,
     nodes: [{ ...BOARD.nodes[0], text: "changed offline" }, BOARD.nodes[1]],
   });
-  await t.fs.writeFile(t.path, changed);
   const client = connect();
+  // (t's client closed with it.)
+  const fs: any = client.fs({
+    project_id: t.project_id,
+    service: fileserver.service,
+  });
+  await fs.writeFile(t.path, changed);
   const syncdb = await openBoardSyncdb({
     // Writes as the host does (only the manager writes in production; these
     // replicas stand in for edits the host has admitted).
@@ -328,10 +337,11 @@ test("the file is the official version when a board is opened again", async () =
     await manager.start();
     expect(itemText(syncdb, "a")).toBe("changed offline");
     await manager.save();
-    expect(`${await t.fs.readFile(t.path, "utf8")}`).toBe(changed);
+    expect(`${await fs.readFile(t.path, "utf8")}`).toBe(changed);
   } finally {
     await manager.close();
     await syncdb.close();
+    client.close();
   }
 });
 
@@ -838,6 +848,39 @@ describe("G1: a board's history is checked before anything opens it", () => {
       expect(openBoardCount()).toBe(0);
     } finally {
       client.close();
+    }
+  });
+
+  test("a file change too costly to merge quarantines the board: nothing is merged or stored, and the file is left as it is", async () => {
+    const t = await setup(canonical(BOARD), {
+      manager: { workLimits: { maxWork: 100_000, maxFields: 64 } },
+    });
+    try {
+      await until(() => itemText(t.browser, "a") === "hello world");
+      await t.syncdb.save();
+      const stored = async () =>
+        [...(await rawStream(t.project_id, t.path)).getAll()].length;
+      const before = await stored();
+      // An agent rewrites one note completely: "hello world" -> 3,000 other
+      // characters, (11 + 3,000)·3,000 of search, far over this cap.
+      const rewritten = canonical({
+        ...BOARD,
+        nodes: [{ ...BOARD.nodes[0], text: "z".repeat(3000) }, BOARD.nodes[1]],
+      });
+      await t.fs.writeFile(t.path, rewritten);
+      await until(() => t.manager.getStatus().state === "quarantined");
+      expect(t.manager.getStatus()).toMatchObject({
+        state: "quarantined",
+        message: expect.stringMatching(/too much to merge/),
+      });
+      expect(t.manager.isRetired()).toBe(true);
+      // Nothing merged, nothing stored, the file as the agent wrote it.
+      expect(itemText(t.syncdb, "a")).toBe("hello world");
+      await new Promise((r) => setTimeout(r, 300));
+      expect(await stored()).toBe(before);
+      expect(await t.read()).toBe(rewritten);
+    } finally {
+      await t.cleanup();
     }
   });
 

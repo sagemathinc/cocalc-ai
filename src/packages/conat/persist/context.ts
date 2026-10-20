@@ -16,15 +16,27 @@ export let compress: (data: Buffer) => Buffer = () => {
   throw Error("must initialize persist context");
 };
 
-export let decompress: (data: Buffer) => Buffer = () => {
+// With maxOutputLength, decompression stops (throws) before producing more
+// than that many bytes: what a compressed message inflates to is never
+// allocated past it.
+export interface DecompressOptions {
+  maxOutputLength?: number;
+}
+
+export let decompress: (
+  data: Buffer,
+  opts?: DecompressOptions,
+) => Buffer = () => {
   throw Error("must initialize persist context");
 };
 
 // Decompression that runs off the event loop (e.g., in the libuv threadpool),
 // used for large messages so one huge stored message cannot stall every other
 // stream served by the same process.  Defaults to the synchronous version.
-export let decompressAsync: (data: Buffer) => Promise<Buffer> = async (data) =>
-  decompress(data);
+export let decompressAsync: (
+  data: Buffer,
+  opts?: DecompressOptions,
+) => Promise<Buffer> = async (data, opts) => decompress(data, opts);
 
 export let syncFiles = {
   local: "",
@@ -54,8 +66,8 @@ export let copyFileSync = (_src: string, _desc: string): void => {
 export function initContext(opts: {
   sqlite: { DatabaseSync: new (...args: any[]) => DatabaseSync };
   compress: (Buffer) => Buffer;
-  decompress: (Buffer) => Buffer;
-  decompressAsync?: (Buffer) => Promise<Buffer>;
+  decompress: (data: Buffer, opts?: DecompressOptions) => Buffer;
+  decompressAsync?: (data: Buffer, opts?: DecompressOptions) => Promise<Buffer>;
   syncFiles: {
     local: string;
     localProjects: string;
@@ -74,7 +86,8 @@ export function initContext(opts: {
   compress = opts.compress;
   decompress = opts.decompress;
   decompressAsync =
-    opts.decompressAsync ?? (async (data: Buffer) => opts.decompress(data));
+    opts.decompressAsync ??
+    (async (data: Buffer, o?: DecompressOptions) => opts.decompress(data, o));
   syncFiles = opts.syncFiles;
   ensureContainingDirectoryExists = opts.ensureContainingDirectoryExists;
   statSync = opts.statSync;

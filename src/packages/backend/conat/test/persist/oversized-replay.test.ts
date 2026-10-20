@@ -211,7 +211,11 @@ describe("reading one message over the limit", () => {
         expect.objectContaining({ code: 413 }),
       );
       expect(queries.length).toBeGreaterThan(0);
-      expect(queries.some((q) => /\braw\b/.test(q))).toBe(false);
+      // length(raw) is answered from the record header (SQLite does not load
+      // a blob's overflow pages for length()); any other use of raw reads it.
+      expect(
+        queries.some((q) => /\braw\b/.test(q.replace(/length\(raw\)/g, ""))),
+      ).toBe(false);
       db.prepare = prepare;
       s.close();
     } finally {

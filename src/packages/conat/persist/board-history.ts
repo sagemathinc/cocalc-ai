@@ -24,8 +24,11 @@ Two checks, with one set of rules:
   the newest snapshot is a cut (every patch is its ancestor or its
   descendant, as patchflow's PatchGraph.isCut defines it), and its
   descendants form one chain. With no snapshot, the whole history must be
-  one chain from a single root. A patch whose parent is missing from the
-  loaded history (other than at the cut) makes it incomplete: never safe.
+  one chain from a single root. The cut is trusted: its snapshot is the
+  whole value and ends reconstruction, so nothing at or below it is read,
+  and ancestors missing there (a trimmed history) are accepted. A parent
+  missing anywhere else (in the suffix, off the cut's ancestry, or in a
+  history without a snapshot) makes it incomplete: never safe.
   Everything else is refused, before Session.init is ever reached.
 
 - BoardAppendCheck (on every write, in the board write service): each new
@@ -380,45 +383,127 @@ function sameList(a: string[], b: string[]): boolean {
 }
 
 /*
-The append rule, as the board write service enforces it: a board stream's
-head (its newest patch) and the check that a new record keeps the history one
-chain. One per stream in the service's process; the service runs requests
-one at a time, and calls check() and then commit() in the same synchronous
-step as the store, so the head can't change in between.
+The append rule, as the board write service enforces it, with PatchGraph's
+own normalization: the stream's stored patches (time and parents) and its one
+head. One per stream in the service's process, read from the stream (whole,
+bounded by the open check's limits) the first time and kept up to date with
+each store. The service runs requests one at a time and calls check() and
+then commit() in the same synchronous step as the store, so nothing can come
+between them.
+
+For each record of a batch, in order, against the stored graph plus the
+batch so far:
+- a patch whose time is new must have exactly the head as its parents (none
+  for the first patch): it is the new head;
+- a patch whose time is stored is the same patch sent again (a retry) if its
+  parents are the stored ones, and changes nothing; otherwise it is refused
+  (PatchGraph keeps the first, so it would never be what was meant);
+- a snapshot record must be of a stored patch, which PatchGraph upgrades in
+  place (no new node, no new head); a snapshot of anything else is refused.
+So after every accepted batch, the stored history's PatchGraph has exactly
+one head, the cached head.
 */
 export class BoardAppendCheck {
   private head: string | undefined;
-  private headParents: string[] | undefined;
-  // The newest stored seq this head was read at: if the stream has moved
-  // on without us (history deleted or reset), the head is read again.
+  // Every stored patch: its parents.
+  private readonly patches: Map<string, string[]>;
+  // The newest stored seq the graph was read at: if the stream has moved on
+  // without us (history deleted or reset), it is read again.
   private seq: number;
+  // Why the stored history can't be appended to (it isn't one chain), or
+  // undefined.
+  private broken?: string;
 
   constructor({
+    patches = new Map(),
     head,
-    headParents,
     seq,
+    broken,
   }: {
+    patches?: Map<string, string[]>;
     head?: string;
-    headParents?: string[];
     seq: number;
+    broken?: string;
   }) {
+    this.patches = patches;
     this.head = head;
-    this.headParents = headParents;
     this.seq = seq;
+    this.broken = broken;
+  }
+
+  // The graph of a stored stream's records, in stream order.
+  static fromRecords(
+    records: Iterable<unknown>,
+    seq: number,
+    limits: BoardHistoryLimits = BOARD_HISTORY_LIMITS,
+  ): BoardAppendCheck {
+    const patches = new Map<string, string[]>();
+    const snapshots: string[] = [];
+    let broken: string | undefined;
+    for (const value of records) {
+      const r = parseBoardRecord(value, limits);
+      if ("invalid" in r) {
+        broken ??= `a stored record that isn't a board patch: ${r.invalid}`;
+        continue;
+      }
+      if (r.snapshot) {
+        snapshots.push(r.time);
+        continue;
+      }
+      const seen = patches.get(r.time);
+      if (seen != null) {
+        if (!sameList(seen, r.parents!)) {
+          broken ??= `two different patches at ${r.time}`;
+        }
+        continue;
+      }
+      patches.set(r.time, r.parents!);
+    }
+    // A snapshot whose patch isn't stored (a trimmed history) is a node of
+    // its own with no parents, as in PatchGraph; the chain after it hangs
+    // off it, and anything else makes a second head.
+    for (const t of snapshots) {
+      if (!patches.has(t)) patches.set(t, []);
+    }
+    const referenced = new Set<string>();
+    for (const parents of patches.values()) {
+      for (const p of parents) referenced.add(p);
+    }
+    const heads = [...patches.keys()].filter((t) => !referenced.has(t));
+    if (patches.size > 0 && heads.length !== 1) {
+      broken ??= `a stored history with ${heads.length} heads`;
+    }
+    return new BoardAppendCheck({
+      patches,
+      head: heads.length === 1 ? heads[0] : undefined,
+      seq,
+      broken,
+    });
   }
 
   get atSeq(): number {
     return this.seq;
   }
 
-  // The head after these records, or throws a refusal ("branch"). Changes
-  // nothing.
+  get currentHead(): string | undefined {
+    return this.head;
+  }
+
+  // The new patches and head after these records, or throws a refusal
+  // ("branch"). Changes nothing.
   check(
     records: unknown[],
     limits: BoardHistoryLimits = BOARD_HISTORY_LIMITS,
-  ): { head?: string; headParents?: string[] } {
+  ): { head?: string; added: [string, string[]][] } {
+    if (this.broken != null) {
+      throw new ConatError(
+        `this board's history can't be appended to: ${this.broken}`,
+        { code: "branch" },
+      );
+    }
     let head = this.head;
-    let headParents = this.headParents;
+    const added = new Map<string, string[]>();
+    const parentsOf = (t: string) => added.get(t) ?? this.patches.get(t);
     for (const value of records) {
       const r = parseBoardRecord(value, limits);
       if ("invalid" in r) {
@@ -426,16 +511,25 @@ export class BoardAppendCheck {
           code: "branch",
         });
       }
-      if (r.snapshot) continue;
-      const parents = r.parents!;
-      // The head sent again (a retried write): the same patch, no change.
-      if (
-        head != null &&
-        r.time === head &&
-        headParents != null &&
-        sameList(parents, headParents)
-      ) {
+      const known = parentsOf(r.time);
+      if (r.snapshot) {
+        if (known == null) {
+          throw new ConatError(
+            `a snapshot of ${r.time}, which isn't a patch of this board's history`,
+            { code: "branch" },
+          );
+        }
         continue;
+      }
+      const parents = r.parents!;
+      if (known != null) {
+        // The same patch again changes nothing; another patch with its time
+        // is refused.
+        if (sameList(parents, known)) continue;
+        throw new ConatError(
+          `a different patch at ${r.time}, which this board's history already has`,
+          { code: "branch" },
+        );
       }
       const expected = head == null ? [] : [head];
       if (!sameList(parents, expected)) {
@@ -446,18 +540,21 @@ export class BoardAppendCheck {
           { code: "branch" },
         );
       }
+      if (this.patches.size + added.size >= limits.records) {
+        throw new ConatError(
+          `a board's history holds at most ${limits.records} patches`,
+          { code: "branch" },
+        );
+      }
+      added.set(r.time, parents);
       head = r.time;
-      headParents = parents;
     }
-    return { head, headParents };
+    return { head, added: [...added] };
   }
 
-  commit(
-    { head, headParents }: { head?: string; headParents?: string[] },
-    seq: number,
-  ): void {
-    this.head = head;
-    this.headParents = headParents;
+  commit(next: ReturnType<BoardAppendCheck["check"]>, seq: number): void {
+    for (const [t, parents] of next.added) this.patches.set(t, parents);
+    this.head = next.head;
     this.seq = seq;
   }
 }

@@ -310,19 +310,56 @@ export interface StoredRow {
 // persist server admits such replay pages one at a time per slot).
 export const ASYNC_DECOMPRESS_MIN_BYTES = 1_000_000;
 
+// A stream with a record cap (a board's: board-history.ts) never yields a
+// message over it, and never allocates one: its stored size, the stored
+// blob's length (from SQLite, without reading it) and what it decompresses
+// to are each checked against the cap, the last by a decompressor that stops
+// at it. The size column alone isn't trusted: a restored database can say
+// anything there.
+export function assertWithinRecordCap(
+  row: { seq: number; size: number; stored?: number },
+  cap: number | undefined,
+): void {
+  if (cap == null) return;
+  const size = Math.max(Number(row.size) || 0, Number(row.stored) || 0);
+  if (size > cap) {
+    throw persistMessageTooLargeError({ size, limit: cap, seq: row.seq });
+  }
+}
+
+function inflateError(seq: number, cap: number, err: unknown): ConatError {
+  const e = persistMessageTooLargeError({ size: cap + 1, limit: cap, seq });
+  (e as any).cause = err;
+  return e;
+}
+
 export async function storedRowToMessage(
   row: StoredRow,
+  { recordCap }: { recordCap?: number } = {},
 ): Promise<StoredMessage> {
   let raw: Buffer;
   if (row.compress == CompressionAlgorithm.None) {
     raw = row.raw;
   } else if (row.compress == CompressionAlgorithm.Zstd) {
-    raw =
-      row.size >= ASYNC_DECOMPRESS_MIN_BYTES
-        ? await decompressAsync(row.raw)
-        : decompress(row.raw);
+    const opts = recordCap == null ? undefined : { maxOutputLength: recordCap };
+    try {
+      raw =
+        row.size >= ASYNC_DECOMPRESS_MIN_BYTES
+          ? await decompressAsync(row.raw, opts)
+          : decompress(row.raw, opts);
+    } catch (err) {
+      if (recordCap != null) throw inflateError(row.seq, recordCap, err);
+      throw err;
+    }
   } else {
     throw Error(`unknown compression ${row.compress}`);
+  }
+  if (recordCap != null && raw.length > recordCap) {
+    throw persistMessageTooLargeError({
+      size: raw.length,
+      limit: recordCap,
+      seq: row.seq,
+    });
   }
   return {
     seq: row.seq,
@@ -371,10 +408,7 @@ export interface CheckpointsOperation {
 }
 
 export type ChangefeedOperation =
-  | SetOperation
-  | DeleteOperation
-  | MetadataOperation
-  | CheckpointsOperation;
+  SetOperation | DeleteOperation | MetadataOperation | CheckpointsOperation;
 
 export const DEFAULT_ARCHIVE_INTERVAL = 30_000; // 30 seconds
 
@@ -594,6 +628,16 @@ export class PersistentStream extends EventEmitter {
     PersistMaintenanceHandle
   >();
 
+  // The largest message this stream may hold or yield (board streams), or
+  // undefined (see assertWithinRecordCap).
+  private recordCap: number | undefined;
+
+  setRecordCap = (cap: number | undefined): void => {
+    this.recordCap = cap;
+  };
+
+  getRecordCap = (): number | undefined => this.recordCap;
+
   constructor(options: StorageOptions) {
     super();
     openPaths.add(options.path);
@@ -751,8 +795,7 @@ export class PersistentStream extends EventEmitter {
 
   private readSqliteCacheKiB = (): number => {
     const cacheRow = this.db.prepare("PRAGMA cache_size").get() as
-      | { cache_size?: number }
-      | undefined;
+      { cache_size?: number } | undefined;
     const cacheSize = Number(cacheRow?.cache_size);
     if (!Number.isFinite(cacheSize)) {
       return 0;
@@ -761,8 +804,7 @@ export class PersistentStream extends EventEmitter {
       return Math.abs(cacheSize);
     }
     const pageRow = this.db.prepare("PRAGMA page_size").get() as
-      | { page_size?: number }
-      | undefined;
+      { page_size?: number } | undefined;
     const pageSize = Number(pageRow?.page_size);
     return Number.isFinite(pageSize)
       ? Math.ceil((cacheSize * pageSize) / 1024)
@@ -773,22 +815,19 @@ export class PersistentStream extends EventEmitter {
     const pageCount = Number(
       (
         this.db.prepare("PRAGMA page_count").get() as
-          | { page_count?: number }
-          | undefined
+          { page_count?: number } | undefined
       )?.page_count ?? 0,
     );
     const freePageCount = Number(
       (
         this.db.prepare("PRAGMA freelist_count").get() as
-          | { freelist_count?: number }
-          | undefined
+          { freelist_count?: number } | undefined
       )?.freelist_count ?? 0,
     );
     const pageSize = Number(
       (
         this.db.prepare("PRAGMA page_size").get() as
-          | { page_size?: number }
-          | undefined
+          { page_size?: number } | undefined
       )?.page_size ?? 0,
     );
     const fileBytes = this.dbPath ? fileSize(this.dbPath) : 0;
@@ -1164,9 +1203,7 @@ export class PersistentStream extends EventEmitter {
 
   private checkRequiredHeaders = (headers?: JSONValue): void => {
     const required = this.conf.required_headers as
-      | Record<string, unknown>
-      | null
-      | undefined;
+      Record<string, unknown> | null | undefined;
     if (required == null || typeof required !== "object") {
       return;
     }
@@ -1187,20 +1224,23 @@ export class PersistentStream extends EventEmitter {
     seq,
     key,
   }: { seq: number; key: undefined } | { seq: undefined; key: string }):
-    | StoredMessage
-    | undefined => {
+    StoredMessage | undefined => {
     const ttl = this.conf.allow_msg_ttl ? ", ttl" : "";
     // Check the size before reading the (possibly huge) data.
     let meta: { seq: number; size: number } | undefined;
     if (seq) {
       meta = this.db
-        .prepare("SELECT seq, size FROM messages WHERE seq=?")
+        .prepare(
+          "SELECT seq, size, length(raw) AS stored FROM messages WHERE seq=?",
+        )
         .get(seq) as any;
     } else if (key != null) {
       // NOTE: we guarantee when doing set above that there is at most one
       // row with a given key.  Also there's a unique constraint.
       meta = this.db
-        .prepare("SELECT seq, size FROM messages WHERE key=?")
+        .prepare(
+          "SELECT seq, size, length(raw) AS stored FROM messages WHERE key=?",
+        )
         .get(key) as any;
     }
     if (meta == null) {
@@ -1214,12 +1254,20 @@ export class PersistentStream extends EventEmitter {
         seq: Number(meta.seq),
       });
     }
+    assertWithinRecordCap(
+      {
+        seq: Number(meta.seq),
+        size: Number(meta.size),
+        stored: (meta as any).stored,
+      },
+      this.recordCap,
+    );
     const x = this.db
       .prepare(
         `SELECT seq, key, time, compress, encoding, raw, headers${ttl} FROM messages WHERE seq=?`,
       )
       .get(meta.seq);
-    return dbToMessage(x as any);
+    return dbToMessage(x as any, this.recordCap);
   };
 
   seqBounds = (): StreamSeqBounds => {
@@ -1263,12 +1311,18 @@ export class PersistentStream extends EventEmitter {
     const params = end_seq != null ? [after_seq, end_seq] : [after_seq];
     const sizes = this.db
       .prepare(
-        `SELECT seq, size FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
+        `SELECT seq, size, length(raw) AS stored FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
       )
-      .all(...params, maxRows) as { seq: number; size: number }[];
+      .all(...params, maxRows) as {
+      seq: number;
+      size: number;
+      stored: number;
+    }[];
     const page: { seq: number; size: number }[] = [];
     let bytes = 0;
     for (const row of sizes) {
+      // Over the stream's record cap: refused before anything is read.
+      assertWithinRecordCap(row, this.recordCap);
       const size = Number(row.size);
       bytes += size;
       if (bytes > maxBytes && page.length > 0) {
@@ -1308,10 +1362,20 @@ export class PersistentStream extends EventEmitter {
       where.push("seq<=?");
       v.push(end_seq);
     }
+    // With a record cap, rows over it are refused before their data is read.
+    if (this.recordCap != null) {
+      for (const row of this.db
+        .prepare(
+          `SELECT seq, size, length(raw) AS stored FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`,
+        )
+        .iterate(...v) as Iterable<any>) {
+        assertWithinRecordCap(row, this.recordCap);
+      }
+    }
     query = `SELECT seq, key, time, compress, encoding, raw, headers FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`;
     stmt = this.db.prepare(query);
     for (const row of stmt.iterate(...v)) {
-      yield dbToMessage(row)!;
+      yield dbToMessage(row, this.recordCap)!;
     }
   }
 
@@ -1698,8 +1762,7 @@ export class PersistentStream extends EventEmitter {
         "SELECT seq, time, data_json FROM stream_checkpoints WHERE name = ?",
       )
       .get(name) as
-      | { seq: number; time: number; data_json?: string | null }
-      | undefined;
+      { seq: number; time: number; data_json?: string | null } | undefined;
     if (row == null) {
       return undefined;
     }
@@ -1947,6 +2010,7 @@ function dbToMessage(
         ttl?: number;
       }
     | undefined,
+  recordCap?: number,
 ): StoredMessage | undefined {
   if (x === undefined) {
     return x;
@@ -1965,22 +2029,39 @@ function dbToMessage(
     time: x.time * 1000,
     key: x.key != null ? x.key : undefined,
     encoding: x.encoding,
-    raw: handleDecompress(x),
+    raw: handleDecompress(x, recordCap),
     headers: x.headers ? JSON.parse(x.headers) : undefined,
   };
 }
 
-function handleDecompress({
-  raw,
-  compress,
-}: {
-  raw: Buffer;
-  compress: CompressionAlgorithm;
-}) {
+function handleDecompress(
+  {
+    raw,
+    compress,
+    seq,
+  }: {
+    raw: Buffer;
+    compress: CompressionAlgorithm;
+    seq: number;
+  },
+  recordCap?: number,
+) {
   if (compress == CompressionAlgorithm.None) {
+    if (recordCap != null && raw.length > recordCap) {
+      throw persistMessageTooLargeError({
+        size: raw.length,
+        limit: recordCap,
+        seq,
+      });
+    }
     return raw;
   } else if (compress == CompressionAlgorithm.Zstd) {
-    return decompress(raw);
+    if (recordCap == null) return decompress(raw);
+    try {
+      return decompress(raw, { maxOutputLength: recordCap });
+    } catch (err) {
+      throw inflateError(seq, recordCap, err);
+    }
   } else {
     throw Error(`unknown compression ${compress}`);
   }

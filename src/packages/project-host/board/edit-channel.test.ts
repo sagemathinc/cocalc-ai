@@ -271,15 +271,15 @@ test("one abusive channel can't starve another's previews", () => {
 });
 
 test("5. an edit whose commit is too much work is refused too-large (work), typed, and not admitted", () => {
-  // "hi" -> "hello": after the common "h", "i" becomes "ello": m = 1,
-  // k = 1 patch, N = 7: work k·N + m² = 8.
-  const ok = channel({ workLimits: { maxWork: 8 } });
+  // "hi" -> "hello": after the common "h", "i" becomes "ello": middles of
+  // 1 and 4, k = 1 patch, N = 7: work k·N + (1 + 4)·4 = 27.
+  const ok = channel({ workLimits: { maxWork: 27 } });
   const m = edit();
   expect(ok.ch.intake(m)).toMatchObject({
     kind: "admit",
-    work: { fields: 1, patches: 1, span: 1, work: 8 },
+    work: { fields: 1, patches: 1, span: 1, work: 27 },
   });
-  const over = channel({ workLimits: { maxWork: 7 } });
+  const over = channel({ workLimits: { maxWork: 26 } });
   const m2 = edit();
   expect(over.ch.intake(m2)).toMatchObject({ kind: "answered" });
   expect(over.sent).toEqual([
@@ -288,8 +288,8 @@ test("5. an edit whose commit is too much work is refused too-large (work), type
       id: m2.id,
       reason: "too-large",
       what: "work",
-      limit: 7,
-      size: 8,
+      limit: 26,
+      size: 27,
     }),
   ]);
   expect(over.ch.pending).toBeUndefined();

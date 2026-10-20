@@ -38,11 +38,11 @@ import type {
 } from "@sagemathinc/sagebrush-board/submission";
 import { TokenBucket } from "./admission";
 import {
-  BOARD_EDIT_WORK_LIMITS,
   type EditWork,
   type EditWorkLimits,
   editWork,
   editWorkRefusal,
+  hostEditWorkLimits,
 } from "./edit-cost";
 import { BOARD_STRING_COLS } from "@cocalc/util/board/names";
 
@@ -130,7 +130,8 @@ export class EditChannel {
     send,
     now = monotonic,
     limits = EDIT_CHANNEL_LIMITS,
-    workLimits = BOARD_EDIT_WORK_LIMITS,
+    // This host's calibrated limits (edit-cost.ts) unless given.
+    workLimits = hostEditWorkLimits(),
   }: {
     clientId: string;
     editState: EditState;

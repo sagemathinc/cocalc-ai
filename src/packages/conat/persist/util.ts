@@ -41,6 +41,8 @@ Also getAll using start_seq:
 */
 
 import { assertHasWritePermission } from "./auth";
+import { classifyStreamPath } from "./board-policy";
+import { BOARD_HISTORY_LIMITS } from "./board-history";
 import { pstream, PersistentStream, type StorageOptions } from "./storage";
 import { join } from "path";
 import {
@@ -211,7 +213,10 @@ export async function getStream({
     );
   }
   if (ephemeral || maintenance == null) {
-    return pstream({ ...storage, path, archive, backup, archiveInterval });
+    return withRecordCap(
+      storage.path,
+      pstream({ ...storage, path, archive, backup, archiveInterval }),
+    );
   }
 
   const maintenancePath: PersistMaintenancePath = {
@@ -243,9 +248,22 @@ export async function getStream({
       // from the first reference, but every later tracked use shares it.
       stream.addMaintenanceHandle(handle);
     }
-    return stream;
+    return withRecordCap(storage.path, stream);
   } catch (err) {
     maintenance.openFailed?.(maintenancePath, err);
     throw err;
   }
+}
+
+// A board stream never yields (or allocates) a record over a board's record
+// limit, whoever opens it here (board-history.ts, storage.ts
+// assertWithinRecordCap).
+function withRecordCap(
+  logicalPath: string,
+  stream: PersistentStream,
+): PersistentStream {
+  if (classifyStreamPath(logicalPath).board) {
+    stream.setRecordCap(BOARD_HISTORY_LIMITS.recordBytes);
+  }
+  return stream;
 }

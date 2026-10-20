@@ -6,7 +6,10 @@ every refusal is a history where that does not hold.
 */
 
 import { legacyPatchId, PatchGraph, StringCodec } from "@cocalc/sync/patchflow";
-import { BoardHistoryCheck } from "@cocalc/conat/persist/board-history";
+import {
+  BoardAppendCheck,
+  BoardHistoryCheck,
+} from "@cocalc/conat/persist/board-history";
 
 // A small deterministic random generator (mulberry32).
 function rng(seed: number) {
@@ -138,4 +141,119 @@ test("the open check agrees with patchflow on 3,000 random histories", () => {
   // Both outcomes are exercised.
   expect(accepted).toBeGreaterThan(300);
   expect(accepted).toBeLessThan(2700);
+});
+
+// The write service's append rule against patchflow: random sequences of
+// appends, including retries, conflicting re-appends, branches, second roots
+// and snapshots of known and unknown patches.
+function graphHeads(records: any[]): string[] {
+  const graph = new PatchGraph({ codec: StringCodec as any });
+  const empty = StringCodec.makePatch(
+    StringCodec.fromString(""),
+    StringCodec.fromString(""),
+  );
+  graph.add(
+    records.map((r) =>
+      r.is_snapshot
+        ? { time: r.time, isSnapshot: true, snapshot: "", parents: [] }
+        : { time: r.time, parents: r.parents, patch: empty },
+    ) as any,
+  );
+  return graph.getHeads();
+}
+
+test("the append rule agrees with patchflow on 2,000 random append sequences", () => {
+  const random = rng(4242);
+  let accepted = 0;
+  let refused = 0;
+  for (let run = 0; run < 2000; run++) {
+    const stored: any[] = [];
+    const guard = BoardAppendCheck.fromRecords([], 0);
+    const ids: string[] = [];
+    let next = 1;
+    const fresh = () => legacyPatchId(next++);
+    const pick = () => ids[Math.floor(random() * ids.length)];
+    for (let step = 0; step < 12; step++) {
+      const batch: any[] = [];
+      const size = 1 + Math.floor(random() * 3);
+      for (let k = 0; k < size; k++) {
+        const r = random();
+        const head = guard.currentHead;
+        const lastInBatch = [...batch].reverse().find((x) => !x.is_snapshot);
+        const tip = lastInBatch?.time ?? head;
+        if (r < 0.45 || ids.length === 0) {
+          batch.push({
+            time: fresh(),
+            parents: tip == null ? [] : [tip],
+            patch: "[]",
+          });
+        } else if (r < 0.55) {
+          batch.push({ time: fresh(), parents: [pick()], patch: "[]" });
+        } else if (r < 0.6) {
+          batch.push({ time: fresh(), parents: [], patch: "[]" });
+        } else if (r < 0.7) {
+          // A retry of a stored patch.
+          const t = pick();
+          const same = stored.find((x) => x.time === t && !x.is_snapshot);
+          if (same) batch.push({ ...same });
+        } else if (r < 0.78) {
+          // Its time again, with other parents.
+          batch.push({ time: pick(), parents: [pick()], patch: "[]" });
+        } else if (r < 0.9) {
+          batch.push({ time: pick(), is_snapshot: true, snapshot: "" });
+        } else {
+          batch.push({
+            time: legacyPatchId(5000 + next++),
+            is_snapshot: true,
+            snapshot: "",
+          });
+        }
+      }
+      if (batch.length === 0) continue;
+      let ok = true;
+      try {
+        const result = guard.check(batch);
+        guard.commit(result, stored.length + batch.length);
+      } catch {
+        ok = false;
+      }
+      if (ok) {
+        accepted += 1;
+        stored.push(...batch);
+        for (const r of batch)
+          if (!r.is_snapshot && !ids.includes(r.time)) ids.push(r.time);
+        // Sound: patchflow sees exactly one head, the guard's.
+        expect({ run, step, heads: graphHeads(stored) }).toEqual({
+          run,
+          step,
+          heads: [guard.currentHead],
+        });
+      } else {
+        refused += 1;
+        // Complete: a refused batch would not leave patchflow one head, or
+        // re-appends a stored time with other parents (which patchflow
+        // would silently ignore, keeping the first).
+        const heads = graphHeads([...stored, ...batch]);
+        const conflicting = batch.some((r) => {
+          if (r.is_snapshot) return false;
+          const first = [...stored, ...batch].find(
+            (x) => x.time === r.time && !x.is_snapshot,
+          );
+          return (
+            first !== r &&
+            JSON.stringify(first.parents) !== JSON.stringify(r.parents)
+          );
+        });
+        if (!conflicting) {
+          expect({ run, step, heads: heads.length }).not.toEqual({
+            run,
+            step,
+            heads: 1,
+          });
+        }
+      }
+    }
+  }
+  expect(accepted).toBeGreaterThan(2000);
+  expect(refused).toBeGreaterThan(2000);
 });

@@ -17,10 +17,15 @@ import {
   BOARD_STRING_COLS,
 } from "@cocalc/util/board/names";
 import {
+  BOARD_EDIT_WORK_CEILING,
   BOARD_EDIT_WORK_LIMITS,
+  REFERENCE_LOOP_MS,
+  calibrateEditWorkLimits,
   editWork,
   editWorkRefusal,
   fieldWork,
+  fileMergeWork,
+  referenceLoopMs,
 } from "./edit-cost";
 import { recordsToString } from "./service";
 
@@ -48,10 +53,11 @@ describe("the bound on an edit's patches, from the edit alone", () => {
       work: 1004,
     });
     expect(fieldWork("abcdef", "af")).toEqual({ patches: 1, span: 0, work: 8 });
-    // A replacement of 16 characters by 20: m = 16, k ≤ 16/8 + 1 = 3.
+    // A replacement of 16 characters by 20: m = 16, k ≤ 16/8 + 1 = 3, and
+    // the search is charged (16 + 20)·20.
     expect(
       fieldWork(`pre${"a".repeat(16)}post`, `pre${"b".repeat(20)}post`),
-    ).toEqual({ patches: 3, span: 16, work: 3 * (23 + 27) + 256 });
+    ).toEqual({ patches: 3, span: 16, work: 3 * (23 + 27) + 36 * 20 });
     expect(fieldWork("", "new")).toEqual({ patches: 1, span: 0, work: 3 });
   });
 
@@ -112,6 +118,125 @@ describe("the bound on an edit's patches, from the edit alone", () => {
       STRING_COLS,
     );
     expect(work).toEqual({ fields: 2, patches: 2, span: 0, work: 16 + 3 });
+  });
+});
+
+describe("a changed file's merge work", () => {
+  const keyOf = (r: any) => `${r.type}:${r.page}:${r.id}`;
+  const item = (id: string, text: string, extra = {}) => ({
+    type: "item",
+    page: "",
+    id,
+    text,
+    ...extra,
+  });
+
+  test("exact values: base → file and current → file, for each text field the file changed", () => {
+    const base = [item("a", "hello"), item("b", "same"), item("gone", "x")];
+    const current = [item("a", "hello brave"), item("b", "same")];
+    const file = [
+      item("a", "hello world", { x: 9 }),
+      item("b", "same", { x: 3 }), // no text change: nothing
+      item("new", "fresh"), // from "" on both sides
+    ];
+    const work = fileMergeWork({
+      current,
+      base,
+      file,
+      stringCols: STRING_COLS,
+      keyOf,
+    });
+    const a1 = fieldWork("hello", "hello world");
+    const a2 = fieldWork("hello brave", "hello world");
+    const n = fieldWork("", "fresh");
+    expect(work).toEqual({
+      fields: 2,
+      patches: a1.patches + a2.patches + 2 * n.patches,
+      span: a1.span + a2.span + 2 * n.span,
+      work: a1.work + a2.work + 2 * n.work,
+    });
+  });
+
+  test("with no base, both sides are the current document", () => {
+    const current = [item("a", "x".repeat(100))];
+    const file = [item("a", "y".repeat(100))];
+    const w = fieldWork("x".repeat(100), "y".repeat(100));
+    expect(
+      fileMergeWork({
+        current,
+        base: undefined,
+        file,
+        stringCols: STRING_COLS,
+        keyOf,
+      }),
+    ).toEqual({
+      fields: 1,
+      patches: 2 * w.patches,
+      span: 2 * w.span,
+      work: 2 * w.work,
+    });
+  });
+
+  test("an unchanged file is no work; a file that rewrites a long note is over the cap", () => {
+    const current = [item("a", "a".repeat(200_000))];
+    expect(
+      fileMergeWork({
+        current,
+        base: current,
+        file: current,
+        stringCols: STRING_COLS,
+        keyOf,
+      }).work,
+    ).toBe(0);
+    const work = fileMergeWork({
+      current,
+      base: current,
+      file: [item("a", "b".repeat(200_000))],
+      stringCols: STRING_COLS,
+      keyOf,
+    });
+    expect(editWorkRefusal(work)).toMatchObject({
+      reason: "too-large",
+      what: "work",
+    });
+  });
+
+  test("its patches are never below the two diffs' real ones (1,000 random merges)", () => {
+    const random = rng(20_10_2026);
+    const word = () =>
+      Array.from(
+        { length: Math.floor(random() * 8) },
+        () => "abc "[Math.floor(random() * 4)],
+      ).join("");
+    const mutate = (s: string) => {
+      for (let e = Math.floor(random() * 6); e >= 0; e--) {
+        const at = Math.floor(random() * (s.length + 1));
+        s = s.slice(0, at) + word() + s.slice(at + Math.floor(random() * 6));
+      }
+      return s;
+    };
+    for (let i = 0; i < 1000; i++) {
+      let start = "";
+      for (let j = Math.floor(random() * 60); j > 0; j--) start += word();
+      const base = mutate(start);
+      const now = mutate(base);
+      const file = mutate(base);
+      const real =
+        (base === file ? 0 : makePatch(base, file).length) +
+        (now === file ? 0 : makePatch(now, file).length);
+      const bound = fileMergeWork({
+        current: [item("a", now)],
+        base: [item("a", base)],
+        file: [item("a", file)],
+        stringCols: STRING_COLS,
+        keyOf,
+      }).patches;
+      if (real > bound) {
+        throw Error(
+          `case ${i}: ${real} patches, over ${bound}: ${JSON.stringify({ base, now, file })}`,
+        );
+      }
+    }
   });
 });
 
@@ -279,11 +404,135 @@ function commitCost({
   };
 }
 
+// Commit these (old text, new text) pairs, one item each, end to end:
+// preview, apply, the syncdb document's patch.
+function commitPairs(
+  pairs: [string, string][],
+  limits = BOARD_EDIT_WORK_LIMITS,
+) {
+  const doc = lib.cleanDoc({
+    format: "sagebrush-board",
+    version: 1,
+    title: "pairs",
+    nodes: pairs.map(([before], i) => ({
+      id: `n${i}`,
+      text: before,
+      x: i,
+      y: 0,
+    })),
+  });
+  const records = lib.toRecords(doc) as any[];
+  const items = records.filter((r) => r.type === "item");
+  const message = {
+    sagebrush: "edit",
+    version: 1,
+    id: "7d0c2f5e-1b2a-4c3d-9e8f-0a1b2c3d4e60",
+    base: "r1",
+    changes: items.map((r, i) => ({
+      op: "set",
+      key: { type: r.type, page: r.page, id: r.id },
+      fields: { text: pairs[i][1] },
+      was: { text: r.text },
+    })),
+  };
+  const es = editState(lib.canonical(doc), {
+    pictures: "by-reference",
+    previewBudget: sharedPreviewBudget({
+      editBurst: 1e9,
+      editsPerSecond: 1e9,
+      workBurst: 1e15,
+      workPerSecond: 1e15,
+    }),
+  });
+  const byKey = new Map(records.map((r) => [`${r.type}:${r.page}:${r.id}`, r]));
+  const t0 = performance.now();
+  const preview = es.preview(message) as any;
+  const work = editWork(
+    preview.changes ?? [],
+    (k) => byKey.get(`${k.type}:${k.page}:${k.id}`),
+    STRING_COLS,
+  );
+  const refusal = editWorkRefusal(work, limits);
+  es.apply(message);
+  const old = from_str(
+    recordsToString(records),
+    BOARD_PRIMARY_KEYS,
+    BOARD_STRING_COLS,
+  ) as any;
+  let next = old;
+  items.forEach((r, i) => (next = next.set({ ...r, text: pairs[i][1] })));
+  const patch = old.make_patch(next);
+  const ms = performance.now() - t0;
+  return {
+    ok: preview.ok === true,
+    editBytes: Buffer.byteLength(JSON.stringify(message)),
+    patchBytes: Buffer.byteLength(JSON.stringify(patch)),
+    work,
+    refusal,
+    ms,
+  };
+}
+
+describe("the work model, in both directions", () => {
+  test("it is symmetric: an edit and its reverse cost the same", () => {
+    const random = rng(1236);
+    const shapes = [
+      ["a".repeat(500), "b".repeat(200_000)],
+      ["x", "x" + "b".repeat(10_000)],
+      ["pre" + "a".repeat(3000) + "post", "pre" + "b".repeat(70) + "post"],
+    ];
+    for (let i = 0; i < 2000; i++) {
+      const len = Math.floor(random() * 300);
+      let a = "";
+      for (let j = 0; j < len; j++) a += "abc"[Math.floor(random() * 3)];
+      let b = a;
+      for (let e = 0; e < 1 + Math.floor(random() * 6); e++) {
+        const at = Math.floor(random() * (b.length + 1));
+        b =
+          b.slice(0, at) +
+          "z".repeat(Math.floor(random() * 30)) +
+          b.slice(at + Math.floor(random() * 30));
+      }
+      shapes.push([a, b]);
+    }
+    for (const [a, b] of shapes) {
+      expect(fieldWork(a, b)).toEqual(fieldWork(b, a));
+    }
+  });
+
+  test("astra's PERF-731-2 and its mirror are refused: two fields of 500 characters replaced by 200,000, and back", () => {
+    const longer: [string, string] = ["a".repeat(500), "b".repeat(200_000)];
+    for (const pair of [longer, [longer[1], longer[0]] as [string, string]]) {
+      const work = editWork(
+        [0, 1].map((i) => ({
+          op: "set",
+          key: { type: "item", page: "", id: `n${i}` },
+          fields: { text: pair[1] },
+        })) as any,
+        () => ({ text: pair[0] }),
+        STRING_COLS,
+      );
+      // (500 + 200,000)·200,000 per field: far over the cap.
+      expect(work.work).toBeGreaterThan(2 * 200_500 * 200_000);
+      expect(editWorkRefusal(work)).toMatchObject({
+        reason: "too-large",
+        what: "work",
+      });
+    }
+  });
+
+  test("pure insertions and deletions are one patch and no search, in either direction", () => {
+    const insert = fieldWork("x", "x" + "b".repeat(200_000));
+    expect(insert).toEqual({ patches: 1, span: 0, work: 200_002 });
+    expect(fieldWork("x" + "b".repeat(200_000), "x")).toEqual(insert);
+  });
+});
+
 describe("the worst edits, end to end", () => {
   test("the worst edit the limits admitted before G2 is refused now", () => {
     // Three 64 KiB texts, each edited every 50 characters: 390 KiB, a
     // 317 KiB patch, so within the commit's limits; it took about 520 ms
-    // to commit on a development machine.
+    // to commit on the reference host.
     const r = commitCost({ N: 64 * KiB, every: 50, F: 3 });
     expect(r.ok).toBe(true);
     expect(r.editBytes).toBeLessThanOrEqual(512 * KiB);
@@ -292,42 +541,106 @@ describe("the worst edits, end to end", () => {
     expect(r.hunks).toBeLessThanOrEqual(r.work.patches);
   });
 
-  test("the worst edit the caps admit commits within the budget; one more field is refused", () => {
-    // Found by the probe (edit-cost-probe.test.ts): 1 KiB texts, every 9th
-    // character changed, as many as the work cap allows.
-    const r = commitCost({ N: KiB, every: 9, F: 37 });
-    expect(r.ok).toBe(true);
-    expect(r.refusal).toBeUndefined();
-    expect(r.work.work).toBeLessThanOrEqual(BOARD_EDIT_WORK_LIMITS.maxWork);
-    expect(r.hunks).toBeLessThanOrEqual(r.work.patches);
-    // The budget is 250 ms on a development machine (about 120 ms there);
-    // CI machines are slower and shared, so this only catches regressions
-    // of several times.
-    expect(r.ms).toBeLessThan(1000);
-    expect(r.rssMB).toBeLessThan(128);
-    console.log(
-      `G2 worst admitted: ${Math.round(r.ms)} ms, ${r.hunks} patches (bound ${r.work.patches}), work ${r.work.work}, +${Math.round(r.rssMB)} MB peak RSS`,
+  test("calibration: a slower host gets a proportionally lower cap, never above the ceiling", () => {
+    expect(calibrateEditWorkLimits(REFERENCE_LOOP_MS / 2).maxWork).toBe(
+      BOARD_EDIT_WORK_CEILING,
     );
-    const over = commitCost({ N: KiB, every: 9, F: 38 });
-    expect(over.refusal).toMatchObject({ reason: "too-large", what: "work" });
+    expect(calibrateEditWorkLimits(REFERENCE_LOOP_MS).maxWork).toBe(
+      BOARD_EDIT_WORK_CEILING,
+    );
+    expect(calibrateEditWorkLimits(REFERENCE_LOOP_MS * 4).maxWork).toBe(
+      BOARD_EDIT_WORK_CEILING / 4,
+    );
+    expect(calibrateEditWorkLimits(NaN).maxWork).toBe(0);
+    expect(calibrateEditWorkLimits(0).maxWork).toBe(0);
+  });
+
+  test("on this host's calibrated cap, the adversarial shapes tuned just under it commit within the normalized budget", () => {
+    // This host's speed, against the reference host's, by the reference
+    // loop; its cap; and its budget: 250 ms on the reference host, scaled
+    // by how much slower this one is (the cap scales the same way).
+    const ref = referenceLoopMs(makePatch);
+    const limits = calibrateEditWorkLimits(ref);
+    const budgetMs = 250 * Math.max(1, ref / REFERENCE_LOOP_MS);
+    const shapes: { name: string; pair: (n: number) => [string, string] }[] = [
+      { name: "replace 1:1", pair: (n) => ["a".repeat(n), "b".repeat(n)] },
+      {
+        name: "replace short->long",
+        pair: (n) => ["a".repeat(Math.max(1, n >> 4)), "b".repeat(n)],
+      },
+      {
+        name: "replace long->short",
+        pair: (n) => ["a".repeat(n), "b".repeat(Math.max(1, n >> 4))],
+      },
+      {
+        name: "scattered every 9th",
+        pair: (n) => {
+          const a = Array.from(
+            { length: n },
+            (_, i) => "abcdefghij"[i % 10],
+          ).join("");
+          return [
+            a,
+            a
+              .split("")
+              .map((c, i) => (i % 9 === 8 ? "X" : c))
+              .join(""),
+          ];
+        },
+      },
+    ];
+    const results: string[] = [];
+    for (const shape of shapes) {
+      for (const n of [512, 1024, 2048, 4096]) {
+        const pair = shape.pair(n);
+        const per = fieldWork(pair[0], pair[1]).work;
+        const F = Math.min(64, Math.floor(limits.maxWork / per));
+        if (F < 1) continue;
+        const r = commitPairs(
+          Array.from({ length: F }, () => pair),
+          limits,
+        );
+        expect(r.ok).toBe(true);
+        expect(r.refusal).toBeUndefined();
+        expect(r.ms).toBeLessThan(budgetMs);
+        results.push(`${shape.name} ${n}x${F}: ${Math.round(r.ms)} ms`);
+        // One more field is over the cap.
+        if (F < 64) {
+          const over = commitPairs(
+            Array.from({ length: F + 1 }, () => pair),
+            limits,
+          );
+          expect(over.refusal).toMatchObject({ what: "work" });
+        }
+      }
+    }
+    console.log(
+      `G2: reference loop ${Math.round(ref)} ms (reference host ${REFERENCE_LOOP_MS}), cap ${limits.maxWork}, budget ${Math.round(budgetMs)} ms; ${results.join("; ")}`,
+    );
   });
 
   test("ordinary edits are far from the caps", () => {
-    // Typing in one place in a 250 KiB note, and pasting 20,000 characters.
-    const typing = commitCost({
-      N: 250 * KiB,
-      every: 9,
-      F: 1,
-      from: 0.5,
-      to: 0.5005,
-    });
-    expect(typing.refusal).toBeUndefined();
-    expect(typing.work.work).toBeLessThan(BOARD_EDIT_WORK_LIMITS.maxWork / 4);
-    const paste = fieldWork(
-      "a".repeat(100_000),
-      "a".repeat(50_000) + "P".repeat(20_000) + "a".repeat(50_000),
+    // In a 250 KiB note: typing a word in one place, replacing one word by
+    // another, and pasting 20,000 characters.
+    const note = "lorem ipsum dolor sit amet "
+      .repeat(10_000)
+      .slice(0, 250 * KiB);
+    const mid = note.length >> 1;
+    const typing = fieldWork(
+      note,
+      note.slice(0, mid) + "hello " + note.slice(mid),
     );
-    expect(paste.patches).toBe(1);
-    expect(paste.work).toBeLessThan(BOARD_EDIT_WORK_LIMITS.maxWork / 100);
+    const word = fieldWork(
+      note,
+      note.slice(0, mid) + "LOREM" + note.slice(mid + 5),
+    );
+    const paste = fieldWork(
+      note,
+      note.slice(0, mid) + "P".repeat(20_000) + note.slice(mid),
+    );
+    for (const w of [typing, word, paste]) {
+      expect(w.patches).toBe(1);
+      expect(w.work).toBeLessThan(BOARD_EDIT_WORK_LIMITS.maxWork / 20);
+    }
   });
 });

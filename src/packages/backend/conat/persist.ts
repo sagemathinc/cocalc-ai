@@ -17,6 +17,7 @@ const {
   zstdDecompress,
 } = require("node:zlib");
 import { promisify } from "node:util";
+const zstdDecompressAsync = promisify(zstdDecompress);
 import { syncFiles } from "@cocalc/backend/data";
 import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-containing-directory-exists";
 import { statSync, copyFileSync } from "node:fs";
@@ -25,9 +26,17 @@ import type { PersistMaintenanceHooks } from "@cocalc/conat/persist/maintenance/
 initContext({
   sqlite,
   compress: zstdCompressSync,
-  decompress: zstdDecompressSync,
+  // With maxOutputLength, zstd stops (throws) before producing more than
+  // that: a message's inflated size is never allocated past it.
+  decompress: (data: Buffer, opts?: { maxOutputLength?: number }) =>
+    opts?.maxOutputLength != null
+      ? zstdDecompressSync(data, { maxOutputLength: opts.maxOutputLength })
+      : zstdDecompressSync(data),
   // runs in the libuv threadpool
-  decompressAsync: promisify(zstdDecompress),
+  decompressAsync: (data: Buffer, opts?: { maxOutputLength?: number }) =>
+    opts?.maxOutputLength != null
+      ? zstdDecompressAsync(data, { maxOutputLength: opts.maxOutputLength })
+      : zstdDecompressAsync(data),
   syncFiles,
   ensureContainingDirectoryExists,
   statSync,

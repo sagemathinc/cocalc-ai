@@ -876,15 +876,23 @@ export async function replay({
       try {
         if (signal.aborted) return;
         for (const row of stream.readPage(after_seq, last_seq)) {
-          const message = await storedRowToMessage(row);
+          const message = await storedRowToMessage(row, {
+            recordCap: stream.getRecordCap?.(),
+          });
           if (signal.aborted) return;
-          messages.push(message);
-          size += message.raw.length;
-          if (size >= messagesThresh) {
+          // A response stays under the threshold: it is sent before the
+          // message that would take it over (one message over it alone is
+          // bounded by the stream's record cap, for a board).
+          if (
+            messages.length > 0 &&
+            size + message.raw.length > messagesThresh
+          ) {
             respond(messages);
             messages.length = 0;
             size = 0;
           }
+          messages.push(message);
+          size += message.raw.length;
         }
         // send the page before releasing its admission, so the budget bounds
         // what replays hold

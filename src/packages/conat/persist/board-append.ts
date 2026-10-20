@@ -5,34 +5,28 @@
 
 /*
 The board write service's append rule (board-history.ts, BoardAppendCheck),
-applied to a stored stream: every patch the service stores for a board
-extends the stream's one chain. persist/server.ts calls appendCheck() and
-then commitAppend() in the same synchronous step as the store, after the
-fence check, so nothing can come between the check and the write.
+applied to a stored stream: every record the service stores for a board
+keeps its history one chain, as PatchGraph reads it. persist/server.ts calls
+appendCheck() and then commitAppend() in the same synchronous step as the
+store, after the fence check, so nothing can come between the check and the
+write.
 
-The head is read from the stream's newest stored patch the first time, and
-again whenever the stream has moved since (its newest seq isn't the one the
-head was read at, e.g. after a delete); after each store it is the newest
-patch just stored.
+The stored graph (every patch's time and parents) is read from the stream
+the first time, and again whenever the stream has moved since (its newest
+seq isn't the one the graph was read at, e.g. after a delete). Reading it is
+bounded as the open check is: at most BOARD_HISTORY_LIMITS.records records,
+each within the stream's record cap.
 */
 
 import { ConatError } from "@cocalc/conat/core/client";
 import { decode } from "@cocalc/conat/core/codec";
-import { BoardAppendCheck } from "./board-history";
+import { BOARD_HISTORY_LIMITS, BoardAppendCheck } from "./board-history";
 
 // What this needs of a stored stream (storage.ts).
 export interface AppendStream {
   seqBounds(): { newest_retained_seq?: number };
-  sqlite(statement: string, params?: any[]): any[];
-  get(opts: {
-    seq: number;
-    key: undefined;
-  }): { encoding: any; raw: Buffer } | undefined;
+  getAll(): Iterable<{ encoding: any; raw: Buffer }>;
 }
-
-// How far back from the newest message the head is looked for: a stream's
-// newest messages are patches, with a snapshot now and then.
-const HEAD_SEARCH = 64;
 
 const checks = new WeakMap<object, BoardAppendCheck>();
 
@@ -40,45 +34,41 @@ function newestSeq(stream: AppendStream): number {
   return stream.seqBounds().newest_retained_seq ?? 0;
 }
 
-function readHead(stream: AppendStream): BoardAppendCheck {
-  const seq = newestSeq(stream);
-  const rows = stream.sqlite(
-    "SELECT seq FROM messages ORDER BY seq DESC LIMIT ?",
-    [HEAD_SEARCH],
-  ) as { seq: number }[];
-  for (const { seq: s } of rows) {
-    const m = stream.get({ seq: Number(s), key: undefined });
-    if (m == null) continue;
-    let value: any;
+function* records(stream: AppendStream): Generator<unknown> {
+  let n = 0;
+  for (const m of stream.getAll()) {
+    if (++n > BOARD_HISTORY_LIMITS.records) {
+      // Unreadable as a board's history: nothing may be appended.
+      yield { invalid: "over the record limit" };
+      return;
+    }
+    let value: unknown;
     try {
       value = decode({ encoding: m.encoding, data: m.raw });
     } catch {
-      continue;
+      value = undefined;
     }
-    if (value?.is_snapshot === true) continue;
-    if (typeof value?.time !== "string" || !Array.isArray(value?.parents)) {
-      continue;
-    }
+    yield value;
+  }
+}
+
+function readGraph(stream: AppendStream): BoardAppendCheck {
+  const seq = newestSeq(stream);
+  try {
+    return BoardAppendCheck.fromRecords(records(stream), seq);
+  } catch (err) {
+    // E.g. a stored record over the record cap: nothing may be appended.
     return new BoardAppendCheck({
-      head: value.time,
-      headParents: value.parents,
       seq,
+      broken: `its stored history can't be read: ${err}`.slice(0, 300),
     });
   }
-  if (rows.length > 0) {
-    // Messages, but no patch among the newest: the head can't be known
-    // cheaply, so nothing is appended (fail closed).
-    throw new ConatError("this board's history has no recent patch to follow", {
-      code: "branch",
-    });
-  }
-  return new BoardAppendCheck({ seq });
 }
 
 function checkFor(stream: AppendStream): BoardAppendCheck {
   let check = checks.get(stream);
   if (check == null || check.atSeq !== newestSeq(stream)) {
-    check = readHead(stream);
+    check = readGraph(stream);
     checks.set(stream, check);
   }
   return check;
@@ -117,6 +107,11 @@ export function appendCheck(
 ): { check: BoardAppendCheck; next: ReturnType<BoardAppendCheck["check"]> } {
   const check = checkFor(stream);
   return { check, next: check.check(records) };
+}
+
+// For tests: the graph's head as the service sees it.
+export function appendHead(stream: AppendStream): string | undefined {
+  return checkFor(stream).currentHead;
 }
 
 // After a successful store: the new head, at the stream's newest seq.

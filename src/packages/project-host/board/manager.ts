@@ -45,11 +45,26 @@ board on the project host, is the only thing that writes the file:
 */
 
 import {
+  BOARD_PRIMARY_KEYS,
+  BOARD_STRING_COLS,
   BOARD_HOST_BYTE_LIMIT,
   BOARD_HOST_HARD_BYTE_LIMIT,
   BOARD_HOST_HARD_RECORD_LIMIT,
   BOARD_HOST_RECORD_LIMIT,
 } from "@cocalc/util/board/names";
+import {
+  type EditWorkLimits,
+  editWorkRefusal,
+  fileMergeWork,
+  hostEditWorkLimits,
+} from "./edit-cost";
+
+const STRING_COLS: ReadonlySet<string> = new Set(BOARD_STRING_COLS);
+
+// A record's identity in the syncdb (its primary keys).
+function recordKey(record: { [field: string]: unknown }): string {
+  return JSON.stringify(BOARD_PRIMARY_KEYS.map((k) => record[k] ?? null));
+}
 
 export interface BoardLib {
   toRecords(doc: any): any[];
@@ -107,7 +122,11 @@ export type BoardStatus =
   | { state: "ok"; bytes: number }
   | { state: "invalid"; message: string }
   | { state: "missing"; message?: string }
-  | { state: "too-large"; message: string; bytes?: number };
+  | { state: "too-large"; message: string; bytes?: number }
+  // The file changed by more than a merge on the host may cost (G2): it is
+  // not merged; the file and the live document stay as they are, for an
+  // isolated repair (A4).
+  | { state: "quarantined"; message: string };
 
 export interface BoardManagerOptions {
   lib: BoardLib;
@@ -129,6 +148,8 @@ export interface BoardManagerOptions {
   hardMaxBytes?: number;
   hardMaxRecords?: number;
   log?: (message: string, extra?: object) => void;
+  // The most a file merge may cost (edit-cost.ts; this host's by default).
+  workLimits?: EditWorkLimits;
 }
 
 // A write that loses its compare-and-swap reloads and tries again, at most
@@ -136,8 +157,7 @@ export interface BoardManagerOptions {
 const MAX_SAVE_ATTEMPTS = 3;
 
 type Parsed =
-  | { ok: true; doc: any; records: any[] }
-  | { ok: false; status: BoardStatus };
+  { ok: true; doc: any; records: any[] } | { ok: false; status: BoardStatus };
 
 export class BoardManager {
   private readonly lib: BoardLib;
@@ -151,6 +171,7 @@ export class BoardManager {
   private readonly hardMaxBytes: number;
   private readonly hardMaxRecords: number;
   private readonly log: (message: string, extra?: object) => void;
+  private readonly workLimits: EditWorkLimits;
 
   private status: BoardStatus = { state: "missing" };
   // The file's text as last read or written by this manager: the only
@@ -159,6 +180,8 @@ export class BoardManager {
   // The syncdb-format string of the records the file last had as a board:
   // the base of a three-way merge when the file changes.
   private diskRecords: string | undefined = undefined;
+  // The same records, as records (the merge's base, for its work).
+  private diskRecordList: any[] | undefined = undefined;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private loadTimer: ReturnType<typeof setTimeout> | undefined;
   // A load is waiting (in loadTimer or the queue) and has not started.
@@ -197,6 +220,7 @@ export class BoardManager {
         ? BOARD_HOST_HARD_RECORD_LIMIT
         : Math.ceil(1.5 * this.maxRecords));
     this.log = opts.log ?? (() => {});
+    this.workLimits = opts.workLimits ?? hostEditWorkLimits();
   }
 
   getStatus(): BoardStatus {
@@ -447,15 +471,36 @@ export class BoardManager {
     // The first load: the file's state replaces whatever the syncdb held
     // (the document from an earlier session, or nothing). Later: a
     // three-way merge from the file's previous state.
-    const base =
-      this.diskRecords ?? this.recordsToString(this.currentRecords());
+    const current = this.currentRecords();
+    const base = this.diskRecords ?? this.recordsToString(current);
     if (value !== base || this.diskRecords === undefined) {
+      // What merging it would cost, before any of it is done (G2): over the
+      // caps, nothing is merged or written, and the board is quarantined.
+      const work = fileMergeWork({
+        current,
+        base: this.diskRecordList,
+        file: parsed.records,
+        stringCols: STRING_COLS,
+        keyOf: recordKey,
+      });
+      const tooMuch = editWorkRefusal(work, this.workLimits);
+      if (tooMuch) {
+        this.log("board: the file's change is too much work to merge here", {
+          work,
+        });
+        this.retire({
+          state: "quarantined",
+          message: `the file changed too much to merge on this host (${tooMuch.message}); it is left as it is for repair`,
+        });
+        return;
+      }
       this.syncdb.from_str(value, { base });
       this.syncdb.commit();
       await this.syncdb.save?.();
     }
     this.diskText = text;
     this.diskRecords = value;
+    this.diskRecordList = parsed.records;
     this.status = { state: "ok", bytes: Buffer.byteLength(text) };
   }
 
@@ -499,6 +544,7 @@ export class BoardManager {
       if ((await this.file.replace(text, this.diskText)) === "ok") {
         this.diskText = text;
         this.diskRecords = this.recordsToString(parsed.records);
+        this.diskRecordList = parsed.records;
         this.status = { state: "ok", bytes };
         return;
       }

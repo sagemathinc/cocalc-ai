@@ -175,10 +175,36 @@ describe("the open check: a clean cut plus a bounded linear suffix", () => {
       ok: false,
       reason: "incomplete",
     });
-    // Only the cut may be missing (a deleted older history).
+    // A parent missing after the cut is incomplete.
     expect(
       check([snapshot("s"), patch("a", ["s"]), patch("c", ["b"])]),
     ).toMatchObject({ ok: false, reason: "incomplete" });
+    // So is one off the cut's ancestry, though its child is below the cut.
+    expect(
+      check([
+        patch("r"),
+        patch("s", ["r"]),
+        patch("o", ["gone"]),
+        snapshot("s"),
+      ]),
+    ).toMatchObject({ ok: false, reason: "incomplete" });
+  });
+
+  test("ancestors missing at or below the trusted cut are a trimmed history", () => {
+    // The cut's snapshot is the whole value, so nothing below it is read:
+    // A (parent X, missing), B (parent A), snapshot B (astra's probe).
+    expect(
+      check([patch("A", ["X"]), patch("B", ["A"]), snapshot("B")]),
+    ).toMatchObject({ ok: true, cut: "B", suffix: 0, head: "B" });
+    // And with a suffix after it.
+    expect(
+      check([
+        patch("A", ["X"]),
+        patch("B", ["A"]),
+        snapshot("B"),
+        ...chain(2, "u", "B"),
+      ]),
+    ).toMatchObject({ ok: true, cut: "B", suffix: 2, head: "u1" });
     // No root and no snapshot: incomplete, not empty.
     expect(check([patch("t5", ["t4"])])).toMatchObject({
       ok: false,
@@ -318,8 +344,11 @@ describe("the open check's limits, just below and just above", () => {
 });
 
 describe("the append rule", () => {
+  const stored = (records: any[]) => BoardAppendCheck.fromRecords(records, 0);
+  const branch = expect.objectContaining({ code: "branch" });
+
   test("the first patch has no parents; each next follows the head", () => {
-    const a = new BoardAppendCheck({ seq: 0 });
+    const a = stored([]);
     const next = a.check(chain(3));
     expect(next.head).toBe("t2");
     a.commit(next, 3);
@@ -327,32 +356,96 @@ describe("the append rule", () => {
   });
 
   test("a branch, a merge, or a second root is refused 'branch', and nothing changes", () => {
-    const a = new BoardAppendCheck({ head: "t2", headParents: ["t1"], seq: 3 });
+    const a = stored(chain(3));
     for (const bad of [
       [patch("x", ["t1"])],
       [patch("x", ["t2", "t1"])],
       [patch("x", [])],
       [patch("x", ["t2"]), patch("y", ["t2"])],
     ]) {
-      expect(() => a.check(bad)).toThrow(
-        expect.objectContaining({ code: "branch" }),
-      );
+      expect(() => a.check(bad)).toThrow(branch);
     }
     expect(a.check([patch("x", ["t2"])]).head).toBe("x");
   });
 
-  test("the head sent again (a retried write) is accepted and changes nothing", () => {
-    const a = new BoardAppendCheck({ head: "t2", headParents: ["t1"], seq: 3 });
+  test("a stored patch sent again changes nothing; another patch with its time is refused", () => {
+    const a = stored(chain(3));
     expect(a.check([patch("t2", ["t1"])]).head).toBe("t2");
-    // The same time with other parents is another patch: refused.
-    expect(() => a.check([patch("t2", ["t0"])])).toThrow(/one chain/);
+    expect(a.check([patch("t0", [])])).toEqual({ head: "t2", added: [] });
+    expect(() => a.check([patch("t2", ["t0"])])).toThrow(/different patch/);
+    expect(() => a.check([patch("t0", ["t2"])])).toThrow(/different patch/);
   });
 
-  test("snapshot records pass through; records that aren't patches are refused", () => {
-    const a = new BoardAppendCheck({ head: "t2", headParents: ["t1"], seq: 3 });
-    expect(a.check([snapshot("t1")]).head).toBe("t2");
-    expect(() => a.check([{ edit: 1 }])).toThrow(
-      expect.objectContaining({ code: "branch" }),
-    );
+  test("astra's probe 1: re-appending a root under a later patch is refused", () => {
+    // A (root), B (A), A again (B), C (A): PatchGraph keeps the first A and
+    // ends with heads B and C.
+    const a = stored([]);
+    a.commit(a.check([patch("A", [])]), 1);
+    a.commit(a.check([patch("B", ["A"])]), 2);
+    expect(() => a.check([patch("A", ["B"])])).toThrow(branch);
+    expect(() => a.check([patch("C", ["A"])])).toThrow(branch);
+    expect(a.currentHead).toBe("B");
+  });
+
+  test("astra's probe 2: a snapshot of a patch the history doesn't have is refused", () => {
+    const a = stored([]);
+    a.commit(a.check([patch("A", [])]), 1);
+    expect(() => a.check([snapshot("X")])).toThrow(branch);
+    // A snapshot of a stored patch (here an earlier one, as SyncDoc makes
+    // them) is PatchGraph's in-place upgrade: no new node, no new head.
+    a.commit(a.check([patch("B", ["A"])]), 2);
+    expect(a.check([snapshot("A")]).head).toBe("B");
+    expect(a.check([snapshot("B")]).head).toBe("B");
+  });
+
+  test("within a batch, records are checked against the batch so far", () => {
+    const a = stored(chain(2));
+    // A patch, then its snapshot and a retry of it: fine.
+    expect(
+      a.check([patch("n", ["t1"]), snapshot("n"), patch("n", ["t1"])]).head,
+    ).toBe("n");
+    // A snapshot of a patch later in the batch: refused (it would be a node).
+    expect(() => a.check([snapshot("m"), patch("m", ["t1"])])).toThrow(branch);
+  });
+
+  test("a stored history that isn't one chain takes no appends at all", () => {
+    for (const records of [
+      [patch("r"), patch("a", ["r"]), patch("b", ["r"])],
+      [patch("r"), snapshot("x")],
+      [patch("r"), patch("r", ["q"])],
+      [{ edit: 1 }],
+    ]) {
+      const a = stored(records);
+      expect(() => a.check([patch("z", ["r"])])).toThrow(/can't be appended/);
+    }
+  });
+
+  test("a stored history with snapshots of its patches keeps their parents and its one head", () => {
+    // SyncDoc's ordinary history: snapshots of earlier patches, upgraded in
+    // place (a snapshot record has no parents; the patch keeps its own).
+    const a = stored([...chain(5), snapshot("t1"), snapshot("t3")]);
+    expect(a.currentHead).toBe("t4");
+    expect(a.check([patch("t5", ["t4"])]).head).toBe("t5");
+    // Before its patch in stream order, the same.
+    const b = stored([patch("t0"), snapshot("t1"), patch("t1", ["t0"])]);
+    expect(b.currentHead).toBe("t1");
+    expect(b.check([patch("t2", ["t1"])]).head).toBe("t2");
+  });
+
+  test("a trimmed history (a snapshot whose patch was deleted) takes appends after its head", () => {
+    // As in PatchGraph, the snapshot is a node of its own with no parents.
+    const a = stored([snapshot("s"), ...chain(2, "u", "s")]);
+    expect(a.currentHead).toBe("u1");
+    expect(a.check([patch("u2", ["u1"])]).head).toBe("u2");
+    expect(() => a.check([patch("x", ["s"])])).toThrow(branch);
+    // Only the snapshot: the next patch follows it.
+    const b = stored([snapshot("s")]);
+    expect(b.check([patch("n", ["s"])]).head).toBe("n");
+    expect(() => b.check([patch("n", [])])).toThrow(branch);
+  });
+
+  test("records that aren't patches are refused", () => {
+    const a = stored(chain(1));
+    expect(() => a.check([{ edit: 1 }])).toThrow(branch);
   });
 });

@@ -287,6 +287,8 @@ describe("the write service's transport bounds", () => {
   test("a snapshot-sized message gets through", async () => {
     const project_id = uuid();
     const raw = hubStream(project_id, "/home/user/snapshot.board.json");
+    // A snapshot is of a stored patch (the append rule).
+    await raw.set({ messageData: messageData(rec(1)), timeout: 10_000 });
     const { seq } = await raw.set({
       // A snapshot record of a board near the editable limit.
       messageData: messageData({
@@ -527,6 +529,30 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     await set(w, rec(2, 1));
     await set(w, { time: "t1", is_snapshot: true, snapshot: "{}" });
     await set(w, rec(2, 1));
+    await set(w, rec(3, 2));
+    w.close();
+  });
+
+  test("astra's schedules through the service: a re-appended id and a snapshot of an unknown patch are refused, before and after a restart", async () => {
+    const project_id = uuid();
+    const path = "/home/user/astra.board.json";
+    let w = hub(project_id, path);
+    await set(w, rec(1));
+    await set(w, rec(2, 1));
+    // t1 again, under t2: a different patch at a stored time.
+    await expect(set(w, rec(1, 2))).rejects.toMatchObject({ code: "branch" });
+    // A snapshot of a patch the history doesn't have.
+    await expect(
+      set(w, { time: "t9", is_snapshot: true, snapshot: "{}" }),
+    ).rejects.toMatchObject({ code: "branch" });
+    expect(await stored(project_id, path)).toEqual([rec(1), rec(2, 1)]);
+    w.close();
+    // The graph read again from the stream: the same rules.
+    await setup.restartPersistServer();
+    w = hub(project_id, path);
+    await expect(set(w, rec(1, 2))).rejects.toMatchObject({ code: "branch" });
+    await expect(set(w, rec(3, 1))).rejects.toMatchObject({ code: "branch" });
+    await set(w, { time: "t1", is_snapshot: true, snapshot: "{}" });
     await set(w, rec(3, 2));
     w.close();
   });

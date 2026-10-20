@@ -223,3 +223,153 @@ probe(
   },
   20 * 60_000,
 );
+
+// Adversarial shapes under a work cap with the shipped model (edit-cost.ts):
+// unequal replacements both ways (astra's PERF-731-2 and its mirror), pure
+// insertions and deletions, and dense equal-length edits, each with as many
+// fields as fit under the cap and the 512 KiB edit.
+import { fieldWork } from "./edit-cost";
+
+function pairCost(pairs: [string, string][]) {
+  const nodes = pairs.map(([before], i) => ({
+    id: `n${i}`,
+    text: before,
+    x: i,
+    y: 0,
+  }));
+  const doc = lib.cleanDoc({
+    format: "sagebrush-board",
+    version: 1,
+    title: "p",
+    nodes,
+  });
+  const records = lib.toRecords(doc) as any[];
+  const items = records.filter((r) => r.type === "item");
+  const message = {
+    sagebrush: "edit",
+    version: 1,
+    id: "0b6d1f0e-2a7c-4d39-9b0a-3c2f8e5d7a12",
+    base: "r1",
+    changes: items.map((r, i) => ({
+      op: "set",
+      key: { type: r.type, page: r.page, id: r.id },
+      fields: { text: pairs[i][1] },
+      was: { text: r.text },
+    })),
+  };
+  const editBytes = Buffer.byteLength(JSON.stringify(message));
+  const es = editState(lib.canonical(doc), {
+    pictures: "by-reference",
+    previewBudget: sharedPreviewBudget({
+      editBurst: 1e9,
+      editsPerSecond: 1e9,
+      workBurst: 1e15,
+      workPerSecond: 1e15,
+    }),
+  });
+  let t = performance.now();
+  const preview = es.preview(message) as any;
+  es.apply(message);
+  const old = from_str(
+    recordsToString(records),
+    BOARD_PRIMARY_KEYS,
+    BOARD_STRING_COLS,
+  ) as any;
+  let next = old;
+  items.forEach((r, i) => (next = next.set({ ...r, text: pairs[i][1] })));
+  const patch = old.make_patch(next);
+  const ms = performance.now() - t;
+  const patchBytes = Buffer.byteLength(JSON.stringify(patch));
+  let W = 0;
+  for (const [a, b] of pairs) W += fieldWork(a, b).work;
+  return { ok: preview.ok, editBytes, patchBytes, W, ms };
+}
+
+probe(
+  "adversarial shapes under the cap",
+  () => {
+    const cap = Number(process.env.G2_CAP ?? 24e6);
+    const KiBs = 1024;
+    const rows: any[] = [];
+    const scattered = (n: number, every: number) => {
+      const a = Array.from({ length: n }, (_, i) => "abcdefghij"[i % 10]).join(
+        "",
+      );
+      const b = a
+        .split("")
+        .map((c, i) => (i % every === every - 1 ? "X" : c))
+        .join("");
+      return [a, b] as [string, string];
+    };
+    const shapes: { name: string; pair: (size: number) => [string, string] }[] =
+      [
+        {
+          name: "replace a->B",
+          pair: (n) => [
+            "a".repeat(Math.max(1, Math.floor(n / 400))),
+            "b".repeat(n),
+          ],
+        },
+        {
+          name: "replace A->b",
+          pair: (n) => [
+            "a".repeat(n),
+            "b".repeat(Math.max(1, Math.floor(n / 400))),
+          ],
+        },
+        {
+          name: "replace 1:10",
+          pair: (n) => ["a".repeat(Math.floor(n / 10)), "b".repeat(n)],
+        },
+        {
+          name: "replace 10:1",
+          pair: (n) => ["a".repeat(n), "b".repeat(Math.floor(n / 10))],
+        },
+        { name: "replace 1:1", pair: (n) => ["a".repeat(n), "b".repeat(n)] },
+        {
+          name: "replace mixed",
+          pair: (n) => ["ab".repeat(n / 2), "ba".repeat(n / 2)],
+        },
+        { name: "insert", pair: (n) => ["x", "x" + "b".repeat(n)] },
+        { name: "delete", pair: (n) => ["x" + "b".repeat(n), "x"] },
+        { name: "scattered/9", pair: (n) => scattered(n, 9) },
+        { name: "scattered/40", pair: (n) => scattered(n, 40) },
+      ];
+    for (const shape of shapes) {
+      for (const size of [
+        256,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        32768,
+        65536,
+        128 * KiBs,
+        200000,
+        250 * KiBs,
+      ]) {
+        const pair = shape.pair(size);
+        const w = fieldWork(pair[0], pair[1]).work;
+        if (w === 0 || w > cap) continue;
+        const bytes = pair[0].length + pair[1].length;
+        const F = Math.max(
+          1,
+          Math.min(64, Math.floor(cap / w), Math.floor((500 * KiBs) / bytes)),
+        );
+        const r = pairCost(Array.from({ length: F }, () => pair));
+        if (
+          r.W > cap ||
+          r.editBytes > 512 * KiBs ||
+          r.patchBytes > 512 * KiBs ||
+          !r.ok
+        )
+          continue;
+        rows.push({ shape: shape.name, size, F, W: r.W, ms: Math.round(r.ms) });
+      }
+    }
+    rows.sort((a, b) => b.ms - a.ms);
+    console.log(JSON.stringify(rows.slice(0, 12)));
+  },
+  30 * 60_000,
+);
