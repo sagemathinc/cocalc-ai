@@ -14,6 +14,7 @@ Component that shows rendered HTML in an iFrame, so safe and no mangling needed.
 // tag in a functional component (it would be fine with chrome).
 // Some day in the future this might no longer be necessary ... (react 16.13.1)
 
+import { CONTENT_FRAME_SANDBOX } from "@cocalc/util/project-content-origin";
 import $ from "jquery";
 import { Spin, Switch } from "antd";
 import { delay } from "awaiting";
@@ -82,14 +83,11 @@ function should_memoize(prev, next) {
   ]);
 }
 
-// The content origin is a separate site, so the page keeps its own origin
-// (storage, relative loads) but can't navigate the app's tab.
 // A re-issued link is shown at the next save, or this long before the shown
 // link expires, so reading a page doesn't reload it unprompted.
 export const CONTENT_LINK_SWAP_BEFORE_EXPIRY_MS = 5 * 60 * 1000;
 
-export const CONTENT_FRAME_SANDBOX =
-  "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
+export { CONTENT_FRAME_SANDBOX };
 
 const STYLE: CSS = {
   overflowY: "auto",
