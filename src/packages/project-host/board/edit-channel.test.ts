@@ -4,6 +4,7 @@ import {
   sharedPreviewBudget,
 } from "@sagemathinc/sagebrush-board/submission";
 import { EDIT_CHANNEL_LIMITS, EditChannel, editClientId } from "./edit-channel";
+import { BOARD_EDIT_WORK_LIMITS } from "./edit-cost";
 
 const board = JSON.stringify({
   format: "sagebrush-board",
@@ -12,6 +13,14 @@ const board = JSON.stringify({
   nodes: [{ id: "a", text: "hi" }],
 });
 
+const boardWith = (text: string) =>
+  JSON.stringify({
+    format: "sagebrush-board",
+    version: 1,
+    title: "t",
+    nodes: [{ id: "a", text }],
+  });
+
 let t = 0;
 const clock = () => t;
 
@@ -19,24 +28,37 @@ function channel(
   opts: {
     budget?: ReturnType<typeof sharedPreviewBudget>;
     limits?: Partial<typeof EDIT_CHANNEL_LIMITS>;
+    workLimits?: Partial<typeof BOARD_EDIT_WORK_LIMITS>;
+    text?: string;
   } = {},
 ) {
   const sent: any[] = [];
-  const editState = makeEditState(board, {
-    pictures: "by-reference",
-    previewBudget: opts.budget ?? sharedPreviewBudget(),
-  });
+  const editState = makeEditState(
+    opts.text == null ? board : boardWith(opts.text),
+    {
+      pictures: "by-reference",
+      previewBudget: opts.budget ?? sharedPreviewBudget(),
+    },
+  );
   const ch = new EditChannel({
     clientId: editClientId(randomUUID(), "conn1"),
     editState,
+    // The live document's records (in the host, the syncdb's get_one).
+    currentRecord: (key) =>
+      editState
+        .records()
+        .find(
+          (r) => r.type === key.type && r.page === key.page && r.id === key.id,
+        ),
     send: (m) => sent.push(m),
     now: clock,
     limits: { ...EDIT_CHANNEL_LIMITS, ...opts.limits },
+    workLimits: { ...BOARD_EDIT_WORK_LIMITS, ...opts.workLimits },
   });
   return { ch, sent, editState };
 }
 
-function edit(text = "hello", id = randomUUID()) {
+function edit(text = "hello", id = randomUUID(), was = "hi") {
   return {
     sagebrush: "edit",
     version: 1,
@@ -47,7 +69,7 @@ function edit(text = "hello", id = randomUUID()) {
         op: "set",
         key: { type: "item", page: "", id: "a" },
         fields: { text },
-        was: { text: "hi" },
+        was: { text: was },
       },
     ],
   };
@@ -246,4 +268,39 @@ test("one abusive channel can't starve another's previews", () => {
   }
   // Its own bucket (40) stopped it long before the shared 100.
   expect(quiet.ch.intake(edit("q")).kind).toBe("admit");
+});
+
+test("5. an edit whose commit is too much work is refused too-large (work), typed, and not admitted", () => {
+  // "hi" -> "hello": after the common "h", "i" becomes "ello": m = 1,
+  // k = 1 patch, N = 7: work k·N + m² = 8.
+  const ok = channel({ workLimits: { maxWork: 8 } });
+  const m = edit();
+  expect(ok.ch.intake(m)).toMatchObject({
+    kind: "admit",
+    work: { fields: 1, patches: 1, span: 1, work: 8 },
+  });
+  const over = channel({ workLimits: { maxWork: 7 } });
+  const m2 = edit();
+  expect(over.ch.intake(m2)).toMatchObject({ kind: "answered" });
+  expect(over.sent).toEqual([
+    expect.objectContaining({
+      sagebrush: "refused",
+      id: m2.id,
+      reason: "too-large",
+      what: "work",
+      limit: 7,
+      size: 8,
+    }),
+  ]);
+  expect(over.ch.pending).toBeUndefined();
+  // Answered once: a replay is ignored.
+  expect(over.ch.intake(m2)).toEqual({ kind: "ignore" });
+});
+
+test("5. the work is counted against the record as it is, not the edit's own 'was'", () => {
+  // The live text is 64 characters; the edit claims it saw "hi".
+  const text = "x".repeat(64);
+  const { ch } = channel({ text });
+  const r = ch.intake(edit(`${text}!`, randomUUID(), text)) as any;
+  expect(r.work).toEqual({ fields: 1, patches: 1, span: 0, work: 129 });
 });

@@ -20,6 +20,9 @@ In order, for each message:
    charged each preview's workBytes afterwards, refused previews included);
 4. editState.preview, which draws on the host's one shared preview budget.
    "Throttled" is "not computed": busy, send again.
+5. the work its commit would take, counted from the changes preview made
+   and the records as they are (edit-cost.ts, G2): over the caps, it is
+   refused "too-large" (what: "work") before it is admitted.
 
 Every answer is recorded in the channel's window (and editState's) before it
 is sent, and an id leaves `pending` only as it enters `answered`.
@@ -30,9 +33,20 @@ fields are only ever read, never used as keys of host objects.
 
 import type {
   EditState,
+  Key,
   Previewed,
 } from "@sagemathinc/sagebrush-board/submission";
 import { TokenBucket } from "./admission";
+import {
+  BOARD_EDIT_WORK_LIMITS,
+  type EditWork,
+  type EditWorkLimits,
+  editWork,
+  editWorkRefusal,
+} from "./edit-cost";
+import { BOARD_STRING_COLS } from "@cocalc/util/board/names";
+
+const STRING_COLS: ReadonlySet<string> = new Set(BOARD_STRING_COLS);
 
 export const EDIT_CHANNEL_LIMITS = {
   messageBytes: 1024 * 1024,
@@ -76,7 +90,14 @@ export type Intake =
   // Answered at once (recorded, and sent).
   | { kind: "answered"; answer: Refused }
   // Admitted to the board's commit queue: pending until answered.
-  | { kind: "admit"; id: string; message: unknown; editBytes: number };
+  | {
+      kind: "admit";
+      id: string;
+      message: unknown;
+      editBytes: number;
+      // What committing it will take (G2's counters).
+      work: EditWork;
+    };
 
 type Clock = () => number;
 
@@ -88,6 +109,10 @@ export class EditChannel {
   readonly clientId: string;
   private readonly limits: EditChannelLimits;
   readonly editState: EditState;
+  private readonly currentRecord: (
+    key: Key,
+  ) => { [field: string]: unknown } | undefined;
+  private readonly workLimits: EditWorkLimits;
   private readonly send: (message: object) => void;
   private readonly now: Clock;
   private readonly count: TokenBucket;
@@ -101,19 +126,27 @@ export class EditChannel {
   constructor({
     clientId,
     editState,
+    currentRecord,
     send,
     now = monotonic,
     limits = EDIT_CHANNEL_LIMITS,
+    workLimits = BOARD_EDIT_WORK_LIMITS,
   }: {
     clientId: string;
     editState: EditState;
+    // A record of the board's live document as it is now (the syncdb's
+    // get_one), for the work an edit's commit takes.
+    currentRecord: (key: Key) => { [field: string]: unknown } | undefined;
     send: (message: object) => void;
     now?: Clock;
     limits?: EditChannelLimits;
+    workLimits?: EditWorkLimits;
   }) {
     this.clientId = clientId;
     this.limits = limits;
     this.editState = editState;
+    this.currentRecord = currentRecord;
+    this.workLimits = workLimits;
     this.send = send;
     this.now = now;
     const t = now();
@@ -218,8 +251,12 @@ export class EditChannel {
         retryAfter: r.retryAfter,
       });
     }
+    // 5. The work its commit would take, before it is admitted.
+    const work = editWork(r.changes, this.currentRecord, STRING_COLS);
+    const tooMuch = editWorkRefusal(work, this.workLimits);
+    if (tooMuch) return this.refuse(id, tooMuch);
     this.pendingId = id;
-    return { kind: "admit", id, message, editBytes: r.editBytes };
+    return { kind: "admit", id, message, editBytes: r.editBytes, work };
   }
 
   // Answer an edit: recorded first, then sent. The pending edit leaves
