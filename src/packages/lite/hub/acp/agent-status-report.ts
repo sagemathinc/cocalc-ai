@@ -37,6 +37,9 @@ const MAX_REMEMBERED = 10_000;
 const FAILED_RETRY_MS = 30_000;
 const FAILED_RETRY_MAX_MS = 10 * 60_000;
 const FAILED_RETRY_ATTEMPTS = 10;
+/** An unchanged status that still says something (busy, unavailable) is
+ * sent again this often, so it never outlives its TTL while still true. */
+export const STATUS_REFRESH_MS = 6 * 60 * 60_000;
 
 type Thread = { project_id: string; path: string; thread_id: string };
 type Reporter = (
@@ -46,7 +49,10 @@ type Reporter = (
 let reporter: Reporter = (opts) => hubApi.agent.reportStatus(opts);
 let lastSweep: number | undefined;
 let sweeping = false;
-const sent = new Map<string, AgentTurnStatus>();
+const sent = new Map<
+  string,
+  { status: AgentTurnStatus; thread: Thread & { account_id: string } }
+>();
 // Not a registered agent when last asked: asked again once `until` passes,
 // whether or not its jobs change (it may be registered meanwhile).
 const unregistered = new Map<
@@ -108,10 +114,23 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
       candidates.set(keyOf(thread), thread);
     // Due to be asked again: report even an unchanged status.
     const retry = new Set<string>();
+    // A failed report waits out its backoff, whatever else is due.
+    const backingOff = (key: string) => (failed.get(key)?.until ?? 0) > now;
     for (const [key, entry] of unregistered)
-      if (entry.until <= now) {
+      if (entry.until <= now && !backingOff(key)) {
         retry.add(key);
         if (!candidates.has(key)) candidates.set(key, entry.thread);
+      }
+    // Still true, but getting old: sent again before it expires.
+    for (const [key, { status, thread }] of sent)
+      if (
+        (status.unavailable || status.running > 0 || status.queued > 0) &&
+        now - status.at >= STATUS_REFRESH_MS &&
+        !unregistered.has(key) &&
+        !backingOff(key)
+      ) {
+        retry.add(key);
+        if (!candidates.has(key)) candidates.set(key, thread);
       }
     // Its last report failed, so `sent` still differs: it is sent once due.
     for (const [key, entry] of failed) {
@@ -123,13 +142,13 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
       if (!thread.path.endsWith(".chat")) continue;
       if (!retry.has(key) && unregistered.has(key)) continue;
       const status = agentThreadStatus(thread, now);
-      if (!retry.has(key) && sameAgentTurnStatus(sent.get(key), status))
+      if (!retry.has(key) && sameAgentTurnStatus(sent.get(key)?.status, status))
         continue;
       try {
         const { registered } = await reporter({ ...thread, status });
         failed.delete(key);
         if (sent.size >= MAX_REMEMBERED) sent.clear();
-        sent.set(key, status);
+        sent.set(key, { status, thread });
         if (!registered) {
           if (unregistered.size >= MAX_REMEMBERED) unregistered.clear();
           unregistered.set(key, {

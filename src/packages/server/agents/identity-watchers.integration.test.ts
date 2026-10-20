@@ -232,6 +232,20 @@ describeDb("agent identity watchers", () => {
     });
     await settle();
     expect(withPersonalHome).toHaveBeenCalledTimes(1);
+    // The host's refresh, hours later: stored and passed on, so it never
+    // outlives its TTL while still true.
+    const refreshed = { ...status, at: status.at + 6 * 60 * 60_000 };
+    await reportStatus({ ...report, status: refreshed });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(2);
+    expect(
+      (
+        await getPool().query(
+          "SELECT turn_status FROM agent_identities WHERE agent_id=$1",
+          [agent_id],
+        )
+      ).rows[0].turn_status,
+    ).toEqual(refreshed);
     // A conversation that isn't a registered agent.
     await expect(
       reportStatus({ ...report, thread_id: "not-an-agent" }),

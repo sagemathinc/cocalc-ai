@@ -223,3 +223,75 @@ describe("a failed report with no later change", () => {
     expect(attempts).toBe(3);
   });
 });
+
+describe("an unchanged status that is still true", () => {
+  it("is sent again before it expires, and only while it says something", async () => {
+    const now = Date.now();
+    const mine = job();
+    set(mine.op_id, {
+      state: "error",
+      started_at: now - 61_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "sign-in" },
+      },
+    });
+    await sweepAgentStatus(now);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].status.unavailable).toMatchObject({ reason: "sign-in" });
+    // Nothing changes for hours: not sent again until the refresh is due.
+    await sweepAgentStatus(now + 60 * 60_000);
+    expect(reports).toHaveLength(1);
+    await sweepAgentStatus(now + 6 * 60 * 60_000 + 1);
+    expect(reports).toHaveLength(2);
+    expect(reports[1].status).toMatchObject({
+      unavailable: { reason: "sign-in" },
+      at: now + 6 * 60 * 60_000 + 1,
+    });
+  });
+
+  it("an idle agent is not refreshed", async () => {
+    const now = Date.now();
+    const mine = job();
+    set(mine.op_id, {
+      state: "completed",
+      started_at: now - 61_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: { version: 1, state: "completed" },
+    });
+    await sweepAgentStatus(now);
+    expect(reports).toHaveLength(1);
+    await sweepAgentStatus(now + 7 * 60 * 60_000);
+    expect(reports).toHaveLength(1);
+  });
+
+  it("an hourly recheck of an unregistered agent waits out a failure's backoff", async () => {
+    const now = Date.now();
+    let fail = false;
+    let attempts = 0;
+    setAgentStatusReporterForTests(async (opts) => {
+      attempts += 1;
+      if (fail) throw new Error("hub unreachable");
+      reports.push(opts);
+      return { registered: false };
+    });
+    const mine = job();
+    set(mine.op_id, { updated_at: now - 60_000 });
+    await sweepAgentStatus(now);
+    expect(attempts).toBe(1);
+    fail = true;
+    // The hourly recheck fails: then it backs off (30 s), not every sweep.
+    const due = now + 61 * 60_000;
+    await sweepAgentStatus(due);
+    expect(attempts).toBe(2);
+    await sweepAgentStatus(due + 10_000);
+    await sweepAgentStatus(due + 20_000);
+    expect(attempts).toBe(2);
+    await sweepAgentStatus(due + 31_000);
+    expect(attempts).toBe(3);
+  });
+});

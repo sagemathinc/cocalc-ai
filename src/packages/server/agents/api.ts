@@ -574,6 +574,9 @@ export const describeNetworkSelf: AgentApi["describeNetworkSelf"] = async (
 // Host-attested: the project host running an agent's turns reports what it
 // is doing. Kept on the identity, so it reaches everyone who named the agent
 // (destinations, the Agents page) the way its runtime and appearance do.
+/** A refresh of an unchanged status is stored at most this often. */
+const STATUS_REFRESH_MIN_MS = 60 * 60_000;
+
 export const reportStatus: AgentApi["reportStatus"] = async (opts) => {
   await assertLocalAgentProject(opts.project_id);
   await assertProjectHostAgentTokenAccess({
@@ -586,7 +589,13 @@ export const reportStatus: AgentApi["reportStatus"] = async (opts) => {
   const db = agentStore();
   const agent = await db.find(opts.project_id, opts.path, opts.thread_id);
   if (!agent) return { registered: false };
-  if (sameAgentTurnStatus(parseAgentTurnStatus(agent.turn_status), status))
+  // Unchanged: kept, unless this refreshes it well before it would expire
+  // (the host sends an unchanged status again every few hours).
+  const stored = parseAgentTurnStatus(agent.turn_status);
+  if (
+    sameAgentTurnStatus(stored, status) &&
+    status.at - (stored?.at ?? 0) < STATUS_REFRESH_MIN_MS
+  )
     return { registered: true };
   await db.query(
     "UPDATE agent_identities SET turn_status=$2::jsonb WHERE agent_id=$1",
