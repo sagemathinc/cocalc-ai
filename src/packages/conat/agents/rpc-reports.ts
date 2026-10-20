@@ -86,6 +86,20 @@ export type AgentRpcReportDeliveryResult =
 
 export const AGENT_RPC_REPORT_DETAIL_MAX = 300;
 
+/** How long a message's report capability is accepted after it was issued
+ * (when the message was admitted): a report after that is refused. */
+export const AGENT_RPC_REPORT_CAPABILITY_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+
+/** When this capability stops being accepted, or undefined. */
+export function agentRpcReportCapabilityExpiresAt(
+  capability: string | undefined,
+): number | undefined {
+  const issued_at = Number(`${capability ?? ""}`.split(".")[0]);
+  return Number.isSafeInteger(issued_at) && issued_at > 0
+    ? issued_at + AGENT_RPC_REPORT_CAPABILITY_MAX_AGE_MS
+    : undefined;
+}
+
 /**
  * The report shape a sender's host can render, as it advertises in its
  * heartbeat (agent_rpc_report_version). 1 (no advertisement): the first five
