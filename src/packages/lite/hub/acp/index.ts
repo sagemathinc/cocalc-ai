@@ -10453,6 +10453,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
           job: getAcpJobByOpId(job.op_id) ?? job,
           outcome: result.outcome,
         });
+        // The recovery poll may have queued this hold first (then
+        // enqueueLimitHold finds that continuation and declines): it is
+        // still held.
+        resumed = resumed ?? continuationOf(getAcpJobByOpId(job.op_id) ?? job);
         void publishLimitNoticeAfterHold(
           refreshedRequest.chat?.message_id,
           resumed?.available_at != null,
