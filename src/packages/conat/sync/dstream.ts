@@ -13,6 +13,8 @@ DEVELOPMENT:
 See the guide for dkv, since it's very similar, especially for use in a browser.
 */
 
+import type { WriteFence } from "@cocalc/conat/persist/board-write-fence";
+
 import { EventEmitter } from "events";
 import {
   CoreStream,
@@ -82,6 +84,7 @@ export interface DStreamOptions {
 
   service?: string;
   persistUser?: User;
+  writeFence?: WriteFence;
 
   initPhaseReporter?: CoreStreamInitPhaseReporter;
 }

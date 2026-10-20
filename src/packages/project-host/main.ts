@@ -29,6 +29,7 @@ import { setConatClient } from "@cocalc/conat/client";
 import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import { boardWriteLockPath, startBoardWriteFence } from "./board/write-lock";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
@@ -508,12 +509,21 @@ export async function main(
   const persistServer = externalPersist
     ? undefined
     : createPersistServer({ client: conatClient });
-  // The board write service (conat/persist/board-policy.ts), beside it.
+  // The board write service (conat/persist/board-policy.ts), beside it. It
+  // refuses board writes until this process holds the board write lock
+  // (board/write-lock.ts).
+  const boardWriteFence = externalPersist
+    ? undefined
+    : startBoardWriteFence({
+        path: boardWriteLockPath(dataDir),
+        log: (message, extra) => logger.warn(message, extra),
+      });
   const boardPersistServer = externalPersist
     ? undefined
     : createPersistServer({
         client: conatClient,
         service: BOARD_WRITE_SERVICE,
+        boardWriteFence: boardWriteFence!.fence,
       });
   if (externalPersist) {
     await waitForProjectHostConatPersistReady({ client: conatClient });
@@ -1531,6 +1541,9 @@ export async function main(
     closed = true;
     persistServer?.close?.();
     boardPersistServer?.close?.();
+    // The board write lock is deliberately not released here: only this
+    // process's exit releases it (the kernel closes the descriptor), so no
+    // successor can take it while a request of ours could still store.
     fsServer?.close?.();
     // Keep the catalog's exclusive lease until process exit: filesystem calls
     // already in flight may still complete after the service stops accepting.

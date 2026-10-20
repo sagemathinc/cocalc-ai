@@ -9,6 +9,8 @@ It uses a conat persistent stream to store the elements
 in a well defined order.
 */
 
+import type { WriteFence } from "@cocalc/conat/persist/board-write-fence";
+
 import jsonStableStringify from "json-stable-stringify";
 import { keys } from "lodash";
 import { cmp_Date, is_array, isValidUUID } from "@cocalc/util/misc";
@@ -58,6 +60,7 @@ export class SyncTableStream extends EventEmitter {
   private initPhaseReporter?: CoreStreamInitPhaseReporter;
   private service?: string;
   private persistUser?: User;
+  private writeFence?: WriteFence;
 
   constructor({
     query,
@@ -74,6 +77,7 @@ export class SyncTableStream extends EventEmitter {
     initPhaseReporter,
     service,
     persistUser,
+    writeFence,
   }: {
     query;
     client: Client;
@@ -90,10 +94,12 @@ export class SyncTableStream extends EventEmitter {
     // The persist service, and the identity to ask it as (see CoreStream).
     service?: string;
     persistUser?: User;
+    writeFence?: WriteFence;
   }) {
     super();
     this.service = service;
     this.persistUser = persistUser;
+    this.writeFence = writeFence;
     this.client = client;
     this.noInventory = noInventory;
     this.noAutosave = noAutosave;
@@ -140,6 +146,7 @@ export class SyncTableStream extends EventEmitter {
       initPhaseReporter: this.initPhaseReporter,
       service: this.service,
       persistUser: this.persistUser,
+      writeFence: this.writeFence,
     });
     this.dstream.on("change", (mesg) => {
       this.handle(mesg, true);

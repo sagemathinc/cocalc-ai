@@ -27,6 +27,14 @@ import type {
 } from "@cocalc/conat/files/fs";
 import { immerdb, type ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import {
+  BOARD_WRITE_MAX_TTL_MS,
+  isBoardWriteNonce,
+  type WriteFence,
+} from "@cocalc/conat/persist/board-write-fence";
+import { stream as persistStream } from "@cocalc/conat/persist/client";
+import { storagePath } from "@cocalc/conat/sync/core-stream";
+import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { getLogger } from "@cocalc/backend/logger";
 import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
 import {
@@ -540,6 +548,11 @@ export async function openBoardSyncdb({
   // board write service, as the hub. Every other replica can only read it.
   writer?: boolean;
 }): Promise<ImmerDB> {
+  // The manager's writes carry the board write service's instance nonce, so
+  // only that server process can accept them (board-write-fence.ts).
+  const writeFence = writer
+    ? await boardWriteFence({ client, project_id, path })
+    : undefined;
   const syncdb = immerdb({
     client,
     project_id,
@@ -554,7 +567,13 @@ export async function openBoardSyncdb({
     // The board's only file is its .board.json, which the manager writes.
     noSaveToDisk: true,
     ...(writer
-      ? { patchesPersist: { service: BOARD_WRITE_SERVICE, persistUser: {} } }
+      ? {
+          patchesPersist: {
+            service: BOARD_WRITE_SERVICE,
+            persistUser: {},
+            writeFence,
+          },
+        }
       : {}),
   });
   if (!syncdb.isReady()) {
@@ -572,6 +591,40 @@ export async function openBoardSyncdb({
     }
   }
   return syncdb;
+}
+
+// The fence for writing this board: the board write service's current
+// instance nonce. Refuses if the service has none (it can't write boards).
+async function boardWriteFence({
+  client,
+  project_id,
+  path,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+}): Promise<WriteFence> {
+  const probe = persistStream({
+    client,
+    user: {},
+    storage: {
+      path: storagePath({
+        project_id,
+        name: patchesStreamName({ path: boardSyncdbPath(path) }),
+      }),
+    },
+    service: BOARD_WRITE_SERVICE,
+    noCache: true,
+  });
+  try {
+    const nonce = await probe.boardInstance({ timeout: 15_000 });
+    if (!isBoardWriteNonce(nonce)) {
+      throw Error("board writes are unavailable on this host");
+    }
+    return { expectedNonce: nonce, ttlMs: BOARD_WRITE_MAX_TTL_MS };
+  } finally {
+    probe.close();
+  }
 }
 
 function result(

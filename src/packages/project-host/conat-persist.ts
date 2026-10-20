@@ -14,6 +14,12 @@ import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import { data as dataDir } from "@cocalc/backend/data";
+import {
+  boardWriteLockPath,
+  startBoardWriteFence,
+  type BoardWriteFenceController,
+} from "./board/write-lock";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
 import {
   connect as connectToConat,
@@ -168,6 +174,8 @@ export async function startStandaloneProjectHostConatPersist({
   // The board write service (conat/persist/board-policy.ts): the host's board
   // managers write board streams only through it.
   boardPersistServer: ConatSocketServer;
+  // The board write service's exclusive lock and nonce (board/write-lock.ts).
+  boardWriteFence: BoardWriteFenceController;
   maintenance?: PersistMaintenanceCoordinator;
   port: number;
 }> {
@@ -210,11 +218,18 @@ export async function startStandaloneProjectHostConatPersist({
     id,
     maintenance: maintenanceHooks,
   });
+  // Board writes are refused until this process holds the board write lock
+  // (taken in the background) and for good if the lock is found invalid.
+  const boardWriteFence = startBoardWriteFence({
+    path: boardWriteLockPath(dataDir),
+    log: (message, extra) => logger.warn(message, extra),
+  });
   const boardPersistServer = createPersistServer({
     client,
     id,
     service: BOARD_WRITE_SERVICE,
     maintenance: maintenanceHooks,
+    boardWriteFence: boardWriteFence.fence,
   });
   maintenance?.start();
 
@@ -230,7 +245,26 @@ export async function startStandaloneProjectHostConatPersist({
       res.status(503).json({ ok: false, ready: false });
       return;
     }
-    res.json({ ok: true, ready: true, id });
+    // A board write lock that is invalid makes this process unhealthy, so
+    // that it is seen and acted on (A2b design, 5a); one still being taken
+    // does not.
+    const board = boardWriteFence.status();
+    if (!board.ok && board.reason === "board-lock-invalid") {
+      res.status(503).json({
+        ok: false,
+        ready: true,
+        id,
+        reason: board.reason,
+        message: board.message,
+      });
+      return;
+    }
+    res.json({
+      ok: true,
+      ready: true,
+      id,
+      board: board.ok ? "ok" : board.reason,
+    });
   });
   app.get("/maintenancez", (_req, res) => {
     if (!maintenance) {
@@ -304,6 +338,7 @@ export async function startStandaloneProjectHostConatPersist({
     maintenance,
     persistServer,
     boardPersistServer,
+    boardWriteFence,
     port: bindPort,
   };
 }

@@ -22,6 +22,8 @@ DEVELOPMENT:
 
 */
 
+import type { WriteFence } from "@cocalc/conat/persist/board-write-fence";
+
 import { EventEmitter } from "events";
 import {
   Message,
@@ -197,6 +199,9 @@ export interface CoreStreamOptions {
   // storage path belongs to: a project host's board manager writes a
   // project's board stream as the hub (conat/persist/board-policy.ts).
   persistUser?: User;
+  // Sent with every write: the board write service's fence
+  // (conat/persist/board-write-fence.ts).
+  writeFence?: WriteFence;
 
   initPhaseReporter?: CoreStreamInitPhaseReporter;
 }
@@ -282,6 +287,7 @@ export class CoreStream<T = any> extends EventEmitter {
   // an account.
   private user: User;
   private persistUser?: User;
+  private writeFence?: WriteFence;
   private storage: StorageOptions;
   private client?: Client;
   private persistClient: PersistStreamClient;
@@ -312,6 +318,7 @@ export class CoreStream<T = any> extends EventEmitter {
     client,
     service,
     persistUser,
+    writeFence,
     initPhaseReporter,
     bootstrapRetry = true,
   }: CoreStreamOptions) {
@@ -326,6 +333,7 @@ export class CoreStream<T = any> extends EventEmitter {
     this.service = service;
     this.user = { account_id, project_id, host_id };
     this.persistUser = persistUser;
+    this.writeFence = writeFence;
     this.name = name;
     this.storage = {
       path: storagePath({ account_id, project_id, host_id, name }),
@@ -480,6 +488,7 @@ export class CoreStream<T = any> extends EventEmitter {
       user: this.persistUser ?? this.user,
       storage: this.storage,
       service: this.service,
+      writeFence: this.writeFence,
       registerRecoveryWithScheduler: false,
       initReporter: (phase, details) => {
         this.emitInitPhase(phase as CoreStreamInitPhase, details);

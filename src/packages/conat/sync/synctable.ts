@@ -1,3 +1,4 @@
+import type { WriteFence } from "@cocalc/conat/persist/board-write-fence";
 import { SyncTableKV } from "./synctable-kv";
 import { SyncTableStream } from "./synctable-stream";
 import refCache from "@cocalc/util/refcache";
@@ -51,6 +52,7 @@ export interface SyncTableOptions {
   // For stream tables: the persist service and the identity to ask it as.
   service?: string;
   persistUser?: User;
+  writeFence?: WriteFence;
 }
 
 export const createSyncTable = refCache<SyncTableOptions, ConatSyncTable>({

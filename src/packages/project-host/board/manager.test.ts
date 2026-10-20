@@ -33,6 +33,8 @@ import { fsServer } from "@cocalc/conat/files/fs";
 import { dstream } from "@cocalc/conat/sync/dstream";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import { BOARD_WRITE_MAX_TTL_MS } from "@cocalc/conat/persist/board-write-fence";
+import * as testSetup from "@cocalc/backend/conat/test/setup";
 import { boardSyncdbPath } from "@cocalc/util/board/names";
 import {
   type ReplaceHooks,
@@ -1111,6 +1113,11 @@ test("an invalid snapshot checkpoint is repaired through the board write service
     name: patchesStreamName({ path: boardSyncdbPath(t.path) }),
     service: BOARD_WRITE_SERVICE,
     persistUser: {},
+    // A board writer's fence: the test write service's nonce.
+    writeFence: {
+      expectedNonce: testSetup.boardWriteFence!.nonce,
+      ttlMs: BOARD_WRITE_MAX_TTL_MS,
+    },
     noInventory: true,
   });
   const n = ds.length;
@@ -1134,6 +1141,88 @@ test("an invalid snapshot checkpoint is repaired through the board write service
   try {
     expect(itemText(syncdb, "b")).toBe("before the bad checkpoint");
   } finally {
+    await syncdb.close();
+  }
+});
+
+test("the manager's writer carries the write service's nonce, and can't open without a lock", async () => {
+  const project_id = uuid();
+  const path = "/home/user/fence.board.json";
+  const old = testSetup.boardWriteFence;
+  // The host has no board write lock: the writer refuses to open.
+  testSetup.setBoardWriteFence(undefined);
+  try {
+    await expect(
+      openBoardSyncdb({
+        writer: true,
+        client: connect(),
+        project_id,
+        path,
+        service: fileserver.service,
+        timeoutMs: 20_000,
+      }),
+    ).rejects.toThrow(/board writes are unavailable/);
+  } finally {
+    testSetup.setBoardWriteFence(old);
+  }
+  // With the lock, it opens and writes, fenced with the current nonce.
+  const syncdb = await openBoardSyncdb({
+    writer: true,
+    client: connect(),
+    project_id,
+    path,
+    service: fileserver.service,
+    timeoutMs: 20_000,
+  });
+  try {
+    syncdb.set({ type: "doc", page: "", id: "", title: "fenced" });
+    syncdb.commit();
+    await syncdb.save();
+    // The write service restarts (a new nonce): this writer's writes are
+    // refused from now on, never re-signed.
+    testSetup.setBoardWriteFence({
+      nonce: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+      assertWritable() {},
+    });
+    const probe = dstream({
+      client: connect(),
+      project_id,
+      name: patchesStreamName({ path: boardSyncdbPath(path) }),
+      service: BOARD_WRITE_SERVICE,
+      persistUser: {},
+      writeFence: {
+        expectedNonce: old!.nonce,
+        ttlMs: BOARD_WRITE_MAX_TTL_MS,
+      },
+      noInventory: true,
+    });
+    const ds = await probe;
+    ds.publish({ stale: true });
+    // One attempt, refused by the server ("instance"), as every attempt
+    // with this writer's nonce will be.
+    await expect((ds as any).attemptToSaveBatch()).rejects.toThrow(
+      /sent to another server instance/,
+    );
+    ds.close();
+    // Read back through the new instance: the stale write was not stored.
+    const reader = await dstream({
+      client: connect(),
+      project_id,
+      name: patchesStreamName({ path: boardSyncdbPath(path) }),
+      service: BOARD_WRITE_SERVICE,
+      persistUser: {},
+      writeFence: {
+        expectedNonce: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        ttlMs: BOARD_WRITE_MAX_TTL_MS,
+      },
+      noInventory: true,
+      noCache: true,
+    });
+    expect(reader.getAll().some((m: any) => m?.stale)).toBe(false);
+    expect(reader.length).toBeGreaterThan(0); // the fenced writes are there
+    reader.close();
+  } finally {
+    testSetup.setBoardWriteFence(old);
     await syncdb.close();
   }
 });

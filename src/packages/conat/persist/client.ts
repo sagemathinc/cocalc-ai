@@ -23,6 +23,7 @@ import { persistSubject, SERVICE, type User } from "./util";
 import { assertHasWritePermission as assertHasWritePermission0 } from "./auth";
 import { refCacheSync } from "@cocalc/util/refcache";
 import { EventEmitter } from "events";
+import type { WriteFence } from "./board-write-fence";
 import { getLogger } from "@cocalc/conat/logger";
 import { until } from "@cocalc/util/async-utils";
 import {
@@ -236,6 +237,7 @@ class PersistStreamClient extends EventEmitter {
     private service = SERVICE,
     initReporter?: PersistClientInitReporter,
     registerRecoveryWithScheduler: boolean = true,
+    private writeFence?: WriteFence,
   ) {
     super();
     this.setMaxListeners(100);
@@ -887,6 +889,7 @@ class PersistStreamClient extends EventEmitter {
         raw: messageData.raw,
         encoding: messageData.encoding,
         headers: {
+          ...this.fenceHeaders(),
           headers: messageData.headers,
           cmd: "set",
           key,
@@ -910,6 +913,7 @@ class PersistStreamClient extends EventEmitter {
     return this.checkForError(
       await this.socket.request(ops, {
         headers: {
+          ...this.fenceHeaders(),
           cmd: "setMany",
           timeout,
         },
@@ -934,6 +938,7 @@ class PersistStreamClient extends EventEmitter {
     return this.checkForError(
       await this.socket.request(null, {
         headers: {
+          ...this.fenceHeaders(),
           cmd: "delete",
           seq,
           seqs,
@@ -956,6 +961,7 @@ class PersistStreamClient extends EventEmitter {
     return this.checkForError(
       await this.socket.request(null, {
         headers: {
+          ...(config != null ? this.fenceHeaders() : {}),
           cmd: "config",
           config,
           timeout,
@@ -988,6 +994,7 @@ class PersistStreamClient extends EventEmitter {
     return this.checkForError(
       await this.socket.request(metadata ?? null, {
         headers: {
+          ...this.fenceHeaders(),
           cmd: "setMetadata",
           timeout,
         } as any,
@@ -1003,6 +1010,7 @@ class PersistStreamClient extends EventEmitter {
     return this.checkForError(
       await this.socket.request(delta, {
         headers: {
+          ...this.fenceHeaders(),
           cmd: "patchMetadata",
           timeout,
         } as any,
@@ -1019,6 +1027,7 @@ class PersistStreamClient extends EventEmitter {
     return this.checkForError(
       await this.socket.request(opts, {
         headers: {
+          ...this.fenceHeaders(),
           cmd: "resetHistory",
           timeout,
         } as any,
@@ -1050,6 +1059,7 @@ class PersistStreamClient extends EventEmitter {
     return this.checkForError(
       await this.socket.request(checkpoint, {
         headers: {
+          ...this.fenceHeaders(),
           cmd: "setCheckpoint",
           timeout,
         } as any,
@@ -1065,6 +1075,7 @@ class PersistStreamClient extends EventEmitter {
     this.checkForError(
       await this.socket.request(null, {
         headers: {
+          ...this.fenceHeaders(),
           cmd: "deleteCheckpoint",
           name,
           timeout,
@@ -1454,6 +1465,27 @@ class PersistStreamClient extends EventEmitter {
     }
   };
 
+  // The headers a fenced writer adds to every mutating request.
+  private fenceHeaders = (): Partial<WriteFence> =>
+    this.writeFence == null
+      ? {}
+      : {
+          expectedNonce: this.writeFence.expectedNonce,
+          ttlMs: this.writeFence.ttlMs,
+        };
+
+  // The board write service's instance nonce (board-write-fence.ts), or null.
+  boardInstance = async ({ timeout }: { timeout?: number } = {}): Promise<
+    string | null
+  > => {
+    return this.checkForError(
+      await this.socket.request(null, {
+        headers: { cmd: "boardInstance", timeout },
+        timeout,
+      }),
+    );
+  };
+
   // id of the remote server we're connected to
   serverId = async () => {
     return this.checkForError(
@@ -1484,6 +1516,9 @@ interface Options {
   service?: string;
   initReporter?: PersistClientInitReporter;
   registerRecoveryWithScheduler?: boolean;
+  // Sent with every mutating request (board-write-fence.ts); for the board
+  // write service.
+  writeFence?: WriteFence;
 }
 
 export const stream = refCacheSync<Options, PersistStreamClient>({
@@ -1497,13 +1532,16 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
     client,
     service = SERVICE,
     registerRecoveryWithScheduler = true,
+    writeFence,
   }: Options) => {
+    // A fenced writer never shares a client with another fence (or none).
     return JSON.stringify([
       user,
       storage,
       client.id,
       service,
       registerRecoveryWithScheduler,
+      writeFence ?? null,
     ]);
   },
   createObject: ({
@@ -1513,6 +1551,7 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
     service = SERVICE,
     initReporter,
     registerRecoveryWithScheduler = true,
+    writeFence,
   }: Options) => {
     // avoid wasting server resources, etc., by always checking permissions client side first
     assertHasWritePermission({ user, storage, service });
@@ -1523,6 +1562,7 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
       service,
       initReporter,
       registerRecoveryWithScheduler,
+      writeFence,
     );
   },
 });

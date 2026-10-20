@@ -3,7 +3,9 @@ A board's stream through real persist servers: the ordinary service only
 reads it, and only the board write service (as the hub) writes it.
 */
 
+import * as setup from "@cocalc/backend/conat/test/setup";
 import { before, after, connect } from "@cocalc/backend/conat/test/setup";
+import { BOARD_WRITE_MAX_TTL_MS } from "@cocalc/conat/persist/board-write-fence";
 import { dstream } from "@cocalc/conat/sync/dstream";
 import { astream } from "@cocalc/conat/sync/astream";
 import {
@@ -28,6 +30,12 @@ jest.setTimeout(30_000);
 const name = (path: string) =>
   patchesStreamName({ path: boardSyncdbPath(path) });
 
+// The fence a board writer sends: the test server's current nonce.
+const fence = (nonce = setup.boardWriteFence!.nonce) => ({
+  expectedNonce: nonce,
+  ttlMs: BOARD_WRITE_MAX_TTL_MS,
+});
+
 function writerStream(project_id: string, path: string) {
   return dstream({
     client: connect(),
@@ -35,6 +43,7 @@ function writerStream(project_id: string, path: string) {
     name: name(path),
     service: BOARD_WRITE_SERVICE,
     persistUser: {},
+    writeFence: fence(),
     noInventory: true,
   });
 }
@@ -230,6 +239,7 @@ describe("the write service's transport bounds", () => {
       user: {},
       storage: { path: storagePath({ project_id, name: name(path) }) },
       service: BOARD_WRITE_SERVICE,
+      writeFence: fence(),
     });
   }
 
@@ -294,6 +304,112 @@ describe("the write service's transport bounds", () => {
     ).rejects.toThrow(/timeout/i);
     const reply = await client.request(subject, null, { timeout: 5000 });
     expect(reply.data?.id).toBeTruthy();
+  });
+});
+
+describe("the write service's fence (A2b 5a)", () => {
+  function raw(project_id: string, path: string, writeFence?) {
+    return persistStream({
+      client: connect(),
+      user: {},
+      storage: { path: storagePath({ project_id, name: name(path) }) },
+      service: BOARD_WRITE_SERVICE,
+      ...(writeFence ? { writeFence } : {}),
+      noCache: true,
+    });
+  }
+  const one = () => messageData({ edit: 1 });
+
+  test("the write service reports its instance nonce; the ordinary service refuses to", async () => {
+    const project_id = uuid();
+    const w = raw(project_id, "/home/user/n.board.json");
+    expect(await w.boardInstance()).toBe(setup.boardWriteFence!.nonce);
+    w.close();
+    const r = persistStream({
+      client: connect(),
+      user: { project_id },
+      storage: {
+        path: storagePath({
+          project_id,
+          name: name("/home/user/n.board.json"),
+        }),
+      },
+      noCache: true,
+    });
+    // Not on the ordinary service's read allowlist for board streams.
+    await expect(r.boardInstance()).rejects.toThrow(/read-only/);
+    r.close();
+  });
+
+  test("a write without the fence, or with another instance's nonce, is refused and stores nothing", async () => {
+    const project_id = uuid();
+    const path = "/home/user/fenced.board.json";
+    const none = raw(project_id, path);
+    await expect(none.set({ messageData: one() })).rejects.toMatchObject({
+      code: "instance",
+    });
+    none.close();
+    const other = raw(
+      project_id,
+      path,
+      fence("fedcba9876543210fedcba9876543210"),
+    );
+    await expect(other.set({ messageData: one() })).rejects.toMatchObject({
+      code: "instance",
+    });
+    // Other mutating commands are fenced too.
+    await expect(other.setMetadata({ x: 1 })).rejects.toMatchObject({
+      code: "instance",
+    });
+    other.close();
+    const ok = raw(project_id, path, fence());
+    // Nothing was stored by the refused writes.
+    expect(await ok.getAll()).toEqual([]);
+    const { seq } = await ok.set({ messageData: one() });
+    expect(seq).toBe(1);
+    ok.close();
+  });
+
+  test("the restart race: a write signed for the old instance reaches a new one and is refused", async () => {
+    const project_id = uuid();
+    const path = "/home/user/race.board.json";
+    const old = setup.boardWriteFence!;
+    const w = raw(project_id, path, fence(old.nonce));
+    // The server process restarts between the writer reading the nonce and
+    // its write: the new process has a new nonce.
+    setup.setBoardWriteFence({
+      nonce: "00112233445566778899aabbccddeeff",
+      assertWritable() {},
+    });
+    try {
+      await expect(w.set({ messageData: one() })).rejects.toMatchObject({
+        code: "instance",
+      });
+      const check = raw(project_id, path, fence());
+      expect(await check.getAll()).toEqual([]);
+      check.close();
+    } finally {
+      setup.setBoardWriteFence(old);
+      w.close();
+    }
+  });
+
+  test("without a lock, every board write is refused 'lock'; reads still work", async () => {
+    const project_id = uuid();
+    const path = "/home/user/nolock.board.json";
+    const old = setup.boardWriteFence;
+    const w = raw(project_id, path, fence());
+    setup.setBoardWriteFence(undefined);
+    try {
+      await expect(w.set({ messageData: one() })).rejects.toMatchObject({
+        code: "lock",
+      });
+      expect(await w.getAll()).toEqual([]);
+      expect(await w.boardInstance()).toBe(null);
+    } finally {
+      setup.setBoardWriteFence(old);
+      w.close();
+    }
   });
 });
 

@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { WriteFence } from "@cocalc/conat/persist/board-write-fence";
+
 /*
 SyncDoc -- the core class for editing with a synchronized document.
 
@@ -173,7 +175,12 @@ export interface SyncOpts0 {
   // Where the patches stream is written: a persist service, and the identity
   // to ask it as. A board's manager writes its board stream through the host's
   // board write service, as the hub (conat/persist/board-policy.ts).
-  patchesPersist?: { service: string; persistUser: Record<string, never> };
+  patchesPersist?: {
+    service: string;
+    persistUser: Record<string, never>;
+    // The board write service's fence (conat/persist/board-write-fence.ts).
+    writeFence?: WriteFence;
+  };
 
   // if true, do not register backend sync-fs watching for this document.
   // This still allows explicit save_to_disk writes.

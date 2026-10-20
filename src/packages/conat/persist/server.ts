@@ -79,6 +79,10 @@ import {
   BOARD_WRITE_SERVICE,
   type BoardStreamAccess,
 } from "./board-policy";
+import {
+  assertBoardWriteFence,
+  type BoardWriteFence,
+} from "./board-write-fence";
 import { throttle } from "lodash";
 import { type SetOptions } from "./client";
 import { once } from "@cocalc/util/async-utils";
@@ -163,11 +167,16 @@ export function server({
   id = "0",
   clusterMode,
   maintenance,
+  boardWriteFence,
 }: {
   client: Client;
   messagesThresh?: number;
   service?: string;
   id?: string;
+  // The board write service's fence (board-write-fence.ts), read at each
+  // request: it can appear later (the lock is taken in the background) or
+  // go away. Without one every board write is refused "lock".
+  boardWriteFence?: () => BoardWriteFence | undefined;
   // if false, runs it's own internal load balancer that always returns this server
   clusterMode?: boolean;
   maintenance?: PersistMaintenanceHooks;
@@ -384,6 +393,9 @@ export function server({
     });
 
     socket.on("request", async (mesg) => {
+      // Before anything is awaited: a board write's time to live counts
+      // from here.
+      const receivedAt = performance.now();
       const request = mesg.headers;
       // log("got request", request);
 
@@ -403,6 +415,16 @@ export function server({
           throw Error("bug");
         }
         assertBoardCommandAllowed(boardAccess, request);
+        if (boardWrite) {
+          // Synchronous, immediately before the store below: a request that
+          // fails a check stores nothing.
+          assertBoardWriteFence({
+            fence: boardWriteFence?.(),
+            request,
+            receivedAt,
+            now: performance.now(),
+          });
+        }
         if (request.cmd == "set") {
           mesg.respondSync(
             stream.set({
@@ -485,6 +507,12 @@ export function server({
           mesg.respondSync(resp);
         } else if (request.cmd == "serverId") {
           mesg.respondSync(server.id);
+        } else if (request.cmd == "boardInstance") {
+          // This process's instance nonce (board-write-fence.ts), or null if
+          // it may not write board streams.
+          mesg.respondSync(
+            boardWrite ? (boardWriteFence?.()?.nonce ?? null) : null,
+          );
         } else if (request.cmd == "getAll") {
           log("getAll", { subject: socket.subject, request });
           if (request.changefeed && !changefeed) {

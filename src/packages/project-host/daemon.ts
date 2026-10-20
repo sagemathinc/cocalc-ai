@@ -10,6 +10,12 @@ import {
 import { readProjectHostActivitySnapshot } from "./health-progress";
 import { getProjectHostProcessTitle } from "./process-role";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
+import {
+  BOARD_WRITE_LOCK_ENV,
+  BOARD_WRITE_LOCK_ID_ENV,
+  ensureBoardWriteLockFile,
+  formatLockFileId,
+} from "./board/write-lock";
 
 type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
 
@@ -727,6 +733,22 @@ function resolveEnv(index: number): {
   }
   env.COCALC_DATA = env.COCALC_DATA ?? dataDir;
   env.DATA = env.DATA ?? dataDir;
+  // The board write lock (board/write-lock.ts): created once, here, and
+  // never replaced; its path and identity go to every process this daemon
+  // starts, so that whichever serves board writes checks it is the same file.
+  if (!env[BOARD_WRITE_LOCK_ENV]) {
+    env[BOARD_WRITE_LOCK_ENV] = path.join(dataDir, "board-write.lock");
+  }
+  if (!env[BOARD_WRITE_LOCK_ID_ENV] && fs.existsSync(dataDir)) {
+    try {
+      env[BOARD_WRITE_LOCK_ID_ENV] = formatLockFileId(
+        ensureBoardWriteLockFile(env[BOARD_WRITE_LOCK_ENV]),
+      );
+    } catch {
+      // The board write service then takes the file as it finds it, and
+      // checks only its filesystem; board editing is off without a lock.
+    }
+  }
   if (!env.COCALC_BIN_PATH && env.COCALC_PROJECT_TOOLS) {
     env.COCALC_BIN_PATH = env.COCALC_PROJECT_TOOLS;
   }

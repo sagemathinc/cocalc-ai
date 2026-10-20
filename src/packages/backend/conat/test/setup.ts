@@ -11,6 +11,8 @@ import { closeConatClientForTests } from "@cocalc/conat/client";
 import { Client as ConatClientClass } from "@cocalc/conat/core/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import type { BoardWriteFence } from "@cocalc/conat/persist/board-write-fence";
+import { randomBytes } from "node:crypto";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,6 +59,16 @@ export let persistServer: any = null;
 // The board write service (conat/persist/board-policy.ts), as a project host
 // runs it beside the persist server.
 export let boardPersistServer: any = null;
+// The board write service's fence in tests: a fixed nonce for this test
+// process, with nothing to lose (project-host/board/write-lock.ts holds the
+// real lock, and has its own tests). Tests may replace it.
+export let boardWriteFence: BoardWriteFence | undefined = {
+  nonce: randomBytes(16).toString("hex"),
+  assertWritable() {},
+};
+export function setBoardWriteFence(fence: BoardWriteFence | undefined) {
+  boardWriteFence = fence;
+}
 let cleanedUp = false;
 let cleaningUp: Promise<void> | null = null;
 
@@ -142,6 +154,7 @@ export async function restartPersistServer() {
   boardPersistServer = createPersistServer({
     client,
     service: BOARD_WRITE_SERVICE,
+    boardWriteFence: () => boardWriteFence,
   });
 }
 
@@ -172,6 +185,7 @@ export async function before(
   boardPersistServer = createPersistServer({
     client,
     service: BOARD_WRITE_SERVICE,
+    boardWriteFence: () => boardWriteFence,
   });
   setConatClient({
     conat: connect,
