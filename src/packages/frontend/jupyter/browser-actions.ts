@@ -241,10 +241,16 @@ export class JupyterActions extends JupyterActions0 {
   // Settles once the open has chosen between the stored (RTC) notebook and
   // the .ipynb file and applied it (or the first load from disk failed):
   // until then an empty notebook may just not have been loaded yet.
-  private settleInitialSource: () => void = () => {};
+  private resolveInitialSource: () => void = () => {};
   private initialSourceSettled: Promise<void> = new Promise((resolve) => {
-    this.settleInitialSource = resolve;
+    this.resolveInitialSource = resolve;
   });
+  private settleInitialSource = (): void => {
+    this.resolveInitialSource();
+    if (!this.isClosed() && !this.store?.get("initial_source_settled")) {
+      this.setState({ initial_source_settled: true });
+    }
+  };
   private openInitStartedAt?: number;
   private openInitMarks: Record<string, number> = {};
   private openInitSummaryLogged = false;

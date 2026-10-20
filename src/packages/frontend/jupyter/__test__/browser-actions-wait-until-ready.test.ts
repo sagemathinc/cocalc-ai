@@ -85,4 +85,21 @@ describe("JupyterActions.wait_until_ready", () => {
     await done;
     expect(ready).toBe(true);
   });
+
+  it("settling the initial source marks the store and wakes waiters", async () => {
+    const actions: any = new JupyterActions("jupyter-test", {
+      getStore: jest.fn(() => undefined),
+      removeActions: jest.fn(),
+    } as any);
+    actions.isClosed = () => false;
+    actions.store = { get: () => undefined };
+    actions.setState = jest.fn();
+
+    actions.settleInitialSource();
+
+    await actions.initialSourceSettled;
+    expect(actions.setState).toHaveBeenCalledWith({
+      initial_source_settled: true,
+    });
+  });
 });

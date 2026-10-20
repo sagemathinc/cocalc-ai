@@ -15,6 +15,8 @@
 // characters. Command keys such as Ctrl+S insert nothing and are ignored.
 
 import { useEffect, useRef } from "react";
+import { useRedux } from "@cocalc/frontend/app-framework";
+import { Loading } from "@cocalc/frontend/components";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { JupyterActions } from "./browser-actions";
@@ -30,6 +32,9 @@ export function EmptyNotebookPlaceholder({
   fontSize,
   autoFocus,
 }: Props) {
+  // Until the notebook has loaded (from the file, if need be), no cells may
+  // just mean not loaded yet, and a cell created now could be lost.
+  const loaded = !!useRedux([actions.name, "initial_source_settled"]);
   const frameActions = useNotebookFrameActions();
   const ref = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
@@ -45,7 +50,7 @@ export function EmptyNotebookPlaceholder({
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
-  }, [autoFocus]);
+  }, [autoFocus, loaded]);
 
   useEffect(() => restoreKeys, []);
 
@@ -78,6 +83,14 @@ export function EmptyNotebookPlaceholder({
     const text = ref.current?.value ?? "";
     if (text) start(text);
   };
+
+  if (!loaded) {
+    return (
+      <div style={{ margin: "15px", textAlign: "center" }}>
+        <Loading />
+      </div>
+    );
+  }
 
   return (
     <textarea

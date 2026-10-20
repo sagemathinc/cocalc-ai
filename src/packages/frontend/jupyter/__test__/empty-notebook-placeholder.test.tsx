@@ -26,10 +26,26 @@ jest.mock(
   }),
 );
 
+let loaded = true;
+
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  useRedux: ([name, key]: string[]) =>
+    name === "jupyter-test" && key === "initial_source_settled"
+      ? loaded
+      : undefined,
+}));
+
+jest.mock("@cocalc/frontend/components", () => ({
+  Loading: () => <div>Loading...</div>,
+}));
+
 import { EmptyNotebookPlaceholder } from "../empty-notebook-placeholder";
 
 function renderPlaceholder() {
-  const actions: any = { createFirstCell: jest.fn(() => "alpha") };
+  const actions: any = {
+    name: "jupyter-test",
+    createFirstCell: jest.fn(() => "alpha"),
+  };
   render(<EmptyNotebookPlaceholder actions={actions} />);
   return {
     actions,
@@ -43,10 +59,24 @@ describe("EmptyNotebookPlaceholder", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
+    loaded = true;
   });
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it("offers no editing until the notebook has loaded", () => {
+    loaded = false;
+    const actions: any = {
+      name: "jupyter-test",
+      createFirstCell: jest.fn(() => "alpha"),
+    };
+    render(<EmptyNotebookPlaceholder actions={actions} />);
+
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByText("Loading...")).toBeTruthy();
+    expect(actions.createFirstCell).not.toHaveBeenCalled();
   });
 
   it("stores nothing just by being shown", () => {
@@ -140,7 +170,10 @@ describe("EmptyNotebookPlaceholder", () => {
   });
 
   it("does not turn shortcuts back on unless it turned them off", () => {
-    const actions: any = { createFirstCell: jest.fn(() => "alpha") };
+    const actions: any = {
+      name: "jupyter-test",
+      createFirstCell: jest.fn(() => "alpha"),
+    };
     const { unmount } = render(<EmptyNotebookPlaceholder actions={actions} />);
 
     unmount(); // e.g. a collaborator added a cell to an unfocused frame
