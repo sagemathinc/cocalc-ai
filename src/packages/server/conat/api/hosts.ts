@@ -9089,10 +9089,14 @@ export async function reconcileHostSoftware({
 
 export async function setHostPublicRouteMode({
   account_id,
+  browser_id,
+  session_hash,
   id,
   mode,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   mode: HostPublicRouteMode;
 }): Promise<HostLroResponse> {
@@ -9101,11 +9105,24 @@ export async function setHostPublicRouteMode({
       "public route mode must be cloudflare-tunnel or cloudflare-proxy",
     );
   }
+  // Changes the host's public ingress and DNS routing.
+  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
-      .setHostPublicRouteMode({ account_id, id, mode });
+      .setHostPublicRouteMode({
+        account_id,
+        browser_id,
+        session_hash: auth.session_hash ?? session_hash,
+        id,
+        mode,
+      });
   }
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
