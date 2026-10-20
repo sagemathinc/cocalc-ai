@@ -2,6 +2,7 @@
 // This allows users to browse and generally use the filesystem of any project,
 // without having to run that project.
 
+import { createContentPathChecker } from "./content-origin";
 import { createHash, randomUUID } from "node:crypto";
 import { withArtifactCatalog } from "./artifact-catalog";
 import {
@@ -5296,6 +5297,12 @@ async function createProjectFilesystem(project_id: string) {
       await deleteSnapshot({ project_id, name }),
   });
 }
+
+// For content links (content-origin.ts): whether path, with symlinks
+// resolved, is dir or inside it (dir resolved the same way).
+export const projectRealPathWithinDir = createContentPathChecker({
+  createFs: createProjectFilesystem,
+});
 
 export async function ensureFileDownloadReadServer({
   client,
