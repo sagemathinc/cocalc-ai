@@ -205,9 +205,10 @@ describeDb("agent identity watchers", () => {
       ...extra,
     });
     const id = randomUUID();
+    const replacement = randomUUID();
     listCredentials.mockResolvedValue([
       credential(id, { revoked: at("2026-10-20T02:00:00Z") }),
-      credential(randomUUID(), { updated: at("2026-10-20T03:00:00Z") }),
+      credential(replacement, { updated: at("2026-10-20T03:00:00Z") }),
       // Another kind or provider does not count.
       credential(randomUUID(), {
         kind: "anthropic-api-key",
@@ -229,6 +230,9 @@ describeDb("agent identity watchers", () => {
       updated_at: Date.parse("2026-10-20T01:00:00Z"),
       revoked: true,
       newest_updated_at: Date.parse("2026-10-20T03:00:00Z"),
+      // Its id, so the held turn runs with it (William approved: the id
+      // only, never the secret or its label).
+      newest_credential_id: replacement,
     });
     expect(JSON.stringify(answer)).not.toMatch(/Max A|secret/);
     expect(listCredentials).toHaveBeenCalledWith({
