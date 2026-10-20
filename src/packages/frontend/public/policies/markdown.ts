@@ -88,9 +88,15 @@ function inline(node: ReactNode): string {
   const { type } = node;
   if (type === Fragment || type === "span") return inline(children);
   if (type === A || type === "a") {
-    const text = inline(children).trim();
+    // Spacing at the edges of the label stays outside the link: it may be
+    // the only separator from the text around it.
+    const [, before, label, after] = /^(\s*)([\s\S]*?)(\s*)$/.exec(
+      inline(children),
+    )!;
     const { href } = props(node);
-    return href ? `[${text}](${href})` : text;
+    return href && label
+      ? `${before}[${label}](${href})${after}`
+      : `${before}${label}${after}`;
   }
   if (type === "b" || type === "strong") return wrap(inline(children), "**");
   if (type === "i" || type === "em") return wrap(inline(children), "*");

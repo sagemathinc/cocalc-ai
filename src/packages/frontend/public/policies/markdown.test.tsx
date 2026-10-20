@@ -67,9 +67,45 @@ function headings(root: ParentNode): string[] {
   );
 }
 
-// Wording, ignoring layout whitespace (paragraph and cell boundaries).
+const BLOCKS = new Set([
+  "BLOCKQUOTE",
+  "BR",
+  "DIV",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "HR",
+  "LI",
+  "OL",
+  "P",
+  "PRE",
+  "TABLE",
+  "TBODY",
+  "TD",
+  "TH",
+  "THEAD",
+  "TR",
+  "UL",
+]);
+
+// Wording: the words in order, with whitespace collapsed, and a space at
+// every block boundary (paragraphs, list items, cells), so layout doesn't
+// matter but a lost space between two words does.
 function words(root: Element): string {
-  return (root.textContent ?? "").replace(/\s+/g, "");
+  const parts: string[] = [];
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      parts.push(node.textContent ?? "");
+      return;
+    }
+    const block = BLOCKS.has((node as Element).tagName);
+    if (block) parts.push(" ");
+    node.childNodes.forEach(walk);
+    if (block) parts.push(" ");
+  };
+  walk(root);
+  return parts.join("").replace(/\s+/g, " ").trim();
 }
 
 describe.each(BUILTIN_POLICIES.map((policy) => [policy.slug, policy]))(
@@ -104,6 +140,26 @@ describe.each(BUILTIN_POLICIES.map((policy) => [policy.slug, policy]))(
     });
   },
 );
+
+it("spacing at the edges of a link label stays outside the link", () => {
+  const policy = {
+    ...BUILTIN_POLICIES[0],
+    content: (
+      <p>
+        The history can be found at
+        <a href="https://github.com/sagemathinc/cocalc">
+          {" "}
+          github.com/sagemathinc/cocalc{" "}
+        </a>
+        today.
+      </p>
+    ),
+  };
+  const markdown = policyMarkdown(policy);
+  expect(markdown).toContain(
+    "found at [github.com/sagemathinc/cocalc](https://github.com/sagemathinc/cocalc) today.",
+  );
+});
 
 it("the copy served by the hub is current", () => {
   const expected = generatedModule();
