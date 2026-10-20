@@ -850,3 +850,19 @@ test("an edit of exactly 512 KiB is admitted", async () => {
   await settle();
   expect(await p).toEqual({ status: "committed" });
 });
+
+test("with one edit per commit, a second edit waits in the next slot and a third is busy", async () => {
+  const host = newHost({ ...BOARD_ADMISSION, maxEditsPerCommit: 1 });
+  const { submit, commits } = board({ host });
+  const a = submit(1, "a");
+  const b = submit(1, "b");
+  expect(await now(submit(1, "c"))).toMatchObject({ reason: "board-busy" });
+  await settle();
+  await settle(250);
+  expect(await Promise.all([a, b])).toEqual([
+    { status: "committed" },
+    { status: "committed" },
+  ]);
+  // One edit in each commit.
+  expect(commits.map((c) => c.edits.length)).toEqual([1, 1]);
+});

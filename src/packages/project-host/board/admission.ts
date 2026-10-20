@@ -70,6 +70,9 @@ export interface AdmissionLimits {
   hostWorkPerSecondMs: number;
   hostWorkBurstMs: number;
   maxClients: number;
+  // Edits a commit may hold (boards use 1: A2b design v9, step 6, so a
+  // commit's outcome is its edit's and its measure is exact).
+  maxEditsPerCommit: number;
 }
 
 export const BOARD_ADMISSION: Readonly<AdmissionLimits> = {
@@ -90,6 +93,7 @@ export const BOARD_ADMISSION: Readonly<AdmissionLimits> = {
   hostWorkBurstMs: 500,
   // Distinct clients remembered per board (each with its own bucket).
   maxClients: 256,
+  maxEditsPerCommit: Infinity,
 };
 
 export type Refusal = {
@@ -420,12 +424,14 @@ export class BoardAdmission<E> {
       });
     }
     // Where it would go, before anything is charged.
-    const target =
-      this.pending.bytes + bytes <= this.limits.maxCommitBytes
-        ? this.pending
-        : this.next.bytes + bytes <= this.limits.maxCommitBytes
-          ? this.next
-          : undefined;
+    const fits = (batch: Batch<E>) =>
+      batch.bytes + bytes <= this.limits.maxCommitBytes &&
+      batch.items.length < this.limits.maxEditsPerCommit;
+    const target = fits(this.pending)
+      ? this.pending
+      : fits(this.next)
+        ? this.next
+        : undefined;
     if (target === undefined) {
       return refused({
         reason: "board-busy",
