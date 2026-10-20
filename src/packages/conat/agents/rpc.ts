@@ -1,4 +1,5 @@
 import { requireUuid } from "./protocol";
+import { validateAgentRpcTurnState } from "./rpc-turn";
 import {
   validateExternalAgentSource,
   type ExternalAgentSource,
@@ -79,6 +80,8 @@ export interface AgentRpcOutcome extends AgentRpcAttempt {
   code?: AgentRpcFailureCode;
   chat_effect?: "none" | "saved" | "unknown";
   operation?: { id: string; disposition: "queued" | "running" | "steered" };
+  /** inspect: what became of the turn it started, if the recipient knows. */
+  turn?: import("./rpc-turn").AgentRpcTurnState;
 }
 
 export interface AgentRpcBroadcast {
@@ -383,6 +386,7 @@ export function validateAgentRpcOutcome(
         )))
   )
     throw new Error("Recipient acknowledgment is invalid or mismatched");
+  if (value.turn !== undefined) validateAgentRpcTurnState(value.turn);
 }
 
 export function validateAgentRpcBroadcastOutcome(

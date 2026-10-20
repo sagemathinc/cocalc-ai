@@ -2,6 +2,8 @@ import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesse
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
 import {
+  chainToolRan,
+  toolRanOf,
   parseTurnOutcome,
   turnFailureOf,
   turnOutcomeOf,
@@ -198,7 +200,6 @@ import {
   acpJobHasLiveFenceResume,
   ACP_PROJECT_RESUME_FENCE_REASON,
   ACP_PROJECT_RUNTIME_LOST_FENCE_REASON,
-  cancelQueuedAcpJob,
   cancelQueuedAcpJobForControl,
   claimNextQueuedAcpJobForThread,
   clearAcpJobRecoveryIntent,
@@ -233,6 +234,8 @@ import {
   stopAcpFenceResumesForThread,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
+  recordAcpJobOutcome,
+  cancelQueuedAcpJobReportingChange,
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
 import {
@@ -9545,16 +9548,30 @@ async function wakeAcpQueueForFencedWork(): Promise<void> {
   }
 }
 
-function reportFencedAgentMessage(job: AcpJobRow, detail: string): void {
-  // A resumed turn reports through the turn it continues, never twice.
-  if (`${job.recovery_parent_op_id ?? ""}`.trim()) return;
-  // A message that never ran still has a reply cut-off: when it was sent.
+function reportFencedAgentMessage(
+  job: AcpJobRow,
+  detail: string,
+  outcome: TurnOutcome,
+): void {
+  recordAcpJobOutcome(job.op_id, outcome);
+  // A resumed turn reports for its whole chain (once: see
+  // reportFailedAgentMessageTurn). A message that never ran still has a
+  // reply cut-off: when it was sent.
   reportFailedAgentMessageTurn(
     { ...job, started_at: job.started_at ?? job.created_at },
     decodeAcpJobRequest(job),
     detail,
+    outcome,
   );
 }
+
+/** A cut-off turn that a restart could not resume. Whether it ran tools is
+ * not known here. */
+const RESTART_NOT_RESUMED_OUTCOME: TurnOutcome = {
+  version: 1,
+  state: "failed",
+  failure: { kind: "host-lost" },
+};
 
 // Why a cut-off turn must not resume, or undefined if it may.  These reasons
 // do not change while it waits; newer messages winning can (see below).
@@ -9728,6 +9745,9 @@ async function resumeFencedAcpJob(
         reportFencedAgentMessage(
           job,
           "The recipient's project restarted while it worked on your message, and that turn could not be resumed.",
+          superseded
+            ? { version: 1, state: "canceled", by: "superseded" }
+            : RESTART_NOT_RESUMED_OUTCOME,
         );
       }
       return;
@@ -9788,6 +9808,7 @@ async function resumeFencedAcpJob(
     reportFencedAgentMessage(
       job,
       "The recipient's project restarted while it worked on your message, and that turn could not be resumed.",
+      RESTART_NOT_RESUMED_OUTCOME,
     );
   }
   if (claimed && continued) {
@@ -9886,6 +9907,13 @@ async function processAcpFenceIntent(
           ran
             ? "The recipient's project was stopped while it worked on your message; that turn did not finish."
             : "The recipient's project was stopped before your message ran; it was not run.",
+          ran
+            ? {
+                version: 1,
+                state: "failed",
+                failure: { kind: "project-stopped" },
+              }
+            : { version: 1, state: "never-started", reason: "project-stopped" },
         );
       }
       return;
@@ -10048,22 +10076,36 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   const path = `${job.path}`.trim();
   const thread_id = `${job.thread_id}`.trim();
   const user_message_id = `${job.user_message_id}`.trim();
-  if (!project_id || !path || !thread_id || !user_message_id) {
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "error",
-      error: "queued acp job missing required thread identity",
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+  // Ended before anything ran: an agent that sent it is told so.
+  const endWithoutRunning = (
+    state: "error" | "canceled",
+    error: string,
+  ): void => {
+    const outcome = turnOutcomeOf({
+      terminalState: "error",
+      error,
+      toolRan: false,
     });
+    // A fence (project stop) may have taken the job meanwhile: it reports.
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
+      op_id: job.op_id,
+      state,
+      error,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+      outcome,
+    });
+    if (ended) reportFailedAgentMessageTurn(job, request, error, outcome);
+  };
+  if (!project_id || !path || !thread_id || !user_message_id) {
+    endWithoutRunning(
+      "error",
+      "queued acp job missing required thread identity",
+    );
     return;
   }
   if (!conatClient) {
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "error",
-      error: "conat client must be initialized",
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
+    endWithoutRunning("error", "conat client must be initialized");
     return;
   }
   let latestQueuedMessageContent: string | undefined;
@@ -10102,12 +10144,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         !request.chat?.agent_rpc_report)
     )
       await writeQueuedJobFailureToChat({ request, error: `${err}` });
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "canceled",
-      error: `${err}`,
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
+    endWithoutRunning("canceled", `${err}`);
     return;
   }
 
@@ -10152,7 +10189,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     // Record progress now so the host watchdog cannot mistake that gap for a
     // stall.
     noteDetachedWorkerExecutionSettled(job.op_id);
-    setAcpJobState({
+    // A fence (project stop) or cancel may have ended the job while the turn
+    // unwound: then it, not this worker, resumes or reports the turn.
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state: result.terminalState,
       error: result.terminalState === "error" ? result.error : undefined,
@@ -10165,6 +10205,13 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     let resumed: AcpJobRow | undefined;
     let recoveryPending = false;
+    if (!ended) {
+      logger.info("queued acp job was ended by another path while it ran", {
+        op_id: job.op_id,
+        state: getAcpJobByOpId(job.op_id)?.state,
+      });
+      return;
+    }
     if (result.terminalState === "error" && result.recoveryCode) {
       try {
         resumed = await enqueueFailureRecoveryContinuation({
@@ -10186,7 +10233,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     }
     // A turn that is (or may still be) retried is not over; the others are
     // reported to the agent whose message started them.
-    if (result.terminalState === "error" && !resumed && !recoveryPending)
+    // Stopped by a person counts too: the sender would otherwise wait.
+    if (result.terminalState !== "completed" && !resumed && !recoveryPending)
       reportFailedAgentMessageTurn(
         job,
         refreshedRequest,
@@ -10210,18 +10258,37 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       request,
       error: message,
     });
-    setAcpJobState({
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state: "error",
       error: message,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
       outcome,
     });
-    reportFailedAgentMessageTurn(job, request, message, outcome);
+    if (ended) reportFailedAgentMessageTurn(job, request, message, outcome);
   }
 }
 
-/** Tell the agent whose message started this failed turn (best effort). */
+function reportSupersededRecovery(job: AcpJobRow): void {
+  // It never ran; its chain's earlier attempts say whether tools ran.
+  const outcome: TurnOutcome = {
+    version: 1,
+    state: "canceled",
+    by: "superseded",
+    tool_ran: false,
+  };
+  recordAcpJobOutcome(job.op_id, outcome);
+  reportFailedAgentMessageTurn(
+    job,
+    decodeAcpJobRequest(job),
+    undefined,
+    outcome,
+  );
+}
+
+/** Tell the agent whose message started this turn how it ended without a
+ * reply: an error, a cancel, a stop (best effort). */
 function reportFailedAgentMessageTurn(
   job: AcpJobRow,
   request: AcpRequest,
@@ -10229,20 +10296,26 @@ function reportFailedAgentMessageTurn(
   outcome: TurnOutcome | undefined = parseTurnOutcome(job.outcome_json),
 ): void {
   // A recovery continuation carries the same message: the turn began when
-  // the first of them started, and a reply from any of them counts.
+  // the first of them started, a reply from any of them counts, any of them
+  // may have run tools, and the chain is reported once (as its first job).
   let started = job.started_at;
+  let root = job.op_id;
+  const toolRan = [toolRanOf(outcome)];
   let parent = job.recovery_parent_op_id;
   for (let hops = 0; parent && hops < 20; hops++) {
     const row = getAcpJobByOpId(parent);
     if (!row) break;
+    root = row.op_id;
     if (row.started_at != null) started = row.started_at;
+    toolRan.push(toolRanOf(parseTurnOutcome(row.outcome_json)));
     parent = row.recovery_parent_op_id;
   }
   const report = noteAgentMessageTurnFailed({
-    op_id: job.op_id,
+    op_id: root,
     request,
-    error: `${error ?? ""}`.trim() || "The turn ended with an error.",
-    failure: outcome?.state === "failed" ? outcome.failure : undefined,
+    error: `${error ?? ""}`.trim() || undefined,
+    outcome,
+    tool_ran: chainToolRan(toolRan) ?? null,
     turn_started_at: started,
   });
   if (report)
@@ -11105,6 +11178,9 @@ async function enqueueChatAcpTurn({
       ),
     },
   );
+  // Turns cut off and waiting to resume that this message replaces: an agent
+  // that sent one of them is told it will not continue.
+  for (const superseded of canceled) reportSupersededRecovery(superseded);
   if (projectId && chatPath && threadId && canceled.length) {
     await clearSupersededRecoveryProjections({
       client: conatClient,
@@ -12389,15 +12465,33 @@ async function handleAcpControlRequestNow(
     };
   }
   if (request.action === "cancel") {
-    const row = cancelQueuedAcpJob({
-      project_id,
-      path,
-      user_message_id,
-      account_id: request.account_id,
-      thread_id,
-    });
+    const { job: row, canceled: canceledNow } =
+      cancelQueuedAcpJobReportingChange({
+        project_id,
+        path,
+        user_message_id,
+        account_id: request.account_id,
+        thread_id,
+      });
     if (!row || row.state !== "canceled") {
       return { ok: false, state: row?.state ?? "missing" };
+    }
+    // An agent that sent it is told it will not run, if this canceled it
+    // (not an earlier cancel, or a fence that reports on its own). First:
+    // the chat update below can fail, and a retried cancel changes nothing.
+    if (canceledNow) {
+      // A message a restart held may have run already.
+      const canceled: TurnOutcome =
+        row.started_at != null
+          ? { version: 1, state: "canceled", by: "person" }
+          : { version: 1, state: "never-started", reason: "canceled" };
+      recordAcpJobOutcome(row.op_id, canceled);
+      reportFailedAgentMessageTurn(
+        { ...row, started_at: row.started_at ?? row.created_at },
+        decodeAcpJobRequest(row),
+        undefined,
+        canceled,
+      );
     }
     await persistQueuedUserMessageProjection({
       client: conatClient,
@@ -13343,6 +13437,8 @@ export const acpTestInternals = {
   executeAcpRequest,
   handleInterruptRequest,
   processPendingAcpInterruptsOnce,
+  reportSupersededRecovery,
+  reportFailedAgentMessageTurn,
   registerInterruptAgentForTests: (
     key: string,
     projectId: string,

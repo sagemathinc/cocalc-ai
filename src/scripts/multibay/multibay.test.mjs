@@ -190,13 +190,20 @@ describe("agent delivery reports across bays", () => {
   // The seed forwards a report about a message to the bay that owns the
   // sender's project, over the real fabric; only that bay may write it, and
   // only with the capability a hub of this cluster minted for the message.
-  async function deliverFromSeed({ project_id, forged = false }) {
+  async function deliverFromSeed({
+    project_id,
+    forged = false,
+    agent_id = randomUUID(),
+    kind = "error",
+    tool_ran,
+  }) {
     const report = {
       version: 1,
       report_id: randomUUID(),
       attempt_id: randomUUID(),
       turn_started_at: Date.now() - 60_000,
-      kind: "error",
+      kind,
+      ...(tool_ran === undefined ? {} : { tool_ran }),
     };
     return await runInBay(
       cluster,
@@ -209,7 +216,7 @@ describe("agent delivery reports across bays", () => {
        const project_id = ${JSON.stringify(project_id)};
        report.authorization = {
          version: 3,
-         source: { project_id, agent_id: ${JSON.stringify(randomUUID())} },
+         source: { project_id, agent_id: ${JSON.stringify(agent_id)} },
          source_run_id: ${JSON.stringify(randomUUID())},
          target: { project_id: ${JSON.stringify(alice.project)}, agent_id: ${JSON.stringify(randomUUID())} },
          target_path: "/home/user/b.chat",
@@ -262,6 +269,324 @@ describe("agent delivery reports across bays", () => {
       await deliverFromSeed({ project_id: bob.project }),
       /agent not found/,
     );
+  });
+
+  describe("held or downgraded for what the sender's host can render", () => {
+    // The sender's agent and host live on the attached bay; the seed
+    // forwards. Holding is decided there, from the host's own heartbeat
+    // metadata (its advertised report version, for the build it runs).
+    const agent_id = randomUUID();
+    const hosts = {
+      old: { software: { project_host: "build-1" } },
+      "rolled back": {
+        software: { project_host: "build-1" },
+        agent_rpc_report: { version: 2, project_host: "build-2" },
+      },
+      current: {
+        software: { project_host: "build-2" },
+        agent_rpc_report: { version: 2, project_host: "build-2" },
+      },
+    };
+    const hostIds = Object.fromEntries(
+      Object.keys(hosts).map((name) => [name, randomUUID()]),
+    );
+    let project_id;
+
+    before(async () => {
+      project_id = await createProject(bob.client, "bob-report-sender");
+      assert.equal(await owningBay(project_id), ATTACHED);
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const pool = getPool();
+         await pool.query(
+           "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES ($1,$2,$3,$4,$5,$6)",
+           [${JSON.stringify(agent_id)}, ${JSON.stringify(project_id)}, "/home/user/a.chat", "thread-a", "sender", ${JSON.stringify(bob.account_id)}],
+         );
+         const hosts = ${JSON.stringify(hosts)};
+         const ids = ${JSON.stringify(hostIds)};
+         for (const [name, metadata] of Object.entries(hosts))
+           await pool.query(
+             "INSERT INTO project_hosts (id, name, status, bay_id, metadata, created, updated) VALUES ($1, $2, 'off', $3, $4, NOW(), NOW())",
+             [ids[name], "report host " + name, ${JSON.stringify(ATTACHED)}, metadata],
+           );`,
+      );
+    });
+
+    async function onHost(name) {
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `await require("@cocalc/database/pool").default().query(
+           "UPDATE projects SET host_id=$1 WHERE project_id=$2",
+           [${JSON.stringify(hostIds[name])}, ${JSON.stringify(project_id)}],
+         );`,
+      );
+    }
+    const held = /must be upgraded before it can receive this report/;
+    // Past the version check, the report goes to the host, which does not
+    // run here: it failed at the host, not at the version check.
+    const forwarded = (result) =>
+      assert.ok(
+        result !== "delivered" &&
+          !held.test(result) &&
+          !/agent not found|does not match|stale agent RPC route/.test(result),
+        result,
+      );
+
+    for (const name of ["old", "rolled back"]) {
+      it(`holds a report that ran tools for a${name === "old" ? "n" : ""} ${name} host`, async () => {
+        await onHost(name);
+        for (const report of [
+          { kind: "canceled", tool_ran: true },
+          { kind: "error", tool_ran: true },
+          { kind: "error" },
+        ])
+          assert.match(
+            await deliverFromSeed({ project_id, agent_id, ...report }),
+            held,
+          );
+      });
+
+      it(`downgrades one that ran nothing for a${name === "old" ? "n" : ""} ${name} host`, async () => {
+        await onHost(name);
+        forwarded(
+          await deliverFromSeed({
+            project_id,
+            agent_id,
+            kind: "canceled",
+            tool_ran: false,
+          }),
+        );
+      });
+    }
+
+    it("forwards every report to a current host", async () => {
+      await onHost("current");
+      forwarded(
+        await deliverFromSeed({
+          project_id,
+          agent_id,
+          kind: "canceled",
+          tool_ran: true,
+        }),
+      );
+    });
+  });
+});
+
+describe("inspecting a sent message's turn across bays", () => {
+  // The sender's agent runs in a seed-owned project; the recipient's project
+  // (and its host) live on the attached bay, which is also the account's
+  // home (its Agent Network). Inspect crosses from the seed to the
+  // recipient's bay, which checks the network (asking the seed for the
+  // sender's run) and asks the recipient's host for the turn. That host is a
+  // stand-in serving the host-control subject, so what comes back from a
+  // real host's answer is checked, not just routed.
+  let rita;
+  let quinn;
+  let sender_project;
+  let target_project;
+  const sender = randomUUID();
+  const recipient = randomUUID();
+  const run = randomUUID();
+  const network = randomUUID();
+  const host_id = randomUUID();
+  const attempts = {
+    held: randomUUID(),
+    foreign: randomUUID(),
+    malformed: randomUUID(),
+  };
+  const turn = {
+    state: "queued",
+    held: true,
+    queued_at: 1_792_000_000_000,
+    started_at: 1_792_000_001_000,
+    tool_ran: true,
+  };
+
+  before(async () => {
+    quinn = await createAccount(cluster, { home_bay_id: SEED, name: "quinn" });
+    quinn.client = await client(quinn);
+    rita = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "rita",
+    });
+    rita.client = await client(rita);
+    sender_project = await createProject(quinn.client, "inspect-sender");
+    await invite(quinn, rita, sender_project);
+    await eventually(() => listed(rita.client, sender_project), {
+      what: "the sender project in rita's list",
+    });
+    assert.equal(await owningBay(sender_project), SEED);
+    target_project = await createProject(rita.client, "inspect-recipient");
+    assert.equal(await owningBay(target_project), ATTACHED);
+    // The sender's agent and an issued run, on the seed.
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { agentStore } = server("agents/store.js");
+       await getPool().query(
+         "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES($1,$2,'/home/user/agents.chat','sender','claude-1',$3)",
+         [${JSON.stringify(sender)}, ${JSON.stringify(sender_project)}, ${JSON.stringify(rita.account_id)}]);
+       const db = agentStore();
+       await db.issue(await db.get(${JSON.stringify(sender)}), ${JSON.stringify(run)}, ${JSON.stringify(rita.account_id)});`,
+    );
+    // The recipient's agent, its host, rita's names and network: all on the
+    // attached bay.
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const account = ${JSON.stringify(rita.account_id)};
+       const target = ${JSON.stringify(target_project)};
+       const sender = [${JSON.stringify(sender)}, ${JSON.stringify(sender_project)}, "sender"];
+       const recipient = [${JSON.stringify(recipient)}, target, "recipient"];
+       await getPool().query(
+         "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES($1,$2,'/home/user/agents.chat','recipient','claude-2',$3)",
+         [recipient[0], target, account]);
+       await getPool().query(
+         "INSERT INTO project_hosts (id, name, status, bay_id, metadata, created, updated) VALUES ($1, 'inspect host', 'running', $2, '{}', NOW(), NOW())",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(ATTACHED)}]);
+       await getPool().query("UPDATE projects SET host_id=$1 WHERE project_id=$2", [${JSON.stringify(host_id)}, target]);
+       for (const [id, project, thread] of [sender, recipient])
+         await getPool().query(
+           "INSERT INTO agent_personal_names(account_id,name,project_id,agent_id,metadata) VALUES($1,$2,$3,$4,$5)",
+           [account, thread, project, id, { path: "/home/user/agents.chat", thread_id: thread }]);
+       await getPool().query(
+         "INSERT INTO agent_networks(agent_network_id,account_id,title,generation,created_by,delivery_mode) VALUES($1,$2,'inspect',$3,$2,'queued')",
+         [${JSON.stringify(network)}, account, ${JSON.stringify(randomUUID())}]);
+       for (const [id, project] of [sender, recipient])
+         await getPool().query(
+           "INSERT INTO agent_network_members(agent_network_id,member_kind,member_id,registered_agent_id,project_id,added_by) VALUES($1,'registered',$2,$2,$3,$4)",
+           [${JSON.stringify(network)}, id, project, account]);
+       await getPool().query("CREATE TABLE IF NOT EXISTS multibay_fake_host (key TEXT PRIMARY KEY, value JSONB)");`,
+    );
+  });
+
+  /** A stand-in for the recipient's project host, until `lifetimeMs`. */
+  function fakeHost(lifetimeMs = 100_000) {
+    return runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { conat } = require("@cocalc/backend/conat");
+       const { createHostControlService } = require("@cocalc/conat/project-host/api");
+       const attempts = ${JSON.stringify(attempts)};
+       const turn = ${JSON.stringify(turn)};
+       const note = (key, value) =>
+         getPool().query(
+           "INSERT INTO multibay_fake_host(key,value) VALUES($1,$2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+           [key, JSON.stringify(value)]);
+       const service = createHostControlService({
+         host_id: ${JSON.stringify(host_id)},
+         client: conat(),
+         impl: {
+           inspectAgentRpc: async ({ source, request, account_id }) => {
+             await note(request.attempt_id, { source, account_id });
+             const answer = {
+               version: 3,
+               attempt_id: request.attempt_id,
+               agent_network_id: request.agent_network_id,
+               target: request.target,
+               outcome: "accepted",
+               observed_at: Date.now(),
+               turn,
+             };
+             // Another conversation's turn, or one that is not a turn.
+             if (request.attempt_id === attempts.foreign)
+               return { ...answer, target: { ...request.target, agent_id: ${JSON.stringify(randomUUID())} } };
+             if (request.attempt_id === attempts.malformed)
+               return { ...answer, turn: { state: "paused", queued_at: -1 } };
+             return answer;
+           },
+         },
+       });
+       await new Promise((resolve) => setTimeout(resolve, 2_000));
+       await note("ready", true);
+       await new Promise((resolve) => setTimeout(resolve, ${lifetimeMs}));
+       service.close();
+       return "served";`,
+      { timeoutMs: lifetimeMs + 60_000 },
+    );
+  }
+
+  async function inspectFromSeed(attempt_id, run_id = run) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const { resolveProjectBay } = server("inter-bay/directory.js");
+       const { createAgentRpcControlClient } = require("@cocalc/conat/inter-bay/agent-rpc");
+       const project_id = ${JSON.stringify(target_project)};
+       const route = await resolveProjectBay(project_id);
+       return await createAgentRpcControlClient(getInterBayFabricClient(), ${JSON.stringify(ATTACHED)}).inspect({
+         project_id,
+         route: { bay_id: route.bay_id, epoch: route.epoch },
+         account_id: ${JSON.stringify(rita.account_id)},
+         source: { project_id: ${JSON.stringify(sender_project)}, agent_id: ${JSON.stringify(sender)} },
+         run_id: ${JSON.stringify(run_id)},
+         request: {
+           version: 3,
+           attempt_id: ${JSON.stringify(attempt_id)},
+           agent_network_id: ${JSON.stringify(network)},
+           target: { project_id, agent_id: ${JSON.stringify(recipient)} },
+         },
+       });`,
+    );
+  }
+
+  it("returns the recipient host's turn, checked, and only for the right turn", async () => {
+    const host = fakeHost();
+    const db = await connectBayDatabase(cluster, ATTACHED);
+    try {
+      await eventually(
+        async () =>
+          (await db.query("SELECT 1 FROM multibay_fake_host WHERE key='ready'"))
+            .rows.length > 0,
+        { timeoutMs: 90_000, intervalMs: 1_000, what: "the fake host" },
+      );
+      // The held turn comes back as the host told it.
+      const held = await inspectFromSeed(attempts.held);
+      assert.equal(held.outcome, "accepted", JSON.stringify(held));
+      assert.deepEqual(held.turn, turn);
+      // The host was asked for the sender's turn, as the account's.
+      const asked = (
+        await db.query("SELECT value FROM multibay_fake_host WHERE key=$1", [
+          attempts.held,
+        ])
+      ).rows[0]?.value;
+      assert.deepEqual(asked, {
+        source: { project_id: sender_project, agent_id: sender },
+        account_id: rita.account_id,
+      });
+      // Another conversation's turn, or a malformed one, never comes back.
+      for (const attempt of [attempts.foreign, attempts.malformed]) {
+        const answer = await inspectFromSeed(attempt);
+        assert.equal(answer.outcome, "unknown", JSON.stringify(answer));
+        assert.equal(answer.turn, undefined);
+      }
+      // A run the sender's bay never issued: refused at the network check,
+      // so the host is never even asked.
+      const forged = randomUUID();
+      await assert.rejects(
+        inspectFromSeed(forged, randomUUID()),
+        /expired, revoked, or invalid/,
+      );
+      assert.equal(
+        (
+          await db.query("SELECT 1 FROM multibay_fake_host WHERE key=$1", [
+            forged,
+          ])
+        ).rows.length,
+        0,
+      );
+    } finally {
+      await db.end();
+      await host;
+    }
   });
 });
 
