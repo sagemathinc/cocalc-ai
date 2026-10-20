@@ -15,6 +15,7 @@ export async function createPathFileserver({
   allowSafeModeHardlink = true,
   allowSafeModeSymlink = true,
   disableOpenAt2 = true,
+  homeAliases,
 }: {
   service?: string;
   path?: string;
@@ -23,6 +24,7 @@ export async function createPathFileserver({
   allowSafeModeHardlink?: boolean;
   allowSafeModeSymlink?: boolean;
   disableOpenAt2?: boolean;
+  homeAliases?: string[];
 } = {}) {
   const tempDir =
     path ?? (await mkdtemp(join(tmpdir(), `cocalc-${randomId()}0`)));
@@ -36,6 +38,7 @@ export async function createPathFileserver({
     allowSafeModeHardlink,
     allowSafeModeSymlink,
     disableOpenAt2,
+    homeAliases,
     jupyter: {
       async importIpynb({ ipynb }) {
         return { ipynb };

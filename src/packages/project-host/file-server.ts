@@ -225,6 +225,7 @@ import {
 } from "@cocalc/project-runner/run/rootfs-base";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { importJupyterIpynb, saveJupyterIpynb } from "./jupyter-ipynb";
+import { boardHandlers } from "./board/service";
 import { resetClonedProjectState } from "./clone-state";
 import { withBackupParallelLimit } from "./backup-queue";
 import { createSharedWorkLimit } from "./shared-work-limit";
@@ -5256,6 +5257,10 @@ export async function initFsServer({
           fs,
         }),
     },
+    board: boardHandlers({
+      client,
+      projectIdOf: projectIdFromSubject,
+    }),
   });
 }
 
