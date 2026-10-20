@@ -707,6 +707,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "hosts.revokeProjectContentLinks": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
   "hosts.issueProjectContentUrl": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

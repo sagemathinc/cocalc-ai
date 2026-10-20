@@ -1927,6 +1927,7 @@ export const hosts = {
   listManagedRootfsReleaseLifecycle: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccountWithBoundSession,
   issueProjectContentUrl: authFirstRequireAccountWithBoundSession,
+  revokeProjectContentLinks: authFirstRequireAccount,
 };
 
 export interface HostConnectorUpgradeRequest {
@@ -2525,6 +2526,12 @@ export interface Hosts {
           | "no-access";
       }
   >;
+  // "Revoke content links": every content link of the project issued before
+  // stops working.  Owners and collaborators.
+  revokeProjectContentLinks: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<{ content_epoch: number; host_synced: boolean }>;
   issueProjectHostAgentAuthToken: (opts: {
     host_id?: string;
     account_id: string;

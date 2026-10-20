@@ -39,6 +39,15 @@ const unavailableUntil = new Map<
   { until: number; status: "unavailable" | "no-access" }
 >();
 
+// "Revoke content links" in this browser: open frames of the project get a
+// new link at once (their old one stopped working).
+const revokeListeners = new Map<string, Set<() => void>>();
+
+export function notifyContentLinksRevoked(project_id: string): void {
+  unavailableUntil.delete(project_id);
+  for (const listener of revokeListeners.get(project_id) ?? []) listener();
+}
+
 // When to re-issue a link: an hour before it expires, or halfway for a
 // short one.
 export function refreshDelayMs(expires_at: number, now = Date.now()): number {
@@ -65,6 +74,21 @@ export function useProjectContentUrl({
     failures.current = 0;
     setState({ status: "loading" });
   }, [project_id, path]);
+
+  useEffect(() => {
+    const listener = () => {
+      failures.current = 0;
+      setState({ status: "loading" });
+      setGeneration((n) => n + 1);
+    };
+    const listeners = revokeListeners.get(project_id) ?? new Set();
+    listeners.add(listener);
+    revokeListeners.set(project_id, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size == 0) revokeListeners.delete(project_id);
+    };
+  }, [project_id]);
 
   useEffect(() => {
     if (!enabled) {

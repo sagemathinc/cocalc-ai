@@ -134,9 +134,11 @@ export async function issueProjectContentUrlLocal({
     host_id: string | null;
     bay_id: string;
     group: string | null;
+    content_epoch: string | number;
   }>(
     `SELECT host_id, COALESCE(owning_bay_id, $3) AS bay_id,
-            users -> $2::text ->> 'group' AS "group"
+            users -> $2::text ->> 'group' AS "group",
+            COALESCE(content_epoch, 0)::bigint AS content_epoch
        FROM projects
       WHERE project_id = $1 AND deleted IS NOT true`,
     [project_id, account_id, localBayId],
@@ -192,9 +194,8 @@ export async function issueProjectContentUrlLocal({
     project_id,
     host_id,
     account_id,
-    // Projects don't carry a content epoch yet (the host also reads 0); the
-    // "revoke links" button adds one.
-    epoch: 0,
+    // Bumped by "Revoke content links"; the host refuses any other value.
+    epoch: Number(project.content_epoch ?? 0),
     dir,
     private_key: getProjectHostAuthTokenPrivateKey(),
     ttl_seconds,
@@ -205,4 +206,52 @@ export async function issueProjectContentUrlLocal({
     url: `https://${hostname}/_c/${token}/files/${filePath}`,
     expires_at,
   };
+}
+
+export interface RevokedProjectContentLinks {
+  content_epoch: number;
+  // Whether the project's host has the new epoch.  If not, it catches up at
+  // its next poll of project changes, or at once when it sees a new link.
+  host_synced: boolean;
+}
+
+// "Revoke content links": bump the project's content epoch, so the host
+// refuses every link issued before, and push it to the host now.
+export async function revokeProjectContentLinksLocal({
+  account_id,
+  project_id,
+  syncHost,
+}: {
+  account_id: string;
+  project_id: string;
+  syncHost: (project_id: string) => Promise<void>;
+}): Promise<RevokedProjectContentLinks> {
+  if (!isValidUUID(account_id) || !isValidUUID(project_id)) {
+    throw new Error("invalid project or account");
+  }
+  const localBayId = getConfiguredBayId();
+  const { rows } = await getPool().query<{ content_epoch: string | number }>(
+    `UPDATE projects
+        SET content_epoch = COALESCE(content_epoch, 0) + 1,
+            -- the cursor of hosts' catch-up sync, so a failed push below is
+            -- re-delivered at the host's next poll
+            last_edited = NOW()
+      WHERE project_id = $1
+        AND deleted IS NOT true
+        AND COALESCE(owning_bay_id, $3) = $3
+        AND users -> $2::text ->> 'group' IN ('owner', 'collaborator')
+      RETURNING content_epoch`,
+    [project_id, account_id, localBayId],
+  );
+  if (rows[0] == null) {
+    throw new Error("not authorized to revoke this project's content links");
+  }
+  let host_synced = false;
+  try {
+    await syncHost(project_id);
+    host_synced = true;
+  } catch {
+    // The host still catches up: see RevokedProjectContentLinks.
+  }
+  return { content_epoch: Number(rows[0].content_epoch), host_synced };
 }

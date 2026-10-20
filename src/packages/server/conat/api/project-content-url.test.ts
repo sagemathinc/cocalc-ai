@@ -40,6 +40,7 @@ import {
   contentDirForFile,
   encodeContentFilePath,
   issueProjectContentUrlLocal,
+  revokeProjectContentLinksLocal,
 } from "./project-content-url";
 
 const ACCOUNT = "11111111-1111-4111-8111-111111111111";
@@ -87,6 +88,19 @@ beforeEach(() => {
       };
     }
     if (sql.includes("FROM project_hosts")) return { rows: hostRows };
+    if (sql.includes("UPDATE projects")) {
+      // Like the database: each filter applies only if the query has it.
+      const row = projectRows[0];
+      const ok =
+        row != null &&
+        (!sql.includes("deleted IS NOT true") || !row.deleted) &&
+        (!sql.includes("= $3") || row.bay_id === "bay-0") &&
+        (!sql.includes("IN ('owner', 'collaborator')") ||
+          ["owner", "collaborator"].includes(row.group));
+      if (!ok) return { rows: [] };
+      row.content_epoch = Number(row.content_epoch ?? 0) + 1;
+      return { rows: [{ content_epoch: row.content_epoch }] };
+    }
     throw new Error(`unexpected query: ${sql}`);
   });
 });
@@ -240,6 +254,51 @@ describe("issueProjectContentUrlLocal", () => {
     await expect(issue({ project_id: "nope" })).rejects.toThrow("invalid");
     await expect(issue({ account_id: "nope" })).rejects.toThrow("invalid");
     expect(queryMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("revokeProjectContentLinksLocal", () => {
+  const syncHost = jest.fn(async (_project_id: string) => {});
+  beforeEach(() => syncHost.mockReset());
+  const revoke = (account_id = ACCOUNT) =>
+    revokeProjectContentLinksLocal({ account_id, project_id: PROJECT, syncHost });
+
+  it("bumps the epoch, pushes it to the host, and new links carry it", async () => {
+    await expect(revoke()).resolves.toEqual({ content_epoch: 1, host_synced: true });
+    // It also moves the hosts' catch-up cursor, so a failed push is re-sent.
+    const update = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("UPDATE projects"),
+    );
+    expect(update?.[0]).toMatch(/last_edited = NOW\(\)/);
+    expect(syncHost).toHaveBeenCalledWith(PROJECT);
+    const result = await issue();
+    if (!("url" in result)) throw new Error("unavailable");
+    const token = new URL(result.url).pathname.split("/")[2];
+    const claims = verifyProjectContentCapability({
+      token,
+      project_id: PROJECT,
+      host_id: HOST,
+      public_key: PUBLIC_KEY,
+      now_ms: NOW,
+    });
+    expect(claims.epoch).toBe(1);
+  });
+
+  it("still revokes when the host can't be reached right now", async () => {
+    syncHost.mockRejectedValue(new Error("host offline"));
+    await expect(revoke()).resolves.toEqual({ content_epoch: 1, host_synced: false });
+  });
+
+  it.each([
+    ["a viewer", { group: "viewer" }],
+    ["a non-member", { group: null }],
+    ["another bay's project", { bay_id: "bay-1" }],
+    ["a deleted project", { deleted: true }],
+  ])("refuses %s", async (_label, change) => {
+    Object.assign(projectRows[0], change);
+    await expect(revoke()).rejects.toThrow("not authorized");
+    expect(syncHost).not.toHaveBeenCalled();
+    expect(projectRows[0].content_epoch).toBeUndefined();
   });
 });
 

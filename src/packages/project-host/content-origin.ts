@@ -245,6 +245,13 @@ export interface ContentOriginHandlerOptions {
   // capabilities carry the project-wide read floor.
   hasReadAccess: (opts: { account_id: string; project_id: string }) => boolean;
   currentEpoch: (project_id: string) => number;
+  // Called with a newer epoch seen in a hub-signed capability, so the host
+  // catches up (and refuses older links) even if a sync from the hub was
+  // missed.
+  observeEpoch?: (opts: { project_id: string; epoch: number }) => void;
+  // Links issued at or before this time (ms) were revoked for the account:
+  // "sign out everywhere", a ban or a deletion.
+  accountRevokedBeforeMs: (account_id: string) => number | undefined;
   // Whether path, with symlinks resolved, is still inside dir (also
   // resolved).  Only members can create symlinks in a project, but a
   // collected or copied folder can carry one that points elsewhere.
@@ -364,12 +371,22 @@ export function createContentOriginHandler(opts: ContentOriginHandlerOptions) {
     } catch {
       return refuse(res, 403, "invalid or expired link");
     }
-    if (claims.epoch !== opts.currentEpoch(project_id)) {
+    // An older epoch was revoked ("Revoke content links").  A newer one is
+    // signed by the hub, so it is current even if this host hasn't heard yet.
+    const currentEpoch = opts.currentEpoch(project_id);
+    if (claims.epoch < currentEpoch) {
       return refuse(res, 403, "invalid or expired link");
     }
     const account_id = claims.sub;
+    const revokedBeforeMs = opts.accountRevokedBeforeMs(account_id);
+    if (revokedBeforeMs != null && claims.iat * 1000 <= revokedBeforeMs) {
+      return refuse(res, 403, "invalid or expired link");
+    }
     if (!opts.hasReadAccess({ account_id, project_id })) {
       return refuse(res, 403, "invalid or expired link");
+    }
+    if (claims.epoch > currentEpoch) {
+      opts.observeEpoch?.({ project_id, epoch: claims.epoch });
     }
     // parseContentPath rejected dot segments and encoded slashes, so this is
     // the absolute path the file route will read.

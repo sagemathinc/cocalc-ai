@@ -95,9 +95,12 @@ import {
 import { recordProjectMaintenanceStatus } from "@cocalc/server/projects/maintenance-status";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getCurrentAuthSessionForSessionHash } from "@cocalc/server/auth/auth-sessions";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import {
   issueProjectContentUrlLocal,
+  revokeProjectContentLinksLocal,
   type ProjectContentUrl,
+  type RevokedProjectContentLinks,
 } from "./project-content-url";
 import centralLog from "@cocalc/database/postgres/central-log";
 import {
@@ -2732,6 +2735,21 @@ export async function issueProjectContentUrl({
     project_id,
     path,
     browser_session_exp_s,
+  });
+}
+
+export async function revokeProjectContentLinks({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<RevokedProjectContentLinks> {
+  return await revokeProjectContentLinksLocal({
+    account_id: requireAccount(account_id),
+    project_id,
+    syncHost: async (project_id) =>
+      await syncProjectUsersOnHost({ project_id }),
   });
 }
 
