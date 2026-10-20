@@ -190,7 +190,10 @@ export interface BoardOpenResult {
   // "missing": there is no file, or it was deleted or moved while open, and
   // the host never writes it again. "too-large": the file or the document
   // is over the editable limits, so the host neither loads nor saves it.
-  state: "ok" | "invalid" | "missing" | "too-large";
+  // "quarantined": the board's live history can't be opened on the host
+  // (not one bounded chain from a snapshot: A2b design, section 8c, G1); it
+  // is left as it is, not edited, until it is repaired.
+  state: "ok" | "invalid" | "missing" | "too-large" | "quarantined";
   // Why the state is not "ok".
   message?: string;
   // The file's size when last read or written (state "ok"), or its size

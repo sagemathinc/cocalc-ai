@@ -57,6 +57,7 @@ import {
   type BoardManagerLike,
   type StartedBoard,
 } from "./registry";
+import { assertBoardHistoryOpenable, BoardQuarantined } from "./history";
 
 const logger = getLogger("project-host:board");
 
@@ -503,6 +504,14 @@ export async function startBoard({
   manager?: Partial<ConstructorParameters<typeof BoardManager>[0]>;
 }): Promise<StartedBoard & { syncdb: ImmerDB }> {
   const lib = await loadBoardLib();
+  // G1: nothing reconstructs a value from a history that isn't one bounded
+  // chain from a snapshot (BoardQuarantined).
+  await assertBoardHistoryOpenable({
+    client,
+    project_id,
+    path,
+    timeout: START_STEP_TIMEOUT_MS,
+  });
   const syncdb = await openBoardSyncdb({
     client,
     project_id,
@@ -647,6 +656,21 @@ interface BoardRequest {
   service?: string;
 }
 
+// Boards found quarantined, by key, with when: each is checked again only
+// after QUARANTINE_RECHECK_MS, so a board shown (and so opened again and
+// again) doesn't read its history each time.
+const QUARANTINE_RECHECK_MS = 60_000;
+const MAX_QUARANTINED = 1000;
+const quarantined = new Map<string, { at: number; status: BoardOpenResult }>();
+
+function rememberQuarantined(key: string, status: BoardOpenResult): void {
+  quarantined.delete(key);
+  quarantined.set(key, { at: Date.now(), status });
+  while (quarantined.size > MAX_QUARANTINED) {
+    quarantined.delete(quarantined.keys().next().value!);
+  }
+}
+
 const registry = new BoardRegistry({
   leaseMs: BOARD_LEASE_MS,
   maxOpen: MAX_OPEN_BOARDS,
@@ -672,6 +696,12 @@ async function managerFor(opts: BoardRequest): Promise<ManagerFor> {
   const path = await boardIdentity(opts);
   const key = `${opts.project_id}:${path}`;
   let reserve = 0;
+  const q = quarantined.get(key);
+  if (q != null) {
+    if (Date.now() - q.at < QUARANTINE_RECHECK_MS)
+      return { path, status: q.status };
+    quarantined.delete(key);
+  }
   if (!registry.has(key)) {
     // Nothing to start for a file that is missing or too large: so such
     // paths take no slot and no memory.
@@ -694,12 +724,25 @@ async function managerFor(opts: BoardRequest): Promise<ManagerFor> {
     // it: that much is charged from now, through start and close.
     reserve = Math.max(info.size, BOARD_HOST_HARD_BYTE_LIMIT);
   }
-  const manager = await registry.open(
-    key,
-    path,
-    () => startBoard({ ...opts, path }),
-    reserve,
-  );
+  let manager: BoardManagerLike;
+  try {
+    manager = await registry.open(
+      key,
+      path,
+      () => startBoard({ ...opts, path }),
+      reserve,
+    );
+  } catch (err) {
+    if (!(err instanceof BoardQuarantined)) throw err;
+    logger.debug("board quarantined", { path, ...err.verdict });
+    const status: BoardOpenResult = {
+      ...boardPaths(path),
+      state: "quarantined",
+      message: err.message.slice(0, 500),
+    };
+    rememberQuarantined(key, status);
+    return { path, status };
+  }
   return { path, manager };
 }
 

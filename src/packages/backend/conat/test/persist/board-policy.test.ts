@@ -27,6 +27,14 @@ afterAll(after);
 
 jest.setTimeout(30_000);
 
+// A board patch record (as SyncDoc writes them): the board write service
+// stores only patches that extend the stream's one chain.
+const rec = (n: number, prev?: number) => ({
+  time: `t${n}`,
+  parents: prev == null ? [] : [`t${prev}`],
+  patch: "[]",
+});
+
 const name = (path: string) =>
   patchesStreamName({ path: boardSyncdbPath(path) });
 
@@ -62,12 +70,12 @@ test("the write service writes a board stream; the ordinary service reads it", a
   const project_id = uuid();
   const path = "/home/user/plan.board.json";
   const writer = await writerStream(project_id, path);
-  writer.publish({ edit: 1 });
+  writer.publish(rec(1));
   await writer.save();
   const reader = await readerStream(project_id, path);
-  expect(reader.getAll()).toEqual([{ edit: 1 }]);
+  expect(reader.getAll()).toEqual([rec(1)]);
   // The reader sees the writer's later changes.
-  writer.publish({ edit: 2 });
+  writer.publish(rec(2, 1));
   await writer.save();
   await waitFor(() => reader.length === 2);
   writer.close();
@@ -78,18 +86,18 @@ test("the ordinary service refuses every write to a board stream", async () => {
   const project_id = uuid();
   const path = "/home/user/plan.board.json";
   const writer = await writerStream(project_id, path);
-  writer.publish({ edit: 1 });
+  writer.publish(rec(1));
   await writer.save();
   const reader = await readerStream(project_id, path);
   // A client that writes anyway: the server refuses it (a client keeps
   // retrying a refused write, as for any write error; only the host writes
   // board streams, so no supported client does this).
-  reader.publish({ edit: "from a browser" });
+  reader.publish(rec(9, 1));
   void reader.save().catch(() => {});
   await new Promise((r) => setTimeout(r, 1000));
   // Nothing reached the stream.
   const check = await readerStream(project_id, path);
-  expect(check.getAll()).toEqual([{ edit: 1 }]);
+  expect(check.getAll()).toEqual([rec(1)]);
   writer.close();
   reader.close();
   check.close();
@@ -119,14 +127,14 @@ test("one client's reader and writer of a board stream are different streams, in
     const [reader, writer] = readerFirst ? [first, second] : [second, first];
     expect(reader === writer).toBe(false);
     // The writer writes, though a reader of the stream was opened first...
-    writer.publish({ edit: 1 });
+    writer.publish(rec(1));
     await writer.save();
     // ...and the reader can't, though a writer was opened first.
-    reader.publish({ edit: "from a reader" });
+    reader.publish(rec(9, 1));
     void reader.save().catch(() => {});
     await new Promise((r) => setTimeout(r, 1000));
     const check = await readerStream(project_id, path);
-    expect(check.getAll()).toEqual([{ edit: 1 }]);
+    expect(check.getAll()).toEqual([rec(1)]);
     reader.close();
     writer.close();
     check.close();
@@ -161,7 +169,7 @@ test("a reader can't make a board stream ephemeral", async () => {
   const sneaky = await readerStream(project_id, path, { ephemeral: true });
   // ...but the board's stream is the durable one the writer uses.
   const writer = await writerStream(project_id, path);
-  writer.publish({ edit: 1 });
+  writer.publish(rec(1));
   await writer.save();
   await waitFor(() => sneaky.length === 1);
   // Durable: the board's database is on disk (a RAM stream would leave no
@@ -201,10 +209,10 @@ test("a first reader can't choose how the host's writes are stored", async () =>
   await raw.getAll();
   // The host's writes go through, stored with the server's own options.
   const writer = await writerStream(project_id, path);
-  writer.publish({ edit: "x".repeat(10_000) });
+  writer.publish({ ...rec(1), patch: "x".repeat(10_000) });
   await writer.save();
   const check = await readerStream(project_id, path);
-  expect(check.getAll()).toEqual([{ edit: "x".repeat(10_000) }]);
+  expect(check.getAll()).toEqual([{ ...rec(1), patch: "x".repeat(10_000) }]);
   raw.close();
   writer.close();
   check.close();
@@ -269,7 +277,7 @@ describe("the write service's transport bounds", () => {
       }),
     ).rejects.toThrow(/timeout/i);
     const { seq } = await raw.set({
-      messageData: messageData({ edit: 1 }),
+      messageData: messageData(rec(1)),
       timeout: 10_000,
     });
     expect(seq).toBeGreaterThan(0);
@@ -280,7 +288,12 @@ describe("the write service's transport bounds", () => {
     const project_id = uuid();
     const raw = hubStream(project_id, "/home/user/snapshot.board.json");
     const { seq } = await raw.set({
-      messageData: messageData(null, { raw: Buffer.alloc(7 * MiB) }),
+      // A snapshot record of a board near the editable limit.
+      messageData: messageData({
+        time: "t1",
+        is_snapshot: true,
+        snapshot: "x".repeat(7 * MiB),
+      }),
       timeout: 20_000,
     });
     expect(seq).toBeGreaterThan(0);
@@ -325,7 +338,7 @@ describe("the write service's fence (A2b 5a)", () => {
       noCache: true,
     });
   }
-  const one = () => messageData({ edit: 1 });
+  const one = () => messageData(rec(1));
 
   test("the write service reports its instance nonce; the ordinary service refuses to", async () => {
     const project_id = uuid();
@@ -420,6 +433,119 @@ describe("the write service's fence (A2b 5a)", () => {
   });
 });
 
+describe("the write service keeps a board's history one chain (G1)", () => {
+  function hub(project_id: string, path: string) {
+    return persistStream({
+      client: connect(),
+      user: {},
+      storage: { path: storagePath({ project_id, name: name(path) }) },
+      service: BOARD_WRITE_SERVICE,
+      writeFence: fence(),
+      noCache: true,
+    });
+  }
+  const set = (w: ReturnType<typeof hub>, r: object) =>
+    w.set({ messageData: messageData(r), timeout: 10_000 });
+  async function stored(project_id: string, path: string) {
+    const r = await readerStream(project_id, path);
+    const all = r.getAll();
+    r.close();
+    return all;
+  }
+
+  test("each patch must follow the head: a branch, a merge or a second root is refused 'branch' and stores nothing", async () => {
+    const project_id = uuid();
+    const path = "/home/user/chain.board.json";
+    const w = hub(project_id, path);
+    await set(w, rec(1));
+    await set(w, rec(2, 1));
+    for (const bad of [
+      rec(3, 1),
+      rec(3),
+      { ...rec(3), parents: ["t2", "t1"] },
+      { edit: 1 },
+    ]) {
+      await expect(set(w, bad)).rejects.toMatchObject({ code: "branch" });
+    }
+    expect(await stored(project_id, path)).toEqual([rec(1), rec(2, 1)]);
+    // The chain goes on.
+    await set(w, rec(3, 2));
+    expect(await stored(project_id, path)).toHaveLength(3);
+    w.close();
+  });
+
+  test("a batch is stored whole or not at all", async () => {
+    const project_id = uuid();
+    const path = "/home/user/batch.board.json";
+    const w = hub(project_id, path);
+    await set(w, rec(1));
+    const ops = (rs: object[]) =>
+      rs.map((r) => ({ messageData: messageData(r) }));
+    // The second patch branches: nothing of the batch is stored.
+    await expect(
+      w.setMany(ops([rec(2, 1), rec(3, 1)]), { timeout: 10_000 }),
+    ).rejects.toMatchObject({ code: "branch" });
+    expect(await stored(project_id, path)).toEqual([rec(1)]);
+    const results = await w.setMany(ops([rec(2, 1), rec(3, 2)]), {
+      timeout: 10_000,
+    });
+    expect(results.every((r) => "seq" in r)).toBe(true);
+    expect(await stored(project_id, path)).toEqual([
+      rec(1),
+      rec(2, 1),
+      rec(3, 2),
+    ]);
+    w.close();
+  });
+
+  test("a batch that passes the rule but fails in storage stores nothing", async () => {
+    const project_id = uuid();
+    const path = "/home/user/partial.board.json";
+    const w = hub(project_id, path);
+    await set(w, rec(1));
+    // The second write fails in storage (a key's last sequence is wrong);
+    // the first must not be stored without it.
+    const results = await w.setMany(
+      [
+        { messageData: messageData(rec(2, 1)) },
+        { messageData: messageData(rec(3, 2)), key: "k", previousSeq: 999 },
+      ],
+      { timeout: 10_000 },
+    );
+    expect(results.every((r) => "error" in r)).toBe(true);
+    expect(await stored(project_id, path)).toEqual([rec(1)]);
+    // And the head is still t1.
+    await set(w, rec(2, 1));
+    w.close();
+  });
+
+  test("a snapshot record passes; a retried head is accepted", async () => {
+    const project_id = uuid();
+    const path = "/home/user/snap.board.json";
+    const w = hub(project_id, path);
+    await set(w, rec(1));
+    await set(w, rec(2, 1));
+    await set(w, { time: "t1", is_snapshot: true, snapshot: "{}" });
+    await set(w, rec(2, 1));
+    await set(w, rec(3, 2));
+    w.close();
+  });
+
+  test("a new server process reads the head from the stream", async () => {
+    const project_id = uuid();
+    const path = "/home/user/restart.board.json";
+    let w = hub(project_id, path);
+    await set(w, rec(1));
+    await set(w, rec(2, 1));
+    w.close();
+    await setup.restartPersistServer();
+    w = hub(project_id, path);
+    await expect(set(w, rec(3, 1))).rejects.toMatchObject({ code: "branch" });
+    await set(w, rec(3, 2));
+    w.close();
+  });
+});
+
 describe("the board writer's single-attempt save (A2b 5a)", () => {
   async function fencedWriter(
     project_id: string,
@@ -443,12 +569,12 @@ describe("the board writer's single-attempt save (A2b 5a)", () => {
     const project_id = uuid();
     const path = "/home/user/once.board.json";
     const w = await fencedWriter(project_id, path);
-    w.publish({ edit: 1 });
+    w.publish(rec(1));
     expect(w.hasUnsavedChanges()).toBe(true);
     expect(await w.saveOnce()).toEqual({ status: "saved" });
     expect(w.hasUnsavedChanges()).toBe(false);
     const r = await readerStream(project_id, path);
-    expect(r.getAll()).toEqual([{ edit: 1 }]);
+    expect(r.getAll()).toEqual([rec(1)]);
     w.close();
     r.close();
   });
@@ -461,7 +587,7 @@ describe("the board writer's single-attempt save (A2b 5a)", () => {
       path,
       "fedcba9876543210fedcba9876543210",
     );
-    w.publish({ edit: "stale" });
+    w.publish(rec(1));
     expect(await w.saveOnce()).toMatchObject({
       status: "refused",
       code: "instance",
@@ -484,7 +610,7 @@ describe("the board writer's single-attempt save (A2b 5a)", () => {
     // The write service goes away before the attempt.
     await setup.boardPersistServer.close();
     try {
-      w.publish({ edit: 1 }, { timeout: 1500 } as any);
+      w.publish(rec(1), { timeout: 1500 } as any);
       await expect(w.saveOnce()).rejects.toThrow();
       expect(w.hasUnsavedChanges()).toBe(true);
     } finally {

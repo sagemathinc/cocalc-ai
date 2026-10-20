@@ -81,8 +81,15 @@ import {
 } from "./board-policy";
 import {
   assertBoardWriteFence,
+  isFencedRequest,
   type BoardWriteFence,
 } from "./board-write-fence";
+import {
+  appendCheck,
+  commitAppend,
+  forgetAppendHead,
+  requestRecords,
+} from "./board-append";
 import { throttle } from "lodash";
 import { type SetOptions } from "./client";
 import { once } from "@cocalc/util/async-utils";
@@ -415,6 +422,9 @@ export function server({
           throw Error("bug");
         }
         assertBoardCommandAllowed(boardAccess, request);
+        // The board write service's append rule: what this request stores
+        // must extend the board's one chain (board-append.ts).
+        let append: ReturnType<typeof appendCheck> | undefined;
         if (boardWrite) {
           // Synchronous, immediately before the store below: a request that
           // fails a check stores nothing.
@@ -424,44 +434,49 @@ export function server({
             receivedAt,
             now: performance.now(),
           });
+          const records = requestRecords(request, mesg);
+          if (records != null) {
+            append = appendCheck(stream, records);
+          } else if (isFencedRequest(request)) {
+            // A delete, a reset, a config change: the head is read again.
+            forgetAppendHead(stream);
+          }
         }
         if (request.cmd == "set") {
-          mesg.respondSync(
-            stream.set({
-              key: request.key,
-              previousSeq: request.previousSeq,
-              raw: mesg.raw,
-              ttl: request.ttl,
-              encoding: mesg.encoding,
-              headers: request.headers,
-              msgID: request.msgID,
-              checkpoint: request.checkpoint,
-            }),
-          );
+          const stored = stream.set({
+            key: request.key,
+            previousSeq: request.previousSeq,
+            raw: mesg.raw,
+            ttl: request.ttl,
+            encoding: mesg.encoding,
+            headers: request.headers,
+            msgID: request.msgID,
+            checkpoint: request.checkpoint,
+          });
+          if (append != null) commitAppend(stream, append);
+          mesg.respondSync(stored);
         } else if (request.cmd == "setMany") {
-          mesg.respondSync(
-            stream.setMany(
-              (mesg.data as SetOptions[]).map(
-                ({
-                  key,
-                  previousSeq,
-                  ttl,
-                  msgID,
-                  checkpoint,
-                  messageData,
-                }) => ({
-                  key,
-                  previousSeq,
-                  ttl,
-                  headers: messageData.headers,
-                  msgID,
-                  checkpoint,
-                  raw: messageData.raw,
-                  encoding: messageData.encoding,
-                }),
-              ),
+          const results = stream.setMany(
+            (mesg.data as SetOptions[]).map(
+              ({ key, previousSeq, ttl, msgID, checkpoint, messageData }) => ({
+                key,
+                previousSeq,
+                ttl,
+                headers: messageData.headers,
+                msgID,
+                checkpoint,
+                raw: messageData.raw,
+                encoding: messageData.encoding,
+              }),
             ),
+            // A board's chain is stored whole or not at all.
+            { allOrNothing: append != null },
           );
+          if (append != null) {
+            if (results.some((r) => "error" in r)) forgetAppendHead(stream);
+            else commitAppend(stream, append);
+          }
+          mesg.respondSync(results);
         } else if (request.cmd == "delete") {
           mesg.respondSync(stream.delete(request));
         } else if (request.cmd == "config") {

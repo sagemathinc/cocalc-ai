@@ -59,9 +59,10 @@ import { abortable } from "@cocalc/conat/core/abort";
 
 const logger = getLogger("sync:dstream");
 
-// The codes the board write service's fence refuses a whole request with
-// (conat/persist/board-write-fence.ts): nothing of it was stored.
-const FENCE_REFUSALS = new Set(["instance", "ttl", "lock"]);
+// The codes the board write service refuses a whole request with, before
+// storing anything: its fence (conat/persist/board-write-fence.ts) and its
+// append rule ("branch", conat/persist/board-append.ts).
+const FENCE_REFUSALS = new Set(["instance", "ttl", "lock", "branch"]);
 
 export interface DStreamOptions {
   // what it's called by us

@@ -36,9 +36,15 @@ import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { BOARD_WRITE_MAX_TTL_MS } from "@cocalc/conat/persist/board-write-fence";
 import * as testSetup from "@cocalc/backend/conat/test/setup";
 import { boardSyncdbPath } from "@cocalc/util/board/names";
+import { getStream } from "@cocalc/conat/persist/util";
+import { storagePath } from "@cocalc/conat/sync/core-stream";
+import { DataEncoding, decode, encode } from "@cocalc/conat/core/codec";
+import { BOARD_HISTORY_LIMITS } from "@cocalc/conat/persist/board-history";
+import { checkBoardHistory } from "./history";
 import {
   type ReplaceHooks,
   boardHandlers,
+  canonicalBoardPath,
   closeBoards,
   fileOf,
   openBoard,
@@ -719,6 +725,160 @@ describe("the service", () => {
       await closeBoards(project_id);
     }
     expect(openBoardCount()).toBe(0);
+  });
+});
+
+describe("G1: a board's history is checked before anything opens it", () => {
+  // The board's stream as the persist server holds it, to write a legacy
+  // history (one from before the write service kept it one chain) directly.
+  async function rawStream(project_id: string, path: string) {
+    return await getStream({
+      subject: `${BOARD_WRITE_SERVICE}.hub`,
+      service: BOARD_WRITE_SERVICE,
+      storage: {
+        path: storagePath({
+          project_id,
+          name: patchesStreamName({
+            path: boardSyncdbPath(canonicalBoardPath(path)),
+          }),
+        }),
+      },
+    });
+  }
+  const write = (stream: any, mesg: object) =>
+    stream.set({
+      encoding: DataEncoding.MsgPack,
+      raw: Buffer.from(encode({ encoding: DataEncoding.MsgPack, mesg })),
+    });
+  const record = (stream: any, seq: number) => {
+    const m = stream.get({ seq });
+    return decode({ encoding: m.encoding, data: m.raw });
+  };
+
+  test("a linear history opens; a branched one is quarantined: nothing opens it, and nothing is written", async () => {
+    const project_id = uuid();
+    const client = connect();
+    const fs: any = client.fs({ project_id, service: fileserver.service });
+    const opts = {
+      client,
+      project_id,
+      fs: localFs(project_id),
+      service: fileserver.service,
+    };
+    const path = "legacy.board.json";
+    try {
+      await fs.writeFile(path, canonical(BOARD));
+      expect(await openBoard({ ...opts, path })).toMatchObject({ state: "ok" });
+      await closeBoards(project_id);
+      const verdict = await checkBoardHistory({
+        client,
+        project_id,
+        path: canonicalBoardPath(path),
+      });
+      expect(verdict).toMatchObject({ ok: true });
+
+      // A legacy branch: two children of the first patch.
+      const stream = await rawStream(project_id, path);
+      const first = record(stream, 1);
+      for (const client of ["legacyBranchClientA", "legacyBranchClientB"]) {
+        write(stream, {
+          time: `${first.time.split("_")[0]}_${client}`,
+          parents: [first.time],
+          patch: "[]",
+          is_snapshot: false,
+        });
+      }
+      const before = await fs.readFile(path, "utf8");
+      const status = await openBoard({ ...opts, path });
+      expect(status).toMatchObject({ state: "quarantined" });
+      expect(status.message).toMatch(/can't be opened here/);
+      expect(openBoardCount()).toBe(0);
+      expect(await fs.readFile(path, "utf8")).toBe(before);
+      // Shown again (opened again and again): the same answer, from memory.
+      expect(await openBoard({ ...opts, path })).toEqual(status);
+      expect(openBoardCount()).toBe(0);
+    } finally {
+      await closeBoards(project_id);
+      client.close();
+    }
+  });
+
+  test("a single head over eight branches is quarantined", async () => {
+    const project_id = uuid();
+    const client = connect();
+    const fs: any = client.fs({ project_id, service: fileserver.service });
+    const path = "eight.board.json";
+    // (Each test closes its client: the server allows 100 per user.)
+    try {
+      await fs.writeFile(path, canonical(BOARD));
+      const stream = await rawStream(project_id, path);
+      write(stream, { time: "r", parents: [], patch: "[]" });
+      const tips: string[] = [];
+      for (let b = 0; b < 8; b++) {
+        write(stream, { time: `b${b}`, parents: ["r"], patch: "[]" });
+        tips.push(`b${b}`);
+      }
+      write(stream, { time: "m", parents: tips, patch: "[]" });
+      expect(
+        await checkBoardHistory({
+          client,
+          project_id,
+          path: canonicalBoardPath(path),
+        }),
+      ).toMatchObject({ ok: false, reason: "non-linear" });
+      expect(
+        await openBoard({
+          client,
+          project_id,
+          path,
+          fs: localFs(project_id),
+          service: fileserver.service,
+        }),
+      ).toMatchObject({ state: "quarantined" });
+      expect(openBoardCount()).toBe(0);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("the check stops at its limits, before reading the whole history", async () => {
+    const project_id = uuid();
+    const client = connect();
+    const path = "/home/user/long.board.json";
+    try {
+      const stream = await rawStream(project_id, "long.board.json");
+      let prev: string | undefined;
+      for (let i = 0; i < 30; i++) {
+        write(stream, {
+          time: `p${i}`,
+          parents: prev == null ? [] : [prev],
+          patch: "[]",
+        });
+        prev = `p${i}`;
+      }
+      const limits = { ...BOARD_HISTORY_LIMITS };
+      expect(
+        await checkBoardHistory({ client, project_id, path, limits }),
+      ).toMatchObject({ ok: true, suffix: 30 });
+      expect(
+        await checkBoardHistory({
+          client,
+          project_id,
+          path,
+          limits: { ...limits, records: 29 },
+        }),
+      ).toMatchObject({ ok: false, reason: "too-large" });
+      expect(
+        await checkBoardHistory({
+          client,
+          project_id,
+          path,
+          limits: { ...limits, suffixRecords: 29 },
+        }),
+      ).toMatchObject({ ok: false, reason: "too-large" });
+    } finally {
+      client.close();
+    }
   });
 });
 

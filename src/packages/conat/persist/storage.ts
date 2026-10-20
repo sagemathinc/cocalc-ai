@@ -1113,26 +1113,43 @@ export class PersistentStream extends EventEmitter {
       msgID?: string;
       checkpoint?: CheckpointUpdate;
     }>,
+    // All of them or none: if one fails, nothing is stored, and every
+    // result is that failure (board streams: a chain must not lose a link).
+    { allOrNothing = false }: { allOrNothing?: boolean } = {},
   ): Array<{ seq: number; time: number } | { error: string; code?: any }> => {
     const changes: ChangefeedOperation[] = [];
     const msgIds: Array<{ msgID: string; time: number; seq: number }> = [];
-    const results = this.runTransaction(() =>
-      operations.map((operation) => {
-        try {
-          const result = this.setInternal({ ...operation, changes });
-          if (operation.msgID !== undefined) {
-            msgIds.push({
-              msgID: operation.msgID,
-              time: result.time,
-              seq: result.seq,
-            });
+    let results: Array<
+      { seq: number; time: number } | { error: string; code?: any }
+    >;
+    try {
+      results = this.runTransaction(() =>
+        operations.map((operation) => {
+          try {
+            const result = this.setInternal({ ...operation, changes });
+            if (operation.msgID !== undefined) {
+              msgIds.push({
+                msgID: operation.msgID,
+                time: result.time,
+                seq: result.seq,
+              });
+            }
+            return { time: result.time, seq: result.seq };
+          } catch (err) {
+            if (allOrNothing) throw new AllOrNothingFailure(err);
+            return { error: `${err}`, code: err.code };
           }
-          return { time: result.time, seq: result.seq };
-        } catch (err) {
-          return { error: `${err}`, code: err.code };
-        }
-      }),
-    );
+        }),
+      );
+    } catch (err) {
+      if (!(err instanceof AllOrNothingFailure)) throw err;
+      // Rolled back: nothing was stored, so nothing changed.
+      const failure = {
+        error: `${err.failure}`,
+        code: (err.failure as any)?.code,
+      };
+      return operations.map(() => failure);
+    }
     for (const change of changes) {
       this.emit("change", change);
     }
@@ -1909,6 +1926,12 @@ export class PersistentStream extends EventEmitter {
       );
     }
   };
+}
+
+class AllOrNothingFailure extends Error {
+  constructor(readonly failure: unknown) {
+    super(`${failure}`);
+  }
 }
 
 function dbToMessage(
