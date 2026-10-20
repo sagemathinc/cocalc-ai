@@ -313,6 +313,31 @@ describe("the recipient's host reports a failed turn", () => {
     expect(listDueAgentRpcReports(STARTED + 60_000)).toHaveLength(1);
   });
 
+  it("of the kind the host classified, not what the error text suggests", () => {
+    // Claude's weekly limit ends the prompt with a generic internal error;
+    // its rate limit report says what it was.
+    const report = noteAgentMessageTurnFailed({
+      op_id: "op-limit",
+      request: { chat: { agent_rpc_execution: execution } },
+      error:
+        "Claude could not run this request. (ACP session/prompt, code -32603)",
+      failure: { kind: "limit", scope: "credential", resets_at: STARTED },
+      turn_started_at: STARTED,
+      now: STARTED + 60_000,
+    });
+    expect(report?.kind).toBe("limit");
+    // Kinds a v1 report has no name for are an error.
+    const lost = noteAgentMessageTurnFailed({
+      op_id: "op-lost",
+      request: { chat: { agent_rpc_execution: execution } },
+      error: "This content was flagged",
+      failure: { kind: "host-lost" },
+      turn_started_at: STARTED,
+      now: STARTED + 60_000,
+    });
+    expect(lost?.kind).toBe("error");
+  });
+
   it("not for guidance, a person's message, a report, or an old or unsigned message", () => {
     expect(
       failed({ agent_rpc_execution: { ...execution, guidance: true } }, "g"),
