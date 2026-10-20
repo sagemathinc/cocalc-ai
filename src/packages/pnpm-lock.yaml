@@ -2040,8 +2040,8 @@ importers:
         specifier: ^1.4.1
         version: 1.4.1
       '@sagemathinc/sagebrush-board':
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.3.0
+        version: 0.3.0
       compression:
         specifier: ^1.8.2
         version: 1.8.2
@@ -5548,8 +5548,8 @@ packages:
       '@swc/helpers':
         optional: true
 
-  '@sagemathinc/sagebrush-board@0.2.0':
-    resolution: {integrity: sha512-bi8TyBCTDhspxdOf5SyUVFNurzeXxBl6W/N8amhdNyRcdl/vESKG/5azGZ3cdWJvMUmLZb7wCOPFnNZKmOhRRw==}
+  '@sagemathinc/sagebrush-board@0.3.0':
+    resolution: {integrity: sha512-4zi6K/x2+0uZRsaQfamp50oqkHRM4X7VX5Uxr5If6/0Uj8sYTSe3mP4Yi7HVjeLEEtOBUXr4w8E4uaOWgZJl6A==}
     engines: {node: '>=22'}
     peerDependencies:
       sagebrush: ^0.5.0
@@ -15784,7 +15784,7 @@ snapshots:
     optionalDependencies:
       '@swc/helpers': 0.5.15
 
-  '@sagemathinc/sagebrush-board@0.2.0': {}
+  '@sagemathinc/sagebrush-board@0.3.0': {}
 
   '@scure/base@2.0.0': {}
 

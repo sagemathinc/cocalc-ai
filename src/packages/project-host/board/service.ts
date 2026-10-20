@@ -63,8 +63,8 @@ const MAX_OPEN_BOARD_BYTES = 512 * 1024 * 1024;
 const START_STEP_TIMEOUT_MS = 45_000;
 
 let libPromise: Promise<BoardLib> | undefined;
-// @sagemathinc/sagebrush-board is ESM; Node loads it through require() once
-// its exports offer "default" (0.3.0).
+// @sagemathinc/sagebrush-board is ESM; since 0.3.0 its exports offer
+// "default", so the compiled require() of this import loads it.
 export function loadBoardLib(): Promise<BoardLib> {
   libPromise ??= import("@sagemathinc/sagebrush-board") as Promise<any>;
   return libPromise;
