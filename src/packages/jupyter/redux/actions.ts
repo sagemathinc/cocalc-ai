@@ -3083,6 +3083,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     } catch {
       this.importCommitVersion = undefined;
     }
+    // Record the imported content now, before setToIpynb awaits the RTC save:
+    // a clear made during that wait must not look like the placeholder.
+    this.noteNotebookContent();
   };
 
   setToIpynb = async (

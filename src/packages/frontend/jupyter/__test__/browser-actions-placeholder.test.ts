@@ -664,6 +664,33 @@ describe("applying a loaded file", () => {
     expect(actions.saveIpynb).toHaveBeenCalledTimes(1);
   });
 
+  it("save a clear made while the loaded file is applied", async () => {
+    const actions = createActions();
+    actions.saveIpynb = jest.fn(async () => {});
+    let finish: () => void = () => {};
+    actions.setToIpynb = jest.fn(() => {
+      actions.setCells([{ ...ALPHA, input: "### Lab 3" }]); // the import commits
+      actions.setVersion("imported");
+      actions.noteImportCommit();
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+
+    const loading = actions.loadFromDisk({
+      diskRead: LAB_READ,
+      expectedRtcVersion: "v1",
+      replacingPlaceholder: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    actions.setCells([ALPHA]); // a collaborator clears the lab meanwhile
+    actions.setVersion("v2");
+    finish();
+    await loading;
+
+    expect(actions.saveIpynb).toHaveBeenCalledTimes(1);
+    // The clear is real work, not the generated placeholder.
+    expect(actions.rtcIsGeneratedPlaceholder()).toBe(false);
+  });
+
   it("mark the notebook saved when nothing changed while applying", async () => {
     const actions = createActions();
     actions.saveIpynb = jest.fn(async () => {});
