@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import test, { mock } from "node:test";
 import { rpcOutcome, type AgentRpcSend } from "@cocalc/conat/agents/rpc";
-import { sendExternalAgentMessage } from "./external-agent-message";
+import {
+  resolveExternalAgentNameIn,
+  sendExternalAgentMessage,
+} from "./external-agent-message";
 
 test("external transport pins profile and preserves network send semantics", async () => {
   const source = {
@@ -64,4 +67,70 @@ test("external transport pins profile and preserves network send semantics", asy
     connect.mock.restore();
     profile.mock.restore();
   }
+});
+
+test("an external agent sends to every name destinations shows it", () => {
+  const network = (title: string) => ({
+    agent_network_id: randomUUID(),
+    title,
+    delivery_mode: "live" as const,
+    generation: randomUUID(),
+  });
+  const cocalc = network("cocalc");
+  const other = network("other");
+  const registered = { project_id: randomUUID(), agent_id: randomUUID() };
+  const externalId = randomUUID();
+  const external = {
+    kind: "external" as const,
+    account_id: randomUUID(),
+    agent_id: externalId,
+    installation_id: randomUUID(),
+  };
+  const added_at = new Date().toISOString();
+  const directory = {
+    peers: [
+      {
+        member: {
+          kind: "registered" as const,
+          member_id: registered.agent_id,
+          endpoint: registered,
+          name: "reviewer",
+          available: true,
+          added_at,
+        },
+        networks: [cocalc],
+      },
+      {
+        member: {
+          kind: "external" as const,
+          member_id: externalId,
+          source: external,
+          label: "ops0 on alpha.cocalc.ai (ops project)",
+          available: true,
+          added_at,
+        },
+        networks: [cocalc],
+      },
+    ],
+  };
+  assert.deepEqual(
+    resolveExternalAgentNameIn(directory, "reviewer").target,
+    registered,
+  );
+  for (const name of [
+    "ops0",
+    "@ops0",
+    externalId,
+    "ops0 on alpha.cocalc.ai (ops project)",
+  ])
+    assert.deepEqual(
+      resolveExternalAgentNameIn(directory, name, "cocalc").target,
+      external,
+      name,
+    );
+  // Only peers in the requested network.
+  assert.throws(
+    () => resolveExternalAgentNameIn(directory, "ops0", other.title),
+    /No approved destination/,
+  );
 });
