@@ -986,6 +986,43 @@ describe("host reads across bays", () => {
       await db.end();
     }
   });
+
+  it("changes a host's access on the host's bay, with fresh auth from home", async () => {
+    // Granting manager access and removing access need fresh auth: the host's
+    // bay asks alice's home bay (the seed) to vouch for her session.
+    const forwarded = async (name) =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND account_id=$3 AND finished IS NOT NULL",
+           [${JSON.stringify(name)}, ${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const bobsRoles = async () =>
+      (await alice.client.call("hosts.listHostAccess", { id: host_id }))
+        .filter((entry) => entry.account_id === bob.account_id)
+        .map(({ role }) => role);
+
+    const setBefore = await forwarded("hosts.setHostAccess");
+    const entry = await alice.client.call("hosts.setHostAccess", {
+      id: host_id,
+      target_account_id: bob.account_id,
+      role: "manager",
+    });
+    assert.equal(entry.role, "manager");
+    assert.equal(await forwarded("hosts.setHostAccess"), setBefore + 1);
+    assert.deepEqual(await bobsRoles(), ["manager"]);
+
+    const removeBefore = await forwarded("hosts.removeHostAccess");
+    await alice.client.call("hosts.removeHostAccess", {
+      id: host_id,
+      target_account_id: bob.account_id,
+    });
+    assert.equal(await forwarded("hosts.removeHostAccess"), removeBefore + 1);
+    assert.deepEqual(await bobsRoles(), []);
+  });
 });
 
 describe("course reconfiguration across bays", () => {

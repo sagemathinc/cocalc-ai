@@ -450,7 +450,6 @@ import {
 } from "@cocalc/server/inter-bay/project-secrets";
 import {
   HOST_DANGEROUS_INTERNAL_AUTH,
-  annotateHostAvailabilityEvent,
   deleteHost,
   deleteHostRootfsImage,
   backupHostProjects,
@@ -474,9 +473,7 @@ import {
   recordServiceAdmissionNearLimitLocal,
   reconcileHostRuntimeDeployments,
   reconcileHostSoftware,
-  setHostPublicRouteMode,
   relocateHost,
-  setHostMaintenanceNotice,
   refreshHostCloudState,
   removeSelfHostConnector,
   restartHost,
@@ -487,24 +484,17 @@ import {
   upgradeHostSoftware,
   listHostProjects,
   pullHostRootfsImage,
-  addHostSshAuthorizedKey,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   markProjectChanged as markProjectChangedLocal,
   recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
-  removeHostAccess,
-  setHostOwnerSpendLimits,
-  setHostAccess,
   setHostDeletionProtection,
-  setHostProjectRamLimit,
-  setHostPoolAccess,
   setHostRuntimeDeployments,
   getProjectBackupIndexesLocal,
   syncProjectBackupIndexesLocal,
   deleteProjectBackupIndexLocal,
-  removeHostSshAuthorizedKey,
 } from "@cocalc/server/conat/api/hosts";
 import {
   getProjectBackupShardAdminStatus,
@@ -2747,16 +2737,8 @@ async function startHostConnectionService(): Promise<void> {
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
       }),
-    setHostAccess: async (opts) => await setHostAccess(opts),
-    removeHostAccess: async (opts) => await removeHostAccess(opts),
-    setHostProjectRamLimit: async (opts) => await setHostProjectRamLimit(opts),
-    setHostOwnerSpendLimits: async (opts) =>
-      await setHostOwnerSpendLimits(opts),
-    setHostPoolAccess: async (opts) => await setHostPoolAccess(opts),
     setHostDeletionProtection: async (opts) =>
       await setHostDeletionProtection(opts),
-    annotateHostAvailabilityEvent: async (opts) =>
-      await annotateHostAvailabilityEvent(opts),
     getHostRuntimeDeploymentStatus: async ({ account_id, id }) =>
       await getHostRuntimeDeploymentStatus({
         account_id,
@@ -2840,11 +2822,7 @@ async function startHostConnectionService(): Promise<void> {
         id,
         force_bootstrap,
       }),
-    setHostPublicRouteMode: async ({ account_id, id, mode }) =>
-      await setHostPublicRouteMode({ account_id, id, mode }),
     relocateHost: async (opts) => await relocateHost(opts),
-    setHostMaintenanceNotice: async (opts) =>
-      await setHostMaintenanceNotice(opts),
     reconcileHostRuntimeDeployments: async ({
       account_id,
       id,
@@ -2991,34 +2969,6 @@ async function startHostConnectionService(): Promise<void> {
       await stopAndEraseHostExamRun({
         ...opts,
         internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    addHostSshAuthorizedKey: async ({
-      account_id,
-      session_hash,
-      id,
-      public_key,
-      user,
-    }) =>
-      await addHostSshAuthorizedKey({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        public_key,
-        user,
-      }),
-    removeHostSshAuthorizedKey: async ({
-      account_id,
-      session_hash,
-      id,
-      public_key,
-    }) =>
-      await removeHostSshAuthorizedKey({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        public_key,
       }),
     setHostRuntimeDeployments: async ({
       account_id,
