@@ -17,7 +17,7 @@ jest.mock("@cocalc/backend/logger", () => ({
   default: () => ({ error, warn: jest.fn(), debug: jest.fn(), info: jest.fn() }),
 }));
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   contentCutoffNow,
@@ -105,11 +105,28 @@ it("is called wherever a password changes or other sessions are signed out", () 
     /UPDATE accounts SET password_hash[\s\S]*await revokeContentLinksBestEffort\(account_id\);/,
   );
   // Passkey and 2FA setup sign out other sessions, then revoke content links.
-  for (const path of ["../auth/passkeys.ts", "../auth/two-factor.ts"]) {
+  const signOutOthers = ["../auth/passkeys.ts", "../auth/two-factor.ts"];
+  for (const path of signOutOthers) {
     expect(read(path)).toMatch(
-      /await deleteOtherRememberMe\(accountId, currentHash\);\s*await revokeOtherAuthSessions\(\{[^}]*\}\);\s*(\/\/[^\n]*\n\s*)?await revokeContentLinksBestEffort\(accountId\);/,
+      /await endOtherSignInSessions\(\{[^}]*\}\);\s*(\/\/[^\n]*\n\s*)?await revokeContentLinksBestEffort\(accountId\);/,
     );
   }
+  // A new caller that signs out other sessions must revoke content links too.
+  const callers = (dir: string): string[] =>
+    readdirSync(join(__dirname, dir), { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory()
+        ? e.name === "node_modules" || e.name === "dist"
+          ? []
+          : callers(`${dir}/${e.name}`)
+        : e.name.endsWith(".ts") &&
+            !e.name.endsWith(".test.ts") &&
+            /await endOtherSignInSessions\(/.test(read(`${dir}/${e.name}`))
+          ? [`${dir}/${e.name}`]
+          : [],
+    );
+  expect(callers("..").sort()).toEqual(
+    [...signOutOthers].sort(),
+  );
 });
 
 it("ends the cutoff just before the current second, so links re-issued now stay valid", () => {
