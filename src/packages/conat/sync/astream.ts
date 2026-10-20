@@ -72,6 +72,8 @@ export class AStream<T = any> {
       user: options.persistUser ?? this.user,
       storage: this.storage,
       service: options.service,
+      // A board writer's fence (board-write-fence.ts), on every mutation.
+      ...(options.writeFence ? { writeFence: options.writeFence } : {}),
     });
   }
 

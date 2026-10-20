@@ -133,7 +133,7 @@ test("one client's reader and writer of a board stream are different streams, in
   }
 });
 
-test("an astream with the writer's route asks as the hub (as a board's history reset does)", async () => {
+test("an astream with the writer's route asks as the hub, with its fence (as a board's history reset does)", async () => {
   const project_id = uuid();
   const path = "/home/user/astream.board.json";
   const s = astream({
@@ -142,9 +142,10 @@ test("an astream with the writer's route asks as the hub (as a board's history r
     name: name(path),
     service: BOARD_WRITE_SERVICE,
     persistUser: {},
+    writeFence: fence(),
     noInventory: true,
   });
-  // Through the board write service as the hub: accepted (as a project,
+  // Through the board write service as the hub, fenced: accepted (as a project,
   // the write service would refuse the connection).
   await s.publish({ edit: 1 });
   s.close();
