@@ -1072,6 +1072,35 @@ describe("host reads across bays", () => {
       ),
     );
   });
+
+  it("queues a host start on the host's bay", async () => {
+    // Last in this group: the start itself then fails (this host has no
+    // cloud provider), so only where it is queued is checked.
+    const forwarded = async () =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.startHost' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+           [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const before = await forwarded();
+    const op = await alice.client.call("hosts.startHost", { id: host_id });
+    assert.ok(op?.op_id, "a start operation was queued");
+    assert.equal(await forwarded(), before + 1);
+    const queuedOn = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM long_running_operations WHERE op_id=$1",
+         [${JSON.stringify(op.op_id)}]);
+       return rows[0].n;`,
+    );
+    assert.equal(queuedOn, 1, "the operation is recorded on the host's bay");
+  });
 });
 
 describe("course reconfiguration across bays", () => {

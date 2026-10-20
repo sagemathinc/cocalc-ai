@@ -5391,16 +5391,8 @@ export async function backupHostProjects({
   id: string;
   parallel?: number;
 }): Promise<HostLroResponse> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .backupHostProjects({
-        account_id,
-        id,
-        parallel,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, account_id);
   const snapshot = await listHostProjectsLocalSnapshot({
     id: row.id,
@@ -6556,23 +6548,8 @@ export async function startHost({
   id: string;
 }): Promise<HostLroResponse> {
   const actor = requireAccount(account_id);
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    const auth = await maybeRequireFreshAuthForInteractiveHostAction({
-      account_id,
-      browser_id,
-      session_hash,
-      required: true,
-    });
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .startHost({
-        account_id,
-        browser_id,
-        session_hash: auth.session_hash ?? session_hash,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, actor);
   assertHostNotUnderMaintenance(row);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
@@ -6640,24 +6617,14 @@ export async function stopHost({
   id: string;
   skip_backups?: boolean;
 }): Promise<HostLroResponse> {
-  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+  await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
     session_hash,
     required: true,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .stopHost({
-        account_id,
-        browser_id,
-        session_hash: auth.session_hash ?? session_hash,
-        id,
-        skip_backups,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, account_id);
   assertHostNotUnderMaintenance(row);
   await eraseActiveExamRunBeforeHostStopLocal({ host: row });
@@ -6700,24 +6667,14 @@ export async function restartHost({
   id: string;
   mode?: "reboot" | "hard";
 }): Promise<HostLroResponse> {
-  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+  await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
     session_hash,
     required: true,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .restartHost({
-        account_id,
-        browser_id,
-        session_hash: auth.session_hash ?? session_hash,
-        id,
-        mode,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, account_id);
   assertHostNotUnderMaintenance(row);
   await assertNoPendingDestructiveHostOp(row.id);
@@ -6777,21 +6734,8 @@ export async function drainHost({
     browser_id,
     session_hash,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .drainHost({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-        dest_host_id,
-        force,
-        allow_offline,
-        parallel,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const owner = requireAccount(account_id);
   const row = await loadHostForDrainInternal({ id, owner });
   assertHostNotUnderMaintenance(row);
@@ -6885,17 +6829,8 @@ export async function forceDeprovisionHost({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .forceDeprovisionHost({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (machineCloud !== "self-host") {
@@ -6991,16 +6926,8 @@ export async function refreshHostCloudState({
   id: string;
   confirm_missing?: boolean;
 }): Promise<HostCloudRefreshResult> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .refreshHostCloudState({
-        account_id,
-        id,
-        confirm_missing,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const owner = requireAccount(account_id);
   if (!(await isAdmin(owner))) {
     throw new Error("not authorized");
@@ -7145,17 +7072,8 @@ export async function removeSelfHostConnector({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .removeSelfHostConnector({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (machineCloud !== "self-host") {
@@ -8923,21 +8841,8 @@ export async function relocateHost({
     session_hash,
   });
   await requireHostMaintenanceAdmin(account_id);
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).relocateHost({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-      zone,
-      machine_type,
-      expected_minutes,
-      message,
-      skip_backups,
-      keep_snapshot,
-    });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { owner, row } = await requireAdminForHostMaintenance(account_id, id);
   assertHostNotUnderMaintenance(row);
   // Validate now, so a bad request fails here instead of in the worker.
@@ -10258,18 +10163,8 @@ export async function deleteHost({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .deleteHost({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-        skip_backups,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForDestructiveAction(id, account_id);
   assertHostNotUnderMaintenance(row);
   if (row.deletion_protection === true) {
@@ -10316,18 +10211,8 @@ export async function setHostDeletionProtection({
   id: string;
   enabled: boolean;
 }): Promise<Host> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostDeletionProtection({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-        enabled,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadOwnedHost(id, account_id);
   if (!enabled) {
     await requireDangerousHostMutationAuth({

@@ -449,11 +449,6 @@ import {
   handleProjectSecretsValidateCourseTarget,
 } from "@cocalc/server/inter-bay/project-secrets";
 import {
-  HOST_DANGEROUS_INTERNAL_AUTH,
-  deleteHost,
-  backupHostProjects,
-  drainHost,
-  forceDeprovisionHost,
   getBackupConfigLocal,
   getHostRuntimeDeploymentStatus,
   getAccountEffectiveLimitsLocal,
@@ -462,13 +457,7 @@ import {
   recordAcpAdmissionDenialLocal,
   recordServiceAdmissionDenialLocal,
   recordServiceAdmissionNearLimitLocal,
-  relocateHost,
-  refreshHostCloudState,
-  removeSelfHostConnector,
-  restartHost,
   rolloutHostManagedComponents,
-  startHost,
-  stopHost,
   upgradeHostSoftware,
   listHostProjects,
   issueProjectHostAuthTokenLocal,
@@ -477,7 +466,6 @@ import {
   recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
-  setHostDeletionProtection,
   getProjectBackupIndexesLocal,
   syncProjectBackupIndexesLocal,
   deleteProjectBackupIndexLocal,
@@ -2723,66 +2711,8 @@ async function startHostConnectionService(): Promise<void> {
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
       }),
-    setHostDeletionProtection: async (opts) =>
-      await setHostDeletionProtection(opts),
     getHostRuntimeDeploymentStatus: async ({ account_id, id }) =>
       await getHostRuntimeDeploymentStatus({
-        account_id,
-        id,
-      }),
-    startHost: async ({ account_id, browser_id, session_hash, id }) =>
-      await startHost({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-      }),
-    stopHost: async ({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-      skip_backups,
-    }) =>
-      await stopHost({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        skip_backups,
-      }),
-    restartHost: async ({ account_id, browser_id, session_hash, id, mode }) =>
-      await restartHost({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        mode,
-      }),
-    backupHostProjects: async ({ account_id, id, parallel }) =>
-      await backupHostProjects({
-        account_id,
-        id,
-        parallel,
-      }),
-    drainHost: async ({
-      account_id,
-      id,
-      dest_host_id,
-      force,
-      allow_offline,
-      parallel,
-    }) =>
-      await drainHost({
-        account_id,
-        id,
-        dest_host_id,
-        force,
-        allow_offline,
-        parallel,
-      }),
-    refreshHostCloudState: async ({ account_id, id }) =>
-      await refreshHostCloudState({
         account_id,
         id,
       }),
@@ -2802,7 +2732,6 @@ async function startHostConnectionService(): Promise<void> {
         align_runtime_stack,
         record_runtime_deployments,
       }),
-    relocateHost: async (opts) => await relocateHost(opts),
     rolloutHostManagedComponents: async ({
       account_id,
       id,
@@ -2820,47 +2749,6 @@ async function startHostConnectionService(): Promise<void> {
         record_runtime_deployments,
         base_url,
         reason,
-      }),
-    deleteHost: async ({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-      skip_backups,
-    }) =>
-      await deleteHost({
-        account_id,
-        browser_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        skip_backups,
-      }),
-    forceDeprovisionHost: async ({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-    }) =>
-      await forceDeprovisionHost({
-        account_id,
-        browser_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-      }),
-    removeSelfHostConnector: async ({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-    }) =>
-      await removeSelfHostConnector({
-        account_id,
-        browser_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
       }),
     getProjectStartMetadata: async ({ host_id, project_id }) => {
       const metadata = await getProjectStartMetadataLocal({
