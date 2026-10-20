@@ -912,3 +912,37 @@ describe("payment launch receipts", () => {
     );
   });
 });
+
+test("inspect reports the turn from the recipient's record, after the receipt expired", () => {
+  const { e, deps } = fixture();
+  const turn = {
+    state: "ended" as const,
+    queued_at: 1_000,
+    ended_at: 2_000,
+    outcome: { version: 1 as const, state: "completed" as const },
+  };
+  const lookups: any[] = [];
+  deps.turnState = (source, attempt, accountId) => {
+    lookups.push([source, attempt.attempt_id, accountId]);
+    return turn;
+  };
+  // A fresh service: no receipt for this attempt (it expired, or the host
+  // restarted).
+  const service = createAgentRpcService(deps);
+  expect(service.inspect(e.source, e, e.account_id)).toMatchObject({
+    outcome: "accepted",
+    chat_effect: "saved",
+    turn,
+  });
+  // Looked up as the caller the hub authenticated, never another sender.
+  expect(lookups).toEqual([[e.source, e.attempt_id, e.account_id]]);
+  // No record: the receipt alone answers, as before.
+  deps.turnState = () => undefined;
+  expect(service.inspect(e.source, e, e.account_id)).not.toHaveProperty("turn");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
+  // A failing lookup never breaks inspect.
+  deps.turnState = () => {
+    throw new Error("sqlite busy");
+  };
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
+});

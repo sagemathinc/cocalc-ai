@@ -6,6 +6,7 @@
 // One message to one network peer, sent with this runtime's agent identity.
 // Shared by `cocalc agent send` and `cocalc project chat send --to/--rpc`.
 
+import { agentRpcTurnSummary } from "@cocalc/conat/agents/rpc-turn";
 import { randomUUID } from "node:crypto";
 import type { AgentSelf } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
@@ -252,4 +253,16 @@ export function agentSendSummary(result: AgentSendResult): string {
     ? ""
     : ` Check without resending: agent rpc inspect ${outcome.attempt_id} --agent-network ${outcome.agent_network_id} --to-agent ${target.agent_id} --target-project ${target.project_id}${profile}.`;
   return `Delivery to ${who} via ${network} is unconfirmed: ${why}. It may still run, so do not resend automatically.${inspect} A deliberate retry needs a new --attempt-id.`;
+}
+
+/** One plain sentence for `agent rpc inspect`: where the turn is, if known. */
+export function agentRpcInspectSummary(outcome: AgentRpcOutcome): string {
+  if (outcome.turn) return agentRpcTurnSummary(outcome.turn);
+  const why = outcome.reason ?? outcome.code ?? "no reason given";
+  if (outcome.outcome === "accepted")
+    return outcome.operation?.disposition === "steered"
+      ? "Admitted into the recipient's running turn; it has no turn of its own to report."
+      : "Admitted; the recipient's host has no record of its turn (an older host, or a message added to a running turn).";
+  if (outcome.outcome === "rejected") return `Not delivered: ${why}.`;
+  return `Unknown: ${why}. Nothing shows it was admitted; it may still run, so do not resend automatically.`;
 }

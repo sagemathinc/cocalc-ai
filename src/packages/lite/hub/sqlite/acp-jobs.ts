@@ -473,6 +473,57 @@ export function getAcpJobByOpId(op_id: string): AcpJobRow | undefined {
     | undefined;
 }
 
+/**
+ * The jobs of one agent message: the turn it started and that turn's
+ * continuations (each carries the same agent_rpc_execution), oldest first.
+ * The caller checks the sender before telling anyone about them.
+ */
+export function listAcpJobsForAgentRpcAttempt({
+  attempt_id,
+  account_id,
+}: {
+  attempt_id: string;
+  account_id: string;
+}): AcpJobRow[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE account_id = ?
+         AND json_extract(request_json, '$.chat.agent_rpc_execution.attempt_id') = ?
+       ORDER BY created_at ASC, op_id ASC`,
+    )
+    .all(account_id, attempt_id) as AcpJobRow[];
+}
+
+/** Turns queued ahead of this one in its conversation, in the order the
+ * scheduler takes them (only those already due can go first). */
+export function countQueuedAcpJobsAhead(job: AcpJobRow): number {
+  ensureInit();
+  const row = getAcpDatabase()
+    .prepare(
+      `WITH ranked AS (
+         SELECT op_id,
+                ROW_NUMBER() OVER (ORDER BY ${THREAD_QUEUE_ORDER}, rowid ASC)
+                  AS position
+         FROM ${TABLE}
+         WHERE project_id = ? AND path = ? AND thread_id = ?
+           AND state = 'queued'
+           AND (op_id = ? OR available_at IS NULL OR available_at <= ?)
+       )
+       SELECT position - 1 AS n FROM ranked WHERE op_id = ?`,
+    )
+    .get(
+      job.project_id,
+      job.path,
+      job.thread_id,
+      job.op_id,
+      Date.now(),
+      job.op_id,
+    ) as { n?: number } | undefined;
+  return Number(row?.n ?? 0);
+}
+
 export function listAcpJobsByRecoveryParent({
   recovery_parent_op_id,
 }: {

@@ -2,6 +2,8 @@ import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesse
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
 import {
+  chainToolRan,
+  toolRanOf,
   parseTurnOutcome,
   turnFailureOf,
   turnOutcomeOf,
@@ -10264,21 +10266,6 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     if (ended) reportFailedAgentMessageTurn(job, request, message, outcome);
   }
-}
-
-function toolRanOf(outcome: TurnOutcome | undefined): boolean | undefined {
-  return outcome?.state === "failed" || outcome?.state === "canceled"
-    ? outcome.tool_ran
-    : outcome?.state === "never-started"
-      ? false
-      : undefined;
-}
-
-/** For the sender: tools ran if any attempt ran them; none ran only if every
- * attempt is known not to have. */
-function chainToolRan(attempts: (boolean | undefined)[]): boolean | undefined {
-  if (attempts.includes(true)) return true;
-  return attempts.every((ran) => ran === false) ? false : undefined;
 }
 
 function reportSupersededRecovery(job: AcpJobRow): void {
