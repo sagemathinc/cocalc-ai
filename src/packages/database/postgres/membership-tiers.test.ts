@@ -142,6 +142,18 @@ describe("membershipTiersQuery", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("rejects a Sagebrush sync limit Sagebrush can't read, before any query", async () => {
+    const { db, calls } = createDb();
+    await expect(
+      upsertMembershipTier(db, {
+        id: "basic",
+        label: "Basic",
+        usage_limits: { sagebrush_sync_read_bytes_per_day: 1e20 },
+      }),
+    ).rejects.toThrow("usage_limits.sagebrush_sync_read_bytes_per_day");
+    expect(calls).toHaveLength(0);
+  });
+
   it("includes usage counts by membership tier", async () => {
     const { db } = createDb({
       siteLicenseRows: [{ tier_id: "instructor", site_license_count: 2 }],

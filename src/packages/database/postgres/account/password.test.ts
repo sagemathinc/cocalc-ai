@@ -175,6 +175,123 @@ describe("password methods", () => {
     ).rejects.toBe("password_hash must be at most 173 characters");
   });
 
+  describe("while the account is being rehomed", () => {
+    // A rehome copies the account row and its sessions to the new bay: a
+    // password or session change landing after the copy read them would be
+    // lost there, or would bring a signed-out session back.
+    async function ensureRehomeTable() {
+      await getPool().query(`
+        CREATE TABLE IF NOT EXISTS account_rehome_operations (
+          op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          account_id UUID NOT NULL,
+          source_bay_id TEXT NOT NULL,
+          dest_bay_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'running',
+          stage TEXT NOT NULL DEFAULT 'requested',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+    }
+
+    async function signedIn(hash: string): Promise<string> {
+      const account_id = uuid();
+      await insertAccount({
+        account_id,
+        email_address: `${account_id}@example.com`,
+        password_hash: "old",
+      });
+      await insertRememberMe({ account_id, hash });
+      await getPool().query(
+        `INSERT INTO account_auth_sessions
+           (session_hash, account_id, created, updated, authenticated_at, expire)
+         VALUES ($1, $2, NOW(), NOW(), NOW(), NOW() + INTERVAL '1 hour')`,
+        [hash, account_id],
+      );
+      return account_id;
+    }
+
+    async function unchanged(account_id: string, hash: string) {
+      const pool = getPool();
+      const { rows } = await pool.query(
+        "SELECT password_hash FROM accounts WHERE account_id = $1",
+        [account_id],
+      );
+      expect(rows[0]?.password_hash).toBe("old");
+      const cookie = await pool.query(
+        "SELECT 1 FROM remember_me WHERE hash = $1",
+        [hash],
+      );
+      expect(cookie.rows.length).toBe(1);
+      const auth = await pool.query(
+        "SELECT revoked_at FROM account_auth_sessions WHERE session_hash = $1",
+        [hash],
+      );
+      expect(auth.rows[0]?.revoked_at).toBeNull();
+    }
+
+    // The callback API reports the error as a message string.
+    const outcome = (p: Promise<void>) =>
+      p.then(
+        () => "changed",
+        (err) => `${err}`,
+      );
+
+    afterEach(async () => {
+      await getPool().query("DELETE FROM account_rehome_operations");
+      await getPool().query("DELETE FROM account_auth_sessions");
+    });
+
+    it("changes neither the password nor any session", async () => {
+      await ensureRehomeTable();
+      const account_id = await signedIn("hash-rehome");
+      await getPool().query(
+        `INSERT INTO account_rehome_operations (account_id, source_bay_id, dest_bay_id)
+         VALUES ($1, 'bay-0', 'bay-1')`,
+        [account_id],
+      );
+      for (const invalidate_remember_me of [true, false]) {
+        expect(
+          await outcome(
+            changePassword({
+              account_id,
+              password_hash: "new-hash",
+              invalidate_remember_me,
+            }),
+          ),
+        ).toMatch(/rehome/);
+        await unchanged(account_id, "hash-rehome");
+      }
+    });
+
+    it("a password change racing a rehome start waits for it, then changes nothing", async () => {
+      await ensureRehomeTable();
+      const account_id = await signedIn("hash-race");
+      // A rehome starts by taking the account fence and recording the running
+      // rehome in one transaction.
+      const rehome = await getPool().connect();
+      try {
+        await rehome.query("BEGIN");
+        await rehome.query(
+          "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+          ["account-rehome", account_id],
+        );
+        const changing = outcome(
+          changePassword({ account_id, password_hash: "new-hash" }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await rehome.query(
+          `INSERT INTO account_rehome_operations (account_id, source_bay_id, dest_bay_id)
+           VALUES ($1, 'bay-0', 'bay-1')`,
+          [account_id],
+        );
+        await rehome.query("COMMIT");
+        expect(await changing).toMatch(/rehome/);
+      } finally {
+        rehome.release();
+      }
+      await unchanged(account_id, "hash-race");
+    });
+  });
+
   it("set/get/delete password reset works and respects expiration", async () => {
     const resetId = await setPasswordReset({
       email_address: "user@example.com",

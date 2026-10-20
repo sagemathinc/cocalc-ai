@@ -21,6 +21,9 @@ const UUID_RE =
 function isIdentifierToken(token: string): boolean {
   if (UUID_RE.test(token)) return true;
   if (/^\d+$/.test(token)) return true;
+  // Generated client ids (e.g. persist clients) are upper-case base32-like,
+  // possibly without any digit: "CEZFLEJZNX".
+  if (token.length >= 8 && /^[A-Z0-9]+$/.test(token)) return true;
   // Random ids (inboxes, hashes, base64-ish keys) mix letters and digits.
   return token.length >= 12 && /\d/.test(token) && /[a-z]/i.test(token);
 }
@@ -124,6 +127,72 @@ export function diffEgressBySubject(
     if (delta > 0) out[key] = delta;
   }
   return out;
+}
+
+// The stored size of a rollup bucket's subjects: a finished minute's exact
+// per-subject totals are folded to this many once (the smallest beyond it
+// summed under OTHER_KEY, so totals are kept); rows from different hub
+// processes are merged with the same fold.
+export const MAX_ROLLUP_SUBJECT_KEYS = 256;
+// Subjects kept while a minute is still being summed: per sample (all of an
+// account's sockets) and per open minute bucket.  Only a sample or minute
+// with more distinct subjects than this (an account with ~60+ sockets, each
+// at its own 64-key cap) folds early; the stored bucket is folded to
+// MAX_ROLLUP_SUBJECT_KEYS once, by exact totals.
+export const MAX_OPEN_SUBJECT_KEYS = 4096;
+// Subjects shown per event when rollups are read.
+export const MAX_REPORTED_TOP_SUBJECTS = 20;
+
+function sumSubjectLists(lists: unknown[]): Record<string, number> {
+  const bySubject: Record<string, number> = {};
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const subject = `${item?.subject ?? ""}`;
+      const bytes = Number(item?.bytes);
+      if (!subject || !(bytes > 0) || !Number.isFinite(bytes)) continue;
+      bySubject[subject] = (bySubject[subject] ?? 0) + bytes;
+    }
+  }
+  return bySubject;
+}
+
+// At most `limit` subjects, largest first; the rest are summed under
+// OTHER_KEY.  The SQL rollup upsert applies the same rule.
+export function foldEgressSubjects(
+  bySubject: Record<string, number>,
+  limit: number,
+): { subject: string; bytes: number }[] {
+  const sorted = topEgressSubjects(bySubject, Number.MAX_SAFE_INTEGER);
+  if (sorted.length <= limit) return sorted;
+  const kept: Record<string, number> = {};
+  for (const { subject, bytes } of sorted.slice(0, limit - 1)) {
+    kept[subject] = bytes;
+  }
+  const rest = sorted
+    .slice(limit - 1)
+    .reduce((total, { bytes }) => total + bytes, 0);
+  kept[OTHER_KEY] = (kept[OTHER_KEY] ?? 0) + rest;
+  return topEgressSubjects(kept, limit);
+}
+
+// Sum top-subject lists (samples of one rollup bucket) without losing
+// totals: truncation to the reported top N happens only when reading.
+export function mergeTopEgressSubjects(
+  a: unknown,
+  b: unknown,
+  limit = MAX_ROLLUP_SUBJECT_KEYS,
+): { subject: string; bytes: number }[] {
+  return foldEgressSubjects(sumSubjectLists([a, b]), limit);
+}
+
+// What an event reports: the top subjects of its bucket, the rest summed
+// under OTHER_KEY.
+export function reportedTopEgressSubjects(
+  list: unknown,
+  limit = MAX_REPORTED_TOP_SUBJECTS,
+): { subject: string; bytes: number }[] {
+  return foldEgressSubjects(sumSubjectLists([list]), limit);
 }
 
 export function topEgressSubjects(

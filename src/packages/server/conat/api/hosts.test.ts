@@ -4701,52 +4701,31 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     ]);
   });
 
-  it("routes host-scoped runtime deployment listing to the authoritative remote bay", async () => {
+  it("refuses host-scoped runtime deployment listing on a bay that does not own the host (it is routed)", async () => {
+    const { getHubApiRoute } = await import("@cocalc/conat/hub/api/routes");
+    expect(getHubApiRoute("hosts.listHostRuntimeDeployments")?.owner).toBe(
+      "host",
+    );
     resolveHostBayMock = jest.fn(async () => ({
       bay_id: "bay-1",
       epoch: 2,
     }));
-    queryMock = jest.fn(async () => {
-      throw new Error("should not query local host rows for remote-owned host");
-    });
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => {
       throw new Error(
         "should not list local runtime deployments for remote-owned host",
       );
     });
-    hostConnectionListHostRuntimeDeploymentsMock.mockResolvedValueOnce([
-      {
-        scope_type: "host",
-        scope_id: HOST_ID,
-        host_id: HOST_ID,
-        target_type: "artifact",
-        target: "project-host",
-        desired_version: "ph-remote",
-        requested_by: ACCOUNT_ID,
-        requested_at: "2026-04-15T00:00:00.000Z",
-        updated_at: "2026-04-15T00:00:00.000Z",
-      },
-    ]);
 
     const { listHostRuntimeDeployments } = await import("./hosts");
-    const deployments = await listHostRuntimeDeployments({
-      account_id: ACCOUNT_ID,
-      scope_type: "host",
-      id: HOST_ID,
-    });
-
-    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
-    expect(hostConnectionListHostRuntimeDeploymentsMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      scope_type: "host",
-      id: HOST_ID,
-    });
-    expect(deployments).toEqual([
-      expect.objectContaining({
-        target: "project-host",
-        desired_version: "ph-remote",
+    await expect(
+      listHostRuntimeDeployments({
+        account_id: ACCOUNT_ID,
+        scope_type: "host",
+        id: HOST_ID,
       }),
-    ]);
+    ).rejects.toMatchObject({ code: 409 });
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(hostConnectionListHostRuntimeDeploymentsMock).not.toHaveBeenCalled();
   });
 
   it("routes host-scoped runtime deployment updates to the authoritative remote bay", async () => {
@@ -4813,7 +4792,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     ]);
   });
 
-  it("routes rootfs listing to the authoritative remote bay", async () => {
+  it("refuses rootfs listing on a bay that does not own the host (it is routed)", async () => {
     resolveHostBayMock = jest.fn(async () => ({
       bay_id: "bay-1",
       epoch: 2,
@@ -4821,36 +4800,15 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     queryMock = jest.fn(async () => {
       throw new Error("should not query local host rows for remote-owned host");
     });
-    hostConnectionListHostRootfsImagesMock.mockResolvedValueOnce([
-      {
-        image: "ghcr.io/cocalc/project:remote",
-        display_name: "remote",
-        state: "ready",
-        backend: "release",
-        local_bytes: 123,
-        deleted: false,
-        last_used_at: null,
-        last_released_at: null,
-        remote_cache: null,
-      },
-    ]);
 
     const { listHostRootfsImages } = await import("./hosts");
-    const images = await listHostRootfsImages({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
-
-    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
-    expect(hostConnectionListHostRootfsImagesMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
-    expect(images).toEqual([
-      expect.objectContaining({
-        image: "ghcr.io/cocalc/project:remote",
+    await expect(
+      listHostRootfsImages({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
       }),
-    ]);
+    ).rejects.toThrow("stale route");
+    expect(hostConnectionListHostRootfsImagesMock).not.toHaveBeenCalled();
   });
 
   it("routes rootfs pull and managed component status to the authoritative remote bay", async () => {
@@ -4893,10 +4851,13 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       id: HOST_ID,
       image: "ghcr.io/cocalc/project:remote",
     });
-    const status = await getHostManagedComponentStatus({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
+    // Managed component status is routed: refused on a non-owning bay.
+    await expect(
+      getHostManagedComponentStatus({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({ code: 409 });
 
     expect(hostConnectionPullHostRootfsImageMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
@@ -4906,20 +4867,12 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     });
     expect(
       hostConnectionGetHostManagedComponentStatusMock,
-    ).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
+    ).not.toHaveBeenCalled();
     expect(pulled).toEqual(
       expect.objectContaining({
         image: "ghcr.io/cocalc/project:remote",
       }),
     );
-    expect(status).toEqual([
-      expect.objectContaining({
-        component: "conat-router",
-      }),
-    ]);
   });
 
   it("routes SSH authorized key operations to the authoritative remote bay", async () => {
@@ -4936,10 +4889,13 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       addHostSshAuthorizedKey,
       removeHostSshAuthorizedKey,
     } = await import("./hosts");
-    await listHostSshAuthorizedKeys({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
+    // Listing is routed: refused on a non-owning bay.
+    await expect(
+      listHostSshAuthorizedKeys({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({ code: 409 });
     await addHostSshAuthorizedKey({
       account_id: ACCOUNT_ID,
       session_hash: "session-hash",
@@ -4953,10 +4909,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       public_key: "ssh-ed25519 AAAATEST test",
     });
 
-    expect(hostConnectionListHostSshAuthorizedKeysMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
+    expect(hostConnectionListHostSshAuthorizedKeysMock).not.toHaveBeenCalled();
     expect(hostConnectionAddHostSshAuthorizedKeyMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       session_hash: "session-hash",

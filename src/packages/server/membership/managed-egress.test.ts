@@ -742,3 +742,29 @@ describe("computeRollingWindowBlockedUntil", () => {
     ).toBe("2026-10-19T01:01:01.000Z");
   });
 });
+
+describe("mergeMetadataSamples", () => {
+  it("sums top_subjects across samples and keeps the first sample's other fields", async () => {
+    const { mergeMetadataSamples } = await import("./managed-egress");
+    expect(
+      mergeMetadataSamples(
+        { browser_ids: ["a"], top_subjects: [{ subject: "x", bytes: 5 }] },
+        {
+          browser_ids: ["b"],
+          top_subjects: [
+            { subject: "x", bytes: 7 },
+            { subject: "y", bytes: 20 },
+          ],
+        },
+      ),
+    ).toEqual({
+      browser_ids: ["a"],
+      top_subjects: [
+        { subject: "y", bytes: 20 },
+        { subject: "x", bytes: 12 },
+      ],
+    });
+    expect(mergeMetadataSamples(undefined, { a: 1 })).toEqual({ a: 1 });
+    expect(mergeMetadataSamples({ a: 1 }, { a: 2 })).toEqual({ a: 1 });
+  });
+});

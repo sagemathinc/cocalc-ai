@@ -64,10 +64,13 @@ describe("container-runtime software proxy", () => {
     process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE;
   const previousContainerRuntimeBaseUrl =
     process.env.COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL;
+  const previousToolsBaseUrl =
+    process.env.COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL;
 
   beforeAll(() => {
     process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE = "remote";
     delete process.env.COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL;
+    delete process.env.COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL;
   });
 
   afterAll(() => {
@@ -83,6 +86,12 @@ describe("container-runtime software proxy", () => {
     } else {
       process.env.COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL =
         previousContainerRuntimeBaseUrl;
+    }
+    if (previousToolsBaseUrl == null) {
+      delete process.env.COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL;
+    } else {
+      process.env.COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL =
+        previousToolsBaseUrl;
     }
   });
 
@@ -146,6 +155,42 @@ describe("container-runtime software proxy", () => {
       process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE = "remote";
       delete process.env
         .COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL;
+    }
+  });
+
+  it("serves tools from their own endpoint when one is configured", async () => {
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE = "local";
+    process.env.COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL =
+      "https://tools.example.test/software/";
+    try {
+      for (const path of [
+        "/software/tools/latest-linux-amd64.json",
+        "/software/tools/versions-latest-linux-arm64.json",
+        "/software/tools/v1/tools-linux-amd64.tar.xz",
+        "/software/tools/v1/tools-linux-amd64.tar.xz.sha256",
+      ]) {
+        const response = await request(path);
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe(
+          `https://tools.example.test/software${path.slice("/software".length)}`,
+        );
+      }
+      // Only tools: this hub's own bundles are still its own.
+      const bundle = await request("/software/project/latest-linux.json");
+      expect(bundle.status).not.toBe(302);
+    } finally {
+      process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE = "remote";
+      delete process.env.COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL;
+    }
+  });
+
+  it("serves local tools when no tools endpoint is configured", async () => {
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE = "local";
+    try {
+      const response = await request("/software/tools/latest-linux-amd64.json");
+      expect(response.status).not.toBe(302);
+    } finally {
+      process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE = "remote";
     }
   });
 

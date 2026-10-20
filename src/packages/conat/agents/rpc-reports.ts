@@ -12,6 +12,10 @@
 // again when the turn it starts for A runs. A report never causes another
 // report: a turn it starts has no agent_rpc_execution.
 
+import {
+  turnFailureFromText,
+  type TurnFailure,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import { requireUuid } from "./protocol";
 import { validateAgentEndpoint, validateAgentRpcSource } from "./rpc";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
@@ -69,29 +73,24 @@ const KIND_TEXT: Record<AgentRpcTurnFailureKind, string> = {
   error: "an error",
 };
 
+/** The report's kind for a turn's typed failure (turn-outcome.ts). */
+export function agentRpcReportKind(
+  failure: TurnFailure,
+): AgentRpcTurnFailureKind {
+  switch (failure.kind) {
+    case "limit":
+    case "sign-in":
+    case "refused":
+    case "timeout":
+      return failure.kind;
+    default:
+      return "error";
+  }
+}
+
 /** Sort an error message into a kind; the text itself may say more. */
 export function classifyAgentTurnError(error: string): AgentRpcTurnFailureKind {
-  const text = error.toLowerCase();
-  if (
-    /flagged|cybersecurity|safety|refus|policy violation|content policy|not allowed to/.test(
-      text,
-    )
-  )
-    return "refused";
-  if (
-    /usage limit|rate limit|quota|credit|insufficient|billing|subscription|payment|out of (?:funds|tokens)|limit reached|429/.test(
-      text,
-    )
-  )
-    return "limit";
-  if (
-    /sign[- ]?in|signed out|log ?in|unauthori[sz]ed|authenticat|expired token|token expired|api key|401|403/.test(
-      text,
-    )
-  )
-    return "sign-in";
-  if (/timed? ?out|timeout|deadline exceeded/.test(text)) return "timeout";
-  return "error";
+  return agentRpcReportKind(turnFailureFromText(error));
 }
 
 /** One short line, so a long error cannot flood the sender's thread. */

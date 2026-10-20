@@ -97,6 +97,10 @@ export interface MembershipUsageLimits {
   sagebrush_storage_bytes?: number;
   sagebrush_max_file_bytes?: number;
   sagebrush_private_links?: boolean;
+  sagebrush_sync_enabled?: boolean;
+  sagebrush_sync_version_bytes?: number;
+  sagebrush_sync_read_bytes_per_day?: number;
+  sagebrush_sync_retention_days?: number;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}

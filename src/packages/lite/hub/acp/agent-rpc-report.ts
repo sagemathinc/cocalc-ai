@@ -12,10 +12,12 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
+import type { TurnFailure } from "@cocalc/conat/ai/acp/turn-outcome";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { agentRpcSourceKey } from "@cocalc/conat/agents/rpc";
 import {
   agentRpcReportDetail,
+  agentRpcReportKind,
   agentRpcReportText,
   classifyAgentTurnError,
   type AgentRpcReportDelivery,
@@ -47,6 +49,8 @@ export function noteAgentMessageTurnFailed(opts: {
   op_id: string;
   request: Pick<AcpRequest, "chat">;
   error: string;
+  /** What the failure was, when the host knows (turn-outcome.ts). */
+  failure?: TurnFailure;
   turn_started_at?: number | null;
   now?: number;
 }): AgentRpcTurnFailureReport | undefined {
@@ -69,7 +73,9 @@ export function noteAgentMessageTurnFailed(opts: {
     attempt_id: authorization.attempt_id,
     authorization: { ...authorization },
     turn_started_at,
-    kind: classifyAgentTurnError(opts.error),
+    kind: opts.failure
+      ? agentRpcReportKind(opts.failure)
+      : classifyAgentTurnError(opts.error),
     ...(detail ? { detail } : {}),
   };
   try {

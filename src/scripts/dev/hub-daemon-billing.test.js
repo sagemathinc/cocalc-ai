@@ -18,6 +18,7 @@ const functions = [
   "rotate_log_file",
   "local_hub_url",
   "billing_authority_enabled",
+  "pid_live",
   "billing_worker_running",
   "start_billing_worker",
   "stop_billing_worker",
@@ -124,5 +125,32 @@ test("the seed starts one locked billing worker and stops it", async () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /billing worker stopped/);
   assert.equal(fs.existsSync(pidFile), false);
-  assert.throws(() => process.kill(Number(pid), 0));
+  assert.equal(live(pid), false);
+});
+
+// Gone, or exited and waiting to be reaped (where PID 1 does not reap).
+function live(pid) {
+  try {
+    process.kill(Number(pid), 0);
+  } catch {
+    return false;
+  }
+  const stat = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+    encoding: "utf8",
+  }).stdout.trim();
+  return !stat.startsWith("Z");
+}
+
+test("an exited but unreaped process is not live", () => {
+  const ctx = setup();
+  // The shell becomes a sleep that never reaps its exited child.
+  const result = run(
+    ctx,
+    {},
+    `sleep 0.2 & child=$!; (sleep 0.6; if pid_live "$child"; then echo live; else echo gone; fi; kill -0 "$child" && echo signalable) & exec sleep 1`,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /gone/);
+  // kill -0 alone would have called it running.
+  assert.match(result.stdout, /signalable/);
 });
