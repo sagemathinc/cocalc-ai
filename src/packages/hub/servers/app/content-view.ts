@@ -22,6 +22,7 @@ import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { issueProjectContentUrl } from "@cocalc/server/conat/api/hosts";
 import { isValidUUID } from "@cocalc/util/misc";
 import { CONTENT_FRAME_SANDBOX } from "@cocalc/util/project-content-origin";
+import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 
 const logger = getLogger("hub:content-view");
 
@@ -49,7 +50,7 @@ const RESERVED_QUERY = new Set([
   "deleteAfterDownload",
   "viewer",
   "share",
-  "cocalc_project_host_token",
+  PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
 ]);
 
 // The frame's URL: the issued content link plus the page's own query (minus

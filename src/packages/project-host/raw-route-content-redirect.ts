@@ -56,7 +56,8 @@ function originOf(value: unknown): string | undefined {
 }
 
 // The site whose content view to use: the page the user came from, if it's
-// one of the host's approved sites, else the configured site.
+// one of the host's approved sites, else the configured site. With the site's
+// base path (a hub served under /base serves /base/content-view).
 export function contentViewSiteOrigin({
   req,
   approvedOrigins,
@@ -66,9 +67,14 @@ export function contentViewSiteOrigin({
   approvedOrigins: Set<string>;
   siteUrl?: string;
 }): string | undefined {
+  let basePath = "";
+  try {
+    basePath = new URL(`${siteUrl ?? ""}`).pathname.replace(/\/+$/, "");
+  } catch {}
   const referer = originOf(req.headers.referer);
-  if (referer && approvedOrigins.has(referer)) return referer;
-  return originOf(siteUrl);
+  if (referer && approvedOrigins.has(referer)) return `${referer}${basePath}`;
+  const site = originOf(siteUrl);
+  return site ? `${site}${basePath}` : undefined;
 }
 
 // The content-view URL to redirect to, or undefined to serve the file here.

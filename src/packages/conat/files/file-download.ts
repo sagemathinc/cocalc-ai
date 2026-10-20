@@ -251,12 +251,14 @@ export async function handleFileDownload({
   const { explicitDownload, deleteAfterDownload } = getDownloadQueryOptions(url);
   const { fileName, contentType } = projectFileResponseName({ path, url });
   const passive = isPassiveInlineType(contentType);
-  if (nonPassive != null && !passive) {
-    res.setHeader(
-      "Content-Security-Policy",
-      "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
-    );
+  if (nonPassive != null) {
     res.setHeader("X-Content-Type-Options", "nosniff");
+    if (!passive) {
+      res.setHeader(
+        "Content-Security-Policy",
+        "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
+      );
+    }
   }
   const cleanupClient =
     req.method !== "HEAD" &&

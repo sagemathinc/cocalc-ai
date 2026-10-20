@@ -14,7 +14,8 @@ import { onContentLinksRevoked } from "./content-link-revocations";
 
 export type ProjectContentUrlState =
   | { status: "loading" }
-  // The content origin can't serve this project: use the old behavior.
+  // The site has no content origins (or the file isn't shown there): use
+  // the old behavior.
   | { status: "unavailable" }
   // Asking failed (retried soon): show only the safe preview meanwhile.
   | { status: "error" }
@@ -109,6 +110,13 @@ export function useProjectContentUrl({
         if (canceled) return;
         failures.current = 0;
         if (!("url" in result)) {
+          // Only a site without content origins gets the old behavior. The
+          // host may already redirect raw HTML (no host yet, not ready,
+          // another bay...), so those are retried like errors, with only the
+          // safe preview meanwhile.
+          if (result.unavailable !== "off" && result.unavailable !== "no-access") {
+            throw new Error(`content origin: ${result.unavailable}`);
+          }
           const status =
             result.unavailable === "no-access" ? "no-access" : "unavailable";
           unavailableUntil.set(project_id, {

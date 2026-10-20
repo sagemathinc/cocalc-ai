@@ -102,6 +102,18 @@ describe("served here as before", () => {
 });
 
 describe("which site's content view", () => {
+  it("keeps the site's base path", () => {
+    expect(
+      contentViewSiteOrigin({
+        req: req("/", { referer: "https://b.test/base/projects/x" }),
+        approvedOrigins: new Set(["https://b.test"]),
+        siteUrl: "https://a.test/base/",
+      }),
+    ).toBe("https://b.test/base");
+    expect(
+      contentViewSiteOrigin({ req: req("/"), approvedOrigins: new Set(), siteUrl: "https://a.test/base" }),
+    ).toBe("https://a.test/base");
+  });
   const approvedOrigins = new Set(["https://a.test", "https://b.test"]);
   it("the approved site the user came from", () => {
     expect(
@@ -118,7 +130,7 @@ describe("which site's content view", () => {
         contentViewSiteOrigin({
           req: req("/", referer ? { referer } : {}),
           approvedOrigins,
-          siteUrl: "https://a.test/base",
+          siteUrl: "https://a.test/",
         }),
       ).toBe("https://a.test");
     }

@@ -60,3 +60,9 @@ it("never frames the raw slides for a viewer", () => {
   render(<SlideshowFrame project_id={PROJECT} path="/d/x.html" url="/raw" />);
   expect(screen.queryByTitle("Jupyter slideshow preview")).toBeNull();
 });
+
+it.each(["error", "loading"])("%s: never frames the raw slides", (status) => {
+  useProjectContentUrl.mockReturnValue({ status });
+  render(<SlideshowFrame project_id={PROJECT} path="/d/x.html" url="/raw" />);
+  expect(screen.queryByTitle("Jupyter slideshow preview")).toBeNull();
+});

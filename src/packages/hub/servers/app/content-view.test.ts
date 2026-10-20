@@ -79,6 +79,19 @@ describe("content view", () => {
     expect(html).toContain("<title>CoCalc</title>");
   });
 
+  it("never lets the forwarded query break out of the frame's data-src", async () => {
+    const res = await get(
+      `/content-view/${PROJECT}/dir/a%20b.html?a=%22%3E%3Cscript%3E&b=x%26y&c=%27`,
+      { "Sec-Fetch-Dest": "document" },
+    );
+    const html = await res.text();
+    const attr = html.match(/data-src="([^"]*)"/)?.[1] ?? "";
+    expect(attr.startsWith(LINK)).toBe(true);
+    expect(html).not.toContain("<script>\"");
+    expect(html).not.toMatch(/data-src="[^"]*"[^>]*<script>/);
+    expect(html.match(/<script/g)?.length).toBe(1);
+  });
+
   it("leaves it to the app when there is no link: signed out, no access, an API key, an error", async () => {
     const app = `/projects/${PROJECT}/files/dir/a%20b.html`;
     getAccountId.mockResolvedValueOnce(undefined);
