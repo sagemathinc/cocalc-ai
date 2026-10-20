@@ -78,16 +78,16 @@ export function resolveAgentName(
   if (!selected.length) {
     // Names are resolved from the current account-home network directory.
   }
+  // Every peer the input could name, by any of these: two different ones
+  // are ambiguous below, never a silent pick.
   const peers = directory.peers.filter(({ member }) =>
-    byId
-      ? member.member_id === name ||
-        (member.kind === "registered" && member.endpoint.agent_id === name)
-      : byLabel
-        ? member.kind === "external" &&
-          member.label.trim().toLowerCase() === name.toLowerCase()
-        : member.kind === "registered"
-          ? member.name === name
-          : externalAgentHandle(member.label) === name,
+    member.kind === "registered"
+      ? member.name === name ||
+        (byId &&
+          (member.member_id === name || member.endpoint.agent_id === name))
+      : externalAgentHandle(member.label) === name ||
+        member.label.trim().toLowerCase() === name.toLowerCase() ||
+        (byId && member.member_id === name),
   );
   const pinned = selected.map((ref) => ref.target);
   const matches = pinned.length

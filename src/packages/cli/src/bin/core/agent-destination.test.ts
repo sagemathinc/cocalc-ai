@@ -248,6 +248,17 @@ test("two external agents with one handle are ambiguous, not a guess", () => {
   );
 });
 
+test("an external label that is also a registered name is ambiguous", () => {
+  // The full-label match must not hide the registered agent of that name.
+  const { value } = withExternal("reviewer");
+  assert.throws(() => resolveAgentName("reviewer", value), /Ambiguous/);
+  // A mention the person selected still names the registered one.
+  assert.equal(
+    resolveAgentName("reviewer", value, [{ name: "reviewer", target }]).target,
+    target,
+  );
+});
+
 test("broadcast reaches an external agent by handle", () => {
   const { value, external } = withExternal(
     "ops0 on alpha.cocalc.ai (ops project)",
