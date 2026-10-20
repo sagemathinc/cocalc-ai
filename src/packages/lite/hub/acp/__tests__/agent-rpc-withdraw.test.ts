@@ -308,4 +308,30 @@ describe("the sender takes back its message", () => {
     ).toHaveLength(0);
     expect(listDueAgentRpcReports(Date.now() + 3_600_000)).toHaveLength(0);
   });
+
+  it("withdrawn after its hold is queued, before the hold is claimed: no report", async () => {
+    // The worker queued the continuation, then is about to claim the
+    // parent's hold intent and send the held report.
+    const attempt = randomUUID();
+    const parent = job(attempt);
+    set(parent.op_id, {
+      state: "error",
+      started_at: parent.created_at + 1,
+      finished_at: parent.created_at + 2,
+      recovery_code: "cocalc-hold",
+    });
+    const next = job(attempt);
+    set(next.op_id, {
+      created_at: parent.created_at + 3,
+      recovery_parent_op_id: parent.op_id,
+      available_at: Date.now() + 3_600_000,
+    });
+    expect(await withdraw(attempt)).toMatchObject({ outcome: "accepted" });
+    // The claim now fails, so neither the worker nor the poll reports.
+    expect(getAcpJobByOpId(parent.op_id)?.recovery_code ?? null).toBeNull();
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as any,
+    });
+    expect(listDueAgentRpcReports(Date.now() + 3_600_000)).toHaveLength(0);
+  });
 });

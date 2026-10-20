@@ -9521,6 +9521,11 @@ export async function withdrawAgentMessageTurn(
       ...turnOf(source, attempt, accountId),
     };
   }
+  // A continuation whose parent still holds its hold intent (queued, but
+  // the worker or poll has not claimed it yet): clear that first, so they
+  // report nothing after this withdrawal.
+  if (job.recovery_parent_op_id)
+    clearAcpJobRecoveryIntentIf(job.recovery_parent_op_id, ACP_HOLD_INTENT);
   const { canceled } = cancelQueuedAcpJobReportingChange({
     project_id: job.project_id,
     path: job.path,
