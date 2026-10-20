@@ -666,6 +666,38 @@ describeDb("account-home Agent Networks", () => {
       (agent) => agent.endpoint.agent_id === peer.agent_id,
     );
     expect(named?.status).toEqual(status);
+    // Pushes may arrive out of order: an older status never replaces a
+    // newer one, though the rest of the snapshot still applies.
+    const statusOf = async () =>
+      (await store.names(account)).find(
+        (agent) => agent.endpoint.agent_id === peer.agent_id,
+      )?.status;
+    await store.applyIdentityChange(account, peer, {
+      path: "/home/user/test.chat",
+      thread_id: peer.agent_id,
+      available: true,
+      status: { version: 1, running: 1, queued: 0, at: status.at - 1_000 },
+    });
+    expect(await statusOf()).toEqual(status);
+    await store.applyIdentityChange(account, peer, {
+      path: "/home/user/test.chat",
+      thread_id: peer.agent_id,
+      available: true,
+    });
+    expect(await statusOf()).toEqual(status);
+    const newer = {
+      version: 1 as const,
+      running: 1,
+      queued: 0,
+      at: status.at + 1,
+    };
+    await store.applyIdentityChange(account, peer, {
+      path: "/home/user/test.chat",
+      thread_id: peer.agent_id,
+      available: true,
+      status: newer,
+    });
+    expect(await statusOf()).toEqual(newer);
     // An agent without a status says nothing.
     expect(
       found.peers.find(

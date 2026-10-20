@@ -265,9 +265,15 @@ export class PersonalAgentStore {
     };
     if (!value.path || !value.thread_id)
       throw new Error("invalid agent identity snapshot");
+    // Pushes can arrive out of order (they are not awaited, and may cross
+    // bays): a status older than the stored one never replaces it.
     const rows = (
       await this.db.query(
-        `UPDATE agent_personal_names SET metadata=COALESCE(metadata,'{}'::jsonb) || $4::jsonb
+        `UPDATE agent_personal_names
+            SET metadata = (COALESCE(metadata,'{}'::jsonb) || $4::jsonb) ||
+              CASE WHEN (metadata->'status'->>'at')::double precision > $5::double precision
+                   THEN jsonb_build_object('status', metadata->'status')
+                   ELSE '{}'::jsonb END
           WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL
           RETURNING *`,
         [
@@ -275,6 +281,7 @@ export class PersonalAgentStore {
           endpoint.project_id,
           endpoint.agent_id,
           JSON.stringify(value),
+          value.status?.at ?? -1,
         ],
       )
     ).rows;
