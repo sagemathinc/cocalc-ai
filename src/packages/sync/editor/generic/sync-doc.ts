@@ -759,6 +759,11 @@ export class SyncDoc extends EventEmitter {
         project_id: this.project_id,
         path: this.syncPath,
         oversized_seq,
+        // The same route as the patches: a board's reset goes through the
+        // board write service (the ordinary one refuses it).
+        ...(this.opts.patchesPersist
+          ? { persist: this.opts.patchesPersist }
+          : {}),
       });
     } catch (resetErr) {
       // e.g., no permission or no connection: keep retrying the open, and
