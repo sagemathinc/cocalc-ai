@@ -1,11 +1,12 @@
 import path from "node:path";
 import os from "node:os";
 import {
-  cp,
   copyFile,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
   writeFile,
@@ -354,6 +355,17 @@ describe("project-host pending copies", () => {
     await expect(
       readFile(path.join(destination, "lecture notes", "new.txt"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    expect(mockCpExec.mock.calls[0][1]).toBe(destination);
+    // Staged in a hidden sibling and moved into place, never copied in place.
+    expect(path.dirname(mockCpExec.mock.calls[0][1])).toBe(
+      path.dirname(destination),
+    );
+    expect(path.basename(mockCpExec.mock.calls[0][1])).toMatch(
+      /^\.lecture notes\.cocalc-incoming-/,
+    );
+    expect(
+      (await readdir(path.dirname(destination))).filter((name) =>
+        name.includes("cocalc-incoming"),
+      ),
+    ).toEqual([]);
   });
 });

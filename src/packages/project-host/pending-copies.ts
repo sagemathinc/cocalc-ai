@@ -224,6 +224,7 @@ async function applyCopyRow(
       destinationExists: destExists,
       exact: row.exact,
       options: row.options ?? undefined,
+      home: projectRoot,
       copy: async (source, destination) => {
         await cpExec(source, destination, {
           ...row.options,

@@ -8,7 +8,7 @@ import {
   deleteRedundantSnapshotHome,
   preserveSnapshotHistory,
 } from "./snapshot-restore-history";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { writeManagedAuthorizedKeysFile } from "./managed-authorized-keys";
 import { tmpdir } from "node:os";
 import {
@@ -281,6 +281,8 @@ import {
   archivePathIsAllowed,
   decodePathCopyArchiveListing,
   installPathFromStaging,
+  isBeneath,
+  mergePathFromStaging,
   replacePathFromStaging,
 } from "./path-copy-archive";
 import { flushJupyterNotebooksToDisk } from "./jupyter-collaborative-flush";
@@ -2658,7 +2660,44 @@ async function cp({
     destPath.startsWith(fs.subvolumes.fs.path + "/") &&
     srcPaths.every((p) => p.startsWith(fs!.subvolumes.fs.path + "/"));
 
-  if (inSharedSubvolumeMount) {
+  // Each file of an ordinary copy into the project's home lands atomically:
+  // students opening a handed-out notebook must never see it missing, empty
+  // or half written (see mergePathFromStaging).
+  const copyOne = async (source: string, destination: string) => {
+    if (inSharedSubvolumeMount) {
+      // Fast path: btrfs-aware copy inside the shared file-server mount.
+      await fs!.subvolumes.fs.cp(toRelative(source), toRelative(destination), {
+        ...options,
+        reflink: true,
+      });
+    } else {
+      await cpExec(source, destination, {
+        ...options,
+        recursive: options?.recursive ?? true,
+        reflink: true,
+      });
+    }
+  };
+  const destDir = await lstatIfExists(destPath);
+  if (
+    isBeneath(destVolume.path, destPath) &&
+    (typeof src.path == "string" || destDir?.isDirectory())
+  ) {
+    // A source array is copied into the destination directory, like cp.
+    const pairs =
+      typeof src.path == "string"
+        ? [[srcPaths[0], destPath]]
+        : srcPaths.map((p) => [p, join(destPath, basename(p))]);
+    for (const [source, destination] of pairs) {
+      await mergePathFromStaging({
+        home: destVolume.path,
+        source,
+        destination,
+        options,
+        copy: copyOne,
+      });
+    }
+  } else if (inSharedSubvolumeMount) {
     srcPaths = srcPaths.map(toRelative);
     destPath = toRelative(destPath);
     // Fast path: btrfs-aware copy inside the shared file-server mount.
@@ -2996,6 +3035,7 @@ async function applyPathCopyArchive({
           destinationExists: destStat != null,
           exact: rootDest.exact,
           options,
+          home: projectRoot,
           copy: async (source, destination) => {
             await cpExec(source, destination, {
               ...options,
