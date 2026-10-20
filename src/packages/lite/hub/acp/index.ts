@@ -161,6 +161,7 @@ import {
   AcpAdmissionDeniedError,
 } from "./admission";
 import {
+  buildAgentLimitNoticeOptions,
   buildCodexTurnNoticeOptions,
   publishCodexTurnNotice,
 } from "./codex-turn-notice";
@@ -2273,6 +2274,8 @@ export class ChatStreamWriter {
   private lastCommittedInterrupted = false;
   private lastCommittedGenerating: boolean | undefined;
   private lastErrorText: string | null = null;
+  // The typed failure the error carried, if any (turn-outcome.ts).
+  private lastFailure: TurnFailure | undefined;
   private threadId: string | null = null;
   private seq = 0;
   private finished = false;
@@ -2884,22 +2887,39 @@ export class ChatStreamWriter {
       const threadLabel =
         this.recordField<string>(threadConfig, "name") ?? undefined;
       const messageDateMs = Date.parse(`${this.metadata.message_date ?? ""}`);
-      const notice = buildCodexTurnNoticeOptions({
-        account_id: this.approverAccountId,
-        source_project_id: this.metadata.project_id,
-        source_path: this.metadata.path,
-        source_fragment_id: Number.isFinite(messageDateMs)
-          ? `chat=${Math.floor(messageDateMs)}`
-          : undefined,
-        thread_id: threadId,
-        thread_label: threadLabel,
-        stable_source_id:
-          `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
-          undefined,
-        terminal_state: "error",
-        error_text: this.lastErrorText,
-        agent_label: this.agentLabel,
-      });
+      const failure = this.lastFailure;
+      // A usage limit pauses the turn (it resumes on its own): one shared
+      // notice for every agent it paused, not an error per turn.
+      const notice =
+        failure?.kind === "limit"
+          ? buildAgentLimitNoticeOptions({
+              account_id: this.approverAccountId,
+              source_project_id: this.metadata.project_id,
+              source_path: this.metadata.path,
+              source_fragment_id: Number.isFinite(messageDateMs)
+                ? `chat=${Math.floor(messageDateMs)}`
+                : undefined,
+              thread_id: threadId,
+              thread_label: threadLabel,
+              failure,
+              agent_label: this.agentLabel,
+            })
+          : buildCodexTurnNoticeOptions({
+              account_id: this.approverAccountId,
+              source_project_id: this.metadata.project_id,
+              source_path: this.metadata.path,
+              source_fragment_id: Number.isFinite(messageDateMs)
+                ? `chat=${Math.floor(messageDateMs)}`
+                : undefined,
+              thread_id: threadId,
+              thread_label: threadLabel,
+              stable_source_id:
+                `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
+                undefined,
+              terminal_state: "error",
+              error_text: this.lastErrorText,
+              agent_label: this.agentLabel,
+            });
       await publishCodexTurnNotice({
         client: this.client,
         project_id: this.metadata.project_id,
@@ -3508,6 +3528,7 @@ export class ChatStreamWriter {
         errorContent,
       );
       this.lastErrorText = stripKnownAcpErrorNoise(payload.error);
+      this.lastFailure = payload.failure;
       this.finished = true;
       this.finishedBy = "error";
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>

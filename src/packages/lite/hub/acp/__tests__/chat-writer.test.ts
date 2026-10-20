@@ -570,6 +570,48 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("a usage limit gets the shared paused notice, not a turn error", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: { ...baseMetadata },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    const resets_at = Date.parse("2026-10-21T08:00:00Z");
+    await writer.handle({
+      type: "error",
+      error: "Claude could not run this request.",
+      failure: {
+        kind: "limit",
+        scope: "credential",
+        credential_id: "11111111-1111-4111-8111-111111111111",
+        resets_at,
+      },
+    });
+    await writer.handle(null);
+    await flush(writer);
+    await waitForCondition(() => callHubMock.mock.calls.length > 0);
+    const call = callHubMock.mock.calls.find(
+      ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
+    )![0] as any;
+    const notice = call.args[0];
+    expect(notice.title).toMatch(/agents paused: usage limit reached$/);
+    expect(notice.severity).toBe("info");
+    expect(notice.body_markdown).toMatch(/paused, not lost/);
+    expect(notice.body_markdown).toMatch(/2026-10-21 08:00 UTC/);
+    expect(notice.group_key).toBe(
+      `usage-limit:credential:11111111-1111-4111-8111-111111111111:${Math.round(resets_at / 3_600_000)}`,
+    );
+    writer.dispose?.(true);
+  });
+
   it("can disable completion notification creation without changing history", async () => {
     process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS = "0";
     const { syncdb } = makeFakeSyncDB();

@@ -61,6 +61,11 @@ export interface CreateCodexTurnNoticeOptions {
   body_markdown: string;
   severity?: NotificationSeverity;
   stable_source_id?: string;
+  /**
+   * One notice per account and group a day, whichever conversation hit it
+   * first (agents paused by the same usage limit share one).
+   */
+  group_key?: string;
 }
 
 export interface CreateCodexAttentionNoticeOptions {
