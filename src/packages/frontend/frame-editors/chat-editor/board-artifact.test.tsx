@@ -335,18 +335,25 @@ test("keyboard: the placeholder hands focus to the frame, and leaving the frame 
     frame.previousElementSibling,
     frame.nextElementSibling,
   ] as HTMLElement[];
-  expect(before.tabIndex).toBe(0);
-  expect(after.tabIndex).toBe(0);
+  // Not in the page's ordinary tab order: only while focus is in the frame.
+  expect(before.tabIndex).toBe(-1);
+  expect(after.tabIndex).toBe(-1);
   // Tab onto the placeholder: focus goes into the frame.
   act(() => shown.focus());
   expect(document.activeElement).toBe(frame);
+  expect(before.tabIndex).toBe(0);
+  expect(after.tabIndex).toBe(0);
   // Tab out of the frame: back to the card, just after the placeholder.
   act(() => after.focus());
   expect(document.activeElement).toBe(shown.nextElementSibling);
+  // Out of the frame: out of the tab order again.
+  expect(before.tabIndex).toBe(-1);
+  expect(after.tabIndex).toBe(-1);
   expect((document.activeElement as HTMLElement).dataset.boardFrameExit).toBe(
     "",
   );
   // Shift+Tab out of the frame: just before the placeholder.
+  act(() => shown.focus());
   act(() => before.focus());
   expect(document.activeElement).toBe(shown.previousElementSibling);
   expect((document.activeElement as HTMLElement).dataset.boardFrameEnter).toBe(

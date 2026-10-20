@@ -26,7 +26,9 @@ its place in the tab order with focus proxies. Tabbing onto the placeholder
 moves focus into the frame; tabbing out of the frame (forward or back) lands
 on sentinels around it, which send focus to marks the card renders just
 after and just before the placeholder ([data-board-frame-exit] and
-[data-board-frame-enter]), so the next Tab continues from the card.
+[data-board-frame-enter]), so the next Tab continues from the card. The
+sentinels are in the tab order only while focus is in the frame, so the
+page's ordinary traversal never reaches them.
 
 The frame protocol (Sagebrush's web/board-host-protocol.md, "The
 bootstrap") is answered here. Each frame element is loaded with a nonce in its
@@ -156,8 +158,14 @@ function hide(entry: Entry): void {
     visibility: "hidden",
     pointerEvents: "none",
   });
-  entry.before.tabIndex = -1;
-  entry.after.tabIndex = -1;
+  setSentinels(entry, false);
+}
+
+// The sentinels take focus only while focus is in the frame (to catch Tab
+// leaving it).
+function setSentinels(entry: Entry, on: boolean): void {
+  entry.before.tabIndex = on ? 0 : -1;
+  entry.after.tabIndex = on ? 0 : -1;
 }
 
 // Whether the user can see this element at all: not under visibility:
@@ -185,6 +193,7 @@ function sentinel(onFocus: () => void): HTMLElement {
 
 // Focus the mark the card renders beside its placeholder.
 function focusMark(entry: Entry, which: "enter" | "exit"): void {
+  setSentinels(entry, false);
   const placeholder = entry.placeholders[entry.placeholders.length - 1];
   const sibling =
     which === "enter"
@@ -259,8 +268,7 @@ export function layoutBoardFrames(): void {
       hide(entry);
       continue;
     }
-    entry.before.tabIndex = 0;
-    entry.after.tabIndex = 0;
+
     Object.assign(entry.iframe.style, {
       visibility: "visible",
       pointerEvents: "auto",
@@ -376,6 +384,14 @@ export function createBoardFrame({
   const before = sentinel(() => focusMark(entry, "enter"));
   const after = sentinel(() => focusMark(entry, "exit"));
   wrapper.append(before, iframe, after);
+  iframe.addEventListener("focus", () => setSentinels(entry, true));
+  // Leaving the frame: a sentinel (Tab) takes focus first, then they leave
+  // the tab order again.
+  iframe.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (document.activeElement !== iframe) setSentinels(entry, false);
+    }, 0);
+  });
   entry = {
     key,
     path,
