@@ -16,6 +16,14 @@ export interface SagebrushLimits {
   storage_bytes: number;
   max_file_bytes: number;
   private_links: boolean;
+  // Always present, so that Sagebrush can tell "this plan has no sync" from
+  // an answer it doesn't understand (which it treats as an outage).
+  sync: {
+    enabled: boolean;
+    version_bytes: number;
+    read_bytes_per_day: number;
+    retention_days: number;
+  };
 }
 
 // For a tier that sets none of the Sagebrush limits and has no built-in
@@ -42,5 +50,17 @@ export async function getSagebrushLimits(
       limits.sagebrush_max_file_bytes ?? FALLBACK.sagebrush_max_file_bytes,
     private_links:
       limits.sagebrush_private_links ?? FALLBACK.sagebrush_private_links,
+    sync: {
+      enabled: limits.sagebrush_sync_enabled ?? FALLBACK.sagebrush_sync_enabled,
+      version_bytes:
+        limits.sagebrush_sync_version_bytes ??
+        FALLBACK.sagebrush_sync_version_bytes,
+      read_bytes_per_day:
+        limits.sagebrush_sync_read_bytes_per_day ??
+        FALLBACK.sagebrush_sync_read_bytes_per_day,
+      retention_days:
+        limits.sagebrush_sync_retention_days ??
+        FALLBACK.sagebrush_sync_retention_days,
+    },
   };
 }
