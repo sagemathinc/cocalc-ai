@@ -1180,7 +1180,10 @@ describe("ConatClient routed project-host reconnect", () => {
           },
         ],
       },
-      { timeout: 4000 },
+      {
+        timeout: 4000,
+        headers: { "CN-Egress-Label": "hosts.issueProjectHostAuthToken" },
+      },
     );
 
     client.releaseProjectHostRouting({
