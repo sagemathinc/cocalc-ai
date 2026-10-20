@@ -451,18 +451,9 @@ import {
 import {
   HOST_DANGEROUS_INTERNAL_AUTH,
   deleteHost,
-  deleteHostRootfsImage,
   backupHostProjects,
   drainHost,
   forceDeprovisionHost,
-  gcDeletedHostRootfsImages,
-  setHostExamConfig,
-  createHostExamRun,
-  rotateHostExamToken,
-  openHostExamRun,
-  updateHostExamDeadline,
-  increaseHostExamCapacity,
-  stopAndEraseHostExamRun,
   getBackupConfigLocal,
   getHostRuntimeDeploymentStatus,
   getAccountEffectiveLimitsLocal,
@@ -471,19 +462,15 @@ import {
   recordAcpAdmissionDenialLocal,
   recordServiceAdmissionDenialLocal,
   recordServiceAdmissionNearLimitLocal,
-  reconcileHostRuntimeDeployments,
-  reconcileHostSoftware,
   relocateHost,
   refreshHostCloudState,
   removeSelfHostConnector,
   restartHost,
-  rollbackHostRuntimeDeployments,
   rolloutHostManagedComponents,
   startHost,
   stopHost,
   upgradeHostSoftware,
   listHostProjects,
-  pullHostRootfsImage,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   markProjectChanged as markProjectChangedLocal,
@@ -491,7 +478,6 @@ import {
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
   setHostDeletionProtection,
-  setHostRuntimeDeployments,
   getProjectBackupIndexesLocal,
   syncProjectBackupIndexesLocal,
   deleteProjectBackupIndexLocal,
@@ -2816,43 +2802,7 @@ async function startHostConnectionService(): Promise<void> {
         align_runtime_stack,
         record_runtime_deployments,
       }),
-    reconcileHostSoftware: async ({ account_id, id, force_bootstrap }) =>
-      await reconcileHostSoftware({
-        account_id,
-        id,
-        force_bootstrap,
-      }),
     relocateHost: async (opts) => await relocateHost(opts),
-    reconcileHostRuntimeDeployments: async ({
-      account_id,
-      id,
-      components,
-      reason,
-    }) =>
-      await reconcileHostRuntimeDeployments({
-        account_id,
-        id,
-        components,
-        reason,
-      }),
-    rollbackHostRuntimeDeployments: async ({
-      account_id,
-      id,
-      target_type,
-      target,
-      version,
-      last_known_good,
-      reason,
-    }) =>
-      await rollbackHostRuntimeDeployments({
-        account_id,
-        id,
-        target_type,
-        target,
-        version,
-        last_known_good,
-        reason,
-      }),
     rolloutHostManagedComponents: async ({
       account_id,
       id,
@@ -2911,80 +2861,6 @@ async function startHostConnectionService(): Promise<void> {
         session_hash,
         internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
-      }),
-    pullHostRootfsImage: async ({ account_id, session_hash, id, image }) =>
-      await pullHostRootfsImage({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        image,
-      }),
-    deleteHostRootfsImage: async ({ account_id, session_hash, id, image }) =>
-      await deleteHostRootfsImage({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        image,
-      }),
-    gcDeletedHostRootfsImages: async ({ account_id, session_hash, id }) =>
-      await gcDeletedHostRootfsImages({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-      }),
-    setHostExamConfig: async (opts) =>
-      await setHostExamConfig({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    createHostExamRun: async (opts) =>
-      await createHostExamRun({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    rotateHostExamToken: async (opts) =>
-      await rotateHostExamToken({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    openHostExamRun: async (opts) =>
-      await openHostExamRun({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    updateHostExamDeadline: async (opts) =>
-      await updateHostExamDeadline({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    increaseHostExamCapacity: async (opts) =>
-      await increaseHostExamCapacity({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    stopAndEraseHostExamRun: async (opts) =>
-      await stopAndEraseHostExamRun({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    setHostRuntimeDeployments: async ({
-      account_id,
-      scope_type,
-      id,
-      deployments,
-      replace,
-      align_runtime_stack,
-    }) =>
-      await setHostRuntimeDeployments({
-        account_id,
-        scope_type,
-        id,
-        deployments,
-        replace,
-        align_runtime_stack,
       }),
     getProjectStartMetadata: async ({ host_id, project_id }) => {
       const metadata = await getProjectStartMetadataLocal({

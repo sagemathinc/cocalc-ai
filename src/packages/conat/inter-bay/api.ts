@@ -2597,26 +2597,12 @@ export type HostConnectionMethod =
   | "drain-host"
   | "refresh-host-cloud-state"
   | "upgrade-host-software"
-  | "reconcile-host-software"
   | "relocate-host"
-  | "reconcile-host-runtime-deployments"
-  | "rollback-host-runtime-deployments"
   | "rollout-host-managed-components"
   | "delete-host"
   | "force-deprovision-host"
   | "remove-self-host-connector"
-  | "pull-host-rootfs-image"
-  | "delete-host-rootfs-image"
-  | "gc-deleted-host-rootfs-images"
-  | "set-host-exam-config"
-  | "create-host-exam-run"
-  | "rotate-host-exam-token"
-  | "open-host-exam-run"
-  | "update-host-exam-deadline"
-  | "increase-host-exam-capacity"
-  | "stop-and-erase-host-exam-run"
   | "list-host-operations"
-  | "set-host-runtime-deployments"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -3326,18 +3312,9 @@ export interface InterBayHostConnectionApi {
   upgradeHostSoftware: (
     opts: Parameters<Hosts["upgradeHostSoftware"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["upgradeHostSoftware"]>>>;
-  reconcileHostSoftware: (
-    opts: Parameters<Hosts["reconcileHostSoftware"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostSoftware"]>>>;
   relocateHost: (
     opts: Parameters<Hosts["relocateHost"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["relocateHost"]>>>;
-  reconcileHostRuntimeDeployments: (
-    opts: Parameters<Hosts["reconcileHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostRuntimeDeployments"]>>>;
-  rollbackHostRuntimeDeployments: (
-    opts: Parameters<Hosts["rollbackHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rollbackHostRuntimeDeployments"]>>>;
   rolloutHostManagedComponents: (
     opts: Parameters<Hosts["rolloutHostManagedComponents"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["rolloutHostManagedComponents"]>>>;
@@ -3350,39 +3327,6 @@ export interface InterBayHostConnectionApi {
   removeSelfHostConnector: (
     opts: Parameters<Hosts["removeSelfHostConnector"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["removeSelfHostConnector"]>>>;
-  pullHostRootfsImage: (
-    opts: Parameters<Hosts["pullHostRootfsImage"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["pullHostRootfsImage"]>>>;
-  deleteHostRootfsImage: (
-    opts: Parameters<Hosts["deleteHostRootfsImage"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["deleteHostRootfsImage"]>>>;
-  gcDeletedHostRootfsImages: (
-    opts: Parameters<Hosts["gcDeletedHostRootfsImages"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["gcDeletedHostRootfsImages"]>>>;
-  setHostExamConfig: (
-    opts: Parameters<Hosts["setHostExamConfig"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostExamConfig"]>>>;
-  createHostExamRun: (
-    opts: Parameters<Hosts["createHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["createHostExamRun"]>>>;
-  rotateHostExamToken: (
-    opts: Parameters<Hosts["rotateHostExamToken"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rotateHostExamToken"]>>>;
-  openHostExamRun: (
-    opts: Parameters<Hosts["openHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["openHostExamRun"]>>>;
-  updateHostExamDeadline: (
-    opts: Parameters<Hosts["updateHostExamDeadline"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["updateHostExamDeadline"]>>>;
-  increaseHostExamCapacity: (
-    opts: Parameters<Hosts["increaseHostExamCapacity"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["increaseHostExamCapacity"]>>>;
-  stopAndEraseHostExamRun: (
-    opts: Parameters<Hosts["stopAndEraseHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["stopAndEraseHostExamRun"]>>>;
-  setHostRuntimeDeployments: (
-    opts: Parameters<Hosts["setHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostRuntimeDeployments"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -3537,16 +3481,7 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "drainHost", method: "drain-host" },
   { name: "refreshHostCloudState", method: "refresh-host-cloud-state" },
   { name: "upgradeHostSoftware", method: "upgrade-host-software" },
-  { name: "reconcileHostSoftware", method: "reconcile-host-software" },
   { name: "relocateHost", method: "relocate-host" },
-  {
-    name: "reconcileHostRuntimeDeployments",
-    method: "reconcile-host-runtime-deployments",
-  },
-  {
-    name: "rollbackHostRuntimeDeployments",
-    method: "rollback-host-runtime-deployments",
-  },
   {
     name: "rolloutHostManagedComponents",
     method: "rollout-host-managed-components",
@@ -3554,33 +3489,7 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "deleteHost", method: "delete-host" },
   { name: "forceDeprovisionHost", method: "force-deprovision-host" },
   { name: "removeSelfHostConnector", method: "remove-self-host-connector" },
-  { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
-  { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },
-  {
-    name: "gcDeletedHostRootfsImages",
-    method: "gc-deleted-host-rootfs-images",
-  },
-  { name: "setHostExamConfig", method: "set-host-exam-config" },
-  { name: "createHostExamRun", method: "create-host-exam-run" },
-  { name: "rotateHostExamToken", method: "rotate-host-exam-token" },
-  { name: "openHostExamRun", method: "open-host-exam-run" },
-  {
-    name: "updateHostExamDeadline",
-    method: "update-host-exam-deadline",
-  },
-  {
-    name: "increaseHostExamCapacity",
-    method: "increase-host-exam-capacity",
-  },
-  {
-    name: "stopAndEraseHostExamRun",
-    method: "stop-and-erase-host-exam-run",
-  },
   { name: "listHostOperations", method: "list-host-operations" },
-  {
-    name: "setHostRuntimeDeployments",
-    method: "set-host-runtime-deployments",
-  },
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",
