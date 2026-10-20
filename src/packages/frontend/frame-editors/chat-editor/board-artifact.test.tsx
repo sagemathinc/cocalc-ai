@@ -23,8 +23,10 @@ const readFile = jest.fn();
 const stat = jest.fn();
 const open_file = jest.fn().mockResolvedValue(undefined);
 const actions = { fs: () => ({ stat, readFile }), open_file };
+// What the project context provides (undefined while it is still loading).
+let contextActions: any = actions;
 jest.mock("@cocalc/frontend/project/context", () => ({
-  useProjectContext: () => ({ actions }),
+  useProjectContext: () => ({ actions: contextActions }),
 }));
 
 const FRAME = "https://sagebrush.test/frame/board/";
@@ -100,6 +102,7 @@ function rect(left: number, top: number, width: number, height: number) {
 }
 
 beforeEach(() => {
+  contextActions = actions;
   jest.clearAllMocks();
   stat.mockResolvedValue({ size: 100 });
   readFile.mockResolvedValue(TEXT);
@@ -306,6 +309,24 @@ test("hidden frames beyond the limit are dropped, oldest first", async () => {
   }
   expect(frames[0].isConnected).toBe(false);
   expect(frames.slice(1).every((frame) => frame.isConnected)).toBe(true);
+});
+
+test("mounted before the project's actions exist, it loads once they come, and only then", async () => {
+  contextActions = undefined;
+  const view = render(<Board />);
+  await screen.findByText(/Project filesystem unavailable/);
+  expect(readFile).not.toHaveBeenCalled();
+  contextActions = actions;
+  view.rerender(<Board />);
+  await screen.findByText("Current saved board");
+  expect(screen.getAllByTitle(TITLE)).toHaveLength(1);
+  const frame = screen.getByTitle(TITLE);
+  // A new actions object later does not read again or replace the frame.
+  contextActions = { ...actions };
+  view.rerender(<Board />);
+  await new Promise((r) => setTimeout(r, 50));
+  expect(readFile).toHaveBeenCalledTimes(1);
+  expect(screen.getByTitle(TITLE)).toBe(frame);
 });
 
 test("a hidden frame is dropped after its time, though nothing else happens", async () => {

@@ -70,6 +70,16 @@ export default function BoardArtifact({
   // Bumped by Refresh. The first read happens only when no live frame
   // exists for this view.
   const [refresh, setRefresh] = useState(frame == null ? 1 : 0);
+  // A read that found no project actions yet: read again once they come
+  // (but not for every new actions object, which would replace the frame).
+  const [waitingForActions, setWaitingForActions] = useState(false);
+  const hasActions = actions != null;
+  useEffect(() => {
+    if (hasActions && waitingForActions) {
+      setWaitingForActions(false);
+      setRefresh((r) => r + 1);
+    }
+  }, [hasActions, waitingForActions]);
   const name = path.split("/").pop() ?? path;
   const site = new URL(frameUrl).host;
 
@@ -82,7 +92,10 @@ export default function BoardArtifact({
     void (async () => {
       try {
         const fs = actionsRef.current?.fs();
-        if (!fs) throw Error("Project filesystem unavailable");
+        if (!fs) {
+          if (!cancelled) setWaitingForActions(true);
+          throw Error("Project filesystem unavailable");
+        }
         const tooLarge = Error(
           `The board exceeds the ${BOARD_PREVIEW_LIMIT / 1024 / 1024} MiB preview limit. Open the file to see it.`,
         );
