@@ -290,6 +290,77 @@ test("lays the frame over the placeholder, clipped to its scrolling ancestors", 
   expect(frame.style.clipPath).toBe("inset(50px 0px 0px 0px)");
 });
 
+test("a placeholder under a hidden ancestor (an inactive editor tab) hides the frame", async () => {
+  for (const props of [
+    { style: { visibility: "hidden" as const } },
+    { "aria-hidden": true },
+    { inert: true } as any,
+  ]) {
+    const view = render(
+      <div {...props}>
+        <Board viewKey={`hidden-${JSON.stringify(props)}`} />
+      </div>,
+    );
+    const frame = (await view.findByTitle(TITLE)) as HTMLIFrameElement;
+    await view.findByText("Current saved board");
+    jest
+      .spyOn(placeholder(view.container), "getBoundingClientRect")
+      .mockReturnValue(rect(10, 50, 400, 300));
+    act(() => layoutBoardFrames());
+    expect(frame.style.visibility).toBe("hidden");
+    expect(frame.style.pointerEvents).toBe("none");
+    expect(frame.isConnected).toBe(true);
+    view.unmount();
+    resetBoardFrames();
+  }
+});
+
+test("keyboard: the placeholder hands focus to the frame, and leaving the frame returns to the card", async () => {
+  const view = render(
+    <div>
+      <button>before</button>
+      <Board />
+      <button>after</button>
+    </div>,
+  );
+  const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+  await screen.findByText("Current saved board");
+  const shown = placeholder(view.container);
+  jest
+    .spyOn(shown, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 50, 400, 300));
+  act(() => layoutBoardFrames());
+  expect(shown.tabIndex).toBe(0);
+  const [before, after] = [
+    frame.previousElementSibling,
+    frame.nextElementSibling,
+  ] as HTMLElement[];
+  expect(before.tabIndex).toBe(0);
+  expect(after.tabIndex).toBe(0);
+  // Tab onto the placeholder: focus goes into the frame.
+  act(() => shown.focus());
+  expect(document.activeElement).toBe(frame);
+  // Tab out of the frame: back to the card, just after the placeholder.
+  act(() => after.focus());
+  expect(document.activeElement).toBe(shown.nextElementSibling);
+  expect((document.activeElement as HTMLElement).dataset.boardFrameExit).toBe(
+    "",
+  );
+  // Shift+Tab out of the frame: just before the placeholder.
+  act(() => before.focus());
+  expect(document.activeElement).toBe(shown.previousElementSibling);
+  expect((document.activeElement as HTMLElement).dataset.boardFrameEnter).toBe(
+    "",
+  );
+  // A hidden frame takes no focus, and its sentinels leave the tab order.
+  jest.spyOn(shown, "getBoundingClientRect").mockReturnValue(rect(0, 0, 0, 0));
+  act(() => layoutBoardFrames());
+  expect(before.tabIndex).toBe(-1);
+  expect(after.tabIndex).toBe(-1);
+  act(() => shown.focus());
+  expect(document.activeElement).toBe(shown);
+});
+
 test("a placeholder with no size (an inactive tab) hides the frame but keeps it", async () => {
   const { view, frame } = await renderBoard();
   jest

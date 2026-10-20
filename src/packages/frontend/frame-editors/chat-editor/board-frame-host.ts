@@ -16,7 +16,17 @@ card renders, clipped to the placeholder's scrolling ancestors. A remounted
 card with the same view key takes over the same frame, which never moved.
 
 A frame no card shows stays alive, hidden, for a while, so that its card can
-come back to it; the oldest are dropped beyond a small limit.
+come back to it; the oldest are dropped beyond a small limit. A placeholder
+that is not shown to the user (no size, scrolled out, under an ancestor
+with visibility: hidden, aria-hidden or inert, as an inactive editor tab is)
+hides its frame.
+
+Keyboard order: the frame lives at the end of the page, so the card keeps
+its place in the tab order with focus proxies. Tabbing onto the placeholder
+moves focus into the frame; tabbing out of the frame (forward or back) lands
+on sentinels around it, which send focus to marks the card renders just
+after and just before the placeholder ([data-board-frame-exit] and
+[data-board-frame-enter]), so the next Tab continues from the card.
 
 The frame protocol (Sagebrush's web/board-host-protocol.md, "The
 bootstrap") is answered here. Each frame element is loaded with a nonce in its
@@ -51,6 +61,10 @@ export interface BoardFrame {
 }
 
 interface Entry extends BoardFrame {
+  // The iframe between its two focus sentinels.
+  wrapper: HTMLDivElement;
+  before: HTMLElement;
+  after: HTMLElement;
   text: string;
   name: string;
   nonce: string;
@@ -142,6 +156,57 @@ function hide(entry: Entry): void {
     visibility: "hidden",
     pointerEvents: "none",
   });
+  entry.before.tabIndex = -1;
+  entry.after.tabIndex = -1;
+}
+
+// Whether the user can see this element at all: not under visibility:
+// hidden (computed, so inherited from an ancestor), aria-hidden or inert.
+function shownToUser(element: HTMLElement): boolean {
+  if (element.closest('[aria-hidden="true"], [inert]') != null) return false;
+  return getComputedStyle(element).visibility === "visible";
+}
+
+// A focus sentinel beside the iframe.
+function sentinel(onFocus: () => void): HTMLElement {
+  const el = document.createElement("span");
+  el.tabIndex = -1;
+  el.dataset.boardFrameSentinel = "";
+  Object.assign(el.style, {
+    position: "fixed",
+    width: "1px",
+    height: "1px",
+    opacity: "0",
+    overflow: "hidden",
+  });
+  el.addEventListener("focus", onFocus);
+  return el;
+}
+
+// Focus the mark the card renders beside its placeholder.
+function focusMark(entry: Entry, which: "enter" | "exit"): void {
+  const placeholder = entry.placeholders[entry.placeholders.length - 1];
+  const sibling =
+    which === "enter"
+      ? placeholder?.element.previousElementSibling
+      : placeholder?.element.nextElementSibling;
+  if (
+    sibling instanceof HTMLElement &&
+    sibling.dataset[which === "enter" ? "boardFrameEnter" : "boardFrameExit"] !=
+      null
+  ) {
+    sibling.focus();
+  } else {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+  }
+}
+
+/** Move focus into a shown frame (its placeholder's focus proxy). */
+export function focusBoardFrame(frame: BoardFrame): void {
+  const entry = entries.get(frame.key);
+  if (entry == null || entry !== frame) return;
+  if (entry.iframe.style.visibility !== "visible") return;
+  entry.iframe.focus();
 }
 
 function clippingAncestors(element: HTMLElement): HTMLElement[] {
@@ -184,10 +249,18 @@ export function layoutBoardFrames(): void {
     top = Math.max(top, rect.top);
     right = Math.min(right, rect.right);
     bottom = Math.min(bottom, rect.bottom);
-    if (rect.width <= 0 || rect.height <= 0 || right <= left || bottom <= top) {
+    if (
+      rect.width <= 0 ||
+      rect.height <= 0 ||
+      right <= left ||
+      bottom <= top ||
+      !shownToUser(placeholder.element)
+    ) {
       hide(entry);
       continue;
     }
+    entry.before.tabIndex = 0;
+    entry.after.tabIndex = 0;
     Object.assign(entry.iframe.style, {
       visibility: "visible",
       pointerEvents: "auto",
@@ -298,10 +371,18 @@ export function createBoardFrame({
     pointerEvents: "none",
   });
   const nonce = crypto.randomUUID();
-  const entry: Entry = {
+  const wrapper = document.createElement("div");
+  let entry: Entry;
+  const before = sentinel(() => focusMark(entry, "enter"));
+  const after = sentinel(() => focusMark(entry, "exit"));
+  wrapper.append(before, iframe, after);
+  entry = {
     key,
     path,
     iframe,
+    wrapper,
+    before,
+    after,
     text,
     name,
     nonce,
@@ -317,7 +398,8 @@ export function createBoardFrame({
   });
   iframe.src = `${frameUrl}#sb-nonce=${nonce}`;
   entries.set(key, entry);
-  getLayer().appendChild(iframe);
+  getLayer().appendChild(wrapper);
+  hide(entry);
   notify(entry);
   layoutBoardFrames();
   schedule();
@@ -363,7 +445,7 @@ export function destroyBoardFrame(key: string): void {
   const entry = entries.get(key);
   if (entry == null) return;
   entries.delete(key);
-  entry.iframe.remove();
+  entry.wrapper.remove();
 }
 
 /** For tests. */

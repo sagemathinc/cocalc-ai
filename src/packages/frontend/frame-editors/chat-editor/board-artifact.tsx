@@ -34,6 +34,7 @@ import {
 import {
   attachBoardFrame,
   createBoardFrame,
+  focusBoardFrame,
   getBoardFrame,
   type BoardFrame,
 } from "./board-frame-host";
@@ -221,9 +222,21 @@ export default function BoardArtifact({
         />
       )}
       {frame && (
+        // Keyboard: the frame itself lives at the end of the page; this
+        // placeholder is its focus proxy, and the marks around it are where
+        // focus returns when it leaves the frame (board-frame-host.ts).
+        <span tabIndex={-1} data-board-frame-enter="" />
+      )}
+      {frame && (
         <div
           ref={placeholderRef}
           data-board-frame-placeholder=""
+          tabIndex={0}
+          role="group"
+          aria-label={`Sagebrush board: ${name}`}
+          onFocus={(e) => {
+            if (e.target === e.currentTarget) focusBoardFrame(frame);
+          }}
           style={{
             flex: "1 1 0",
             minHeight: 420,
@@ -240,6 +253,7 @@ export default function BoardArtifact({
           )}
         </div>
       )}
+      {frame && <span tabIndex={-1} data-board-frame-exit="" />}
       <div role="note" style={{ flexShrink: 0, marginTop: 6, fontSize: "85%" }}>
         Runs on {site} in a sandboxed frame: showing it sends {site} this
         file&apos;s complete text and name. Changes made there are not saved to
