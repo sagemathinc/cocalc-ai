@@ -460,6 +460,44 @@ describe("project-host HTTP session cookie", () => {
     }
   });
 
+  it("cookies minted from a bearer request count from the bearer's iat", async () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: account_id,
+      act: "account",
+      iat: now_s - 3600,
+      exp: now_s + 600,
+    });
+    mockGetProject.mockReturnValue({ users: { [account_id]: "owner" } });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const res = createResponse();
+    await auth.authorizeHttpRequest(
+      {
+        headers: { authorization: "Bearer token", "x-forwarded-proto": "https" },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/`,
+      } as any,
+      res,
+      project_id,
+    );
+    const setCookie = res.headers.get("Set-Cookie");
+    const fresh = (Array.isArray(setCookie) ? setCookie : [setCookie])
+      .map((c) => `${c}`.split(";")[0])
+      .filter((c) => /^cocalc_project_host_(http_)?session=[^;]+$/.test(c));
+    expect(fresh).toHaveLength(2);
+    for (const cookie of fresh) {
+      const name = cookie.split("=")[0];
+      const token = decodeURIComponent(cookie.slice(name.length + 1));
+      const session =
+        name === "cocalc_project_host_session"
+          ? resolveProjectHostBrowserSessionFromCookieHeader(cookie)
+          : verifyProjectHostHttpSessionToken(token);
+      expect(session?.iat_s).toBe(now_s - 3600);
+    }
+  });
+
   it("rejects an expired restricted bearer for HTTP requests", async () => {
     const now_s = Math.floor(Date.now() / 1000);
     mockVerifyProjectHostAuthToken.mockReturnValue({

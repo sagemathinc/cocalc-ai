@@ -264,6 +264,30 @@ describe("project-host shared browser session", () => {
     ).toThrow("agent credentials cannot create a browser session");
   });
 
+  it("a cookie redeemed from a bearer counts from the bearer's iat", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: "00000000-1000-4000-8000-000000000001",
+      act: "account",
+      iat: now_s - 3600,
+      exp: now_s + 600,
+    });
+    const res = createResponse();
+    issueProjectHostBrowserSessionFromBearer({
+      req: { headers: {}, socket: {} } as any,
+      res,
+      host_id: "00000000-1000-4000-8000-000000000099",
+      token: "bearer",
+    });
+    const setCookie = res.headers.get("Set-Cookie");
+    const cookie = (Array.isArray(setCookie) ? setCookie : [setCookie])
+      .map((c) => `${c}`.split(";")[0])
+      .join("; ");
+    expect(resolveProjectHostBrowserSessionFromCookieHeader(cookie)?.iat_s).toBe(
+      now_s - 3600,
+    );
+  });
+
   it("rejects API key child bearers at browser-session redemption", () => {
     mockVerifyProjectHostAuthToken.mockReturnValue({
       sub: "00000000-1000-4000-8000-000000000001",
