@@ -111,7 +111,7 @@ function contentToken(settings: Record<string, any>): string | undefined {
   return undefined;
 }
 
-function recordedContentDns(
+export function recordedContentDns(
   row: HostRowLike,
 ): HostContentDnsRecord | undefined {
   const value = row.metadata?.content_dns;
