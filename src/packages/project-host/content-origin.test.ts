@@ -10,6 +10,11 @@ jest.mock(
   () => jest.requireActual("../conat/auth/project-content-capability"),
   { virtual: true },
 );
+jest.mock(
+  "@cocalc/util/project-content-origin",
+  () => jest.requireActual("../util/project-content-origin"),
+  { virtual: true },
+);
 
 import { generateKeyPairSync } from "node:crypto";
 import { createServer, request, type Server } from "node:http";

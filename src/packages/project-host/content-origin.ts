@@ -29,10 +29,23 @@ Invariants (see kucalc step6-content-origin-design):
 import type { IncomingMessage, Server, ServerResponse } from "http";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
+  hostContentLabel,
+  normalizeContentDomain,
+  projectContentHostname,
+  projectContentLabel,
+} from "@cocalc/util/project-content-origin";
+import {
   contentPathWithinDir,
   verifyProjectContentCapability,
   type ProjectContentCapabilityClaims,
 } from "@cocalc/conat/auth/project-content-capability";
+
+export {
+  hostContentLabel,
+  normalizeContentDomain,
+  projectContentHostname,
+  projectContentLabel,
+};
 
 export const CONTENT_PATH_PREFIX = "/_c/";
 
@@ -41,35 +54,6 @@ function normalizeHostname(value: unknown): string {
   if (host.startsWith("[")) return host; // IPv6 literal: never a content host
   host = host.replace(/:\d*$/, "").replace(/\.+$/, "");
   return host;
-}
-
-// The content domain, e.g. "cocalcusercontent.com", or undefined if this
-// site has none (then the content origin is off and nothing changes).
-export function normalizeContentDomain(value: unknown): string | undefined {
-  const domain = normalizeHostname(value).replace(/^\.+/, "");
-  if (!domain || !domain.includes(".")) return undefined;
-  if (!/^[a-z0-9.-]+$/.test(domain)) return undefined;
-  return domain;
-}
-
-export function projectContentLabel(project_id: string): string {
-  return project_id.replace(/-/g, "").toLowerCase();
-}
-
-export function hostContentLabel(host_id: string): string {
-  return `h-${host_id.replace(/-/g, "").toLowerCase()}`;
-}
-
-export function projectContentHostname({
-  project_id,
-  host_id,
-  domain,
-}: {
-  project_id: string;
-  host_id: string;
-  domain: string;
-}): string {
-  return `${projectContentLabel(project_id)}.${hostContentLabel(host_id)}.${domain}`;
 }
 
 // The content domain configured for this process, if any.
