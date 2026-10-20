@@ -316,6 +316,12 @@ export const ASYNC_DECOMPRESS_MIN_BYTES = 1_000_000;
 // to are each checked against the cap, the last by a decompressor that stops
 // at it. The size column alone isn't trusted: a restored database can say
 // anything there.
+// What a stored message counts as in a replay page: the larger of its size
+// column and the bytes stored.
+export function recordBytes(row: { size: number; stored?: number }): number {
+  return Math.max(Number(row.size) || 0, Number(row.stored) || 0);
+}
+
 export function assertWithinRecordCap(
   row: { seq: number; size: number; stored?: number },
   cap: number | undefined,
@@ -341,14 +347,22 @@ export async function storedRowToMessage(
   if (row.compress == CompressionAlgorithm.None) {
     raw = row.raw;
   } else if (row.compress == CompressionAlgorithm.Zstd) {
-    const opts = recordCap == null ? undefined : { maxOutputLength: recordCap };
+    // A capped stream's record inflates to at most its stored size (which
+    // counts its uncompressed bytes), so the size the replay was charged for
+    // bounds what it allocates: a record whose size understates it fails
+    // here instead.
+    const bound =
+      recordCap == null
+        ? undefined
+        : Math.min(recordCap, Math.max(1, Number(row.size) || 0));
+    const opts = bound == null ? undefined : { maxOutputLength: bound };
     try {
       raw =
         row.size >= ASYNC_DECOMPRESS_MIN_BYTES
           ? await decompressAsync(row.raw, opts)
           : decompress(row.raw, opts);
     } catch (err) {
-      if (recordCap != null) throw inflateError(row.seq, recordCap, err);
+      if (bound != null) throw inflateError(row.seq, bound, err);
       throw err;
     }
   } else {
@@ -408,7 +422,10 @@ export interface CheckpointsOperation {
 }
 
 export type ChangefeedOperation =
-  SetOperation | DeleteOperation | MetadataOperation | CheckpointsOperation;
+  | SetOperation
+  | DeleteOperation
+  | MetadataOperation
+  | CheckpointsOperation;
 
 export const DEFAULT_ARCHIVE_INTERVAL = 30_000; // 30 seconds
 
@@ -795,7 +812,8 @@ export class PersistentStream extends EventEmitter {
 
   private readSqliteCacheKiB = (): number => {
     const cacheRow = this.db.prepare("PRAGMA cache_size").get() as
-      { cache_size?: number } | undefined;
+      | { cache_size?: number }
+      | undefined;
     const cacheSize = Number(cacheRow?.cache_size);
     if (!Number.isFinite(cacheSize)) {
       return 0;
@@ -804,7 +822,8 @@ export class PersistentStream extends EventEmitter {
       return Math.abs(cacheSize);
     }
     const pageRow = this.db.prepare("PRAGMA page_size").get() as
-      { page_size?: number } | undefined;
+      | { page_size?: number }
+      | undefined;
     const pageSize = Number(pageRow?.page_size);
     return Number.isFinite(pageSize)
       ? Math.ceil((cacheSize * pageSize) / 1024)
@@ -815,19 +834,22 @@ export class PersistentStream extends EventEmitter {
     const pageCount = Number(
       (
         this.db.prepare("PRAGMA page_count").get() as
-          { page_count?: number } | undefined
+          | { page_count?: number }
+          | undefined
       )?.page_count ?? 0,
     );
     const freePageCount = Number(
       (
         this.db.prepare("PRAGMA freelist_count").get() as
-          { freelist_count?: number } | undefined
+          | { freelist_count?: number }
+          | undefined
       )?.freelist_count ?? 0,
     );
     const pageSize = Number(
       (
         this.db.prepare("PRAGMA page_size").get() as
-          { page_size?: number } | undefined
+          | { page_size?: number }
+          | undefined
       )?.page_size ?? 0,
     );
     const fileBytes = this.dbPath ? fileSize(this.dbPath) : 0;
@@ -1203,7 +1225,9 @@ export class PersistentStream extends EventEmitter {
 
   private checkRequiredHeaders = (headers?: JSONValue): void => {
     const required = this.conf.required_headers as
-      Record<string, unknown> | null | undefined;
+      | Record<string, unknown>
+      | null
+      | undefined;
     if (required == null || typeof required !== "object") {
       return;
     }
@@ -1224,7 +1248,8 @@ export class PersistentStream extends EventEmitter {
     seq,
     key,
   }: { seq: number; key: undefined } | { seq: undefined; key: string }):
-    StoredMessage | undefined => {
+    | StoredMessage
+    | undefined => {
     const ttl = this.conf.allow_msg_ttl ? ", ttl" : "";
     // Check the size before reading the (possibly huge) data.
     let meta: { seq: number; size: number } | undefined;
@@ -1293,9 +1318,13 @@ export class PersistentStream extends EventEmitter {
     };
   };
 
-  // Plan one page of a replay from message sizes alone (cheap; no message
+  // Plan one page of a replay from message metadata alone (cheap; no message
   // data is read): the messages after after_seq through end_seq, ending once
-  // their uncompressed sizes reach maxBytes but always including at least one.
+  // their bytes reach maxBytes but always including at least one. A message
+  // counts as the larger of its size column (its uncompressed bytes, which
+  // bound what a capped stream inflates it to) and the bytes actually
+  // stored, so a size that understates what is stored never shrinks a page's
+  // charge.
   planPage = ({
     after_seq,
     end_seq,
@@ -1323,7 +1352,7 @@ export class PersistentStream extends EventEmitter {
     for (const row of sizes) {
       // Over the stream's record cap: refused before anything is read.
       assertWithinRecordCap(row, this.recordCap);
-      const size = Number(row.size);
+      const size = recordBytes(row);
       bytes += size;
       if (bytes > maxBytes && page.length > 0) {
         break;
@@ -1333,14 +1362,35 @@ export class PersistentStream extends EventEmitter {
     return page;
   };
 
-  // Read the messages with after_seq < seq <= last_seq.  A complete query, so
-  // a caller can yield between pages without holding a SQLite iterator open.
-  readPage = (after_seq: number, last_seq: number): StoredRow[] => {
-    return this.db
+  // Read the messages with after_seq < seq <= last_seq, one row at a time,
+  // stopping once their bytes (as planPage counts them) would pass maxBytes,
+  // but always reading at least one: so a page holds at most what it was
+  // planned and charged for, even if the rows changed since it was planned.
+  // The caller continues after the last row returned. Each row is checked
+  // against the record cap as it is read. The iterator is closed before
+  // returning, so a caller can yield between pages without holding it open.
+  readPage = (
+    after_seq: number,
+    last_seq: number,
+    maxBytes = Infinity,
+  ): StoredRow[] => {
+    const rows: StoredRow[] = [];
+    let bytes = 0;
+    for (const row of this.db
       .prepare(
-        `SELECT seq, key, time, compress, encoding, raw, headers, size FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
+        `SELECT seq, key, time, compress, encoding, raw, headers, size, length(raw) AS stored FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
       )
-      .all(after_seq, last_seq) as unknown as StoredRow[];
+      .iterate(after_seq, last_seq) as IterableIterator<
+      StoredRow & { stored: number }
+    >) {
+      assertWithinRecordCap(row, this.recordCap);
+      bytes += recordBytes(row);
+      if (bytes > maxBytes && rows.length > 0) break;
+      const { stored, ...stored_row } = row;
+      void stored;
+      rows.push(stored_row as StoredRow);
+    }
+    return rows;
   };
 
   *getAll({
@@ -1762,7 +1812,8 @@ export class PersistentStream extends EventEmitter {
         "SELECT seq, time, data_json FROM stream_checkpoints WHERE name = ?",
       )
       .get(name) as
-      { seq: number; time: number; data_json?: string | null } | undefined;
+      | { seq: number; time: number; data_json?: string | null }
+      | undefined;
     if (row == null) {
       return undefined;
     }

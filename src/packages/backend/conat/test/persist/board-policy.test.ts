@@ -505,12 +505,13 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     const path = "/home/user/partial.board.json";
     const w = hub(project_id, path);
     await set(w, rec(1));
-    // The second write fails in storage (a key's last sequence is wrong);
+    // The second write fails in storage (over the stream's message size);
     // the first must not be stored without it.
+    await w.config({ config: { max_msg_size: 500 } });
     const results = await w.setMany(
       [
         { messageData: messageData(rec(2, 1)) },
-        { messageData: messageData(rec(3, 2)), key: "k", previousSeq: 999 },
+        { messageData: messageData({ ...rec(3, 2), patch: "x".repeat(1000) }) },
       ],
       { timeout: 10_000 },
     );
@@ -554,6 +555,74 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     await expect(set(w, rec(3, 1))).rejects.toMatchObject({ code: "branch" });
     await set(w, { time: "t1", is_snapshot: true, snapshot: "{}" });
     await set(w, rec(3, 2));
+    w.close();
+  });
+
+  test("astra's round 2: a retry changes nothing only if it is the stored record exactly, live and after a restart", async () => {
+    const project_id = uuid();
+    const path = "/home/user/identity.board.json";
+    let w = hub(project_id, path);
+    const old = { ...rec(1), patch: '[{"text":"old"}]' };
+    await set(w, old);
+    // The same time and parents, another payload: refused, so the stored
+    // value can't differ from what a live graph (which keeps the first) has.
+    await expect(
+      set(w, { ...rec(1), patch: '[{"text":"new"}]' }),
+    ).rejects.toMatchObject({ code: "branch" });
+    // The same payload under other parents: refused.
+    await expect(set(w, { ...old, parents: ["t0"] })).rejects.toMatchObject({
+      code: "branch",
+    });
+    // Exactly the stored record: accepted, and the value is unchanged.
+    await set(w, old);
+    const live = readerStream(project_id, path);
+    const r = await live;
+    expect(new Set(r.getAll().map((x) => JSON.stringify(x)))).toEqual(
+      new Set([JSON.stringify(old)]),
+    );
+    w.close();
+    // Reopened from the stream by a new server process: the same value.
+    await setup.restartPersistServer();
+    expect(
+      new Set((await stored(project_id, path)).map((x) => JSON.stringify(x))),
+    ).toEqual(new Set([JSON.stringify(old)]));
+    w = hub(project_id, path);
+    await expect(
+      set(w, { ...rec(1), patch: '[{"text":"new"}]' }),
+    ).rejects.toMatchObject({ code: "branch" });
+    await set(w, rec(2, 1));
+    r.close();
+    w.close();
+  });
+
+  test("a board's records are stored without a key: a keyed record is refused, whatever it claims", async () => {
+    const project_id = uuid();
+    const path = "/home/user/keyed.board.json";
+    const w = hub(project_id, path);
+    await set(w, rec(1));
+    // A keyed set deletes the row with that key before inserting: a new
+    // patch, a retry, or a batch naming any key is refused, storing nothing.
+    await expect(
+      w.set({
+        messageData: messageData(rec(2, 1)),
+        key: "t1",
+        timeout: 10_000,
+      }),
+    ).rejects.toMatchObject({ code: "branch" });
+    await expect(
+      w.set({ messageData: messageData(rec(1)), key: "t1", timeout: 10_000 }),
+    ).rejects.toMatchObject({ code: "branch" });
+    await expect(
+      w.setMany(
+        [
+          { messageData: messageData(rec(2, 1)) },
+          { messageData: messageData(rec(3, 2)), key: "x" },
+        ],
+        { timeout: 10_000 },
+      ),
+    ).rejects.toMatchObject({ code: "branch" });
+    expect(await stored(project_id, path)).toEqual([rec(1)]);
+    await set(w, rec(2, 1));
     w.close();
   });
 

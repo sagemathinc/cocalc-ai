@@ -18,14 +18,27 @@ bounded as the open check is: at most BOARD_HISTORY_LIMITS.records records,
 each within the stream's record cap.
 */
 
+import { createHash } from "node:crypto";
 import { ConatError } from "@cocalc/conat/core/client";
 import { decode } from "@cocalc/conat/core/codec";
-import { BOARD_HISTORY_LIMITS, BoardAppendCheck } from "./board-history";
+import {
+  BOARD_HISTORY_LIMITS,
+  BoardAppendCheck,
+  type AppendRecord,
+} from "./board-history";
 
 // What this needs of a stored stream (storage.ts).
 export interface AppendStream {
   seqBounds(): { newest_retained_seq?: number };
-  getAll(): Iterable<{ encoding: any; raw: Buffer }>;
+  getAll(): Iterable<{ encoding: any; raw: Buffer; key?: string }>;
+}
+
+// A record's identity: its encoding and exact bytes, as stored.
+function digestOf(encoding: unknown, raw: Buffer | undefined): string {
+  return createHash("sha256")
+    .update(`${encoding}\0`)
+    .update(raw ?? Buffer.alloc(0))
+    .digest("hex");
 }
 
 const checks = new WeakMap<object, BoardAppendCheck>();
@@ -34,12 +47,12 @@ function newestSeq(stream: AppendStream): number {
   return stream.seqBounds().newest_retained_seq ?? 0;
 }
 
-function* records(stream: AppendStream): Generator<unknown> {
+function* records(stream: AppendStream): Generator<AppendRecord> {
   let n = 0;
   for (const m of stream.getAll()) {
     if (++n > BOARD_HISTORY_LIMITS.records) {
       // Unreadable as a board's history: nothing may be appended.
-      yield { invalid: "over the record limit" };
+      yield { value: { invalid: "over the record limit" }, digest: "" };
       return;
     }
     let value: unknown;
@@ -48,7 +61,11 @@ function* records(stream: AppendStream): Generator<unknown> {
     } catch {
       value = undefined;
     }
-    yield value;
+    yield {
+      value,
+      digest: digestOf(m.encoding, m.raw),
+      key: m.key ?? undefined,
+    };
   }
 }
 
@@ -74,26 +91,42 @@ function checkFor(stream: AppendStream): BoardAppendCheck {
   return check;
 }
 
-// The records a set or setMany request would store, decoded.
+// The records a set or setMany request would store: decoded, with the
+// digest of the bytes it would store and the storage key it names.
 export function requestRecords(
-  request: { cmd?: unknown },
+  request: { cmd?: unknown; key?: unknown },
   mesg: { raw?: Buffer; encoding?: any; data?: any },
-): unknown[] | undefined {
-  const record = (encoding: any, data: Buffer | undefined) => {
+): AppendRecord[] | undefined {
+  const record = (
+    encoding: any,
+    data: Buffer | undefined,
+    key: unknown,
+  ): AppendRecord => {
+    let value: unknown;
     try {
-      return decode({ encoding, data });
+      value = decode({ encoding, data });
     } catch (err) {
       throw new ConatError(`not a board patch record: ${err}`.slice(0, 300), {
         code: "branch",
       });
     }
+    return {
+      value,
+      digest: digestOf(encoding, data),
+      key: key == null ? undefined : `${key}`,
+    };
   };
   if (request.cmd === "set") {
-    return [record(mesg.encoding, mesg.raw)];
+    return [record(mesg.encoding, mesg.raw, request.key)];
   }
   if (request.cmd === "setMany") {
-    return (mesg.data as { messageData: { raw: Buffer; encoding: any } }[]).map(
-      ({ messageData }) => record(messageData.encoding, messageData.raw),
+    return (
+      mesg.data as {
+        key?: unknown;
+        messageData: { raw: Buffer; encoding: any };
+      }[]
+    ).map(({ key, messageData }) =>
+      record(messageData.encoding, messageData.raw, key),
     );
   }
   return undefined;
@@ -103,7 +136,7 @@ export function requestRecords(
 // Returns what to commit after the store.
 export function appendCheck(
   stream: AppendStream,
-  records: unknown[],
+  records: AppendRecord[],
 ): { check: BoardAppendCheck; next: ReturnType<BoardAppendCheck["check"]> } {
   const check = checkFor(stream);
   return { check, next: check.check(records) };

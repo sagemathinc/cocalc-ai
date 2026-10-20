@@ -212,7 +212,9 @@ test("the append rule agrees with patchflow on 2,000 random append sequences", (
       if (batch.length === 0) continue;
       let ok = true;
       try {
-        const result = guard.check(batch);
+        const result = guard.check(
+          batch.map((value) => ({ value, digest: JSON.stringify(value) })),
+        );
         guard.commit(result, stored.length + batch.length);
       } catch {
         ok = false;

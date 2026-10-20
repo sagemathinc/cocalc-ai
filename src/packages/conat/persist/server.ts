@@ -828,6 +828,7 @@ export async function replay({
     const messages: StoredMessage[] = [];
     let size = 0;
     let after_seq = startSeq == null ? 0 : startSeq - 1;
+    let read_seq = after_seq;
     while (true) {
       if (signal.aborted) return;
       if (stream.isClosing()) {
@@ -860,6 +861,8 @@ export async function replay({
         });
       }
       const last_seq = plan[plan.length - 1].seq;
+      // What the page was planned at: it is read up to this and no further.
+      const plannedBytes = plan.reduce((total, row) => total + row.size, 0);
       const pageBytes = plan.reduce(
         (total, row) => total + Math.max(row.size, REPLAY_MESSAGE_CHARGE_BYTES),
         0,
@@ -877,7 +880,11 @@ export async function replay({
       }
       try {
         if (signal.aborted) return;
-        for (const row of stream.readPage(after_seq, last_seq)) {
+        const rows = stream.readPage(after_seq, last_seq, plannedBytes);
+        // If the rows grew since they were planned, the page stops early,
+        // and the next one continues after the last row read.
+        read_seq = rows.length > 0 ? rows[rows.length - 1].seq : last_seq;
+        for (const row of rows) {
           const message = await storedRowToMessage(row, {
             recordCap: stream.getRecordCap?.(),
           });
@@ -906,7 +913,7 @@ export async function replay({
       } finally {
         release();
       }
-      after_seq = last_seq;
+      after_seq = read_seq;
       await new Promise((resolve) => setImmediate(resolve));
     }
     if (signal.aborted) return;

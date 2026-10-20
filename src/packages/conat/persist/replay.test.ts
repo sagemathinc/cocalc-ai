@@ -124,6 +124,26 @@ describe("persist replay", () => {
     resetReplayAdmission();
   });
 
+  it("a page cut short when it is read (its rows grew since it was planned) continues after the last row read", async () => {
+    const f = fakeStream([row(1, 100), row(2, 100), row(3, 100)]);
+    const readPage = f.stream.readPage;
+    let first = true;
+    f.stream.readPage = (after_seq: number, last_seq: number, maxBytes) => {
+      const rows = readPage(after_seq, last_seq, maxBytes);
+      if (first) {
+        first = false;
+        return rows.slice(0, 1);
+      }
+      return rows;
+    };
+    const { mesg, frames } = fakeMesg();
+    await replay({ stream: f.stream, mesg, request: {}, messagesThresh: 1e9 });
+    // Every row, once, in order: the next page started after seq 1.
+    expect(replayedSeqs(frames)).toEqual([1, 2, 3]);
+    expect(f.readCalls[0]).toEqual([0, 3]);
+    expect(f.readCalls[1]).toEqual([1, 3]);
+  });
+
   it("decompresses small messages inline and large ones off the event loop", async () => {
     const { stream } = fakeStream([row(1, 100), row(2, BIG)]);
     const { mesg, frames } = fakeMesg();

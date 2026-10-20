@@ -344,7 +344,21 @@ describe("the open check's limits, just below and just above", () => {
 });
 
 describe("the append rule", () => {
-  const stored = (records: any[]) => BoardAppendCheck.fromRecords(records, 0);
+  // Records as the service sees them: a digest of their bytes (here their
+  // JSON) and no storage key.
+  const R = (records: any[], key?: string) =>
+    records.map((value) => ({ value, digest: JSON.stringify(value), key }));
+  const stored = (records: any[]) => {
+    const c = BoardAppendCheck.fromRecords(R(records), 0);
+    return {
+      check: (records: any[], key?: string) => c.check(R(records, key)),
+      commit: (next: ReturnType<typeof c.check>, seq: number) =>
+        c.commit(next, seq),
+      get currentHead() {
+        return c.currentHead;
+      },
+    };
+  };
   const branch = expect.objectContaining({ code: "branch" });
 
   test("the first patch has no parents; each next follows the head", () => {
@@ -371,7 +385,11 @@ describe("the append rule", () => {
   test("a stored patch sent again changes nothing; another patch with its time is refused", () => {
     const a = stored(chain(3));
     expect(a.check([patch("t2", ["t1"])]).head).toBe("t2");
-    expect(a.check([patch("t0", [])])).toEqual({ head: "t2", added: [] });
+    expect(a.check([patch("t0", [])])).toEqual({
+      head: "t2",
+      added: [],
+      digests: [],
+    });
     expect(() => a.check([patch("t2", ["t0"])])).toThrow(/different patch/);
     expect(() => a.check([patch("t0", ["t2"])])).toThrow(/different patch/);
   });
@@ -442,6 +460,82 @@ describe("the append rule", () => {
     const b = stored([snapshot("s")]);
     expect(b.check([patch("n", ["s"])]).head).toBe("n");
     expect(() => b.check([patch("n", [])])).toThrow(branch);
+  });
+
+  test("astra's round 2: a retry changes nothing only if it is the stored record exactly", () => {
+    const a = stored([patch("A", [], { patch: '"old"' })]);
+    // The same time and parents, another payload: refused (PatchGraph keeps
+    // the first, so a reopened board could differ from the live one).
+    expect(() => a.check([patch("A", [], { patch: '"new"' })])).toThrow(
+      /different patch at A/,
+    );
+    // The same payload, other parents: refused.
+    expect(() => a.check([patch("A", ["A0"], { patch: '"old"' })])).toThrow(
+      /different patch at A/,
+    );
+    // Exactly the stored record again: nothing changes.
+    expect(a.check([patch("A", [], { patch: '"old"' })])).toEqual({
+      head: "A",
+      added: [],
+      digests: [],
+    });
+    // Within one batch too.
+    expect(() =>
+      a.check([
+        patch("B", ["A"], { patch: '"b"' }),
+        patch("B", ["A"], { patch: '"b2"' }),
+      ]),
+    ).toThrow(/different patch at B/);
+  });
+
+  test("one snapshot record per time: the same again changes nothing, another is refused", () => {
+    const a = stored([...chain(2), snapshot("t0")]);
+    expect(a.check([snapshot("t0")]).head).toBe("t1");
+    expect(() =>
+      a.check([{ ...snapshot("t0"), snapshot: '{"other":1}' }]),
+    ).toThrow(/different snapshot at t0/);
+    // A snapshot of a stored patch without one is the in-place upgrade.
+    const next = a.check([snapshot("t1")]);
+    expect(next.digests.map(([id]) => id)).toEqual(["s:t1"]);
+    a.commit(next, 4);
+    expect(() =>
+      a.check([{ ...snapshot("t1"), seq_info: { seq: 9 } }]),
+    ).toThrow(/different snapshot at t1/);
+  });
+
+  test("a board's records have no storage key: a keyed record is refused, a stored one takes no appends", () => {
+    const a = stored(chain(2));
+    // A keyed set deletes the row with that key before it inserts: refused,
+    // whatever it claims to be.
+    expect(() => a.check([patch("t2", ["t1"])], "t0")).toThrow(
+      /without a storage key/,
+    );
+    expect(() => a.check([patch("t1", ["t0"])], "t1")).toThrow(
+      /without a storage key/,
+    );
+    const keyed = BoardAppendCheck.fromRecords(
+      [
+        { value: patch("t0"), digest: "d0" },
+        { value: patch("t1", ["t0"]), digest: "d1", key: "k" },
+      ],
+      0,
+    );
+    expect(() =>
+      keyed.check([{ value: patch("t2", ["t1"]), digest: "d2" }]),
+    ).toThrow(/storage key/);
+  });
+
+  test("a stored history with two different records at one time takes no appends", () => {
+    const c = BoardAppendCheck.fromRecords(
+      [
+        { value: patch("A", [], { patch: '"old"' }), digest: "old" },
+        { value: patch("A", [], { patch: '"new"' }), digest: "new" },
+      ],
+      0,
+    );
+    expect(() => c.check([{ value: patch("B", ["A"]), digest: "b" }])).toThrow(
+      /two different records at A/,
+    );
   });
 
   test("records that aren't patches are refused", () => {

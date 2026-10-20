@@ -384,29 +384,51 @@ function sameList(a: string[], b: string[]): boolean {
 
 /*
 The append rule, as the board write service enforces it, with PatchGraph's
-own normalization: the stream's stored patches (time and parents) and its one
-head. One per stream in the service's process, read from the stream (whole,
-bounded by the open check's limits) the first time and kept up to date with
-each store. The service runs requests one at a time and calls check() and
-then commit() in the same synchronous step as the store, so nothing can come
-between them.
+own normalization: the stream's stored records (each patch's parents, and a
+digest of every stored record's exact bytes) and its one head. One per
+stream in the service's process, read from the stream (whole, bounded by
+the open check's limits) the first time and kept up to date with each store.
+The service runs requests one at a time and calls check() and then commit()
+in the same synchronous step as the store, so nothing can come between them.
 
-For each record of a batch, in order, against the stored graph plus the
+A board's records are stored without a storage key (SyncDoc's patches stream
+is append-only): a keyed store deletes the row with that key before it
+inserts, so a keyed record could replace any stored record. Every record
+with a key is refused.
+
+For each record of a batch, in order, against the stored records plus the
 batch so far:
 - a patch whose time is new must have exactly the head as its parents (none
   for the first patch): it is the new head;
-- a patch whose time is stored is the same patch sent again (a retry) if its
-  parents are the stored ones, and changes nothing; otherwise it is refused
-  (PatchGraph keeps the first, so it would never be what was meant);
+- a patch whose time is stored is the same record sent again (a retry) only
+  if it is byte for byte the stored one, and then changes nothing (storing
+  it again appends an identical copy, which PatchGraph reads as the same
+  patch); any other patch at that time is refused (PatchGraph keeps the
+  first, so a reopened board could differ from the live one);
 - a snapshot record must be of a stored patch, which PatchGraph upgrades in
-  place (no new node, no new head); a snapshot of anything else is refused.
+  place (no new node, no new head), and at most one snapshot record per
+  time: the same one again changes nothing, any other is refused; a snapshot
+  of anything else is refused.
 So after every accepted batch, the stored history's PatchGraph has exactly
-one head, the cached head.
+one head, the cached head, and reopening it gives the value the live graph
+has.
 */
+
+// A record as the service stores it: decoded, a digest of its encoding and
+// exact bytes, and its storage key (none, for a board's records).
+export interface AppendRecord {
+  value: unknown;
+  digest: string;
+  key?: string;
+}
+
 export class BoardAppendCheck {
   private head: string | undefined;
   // Every stored patch: its parents.
   private readonly patches: Map<string, string[]>;
+  // The digest of each stored patch ("p:" + time) and snapshot ("s:" +
+  // time) record.
+  private readonly digests: Map<string, string>;
   // The newest stored seq the graph was read at: if the stream has moved on
   // without us (history deleted or reset), it is read again.
   private seq: number;
@@ -416,16 +438,19 @@ export class BoardAppendCheck {
 
   constructor({
     patches = new Map(),
+    digests = new Map(),
     head,
     seq,
     broken,
   }: {
     patches?: Map<string, string[]>;
+    digests?: Map<string, string>;
     head?: string;
     seq: number;
     broken?: string;
   }) {
     this.patches = patches;
+    this.digests = digests;
     this.head = head;
     this.seq = seq;
     this.broken = broken;
@@ -433,31 +458,38 @@ export class BoardAppendCheck {
 
   // The graph of a stored stream's records, in stream order.
   static fromRecords(
-    records: Iterable<unknown>,
+    records: Iterable<AppendRecord>,
     seq: number,
     limits: BoardHistoryLimits = BOARD_HISTORY_LIMITS,
   ): BoardAppendCheck {
     const patches = new Map<string, string[]>();
+    const digests = new Map<string, string>();
     const snapshots: string[] = [];
     let broken: string | undefined;
-    for (const value of records) {
+    for (const { value, digest, key } of records) {
+      if (key != null) {
+        broken ??= "a stored record with a storage key";
+        continue;
+      }
       const r = parseBoardRecord(value, limits);
       if ("invalid" in r) {
         broken ??= `a stored record that isn't a board patch: ${r.invalid}`;
         continue;
       }
-      if (r.snapshot) {
-        snapshots.push(r.time);
-        continue;
-      }
-      const seen = patches.get(r.time);
+      const id = `${r.snapshot ? "s" : "p"}:${r.time}`;
+      const seen = digests.get(id);
       if (seen != null) {
-        if (!sameList(seen, r.parents!)) {
-          broken ??= `two different patches at ${r.time}`;
+        if (seen !== digest) {
+          broken ??= `two different records at ${r.time}`;
         }
         continue;
       }
-      patches.set(r.time, r.parents!);
+      digests.set(id, digest);
+      if (r.snapshot) {
+        snapshots.push(r.time);
+      } else {
+        patches.set(r.time, r.parents!);
+      }
     }
     // A snapshot whose patch isn't stored (a trimmed history) is a node of
     // its own with no parents, as in PatchGraph; the chain after it hangs
@@ -475,6 +507,7 @@ export class BoardAppendCheck {
     }
     return new BoardAppendCheck({
       patches,
+      digests,
       head: heads.length === 1 ? heads[0] : undefined,
       seq,
       broken,
@@ -489,12 +522,16 @@ export class BoardAppendCheck {
     return this.head;
   }
 
-  // The new patches and head after these records, or throws a refusal
+  // The new records and head after these records, or throws a refusal
   // ("branch"). Changes nothing.
   check(
-    records: unknown[],
+    records: AppendRecord[],
     limits: BoardHistoryLimits = BOARD_HISTORY_LIMITS,
-  ): { head?: string; added: [string, string[]][] } {
+  ): {
+    head?: string;
+    added: [string, string[]][];
+    digests: [string, string][];
+  } {
     if (this.broken != null) {
       throw new ConatError(
         `this board's history can't be appended to: ${this.broken}`,
@@ -503,13 +540,34 @@ export class BoardAppendCheck {
     }
     let head = this.head;
     const added = new Map<string, string[]>();
+    const newDigests = new Map<string, string>();
     const parentsOf = (t: string) => added.get(t) ?? this.patches.get(t);
-    for (const value of records) {
+    const digestOf = (id: string) => newDigests.get(id) ?? this.digests.get(id);
+    for (const { value, digest, key } of records) {
+      if (key != null) {
+        throw new ConatError(
+          "a board's records are stored without a storage key",
+          { code: "branch" },
+        );
+      }
       const r = parseBoardRecord(value, limits);
       if ("invalid" in r) {
         throw new ConatError(`not a board patch record: ${r.invalid}`, {
           code: "branch",
         });
+      }
+      const id = `${r.snapshot ? "s" : "p"}:${r.time}`;
+      const stored = digestOf(id);
+      if (stored != null) {
+        // The same record again changes nothing; any other record at its
+        // time is refused.
+        if (stored === digest) continue;
+        throw new ConatError(
+          r.snapshot
+            ? `a different snapshot at ${r.time}, which this board's history already has`
+            : `a different patch at ${r.time}, which this board's history already has`,
+          { code: "branch" },
+        );
       }
       const known = parentsOf(r.time);
       if (r.snapshot) {
@@ -519,18 +577,18 @@ export class BoardAppendCheck {
             { code: "branch" },
           );
         }
+        newDigests.set(id, digest);
         continue;
       }
-      const parents = r.parents!;
       if (known != null) {
-        // The same patch again changes nothing; another patch with its time
-        // is refused.
-        if (sameList(parents, known)) continue;
+        // A patch at the time of a stored, trimmed snapshot (a node with no
+        // parents of its own): not a retry of anything stored.
         throw new ConatError(
           `a different patch at ${r.time}, which this board's history already has`,
           { code: "branch" },
         );
       }
+      const parents = r.parents!;
       const expected = head == null ? [] : [head];
       if (!sameList(parents, expected)) {
         throw new ConatError(
@@ -547,13 +605,15 @@ export class BoardAppendCheck {
         );
       }
       added.set(r.time, parents);
+      newDigests.set(id, digest);
       head = r.time;
     }
-    return { head, added: [...added] };
+    return { head, added: [...added], digests: [...newDigests] };
   }
 
   commit(next: ReturnType<BoardAppendCheck["check"]>, seq: number): void {
     for (const [t, parents] of next.added) this.patches.set(t, parents);
+    for (const [id, digest] of next.digests) this.digests.set(id, digest);
     this.head = next.head;
     this.seq = seq;
   }
