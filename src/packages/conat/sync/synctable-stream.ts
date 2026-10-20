@@ -296,6 +296,16 @@ export class SyncTableStream extends EventEmitter {
     throw Error("delete: not implemented for stream synctable");
   };
 
+  // One attempt, never retried (dstream.saveOnce).
+  saveOnce = async () => {
+    if (this.dstream == null) throw Error("not initialized");
+    return await this.dstream.saveOnce();
+  };
+
+  discardUnsaved = (): void => {
+    this.dstream?.discardUnsaved();
+  };
+
   save = async () => {
     await this.dstream?.save();
   };

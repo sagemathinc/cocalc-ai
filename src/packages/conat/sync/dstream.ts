@@ -59,6 +59,10 @@ import { abortable } from "@cocalc/conat/core/abort";
 
 const logger = getLogger("sync:dstream");
 
+// The codes the board write service's fence refuses a whole request with
+// (conat/persist/board-write-fence.ts): nothing of it was stored.
+const FENCE_REFUSALS = new Set(["instance", "ttl", "lock"]);
+
 export interface DStreamOptions {
   // what it's called by us
   name: string;
@@ -573,6 +577,74 @@ export class DStream<T = any> extends EventEmitter {
       { start: 150, decay: 1.3, max: 10000 },
     );
   });
+
+  /*
+  One attempt to save everything unsaved, never retried (the board writer's
+  fenced save: A2b design 5a). Resolves with what the server said: "saved"
+  if every message was stored, or "refused" with the server's error code
+  (e.g. "instance", "ttl", "lock", "reject") if any was refused, in which
+  case nothing of it was stored; refused messages stay unsaved locally, for
+  the caller to discard. Throws if there was no reply at all (the outcome is
+  then unknown).
+  */
+  saveOnce = async (): Promise<
+    { status: "saved" } | { status: "refused"; code: string; message: string }
+  > => {
+    if (this.isClosed()) {
+      throw Error("closed");
+    }
+    const v: { mesg: T; options: PublishOptions }[] = [];
+    const ids = Object.keys(this.local);
+    for (const id of ids) {
+      v.push({
+        mesg: this.local[id],
+        options: { ...this.publishOptions[id], msgID: id },
+      });
+    }
+    if (v.length === 0) return { status: "saved" };
+    let w: any[];
+    try {
+      w = await this.stream.publishMany(v);
+    } catch (err) {
+      // The board write service's fence refuses the whole request with one
+      // of these codes, before storing anything: a reply, so definite.
+      const code = `${(err as any)?.code ?? ""}`;
+      if (FENCE_REFUSALS.has(code)) {
+        return { status: "refused", code, message: `${err}` };
+      }
+      // Anything else (a timeout, a lost reply) propagates: unknown.
+      throw err;
+    }
+    let refused: { code: string; message: string } | undefined;
+    for (let i = 0; i < w.length; i++) {
+      const id = ids[i];
+      const r = w[i] as any;
+      if (r?.error) {
+        refused ??= { code: `${r.code ?? "error"}`, message: `${r.error}` };
+        continue;
+      }
+      const { seq } = r as { seq: number };
+      if ((this.raw[this.raw.length - 1]?.seq ?? -1) < seq) {
+        this.saved[seq] = v[i].mesg;
+      }
+      delete this.local[id];
+      delete this.publishOptions[id];
+    }
+    this.updateHasUnsavedChanges();
+    return refused == null
+      ? { status: "saved" }
+      : { status: "refused", ...refused };
+  };
+
+  // Drop every unsaved local message (a retired board writer: its local
+  // state must never reach the stream through a later save or close).
+  discardUnsaved = (): void => {
+    for (const id of Object.keys(this.local)) {
+      delete this.local[id];
+      delete this.publishOptions[id];
+    }
+    this.updateHasUnsavedChanges();
+  };
 
   private attemptToSave = async () => {
     await this.attemptToSaveBatch();

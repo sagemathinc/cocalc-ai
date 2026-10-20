@@ -2504,6 +2504,37 @@ export class SyncDoc extends EventEmitter {
     await this.patches_table.save();
   });
 
+  /*
+  The board writer's fenced save (A2b design 5a): commit the live document
+  as a patch, then ONE attempt to store the unsaved patches, never retried.
+  Needs a writer opened with noAutosave. Resolves with "saved", or "refused"
+  and the server's code (nothing stored); throws if there was no reply (the
+  outcome is unknown).
+  */
+  saveOnce = async (): Promise<
+    { status: "saved" } | { status: "refused"; code: string; message: string }
+  > => {
+    if (this.doc == null || this.last == null || this.state == "closed") {
+      throw Error("not ready");
+    }
+    if (!this.noAutosave) {
+      throw Error("saveOnce needs a document opened with noAutosave");
+    }
+    if (!this.doc.is_equal(this.last)) {
+      this.emitUserChange();
+      this.commit();
+    }
+    // @ts-ignore -- the conat patches table
+    return await this.patches_table.saveOnce();
+  };
+
+  // Drop every unsaved patch (a retired board writer), so that none can reach
+  // the stream through a later save or close.
+  discardUnsaved = (): void => {
+    // @ts-ignore -- the conat patches table
+    this.patches_table?.discardUnsaved?.();
+  };
+
   private dstream = () => {
     // @ts-ignore -- in general patches_table might not be a conat one still,
     // or at least dstream is an internal implementation detail.

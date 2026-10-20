@@ -420,6 +420,80 @@ describe("the write service's fence (A2b 5a)", () => {
   });
 });
 
+describe("the board writer's single-attempt save (A2b 5a)", () => {
+  async function fencedWriter(
+    project_id: string,
+    path: string,
+    nonce?: string,
+  ) {
+    return await dstream({
+      client: connect(),
+      project_id,
+      name: name(path),
+      service: BOARD_WRITE_SERVICE,
+      persistUser: {},
+      writeFence: fence(nonce),
+      noAutosave: true,
+      noInventory: true,
+      noCache: true,
+    });
+  }
+
+  test("saveOnce stores what is unsaved, once", async () => {
+    const project_id = uuid();
+    const path = "/home/user/once.board.json";
+    const w = await fencedWriter(project_id, path);
+    w.publish({ edit: 1 });
+    expect(w.hasUnsavedChanges()).toBe(true);
+    expect(await w.saveOnce()).toEqual({ status: "saved" });
+    expect(w.hasUnsavedChanges()).toBe(false);
+    const r = await readerStream(project_id, path);
+    expect(r.getAll()).toEqual([{ edit: 1 }]);
+    w.close();
+    r.close();
+  });
+
+  test("a refused attempt is definite, stores nothing, is never retried, and can be discarded", async () => {
+    const project_id = uuid();
+    const path = "/home/user/refused.board.json";
+    const w = await fencedWriter(
+      project_id,
+      path,
+      "fedcba9876543210fedcba9876543210",
+    );
+    w.publish({ edit: "stale" });
+    expect(await w.saveOnce()).toMatchObject({
+      status: "refused",
+      code: "instance",
+    });
+    // Still unsaved locally, and nothing retries it.
+    expect(w.hasUnsavedChanges()).toBe(true);
+    await new Promise((r) => setTimeout(r, 1500));
+    const r = await readerStream(project_id, path);
+    expect(r.getAll()).toEqual([]);
+    w.discardUnsaved();
+    expect(w.hasUnsavedChanges()).toBe(false);
+    w.close();
+    r.close();
+  });
+
+  test("no reply at all is not a refusal: saveOnce throws (the outcome is unknown)", async () => {
+    const project_id = uuid();
+    const path = "/home/user/unknown.board.json";
+    const w = await fencedWriter(project_id, path);
+    // The write service goes away before the attempt.
+    await setup.boardPersistServer.close();
+    try {
+      w.publish({ edit: 1 }, { timeout: 1500 } as any);
+      await expect(w.saveOnce()).rejects.toThrow();
+      expect(w.hasUnsavedChanges()).toBe(true);
+    } finally {
+      w.close();
+      await setup.restartPersistServer();
+    }
+  });
+});
+
 async function waitFor(f: () => boolean, ms = 10_000) {
   const start = Date.now();
   while (!f()) {
