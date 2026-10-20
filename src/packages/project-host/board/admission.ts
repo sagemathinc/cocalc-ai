@@ -462,9 +462,10 @@ export class BoardAdmission<E> {
   }
 
   // After an unknown outcome: the write has settled and been reconciled, so
-  // commits may start again. Throws if a write is still in progress.
+  // commits may start again. Throws if a write is still in progress (one
+  // that timed out and hasn't settled yet).
   resume(): void {
-    if (this.flushing) throw Error("a write is still in progress");
+    if (this.inflight != null) throw Error("a write is still in progress");
     if (!this.paused) return;
     this.paused = false;
     this.schedule();
@@ -641,7 +642,12 @@ export class BoardAdmission<E> {
       const late = await write;
       this.inflight = undefined;
       done(applyCharge(late, this.limits));
-      for (const w of batch.items) w.reservation.consume();
+      // The edits were told "unknown"; what they reserved is refunded if the
+      // write turned out refused (nothing was applied), as it is then.
+      for (const w of batch.items) {
+        if (late.status === "refused") w.reservation.release();
+        else w.reservation.consume();
+      }
       this.note("board: a timed-out write settled", { status: late.status });
       return;
     }

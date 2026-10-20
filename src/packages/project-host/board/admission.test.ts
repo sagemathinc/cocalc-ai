@@ -547,6 +547,65 @@ test("a logger that throws leaves nothing unsettled: the host slot, reservations
   expect(host.stats).toEqual({ waiting: 0, applying: 0 });
 });
 
+test("resume() works as soon as an unknown outcome is reported (the write has settled)", async () => {
+  let n = 0;
+  const { b, submit, commits } = board({
+    result: async () =>
+      n++ === 0
+        ? { status: "unknown", message: "lost reply" }
+        : { status: "acknowledged" },
+  });
+  const first = submit(1);
+  // Reconciled at once, in the same turn as the outcome: resume is allowed.
+  let resumed: unknown = "not yet";
+  void first.then(() => {
+    try {
+      b.resume();
+      resumed = "ok";
+    } catch (err) {
+      resumed = err;
+    }
+  });
+  await settle(300);
+  expect(await first).toMatchObject({ status: "unknown" });
+  expect(resumed).toBe("ok");
+  const second = submit(1);
+  await settle(300);
+  expect(await second).toEqual({ status: "committed" });
+  expect(commits).toHaveLength(2);
+});
+
+test("a timed-out write that later turns out refused refunds what its edits reserved", async () => {
+  // Each edit reserves 200 ms of host work; the bucket holds 500 and barely
+  // refills, so what is refunded can be seen.
+  const limits = {
+    ...BOARD_ADMISSION,
+    workBaseMs: 200,
+    workPerKiBMs: 0,
+    hostWorkBurstMs: 500,
+    hostWorkPerSecondMs: 0.001,
+  };
+  const host = newHost(limits);
+  let refuse!: () => void;
+  const { submit } = board({
+    host,
+    result: () =>
+      new Promise<CommitResult>((resolve) => {
+        refuse = () => resolve({ status: "refused", message: "over a cap" });
+      }),
+  });
+  const edit = submit(1);
+  await settle(limits.commitTimeoutMs + 300);
+  expect(await edit).toMatchObject({ status: "unknown" });
+  refuse();
+  await settle(0);
+  expect(host.stats).toEqual({ waiting: 0, applying: 0 });
+  // All 500 ms are back: two more reservations of 200 fit.
+  const r1 = host.reserve(1);
+  const r2 = host.reserve(1);
+  expect("workMs" in r1 && "workMs" in r2).toBe(true);
+});
+
 test("a board remembers a bounded number of clients", async () => {
   const limits = { ...BOARD_ADMISSION, maxClients: 2 };
   const host = newHost(limits);
