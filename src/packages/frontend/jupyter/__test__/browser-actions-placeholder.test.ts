@@ -116,7 +116,11 @@ describe("file events", () => {
 
     expect(actions.saveIpynb).not.toHaveBeenCalled();
     expect(actions.syncdb.fs.jupyterImportIpynb).toHaveBeenCalledWith(LAB);
-    expect(actions.setToIpynb).toHaveBeenCalledWith(LAB);
+    expect(actions.setToIpynb).toHaveBeenCalledWith(
+      LAB,
+      false,
+      expect.any(Object),
+    );
     expect(actions.toIpynb).not.toHaveBeenCalled();
   });
 
@@ -195,7 +199,11 @@ describe("saving", () => {
     await actions.saveIpynb();
 
     expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
-    expect(actions.setToIpynb).toHaveBeenCalledWith(LAB);
+    expect(actions.setToIpynb).toHaveBeenCalledWith(
+      LAB,
+      false,
+      expect.any(Object),
+    );
   });
 
   it("never write the placeholder; nothing to save when the file is empty", async () => {
@@ -626,7 +634,11 @@ describe("watcher hand-off", () => {
 
     await actions.watchIpynb();
 
-    expect(actions.setToIpynb).toHaveBeenCalledWith(LAB);
+    expect(actions.setToIpynb).toHaveBeenCalledWith(
+      LAB,
+      false,
+      expect.any(Object),
+    );
   });
 });
 
@@ -654,7 +666,11 @@ describe("applying a loaded file", () => {
       replacingPlaceholder: true,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(actions.setToIpynb).toHaveBeenCalledWith(LAB);
+    expect(actions.setToIpynb).toHaveBeenCalledWith(
+      LAB,
+      false,
+      expect.any(Object),
+    );
     actions.setVersion("v2"); // the user edits the loaded lab
     actions.hasUnsavedChanges = true;
     finish();

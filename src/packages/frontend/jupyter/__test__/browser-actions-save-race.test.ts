@@ -377,7 +377,11 @@ describe("Jupyter browser disk-save reconciliation", () => {
           expect(actions.syncdb.fs.jupyterImportIpynb).toHaveBeenCalledWith(
             diskRead.ipynb,
           );
-          expect(actions.setToIpynb).toHaveBeenCalledWith(diskRead.ipynb);
+          expect(actions.setToIpynb).toHaveBeenCalledWith(
+            diskRead.ipynb,
+            false,
+            expect.any(Object),
+          );
           expect(actions.saveIpynb).not.toHaveBeenCalled();
           expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
         } finally {

@@ -271,4 +271,27 @@ describe("project-side save of a changing notebook", () => {
 
     expect(saved).toEqual(["x = 1", "x = 3"]);
   });
+
+  it("does not overwrite an edit made while a conversion is prepared", async () => {
+    // setToIpynb first prepares the converted ipynb (an async step); an edit
+    // there must abort the apply, not be replaced by the import.
+    const { actions, edit, saved } = liveActions();
+    edit("x = 1", "v1");
+    actions.syncdb.fs.jupyterSaveIpynb = jest.fn(async (_path, ipynb) => {
+      saved.push(ipynb.cells[0].source.join(""));
+      return { bytes: 10, converted: saved.length === 1, ipynb };
+    });
+    const commits: string[] = [];
+    actions.prepareIpynbForSyncdoc = jest.fn(async (ipynb) => {
+      if (saved.length === 1) edit("x = 3", "v3"); // edit while preparing
+      return ipynb;
+    });
+    actions.syncdb.set = jest.fn();
+    actions.syncdb.commit = jest.fn(() => commits.push("commit"));
+
+    await actions.save_ipynb_file();
+
+    expect(commits).toEqual([]); // the import never touched the notebook
+    expect(saved).toEqual(["x = 1", "x = 3"]);
+  });
 });

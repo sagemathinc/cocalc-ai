@@ -84,7 +84,10 @@ export class JupyterActions extends JupyterActions0 {
         // Apply the converted file only over the version that was saved;
         // an edit made while it is applied is saved by the next attempt.
         this.importCommitVersion = undefined;
-        await this.setToIpynb(result.ipynb);
+        const applied = await this.setToIpynb(result.ipynb, false, {
+          expectedVersion: version,
+        });
+        if (applied === "aborted") continue;
         const importVersion = this.importCommitVersion;
         if (importVersion != null && this.rtcVersion() !== importVersion) {
           continue;

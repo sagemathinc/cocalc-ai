@@ -3091,7 +3091,15 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   setToIpynb = async (
     ipynb: any,
     data_only: boolean = false,
-  ): Promise<void> => {
+    {
+      expectedVersion,
+    }: {
+      // Apply only over this RTC version: if the notebook changes while the
+      // ipynb is prepared, nothing is changed and "aborted" is returned, so
+      // the caller can retry rather than overwrite that edit.
+      expectedVersion?: string;
+    } = {},
+  ): Promise<"aborted" | undefined> => {
     /*
      * set_to_ipynb - set from ipynb object.  This is
      * mainly meant to be run on the backend in the project,
@@ -3108,6 +3116,12 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     // Project-side implementations use this asynchronous boundary to replace
     // native Jupyter attachments before any live syncdoc state is mutated.
     ipynb = await this.prepareIpynbForSyncdoc(ipynb);
+    if (
+      expectedVersion != null &&
+      (this.syncdb as any)?.newestVersion?.() !== expectedVersion
+    ) {
+      return "aborted";
+    }
 
     this._state = "load";
 

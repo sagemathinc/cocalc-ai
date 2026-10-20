@@ -4654,7 +4654,10 @@ export class JupyterActions extends JupyterActions0 {
       }
       return "rtc_changed";
     }
-    const editedWhileApplying = await this.applyIpynb(ipynb);
+    const editedWhileApplying = await this.applyIpynb(
+      ipynb,
+      expectedRtcVersion,
+    );
     // setToIpynb runs with change handling paused, so note the loaded content
     // here (see ensureThereIsACell).
     this.noteNotebookContent();
@@ -4699,9 +4702,17 @@ export class JupyterActions extends JupyterActions0 {
   // Apply an ipynb to the live notebook and report whether it was edited
   // meanwhile: setToIpynb commits the file and then awaits the RTC save, and
   // edits are allowed during that wait. Such an edit is not in the file.
-  private applyIpynb = async (ipynb: any): Promise<boolean> => {
+  private applyIpynb = async (
+    ipynb: any,
+    expectedVersion?: string,
+  ): Promise<boolean> => {
     this.importCommitVersion = undefined;
-    await this.setToIpynb(ipynb);
+    if (
+      (await this.setToIpynb(ipynb, false, { expectedVersion })) === "aborted"
+    ) {
+      // Edited while the ipynb was prepared: nothing was applied.
+      return true;
+    }
     const importVersion = this.importCommitVersion;
     return (
       importVersion != null &&
@@ -4799,7 +4810,10 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     if (result.converted) {
-      const editedWhileApplying = await this.applyIpynb(result.ipynb);
+      const editedWhileApplying = await this.applyIpynb(
+        result.ipynb,
+        snapshotVersion,
+      );
       if (this.isClosed()) return;
       if (editedWhileApplying) {
         this.runDebug("ipynb.save.edited_while_applying_conversion");
