@@ -312,7 +312,9 @@ describe("a turn held until its usage limit resets", () => {
   });
 
   it("reaches only a sender's host that knows a held report", () => {
-    expect(agentRpcReportForVersion(held(), 3)).toEqual(held());
+    expect(agentRpcReportForVersion(held(), 4)).toEqual(held());
+    // Version 3 knows completed reports, but rejects the phase field.
+    expect(agentRpcReportForVersion(held(), 3)).toBeUndefined();
     expect(agentRpcReportForVersion(held(), 2)).toBeUndefined();
     expect(agentRpcReportForVersion(held(), 1)).toBeUndefined();
   });

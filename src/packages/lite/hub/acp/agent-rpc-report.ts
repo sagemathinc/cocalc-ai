@@ -30,6 +30,7 @@ import getLogger from "@cocalc/backend/logger";
 import { getAcpJob } from "../sqlite/acp-jobs";
 import {
   deleteAgentRpcReport,
+  deleteAgentRpcReportByOpId,
   enqueueAgentRpcReport,
   listDueAgentRpcReports,
   retryAgentRpcReport,
@@ -122,6 +123,8 @@ export function noteAgentMessageTurnFailed(opts: {
       })
     )
       return;
+    // The final word supersedes a held report still waiting to be sent.
+    if (!opts.held) deleteAgentRpcReportByOpId(`${opts.op_id}:held`);
   } catch (err) {
     logger.warn("could not queue a delivery report", {
       op_id: opts.op_id,
@@ -218,6 +221,13 @@ export async function deliverAgentRpcReport(
         if (row.event !== "chat" || row.thread_id !== delivery.thread_id)
           continue;
         const rpc = row.agent_rpc;
+        // A held report that arrives after the final one is out of date.
+        if (
+          report.phase === "held" &&
+          rpc?.delivery_report?.attempt_id === report.attempt_id &&
+          (rpc.delivery_report.phase ?? "final") === "final"
+        )
+          return { skipped: "duplicate" };
         if (
           rpc?.delivery_report?.attempt_id === report.attempt_id &&
           (rpc.delivery_report.phase ?? "final") === (report.phase ?? "final")

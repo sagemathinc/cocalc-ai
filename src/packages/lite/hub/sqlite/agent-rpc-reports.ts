@@ -96,6 +96,13 @@ export function listDueAgentRpcReports(
   }));
 }
 
+/** Drop a queued report by its job key (e.g. a held report, once the
+ * final one is queued: it would only arrive out of date). */
+export function deleteAgentRpcReportByOpId(op_id: string): void {
+  ensureInit();
+  getAcpDatabase().prepare(`DELETE FROM ${TABLE} WHERE op_id = ?`).run(op_id);
+}
+
 /** Done: delivered, refused, or the sender already had a reply. */
 export function deleteAgentRpcReport(report_id: string): void {
   ensureInit();
