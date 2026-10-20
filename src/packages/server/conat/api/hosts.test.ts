@@ -4149,6 +4149,37 @@ describe("hosts browser fresh auth gating", () => {
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
+  it("requires fresh auth before queueing a public route mode change", async () => {
+    const { setHostPublicRouteMode } = await import("./hosts");
+    queryMock.mockClear();
+    createLroMock.mockClear();
+    // No session at all.
+    await expect(
+      setHostPublicRouteMode({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        mode: "cloudflare-proxy",
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    // A session that is not freshly authenticated.
+    requireFreshAuthForSessionHashMock = jest.fn(async () => {
+      throw Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+    });
+    await expect(
+      setHostPublicRouteMode({
+        account_id: ACCOUNT_ID,
+        session_hash: "stale-session-hash",
+        id: HOST_ID,
+        mode: "cloudflare-proxy",
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
   it("uses browser fresh auth before queueing host stop", async () => {
     getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
 

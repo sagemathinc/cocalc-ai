@@ -2673,6 +2673,8 @@ export interface Hosts {
   }) => Promise<HostLroResponse>;
   setHostPublicRouteMode: (opts: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
     id: string;
     mode: HostPublicRouteMode;
   }) => Promise<HostLroResponse>;

@@ -2840,8 +2840,7 @@ async function startHostConnectionService(): Promise<void> {
         id,
         force_bootstrap,
       }),
-    setHostPublicRouteMode: async ({ account_id, id, mode }) =>
-      await setHostPublicRouteMode({ account_id, id, mode }),
+    setHostPublicRouteMode: async (opts) => await setHostPublicRouteMode(opts),
     relocateHost: async (opts) => await relocateHost(opts),
     setHostMaintenanceNotice: async (opts) =>
       await setHostMaintenanceNotice(opts),
