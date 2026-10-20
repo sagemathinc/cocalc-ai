@@ -5112,6 +5112,39 @@ describe("held sign-in turns resume once the account signs in again", () => {
     );
   });
 
+  it("only a subscription's sign-in is held, never an API key's", () => {
+    const signIn = (credential_id?: string) =>
+      ({
+        version: 1,
+        state: "failed",
+        failure: {
+          kind: "sign-in",
+          ...(credential_id ? { credential_id } : {}),
+        },
+      }) as any;
+    const claude = (mode: string) =>
+      ({
+        runtime: { version: 1, kind: "acp" },
+        harness_credential: {
+          version: 1,
+          provider: "anthropic",
+          mode,
+          credentialId,
+        },
+      }) as any;
+    const codex = (paymentSource: string) =>
+      ({ config: { paymentSource } }) as any;
+    const renewable = acpTestInternals.signInRenewable;
+    expect(renewable(claude("account-subscription"), signIn())).toBe(true);
+    expect(renewable(claude("account-api-key"), signIn())).toBe(false);
+    expect(renewable(codex("subscription"), signIn(credentialId))).toBe(true);
+    expect(renewable(codex("auto"), signIn(credentialId))).toBe(true);
+    // An invalid API key (a 401) is reported, not held for a day.
+    for (const source of ["site-api-key", "project-api-key", "account-api-key"])
+      expect(renewable(codex(source), signIn(credentialId))).toBe(false);
+    expect(renewable(codex("auto"), signIn())).toBe(false);
+  });
+
   it("a turn held again keeps the day from when it was first held", () => {
     getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
     const T0 = Date.now() - 2 * 60 * 60_000;

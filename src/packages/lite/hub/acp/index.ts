@@ -9485,6 +9485,9 @@ async function enqueueSignInHold({
     return undefined;
   const failed = decodeAcpJobRequest(job);
   if (failed.chat?.agent_rpc_report) return undefined;
+  // Only a subscription's sign-in can be renewed (and seen renewed): an
+  // invalid API key ends the turn as an ordinary failure.
+  if (!signInRenewable(failed, outcome)) return undefined;
   const count = Math.floor(Number(job.recovery_count ?? 0));
   if (count >= ACP_SIGNIN_HOLD_MAX) return undefined;
   const base = job.finished_at ?? now;
@@ -9526,6 +9529,30 @@ async function enqueueSignInHold({
     await takeSignInHoldBaseline(held, credentialUpdatedAt);
   }
   return held;
+}
+
+const API_KEY_PAYMENT_SOURCES = [
+  "project-api-key",
+  "account-api-key",
+  "site-api-key",
+];
+
+/** Whether this sign-in failure is a subscription's, which signing in again
+ * renews: a Claude subscription credential, or a Codex turn whose failure
+ * names its subscription credential (never an API key). */
+function signInRenewable(
+  request: AcpJobRequest,
+  outcome: TurnOutcome,
+): boolean {
+  const failure = outcome.state === "failed" ? outcome.failure : undefined;
+  if (failure?.kind !== "sign-in") return false;
+  const harness = request.harness_credential as
+    | { mode?: string; credentialId?: string }
+    | undefined;
+  if (request.runtime !== undefined)
+    return harness?.mode === "account-subscription" && !!harness.credentialId;
+  const source = `${(request.config as { paymentSource?: string } | undefined)?.paymentSource ?? ""}`;
+  return !!failure.credential_id && !API_KEY_PAYMENT_SOURCES.includes(source);
 }
 
 /** The credential a held sign-in turn waits for, and its provider. */
@@ -13927,6 +13954,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  signInRenewable,
   releaseRenewedSignInHolds,
   signInHoldStart,
   harnessKilledFailure,
