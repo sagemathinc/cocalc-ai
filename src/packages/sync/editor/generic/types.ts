@@ -9,6 +9,7 @@
 
 // A Patch is an entry in the patches table, as represented in memory locally here.
 
+import type { WriteFence } from "@cocalc/conat/persist/board-write-fence";
 import { SyncTable } from "@cocalc/sync/table/synctable";
 import { type CompressedPatch } from "@cocalc/util/dmp";
 export { type CompressedPatch };
@@ -211,7 +212,11 @@ export interface Client extends ProjectClient {
     oversized_seq: number;
     // How the document's patches are written (SyncDoc's patchesPersist): a
     // board's go through the board write service, and so must its reset.
-    persist?: { service: string; persistUser: Record<string, never> };
+    persist?: {
+      service: string;
+      persistUser: Record<string, never>;
+      writeFence?: WriteFence;
+    };
   }) => Promise<{ history_epoch: number; reset: boolean }>;
 }
 

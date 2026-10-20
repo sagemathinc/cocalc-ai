@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { WriteFence } from "@cocalc/conat/persist/board-write-fence";
 import { EventEmitter } from "events";
 import { Client as Client0 } from "@cocalc/sync/editor/generic/types";
 import { parseQueryWithOptions } from "@cocalc/sync/table/util";
@@ -158,7 +159,11 @@ export class SyncClient extends EventEmitter implements Client0 {
     oversized_seq: number;
     // The route the document's patches are written by (a board's: the
     // board write service, as the hub).
-    persist?: { service: string; persistUser: Record<string, never> };
+    persist?: {
+      service: string;
+      persistUser: Record<string, never>;
+      writeFence?: WriteFence;
+    };
   }): Promise<{ history_epoch: number; reset: boolean }> => {
     const stream = this.client.sync.astream({
       project_id,
