@@ -4929,13 +4929,14 @@ describe("held sign-in turns resume once the account signs in again", () => {
 
   it.each([
     ["an update before it was held", { updated_at: -1 }, false],
-    ["its credential signed in again", { updated_at: 1 }, true],
+    ["an update within the clock-skew slack", { updated_at: 1 }, false],
+    ["its credential signed in again", { updated_at: 3 }, true],
     [
       "a new credential replacing a revoked one",
-      { updated_at: 1, revoked: true, newest_updated_at: 2 },
+      { updated_at: 3, revoked: true, newest_updated_at: 4 },
       true,
     ],
-    ["only revoked", { updated_at: 1, revoked: true }, false],
+    ["only revoked", { updated_at: 3, revoked: true }, false],
     ["no answer (the home bay is down)", "fail", false],
   ] as const)("%s", async (_name, answer, release) => {
     getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
@@ -4945,7 +4946,7 @@ describe("held sign-in turns resume once the account signs in again", () => {
       if (answer === "fail") throw new Error("timeout");
       const a = answer as any;
       const at = (delta?: number) =>
-        delta == null ? undefined : heldAt + delta * 1_000;
+        delta == null ? undefined : heldAt + delta * 60_000;
       return {
         updated_at: at(a.updated_at),
         revoked: a.revoked,
@@ -4991,8 +4992,23 @@ describe("held sign-in turns resume once the account signs in again", () => {
     const heldAt = Date.now() - 60_000;
     held(heldAt);
     held(heldAt);
-    const lookup = jest.fn(async () => ({ updated_at: heldAt + 1_000 }));
+    const lookup = jest.fn(async () => ({ updated_at: heldAt + 3 * 60_000 }));
     expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(2);
     expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("after its first look, compares only the home bay's own times", async () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    const job = held(heldAt);
+    // The home bay's clock runs behind: its times look older than the hold.
+    let updated_at = heldAt - 5 * 60_000;
+    const lookup = jest.fn(async () => ({ updated_at }));
+    const release = acpTestInternals.releaseRenewedSignInHolds;
+    expect(await release(lookup)).toBe(0);
+    expect(await release(lookup)).toBe(0);
+    updated_at += 1_000; // a real sign-in, still "before" the hold start
+    expect(await release(lookup)).toBe(1);
+    expect(getAcpJobByOpId(job.op_id)?.available_at ?? null).toBeNull();
   });
 });

@@ -9535,6 +9535,17 @@ type CredentialUpdatedAt = (opts: {
   newest_updated_at?: number;
 }>;
 
+/** Slack for clock skew between this host and the account's home bay. */
+const SIGNIN_HOLD_SKEW_MS = 2 * 60_000;
+
+/**
+ * The newest credential update each held sign-in turn has seen, by op_id.
+ * Timestamps come from the home bay's clock, so comparing an answer with
+ * the baseline never mixes clocks; only a turn's first look (no baseline
+ * yet, e.g. after a restart) compares with its hold start, with slack.
+ */
+const signInHoldBaselines = new Map<string, number>();
+
 /**
  * Release every held sign-in turn whose account signed in again since it
  * was first held: its credential, or a newer one of the same kind, was
@@ -9548,7 +9559,11 @@ async function releaseRenewedSignInHolds(
   // One lookup per account and credential per pass.
   const asked = new Map<string, ReturnType<CredentialUpdatedAt>>();
   let released = 0;
-  for (const job of listHeldAcpJobs(SIGNIN_HOLD_REASON, now)) {
+  const held = listHeldAcpJobs(SIGNIN_HOLD_REASON, now);
+  const heldIds = new Set(held.map((job) => job.op_id));
+  for (const op_id of signInHoldBaselines.keys())
+    if (!heldIds.has(op_id)) signInHoldBaselines.delete(op_id);
+  for (const job of held) {
     const credential = heldSignInCredential(job);
     if (!credential || !job.account_id) continue;
     const start = signInHoldStart(job) ?? job.created_at;
@@ -9567,8 +9582,15 @@ async function releaseRenewedSignInHolds(
         }).catch(() => ({})),
       );
     const answer = await asked.get(key)!;
+    if (answer.updated_at == null && answer.newest_updated_at == null) continue;
     const own = !answer.revoked ? (answer.updated_at ?? 0) : 0;
-    if (Math.max(own, answer.newest_updated_at ?? 0) <= start) continue;
+    const seen = Math.max(own, answer.newest_updated_at ?? 0);
+    const baseline = signInHoldBaselines.get(job.op_id);
+    if (baseline == null) {
+      signInHoldBaselines.set(job.op_id, seen);
+      if (seen <= start + SIGNIN_HOLD_SKEW_MS) continue;
+    } else if (seen <= baseline) continue;
+    signInHoldBaselines.delete(job.op_id);
     if (releaseHeldAcpJob(job.op_id, now)) released += 1;
   }
   if (released > 0) scheduleNextDelayedAcpQueueWake();
