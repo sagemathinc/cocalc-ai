@@ -23,6 +23,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { MultibayCluster, SRC } from "./cluster.mjs";
 import {
   AccountClient,
+  connectBayDatabase,
   createAccount,
   eventually,
   runInBay,
@@ -1027,6 +1028,74 @@ describe("bulk project stop across bays", () => {
     await sleep(2000);
     assert.equal(await forwardedStops(), before + 1);
     void pending;
+  });
+});
+
+describe("host reads across bays", () => {
+  // A host on the attached bay, owned by alice (homed on the seed): reading
+  // its log runs on the host's bay, which records the forwarded call.
+  const host_id = randomUUID();
+  const forwardedReads = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const t = await getPool().query("SELECT to_regclass('hub_api_forwarded_calls') AS t");
+       if (t.rows[0].t == null) return 0; // nothing forwarded to this bay yet
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.getHostLog' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("reads a host's log on the host's bay", async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO project_hosts (id, name, status, metadata, created, updated, bay_id) VALUES ($1, 'routed-host', 'off', $2, NOW(), NOW(), $3)",
+         [${JSON.stringify(host_id)}, ${JSON.stringify({ owner: alice.account_id })}, ${JSON.stringify(ATTACHED)}]);
+       await getPool().query(
+         "INSERT INTO cloud_vm_log (id, vm_id, ts, action, status) VALUES ($1, $2, NOW(), 'create', 'success')",
+         [${JSON.stringify(randomUUID())}, ${JSON.stringify(host_id)}]);`,
+    );
+    const before = await forwardedReads();
+    const log = await alice.client.call("hosts.getHostLog", { id: host_id });
+    assert.deepEqual(
+      log.map(({ vm_id, action, status }) => ({ vm_id, action, status })),
+      [{ vm_id: host_id, action: "create", status: "success" }],
+    );
+    assert.equal(await forwardedReads(), before + 1);
+  });
+
+  it("waits as long as the caller asked for a slow read", async () => {
+    // The log read is held up 26 s on the host's bay: past what the default
+    // forwarding budget covers (two 12 s attempts, a repeat waiting 9 s),
+    // within the 300 s this call asks for, and within the bay's own 30 s
+    // statement timeout. Its 120 s attempts exceed fast RPC's 90 s ack
+    // limit, so they go by request/reply.
+    const BLOCKED_MS = 26_000;
+    const db = await connectBayDatabase(cluster, ATTACHED);
+    let released;
+    try {
+      await db.query("BEGIN");
+      await db.query("LOCK TABLE cloud_vm_log IN ACCESS EXCLUSIVE MODE");
+      released = sleep(BLOCKED_MS).then(() => db.query("COMMIT"));
+      const started = Date.now();
+      const log = await alice.client.call("hosts.getHostLog", {
+        id: host_id,
+        timeout: 300_000,
+      });
+      assert.ok(Date.now() - started > 22_000, "the read was held up");
+      assert.deepEqual(
+        log.map(({ vm_id, action }) => ({ vm_id, action })),
+        [{ vm_id: host_id, action: "create" }],
+      );
+    } finally {
+      await released?.catch(() => undefined);
+      await db.end();
+    }
   });
 });
 
