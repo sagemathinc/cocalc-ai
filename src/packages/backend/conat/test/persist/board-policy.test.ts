@@ -81,6 +81,38 @@ test("the ordinary service refuses every write to a board stream", async () => {
   check.close();
 });
 
+test("one client's reader and writer of a board stream are different streams, in either order", async () => {
+  for (const readerFirst of [true, false]) {
+    const project_id = uuid();
+    const path = "/home/user/cached.board.json";
+    const client = connect();
+    const open = (write: boolean) =>
+      dstream({
+        client,
+        project_id,
+        name: name(path),
+        noInventory: true,
+        ...(write ? { service: BOARD_WRITE_SERVICE, persistUser: {} } : {}),
+      });
+    const first = await open(!readerFirst);
+    const second = await open(readerFirst);
+    const [reader, writer] = readerFirst ? [first, second] : [second, first];
+    expect(reader === writer).toBe(false);
+    // The writer writes, though a reader of the stream was opened first...
+    writer.publish({ edit: 1 });
+    await writer.save();
+    // ...and the reader can't, though a writer was opened first.
+    reader.publish({ edit: "from a reader" });
+    void reader.save().catch(() => {});
+    await new Promise((r) => setTimeout(r, 1000));
+    const check = await readerStream(project_id, path);
+    expect(check.getAll()).toEqual([{ edit: 1 }]);
+    reader.close();
+    writer.close();
+    check.close();
+  }
+});
+
 test("a reader can't make a board stream ephemeral", async () => {
   const project_id = uuid();
   const path = "/home/user/ephemeral.board.json";

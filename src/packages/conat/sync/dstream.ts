@@ -724,9 +724,29 @@ export const cache = refCache<DStreamOptions & { client: Client }, DStream>({
     if (!options.name) {
       throw Error("name must be specified");
     }
-    const { name, account_id, project_id, client } = options;
+    // Everything that decides what the stream may do and who it asks as:
+    // a board stream opened through the board write service (as the hub)
+    // and the same stream opened through the ordinary service are different
+    // streams, never one cached for the other.
+    const {
+      name,
+      account_id,
+      project_id,
+      host_id,
+      service,
+      persistUser,
+      client,
+    } = options;
     const id = client?.id;
-    return jsonStableStringify({ name, account_id, project_id, id })!;
+    return jsonStableStringify({
+      name,
+      account_id,
+      project_id,
+      host_id,
+      service,
+      persistUser,
+      id,
+    })!;
   },
   createObject: async (options: DStreamOptions & { client: Client }) => {
     const dstream = new DStream(options);
