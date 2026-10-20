@@ -37,6 +37,7 @@ import { BOARD_WRITE_MAX_TTL_MS } from "@cocalc/conat/persist/board-write-fence"
 import * as testSetup from "@cocalc/backend/conat/test/setup";
 import { boardSyncdbPath } from "@cocalc/util/board/names";
 import { getStream } from "@cocalc/conat/persist/util";
+import { boardRecordCap } from "@cocalc/conat/persist/board-record-cap";
 import { storagePath } from "@cocalc/conat/sync/core-stream";
 import { DataEncoding, decode, encode } from "@cocalc/conat/core/codec";
 import { BOARD_HISTORY_LIMITS } from "@cocalc/conat/persist/board-history";
@@ -742,17 +743,18 @@ describe("G1: a board's history is checked before anything opens it", () => {
   // The board's stream as the persist server holds it, to write a legacy
   // history (one from before the write service kept it one chain) directly.
   async function rawStream(project_id: string, path: string) {
+    const stored = storagePath({
+      project_id,
+      name: patchesStreamName({
+        path: boardSyncdbPath(canonicalBoardPath(path)),
+      }),
+    });
     return await getStream({
       subject: `${BOARD_WRITE_SERVICE}.hub`,
       service: BOARD_WRITE_SERVICE,
-      storage: {
-        path: storagePath({
-          project_id,
-          name: patchesStreamName({
-            path: boardSyncdbPath(canonicalBoardPath(path)),
-          }),
-        }),
-      },
+      storage: { path: stored },
+      // As the persist server opens it.
+      recordCap: boardRecordCap(stored),
     });
   }
   const write = (stream: any, mesg: object) =>

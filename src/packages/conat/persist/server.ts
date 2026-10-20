@@ -90,6 +90,7 @@ import {
   forgetAppendHead,
   requestRecords,
 } from "./board-append";
+import { boardRecordCap } from "./board-record-cap";
 import { throttle } from "lodash";
 import { type SetOptions } from "./client";
 import { once } from "@cocalc/util/async-utils";
@@ -284,6 +285,7 @@ export function server({
             storage: storage!,
             service,
             maintenance,
+            recordCap: boardRecordCap(storage!.path),
           });
           if (closed) {
             streamReleaseQueue.schedule(opened);

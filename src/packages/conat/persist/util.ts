@@ -41,8 +41,6 @@ Also getAll using start_seq:
 */
 
 import { assertHasWritePermission } from "./auth";
-import { classifyStreamPath } from "./board-policy";
-import { BOARD_HISTORY_LIMITS } from "./board-history";
 import { pstream, PersistentStream, type StorageOptions } from "./storage";
 import { join } from "path";
 import {
@@ -177,11 +175,15 @@ export async function getStream({
   storage,
   service,
   maintenance,
+  recordCap,
 }: {
   subject: string;
   storage: StorageOptions;
   service?: string;
   maintenance?: PersistMaintenanceHooks;
+  // The largest record the stream yields or allocates (a board stream's:
+  // board-record-cap.ts), or none.
+  recordCap?: number;
 }): Promise<PersistentStream> {
   // this permsissions check should always work and use should
   // never see an error here, since
@@ -214,8 +216,8 @@ export async function getStream({
   }
   if (ephemeral || maintenance == null) {
     return withRecordCap(
-      storage.path,
       pstream({ ...storage, path, archive, backup, archiveInterval }),
+      recordCap,
     );
   }
 
@@ -248,22 +250,21 @@ export async function getStream({
       // from the first reference, but every later tracked use shares it.
       stream.addMaintenanceHandle(handle);
     }
-    return withRecordCap(storage.path, stream);
+    return withRecordCap(stream, recordCap);
   } catch (err) {
     maintenance.openFailed?.(maintenancePath, err);
     throw err;
   }
 }
 
-// A board stream never yields (or allocates) a record over a board's record
-// limit, whoever opens it here (board-history.ts, storage.ts
-// assertWithinRecordCap).
+// A capped stream never yields (or allocates) a record over its cap
+// (storage.ts assertWithinRecordCap).
 function withRecordCap(
-  logicalPath: string,
   stream: PersistentStream,
+  recordCap: number | undefined,
 ): PersistentStream {
-  if (classifyStreamPath(logicalPath).board) {
-    stream.setRecordCap(BOARD_HISTORY_LIMITS.recordBytes);
+  if (recordCap != null) {
+    stream.setRecordCap(recordCap);
   }
   return stream;
 }

@@ -14,6 +14,7 @@ import { uuid } from "@cocalc/util/misc";
 import { stream as persistStream } from "@cocalc/conat/persist/client";
 import { storagePath } from "@cocalc/conat/sync/core-stream";
 import { getStream } from "@cocalc/conat/persist/util";
+import { boardRecordCap } from "@cocalc/conat/persist/board-record-cap";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { BOARD_HISTORY_LIMITS } from "@cocalc/conat/persist/board-history";
 import { createZstdCompress } from "node:zlib";
@@ -39,6 +40,8 @@ async function direct(project_id: string, path: string) {
     subject: `${BOARD_WRITE_SERVICE}.hub`,
     service: BOARD_WRITE_SERVICE,
     storage: { path: storage(project_id, path) },
+    // As the persist server opens it.
+    recordCap: boardRecordCap(storage(project_id, path)),
   });
 }
 
