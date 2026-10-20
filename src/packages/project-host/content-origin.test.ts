@@ -510,9 +510,16 @@ describe("canonicalPathWithinDir on a real sandboxed filesystem", () => {
     // Revocation: per project (epoch) and per account.
     expect(main).toMatch(/currentEpoch: projectContentEpoch,/);
     expect(main).toMatch(/observeEpoch: observeProjectContentEpoch,/);
-    expect(main).toMatch(/accountRevokedBeforeMs: getAccountRevokedBeforeMs,/);
+    expect(main).toMatch(
+      /accountRevokedBeforeMs: getAccountContentRevokedBeforeMs,/,
+    );
     // The epoch reaches the host's project row on both paths from the hub:
     // the immediate push and the catch-up sync.
+    // The account's content-only cutoff reaches the host's revocation table.
+    const masterStatus = readFileSync(join(__dirname, "master-status.ts"), "utf8");
+    expect(masterStatus).toMatch(
+      /upsertAccountRevocation\(\{[^}]*content_revoked_before_ms: row\.content_revoked_before_ms,/,
+    );
     const master = readFileSync(join(__dirname, "master.ts"), "utf8");
     expect(master).toMatch(
       /async updateProjectUsers\(\{[^}]*content_epoch,[^}]*\}\) \{\s*await updateProjectUsers\(\{[^}]*content_epoch,/,

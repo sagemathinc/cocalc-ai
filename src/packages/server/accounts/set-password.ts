@@ -7,6 +7,7 @@ import passwordHash, {
 } from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { revokeContentLinksBestEffort } from "@cocalc/server/accounts/revocation";
 import passwordStrength from "@cocalc/server/auth/password-strength";
 import { MIN_PASSWORD_STRENGTH } from "@cocalc/util/auth";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -53,4 +54,7 @@ export default async function setPassword(
       );
     },
   });
+  // Content-origin links minted before (possibly by someone who had the old
+  // password) stop working.
+  await revokeContentLinksBestEffort(account_id);
 }

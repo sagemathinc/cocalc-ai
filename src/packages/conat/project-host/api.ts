@@ -1254,6 +1254,8 @@ export interface HostStatusApi {
     rows: Array<{
       account_id: string;
       revoked_before_ms: number;
+      // Content-origin links only (absent from older hubs).
+      content_revoked_before_ms?: number;
       updated_ms: number;
     }>;
     next_cursor_updated_ms?: number;

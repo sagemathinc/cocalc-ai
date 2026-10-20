@@ -34,6 +34,7 @@ jest.mock("../frame-tree/hooks", () => ({
 
 import { set_local_storage } from "@cocalc/frontend/misc/local-storage";
 import { CONTENT_FRAME_SANDBOX, IFrameHTML } from "./iframe-html";
+import { notifyAllContentLinksRevoked } from "@cocalc/frontend/project/content-link-revocations";
 import {
   errorRetryDelayMs,
   notifyContentLinksRevoked,
@@ -179,6 +180,20 @@ describe("IFrameHTML on a site with a content origin", () => {
     });
     await waitFor(() => expect(src()).toBe(`${second}?param=7`));
     expect(issueMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-issues links in every project after a password change or 2FA setup in this browser", async () => {
+    issueMock.mockImplementation(async ({ project_id }: any) => ({
+      url: `${CONTENT_URL}#${project_id}-${issueMock.mock.calls.length}`,
+      expires_at: Date.now() + 24 * 3600_000,
+    }));
+    renderFrame(freshProject());
+    renderFrame(freshProject(), undefined, "/home/user/b.html");
+    await waitFor(() => expect(issueMock).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      notifyAllContentLinksRevoked();
+    });
+    await waitFor(() => expect(issueMock).toHaveBeenCalledTimes(4));
   });
 
   it("keeps showing a still-valid link when a refresh fails", async () => {
