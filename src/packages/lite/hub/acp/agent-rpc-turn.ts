@@ -87,8 +87,9 @@ export function agentRpcTurnState(
       ...base,
       ahead_in_queue: countQueuedAcpJobsAhead(last),
     };
-  // Cut off by a project restart, waiting for the project to run again.
-  if (last.state === "canceled" && acpJobHasLiveFenceResume(last))
+  // Cut off by a project restart, waiting for the project to run again:
+  // queued (then canceled) or running (then error or interrupted).
+  if (acpJobHasLiveFenceResume(last))
     return { state: "queued", held: true, ...base };
   if (last.state === "running") return { state: "running", ...base };
   const outcome = parseTurnOutcome(last.outcome_json);
