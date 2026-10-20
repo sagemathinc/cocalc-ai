@@ -20,6 +20,7 @@ import {
   drainAgentRpcReports,
   noteAgentMessageTurnFailed,
 } from "./agent-rpc-report";
+import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-reports";
 import { toolUseTracker } from "./tool-use";
 import {
   authorizeAgentDeliveryExecution,
@@ -725,6 +726,9 @@ const ACP_LIMIT_HOLD_MARGIN_MS = 60_000;
 // is queued (or the hold declined), so a worker that dies in between leaves
 // the hold for recoverPendingFailureRecoveryIntents to finish.
 const ACP_HOLD_INTENT = "cocalc-hold";
+/** A held agent message resumes at least this long before its report
+ * capability expires, so its final report can still be sent. */
+const HOLD_REPORT_MARGIN_MS = 60 * 60_000;
 const ACP_LIMIT_HOLD_MAX_RETRIES = 4;
 const LIMIT_HOLD_NOTICE =
   "**Conversation paused because a usage limit was reached.**";
@@ -9409,9 +9413,20 @@ async function enqueueLimitHold({
 }): Promise<AcpJobRow | undefined> {
   // From when the turn ended, as the continuation is scheduled: a hold
   // recovered after a restart still resumes after the reset, not early.
-  const delayMs = limitHoldDelayMs(outcome, job.finished_at ?? Date.now());
+  const base = job.finished_at ?? Date.now();
+  let delayMs = limitHoldDelayMs(outcome, base);
   if (delayMs == null) return undefined;
   const failed = decodeAcpJobRequest(job);
+  // Another agent's message: resume while its report can still be sent
+  // (its capability expires a week after the message). If the limit has
+  // not reset by then, the turn ends there and the sender hears so.
+  const reportable = agentRpcReportCapabilityExpiresAt(
+    failed.chat?.agent_rpc_execution?.report_capability,
+  );
+  if (reportable != null) {
+    delayMs = Math.min(delayMs, reportable - HOLD_REPORT_MARGIN_MS - base);
+    if (delayMs < 60_000) return undefined;
+  }
   // A delivery report starts one turn (the hub records it).
   if (failed.chat?.agent_rpc_report) return undefined;
   if (Math.floor(Number(job.recovery_count ?? 0)) >= ACP_LIMIT_HOLD_MAX_RETRIES)

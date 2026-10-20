@@ -3992,7 +3992,7 @@ describe("the agent that sent a message is told how its turn ended", () => {
     principal_account_id: base.account_id,
     guidance: false,
     attempt_id: randomUUID(),
-    report_capability: "1791800000000." + "c".repeat(43),
+    report_capability: `${Date.now()}.` + "c".repeat(43),
   });
   const agentRequest = (base: any = makeRequest()) => {
     const execution = authorization(base);
@@ -4681,6 +4681,61 @@ describe("the agent that sent a message is told how its turn ended", () => {
     expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
     for (const { report } of reports())
       expect(report).toMatchObject({ phase: "held" });
+  });
+
+  it.each([
+    ["a fresh message: held until the reset", 0, true],
+    [
+      "a message about to outlive its report: not held, reported now",
+      6.99,
+      false,
+    ],
+  ])("a limit a week away, for %s", async (_name, ageDays, holds) => {
+    const { request, execution } = agentRequest();
+    const issued = Date.now() - ageDays * 24 * 60 * 60_000;
+    execution.report_capability = `${Math.floor(issued)}.` + "c".repeat(43);
+    const job = enqueueAcpJob(request);
+    const ended = Date.now();
+    const resets_at = ended + 8 * 24 * 60 * 60_000;
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET state = 'error', started_at = ?, finished_at = ?, recovery_code = 'cocalc-hold', outcome_json = ? WHERE op_id = ?",
+      )
+      .run(
+        ended - 1,
+        ended,
+        JSON.stringify({
+          version: 1,
+          state: "failed",
+          failure: { kind: "limit", scope: "credential", resets_at },
+          tool_ran: false,
+        }),
+        job.op_id,
+      );
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as unknown as ConatClient,
+    });
+    const held = listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: job.op_id,
+    });
+    const due = reports();
+    if (holds) {
+      expect(held).toHaveLength(1);
+      // Resumes before its report capability expires (a week after the
+      // message), even though the limit resets later.
+      expect(Number(held[0].available_at)).toBeLessThanOrEqual(
+        issued + 7 * 24 * 60 * 60_000 - 60 * 60_000,
+      );
+      expect(due[0].report).toMatchObject({ phase: "held" });
+    } else {
+      expect(held).toHaveLength(0);
+      expect(due).toHaveLength(1);
+      expect(due[0].report).toMatchObject({
+        attempt_id: execution.attempt_id,
+        kind: "limit",
+      });
+      expect(due[0].report.phase).toBeUndefined();
+    }
   });
 
   it("when a newer message replaces the turn waiting to resume", () => {
