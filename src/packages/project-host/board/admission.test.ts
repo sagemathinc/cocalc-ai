@@ -512,6 +512,41 @@ test("an aborted wait for a host slot holds none, and one woken after aborting p
   expect(host.stats.applying).toBe(0);
 });
 
+test("a logger that throws leaves nothing unsettled: the host slot, reservations and edits", async () => {
+  const host = newHost();
+  let ack!: () => void;
+  const b = new BoardAdmission<number>({
+    host,
+    measure: (edits) => edits.length,
+    // The first write times out and then settles; the second is unknown.
+    commit: (() => {
+      let n = 0;
+      return () =>
+        n++ === 0
+          ? new Promise<CommitResult>((resolve) => {
+              ack = () => resolve({ status: "acknowledged" });
+            })
+          : Promise.resolve({ status: "unknown", message: "lost" } as const);
+    })(),
+    log: () => {
+      throw Error("the logger is broken");
+    },
+  });
+  const first = b.submit("a", 1, 1);
+  await settle(BOARD_ADMISSION.commitTimeoutMs + 300);
+  expect(await first).toMatchObject({ status: "unknown" });
+  expect(host.stats.applying).toBe(1);
+  ack();
+  await settle(0);
+  // Settled despite the logger: the slot and the reservation are released.
+  expect(host.stats).toEqual({ waiting: 0, applying: 0 });
+  b.resume();
+  const second = b.submit("a", 1, 1);
+  await settle(300);
+  expect(await second).toMatchObject({ status: "unknown" });
+  expect(host.stats).toEqual({ waiting: 0, applying: 0 });
+});
+
 test("a board remembers a bounded number of clients", async () => {
   const limits = { ...BOARD_ADMISSION, maxClients: 2 };
   const host = newHost(limits);

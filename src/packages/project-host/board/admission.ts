@@ -639,10 +639,10 @@ export class BoardAdmission<E> {
       controller.abort();
       for (const w of batch.items) w.resolve({ status: "unknown", message });
       const late = await write;
-      this.log("board: a timed-out write settled", { status: late.status });
       this.inflight = undefined;
       done(applyCharge(late, this.limits));
       for (const w of batch.items) w.reservation.consume();
+      this.note("board: a timed-out write settled", { status: late.status });
       return;
     }
     this.inflight = undefined;
@@ -660,7 +660,7 @@ export class BoardAdmission<E> {
       // The write may have been stored: the work was done either way, and
       // nothing more is written until it is reconciled.
       this.paused = true;
-      this.log("board: a commit's outcome is unknown", {
+      this.note("board: a commit's outcome is unknown", {
         message: result.message,
       });
       for (const w of batch.items) w.reservation.consume();
@@ -668,6 +668,14 @@ export class BoardAdmission<E> {
         w.resolve({ status: "unknown", message: result.message });
       }
     }
+  }
+
+  // Logging is best effort: a logger that throws never leaves a slot,
+  // reservation or edit unsettled.
+  private note(message: string, extra: object): void {
+    try {
+      this.log(message, extra);
+    } catch {}
   }
 
   private finish(items: Waiting<E>[], outcome: Outcome): void {
