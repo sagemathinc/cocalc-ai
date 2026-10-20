@@ -12,12 +12,12 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
-import type { TurnFailure } from "@cocalc/conat/ai/acp/turn-outcome";
+import type { TurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { agentRpcSourceKey } from "@cocalc/conat/agents/rpc";
 import {
   agentRpcReportDetail,
-  agentRpcReportKind,
+  agentRpcReportKindOf,
   agentRpcReportText,
   classifyAgentTurnError,
   type AgentRpcReportDelivery,
@@ -41,16 +41,20 @@ const errorText = (err: unknown) =>
   `${err instanceof Error ? err.message : err}`.slice(0, 500);
 
 /**
- * The recipient's side: a turn ended in an error. If another agent's queued
- * message started it, queue a report for that agent. A turn a report started
- * has no agent_rpc_execution, so reports never cause reports.
+ * The recipient's side: a turn ended without success (an error, a cancel, a
+ * stop...). If another agent's queued message started it, queue a report for
+ * that agent. A turn a report started has no agent_rpc_execution, so reports
+ * never cause reports.
  */
 export function noteAgentMessageTurnFailed(opts: {
   op_id: string;
   request: Pick<AcpRequest, "chat">;
-  error: string;
-  /** What the failure was, when the host knows (turn-outcome.ts). */
-  failure?: TurnFailure;
+  error?: string;
+  /** How the turn ended, when the host knows (turn-outcome.ts). */
+  outcome?: TurnOutcome;
+  /** Whether tools ran, over the whole recovery chain when the caller knows
+   * it (null: not known); otherwise taken from the outcome. */
+  tool_ran?: boolean | null;
   turn_started_at?: number | null;
   now?: number;
 }): AgentRpcTurnFailureReport | undefined {
@@ -66,17 +70,33 @@ export function noteAgentMessageTurnFailed(opts: {
     return;
   const turn_started_at = Number(opts.turn_started_at ?? 0);
   if (!Number.isSafeInteger(turn_started_at) || turn_started_at <= 0) return;
-  const detail = agentRpcReportDetail(opts.error);
+  const outcome = opts.outcome;
+  const kind = outcome
+    ? agentRpcReportKindOf(outcome)
+    : classifyAgentTurnError(opts.error ?? "");
+  // A turn that succeeded is not reported.
+  if (!kind) return;
+  const detail = agentRpcReportDetail(opts.error ?? "");
+  const failure = outcome?.state === "failed" ? outcome.failure : undefined;
+  const resets_at = failure?.kind === "limit" ? failure.resets_at : undefined;
+  const tool_ran =
+    opts.tool_ran !== undefined
+      ? (opts.tool_ran ?? undefined)
+      : outcome?.state === "failed" || outcome?.state === "canceled"
+        ? outcome.tool_ran
+        : outcome?.state === "never-started"
+          ? false
+          : undefined;
   const report: AgentRpcTurnFailureReport = {
     version: 1,
     report_id: randomUUID(),
     attempt_id: authorization.attempt_id,
     authorization: { ...authorization },
     turn_started_at,
-    kind: opts.failure
-      ? agentRpcReportKind(opts.failure)
-      : classifyAgentTurnError(opts.error),
+    kind,
     ...(detail ? { detail } : {}),
+    ...(resets_at ? { resets_at } : {}),
+    ...(tool_ran !== undefined ? { tool_ran } : {}),
   };
   try {
     if (

@@ -42,6 +42,7 @@ import {
   claimNextQueuedAcpJobForThread,
   decodeAcpJobRequest,
   enqueueAcpJob,
+  enqueueAcpJobCancelingQueuedRecoveries,
   getAcpJob,
   getAcpJobByOpId,
   listAcpJobsByRecoveryParent,
@@ -3775,5 +3776,618 @@ describe("project fence follow-ups", () => {
       "55555555-5555-4555-8555-555555555555",
     );
     expect(reports[0].report.detail ?? "").toContain("project was stopped");
+    // Typed, not guessed from the text.
+    expect(reports[0].report.kind).toBe("project-stopped");
+  });
+
+  it("tells it too when the stopped turn was resuming an earlier one", async () => {
+    const base = makeRequest();
+    const request = {
+      ...base,
+      chat: {
+        ...base.chat,
+        agent_message: true,
+        agent_rpc_execution: {
+          version: 3,
+          source: {
+            project_id: "11111111-1111-4111-8111-111111111111",
+            agent_id: "22222222-2222-4222-8222-222222222222",
+          },
+          source_run_id: "77777777-7777-4777-8777-777777777777",
+          target: {
+            project_id: base.project_id,
+            agent_id: "44444444-4444-4444-8444-444444444444",
+          },
+          target_path: base.chat.path,
+          target_thread_id: base.chat.thread_id,
+          agent_network_id: "88888888-8888-4888-8888-888888888888",
+          network_generation: "99999999-9999-4999-8999-999999999999",
+          account_generation: 3,
+          configured_delivery: "queued",
+          principal_account_id: base.account_id,
+          guidance: false,
+          attempt_id: "55555555-5555-4555-8555-555555555555",
+          report_capability: "1791800000000." + "c".repeat(43),
+        },
+      },
+    };
+    // The first attempt was cut off and queued this continuation.
+    const first = enqueueAcpJob({
+      ...request,
+      chat: {
+        ...request.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    });
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET state='error', started_at=? WHERE op_id=?")
+      .run(Date.now() - 120_000, first.op_id);
+    const rows: any[] = [];
+    const { job } = runningTurn(rows, request);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_parent_op_id=? WHERE op_id=?")
+      .run(first.op_id, job.op_id);
+
+    await fenceAcpProjectAfterStop({ project_id: job.project_id });
+    await processAcpProjectFenceIntents(client);
+
+    const reports = listDueAgentRpcReports(Date.now() + 60 * 60_000);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].report.attempt_id).toBe(
+      "55555555-5555-4555-8555-555555555555",
+    );
+    expect(reports[0].report.detail ?? "").toContain("project was stopped");
+    // Typed, not guessed from the text.
+    expect(reports[0].report.kind).toBe("project-stopped");
+  });
+});
+
+describe("the agent that sent a message is told how its turn ended", () => {
+  const authorization = (base: any) => ({
+    version: 3,
+    source: {
+      project_id: "11111111-1111-4111-8111-111111111111",
+      agent_id: "22222222-2222-4222-8222-222222222222",
+    },
+    source_run_id: "77777777-7777-4777-8777-777777777777",
+    target: {
+      project_id: base.project_id,
+      agent_id: "44444444-4444-4444-8444-444444444444",
+    },
+    target_path: base.chat.path,
+    target_thread_id: base.chat.thread_id,
+    agent_network_id: "88888888-8888-4888-8888-888888888888",
+    network_generation: "99999999-9999-4999-8999-999999999999",
+    account_generation: 3,
+    configured_delivery: "queued",
+    principal_account_id: base.account_id,
+    guidance: false,
+    attempt_id: randomUUID(),
+    report_capability: "1791800000000." + "c".repeat(43),
+  });
+  const agentRequest = (base: any = makeRequest()) => {
+    const execution = authorization(base);
+    return {
+      execution,
+      request: {
+        ...base,
+        chat: {
+          ...base.chat,
+          message_id: randomUUID(),
+          parent_message_id: randomUUID(),
+          agent_message: true,
+          agent_rpc_execution: execution,
+        },
+      },
+    };
+  };
+  const reports = () => listDueAgentRpcReports(Date.now() + 60 * 60_000);
+
+  beforeEach(() => {
+    reports();
+    getAcpDatabase().prepare("DELETE FROM acp_agent_rpc_reports").run();
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockResolvedValue(makeSyncdb([]) as any);
+  });
+
+  it("when someone in its project cancels it before it runs", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    await expect(
+      acpTestInternals.handleAcpControlRequest({
+        action: "cancel",
+        account_id: request.account_id,
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+        user_message_id: job.user_message_id,
+      } as any),
+    ).resolves.toMatchObject({ ok: true, state: "canceled" });
+    expect(parseTurnOutcome(getAcpJobByOpId(job.op_id)?.outcome_json)).toEqual({
+      version: 1,
+      state: "never-started",
+      reason: "canceled",
+    });
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      kind: "canceled",
+      tool_ran: false,
+    });
+  });
+
+  it("even when the chat cannot be updated for the cancel", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockRejectedValue(new Error("chat unavailable"));
+    await expect(
+      acpTestInternals.handleAcpControlRequest({
+        action: "cancel",
+        account_id: request.account_id,
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+        user_message_id: job.user_message_id,
+      } as any),
+    ).rejects.toThrow("chat unavailable");
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      kind: "canceled",
+      tool_ran: false,
+    });
+  });
+
+  it("but not for a person's own message", async () => {
+    const job = enqueueAcpJob({
+      ...makeRequest(),
+      chat: { ...makeRequest().chat, message_id: randomUUID() },
+    } as any);
+    await acpTestInternals.handleAcpControlRequest({
+      action: "cancel",
+      account_id: job.account_id,
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      user_message_id: job.user_message_id,
+    } as any);
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+    expect(reports()).toHaveLength(0);
+  });
+
+  it("when someone stops its turn", async () => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+    hubApi.agent.authorizeRpcExecution = jest.fn(async () => ({})) as any;
+    const { request: raw, execution } = agentRequest();
+    const request = prepareHarnessRequest({
+      ...raw,
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: request.chat!.thread_id,
+          agent_kind: "acp",
+          agent_runtime: request.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          data: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t1",
+            status: "in_progress",
+          },
+        },
+      });
+      // Claude confirms the cancellation a person asked for.
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "stop",
+          data: { stopReason: "cancelled" },
+        },
+      });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(
+        parseTurnOutcome(getAcpJobByOpId(job.op_id)?.outcome_json),
+      ).toEqual({
+        version: 1,
+        state: "canceled",
+        by: "person",
+        tool_ran: true,
+      });
+      const due = reports();
+      expect(due).toHaveLength(1);
+      expect(due[0].report).toMatchObject({
+        attempt_id: execution.attempt_id,
+        kind: "stopped",
+        tool_ran: true,
+      });
+    } finally {
+      unregister();
+      hubApi.agent.authorizeRpcExecution = originalAuthorize;
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+    }
+  });
+
+  it("not by the worker when a project stop fenced the turn as it ended", async () => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+    hubApi.agent.authorizeRpcExecution = jest.fn(async () => ({})) as any;
+    const { request: raw, execution } = agentRequest();
+    const request = prepareHarnessRequest({
+      ...raw,
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: request.chat!.thread_id,
+          agent_kind: "acp",
+          agent_runtime: request.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          data: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t1",
+            status: "in_progress",
+          },
+        },
+      });
+      // The project stops while the turn unwinds: the fence takes the job.
+      await fenceAcpProjectAfterStop({ project_id: request.project_id });
+      // Claude confirms the cancellation a person asked for.
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "stop",
+          data: { stopReason: "cancelled" },
+        },
+      });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      // The worker saw a stop, but the fence owns the job now.
+      expect(reports()).toHaveLength(0);
+      expect(getAcpJobByOpId(job.op_id)?.state).not.toBe("canceled");
+      await processAcpProjectFenceIntents({
+        sync: { akv: () => ({}) },
+      } as unknown as ConatClient);
+      const due = reports();
+      expect(due).toHaveLength(1);
+      expect(due[0].report).toMatchObject({
+        attempt_id: execution.attempt_id,
+        kind: "project-stopped",
+      });
+    } finally {
+      unregister();
+      hubApi.agent.authorizeRpcExecution = originalAuthorize;
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+    }
+  });
+
+  it("when a newer message replaces the turn waiting to resume", () => {
+    const base = makeRequest();
+    const { request, execution } = agentRequest(base);
+    const parent = enqueueAcpJob(request);
+    // It ran, and was cut off.
+    claimNextQueuedAcpJobForThread({
+      project_id: parent.project_id,
+      path: parent.path,
+      thread_id: parent.thread_id,
+    });
+    setAcpJobState({
+      op_id: parent.op_id,
+      state: "error",
+      outcome: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "host-lost" },
+        tool_ran: true,
+      },
+    });
+    // Its continuation, queued to resume it.
+    const child = enqueueAcpJob({
+      ...request,
+      chat: {
+        ...request.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    });
+    expect(child.op_id).not.toBe(parent.op_id);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_parent_op_id = ? WHERE op_id = ?")
+      .run(parent.op_id, child.op_id);
+    // A person's newer message in the same thread supersedes it.
+    const { canceled } = enqueueAcpJobCancelingQueuedRecoveries({
+      ...base,
+      chat: {
+        ...base.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    } as any);
+    expect(canceled.map((row) => row.op_id)).toEqual([child.op_id]);
+    for (const row of canceled) acpTestInternals.reportSupersededRecovery(row);
+    // The continuation itself never ran; its chain had run tools.
+    expect(
+      parseTurnOutcome(getAcpJobByOpId(child.op_id)?.outcome_json),
+    ).toEqual({
+      version: 1,
+      state: "canceled",
+      by: "superseded",
+      tool_ran: false,
+    });
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      kind: "superseded",
+      tool_ran: true,
+    });
+  });
+
+  function chain(request: any, toolRan: (boolean | undefined)[]) {
+    // Attempts of one message: each later one continues the one before.
+    const jobs: any[] = [];
+    for (const ran of toolRan) {
+      const job = enqueueAcpJob({
+        ...request,
+        chat: {
+          ...request.chat,
+          message_id: randomUUID(),
+          parent_message_id: jobs.length
+            ? randomUUID()
+            : request.chat.parent_message_id,
+        },
+      });
+      getAcpDatabase()
+        .prepare(
+          "UPDATE acp_jobs SET state='error', started_at=?, recovery_parent_op_id=?, outcome_json=? WHERE op_id=?",
+        )
+        .run(
+          Date.now() - 60_000,
+          jobs.at(-1)?.op_id ?? null,
+          JSON.stringify({
+            version: 1,
+            state: "failed",
+            failure: { kind: "host-lost" },
+            ...(ran === undefined ? {} : { tool_ran: ran }),
+          }),
+          job.op_id,
+        );
+      jobs.push(getAcpJobByOpId(job.op_id));
+    }
+    return jobs;
+  }
+
+  it.each([
+    [[true, false, false], true],
+    [[false, false, false], false],
+    [[false, undefined, false], undefined],
+  ] as const)(
+    "a recovery chain whose attempts ran tools %j reports tool_ran %j, once",
+    (attempts, expected) => {
+      const { request } = agentRequest();
+      const jobs = chain(request, [...attempts]);
+      for (const job of [jobs.at(-1), jobs.at(-1)]) {
+        acpTestInternals.reportFailedAgentMessageTurn(
+          job,
+          decodeAcpJobRequest(job),
+          "lost",
+        );
+      }
+      // An earlier attempt reporting too is the same report.
+      acpTestInternals.reportFailedAgentMessageTurn(
+        jobs[0],
+        decodeAcpJobRequest(jobs[0]),
+        "lost",
+      );
+      const due = reports();
+      expect(due).toHaveLength(1);
+      expect(due[0].report.tool_ran).toBe(expected);
+    },
+  );
+
+  it("a continuation stopped before it started keeps its chain's tool use", () => {
+    const { request } = agentRequest();
+    const [first, queued] = chain(request, [true, undefined]);
+    // The project stopped while the continuation was still queued.
+    acpTestInternals.reportFailedAgentMessageTurn(
+      queued,
+      decodeAcpJobRequest(queued),
+      "stopped",
+      { version: 1, state: "never-started", reason: "project-stopped" },
+    );
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      kind: "project-stopped",
+      tool_ran: true,
+    });
+    expect(first).toBeTruthy();
+  });
+
+  it("a chain whose last attempt has no outcome yet keeps its tool use", () => {
+    const { request } = agentRequest();
+    const [, last] = chain(request, [true, false]);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET outcome_json = NULL WHERE op_id = ?")
+      .run(last.op_id);
+    acpTestInternals.reportFailedAgentMessageTurn(
+      getAcpJobByOpId(last.op_id),
+      decodeAcpJobRequest(last),
+      "lost",
+    );
+    expect(reports()[0].report.tool_ran).toBe(true);
+  });
+
+  it("when its turn cannot even be prepared", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockRejectedValueOnce(new Error("chat unavailable"));
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+    })!;
+    await acpTestInternals.runQueuedAcpJob(claimed);
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+    expect(
+      parseTurnOutcome(getAcpJobByOpId(job.op_id)?.outcome_json),
+    ).toMatchObject({ state: "failed", tool_ran: false });
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      tool_ran: false,
+    });
+  });
+
+  it("a cancel of a message a fence already canceled reports nothing", async () => {
+    const { request } = agentRequest();
+    const job = enqueueAcpJob(request);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET state='canceled' WHERE op_id=?")
+      .run(job.op_id);
+    await acpTestInternals.handleAcpControlRequest({
+      action: "cancel",
+      account_id: request.account_id,
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      user_message_id: job.user_message_id,
+    } as any);
+    expect(reports()).toHaveLength(0);
+    expect(getAcpJobByOpId(job.op_id)?.outcome_json).toBeNull();
   });
 });

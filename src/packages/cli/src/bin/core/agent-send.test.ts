@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { agentSendExitCode, agentSendSummary } from "./agent-send";
+import {
+  agentRpcInspectSummary,
+  agentSendExitCode,
+  agentSendSummary,
+} from "./agent-send";
 import {
   agentRecipientSetupError,
   parseAgentRecipientSetup,
@@ -110,4 +114,28 @@ test("a recipient with nothing to pay for turns gives a sentence to relay", () =
   );
   assert.match(summary, /choose Connect in its thread/);
   assert.match(summary, /saved in their thread, but no turn started\.$/);
+});
+
+test("agent rpc inspect says where the turn is when the recipient knows", () => {
+  assert.equal(
+    agentRpcInspectSummary({
+      ...base,
+      outcome: "accepted",
+      turn: { state: "queued", queued_at: Date.parse("2026-10-19T05:00:00Z") },
+    }),
+    "Queued since 2026-10-19T05:00:00.000Z; it has not started.",
+  );
+  // Otherwise what the receipt says, without inviting a resend.
+  assert.match(
+    agentRpcInspectSummary({ ...base, outcome: "accepted" }),
+    /^Admitted; the recipient's host has no record of its turn/,
+  );
+  assert.match(
+    agentRpcInspectSummary({
+      ...base,
+      outcome: "unknown",
+      reason: "No retained acceptance evidence",
+    }),
+    /do not resend automatically/,
+  );
 });

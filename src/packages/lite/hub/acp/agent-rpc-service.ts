@@ -1,4 +1,6 @@
 import type { Client } from "@cocalc/conat/core/client";
+import type { AgentRpcTurnState } from "@cocalc/conat/agents/rpc-turn";
+import { agentRpcTurnState } from "./agent-rpc-turn";
 import getLogger from "@cocalc/backend/logger";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
@@ -73,6 +75,12 @@ export interface AgentRpcExecutionAdapter {
     staged: StagedAgentAttachments,
   ): Promise<void>;
   withChat<T>(e: AgentRpcEnvelope, fn: (db: ChatDB) => Promise<T>): Promise<T>;
+  /** inspect: what became of the turn an attempt started (agent-rpc-turn). */
+  turnState?(
+    source: AgentRpcSource,
+    attempt: AgentRpcAttempt,
+    accountId: string,
+  ): AgentRpcTurnState | undefined;
   admit(prepared: Prepared): Promise<void>;
 }
 
@@ -487,11 +495,28 @@ export function createAgentRpcService(
       attempt: AgentRpcAttempt,
       accountId?: string,
     ) {
-      return accountId
-        ? attempts.inspect(source, attempt, accountId)
-        : rpcOutcome(attempt, "unknown", {
-            reason: "Inspection principal unavailable",
-          });
+      if (!accountId)
+        return rpcOutcome(attempt, "unknown", {
+          reason: "Inspection principal unavailable",
+        });
+      const result = attempts.inspect(source, attempt, accountId);
+      let turn: AgentRpcTurnState | undefined;
+      try {
+        turn = deps.turnState?.(source, attempt, accountId);
+      } catch {
+        // The receipt alone still answers.
+      }
+      if (!turn) return result;
+      // The job record outlives the receipt: a turn means it was admitted.
+      if (result.outcome === "unknown")
+        return {
+          ...rpcOutcome(attempt, "accepted", {
+            reason: "The recipient's record of the turn shows it was admitted",
+            chat_effect: "saved",
+          }),
+          turn,
+        };
+      return { ...result, turn };
     },
     async prepareAttachments(
       e: AgentRpcEnvelope,
@@ -628,6 +653,7 @@ export function createLocalAgentRpcService(
           envelope,
         });
       },
+      turnState: agentRpcTurnState,
       validateFileReferences: async (e) => {
         const fs = client.fs({
           project_id: e.target.project_id,
