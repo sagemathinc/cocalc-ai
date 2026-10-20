@@ -5,16 +5,22 @@
 
 /*
 Admission of board edits on the project host (board stream design v4.5,
-section 4). Nothing here knows what an edit is; the manager (a later step)
-validates an edit with Sagebrush's editState, then submits it here with its
-encoded size, and applies a commit's edits when this says to.
+section 4). Nothing here knows what an edit is. The caller (the manager, a
+later step) submits each edit with a bound on its encoded size, and applies
+a commit's edits only when this module calls its commit. Admission must come
+before any state changes: Sagebrush 0.3.0's EditState.apply updates its own
+records as it validates, so the manager may not call it before admission
+(it needs a validation that changes nothing, or applies at commit time;
+A2B-GATE-1).
 
 - Rates: per board, across all its clients (a burst of 20, then 5 a
   second), and per client (2 a second).
 - Host-wide work: one bucket for the whole host, in milliseconds of
   estimated work, so that board edits stay under a quarter of one core. An
   edit is charged 0.23 ms + 0.34 ms/KiB of its encoded size when admitted,
-  and a commit is charged the time its apply actually took. At most 64
+  and a commit is charged the time its apply took, as the commit reports it
+  (applyMs): only the work of applying, never the wait for the write's
+  acknowledgment. At most 64
   edits wait across the host, and at most 2 commits apply at once.
 - Commits are coalesced: at most one every 250 ms per board, so history
   grows by at most 4 commits a second. A commit is at most 512 KiB. An edit
@@ -26,8 +32,16 @@ encoded size, and applies a commit's edits when this says to.
   size within the cap the whole commit is refused before anything is
   applied.
 - A commit's write has a deadline (commitTimeoutMs). One that doesn't settle
-  by then is "unknown": its host slot is freed and its reservations consumed,
-  so a write that never settles can't hold the host.
+  by then is reported "unknown" to its edits at once, and its abort signal
+  fires. Its host slot and reservations stay held until the write actually
+  settles: a timed-out write is never left running uncounted, so at most 2
+  writes are ever in progress on the host. The commit must honor the
+  signal (stop and settle), or the slot stays held, and the host's other
+  boards wait or are refused as busy: degraded, but bounded.
+- After any unknown outcome the board is paused: no commit starts, and new
+  edits are refused as busy, until resume() is called once the write has
+  settled and been reconciled by patch id (design section 5b). So nothing
+  is written after a write whose outcome isn't known, until it is.
 - Every duration and bucket uses one monotonic clock (the host's), never the
   wall clock, so a clock change can't stall or flood the buckets.
 - Each admitted edit holds a reservation (a host queue slot and its work).
@@ -41,7 +55,24 @@ encoded size, and applies a commit's edits when this says to.
   must reconcile by patch id before resubmitting (design section 5b).
 */
 
-export const BOARD_ADMISSION = {
+export interface AdmissionLimits {
+  boardBurst: number;
+  boardPerSecond: number;
+  clientBurst: number;
+  clientPerSecond: number;
+  maxCommitBytes: number;
+  commitIntervalMs: number;
+  commitTimeoutMs: number;
+  hostMaxWaiting: number;
+  hostMaxApplying: number;
+  workBaseMs: number;
+  workPerKiBMs: number;
+  hostWorkPerSecondMs: number;
+  hostWorkBurstMs: number;
+  maxClients: number;
+}
+
+export const BOARD_ADMISSION: Readonly<AdmissionLimits> = {
   boardBurst: 20,
   boardPerSecond: 5,
   clientBurst: 20,
@@ -59,9 +90,7 @@ export const BOARD_ADMISSION = {
   hostWorkBurstMs: 500,
   // Distinct clients remembered per board (each with its own bucket).
   maxClients: 256,
-} as const;
-
-export type AdmissionLimits = typeof BOARD_ADMISSION;
+};
 
 export type Refusal = {
   reason:
@@ -136,7 +165,7 @@ export class TokenBucket {
 
 export function editWorkMs(
   bytes: number,
-  limits: AdmissionLimits = BOARD_ADMISSION,
+  limits: Readonly<AdmissionLimits> = BOARD_ADMISSION,
 ): number {
   return limits.workBaseMs + (limits.workPerKiBMs * bytes) / 1024;
 }
@@ -171,7 +200,7 @@ export class Reservation {
 
 // The host-wide budget, shared by every board on the host.
 export class HostAdmission {
-  readonly limits: AdmissionLimits;
+  readonly limits: Readonly<AdmissionLimits>;
   // The one clock for the host and its boards.
   readonly now: Clock;
   private readonly work: TokenBucket;
@@ -182,7 +211,7 @@ export class HostAdmission {
   constructor({
     limits = BOARD_ADMISSION,
     now = monotonic,
-  }: { limits?: AdmissionLimits; now?: Clock } = {}) {
+  }: { limits?: Readonly<AdmissionLimits>; now?: Clock } = {}) {
     this.limits = limits;
     this.now = now;
     this.work = new TokenBucket(
@@ -227,30 +256,46 @@ export class HostAdmission {
   }
 
   // Wait for one of the host's commit slots; call the returned function
-  // when the apply is done, with the time it took.
-  async startApply(): Promise<(elapsedMs: number) => void> {
+  // when the write has settled, with the apply work to charge.
+  async startApply(): Promise<(chargeMs: number) => void> {
     while (this.applying >= this.limits.hostMaxApplying) {
       await new Promise<void>((resolve) => this.applyWaiters.push(resolve));
     }
     this.applying += 1;
     let ended = false;
-    return (elapsedMs: number) => {
+    return (chargeMs: number) => {
       if (ended) return;
       ended = true;
       this.applying -= 1;
       // Charged after the fact: the bucket may go below zero, which holds
       // later edits back until it refills.
-      if (elapsedMs > 0) this.work.take(elapsedMs, this.now());
+      if (chargeMs > 0) this.work.take(chargeMs, this.now());
       this.applyWaiters.shift()?.();
     };
   }
 }
 
-// The write of a commit: acknowledged, refused, or not known.
-export type CommitResult =
+// The write of a commit: acknowledged, refused, or not known. applyMs: how
+// long applying the edits took (measured by the commit, around the
+// synchronous apply only, not the write's wait); it is charged to the host.
+export type CommitResult = (
   | { status: "acknowledged" }
   | { status: "refused"; message: string }
-  | { status: "unknown"; message: string };
+  | { status: "unknown"; message: string }
+) & { applyMs?: number };
+
+// What a commit's reported apply time is charged: at most one burst. Not
+// reported, zero or negative: nothing. NaN or infinite: a whole burst, since
+// the apply took an unknown, possibly long, time.
+function applyCharge(
+  result: CommitResult,
+  limits: Readonly<AdmissionLimits>,
+): number {
+  const ms = result.applyMs;
+  if (ms === undefined || ms <= 0) return 0;
+  if (!Number.isFinite(ms)) return limits.hostWorkBurstMs;
+  return Math.min(ms, limits.hostWorkBurstMs);
+}
 
 export interface BoardAdmissionOptions<E> {
   host: HostAdmission;
@@ -261,7 +306,7 @@ export interface BoardAdmissionOptions<E> {
   // within commitTimeoutMs, is an unknown outcome, never a refusal; the
   // write may still complete after that, so the caller reconciles by patch
   // id before resubmitting.
-  commit: (edits: E[]) => Promise<CommitResult>;
+  commit: (edits: E[], signal: AbortSignal) => Promise<CommitResult>;
   log?: (message: string, extra?: object) => void;
 }
 
@@ -280,9 +325,12 @@ interface Batch<E> {
 // One board's admission and commit coalescing.
 export class BoardAdmission<E> {
   private readonly host: HostAdmission;
-  private readonly limits: AdmissionLimits;
+  private readonly limits: Readonly<AdmissionLimits>;
   private readonly measure: (edits: E[]) => number;
-  private readonly commitEdits: (edits: E[]) => Promise<CommitResult>;
+  private readonly commitEdits: (
+    edits: E[],
+    signal: AbortSignal,
+  ) => Promise<CommitResult>;
   private readonly now: Clock;
   private readonly log: (message: string, extra?: object) => void;
   private readonly board: TokenBucket;
@@ -293,6 +341,10 @@ export class BoardAdmission<E> {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private lastCommitStart = -Infinity;
   private closed = false;
+  // An unknown outcome: no commit starts until resume().
+  private paused = false;
+  // The write in progress, to abort on close.
+  private inflight: AbortController | undefined;
   private idleWaiters: (() => void)[] = [];
 
   constructor(opts: BoardAdmissionOptions<E>) {
@@ -316,6 +368,7 @@ export class BoardAdmission<E> {
       next: this.next.items.length,
       nextBytes: this.next.bytes,
       flushing: this.flushing,
+      paused: this.paused,
     };
   }
 
@@ -329,6 +382,13 @@ export class BoardAdmission<E> {
     }
     if (!Number.isSafeInteger(bytes) || bytes < 0) {
       throw Error("an edit's size must be a non-negative integer");
+    }
+    if (this.paused) {
+      return refused({
+        reason: "board-busy",
+        message: "the board is checking an earlier save; send the edit again",
+        retryAfter: this.limits.commitIntervalMs,
+      });
     }
     if (bytes > this.limits.maxCommitBytes) {
       return refused({
@@ -378,7 +438,21 @@ export class BoardAdmission<E> {
     });
   }
 
-  // Refuse everything waiting, and resolve when no commit is applying.
+  // After an unknown outcome: the write has settled and been reconciled, so
+  // commits may start again. Throws if a write is still in progress.
+  resume(): void {
+    if (this.flushing) throw Error("a write is still in progress");
+    if (!this.paused) return;
+    this.paused = false;
+    this.schedule();
+  }
+
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
+  // Refuse everything waiting, abort the write in progress, and resolve
+  // when it has settled.
   async close(): Promise<void> {
     if (!this.closed) {
       this.closed = true;
@@ -395,6 +469,7 @@ export class BoardAdmission<E> {
       }
       this.pending = { items: [], bytes: 0 };
       this.next = { items: [], bytes: 0 };
+      this.inflight?.abort();
     }
     while (this.flushing) {
       await new Promise<void>((resolve) => this.idleWaiters.push(resolve));
@@ -424,7 +499,9 @@ export class BoardAdmission<E> {
   }
 
   private schedule(): void {
-    if (this.closed || this.flushing || this.timer != null) return;
+    if (this.closed || this.paused || this.flushing || this.timer != null) {
+      return;
+    }
     if (this.pending.items.length === 0) return;
     // At most one interval, even if an injected clock went back.
     const delay = Math.min(
@@ -442,7 +519,14 @@ export class BoardAdmission<E> {
   }
 
   private async flush(): Promise<void> {
-    if (this.closed || this.flushing || this.pending.items.length === 0) return;
+    if (
+      this.closed ||
+      this.paused ||
+      this.flushing ||
+      this.pending.items.length === 0
+    ) {
+      return;
+    }
     this.flushing = true;
     const batch = this.pending;
     // The next-commit slot becomes the pending commit, keeping its
@@ -495,30 +579,43 @@ export class BoardAdmission<E> {
       });
       return;
     }
-    const start = this.now();
-    this.lastCommitStart = start;
-    let result: CommitResult;
+    this.lastCommitStart = this.now();
+    const controller = new AbortController();
+    this.inflight = controller;
+    // The write itself: settles once, whatever happens to its caller.
+    const write: Promise<CommitResult> = (async () => {
+      try {
+        return await this.commitEdits(edits, controller.signal);
+      } catch (err) {
+        return { status: "unknown", message: `${err}`.slice(0, 500) };
+      }
+    })();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), this.limits.commitTimeoutMs);
+    });
+    let result: CommitResult | "timeout";
     try {
-      result = await Promise.race([
-        this.commitEdits(edits),
-        new Promise<CommitResult>((resolve) => {
-          timer = setTimeout(
-            () =>
-              resolve({
-                status: "unknown",
-                message: `the write did not finish in ${this.limits.commitTimeoutMs} ms`,
-              }),
-            this.limits.commitTimeoutMs,
-          );
-        }),
-      ]);
-    } catch (err) {
-      result = { status: "unknown", message: `${err}`.slice(0, 500) };
+      result = await Promise.race([write, deadline]);
     } finally {
       if (timer != null) clearTimeout(timer);
-      done(Math.max(0, this.now() - start));
     }
+    if (result === "timeout") {
+      // The edits learn now that the outcome is unknown; the slot and their
+      // reservations stay held until the write really settles.
+      const message = `the write did not finish in ${this.limits.commitTimeoutMs} ms`;
+      this.paused = true;
+      controller.abort();
+      for (const w of batch.items) w.resolve({ status: "unknown", message });
+      const late = await write;
+      this.log("board: a timed-out write settled", { status: late.status });
+      this.inflight = undefined;
+      done(applyCharge(late, this.limits));
+      for (const w of batch.items) w.reservation.consume();
+      return;
+    }
+    this.inflight = undefined;
+    done(applyCharge(result, this.limits));
     if (result.status === "acknowledged") {
       for (const w of batch.items) w.reservation.consume();
       for (const w of batch.items) w.resolve({ status: "committed" });
@@ -529,7 +626,9 @@ export class BoardAdmission<E> {
         message: result.message,
       });
     } else {
-      // The write may have been stored: the work was done either way.
+      // The write may have been stored: the work was done either way, and
+      // nothing more is written until it is reconciled.
+      this.paused = true;
       this.log("board: a commit's outcome is unknown", {
         message: result.message,
       });

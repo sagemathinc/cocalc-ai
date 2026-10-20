@@ -32,15 +32,15 @@ function board({
 }: {
   host?: HostAdmission;
   measure?: (edits: number[]) => number;
-  result?: (edits: number[]) => Promise<CommitResult>;
+  result?: (edits: number[], signal: AbortSignal) => Promise<CommitResult>;
 } = {}) {
   const commits: { at: number; edits: number[] }[] = [];
   const b = new BoardAdmission<number>({
     host,
     measure,
-    commit: async (edits) => {
+    commit: async (edits, signal) => {
       commits.push({ at: Date.now(), edits });
-      return await result(edits);
+      return await result(edits, signal);
     },
   });
   // Edits are their own sizes, so a commit's size is their sum.
@@ -336,21 +336,70 @@ test("the host's work budget refuses edits once spent, then refills", async () =
   expect(await now(boards[7].submit(500 * KiB))).toBeUndefined();
 });
 
-test("a commit is charged the time its apply took", async () => {
+test("a commit is charged the apply time it reports", async () => {
   const host = newHost();
   const { submit } = board({
     host,
-    result: async () => {
-      // An apply that takes most of the burst.
-      jest.setSystemTime(Date.now() + 480);
-      return { status: "acknowledged" };
-    },
+    result: async () => ({ status: "acknowledged", applyMs: 480 }),
   });
   const p = submit(1);
   await settle();
   await p;
   // The budget is spent: a 100 KiB edit (34 ms) waits.
   expect(host.reserve(100 * KiB)).toMatchObject({ reason: "host-busy" });
+});
+
+test("waiting for a slow write is not charged as work", async () => {
+  const host = newHost();
+  const { submit } = board({
+    host,
+    result: () =>
+      new Promise((resolve) =>
+        setTimeout(
+          () => resolve({ status: "acknowledged", applyMs: 1 }),
+          20_000,
+        ),
+      ),
+  });
+  const p = submit(1);
+  await settle(20_000);
+  expect(await p).toEqual({ status: "committed" });
+  // Nearly the whole burst is left: three 500 KiB edits (170 ms each) fit
+  // in the 500 ms budget only if the 20 s wait wasn't charged.
+  expect(host.reserve(400 * KiB)).not.toHaveProperty("reason");
+  expect(host.reserve(400 * KiB)).not.toHaveProperty("reason");
+  expect(host.reserve(400 * KiB)).not.toHaveProperty("reason");
+});
+
+test("a reported apply time is charged at most one burst; negative is nothing, NaN or infinite a whole burst", async () => {
+  for (const applyMs of [undefined, 0, -5, -Infinity]) {
+    const host = newHost();
+    const { submit } = board({
+      host,
+      result: async () => ({ status: "acknowledged", applyMs }),
+    });
+    const p = submit(1);
+    await settle();
+    await p;
+    // Nothing charged, nothing credited: the burst less the edit's 0.23 ms.
+    expect(host.reserve(500 * KiB)).not.toHaveProperty("reason");
+    expect(host.reserve(500 * KiB)).not.toHaveProperty("reason");
+    expect(host.reserve(500 * KiB)).toMatchObject({ reason: "host-busy" });
+  }
+  for (const applyMs of [NaN, Infinity, 10_000]) {
+    const host = newHost();
+    const { submit } = board({
+      host,
+      result: async () => ({ status: "acknowledged", applyMs }),
+    });
+    const p = submit(1);
+    await settle();
+    await p;
+    // Charged one burst (500 ms): it refills within about 2 s, not never.
+    const busy = host.reserve(KiB);
+    expect(busy).toMatchObject({ reason: "host-busy" });
+    expect((busy as any).retryAfter).toBeLessThanOrEqual(2100);
+  }
 });
 
 test("closing refuses what waits and releases its reservations", async () => {
@@ -479,26 +528,149 @@ describe("an injected clock that jumps", () => {
   });
 });
 
-test("a write that never settles is unknown after the deadline, and frees the host", async () => {
+test("timed-out writes keep their host slots until they settle: at most 2 writes are ever live", async () => {
   const host = newHost();
-  const never = () => new Promise<CommitResult>(() => {});
-  const a = board({ host, result: never });
-  const b = board({ host, result: never });
-  const c = board({ host });
-  const stuck = [a.submit(1), b.submit(1)];
+  let live = 0;
+  let most = 0;
+  // Writes that never settle and ignore their abort signal.
+  const never = () => {
+    live += 1;
+    most = Math.max(most, live);
+    return new Promise<CommitResult>(() => {});
+  };
+  const boards = Array.from({ length: 4 }, () =>
+    board({ host, result: never }),
+  );
+  const first = boards.map((b) => b.submit(1));
   await settle();
-  expect(host.stats.applying).toBe(2);
-  const waiting = c.submit(1);
-  await settle(BOARD_ADMISSION.commitTimeoutMs - 1);
-  expect(await now(waiting)).toBeUndefined();
-  await settle(1);
-  for (const o of await Promise.all(stuck)) {
-    expect(o).toMatchObject({ status: "unknown" });
+  for (let round = 0; round < 3; round++) {
+    await settle(BOARD_ADMISSION.commitTimeoutMs);
+    for (const b of boards) void b.submit(1, `r${round}`);
   }
+  expect(await now(first[0])).toMatchObject({ status: "unknown" });
+  expect(await now(first[1])).toMatchObject({ status: "unknown" });
+  // The other two boards are still waiting for a slot.
+  expect(await now(first[2])).toBeUndefined();
+  expect(await now(first[3])).toBeUndefined();
+  expect(most).toBe(2);
+  expect(live).toBe(2);
+  expect(host.stats.applying).toBe(2);
+});
+
+test("a write that times out and then succeeds: no other commit starts on its slot before it settles", async () => {
+  const host = newHost({ ...BOARD_ADMISSION, hostMaxApplying: 1 });
+  const events: string[] = [];
+  let settleFirst!: () => void;
+  const a = board({
+    host,
+    result: () =>
+      new Promise((resolve) => {
+        events.push("a starts");
+        settleFirst = () => {
+          events.push("a settles");
+          resolve({ status: "acknowledged" });
+        };
+      }),
+  });
+  const b = board({
+    host,
+    result: async () => {
+      events.push("b starts");
+      return { status: "acknowledged" };
+    },
+  });
+  const pa = a.submit(1);
   await settle();
-  expect(await waiting).toEqual({ status: "committed" });
-  await a.b.close();
-  await b.b.close();
+  const pb = b.submit(1);
+  await settle(BOARD_ADMISSION.commitTimeoutMs);
+  expect(await pa).toMatchObject({ status: "unknown" });
+  await settle(10_000);
+  expect(events).toEqual(["a starts"]);
+  settleFirst();
+  await settle();
+  expect(await pb).toEqual({ status: "committed" });
+  expect(events).toEqual(["a starts", "a settles", "b starts"]);
+  expect(host.stats).toEqual({ waiting: 0, applying: 0 });
+});
+
+test("after an unknown outcome the board starts no commit until it is resumed", async () => {
+  let n = 0;
+  const { b, submit, commits } = board({
+    // The first write times out (it settles when aborted); later ones work.
+    result: (_edits, signal) =>
+      n++ === 0
+        ? new Promise((resolve) =>
+            signal.addEventListener("abort", () =>
+              resolve({ status: "unknown", message: "aborted" }),
+            ),
+          )
+        : Promise.resolve({ status: "acknowledged" }),
+  });
+  const first = submit(1, "a");
+  await settle();
+  const second = submit(1, "b"); // pending, behind the first
+  await settle(BOARD_ADMISSION.commitTimeoutMs);
+  expect(await first).toMatchObject({ status: "unknown" });
+  expect(b.isPaused).toBe(true);
+  // Paused: new edits are refused, and the pending one doesn't commit.
+  expect(await now(submit(1, "c"))).toMatchObject({ reason: "board-busy" });
+  await settle(10_000);
+  expect(commits).toHaveLength(1);
+  expect(await now(second)).toBeUndefined();
+  // Reconciled: resume.
+  b.resume();
+  await settle(250);
+  expect(await second).toEqual({ status: "committed" });
+  expect(commits).toHaveLength(2);
+  expect(b.isPaused).toBe(false);
+});
+
+test("a write that throws also pauses the board, and resume needs the write settled", async () => {
+  let release!: () => void;
+  let n = 0;
+  const { b, submit } = board({
+    result: () => {
+      n += 1;
+      if (n === 1) return Promise.reject(Error("lost reply"));
+      // The second write ignores its signal until released.
+      return new Promise((resolve) => {
+        release = () => resolve({ status: "acknowledged" });
+      });
+    },
+  });
+  const p = submit(1);
+  await settle();
+  expect(await p).toMatchObject({ status: "unknown" });
+  expect(b.isPaused).toBe(true);
+  b.resume();
+  const q = submit(1, "b");
+  await settle(250);
+  await settle(BOARD_ADMISSION.commitTimeoutMs);
+  expect(await q).toMatchObject({ status: "unknown" });
+  // Its write is still in progress: it can't be resumed yet.
+  expect(() => b.resume()).toThrow(/in progress/);
+  release();
+  await settle();
+  b.resume();
+  expect(b.isPaused).toBe(false);
+});
+
+test("closing aborts the write in progress and waits for it to settle", async () => {
+  let aborted = false;
+  const { b, submit, host } = board({
+    result: (_edits, signal) =>
+      new Promise((resolve) =>
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          resolve({ status: "unknown", message: "aborted" });
+        }),
+      ),
+  });
+  const p = submit(1);
+  await settle();
+  await b.close();
+  expect(aborted).toBe(true);
+  expect(await p).toMatchObject({ status: "unknown" });
   expect(host.stats).toEqual({ waiting: 0, applying: 0 });
 });
 
