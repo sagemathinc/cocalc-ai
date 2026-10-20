@@ -5,7 +5,8 @@
 
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { AgentStatusMark } from "./agent-status-mark";
+import { act } from "@testing-library/react";
+import { AgentStatusMark, agentRowLabel } from "./agent-status-mark";
 
 const NOW = Date.parse("2026-10-20T06:00:00Z");
 const status = (extra = {}) => ({
@@ -62,5 +63,36 @@ describe("an agent's status mark", () => {
       expect(container.innerHTML).toBe("");
       unmount();
     }
+  });
+
+  it("goes away on its own when the limit resets, with nothing else rendering", () => {
+    jest.useFakeTimers({ now: NOW });
+    try {
+      render(
+        <AgentStatusMark
+          status={status({
+            unavailable: { reason: "limit", until: NOW + 60_000 },
+          })}
+        />,
+      );
+      expect(screen.queryByRole("img")).toBeTruthy();
+      act(() => {
+        jest.setSystemTime(NOW + 62_000);
+        jest.advanceTimersByTime(62_000);
+      });
+      expect(screen.queryByRole("img")).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("is part of the row's accessible name", () => {
+    const parts = { title: "Matlab", name: "matlab", project: "Research" };
+    expect(agentRowLabel(parts, undefined, NOW)).toBe(
+      "Matlab, @matlab, Research",
+    );
+    expect(
+      agentRowLabel(parts, status({ unavailable: { reason: "sign-in" } }), NOW),
+    ).toBe("Matlab, @matlab, Research, Unavailable (sign-in needs renewing)");
   });
 });

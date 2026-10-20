@@ -191,6 +191,10 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_worker_updated_idx ON ${TABLE}(worker_id, updated_at)`,
   );
+  // The agent status sweep reads what changed recently, every few seconds.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_jobs_updated_idx ON ${TABLE}(updated_at)`,
+  );
   ensureAcpTableMigrated(TABLE);
   installThreadSuccessorFence(TABLE);
   removeRetiredAutomationJobs(db);

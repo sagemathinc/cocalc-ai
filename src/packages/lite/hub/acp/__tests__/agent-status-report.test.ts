@@ -127,6 +127,28 @@ describe("reporting what each agent is doing", () => {
     expect(reports).toHaveLength(1);
   });
 
+  it("asks again after an hour, even if nothing changed (it may be registered now)", async () => {
+    const now = Date.now();
+    registered = false;
+    job();
+    await sweepAgentStatus(now);
+    expect(reports).toHaveLength(1);
+    registered = true;
+    // Within the hour: not asked.
+    await sweepAgentStatus(now + 30 * 60_000);
+    expect(reports).toHaveLength(1);
+    // After it: asked, with the same (unchanged) status.
+    await sweepAgentStatus(now + 61 * 60_000);
+    expect(reports).toHaveLength(2);
+    expect(reports[1].status).toEqual({
+      ...reports[0].status,
+      at: now + 61 * 60_000,
+    });
+    // Registered now: reported like any agent, only on change.
+    await sweepAgentStatus(now + 62 * 60_000);
+    expect(reports).toHaveLength(2);
+  });
+
   it("only chats have agents", async () => {
     job("/tmp/notes.term");
     await sweepAgentStatus(Date.now());

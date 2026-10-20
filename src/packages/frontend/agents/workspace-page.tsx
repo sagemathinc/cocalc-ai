@@ -338,7 +338,7 @@ import {
 } from "./agent-subscription-selection";
 import { copyPaymentSelection } from "@cocalc/frontend/chat/payment-selection-store";
 import { WithAgentRuntimeMark } from "./agent-runtime-mark";
-import { AgentStatusMark } from "./agent-status-mark";
+import { AgentStatusMark, agentRowLabel } from "./agent-status-mark";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -4679,7 +4679,10 @@ export function MyAgentsWorkspacePage({
           <button
             type="button"
             aria-current={active ? "page" : undefined}
-            aria-label={`${theme.title}, @${agent.name}, ${projectTitle}`}
+            aria-label={agentRowLabel(
+              { title: theme.title, name: agent.name, project: projectTitle },
+              agent.status,
+            )}
             title={`${theme.title} · @${agent.name}${showProjectTitle ? ` · ${projectTitle}` : ""}`}
             onClick={() => selectAgent(agent)}
             style={{

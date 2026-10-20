@@ -42,7 +42,12 @@ let reporter: Reporter = (opts) => hubApi.agent.reportStatus(opts);
 let lastSweep: number | undefined;
 let sweeping = false;
 const sent = new Map<string, AgentTurnStatus>();
-const unregistered = new Map<string, number>();
+// Not a registered agent when last asked: asked again once `until` passes,
+// whether or not its jobs change (it may be registered meanwhile).
+const unregistered = new Map<
+  string,
+  { thread: Thread & { account_id: string }; until: number }
+>();
 
 /** Tests only. */
 export function setAgentStatusReporterForTests(next?: Reporter): void {
@@ -83,24 +88,35 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
         ? now - FIRST_SWEEP_LOOKBACK_MS
         : lastSweep - SWEEP_OVERLAP_MS;
     lastSweep = now;
-    for (const thread of listAcpThreadsChangedSince(since)) {
+    const keyOf = (thread: Thread) =>
+      JSON.stringify([thread.project_id, thread.path, thread.thread_id]);
+    const candidates = new Map<string, Thread & { account_id: string }>();
+    for (const thread of listAcpThreadsChangedSince(since))
+      candidates.set(keyOf(thread), thread);
+    // Due to be asked again: report even an unchanged status.
+    const retry = new Set<string>();
+    for (const [key, entry] of unregistered)
+      if (entry.until <= now) {
+        retry.add(key);
+        if (!candidates.has(key)) candidates.set(key, entry.thread);
+      }
+    for (const [key, thread] of candidates) {
       // Only chats have registered agents.
       if (!thread.path.endsWith(".chat")) continue;
-      const key = JSON.stringify([
-        thread.project_id,
-        thread.path,
-        thread.thread_id,
-      ]);
-      if ((unregistered.get(key) ?? 0) > now) continue;
+      if (!retry.has(key) && unregistered.has(key)) continue;
       const status = agentThreadStatus(thread, now);
-      if (sameAgentTurnStatus(sent.get(key), status)) continue;
+      if (!retry.has(key) && sameAgentTurnStatus(sent.get(key), status))
+        continue;
       try {
         const { registered } = await reporter({ ...thread, status });
         if (sent.size >= MAX_REMEMBERED) sent.clear();
         sent.set(key, status);
         if (!registered) {
           if (unregistered.size >= MAX_REMEMBERED) unregistered.clear();
-          unregistered.set(key, now + UNREGISTERED_RECHECK_MS);
+          unregistered.set(key, {
+            thread,
+            until: now + UNREGISTERED_RECHECK_MS,
+          });
         } else unregistered.delete(key);
       } catch (err) {
         // An older hub, or unreachable: the next change tries again.
