@@ -127,6 +127,7 @@ export function buildAgentLimitNoticeOptions(opts: {
       "To run one sooner (for example after switching subscriptions) or cancel it, open its conversation.",
     ].join("\n\n"),
     severity: "info",
+    paused: true,
     group_key: [
       "usage-limit",
       failure.scope,

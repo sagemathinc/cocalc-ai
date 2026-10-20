@@ -354,7 +354,10 @@ function showNativeCodexNotification(opts: {
   if (!nativeCodexNotificationAvailable()) {
     return;
   }
-  const { title, body } = codexNativeNotificationContent(opts.attention);
+  const { title, body } = codexNativeNotificationContent(
+    opts.attention,
+    opts.row.summary?.turn_state === "paused",
+  );
   const notification = new window.Notification(
     opts.agentName ? `${opts.agentName} · ${title}` : title,
     {

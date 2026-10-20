@@ -606,6 +606,8 @@ describe("ChatStreamWriter", () => {
     expect(notice.severity).toBe("info");
     expect(notice.body_markdown).toMatch(/paused, not lost/);
     expect(notice.body_markdown).toMatch(/2026-10-21 08:00 UTC/);
+    // Paused, not finished: notifications must say so.
+    expect(notice.paused).toBe(true);
     expect(notice.group_key).toBe(
       `usage-limit:credential:11111111-1111-4111-8111-111111111111:${Math.round(resets_at / 3_600_000)}`,
     );

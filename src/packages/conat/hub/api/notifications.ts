@@ -66,6 +66,9 @@ export interface CreateCodexTurnNoticeOptions {
    * first (agents paused by the same usage limit share one).
    */
   group_key?: string;
+  /** The turn is paused (e.g. until a usage limit resets), not finished:
+   * notifications must not say it finished. */
+  paused?: boolean;
 }
 
 export interface CreateCodexAttentionNoticeOptions {

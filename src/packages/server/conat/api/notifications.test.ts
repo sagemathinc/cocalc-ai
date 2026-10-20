@@ -429,6 +429,7 @@ describe("conat notifications api", () => {
         body_markdown: "Their turns are paused, not lost.",
         severity: "info",
         group_key: "usage-limit:credential:c1:493800",
+        paused: true,
       });
     await expect(notice("thread-1")).resolves.toMatchObject({
       target_count: 1,
@@ -446,6 +447,11 @@ describe("conat notifications api", () => {
         dedupe_key: `agent_turn_group:usage-limit:credential:c1:493800:${TARGET_ACCOUNT_ID}`,
       },
     ]);
+    // Marked paused, so no notification says the turn finished.
+    const projected = await getPool().query(
+      "SELECT payload_json->'summary'->>'turn_state' AS turn_state FROM notification_target_outbox",
+    );
+    expect(projected.rows).toEqual([{ turn_state: "paused" }]);
   });
 
   it("keeps Codex question content out of attention projections", async () => {

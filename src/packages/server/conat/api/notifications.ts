@@ -573,6 +573,7 @@ export async function createCodexTurnNotice(
         thread_id,
         thread_label,
         stable_source_id,
+        ...(opts.paused === true ? { turn_state: "paused" } : {}),
       },
     }),
     buildTargets: async (targetHomeBays) => [
@@ -603,6 +604,7 @@ export async function createCodexTurnNotice(
           thread_id,
           thread_label,
           stable_source_id,
+          ...(opts.paused === true ? { turn_state: "paused" } : {}),
         },
       },
     ],
