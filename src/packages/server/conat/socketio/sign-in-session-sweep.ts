@@ -14,8 +14,9 @@ export type SessionConnection = [id: string, user: any];
 // A cookie socket is checked only at its handshake, so signing a session out
 // (sign out everywhere, a password change, passkey/2FA setup) must also close
 // the sockets that session already has open. Ending a session deletes its
-// remember_me row; a socket whose row is gone is disconnected. An expired row
-// is not a sign-out: connected sessions are never cut by expiry.
+// remember_me row; a socket whose row is gone is disconnected. That includes
+// rows maintenance deletes at their hard expiry (max_expire): a session past
+// it is over. An idle-expired row that still exists keeps its sockets.
 export async function sweepSignedOutSessionConnections({
   connections,
   liveSessionHashes,

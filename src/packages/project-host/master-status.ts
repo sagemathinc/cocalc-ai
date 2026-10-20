@@ -581,7 +581,7 @@ async function reportPendingProvisioning() {
   await reportProvisionedInventory();
 }
 
-async function syncAccountRevocationsFromMaster() {
+export async function syncAccountRevocationsFromMaster() {
   if (!statusClient || !hostInfo) return;
   let cursor = getRevocationSyncCursor() ?? { updated_ms: 0, account_id: "" };
   // Bound loop so one invocation cannot run forever.

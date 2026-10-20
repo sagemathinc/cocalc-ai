@@ -56,7 +56,10 @@ import {
   verifyProjectHostHttpSessionToken,
 } from "./http-proxy-auth";
 import { EventEmitter } from "node:events";
-import { createProjectHostBrowserSessionToken } from "./browser-session";
+import {
+  createProjectHostBrowserSessionToken,
+  resolveProjectHostBrowserSessionFromCookieHeader,
+} from "./browser-session";
 import {
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
   PROJECT_HOST_API_KEY_HTTP_HEADER,
@@ -338,6 +341,51 @@ describe("project-host HTTP session cookie", () => {
     const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
     expect(cookies.join("\n")).toContain("cocalc_project_host_http_session=");
     expect(cookies.join("\n")).toContain(`Path=/${project_id}`);
+  });
+
+  it("re-issued cookies keep the original credential's iat, so a later cutoff still applies", async () => {
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const now_s = Math.floor(Date.now() / 1000);
+    const origin_s = now_s - 3600;
+    const request = (cookie: string) =>
+      ({
+        headers: {
+          cookie,
+          "sec-fetch-site": "none",
+          "x-forwarded-proto": "https",
+        },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/`,
+      }) as any;
+    const res = createResponse();
+    // A session from an hour ago uses the host before it learns the cutoff.
+    await auth.authorizeHttpRequest(
+      request(
+        `cocalc_project_host_session=${encodeURIComponent(
+          createProjectHostBrowserSessionToken({ account_id, auth_iat_s: origin_s }),
+        )}`,
+      ),
+      res,
+      project_id,
+    );
+    const setCookie = res.headers.get("Set-Cookie");
+    const fresh = (Array.isArray(setCookie) ? setCookie : [setCookie])
+      .map((c) => `${c}`.split(";")[0])
+      .filter((c) => /^cocalc_project_host_(http_)?session=[^;]+$/.test(c));
+    expect(fresh.length).toBe(2);
+    // Both re-issued cookies still say an hour ago...
+    expect(
+      resolveProjectHostBrowserSessionFromCookieHeader(fresh.join("; "))?.iat_s,
+    ).toBe(origin_s);
+    // ...so once the host has the cutoff (half an hour ago), they're refused.
+    getAccountRevokedBeforeMsMock.mockReturnValue((now_s - 1800) * 1000);
+    for (const cookie of fresh) {
+      await expect(
+        auth.authorizeHttpRequest(request(cookie), createResponse(), project_id),
+      ).rejects.toThrow("session revoked");
+    }
   });
 
   it("does not widen a bounded browser session when minting HTTP cookies", async () => {

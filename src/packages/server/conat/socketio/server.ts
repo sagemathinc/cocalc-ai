@@ -105,17 +105,25 @@ const SIGNED_OUT_SESSION_SWEEP_MS = 10_000;
 // process, else within SIGNED_OUT_SESSION_SWEEP_MS.
 function startSignedOutSessionSweep(server: ConatServer): void {
   let running = false;
+  // A sign-out while a sweep runs gets a sweep of its own right after.
+  let again = false;
   const sweep = async () => {
-    if (running) return;
+    if (running) {
+      again = true;
+      return;
+    }
     running = true;
     try {
-      await sweepSignedOutSessionConnections({
-        connections: Object.entries(server.getStatsSnapshot()).map(
-          ([id, stats]) => [id, stats.user],
-        ),
-        liveSessionHashes: liveRememberMeHashes,
-        disconnect: (ids) => server.disconnectSockets(ids),
-      });
+      do {
+        again = false;
+        await sweepSignedOutSessionConnections({
+          connections: Object.entries(server.getStatsSnapshot()).map(
+            ([id, stats]) => [id, stats.user],
+          ),
+          liveSessionHashes: liveRememberMeHashes,
+          disconnect: (ids) => server.disconnectSockets(ids),
+        });
+      } while (again);
     } finally {
       running = false;
     }

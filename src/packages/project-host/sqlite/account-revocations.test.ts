@@ -94,6 +94,20 @@ describe("account revocations on the host", () => {
     expect(getAccountRevokedBeforeMs(account_id)).toBe(6000);
   });
 
+  it("adds the browser cutoff to an existing row", () => {
+    upsertAccountRevocation({ account_id, revoked_before_ms: 1000, updated_ms: 1 });
+    upsertAccountRevocation({
+      account_id,
+      revoked_before_ms: 0,
+      browser_revoked_before_ms: 7000,
+      updated_ms: 2,
+    });
+    expect(getAccountRevokedBeforeMs(account_id)).toBe(7000);
+    expect(getAccountRevokedBeforeMs(account_id, { auth_actor: "agent" })).toBe(
+      1000,
+    );
+  });
+
   it("adds the column to a table created by an older host", () => {
     const db = getDatabase();
     db.exec(`
