@@ -721,6 +721,10 @@ const ACP_LIMIT_HOLD_UNKNOWN_RESET_MS = envNumber(
   60 * 60_000,
 );
 const ACP_LIMIT_HOLD_MARGIN_MS = 60_000;
+// The durable intent a held turn's failed job carries until its continuation
+// is queued (or the hold declined), so a worker that dies in between leaves
+// the hold for recoverPendingFailureRecoveryIntents to finish.
+const ACP_HOLD_INTENT = "cocalc-hold";
 const ACP_LIMIT_HOLD_MAX_RETRIES = 4;
 const LIMIT_HOLD_NOTICE =
   "**Conversation paused because a usage limit was reached.**";
@@ -9444,6 +9448,33 @@ async function recoverPendingFailureRecoveryIntents({
 }): Promise<number> {
   let recovered = 0;
   for (const job of listAcpJobsWithRecoveryIntent(limit)) {
+    if (job.recovery_code === ACP_HOLD_INTENT) {
+      // A hold whose worker died before its continuation was queued.
+      try {
+        const outcome = parseTurnOutcome(job.outcome_json);
+        const held = outcome
+          ? await enqueueLimitHold({ client, job, outcome })
+          : undefined;
+        clearAcpJobRecoveryIntent(job.op_id);
+        recovered += 1;
+        const request = decodeAcpJobRequest(job);
+        if (held?.available_at)
+          reportFailedAgentMessageTurn(
+            job,
+            request,
+            job.error ?? undefined,
+            outcome,
+            { resume_at: held.available_at },
+          );
+        else reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
+      } catch (err) {
+        logger.warn("failed recovering a persisted ACP hold", {
+          op_id: job.op_id,
+          err,
+        });
+      }
+      continue;
+    }
     try {
       const resumed = await enqueueFailureRecoveryContinuation({
         client,
@@ -10293,7 +10324,12 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       error: result.terminalState === "error" ? result.error : undefined,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
       recovery_code:
-        result.terminalState === "error" ? result.recoveryCode : undefined,
+        result.terminalState === "error"
+          ? (result.recoveryCode ??
+            (limitHoldDelayMs(result.outcome) != null
+              ? ACP_HOLD_INTENT
+              : undefined))
+          : undefined,
       recovery_detail:
         result.terminalState === "error" ? result.recoveryDetail : undefined,
       outcome: result.outcome,
@@ -10318,6 +10354,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
           job: getAcpJobByOpId(job.op_id) ?? job,
           outcome: result.outcome,
         });
+        // Queued (or declined): the intent has done its job.
+        clearAcpJobRecoveryIntent(job.op_id);
         // The agent that sent the message hears it is paused, and until when.
         if (resumed?.available_at)
           reportFailedAgentMessageTurn(
@@ -10328,7 +10366,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
             { resume_at: resumed.available_at },
           );
       } catch (err) {
-        // Not held: the turn is over, and reported as such below.
+        // The persisted intent stays: the recovery poll holds it later.
+        recoveryPending = true;
         logger.warn("failed to hold an ACP turn for its usage limit", {
           op_id: job.op_id,
           err,

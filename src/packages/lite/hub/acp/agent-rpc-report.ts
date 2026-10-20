@@ -86,9 +86,11 @@ export function noteAgentMessageTurnFailed(opts: {
   if (!kind) return;
   const detail = agentRpcReportDetail(opts.error ?? "");
   const failure = outcome?.state === "failed" ? outcome.failure : undefined;
+  // A held turn announces when it is scheduled to resume (after the reset,
+  // with a margin), not the provider's raw reset time.
   const resets_at =
-    (failure?.kind === "limit" ? failure.resets_at : undefined) ??
-    opts.held?.resume_at;
+    opts.held?.resume_at ??
+    (failure?.kind === "limit" ? failure.resets_at : undefined);
   const tool_ran =
     opts.tool_ran !== undefined
       ? (opts.tool_ran ?? undefined)
