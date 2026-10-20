@@ -25,29 +25,16 @@ Unicode normalization, since distinct Linux names are distinct boards.
 
 import { posix } from "node:path";
 import { isValidUUID } from "@cocalc/util/misc";
-import type { ReceiveLimits } from "@cocalc/conat/core/receive-budget";
 
-export const BOARD_WRITE_SERVICE = "persist-board-write";
-// The only user segment the board write service serves.
-export const BOARD_WRITE_USER = "hub";
-
-// Transport bounds for the board write service's data subscription. Raw
-// fragments are counted before reassembly, so nothing larger than one snapshot
-// message (at most 7 MiB encoded, plus envelope) is ever assembled, and a
-// stalled or flooding writer holds at most 16 MiB. The process-wide aggregate
-// in receive-budget.ts applies on top.
-export const BOARD_WRITE_RECEIVE_LIMITS: ReceiveLimits = {
-  maxMessageBytes: 8 * 1024 * 1024,
-  maxInflightBytes: 16 * 1024 * 1024,
-  maxInflightMessages: 8,
-};
-
-// Status pings and load-balancer lookups carry no data.
-export const BOARD_WRITE_CONTROL_RECEIVE_LIMITS: ReceiveLimits = {
-  maxMessageBytes: 64 * 1024,
-  maxInflightBytes: 1024 * 1024,
-  maxInflightMessages: 64,
-};
+// The service names and limits live in board-constants.ts, which has no Node
+// imports, so browser code (e.g. the load balancer) can use them.
+export {
+  BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
+  BOARD_WRITE_RECEIVE_LIMITS,
+  BOARD_WRITE_SERVICE,
+  BOARD_WRITE_USER,
+} from "./board-constants";
+import { BOARD_WRITE_SERVICE, BOARD_WRITE_USER } from "./board-constants";
 
 const BOARD_STREAM_SUFFIX = ".sage-board";
 const PATCHFLOW_SEGMENT = "patchflow";

@@ -29,7 +29,7 @@ import { SERVICE } from "./util";
 import {
   BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
   BOARD_WRITE_SERVICE,
-} from "./board-policy";
+} from "./board-constants";
 import { hash_string } from "@cocalc/util/misc";
 import { delay } from "awaiting";
 import type { SocketServerInfo } from "../socket/util";
