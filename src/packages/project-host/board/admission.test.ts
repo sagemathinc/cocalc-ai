@@ -453,6 +453,65 @@ test("a board closed while its commit waits for a host slot applies nothing", as
   expect(host.stats).toEqual({ waiting: 0, applying: 0 });
 });
 
+test("closing a board whose commit waits for a host slot that never frees: refused at once, and close returns", async () => {
+  const host = newHost();
+  const hold: (() => void)[] = [];
+  const busy = () =>
+    new Promise<CommitResult>((resolve) =>
+      hold.push(() => resolve({ status: "acknowledged" })),
+    );
+  const a = board({ host, result: busy });
+  const b = board({ host, result: busy });
+  const c = board({ host });
+  const d = board({ host });
+  const held = [a.submit(1), b.submit(1)];
+  const waiting = c.submit(1);
+  const after = d.submit(1);
+  await settle(300);
+  expect(host.stats.applying).toBe(2);
+  // Both host slots stay taken: close must not wait for one.
+  await c.b.close();
+  expect(await now(waiting)).toMatchObject({
+    status: "refused",
+    reason: "closed",
+  });
+  expect(c.commits).toEqual([]);
+  expect(c.b.stats.flushing).toBe(false);
+  // The slot c gave up goes to the next board waiting, not to nobody.
+  hold.shift()!();
+  await settle();
+  expect(d.commits).toHaveLength(1);
+  expect(await after).toEqual({ status: "committed" });
+  hold.shift()!();
+  await settle();
+  await Promise.all(held);
+  expect(host.stats).toEqual({ waiting: 0, applying: 0 });
+});
+
+test("an aborted wait for a host slot holds none, and one woken after aborting passes it on", async () => {
+  const host = new HostAdmission({
+    limits: { ...BOARD_ADMISSION, hostMaxApplying: 1 },
+    now: testClock,
+  });
+  const first = (await host.startApply())!;
+  const gone = new AbortController();
+  const late = new AbortController();
+  const p1 = host.startApply(gone.signal);
+  const p2 = host.startApply(late.signal);
+  const p3 = host.startApply();
+  gone.abort();
+  expect(await p1).toBeUndefined();
+  // p2 is woken by the free slot, but aborts before it runs.
+  first(0);
+  late.abort();
+  expect(await p2).toBeUndefined();
+  const third = await p3;
+  expect(typeof third).toBe("function");
+  expect(host.stats.applying).toBe(1);
+  third!(0);
+  expect(host.stats.applying).toBe(0);
+});
+
 test("a board remembers a bounded number of clients", async () => {
   const limits = { ...BOARD_ADMISSION, maxClients: 2 };
   const host = newHost(limits);

@@ -256,10 +256,31 @@ export class HostAdmission {
   }
 
   // Wait for one of the host's commit slots; call the returned function
-  // when the write has settled, with the apply work to charge.
-  async startApply(): Promise<(chargeMs: number) => void> {
+  // when the write has settled, with the apply work to charge. Undefined if
+  // the signal aborted the wait (no slot is held then).
+  async startApply(
+    signal?: AbortSignal,
+  ): Promise<((chargeMs: number) => void) | undefined> {
     while (this.applying >= this.limits.hostMaxApplying) {
-      await new Promise<void>((resolve) => this.applyWaiters.push(resolve));
+      if (signal?.aborted) return undefined;
+      await new Promise<void>((resolve) => {
+        const onAbort = () => {
+          const i = this.applyWaiters.indexOf(wake);
+          if (i >= 0) this.applyWaiters.splice(i, 1);
+          resolve();
+        };
+        const wake = () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        };
+        this.applyWaiters.push(wake);
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+    if (signal?.aborted) {
+      // Woken for a free slot but no longer wanting it: pass it on.
+      this.applyWaiters.shift()?.();
+      return undefined;
     }
     this.applying += 1;
     let ended = false;
@@ -345,6 +366,8 @@ export class BoardAdmission<E> {
   private paused = false;
   // The write in progress, to abort on close.
   private inflight: AbortController | undefined;
+  // A commit waiting for a host slot, to stop waiting on close.
+  private slotWait: AbortController | undefined;
   private idleWaiters: (() => void)[] = [];
 
   constructor(opts: BoardAdmissionOptions<E>) {
@@ -469,6 +492,7 @@ export class BoardAdmission<E> {
       }
       this.pending = { items: [], bytes: 0 };
       this.next = { items: [], bytes: 0 };
+      this.slotWait?.abort();
       this.inflight?.abort();
     }
     while (this.flushing) {
@@ -568,10 +592,17 @@ export class BoardAdmission<E> {
       });
       return;
     }
-    const done = await this.host.startApply();
-    if (this.closed) {
+    const slotWait = new AbortController();
+    this.slotWait = slotWait;
+    let done: ((chargeMs: number) => void) | undefined;
+    try {
+      done = await this.host.startApply(slotWait.signal);
+    } finally {
+      this.slotWait = undefined;
+    }
+    if (done === undefined || this.closed) {
       // Closed while waiting for a slot: nothing has been applied.
-      done(0);
+      done?.(0);
       this.finish(batch.items, {
         status: "refused",
         reason: "closed",
