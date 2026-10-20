@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
+import { uuidsha1 } from "@cocalc/util/misc";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import type {
   AgentRpcControlApi,
@@ -921,7 +922,11 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
     // Last, once everything else allowed it: one turn per reported message.
     if (
       !(await claimAgentRpcReportExecution({
-        attempt_id: report.attempt_id,
+        // A held report's turn and the final one's are each one turn.
+        attempt_id:
+          report.phase === "held"
+            ? uuidsha1(`agent-rpc-report-held:${report.attempt_id}`)
+            : report.attempt_id,
         report_id: report.report_id,
         account_id,
         project_id: message.source.project_id,

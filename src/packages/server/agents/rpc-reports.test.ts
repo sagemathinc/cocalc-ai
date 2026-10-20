@@ -432,6 +432,23 @@ describe("the turn the report starts for A", () => {
     });
   });
 
+  test("a held report and the final one each get their one turn", async () => {
+    const held = {
+      ...report(),
+      phase: "held" as const,
+      kind: "limit" as const,
+    };
+    await authorizeRpcReportExecution(execution(signed(held)));
+    const heldKey = claimExecution.mock.calls.at(-1)[0].attempt_id;
+    // Its own key, stable, and not the message's.
+    expect(heldKey).not.toBe(attempt);
+    expect(heldKey).toMatch(/^[0-9a-f-]{36}$/);
+    await authorizeRpcReportExecution(execution(signed({ ...held })));
+    expect(claimExecution.mock.calls.at(-1)[0].attempt_id).toBe(heldKey);
+    await authorizeRpcReportExecution(execution());
+    expect(claimExecution.mock.calls.at(-1)[0].attempt_id).toBe(attempt);
+  });
+
   test("runs once: a report cannot be replayed into another turn", async () => {
     claimExecution.mockResolvedValueOnce(false);
     await expect(authorizeRpcReportExecution(execution())).rejects.toThrow(

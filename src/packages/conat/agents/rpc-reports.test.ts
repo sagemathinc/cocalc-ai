@@ -289,3 +289,37 @@ describe("a turn that ended without a reply, when the sender asked", () => {
     );
   });
 });
+
+describe("a turn held until its usage limit resets", () => {
+  const NOW = 1_791_800_000_000;
+  const held = () =>
+    report({
+      kind: "limit",
+      detail: undefined,
+      resets_at: NOW + 3 * 3_600_000,
+      tool_ran: true,
+      phase: "held",
+    });
+
+  it("says the turn is paused, not over, and when it resumes", () => {
+    expect(() => validateAgentRpcTurnFailureReport(held())).not.toThrow();
+    const text = agentRpcReportText(held(), "@reviewer", NOW);
+    expect(text).toMatch(
+      /^\[Delivery report\] @reviewer stopped working on your message because a usage, credit or subscription limit was reached\. Its turn is paused, not over: CoCalc resumes it automatically at 2026-.*\(in about 3 hours\)\./,
+    );
+    expect(text).toMatch(/another report only if that resumed turn ends/);
+    expect(text).not.toMatch(/send it again/);
+  });
+
+  it("reaches only a sender's host that knows a held report", () => {
+    expect(agentRpcReportForVersion(held(), 3)).toEqual(held());
+    expect(agentRpcReportForVersion(held(), 2)).toBeUndefined();
+    expect(agentRpcReportForVersion(held(), 1)).toBeUndefined();
+  });
+
+  it("has only the held phase", () => {
+    expect(() =>
+      validateAgentRpcTurnFailureReport({ ...held(), phase: "final" } as any),
+    ).toThrow("invalid phase");
+  });
+});

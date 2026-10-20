@@ -56,6 +56,8 @@ export function noteAgentMessageTurnFailed(opts: {
    * it (null: not known); otherwise taken from the outcome. */
   tool_ran?: boolean | null;
   turn_started_at?: number | null;
+  /** The turn is held, not over: resumes at this time (a usage limit). */
+  held?: { resume_at: number };
   now?: number;
 }): AgentRpcTurnFailureReport | undefined {
   const authorization = opts.request.chat?.agent_rpc_execution;
@@ -84,7 +86,9 @@ export function noteAgentMessageTurnFailed(opts: {
   if (!kind) return;
   const detail = agentRpcReportDetail(opts.error ?? "");
   const failure = outcome?.state === "failed" ? outcome.failure : undefined;
-  const resets_at = failure?.kind === "limit" ? failure.resets_at : undefined;
+  const resets_at =
+    (failure?.kind === "limit" ? failure.resets_at : undefined) ??
+    opts.held?.resume_at;
   const tool_ran =
     opts.tool_ran !== undefined
       ? (opts.tool_ran ?? undefined)
@@ -103,11 +107,13 @@ export function noteAgentMessageTurnFailed(opts: {
     ...(detail ? { detail } : {}),
     ...(resets_at ? { resets_at } : {}),
     ...(tool_ran !== undefined ? { tool_ran } : {}),
+    ...(opts.held ? { phase: "held" as const } : {}),
   };
   try {
     if (
       !enqueueAgentRpcReport({
-        op_id: opts.op_id,
+        // A held report and the final one are each sent once.
+        op_id: opts.held ? `${opts.op_id}:held` : opts.op_id,
         account_id: authorization.principal_account_id,
         report,
         now: opts.now,
@@ -210,7 +216,10 @@ export async function deliverAgentRpcReport(
         if (row.event !== "chat" || row.thread_id !== delivery.thread_id)
           continue;
         const rpc = row.agent_rpc;
-        if (rpc?.delivery_report?.attempt_id === report.attempt_id) {
+        if (
+          rpc?.delivery_report?.attempt_id === report.attempt_id &&
+          (rpc.delivery_report.phase ?? "final") === (report.phase ?? "final")
+        ) {
           // A report whose admission was never confirmed (it failed, or
           // this process died first) is replaced below, unless its turn was
           // queued after all (the acknowledgement was lost); any other is
@@ -265,6 +274,7 @@ export async function deliverAgentRpcReport(
         report_id: report.report_id,
         attempt_id: report.attempt_id,
         kind: report.kind,
+        ...(report.phase ? { phase: report.phase } : {}),
       },
     };
     if (unadmitted)

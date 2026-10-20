@@ -62,6 +62,10 @@ export interface AgentRpcTurnFailureReport {
   resets_at?: number;
   /** Whether the recipient ran any tool before the turn ended, if known. */
   tool_ran?: boolean;
+  /** "held": not the end. The turn stopped (a usage limit) and resumes on
+   * its own at resets_at; a final report follows only if it then ends
+   * without replying. Absent: the turn is over. */
+  phase?: "held";
 }
 
 /** What A's host is asked to deliver; labels are the account's own names. */
@@ -107,8 +111,8 @@ export function agentRpcReportForVersion(
   version: number,
 ): AgentRpcTurnFailureReport | undefined {
   if (version >= AGENT_RPC_REPORT_VERSION) return report;
-  // Before version 3 every report says the turn did not succeed.
-  if (report.kind === "completed") return undefined;
+  // Before version 3 every report says the turn is over and did not succeed.
+  if (report.kind === "completed" || report.phase === "held") return undefined;
   if (version >= 2) return report;
   const { resets_at: _r, tool_ran, ...v1 } = report;
   // Only when nothing ran is the old text ("did not act ... you can send
@@ -194,12 +198,23 @@ function inAbout(ms: number): string {
 export function agentRpcReportText(
   report: Pick<
     AgentRpcTurnFailureReport,
-    "kind" | "detail" | "resets_at" | "tool_ran"
+    "kind" | "detail" | "resets_at" | "tool_ran" | "phase"
   >,
   targetLabel: string,
   now = Date.now(),
 ): string {
   const B = targetLabel;
+  if (report.phase === "held") {
+    const at = report.resets_at
+      ? `${new Date(report.resets_at).toISOString()}${report.resets_at > now ? ` (in about ${inAbout(report.resets_at - now)})` : ""}`
+      : "soon";
+    return [
+      `[Delivery report] ${B} stopped working on your message because ${KIND_TEXT[report.kind] ?? "an error"} was reached. Its turn is paused, not over: CoCalc resumes it automatically at ${at}.`,
+      `You will get another report only if that resumed turn ends without replying to you.`,
+      `If you cannot wait, send the work to another agent instead (and tell ${B}), or carry on without it.`,
+      `This report is from CoCalc, not from ${B}.`,
+    ].join("\n");
+  }
   if (report.kind === "completed")
     return [
       `[Delivery report] ${B} finished its turn on your message without replying to you (you asked to be told).`,
@@ -321,9 +336,12 @@ export function validateAgentRpcTurnFailureReport(
       "detail",
       "resets_at",
       "tool_ran",
+      "phase",
     ],
     "delivery report",
   );
+  if (report.phase !== undefined && report.phase !== "held")
+    throw new Error("invalid phase");
   requireUuid(report.report_id, "report_id");
   requireUuid(report.attempt_id, "attempt_id");
   validateAgentRpcExecution(report.authorization);

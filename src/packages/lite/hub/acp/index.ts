@@ -712,6 +712,17 @@ const ACP_MODEL_CAPACITY_RECOVERY_DELAY_MS = envNumber(
   "COCALC_ACP_MODEL_CAPACITY_RECOVERY_DELAY_MS",
   15 * 60_000,
 );
+// A turn that hit a usage limit is held, then resumes when the limit resets
+// (I4): with a margin after the reset the provider gave, or after this long
+// when it gave none. Held again if it is still limited, a few times at most.
+const ACP_LIMIT_HOLD_UNKNOWN_RESET_MS = envNumber(
+  "COCALC_ACP_LIMIT_HOLD_UNKNOWN_RESET_MS",
+  60 * 60_000,
+);
+const ACP_LIMIT_HOLD_MARGIN_MS = 60_000;
+const ACP_LIMIT_HOLD_MAX_RETRIES = 4;
+const LIMIT_HOLD_NOTICE =
+  "**Conversation paused because a usage limit was reached.**";
 const ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS = envNumber(
   "COCALC_ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS",
   5 * 60_000,
@@ -9340,6 +9351,69 @@ async function enqueueFailureRecoveryContinuation({
   return resumed;
 }
 
+/** How long a turn that ended this way is held before it resumes, if it is
+ * held at all: a turn that hit a usage limit. */
+function limitHoldDelayMs(
+  outcome: TurnOutcome | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (outcome?.state !== "failed" || outcome.failure.kind !== "limit") return;
+  const resets_at = outcome.failure.resets_at;
+  return resets_at
+    ? Math.max(
+        ACP_LIMIT_HOLD_MARGIN_MS,
+        resets_at - now + ACP_LIMIT_HOLD_MARGIN_MS,
+      )
+    : ACP_LIMIT_HOLD_UNKNOWN_RESET_MS;
+}
+
+/**
+ * Hold a turn that hit a usage limit: a continuation that runs after the
+ * limit resets, and tells the agent what happened, so it checks the state of
+ * things and carries on (it may have run tools before it stopped). Like any
+ * continuation, a newer message in the conversation comes first instead.
+ */
+async function enqueueLimitHold({
+  client,
+  job,
+  outcome,
+}: {
+  client: ConatClient;
+  job: AcpJobRow;
+  outcome: TurnOutcome;
+}): Promise<AcpJobRow | undefined> {
+  const delayMs = limitHoldDelayMs(outcome);
+  if (delayMs == null) return undefined;
+  const failed = decodeAcpJobRequest(job);
+  // A delivery report starts one turn (the hub records it).
+  if (failed.chat?.agent_rpc_report) return undefined;
+  if (Math.floor(Number(job.recovery_count ?? 0)) >= ACP_LIMIT_HOLD_MAX_RETRIES)
+    return undefined;
+  const ranTools = toolRanOf(outcome) === true;
+  const held = await enqueueRecoveryContinuationForJob({
+    client,
+    job,
+    interruptedNotice: LIMIT_HOLD_NOTICE,
+    recoveryReason: "usage limit hold",
+    delayMs,
+    maxRetries: ACP_LIMIT_HOLD_MAX_RETRIES,
+    recoveryGuidance: [
+      "The previous attempt stopped because a usage limit was reached; CoCalc held this turn until the limit reset.",
+      ranTools
+        ? "It had already run tools before it stopped: check the current state of what it was doing before you continue, and do not repeat completed steps."
+        : "It had not run any tools before it stopped.",
+    ].join(" "),
+  });
+  if (held)
+    logger.info("held ACP turn until its usage limit resets", {
+      failed_op_id: job.op_id,
+      held_op_id: held.op_id,
+      available_at: held.available_at ?? null,
+      recovery_count: held.recovery_count,
+    });
+  return held;
+}
+
 async function recoverPendingFailureRecoveryIntents({
   client,
   limit = 100,
@@ -10210,6 +10284,34 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       });
       return;
     }
+    if (
+      result.terminalState === "error" &&
+      !result.recoveryCode &&
+      limitHoldDelayMs(result.outcome) != null
+    ) {
+      try {
+        resumed = await enqueueLimitHold({
+          client: conatClient,
+          job: getAcpJobByOpId(job.op_id) ?? job,
+          outcome: result.outcome,
+        });
+        // The agent that sent the message hears it is paused, and until when.
+        if (resumed?.available_at)
+          reportFailedAgentMessageTurn(
+            job,
+            refreshedRequest,
+            result.error,
+            result.outcome,
+            { resume_at: resumed.available_at },
+          );
+      } catch (err) {
+        // Not held: the turn is over, and reported as such below.
+        logger.warn("failed to hold an ACP turn for its usage limit", {
+          op_id: job.op_id,
+          err,
+        });
+      }
+    }
     if (result.terminalState === "error" && result.recoveryCode) {
       try {
         resumed = await enqueueFailureRecoveryContinuation({
@@ -10298,6 +10400,8 @@ function reportFailedAgentMessageTurn(
   request: AcpRequest,
   error?: string,
   outcome: TurnOutcome | undefined = parseTurnOutcome(job.outcome_json),
+  /** Held, not over: tell the sender when it resumes (I4). */
+  held?: { resume_at: number },
 ): void {
   // A recovery continuation carries the same message: the turn began when
   // the first of them started, a reply from any of them counts, any of them
@@ -10321,6 +10425,7 @@ function reportFailedAgentMessageTurn(
     outcome,
     tool_ran: chainToolRan(toolRan) ?? null,
     turn_started_at: started,
+    ...(held ? { held } : {}),
   });
   if (report)
     void drainAgentRpcReports(hubApi.agent).catch((err) =>
