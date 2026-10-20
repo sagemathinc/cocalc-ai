@@ -65,6 +65,68 @@ function getDownloadQueryOptions(url: string): {
   }
 }
 
+// A weak validator: the same size and modification time mean the same file
+// for caching purposes.
+export function fileETag({ size, mtime }: { size: number; mtime: Date }): string {
+  return `W/"${size.toString(36)}-${mtime.valueOf().toString(36)}"`;
+}
+
+// RFC 9110 §13.1.5: a range is served only if If-Range still matches;
+// otherwise the whole file is sent, so a cached partial copy is never
+// completed with bytes of a newer version.  Entity tags need a strong match,
+// which our weak ones never are; a date must equal Last-Modified exactly,
+// and only counts if that date is strong (§8.8.2.2: at least a second old,
+// so the file can't have changed again within the same second).
+export function ifRangeMatches({
+  headers,
+  mtime,
+  now = Date.now(),
+}: {
+  headers?: Record<string, unknown>;
+  mtime?: unknown;
+  now?: number;
+}): boolean {
+  const ifRange = headers?.["if-range"];
+  if (typeof ifRange !== "string") return true;
+  const value = ifRange.trim();
+  if (value.startsWith('"') || value.startsWith("W/")) return false;
+  return (
+    mtime instanceof Date &&
+    Number.isFinite(mtime.valueOf()) &&
+    mtime.valueOf() <= now - 1000 &&
+    value === mtime.toUTCString()
+  );
+}
+
+// RFC 9110: If-None-Match (weak comparison) wins; otherwise
+// If-Modified-Since, at the one-second resolution of HTTP dates.
+export function isNotModified({
+  headers,
+  etag,
+  mtime,
+}: {
+  headers?: Record<string, unknown>;
+  etag: string;
+  mtime: Date;
+}): boolean {
+  const inm = headers?.["if-none-match"];
+  if (typeof inm === "string") {
+    const opaque = (tag: string) => tag.trim().replace(/^W\//, "");
+    return inm
+      .split(",")
+      .some((tag) => tag.trim() === "*" || opaque(tag) === opaque(etag));
+  }
+  const ims = headers?.["if-modified-since"];
+  if (typeof ims === "string") {
+    const since = Date.parse(ims);
+    return (
+      Number.isFinite(since) &&
+      Math.floor(mtime.valueOf() / 1000) * 1000 <= since
+    );
+  }
+  return false;
+}
+
 function encodeDownloadErrorHeader(message: string): string {
   return encodeURIComponent(message);
 }
@@ -144,6 +206,7 @@ export async function handleFileDownload({
   readServiceName,
   statSubject,
   account_id,
+  conditional,
   // Idle timeout, not a limit on the duration of a progressing download.
   maxWait = 1000 * 60 * 60,
 }: {
@@ -169,6 +232,10 @@ export async function handleFileDownload({
   // Authenticated by the caller, never taken from HTTP parameters/headers.
   account_id?: string;
   maxWait?: number;
+  // Let browsers keep a private copy and revalidate it (ETag, 304), so an
+  // unchanged image isn't downloaded again on every page reload.  Explicit
+  // downloads are never cached.
+  conditional?: boolean;
 }) {
   url ??= req.url;
   logger.debug("downloading file from project to browser", url);
@@ -233,10 +300,13 @@ export async function handleFileDownload({
     }
   }
 
+  const revalidate = conditional === true && !explicitDownload;
   let range: { start: number; end: number } | undefined;
   if (
     client != null &&
-    (req.method === "HEAD" || typeof req.headers?.range === "string")
+    (req.method === "HEAD" ||
+      typeof req.headers?.range === "string" ||
+      revalidate)
   ) {
     try {
       const stat = await fsClient({
@@ -245,7 +315,12 @@ export async function handleFileDownload({
       }).stat(path);
       if (typeof stat.size === "number" && Number.isSafeInteger(stat.size)) {
         res.setHeader("Accept-Ranges", "bytes");
-        const parsedRange = parseByteRange(req.headers?.range, stat.size);
+        const parsedRange = parseByteRange(
+          revalidate && !ifRangeMatches({ headers: req.headers, mtime: stat.mtime })
+            ? undefined
+            : req.headers?.range,
+          stat.size,
+        );
         if (parsedRange === "unsatisfiable") {
           res.statusCode = 416;
           res.setHeader("Content-Range", `bytes */${stat.size}`);
@@ -264,8 +339,23 @@ export async function handleFileDownload({
           res.setHeader("Content-Length", stat.size);
         }
       }
-      if (stat.mtime instanceof Date && Number.isFinite(stat.mtime.valueOf())) {
-        res.setHeader("Last-Modified", stat.mtime.toUTCString());
+      const mtime =
+        stat.mtime instanceof Date && Number.isFinite(stat.mtime.valueOf())
+          ? stat.mtime
+          : undefined;
+      if (mtime != null) {
+        res.setHeader("Last-Modified", mtime.toUTCString());
+      }
+      if (revalidate && mtime != null && Number.isSafeInteger(stat.size)) {
+        const etag = fileETag({ size: stat.size, mtime });
+        res.setHeader("ETag", etag);
+        res.setHeader("Cache-Control", "private, no-cache");
+        if (range == null && isNotModified({ headers: req.headers, etag, mtime })) {
+          res.statusCode = 304;
+          res.removeHeader?.("Content-Length");
+          res.end();
+          return;
+        }
       }
       if (req.method === "HEAD") {
         res.statusCode ??= 200;

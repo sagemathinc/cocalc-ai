@@ -158,7 +158,9 @@ export function contentResponseHeaders({
     "Origin-Agent-Cluster": "?1",
     "Strict-Transport-Security": "max-age=31536000",
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Cache-Control": "private, no-store",
+    // Browsers may keep a private copy but must revalidate it on every use
+    // (the file handler answers 304 when unchanged); no shared caches.
+    "Cache-Control": "private, no-cache",
     // A default only: pages can override it, and the capability is in
     // location.href anyway.  Scope, lifetime and the epoch are the controls.
     "Referrer-Policy": "no-referrer",

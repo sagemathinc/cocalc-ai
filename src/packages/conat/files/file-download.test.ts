@@ -1,4 +1,10 @@
-import { handleFileDownload, DOWNLOAD_ERROR_HEADER } from "./file-download";
+import {
+  handleFileDownload,
+  DOWNLOAD_ERROR_HEADER,
+  fileETag,
+  ifRangeMatches,
+  isNotModified,
+} from "./file-download";
 import { EventEmitter } from "node:events";
 
 const mockReadFile = jest.fn();
@@ -526,5 +532,165 @@ describe("handleFileDownload", () => {
     expect(mockFsStat).not.toHaveBeenCalled();
     expect(mockReadFile).not.toHaveBeenCalled();
     expect(res.end).toHaveBeenCalled();
+  });
+
+  describe("conditional (revalidated) responses", () => {
+    const mtime = new Date("2026-10-19T03:00:00.250Z");
+    const etag = fileETag({ size: 1234, mtime });
+
+    function fakeRes() {
+      const headers: Record<string, any> = {};
+      const res: any = Object.assign(new EventEmitter(), {
+        statusCode: undefined,
+        headers,
+        setHeader: jest.fn((key, value) => {
+          headers[key] = value;
+        }),
+        removeHeader: jest.fn((key) => {
+          delete headers[key];
+        }),
+        write: jest.fn(() => true),
+        end: jest.fn(),
+        destroy: jest.fn(),
+        destroyed: false,
+        writableEnded: false,
+      });
+      return res;
+    }
+
+    async function get(
+      url: string,
+      reqHeaders: Record<string, string> = {},
+      conditional = true,
+    ) {
+      mockFsStat.mockResolvedValue({ size: 1234, mtime });
+      mockReadFile.mockImplementation(async function* () {
+        yield Buffer.from("png");
+      });
+      const res = fakeRes();
+      await handleFileDownload({
+        req: { method: "GET", url, headers: reqHeaders },
+        res,
+        client: {} as any,
+        conditional,
+      });
+      return res;
+    }
+
+    it("sends validators and a no-cache policy, then 304 for an unchanged file", async () => {
+      const first = await get("/project-1/files/home/user/a.png");
+      expect(first.headers.ETag).toBe(etag);
+      expect(first.headers["Cache-Control"]).toBe("private, no-cache");
+      expect(first.headers["Last-Modified"]).toBe(mtime.toUTCString());
+      expect(first.write).toHaveBeenCalled();
+
+      mockReadFile.mockClear();
+      const again = await get("/project-1/files/home/user/a.png", {
+        "if-none-match": etag,
+      });
+      expect(again.statusCode).toBe(304);
+      expect(again.headers["Content-Length"]).toBeUndefined();
+      expect(again.write).not.toHaveBeenCalled();
+      expect(mockReadFile).not.toHaveBeenCalled();
+    });
+
+    it("sends the file again once it changes", async () => {
+      const res = await get("/project-1/files/home/user/a.png", {
+        "if-none-match": fileETag({ size: 1234, mtime: new Date(mtime.valueOf() - 1) }),
+      });
+      expect(res.statusCode).not.toBe(304);
+      expect(res.write).toHaveBeenCalled();
+    });
+
+    it("never caches explicit downloads, and is off unless asked for", async () => {
+      const download = await get("/project-1/files/home/user/a.png?download", {
+        "if-none-match": etag,
+      });
+      expect(download.statusCode).not.toBe(304);
+      expect(download.headers["Cache-Control"]).toBe("private, no-store");
+      expect(download.headers.ETag).toBeUndefined();
+
+      mockFsStat.mockClear();
+      const plain = await get(
+        "/project-1/files/home/user/a.png",
+        { "if-none-match": etag },
+        false,
+      );
+      expect(plain.statusCode).not.toBe(304);
+      expect(plain.headers.ETag).toBeUndefined();
+      expect(mockFsStat).not.toHaveBeenCalled();
+    });
+
+    it("honors If-Range: a stale validator gets the whole file, a current date gets the range", async () => {
+      const stale = await get("/project-1/files/home/user/a.png", {
+        range: "bytes=0-1",
+        "if-range": etag,
+      });
+      expect(stale.statusCode).not.toBe(206);
+      expect(stale.headers["Content-Length"]).toBe(1234);
+      const oldDate = await get("/project-1/files/home/user/a.png", {
+        range: "bytes=0-1",
+        "if-range": "Mon, 19 Oct 2026 02:00:00 GMT",
+      });
+      expect(oldDate.statusCode).not.toBe(206);
+      const current = await get("/project-1/files/home/user/a.png", {
+        range: "bytes=0-1",
+        "if-range": mtime.toUTCString(),
+      });
+      expect(current.statusCode).toBe(206);
+    });
+
+    it("serves ranges in full rather than answering 304", async () => {
+      const res = await get("/project-1/files/home/user/a.png", {
+        "if-none-match": etag,
+        range: "bytes=0-1",
+      });
+      expect(res.statusCode).toBe(206);
+    });
+  });
+});
+
+describe("ifRangeMatches", () => {
+  const mtime = new Date("2026-10-19T03:00:00.250Z");
+  const headers = { "if-range": mtime.toUTCString() };
+
+  it("trusts a matching date only once it is at least a second old", () => {
+    expect(ifRangeMatches({ headers, mtime, now: mtime.valueOf() + 1000 })).toBe(true);
+    expect(ifRangeMatches({ headers, mtime, now: mtime.valueOf() + 999 })).toBe(false);
+    expect(ifRangeMatches({ headers: {}, mtime, now: mtime.valueOf() })).toBe(true);
+  });
+});
+
+describe("isNotModified", () => {
+  const mtime = new Date("2026-10-19T03:00:00.250Z");
+  const etag = fileETag({ size: 1, mtime });
+
+  it("compares entity tags weakly, in lists and with *", () => {
+    expect(isNotModified({ headers: { "if-none-match": etag }, etag, mtime })).toBe(true);
+    expect(
+      isNotModified({ headers: { "if-none-match": etag.slice(2) }, etag, mtime }),
+    ).toBe(true);
+    expect(
+      isNotModified({ headers: { "if-none-match": `W/"x", ${etag}` }, etag, mtime }),
+    ).toBe(true);
+    expect(isNotModified({ headers: { "if-none-match": "*" }, etag, mtime })).toBe(true);
+    expect(isNotModified({ headers: { "if-none-match": 'W/"x"' }, etag, mtime })).toBe(false);
+  });
+
+  it("falls back to If-Modified-Since at one-second resolution", () => {
+    const at = (iso: string) =>
+      isNotModified({ headers: { "if-modified-since": iso }, etag, mtime });
+    expect(at(mtime.toUTCString())).toBe(true);
+    expect(at("Mon, 19 Oct 2026 02:59:59 GMT")).toBe(false);
+    expect(at("not a date")).toBe(false);
+    // If-None-Match wins when both are present.
+    expect(
+      isNotModified({
+        headers: { "if-none-match": 'W/"x"', "if-modified-since": mtime.toUTCString() },
+        etag,
+        mtime,
+      }),
+    ).toBe(false);
+    expect(isNotModified({ headers: {}, etag, mtime })).toBe(false);
   });
 });
