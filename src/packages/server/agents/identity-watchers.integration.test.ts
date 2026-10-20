@@ -27,7 +27,7 @@ import {
   notifyIdentityWatchers,
   watchIdentity,
 } from "./identity-watchers";
-import { reportRuntime } from "./api";
+import { reportRuntime, reportStatus } from "./api";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -183,5 +183,61 @@ describeDb("agent identity watchers", () => {
     await expect(
       reportRuntime({ ...report, runtime: { kind: "bogus" } as any }),
     ).rejects.toThrow("invalid agent runtime");
+  });
+
+  test("the host's status report reaches watchers, only when it changes, never a credential", async () => {
+    await watchIdentity({
+      account_id: alice,
+      project_id,
+      agent_id,
+      watching: true,
+    });
+    const status = {
+      version: 1 as const,
+      running: 0,
+      queued: 1,
+      unavailable: { reason: "limit" as const, until: Date.now() + 3_600_000 },
+      at: Date.now(),
+    };
+    const report = {
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+      // A credential id smuggled in is dropped, never stored.
+      status: { ...status, credential_id: randomUUID() } as any,
+    };
+    await expect(reportStatus(report)).resolves.toEqual({ registered: true });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(1);
+    expect(withPersonalHome).toHaveBeenCalledWith(alice, {
+      action: "identityChanged",
+      options: {
+        endpoint: { project_id, agent_id },
+        snapshot: expect.objectContaining({ status }),
+      },
+    });
+    const stored = (
+      await getPool().query(
+        "SELECT turn_status FROM agent_identities WHERE agent_id=$1",
+        [agent_id],
+      )
+    ).rows[0].turn_status;
+    expect(stored).toEqual(status);
+    // The same status computed later: no write, no notification.
+    await reportStatus({
+      ...report,
+      status: { ...status, at: Date.now() + 5 },
+    });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(1);
+    // A conversation that isn't a registered agent.
+    await expect(
+      reportStatus({ ...report, thread_id: "not-an-agent" }),
+    ).resolves.toEqual({ registered: false });
+    await expect(
+      reportStatus({ ...report, status: { version: 1, running: -1 } as any }),
+    ).rejects.toThrow("invalid agent status");
   });
 });

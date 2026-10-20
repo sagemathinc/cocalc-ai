@@ -338,6 +338,7 @@ import {
 } from "./agent-subscription-selection";
 import { copyPaymentSelection } from "@cocalc/frontend/chat/payment-selection-store";
 import { WithAgentRuntimeMark } from "./agent-runtime-mark";
+import { AgentStatusMark } from "./agent-status-mark";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -4707,6 +4708,7 @@ export function MyAgentsWorkspacePage({
                 </Text>
               )}
             </Text>
+            <AgentStatusMark status={agent.status} />
           </button>
         </div>
         {!hidden && (

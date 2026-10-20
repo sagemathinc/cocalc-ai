@@ -92,6 +92,39 @@ test("friendly discovery omits internal identifiers", () => {
   assert.doesNotMatch(JSON.stringify(value), /agent_network_id|project_id/);
 });
 
+test("friendly discovery says what a peer is doing", () => {
+  const peer = (name: string, status?: any) => ({
+    member: {
+      kind: "registered" as const,
+      member_id: randomUUID(),
+      endpoint: { project_id: randomUUID(), agent_id: randomUUID() },
+      name,
+      available: true,
+      added_at: new Date().toISOString(),
+      ...(status ? { status } : {}),
+    },
+    networks: [],
+  });
+  const now = Date.now();
+  const value = friendlyAgentDestinations({
+    peers: [
+      peer("matlab", {
+        version: 1,
+        running: 0,
+        queued: 0,
+        unavailable: { reason: "limit", until: now + 3_600_000 },
+        at: now,
+      }),
+      peer("reviewer", { version: 1, running: 1, queued: 0, at: now }),
+      peer("quiet"),
+    ],
+  });
+  const status = value.peers.map((p: any) => p.status);
+  assert.match(status[0], /^unavailable until .+ \(usage limit\)$/);
+  assert.equal(status[1], "busy");
+  assert.equal(status[2], undefined);
+});
+
 test("network proposal and broadcast carry explicit bounded topology", async () => {
   const requests: any[] = [];
   const transport = mock.method(

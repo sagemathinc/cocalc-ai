@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { parseAgentTurnStatus } from "@cocalc/conat/agents/agent-status";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { isActorDenial } from "./actor-denial";
@@ -82,6 +83,12 @@ const REPAIR_INTERVAL_MS = 30 * 60_000;
 const REPAIR_CONCURRENCY = 8;
 const lastRepair = new Map<string, number>();
 
+/** A named agent's status for its network peers, if it has one. */
+function memberStatus(metadata: any) {
+  const status = parseAgentTurnStatus(metadata?.status);
+  return status ? { status } : {};
+}
+
 export function identitySnapshot(identity: AgentIdentity): NamedAgentSnapshot {
   return {
     path: identity.path,
@@ -89,6 +96,7 @@ export function identitySnapshot(identity: AgentIdentity): NamedAgentSnapshot {
     appearance: identity.appearance ?? null,
     runtime: identity.runtime ?? null,
     available: !identity.disabled_at,
+    status: parseAgentTurnStatus(identity.turn_status) ?? null,
   };
 }
 
@@ -99,6 +107,7 @@ const snapshotKey = (value: Partial<NamedAgentSnapshot>) =>
     value.appearance ?? null,
     value.runtime ?? null,
     value.available !== false,
+    value.status ?? null,
   ]);
 
 export class PersonalAgentStore {
@@ -182,12 +191,15 @@ export class PersonalAgentStore {
       available: snapshotAvailable,
       appearance,
       runtime,
+      status: rawStatus,
       ...metadata
     } = row.metadata ?? {};
+    const status = parseAgentTurnStatus(rawStatus);
     return {
       ...metadata,
       ...(appearance ? { appearance } : {}),
       ...(runtime ? { runtime } : {}),
+      ...(status ? { status } : {}),
       account_id: row.account_id,
       name: row.name,
       endpoint: { project_id: row.project_id, agent_id: row.agent_id },
@@ -249,6 +261,7 @@ export class PersonalAgentStore {
       appearance: snapshot.appearance ?? null,
       runtime: snapshot.runtime ?? null,
       available: snapshot.available !== false,
+      status: parseAgentTurnStatus(snapshot.status) ?? null,
     };
     if (!value.path || !value.thread_id)
       throw new Error("invalid agent identity snapshot");
@@ -323,6 +336,7 @@ export class PersonalAgentStore {
             appearance: row.metadata?.appearance ?? null,
             runtime: row.metadata?.runtime ?? null,
             available: false,
+            status: row.metadata?.status ?? null,
           };
         }
         if (snapshotKey(snapshot) !== snapshotKey(row.metadata ?? {}))
@@ -1038,6 +1052,7 @@ export class PersonalAgentStore {
         name: namedRow?.name,
         project_title: namedRow?.metadata?.project_title,
         thread_title: namedRow?.metadata?.thread_title,
+        ...memberStatus(namedRow?.metadata),
         available,
         added_at: iso(row.added_at),
         removed_at: row.removed_at ? iso(row.removed_at) : null,
@@ -1496,6 +1511,7 @@ export class PersonalAgentStore {
           name: row.registered_name,
           project_title: row.registered_metadata?.project_title,
           thread_title: row.registered_metadata?.thread_title,
+          ...memberStatus(row.registered_metadata),
           available: !!row.registered_name,
           added_at: iso(row.added_at),
           removed_at: null,

@@ -630,6 +630,50 @@ describeDb("account-home Agent Networks", () => {
     ).rejects.toThrow("external_identity_unavailable");
   });
 
+  test("a peer's status reaches discovery and the name book, nothing more", async () => {
+    await store.createNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        title: "Status",
+        members: [
+          { kind: "registered", endpoint: source },
+          { kind: "registered", endpoint: peer },
+        ],
+      },
+      8,
+    );
+    const status = {
+      version: 1 as const,
+      running: 0,
+      queued: 0,
+      unavailable: { reason: "limit" as const, until: Date.now() + 60_000 },
+      at: Date.now(),
+    };
+    await store.applyIdentityChange(account, peer, {
+      path: "/home/user/test.chat",
+      thread_id: peer.agent_id,
+      available: true,
+      status: { ...status, credential: "Max A" } as any,
+    });
+    const found = await store.discover(account, source, run_id);
+    expect(
+      found.peers.find(({ member }) => member.member_id === peer.agent_id)
+        ?.member,
+    ).toMatchObject({ name: "reviewer", status });
+    expect(JSON.stringify(found)).not.toMatch(/Max A/);
+    const named = (await store.names(account)).find(
+      (agent) => agent.endpoint.agent_id === peer.agent_id,
+    );
+    expect(named?.status).toEqual(status);
+    // An agent without a status says nothing.
+    expect(
+      found.peers.find(
+        ({ member }) => member.member_id === secondPeer.agent_id,
+      ),
+    ).toBeUndefined();
+  });
+
   test("discovery excludes removed peers and an approved re-add revives the member", async () => {
     const member = { kind: "registered" as const, endpoint: peer };
     const network = await store.createNetwork(

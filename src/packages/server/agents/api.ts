@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AgentApi, AgentHumanAuth } from "@cocalc/conat/hub/api/agent";
+import {
+  parseAgentTurnStatus,
+  sameAgentTurnStatus,
+} from "@cocalc/conat/agents/agent-status";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
@@ -565,6 +569,31 @@ export const describeNetworkSelf: AgentApi["describeNetworkSelf"] = async (
     },
   })) as import("@cocalc/conat/agents/personal").AgentNetworkDiscovery;
   return directory.self;
+};
+
+// Host-attested: the project host running an agent's turns reports what it
+// is doing. Kept on the identity, so it reaches everyone who named the agent
+// (destinations, the Agents page) the way its runtime and appearance do.
+export const reportStatus: AgentApi["reportStatus"] = async (opts) => {
+  await assertLocalAgentProject(opts.project_id);
+  await assertProjectHostAgentTokenAccess({
+    host_id: opts.host_id!,
+    account_id: opts.account_id!,
+    project_id: opts.project_id,
+  });
+  const status = parseAgentTurnStatus(opts.status);
+  if (!status) throw new Error("invalid agent status");
+  const db = agentStore();
+  const agent = await db.find(opts.project_id, opts.path, opts.thread_id);
+  if (!agent) return { registered: false };
+  if (sameAgentTurnStatus(parseAgentTurnStatus(agent.turn_status), status))
+    return { registered: true };
+  await db.query(
+    "UPDATE agent_identities SET turn_status=$2::jsonb WHERE agent_id=$1",
+    [agent.agent_id, JSON.stringify(status)],
+  );
+  void notifyIdentityWatchers(agent.agent_id);
+  return { registered: true };
 };
 
 // Host-attested: the project host admitting a turn reports the agent's

@@ -473,6 +473,73 @@ export function getAcpJobByOpId(op_id: string): AcpJobRow | undefined {
     | undefined;
 }
 
+/** Conversations whose jobs changed since `since` (ms), each with the
+ * account of its latest job. */
+export function listAcpThreadsChangedSince(since: number): {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  account_id: string;
+}[] {
+  ensureInit();
+  const rows = getAcpDatabase()
+    .prepare(
+      `SELECT project_id, path, thread_id, account_id FROM ${TABLE}
+       WHERE updated_at > ? ORDER BY updated_at DESC`,
+    )
+    .all(since) as {
+    project_id: string;
+    path: string;
+    thread_id: string;
+    account_id: string;
+  }[];
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = JSON.stringify([row.project_id, row.path, row.thread_id]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** What a conversation's jobs say now: how many run and wait, and the
+ * latest that ended. */
+export function acpThreadJobSummary({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): { running: number; queued: number; last?: AcpJobRow } {
+  ensureInit();
+  const db = getAcpDatabase();
+  const counts = db
+    .prepare(
+      `SELECT SUM(state = 'running') AS running, SUM(state = 'queued') AS queued
+       FROM ${TABLE} WHERE project_id = ? AND path = ? AND thread_id = ?`,
+    )
+    .get(project_id, path, thread_id) as {
+    running?: number | null;
+    queued?: number | null;
+  };
+  const last = db
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state IN ('completed', 'error', 'canceled', 'interrupted')
+         AND finished_at IS NOT NULL
+       ORDER BY finished_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(project_id, path, thread_id) as AcpJobRow | undefined;
+  return {
+    running: Number(counts?.running ?? 0),
+    queued: Number(counts?.queued ?? 0),
+    ...(last ? { last } : {}),
+  };
+}
+
 export function listAcpJobsByRecoveryParent({
   recovery_parent_op_id,
 }: {

@@ -87,6 +87,7 @@ export const agent = {
   copyPaymentSelection: authFirstRequireAccount,
   resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
   reportRuntime: authFirstRequireHostWithAccountTarget,
+  reportStatus: authFirstRequireHostWithAccountTarget,
   describeNetworkSelf: authFirstRequireHostWithAccountTarget,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
@@ -597,6 +598,18 @@ export interface AgentApi {
   ): Promise<
     import("@cocalc/conat/agents/personal").AgentNetworkSelf | undefined
   >;
+  /** Host running an agent's turns: what it is doing (busy, waiting,
+   * unavailable until a limit resets), when that changes. Whether the
+   * conversation is a registered agent, so the host stops reporting one
+   * that isn't. */
+  reportStatus(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      status: import("@cocalc/conat/agents/agent-status").AgentTurnStatus;
+    },
+  ): Promise<{ registered: boolean }>;
   /** Host admitting a turn: which runtime the agent uses. */
   reportRuntime(
     opts: AgentHostAuth & {
