@@ -1893,6 +1893,12 @@ async function hubCallByName<T>(
       "system.getNames",
       "projects.createProject",
       "projects.listProjectSummaries",
+      "notifications.list",
+      "notifications.counts",
+      "notifications.summary",
+      "notifications.markRead",
+      "notifications.save",
+      "notifications.archive",
     ].includes(name)
   ) {
     return await callHubWithApiKey<T>({

@@ -99,6 +99,8 @@ export default function initUpgrade(
     ) {
       throw Error(`user does not have ${accessType} access to project`);
     }
+    // The client may have gone during the access checks.
+    if (socket.destroyed) return;
     projectProxyHandlers.handleUpgrade(req, socket, head);
   }
 

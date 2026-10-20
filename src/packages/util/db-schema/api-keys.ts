@@ -6,6 +6,7 @@ export type Action = "get" | "delete" | "create" | "edit";
 export const API_KEY_CAPABILITIES = [
   "account:read",
   "api-key:revoke:request",
+  "notifications:manage",
   "project:create",
   "project:list",
   "project:read",

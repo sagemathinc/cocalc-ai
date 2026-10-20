@@ -1,16 +1,7 @@
 import register from "./register";
-import HTML from "@cocalc/frontend/components/html-ssr";
+import HtmlOutput from "../html-output";
 
-export default function Html({
-  value,
-}: {
-  value: string;
-  id?: string;
-  index?: number;
-  trust?: boolean;
-}) {
-  return <HTML value={value} />;
-}
+export default HtmlOutput;
 
 // HTML should definitely have higher priority than
 // LaTeX.  For example, Julia tables are output as both
@@ -20,4 +11,4 @@ export default function Html({
 // But Latex should have higher priority than HTML, e.g.,
 // sage show(...) is much better to just render using latex!
 // SIGH.
-register("text/html", 5, Html);
+register("text/html", 5, HtmlOutput);

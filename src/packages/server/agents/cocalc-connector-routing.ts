@@ -119,6 +119,27 @@ export const sensorConnectors = {
   beginCli: async (
     opts: Parameters<InterBayAgentConnectorApi["beginCliTurn"]>[0],
   ) => await (await accountHomeApi(opts.account_id)).beginCliTurn(opts),
+  /** Whether the account gave this agent a connector (no token is issued). */
+  hasCli: async (opts: {
+    account_id: string;
+    agent_id: string;
+    source_project_id: string;
+    connector: string;
+  }): Promise<boolean> =>
+    (
+      await (
+        await accountHomeApi(opts.account_id)
+      ).listCliGrants({
+        account_id: opts.account_id,
+        agent_id: opts.agent_id,
+        source_project_id: opts.source_project_id,
+      })
+    ).some(
+      (grant) =>
+        grant.connector === opts.connector &&
+        grant.enabled &&
+        !!grant.connection_id,
+    ),
 };
 
 /**

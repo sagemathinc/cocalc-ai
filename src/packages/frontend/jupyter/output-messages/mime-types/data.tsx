@@ -18,7 +18,17 @@ export const Data: React.FC<DataProps> = React.memo((props) => {
     return null;
   }
 
-  const types = data.keySeq().toJS();
+  const type = selectMimeType(data.keySeq().toJS(), kernelspec, trust);
+  const H = getHandler(type);
+  return <H type={type} value={data.get(type)} data={data} {...props} />;
+}, shouldMemoize);
+
+// The one representation of an output's MIME bundle that gets rendered.
+export function selectMimeType(
+  types: string[],
+  kernelspec: KernelSpec | undefined,
+  trust: boolean | undefined,
+): string {
   let type: string | undefined = undefined;
   if (!trust) {
     // When viewing a non-trusted notebook we do some heuristics to try to provide a better
@@ -31,9 +41,8 @@ export const Data: React.FC<DataProps> = React.memo((props) => {
   if (type == null) {
     throw Error("bug");
   }
-  const H = getHandler(type);
-  return <H type={type} value={data.get(type)} data={data} {...props} />;
-}, shouldMemoize);
+  return type;
+}
 
 function getUntrustedType(kernelspec: KernelSpec | undefined, types: string[]) {
   if (kernelspec == null) {

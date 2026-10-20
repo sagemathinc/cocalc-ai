@@ -685,7 +685,7 @@ Check these items before starting the move:
 5. The user understands that \`/tmp\` files, previous host-local snapshots, and
    files omitted from the backup will not follow the project. Review any
    skipped-file warning before confirming the move.
-6. SSH access may need to be configured again after the move.
+6. SSH access must be reconfigured after the move.
 
 If the move changes backup region, CoCalc restores from the current backup
 region, creates a new backup in the destination region, then switches the

@@ -18,20 +18,60 @@ import { renderToString } from "react-dom/server";
 import { createElement, CSSProperties } from "react";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import type { CoCalcJupyter } from "@cocalc/jupyter/ipynb/parse";
+import {
+  PASSIVE_DOCUMENT_CSP,
+  escapeHtmlText,
+} from "@cocalc/frontend/misc/print-document";
+import { STATIC_RESIZE_LISTENER } from "@cocalc/frontend/jupyter/output-messages/autosized-iframe";
 
-export default function exportToHTML({
-  title,
-  ipynb,
-  cocalcJupyter,
-  fontSize,
-  style,
-}: {
+// Markdown images carry max-height:100% (from the static slate image element).
+// When Chrome moves such an image to the next printed page, it resolves that
+// percentage against the stretched flex row of the cell, reserves too little
+// height, and paints the image over the cells that follow. Nothing in a
+// printed notebook needs that cap.
+export const PRINT_CSS =
+  "@media print { .cocalc-slate-render img { max-height: none !important; } }";
+
+interface Options {
   title?: string;
   ipynb?: string;
   cocalcJupyter?: CoCalcJupyter;
   fontSize?: number;
   style?: CSSProperties;
+}
+
+export default function exportToHTML({
+  passive,
+  ...opts
+}: Options & {
+  // Block all scripts in the resulting document, e.g., for an untrusted
+  // notebook, whose HTML outputs are included unsanitized.  (To print in a
+  // same-origin popup use writePassiveHtmlDocument, which also removes
+  // navigation and frames.)
+  passive?: boolean;
 }): string {
+  const { title, head, body } = exportToHTMLParts(opts);
+  return `<html>
+<head>
+${passive ? PASSIVE_DOCUMENT_CSP : ""}
+<title>${escapeHtmlText(title)}</title>
+${head}
+</head>
+<body>
+${body}
+</body>
+`;
+}
+
+// The document's title, trusted <head> markup (our stylesheets), and the
+// rendered notebook body.
+export function exportToHTMLParts({
+  title,
+  ipynb,
+  cocalcJupyter,
+  fontSize,
+  style,
+}: Options): { title: string; head: string; body: string } {
   let notebook;
   if (ipynb != null) {
     if (cocalcJupyter != null) {
@@ -40,6 +80,9 @@ export default function exportToHTML({
     notebook = createElement(NBViewer, {
       key: "x",
       content: ipynb,
+      // Export renders the notebook as its owner sees it; printing an
+      // untrusted notebook is protected separately, in the print path.
+      trust: true,
       fontSize,
       style,
     });
@@ -47,6 +90,7 @@ export default function exportToHTML({
     notebook = createElement(Notebook, {
       key: "x",
       cocalcJupyter,
+      trust: true,
       fontSize,
       style,
     });
@@ -58,6 +102,7 @@ export default function exportToHTML({
     {
       value: {
         noSanitize: true,
+        staticExport: true,
         is_visible: true,
         disableMarkdownCodebar: true,
         disableExtraButtons: true,
@@ -69,19 +114,17 @@ export default function exportToHTML({
   let body = renderToString(element);
   const { codemirror, antd, katex } = getVersions();
 
-  return `<html>
-<head>
-<title>${title}</title>
-<meta charset="utf-8" />
+  return {
+    title: title ?? "",
+    head: `<meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/${codemirror}/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@${katex}/dist/katex.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@${antd}/dist/antd.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-</head>
-<body>
-${body}
-</body>
-`;
+<style>${PRINT_CSS}</style>
+${STATIC_RESIZE_LISTENER}`,
+    body,
+  };
 }
 
 // TODO regarding antd -- see https://github.com/sagemathinc/cocalc/issues/6305

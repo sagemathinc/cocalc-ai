@@ -136,6 +136,7 @@ import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-sett
 import { getProjectRecoveryNotificationConfiguration } from "@cocalc/server/projects/recovery-notification-configuration";
 import { is_valid_email_address, isValidUUID } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
+import { sessionLimitSettingsError } from "@cocalc/util/db-schema/site-defaults";
 import {
   displayNameFromParts,
   legacyNamePartsFromDisplayName,
@@ -301,6 +302,7 @@ import {
   getActiveUserMapHistorySnapshot as getActiveUserMapHistorySnapshotLocal,
 } from "@cocalc/server/active-user-map-history";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
+import { SESSION_LIFETIME_WARNING_MS } from "@cocalc/server/auth/session-expiry";
 import {
   recordNewAuthSession,
   type AuthSessionFactorLevel,
@@ -325,7 +327,7 @@ import {
 import {
   getBayPublicOrigin,
   getClusterBayPublicOrigins,
-  getSitePublicOrigin,
+  getSiteBrowserOrigins,
 } from "@cocalc/server/bay-public-origin";
 import { conat } from "@cocalc/backend/conat";
 import {
@@ -351,6 +353,7 @@ import {
   getUxLatencySlaThresholdsFromSettings,
   getUxLatencySummary as getUxLatencySummary0,
   recordUxLatencyEvent as recordUxLatencyEvent0,
+  type UxLatencySlaThresholds,
 } from "@cocalc/server/monitoring/ux-latency";
 import {
   DEFAULT_ADMIN_ALERT_WINDOW_HOURS,
@@ -951,6 +954,32 @@ export async function getSiteSettingsOnSeed({
   };
 }
 
+const SESSION_LIMIT_SETTINGS = [
+  "session_idle_timeout_days",
+  "session_max_lifetime_days",
+] as const;
+
+// The two session limits are checked together, as they will be after this
+// update: each in range, and the idle timeout at most the maximum lifetime.
+async function assertSessionLimitSettings(
+  updates: SiteSettingUpdate[],
+): Promise<void> {
+  if (!updates.some(({ name }) => SESSION_LIMIT_SETTINGS.includes(name as any)))
+    return;
+  const next: Record<string, string> = {};
+  for (const name of SESSION_LIMIT_SETTINGS) {
+    const update = updates.filter((u) => u.name === name).pop();
+    const current =
+      update?.value ??
+      (await callback2(db().get_server_setting, { name })) ??
+      "";
+    // An unset setting means its default.
+    next[name] = `${current}`.trim() || siteSettingSpec(name)?.default;
+  }
+  const error = sessionLimitSettingsError(next);
+  if (error) throw Error(error);
+}
+
 async function assertSiteSettingWritable(name: string): Promise<void> {
   const { rows } = await getPool().query(
     "SELECT readonly FROM server_settings WHERE name=$1 LIMIT 1",
@@ -1244,6 +1273,7 @@ export async function setSiteSettingsOnSeed({
     );
   }
   const updates = settings.map(normalizeSiteSettingUpdate);
+  await assertSessionLimitSettings(updates);
   const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
     isSignupEmailDomainPolicySetting(name),
   )
@@ -1943,6 +1973,91 @@ function uxLatencyMetric({
   );
 }
 
+export interface UxLatencyHealthAssessment {
+  metric: string;
+  segment?: string;
+  p95_ms: number | null;
+  count: number;
+  min_samples: number;
+  warning_ms: number;
+  critical_ms: number;
+  level: LaunchHealthLevel;
+}
+
+// The browser-observed latency SLAs behind the "ux-latency" launch health
+// check. Each metric is "unknown" until it has min_samples samples; callers
+// that act on the level (such as the fleet rollout gate) may ask for more.
+export function uxLatencyHealthAssessments({
+  summary,
+  sla,
+  min_samples = 1,
+}: {
+  summary?: UxLatencySummary;
+  sla: UxLatencySlaThresholds;
+  min_samples?: number;
+}): UxLatencyHealthAssessment[] {
+  const specs: Array<{
+    metric: string;
+    segment?: string;
+    warning_ms: number;
+    min_samples?: number;
+  }> = [
+    {
+      metric: "project_start_running",
+      segment: "warm_provisioned",
+      warning_ms: sla.project_start_warm_p95_ms,
+      min_samples: 10,
+    },
+    {
+      metric: "project_terminal_ready",
+      warning_ms: sla.project_terminal_ready_p95_ms,
+    },
+    {
+      metric: "project_jupyter_ready",
+      warning_ms: sla.project_jupyter_ready_p95_ms,
+    },
+    {
+      metric: "project_exec_ready",
+      segment: "warm",
+      warning_ms: sla.project_exec_ready_p95_ms,
+    },
+    {
+      metric: UX_LATENCY_HEALTH_METRICS.fileVisible,
+      warning_ms: sla.file_open_visible_p95_ms,
+    },
+    {
+      metric: UX_LATENCY_HEALTH_METRICS.fileSyncReady,
+      warning_ms: sla.file_open_sync_ready_p95_ms,
+    },
+  ];
+  return specs.map((spec) => {
+    const row = uxLatencyMetric({
+      summary,
+      metric: spec.metric,
+      segment: spec.segment,
+    });
+    const minSamples = Math.max(1, spec.min_samples ?? 1, min_samples);
+    const p95 = row?.p95_ms ?? null;
+    const count = row?.count ?? 0;
+    return {
+      metric: spec.metric,
+      ...(spec.segment ? { segment: spec.segment } : {}),
+      p95_ms: p95,
+      count,
+      min_samples: minSamples,
+      warning_ms: spec.warning_ms,
+      critical_ms: spec.warning_ms * 2,
+      level: classifyLatencyP95Health({
+        p95,
+        sample_count: count,
+        min_samples: minSamples,
+        warning_ms: spec.warning_ms,
+        critical_ms: spec.warning_ms * 2,
+      }),
+    };
+  });
+}
+
 function launchHealthKillSwitches(
   settings: Record<string, any> | undefined,
 ): LaunchHealthKillSwitches {
@@ -2310,40 +2425,11 @@ export async function getLaunchHealth({
         : backups.bay_backup.enabled
           ? "warning"
           : "warning";
-  const latencyLevel = worstLaunchHealthLevel([
-    classifyLatencyP95Health({
-      p95: lifecycleP95,
-      sample_count: lifecycleMetric?.count,
-      min_samples: 10,
-      warning_ms: sla.project_start_warm_p95_ms,
-      critical_ms: sla.project_start_warm_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: terminalP95,
-      warning_ms: sla.project_terminal_ready_p95_ms,
-      critical_ms: sla.project_terminal_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: jupyterP95,
-      warning_ms: sla.project_jupyter_ready_p95_ms,
-      critical_ms: sla.project_jupyter_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: execP95,
-      warning_ms: sla.project_exec_ready_p95_ms,
-      critical_ms: sla.project_exec_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: fileVisibleP95,
-      warning_ms: sla.file_open_visible_p95_ms,
-      critical_ms: sla.file_open_visible_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: fileSyncReadyP95,
-      warning_ms: sla.file_open_sync_ready_p95_ms,
-      critical_ms: sla.file_open_sync_ready_p95_ms * 2,
-    }),
-  ]);
+  const latencyLevel = worstLaunchHealthLevel(
+    uxLatencyHealthAssessments({ summary: latency, sla }).map(
+      (assessment) => assessment.level,
+    ),
+  );
 
   const checks: LaunchHealthCheck[] = [
     launchHealthCheck({
@@ -2784,6 +2870,46 @@ export async function getFundingApprovalReadiness({
   await assertAdmin(account_id);
   if (force === true) await initCourseFundingApprovalService();
   return await getFundingApprovalReadiness0({ force: force === true });
+}
+
+export async function getSessionLifetime({
+  account_id,
+  session_hash,
+}: {
+  account_id?: string;
+  session_hash?: string | null;
+} = {}): Promise<{
+  max_expire?: string;
+  warn_before_ms: number;
+  renewable: boolean;
+}> {
+  const hash = `${session_hash ?? ""}`.trim();
+  if (!account_id || !hash) {
+    return { warn_before_ms: SESSION_LIFETIME_WARNING_MS, renewable: false };
+  }
+  const row = (
+    await getPool().query(
+      `
+        SELECT r.max_expire,
+               EXISTS (
+                 SELECT 1 FROM account_impersonation_sessions i
+                  WHERE i.session_hash = r.hash
+               ) AS impersonation
+          FROM remember_me r
+         WHERE r.hash = $1::CHAR(127)
+           AND r.account_id = $2::UUID
+           AND r.expire > NOW()
+      `,
+      [hash.slice(0, 127), account_id],
+    )
+  ).rows[0];
+  return {
+    max_expire: row?.max_expire
+      ? new Date(row.max_expire).toISOString()
+      : undefined,
+    warn_before_ms: SESSION_LIFETIME_WARNING_MS,
+    renewable: row != null && !row.impersonation,
+  };
 }
 
 export async function getBillingAuthorityStatus({
@@ -8254,8 +8380,9 @@ async function getBrowserOriginsForProjectHosts(
 ): Promise<string[] | undefined> {
   const origins = new Set<string>([new URL(url).origin]);
   try {
-    const site = await getSitePublicOrigin();
-    if (site) origins.add(site);
+    for (const site of await getSiteBrowserOrigins()) {
+      origins.add(site);
+    }
     for (const origin of Object.values(
       await getClusterBayPublicOrigins({ strict: true }),
     )) {

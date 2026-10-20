@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { recoveryFailureReason } from "./recovery-failure-reason";
 
 it.each([
@@ -37,4 +38,26 @@ it("does not claim a generic permission error is a repository credential failure
     recoveryFailureReason(new Error("AccessDenied"), "backup"),
   ).toBeUndefined();
   expect(recoveryFailureReason(new Error("503"), "snapshot")).toBeUndefined();
+});
+
+it("classifies the shared managed-egress block message for backup uploads", () => {
+  const message = formatManagedEgressBlockedMessage({
+    category: "backup-upload",
+    policy: {
+      blocked_by: "7d",
+      managed_egress_7d_bytes: 2100,
+      egress_7d_bytes: 2000,
+    },
+    blocked: "Backups of this project are paused.",
+  });
+  expect(
+    recoveryFailureReason(new Error(`backup failed: ${message}`), "backup"),
+  ).toBe("managed_backup_egress_policy_blocked");
+  // another category's block is not a backup-policy block
+  expect(
+    recoveryFailureReason(
+      new Error(message.replace("category=backup-upload", "category=ssh")),
+      "backup",
+    ),
+  ).toBeUndefined();
 });

@@ -282,9 +282,10 @@ export async function pairComputer({
       `${origin} asks to connect this computer:`,
       `  account:  ${clean(view.account_label, 200).replace(/\s+/g, " ")}`,
       `  name:     ${view.name}`,
-      `  access:   FULL: anything running in one of that account's projects`,
-      `            can run commands here as ${userInfo().username}, with all of`,
-      `            your access, until it is revoked in CoCalc`,
+      `  access:   FULL: anything running in the one project chosen for it in`,
+      `            CoCalc, agents included, can run commands here as`,
+      `            ${userInfo().username}, with all of your access, until it is`,
+      `            revoked in CoCalc`,
     ].join("\n"),
   );
   // Always asked: connecting gives that project full trust here.

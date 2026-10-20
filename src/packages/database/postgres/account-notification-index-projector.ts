@@ -53,6 +53,7 @@ type ExistingProjection = {
   notification_id: string;
   summary: Record<string, any>;
   read_state: Record<string, any>;
+  updated_at: Date;
 };
 
 async function coalescedProjection(opts: {
@@ -78,7 +79,7 @@ async function coalescedProjection(opts: {
     return;
   }
   const { rows } = await opts.db.query<ExistingProjection>(
-    `SELECT notification_id, summary, read_state
+    `SELECT notification_id, summary, read_state, updated_at
        FROM account_notification_index
       WHERE account_id = $1::UUID
         AND kind = 'account_notice'
@@ -125,6 +126,15 @@ function projectedSummary(opts: {
     },
   };
 }
+
+const SETTLED_ATTENTION_STATES = new Set([
+  "answered",
+  "declined",
+  "canceled",
+  "resolved",
+  "expired",
+  "superseded",
+]);
 
 export interface DrainAccountNotificationIndexProjectionResult {
   bay_id: string;
@@ -257,7 +267,31 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
     existing: existingProjection,
     created_at: payload.created_at ?? event.created_at.toISOString(),
   });
+  // A question that was answered (or no longer needs anyone) is cleared
+  // automatically: answering it is enough, without also marking the notice
+  // read. "stale" still needs the person: the agent did not take the answer.
+  const attentionSettled =
+    payload.summary?.notice_type === "codex_attention" &&
+    SETTLED_ATTENTION_STATES.has(`${payload.summary?.attention_state ?? ""}`);
+  // Workers may apply one question's events out of order. An older,
+  // unsettled event must not reopen a question that a newer event settled.
+  if (
+    payload.summary?.notice_type === "codex_attention" &&
+    !attentionSettled &&
+    SETTLED_ATTENTION_STATES.has(
+      `${existingProjection?.summary?.attention_state ?? ""}`,
+    ) &&
+    existingProjection!.updated_at.getTime() > event.created_at.getTime()
+  ) {
+    return {
+      inserted_rows: 0,
+      deleted_rows: 0,
+      affected_account_id: undefined,
+      affected_notification_id: undefined,
+    };
+  }
   const shouldReplaceReadState =
+    attentionSettled ||
     !policy.creates_in_app ||
     (policy.creates_in_app &&
       existingProjection?.read_state?.archived === true) ||
@@ -278,6 +312,9 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
        project_id = EXCLUDED.project_id,
        summary = EXCLUDED.summary,
        read_state = CASE
+         WHEN $9::BOOLEAN AND $10::BOOLEAN THEN
+           COALESCE(account_notification_index.read_state, '{}'::JSONB)
+             || EXCLUDED.read_state
          WHEN $9::BOOLEAN THEN EXCLUDED.read_state
          ELSE account_notification_index.read_state
        END,
@@ -290,11 +327,16 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
         payload.source_project_id ?? null,
         JSON.stringify(projection.summary),
         JSON.stringify(
-          policy.creates_in_app ? {} : { read: true, archived: true },
+          policy.creates_in_app && !attentionSettled
+            ? {}
+            : { read: true, archived: true },
         ),
         payload.created_at ?? event.created_at.toISOString(),
         event.created_at,
         shouldReplaceReadState,
+        // Settling a question sets read and archived, keeping the person's
+        // own fields (saved, delivery ids) instead of replacing them.
+        attentionSettled,
       ],
     );
   }

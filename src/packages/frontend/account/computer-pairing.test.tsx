@@ -71,7 +71,7 @@ test("only projects whose one collaborator is you can have a computer", async ()
 
 test("a request names the computer and its project; the line is the home bay's", async () => {
   render(<ConnectComputer defaultProjectId={SOLO} />);
-  await userEvent.type(screen.getByPlaceholderText("name, e.g. laptop"), "m1");
+  await userEvent.type(screen.getByLabelText("Computer name"), "m1");
   await userEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(mockApi.createComputerRequest).toHaveBeenCalledWith({
     name: "m1",
@@ -122,4 +122,19 @@ test("approving says the rule", () => {
   expect(approvalText({ machine: { user: "sage" } } as any, "Solo")).toBe(
     'Anything running in the project "Solo" (agents included) will be able to run any command there as sage, with all of that user\'s access, until you revoke it.',
   );
+});
+
+test("two forms at once: each label names its own field", () => {
+  render(
+    <>
+      <ConnectComputer />
+      <ConnectComputer />
+    </>,
+  );
+  const names = screen.getAllByLabelText("Computer name");
+  expect(names).toHaveLength(2);
+  expect(names[0]).not.toBe(names[1]);
+  const projects = screen.getAllByLabelText("Project it serves");
+  expect(projects).toHaveLength(2);
+  expect(projects[0]).not.toBe(projects[1]);
 });

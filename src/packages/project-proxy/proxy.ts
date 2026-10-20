@@ -372,9 +372,14 @@ export function createProxyHandlers({
     socket: Socket,
     head: Buffer,
   ) => {
+    guardUpgradeSocket(socket);
     try {
       await rewriteRequest?.(req);
+      // A client gone during an await must not open an upstream that
+      // nothing will close (proxy.ws only cleans up on a later close).
+      if (socket.destroyed) return;
       const { target, handled } = await resolveTarget(req);
+      if (socket.destroyed) return;
       if (!handled || !target) {
         throw new Error("not matched");
       }
@@ -405,6 +410,22 @@ export function createProxyHandlers({
 }
 
 // Express-friendly wrapper used by project-host.
+const guardedUpgradeSockets = new WeakSet<Duplex>();
+
+// Node's HTTP server leaves an upgraded socket without an 'error' listener,
+// and http-proxy adds one only once proxy.ws runs. A client that resets its
+// connection while an upgrade handler awaits (rewrite, route lookup) would
+// raise an uncaught ECONNRESET and kill the process serving every
+// connection. Call this synchronously, before any await.
+export function guardUpgradeSocket(socket: Duplex): void {
+  if (guardedUpgradeSockets.has(socket)) return;
+  guardedUpgradeSockets.add(socket);
+  socket.on("error", (err) => {
+    logger.debug("upgrade socket error", { err: `${err}` });
+    socket.destroy();
+  });
+}
+
 export function attachProjectProxy({
   httpServer,
   httpServers,
@@ -540,14 +561,25 @@ export function attachProjectProxy({
   app.use(handleRequest);
 
   const handleUpgrade = async (req, socket, head) => {
-    await rewriteRequest?.(req);
+    guardUpgradeSocket(socket);
+    try {
+      await rewriteRequest?.(req);
+    } catch (err) {
+      // Nothing can route a request whose rewrite failed (e.g. a malformed
+      // URL); an upgraded socket has no HTTP timeout, so close it.
+      logger.debug("upgrade rewrite failed", { err: `${err}` });
+      socket.destroy();
+      return;
+    }
     // Only proxy project-scoped websocket upgrades.
-    if (!parseProjectId(req.url)) return;
+    if (socket.destroyed || !parseProjectId(req.url)) return;
     try {
       const { target, handled } = await resolveTarget(req);
       if (!handled || !target) {
         return;
       }
+      // Before onUpgradeAuthorized: its listeners would miss an earlier close.
+      if (socket.destroyed) return;
       onUpgradeAuthorized?.(req, socket);
       if (socket.destroyed) return;
       assertLive(req);

@@ -5,8 +5,13 @@
 
 import { createHash } from "node:crypto";
 import { agentStore } from "./store";
+import {
+  AgentRpcCapacityError,
+  type AgentRpcAdmissionScope,
+} from "./admission-capacity";
 
-export type AgentRpcAdmissionKind = "permit" | "preparation";
+import type { AgentRpcAdmissionKind } from "./admission-capacity";
+export type { AgentRpcAdmissionKind } from "./admission-capacity";
 
 export interface AgentRpcAdmissionState {
   token_id: string;
@@ -23,19 +28,55 @@ const MAX_ACTIVE_BY_KIND: Record<AgentRpcAdmissionKind, number> = {
   preparation: 1000,
 };
 const MAX_ACTIVE_BY_ACCOUNT: Record<AgentRpcAdmissionKind, number> = {
-  permit: 8,
+  permit: 64,
   preparation: 4,
 };
 const MAX_ACTIVE_BY_PROJECT: Record<AgentRpcAdmissionKind, number> = {
-  permit: 4,
+  permit: 32,
   preparation: 2,
 };
 
 export const hashAgentRpcAdmissionBinding = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
 
+type PreparationBinding = Pick<
+  AgentRpcAdmissionState,
+  "token_id" | "binding_hash" | "host_id" | "project_id" | "account_id"
+>;
+
+const PREPARATION_MATCH = `kind='preparation' AND token_id=$1 AND binding_hash=$2
+  AND host_id=$3 AND project_id=$4 AND account_id=$5 AND expires_at>now()`;
+
+const preparationArgs = (p: PreparationBinding) => [
+  p.token_id,
+  p.binding_hash,
+  p.host_id,
+  p.project_id,
+  p.account_id,
+];
+
+/** A live preparation matching this binding, without claiming it. */
+export async function findAgentRpcPreparation(
+  binding: PreparationBinding,
+): Promise<AgentRpcAdmissionState | undefined> {
+  return (
+    await agentStore().query<AgentRpcAdmissionState>(
+      `SELECT token_id,kind,binding_hash,host_id,project_id,account_id,expires_at
+       FROM agent_rpc_admission_state WHERE ${PREPARATION_MATCH}`,
+      preparationArgs(binding),
+    )
+  ).rows[0];
+}
+
+/**
+ * coveredBy: the send's own live preparation. That preparation already holds
+ * capacity under the tighter preparation limits, so the permit for its send
+ * is not counted again; otherwise a full permit limit would turn away a send
+ * whose reservation then lingers until it expires.
+ */
 export async function createAgentRpcAdmissionState(
   state: AgentRpcAdmissionState,
+  { coveredBy }: { coveredBy?: PreparationBinding } = {},
 ): Promise<void> {
   const expiresAt = state.expires_at.getTime();
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now())
@@ -48,6 +89,15 @@ export async function createAgentRpcAdmissionState(
     await db.query(
       "DELETE FROM agent_rpc_admission_state WHERE expires_at<=now()",
     );
+    const covered =
+      state.kind === "permit" &&
+      coveredBy != null &&
+      (
+        await db.query(
+          `SELECT 1 FROM agent_rpc_admission_state WHERE ${PREPARATION_MATCH}`,
+          preparationArgs(coveredBy),
+        )
+      ).rows.length > 0;
     const counts = (
       await db.query<{
         total: string;
@@ -62,16 +112,28 @@ export async function createAgentRpcAdmissionState(
         [state.kind, state.account_id, state.project_id],
       )
     ).rows[0];
-    if (Number(counts?.total ?? 0) >= MAX_ACTIVE_BY_KIND[state.kind])
-      throw new Error(
-        state.kind === "permit"
-          ? "too many in-flight submissions"
-          : "attachment preparation capacity full",
+    const full = (
+      scope: AgentRpcAdmissionScope,
+      active: string | undefined,
+      limit: number,
+    ) => {
+      if (Number(active ?? 0) >= limit)
+        throw new AgentRpcCapacityError(
+          scope,
+          state.kind,
+          Number(active ?? 0),
+          limit,
+        );
+    };
+    if (!covered) {
+      full("bay", counts?.total, MAX_ACTIVE_BY_KIND[state.kind]);
+      full("sender", counts?.account_total, MAX_ACTIVE_BY_ACCOUNT[state.kind]);
+      full(
+        "recipient",
+        counts?.project_total,
+        MAX_ACTIVE_BY_PROJECT[state.kind],
       );
-    if (Number(counts?.account_total ?? 0) >= MAX_ACTIVE_BY_ACCOUNT[state.kind])
-      throw new Error("agent RPC principal capacity full");
-    if (Number(counts?.project_total ?? 0) >= MAX_ACTIVE_BY_PROJECT[state.kind])
-      throw new Error("recipient project messaging capacity full");
+    }
     await db.query(
       `INSERT INTO agent_rpc_admission_state
        (token_id,kind,binding_hash,host_id,project_id,account_id,expires_at)

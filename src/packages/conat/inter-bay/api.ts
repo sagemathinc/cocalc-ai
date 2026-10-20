@@ -285,6 +285,8 @@ export interface ProjectReference {
   users?: Record<string, any>;
   api_key_membership_revocation?: unknown;
   runtime_lifecycle_revision?: number;
+  /** runtime_authority_revision, read with users (see project-host updateProjectUsers). */
+  users_revision?: number;
   allow_collaborator_destructive_storage_actions?: boolean | null;
 }
 
@@ -1831,6 +1833,8 @@ export interface AccountLocalUpdateSiteLicenseRequest {
   overage_policy?: string | null;
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
+  // Admin only: transfer ownership of the license and its pools.
+  owner_account_id?: string;
 }
 
 export interface AccountLocalAddSiteLicensePoolRequest {
@@ -2478,13 +2482,19 @@ export interface ProjectCollabInviteRespondRequest {
   trusted_product_access_checked?: boolean;
 }
 
+// Sent by the course project's owning bay, which has checked the caller's
+// access to the course: source_bay_id is the authenticated calling bay
+// (typed services enforce that), and the receiving bay accepts the request
+// only if that bay owns the course project.
 export interface ProjectAcceptedCourseStudentInviteAccountRepairRequest {
+  source_bay_id: string;
   account_id: string;
   course_project_id: string;
   students: CourseStudentInviteAccountRepairInput[];
 }
 
 export interface ProjectEnsureCourseManagerAccessRequest {
+  source_bay_id: string;
   account_id: string;
   course_project_id: string;
   course_path?: string;
@@ -2544,24 +2554,6 @@ export interface ProjectCourseManagedProjectState {
   env: ProjectEnv | null;
 }
 
-export interface ProjectLeaveOrDeleteProjectsRequest {
-  account_id: string;
-  project_ids: string[];
-}
-
-export type ProjectLeaveOrDeleteProjectsResult = {
-  project_id: string;
-  action:
-    | "removed_self"
-    | "transferred"
-    | "hard_deleted"
-    | "hard_delete_queued"
-    | "error";
-  new_owner_account_id?: string;
-  op_id?: string;
-  error?: string;
-};
-
 export type ProjectControlMethod =
   | "create"
   | "check-start-admission"
@@ -2596,18 +2588,13 @@ export type HostConnectionMethod =
   | "update-api-relay-usage"
   | "update-api-relay-account-usage"
   | "list"
-  | "list-host-access"
   | "set-host-access"
   | "remove-host-access"
   | "set-host-project-ram-limit"
   | "set-host-owner-spend-limits"
   | "set-host-pool-access"
   | "set-host-deletion-protection"
-  | "get-host-log"
-  | "get-host-availability"
   | "annotate-host-availability-event"
-  | "get-host-runtime-log"
-  | "get-host-metrics-history"
   | "get-host-runtime-deployment-status"
   | "start-host"
   | "stop-host"
@@ -2626,11 +2613,9 @@ export type HostConnectionMethod =
   | "delete-host"
   | "force-deprovision-host"
   | "remove-self-host-connector"
-  | "list-host-rootfs-images"
   | "pull-host-rootfs-image"
   | "delete-host-rootfs-image"
   | "gc-deleted-host-rootfs-images"
-  | "get-host-exam-state"
   | "set-host-exam-config"
   | "create-host-exam-run"
   | "rotate-host-exam-token"
@@ -2638,13 +2623,10 @@ export type HostConnectionMethod =
   | "update-host-exam-deadline"
   | "increase-host-exam-capacity"
   | "stop-and-erase-host-exam-run"
-  | "list-host-ssh-authorized-keys"
   | "add-host-ssh-authorized-key"
   | "remove-host-ssh-authorized-key"
-  | "list-host-runtime-deployments"
   | "list-host-operations"
   | "set-host-runtime-deployments"
-  | "get-host-managed-component-status"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -2990,7 +2972,6 @@ export type ProjectCollabInviteMethod =
   | "usage"
   | "remove-collaborator"
   | "set-project-user-role"
-  | "leave-or-delete-projects"
   | "set-project-metadata"
   | "set-manage-users-owner-only"
   | "set-deletion-protection"
@@ -3328,9 +3309,6 @@ export interface InterBayHostConnectionApi {
   }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
-  listHostAccess: (
-    opts: Parameters<Hosts["listHostAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostAccess"]>>>;
   setHostAccess: (
     opts: Parameters<Hosts["setHostAccess"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostAccess"]>>>;
@@ -3349,21 +3327,9 @@ export interface InterBayHostConnectionApi {
   setHostDeletionProtection: (
     opts: Parameters<Hosts["setHostDeletionProtection"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostDeletionProtection"]>>>;
-  getHostLog: (
-    opts: Parameters<Hosts["getHostLog"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
-  getHostAvailability: (
-    opts: Parameters<Hosts["getHostAvailability"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostAvailability"]>>>;
   annotateHostAvailabilityEvent: (
     opts: Parameters<Hosts["annotateHostAvailabilityEvent"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["annotateHostAvailabilityEvent"]>>>;
-  getHostRuntimeLog: (
-    opts: Parameters<Hosts["getHostRuntimeLog"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeLog"]>>>;
-  getHostMetricsHistory: (
-    opts: Parameters<Hosts["getHostMetricsHistory"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostMetricsHistory"]>>>;
   getHostRuntimeDeploymentStatus: (
     opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
@@ -3418,9 +3384,6 @@ export interface InterBayHostConnectionApi {
   removeSelfHostConnector: (
     opts: Parameters<Hosts["removeSelfHostConnector"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["removeSelfHostConnector"]>>>;
-  listHostRootfsImages: (
-    opts: Parameters<Hosts["listHostRootfsImages"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostRootfsImages"]>>>;
   pullHostRootfsImage: (
     opts: Parameters<Hosts["pullHostRootfsImage"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["pullHostRootfsImage"]>>>;
@@ -3430,9 +3393,6 @@ export interface InterBayHostConnectionApi {
   gcDeletedHostRootfsImages: (
     opts: Parameters<Hosts["gcDeletedHostRootfsImages"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["gcDeletedHostRootfsImages"]>>>;
-  getHostExamState: (
-    opts: Parameters<Hosts["getHostExamState"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostExamState"]>>>;
   setHostExamConfig: (
     opts: Parameters<Hosts["setHostExamConfig"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostExamConfig"]>>>;
@@ -3454,24 +3414,15 @@ export interface InterBayHostConnectionApi {
   stopAndEraseHostExamRun: (
     opts: Parameters<Hosts["stopAndEraseHostExamRun"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["stopAndEraseHostExamRun"]>>>;
-  listHostSshAuthorizedKeys: (
-    opts: Parameters<Hosts["listHostSshAuthorizedKeys"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostSshAuthorizedKeys"]>>>;
   addHostSshAuthorizedKey: (
     opts: Parameters<Hosts["addHostSshAuthorizedKey"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["addHostSshAuthorizedKey"]>>>;
   removeHostSshAuthorizedKey: (
     opts: Parameters<Hosts["removeHostSshAuthorizedKey"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["removeHostSshAuthorizedKey"]>>>;
-  listHostRuntimeDeployments: (
-    opts: Parameters<Hosts["listHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostRuntimeDeployments"]>>>;
   setHostRuntimeDeployments: (
     opts: Parameters<Hosts["setHostRuntimeDeployments"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostRuntimeDeployments"]>>>;
-  getHostManagedComponentStatus: (
-    opts: Parameters<Hosts["getHostManagedComponentStatus"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostManagedComponentStatus"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -3611,7 +3562,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "update-api-relay-account-usage",
   },
   { name: "list", method: "list" },
-  { name: "listHostAccess", method: "list-host-access" },
   { name: "setHostAccess", method: "set-host-access" },
   { name: "removeHostAccess", method: "remove-host-access" },
   {
@@ -3627,14 +3577,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "setHostDeletionProtection",
     method: "set-host-deletion-protection",
   },
-  { name: "getHostLog", method: "get-host-log" },
-  { name: "getHostAvailability", method: "get-host-availability" },
   {
     name: "annotateHostAvailabilityEvent",
     method: "annotate-host-availability-event",
   },
-  { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
-  { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
   {
     name: "getHostRuntimeDeploymentStatus",
     method: "get-host-runtime-deployment-status",
@@ -3668,14 +3614,12 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "deleteHost", method: "delete-host" },
   { name: "forceDeprovisionHost", method: "force-deprovision-host" },
   { name: "removeSelfHostConnector", method: "remove-self-host-connector" },
-  { name: "listHostRootfsImages", method: "list-host-rootfs-images" },
   { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
   { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },
   {
     name: "gcDeletedHostRootfsImages",
     method: "gc-deleted-host-rootfs-images",
   },
-  { name: "getHostExamState", method: "get-host-exam-state" },
   { name: "setHostExamConfig", method: "set-host-exam-config" },
   { name: "createHostExamRun", method: "create-host-exam-run" },
   { name: "rotateHostExamToken", method: "rotate-host-exam-token" },
@@ -3692,27 +3636,15 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "stopAndEraseHostExamRun",
     method: "stop-and-erase-host-exam-run",
   },
-  {
-    name: "listHostSshAuthorizedKeys",
-    method: "list-host-ssh-authorized-keys",
-  },
   { name: "addHostSshAuthorizedKey", method: "add-host-ssh-authorized-key" },
   {
     name: "removeHostSshAuthorizedKey",
     method: "remove-host-ssh-authorized-key",
   },
-  {
-    name: "listHostRuntimeDeployments",
-    method: "list-host-runtime-deployments",
-  },
   { name: "listHostOperations", method: "list-host-operations" },
   {
     name: "setHostRuntimeDeployments",
     method: "set-host-runtime-deployments",
-  },
-  {
-    name: "getHostManagedComponentStatus",
-    method: "get-host-managed-component-status",
   },
   {
     name: "getProjectStartMetadata",
@@ -4429,6 +4361,7 @@ export interface InterBayAccountLocalApi
     scope_revision: number;
     issuance_sequence: string;
     expire_ms?: number;
+    connector_source_project_id?: string | null;
   } | null>;
   getApiKeyIssuanceWatermark: (opts: { account_id: string }) => Promise<string>;
   requestApiKeyAction: (opts: {
@@ -5009,9 +4942,6 @@ export interface InterBayProjectCollabInviteApi {
   getCourseManagedProjectStates: (
     opts: ProjectCourseManagedProjectStatesRequest,
   ) => Promise<ProjectCourseManagedProjectState[]>;
-  leaveOrDeleteProjects: (
-    opts: ProjectLeaveOrDeleteProjectsRequest,
-  ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
   respond: (
     opts: ProjectCollabInviteRespondRequest,
   ) => Promise<ProjectCollabInviteWire>;
@@ -12313,15 +12243,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "get-course-managed-project-states",
     }),
   });
-  const leaveOrDeleteProjectsClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "leave-or-delete-projects",
-    }),
-  });
   const respondClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "respond">
   >({
@@ -12345,8 +12266,6 @@ export function createInterBayProjectCollabInviteClient({
       await getCourseManagedProjectStatesClient.getCourseManagedProjectStates(
         opts,
       ),
-    leaveOrDeleteProjects: async (opts) =>
-      await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
     respond: async (opts) => await respondClient.respond(opts),
   };
 }
@@ -12486,20 +12405,6 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         getCourseManagedProjectStates: async (opts) =>
           await impl.getCourseManagedProjectStates(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "leave-or-delete-projects",
-      }),
-      impl: {
-        leaveOrDeleteProjects: async (opts) =>
-          await impl.leaveOrDeleteProjects(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({

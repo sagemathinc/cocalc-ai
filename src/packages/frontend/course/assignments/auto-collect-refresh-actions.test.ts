@@ -79,6 +79,7 @@ function setup(assignedInStore: string[]) {
   const errors: string[] = [];
   const courseActions: any = {
     is_closed: () => false,
+    save_course_project_files: async () => true,
     get_store: () => store,
     resolve: ({ student_id }: { student_id?: string }) => ({
       store,

@@ -775,12 +775,14 @@ async function listHostsForRouteHealth({
   allHosts: boolean;
   requestTimeoutMs: number;
 }): Promise<Array<{ host_id: string; name?: string; status?: string }>> {
+  // The cookie goes over stdin ("--cookie-file -"), never argv, where ps,
+  // /proc/<pid>/cmdline and "Command failed" errors would expose it.
   const invocation = cliInvocation(cliPath, [
     "--api",
     api,
     "--disable-env-auth-defaults",
-    "--cookie",
-    authCookie,
+    "--cookie-file",
+    "-",
     "--output",
     "json",
     "host",
@@ -793,16 +795,22 @@ async function listHostsForRouteHealth({
   const result = spawnSync(invocation.command, invocation.args, {
     encoding: "utf8",
     timeout: requestTimeoutMs,
+    input: authCookie,
   });
   if (result.error) {
-    throw new Error(`host list failed: ${result.error.message}`);
+    throw new Error(
+      `host list failed: ${redactSecrets(result.error.message, [authCookie])}`,
+    );
   }
   if (result.status !== 0) {
     throw new Error(
-      `host list failed: ${trimCommandOutput(result.stderr || result.stdout)}`,
+      `host list failed: ${redactSecrets(
+        trimCommandOutput(result.stderr || result.stdout),
+        [authCookie],
+      )}`,
     );
   }
-  const rows = normalizeCliDataArray(result.stdout, "host list");
+  const rows = normalizeCliDataArray(result.stdout, "host list", [authCookie]);
   const candidates = rows
     .map((row) => ({
       host_id: `${row.host_id ?? row.id ?? ""}`.trim(),
@@ -859,8 +867,8 @@ async function runHostRouteProbe({
     "--api",
     api,
     "--disable-env-auth-defaults",
-    "--cookie",
-    cookie,
+    "--cookie-file",
+    "-",
     "--rpc-timeout",
     rpcTimeout,
     "--timeout",
@@ -876,9 +884,14 @@ async function runHostRouteProbe({
     invocation.command,
     invocation.args,
     requestTimeoutMs + 2_000,
+    cookie,
   );
   const ms = Date.now() - started;
-  const output = trimCommandOutput(result.stderr || result.stdout);
+  const secrets = [cookie, authCookie, affinityCookie];
+  const output = redactSecrets(
+    trimCommandOutput(result.stderr || result.stdout),
+    secrets,
+  );
   if (result.error) {
     return {
       worker_id: workerId,
@@ -886,7 +899,7 @@ async function runHostRouteProbe({
       host_name: host.name,
       ok: false,
       ms,
-      error: result.error.message,
+      error: redactSecrets(result.error.message, secrets),
     };
   }
   if (result.status !== 0) {
@@ -908,8 +921,10 @@ async function runHostRouteProbe({
         host_name: host.name,
         ok: false,
         ms,
-        error:
+        error: redactSecrets(
           `${parsed?.error?.message ?? parsed?.error ?? "host get failed"}`.trim(),
+          secrets,
+        ),
       };
     }
   } catch {
@@ -928,6 +943,7 @@ function execFileResult(
   command: string,
   args: string[],
   timeoutMs: number,
+  input: string,
 ): Promise<{
   status: number | null;
   stdout: string;
@@ -935,7 +951,7 @@ function execFileResult(
   error?: Error;
 }> {
   return new Promise((resolveResult) => {
-    execFile(
+    const child = execFile(
       command,
       args,
       {
@@ -955,6 +971,10 @@ function execFileResult(
         });
       },
     );
+    // A child that exits before reading stdin makes the write fail with EPIPE;
+    // its exit status already reports the failure.
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(input);
   });
 }
 
@@ -963,7 +983,39 @@ function appendCookieHeader(base: string, extra: string): string {
   return parts.join("; ");
 }
 
-function normalizeCliDataArray(stdout: string, label: string): any[] {
+// Defense in depth: the cookie is passed over stdin, not argv, but a child's
+// own output or error can still echo it. Replace every known cookie header,
+// name=value pair and value with "<redacted>" before the text reaches an
+// error, a report or a log. This matches only the given secrets; it is not a
+// generic credential scanner.
+function redactSecrets(text: string, secrets: string[]): string {
+  const values = new Set<string>();
+  for (const secret of secrets) {
+    const header = `${secret ?? ""}`.trim();
+    if (!header) continue;
+    values.add(header);
+    for (const part of header.split(";")) {
+      const pair = part.trim();
+      if (pair) values.add(pair);
+      const value = pair.slice(pair.indexOf("=") + 1);
+      // Short values (e.g. "1") would redact unrelated text; real cookie
+      // values are long random strings.
+      if (pair.includes("=") && value.length >= 8) values.add(value);
+    }
+  }
+  let redacted = text;
+  // Longest first, so a whole header is replaced before its parts.
+  for (const value of [...values].sort((a, b) => b.length - a.length)) {
+    redacted = redacted.split(value).join("<redacted>");
+  }
+  return redacted;
+}
+
+function normalizeCliDataArray(
+  stdout: string,
+  label: string,
+  secrets: string[],
+): any[] {
   let parsed: any;
   try {
     parsed = JSON.parse(stdout);
@@ -974,7 +1026,10 @@ function normalizeCliDataArray(stdout: string, label: string): any[] {
   }
   if (parsed?.ok === false) {
     throw new Error(
-      `${label} failed: ${parsed?.error?.message ?? "unknown error"}`,
+      `${label} failed: ${redactSecrets(
+        `${parsed?.error?.message ?? "unknown error"}`,
+        secrets,
+      )}`,
     );
   }
   const data = parsed?.data ?? parsed;
@@ -1906,5 +1961,9 @@ function shellQuote(value: string): string {
 
 export const __test__ = {
   cliInvocation,
+  listHostsForRouteHealth,
+  normalizeCliDataArray,
+  redactSecrets,
+  runHostRouteProbe,
   trimCommandOutput,
 };

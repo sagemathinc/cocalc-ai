@@ -10,18 +10,34 @@ import type { AgentNetworkDirectory } from "@cocalc/conat/agents/personal";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { AgentNetworkSummary } from "@cocalc/frontend/agents/agent-network-summary";
 
+// Warn when the enrollment request is this close to expiring.
+const EXPIRY_WARNING_MS = 10 * 60_000;
+
+function timeLabel(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function ExternalAgentApproval({
   challengeId,
   label,
   originBayId,
   isAuthenticated,
   accountLabel,
+  expiresInMs,
+  state,
 }: {
   challengeId: string;
   label: string;
   originBayId: string;
   isAuthenticated: boolean;
   accountLabel?: string;
+  /** Server time left on the enrollment request (not the credential) when
+   * the page loaded. */
+  expiresInMs?: number;
+  state?: "pending" | "approved" | "redeemed" | "canceled";
 }) {
   const [directory, setDirectory] = useState<AgentNetworkDirectory>();
   const [selected, setSelected] = useState<string>();
@@ -34,12 +50,47 @@ export function ExternalAgentApproval({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     origin,
   });
+  // The server's time left, counted down with the browser's monotonic clock:
+  // the browser's wall clock may be off from the server's.
+  const [loadedAt] = useState(() => performance.now());
+  const [elapsed, setElapsed] = useState(0);
+  const hasExpiry = expiresInMs != null && Number.isFinite(expiresInMs);
+  useEffect(() => {
+    if (expiresInMs == null || !hasExpiry) return;
+    const tick = () => setElapsed(performance.now() - loadedAt);
+    // Coarse updates for the countdown, and one exactly at expiry so the form
+    // closes when the request does.
+    const timer = setInterval(tick, 15_000);
+    const atExpiry = setTimeout(
+      tick,
+      Math.max(0, expiresInMs - (performance.now() - loadedAt)),
+    );
+    return () => {
+      clearInterval(timer);
+      clearTimeout(atExpiry);
+    };
+  }, [expiresInMs, hasExpiry, loadedAt]);
+  const remainingMs =
+    expiresInMs != null && hasExpiry ? expiresInMs - elapsed : Infinity;
+  // Shown in the browser's own time, whatever its clock says.
+  const expiresLabel = hasExpiry ? timeLabel(Date.now() + remainingMs) : "";
+  // Say so as soon as the page opens, not after the form is filled out.
+  const closedReason =
+    state === "approved" || state === "redeemed"
+      ? "It was already approved."
+      : state === "canceled"
+        ? "It was canceled, or the access it granted was revoked or has expired."
+        : remainingMs <= 0
+          ? `It expired at ${expiresLabel}.`
+          : undefined;
+  const closed = closedReason != null;
+  const expiresSoon = remainingMs <= EXPIRY_WARNING_MS;
   const selectedNetwork = directory?.networks.find(
     ({ agent_network_id }) => agent_network_id === selected,
   );
   useEffect(() => {
     let disposed = false;
-    if (isAuthenticated) {
+    if (isAuthenticated && !closed) {
       void postAuthApi<AgentNetworkDirectory>({
         origin,
         endpoint: "auth/cli/agent/destinations",
@@ -55,7 +106,7 @@ export function ExternalAgentApproval({
     return () => {
       disposed = true;
     };
-  }, [isAuthenticated, origin]);
+  }, [isAuthenticated, origin, closed]);
 
   async function approve() {
     if (!selected) return;
@@ -98,7 +149,28 @@ export function ExternalAgentApproval({
           Approving account: <strong>{accountLabel}</strong>
         </p>
       )}
-      {!isAuthenticated ? (
+      {!approved && closed ? (
+        <Alert
+          type="error"
+          role="alert"
+          title="This enrollment request is no longer open."
+          description={`${closedReason} Run the enrollment command (cocalc auth login --agent ...) again for a new link.`}
+        />
+      ) : (
+        !approved &&
+        hasExpiry && (
+          <Alert
+            type={expiresSoon ? "warning" : "info"}
+            role="note"
+            title={`This request expires at ${expiresLabel}${
+              expiresSoon
+                ? ` (in about ${Math.max(1, Math.ceil(remainingMs / 60_000))} minutes)`
+                : ""
+            }.`}
+          />
+        )
+      )}
+      {closed && !approved ? null : !isAuthenticated ? (
         <Alert
           type="info"
           role="note"

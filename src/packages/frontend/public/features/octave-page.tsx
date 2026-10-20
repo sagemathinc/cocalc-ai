@@ -6,6 +6,7 @@
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_PLUS_FEATURE_LINES } from "@cocalc/util/public-feature-pages";
 import { COLORS } from "@cocalc/util/theme";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
@@ -14,6 +15,7 @@ import {
   featureSignUpPath,
   featureAsset,
   LinkButton,
+  PlusSentence,
 } from "./page-components";
 import { FeatureInfo, FeatureInfoHeading, ZoomableImage } from "./feature-info";
 import { FeatureFinalBand } from "./feature-visuals";
@@ -80,8 +82,8 @@ export default function OctaveFeaturePage({
               The hosted image supplies Octave, while collaborators work with
               shared project files and edit history. System installation
               permissions and snapshot coverage depend on the selected image and
-              deployment. Native CoCalc Plus uses your computer's operating
-              system and installed tools.
+              deployment.
+              <PlusSentence>{PUBLIC_PLUS_FEATURE_LINES.octave}</PlusSentence>
             </>
           }
         >

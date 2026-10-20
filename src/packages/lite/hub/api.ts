@@ -36,6 +36,8 @@ import type {
   MarkNotificationReadOptions,
   MarkNotificationReadResult,
   NotificationCountsResult,
+  NotificationSummaryOptions,
+  NotificationSummaryResult,
   NotificationListRow,
   SaveNotificationOptions,
 } from "@cocalc/conat/hub/api/notifications";
@@ -1308,6 +1310,12 @@ async function getNotificationCountsLite(_opts?: {
   throw Error("notifications.counts is not supported in lite mode");
 }
 
+async function summarizeNotificationsLite(
+  _opts?: NotificationSummaryOptions,
+): Promise<NotificationSummaryResult> {
+  throw Error("notifications.summary is not supported in lite mode");
+}
+
 async function markNotificationReadLite(
   _opts: MarkNotificationReadOptions,
 ): Promise<MarkNotificationReadResult> {
@@ -1410,6 +1418,7 @@ export const hubApi: HubApi = {
     createCodexAttentionNotice: createCodexAttentionNoticeLite,
     list: listNotificationsLite,
     counts: getNotificationCountsLite,
+    summary: summarizeNotificationsLite,
     markRead: markNotificationReadLite,
     save: saveNotificationLite,
     archive: archiveNotificationLite,

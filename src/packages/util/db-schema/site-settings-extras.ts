@@ -1181,7 +1181,7 @@ export const EXTRAS: SettingsExtras = {
   },
   site_funded_codex_global_pool_weekly_usd: {
     name: "Combined Weekly Budget (USD)",
-    desc: "Hard weekly ceiling across all free and paid site-funded Codex usage. The free and paid limits below are sub-pool ceilings and cannot exceed this combined budget in aggregate.",
+    desc: "Hard weekly ceiling across all free and paid site-funded AI usage (Codex turns and speech). The free and paid limits below are sub-pool ceilings and cannot exceed this combined budget in aggregate.",
     default: "100",
     valid: onlyPosFloat,
     to_val: toFloat,

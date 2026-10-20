@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { parseManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
+
 // Only classify failures with recognizable evidence. Unknown errors retain
 // their existing report path so an operator can still diagnose new failures.
 export function recoveryFailureReason(
@@ -23,6 +25,8 @@ export function recoveryFailureReason(
   }
 
   if (
+    parseManagedEgressBlockedMessage(message)?.category === "backup-upload" ||
+    // the message before the shared format (mixed-version hosts)
     message.includes("Managed backup upload limit reached for this account.")
   ) {
     return "managed_backup_egress_policy_blocked";

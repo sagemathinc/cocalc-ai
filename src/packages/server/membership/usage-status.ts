@@ -12,9 +12,11 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import {
+  getManagedEgressCategoryUsageForAccount,
   getManagedEgressUsageForAccount,
   getRecentManagedEgressEventsForAccount,
 } from "./managed-egress";
+import { getControlPlaneEgressLimitsFromEffective } from "./control-plane-egress-limits";
 import {
   getManagedCpuUsageForAccount,
   getRecentManagedCpuEventsForAccount,
@@ -204,6 +206,22 @@ export async function getMembershipUsageStatusForAccount({
       limit5h: egress5hLimit,
       limit7d: egress7dLimit,
     });
+    // The independent browser control-traffic pool, so the warning banner
+    // can show it before it blocks sign-in.  Best effort.
+    const controlPlaneLimits =
+      getControlPlaneEgressLimitsFromEffective(effectiveLimits);
+    let controlPlaneUsage: { bytes_5h: number; bytes_7d: number } | undefined;
+    try {
+      controlPlaneUsage = await getManagedEgressCategoryUsageForAccount({
+        account_id,
+        category: "control-plane-conat",
+      });
+    } catch (err) {
+      log.debug("unable to load control-plane egress usage", {
+        account_id,
+        err: `${err}`,
+      });
+    }
     const managedEgressRecentEvents =
       await getRecentManagedEgressEventsForAccount({
         account_id,
@@ -307,6 +325,12 @@ export async function getMembershipUsageStatusForAccount({
       blob_project_total_bytes_limit: effectiveLimits.blob_project_total_bytes,
       ...managedEgress,
       managed_egress_recent_events: managedEgressRecentEvents,
+      managed_control_plane_egress_5h_bytes: controlPlaneUsage?.bytes_5h,
+      managed_control_plane_egress_7d_bytes: controlPlaneUsage?.bytes_7d,
+      managed_control_plane_egress_5h_limit_bytes:
+        controlPlaneLimits.egress_5h_bytes,
+      managed_control_plane_egress_7d_limit_bytes:
+        controlPlaneLimits.egress_7d_bytes,
       managed_cpu_5h_seconds: managedCpu.managed_cpu_5h_seconds,
       managed_cpu_7d_seconds: managedCpu.managed_cpu_7d_seconds,
       managed_cpu_5h_remaining_seconds:

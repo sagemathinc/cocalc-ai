@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { IntlProvider } from "react-intl";
 import Message from "../message";
 import { startChatSpeech } from "../audio/chat-speech-player";
+import { isAnyChatOverlayOpen } from "../drawer-overlay-state";
 
 jest.mock("../audio/chat-speech-player", () => ({
   ...jest.requireActual("../audio/chat-speech-player"),
@@ -116,6 +117,22 @@ test("finished agent messages show copy, read aloud and more as footer icons", a
   );
   expect(screen.queryByText("Copy whole message")).toBeNull();
   expect(screen.queryByRole("menuitem", { name: "Read aloud" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Focus message" })).toBeNull();
+});
+
+test("focus is one click on an agent reply, and holds the log still while open", async () => {
+  const user = userEvent.setup();
+  renderTurn(false);
+  const footer = within(screen.getByTestId("chat-message-actions"));
+  expect(isAnyChatOverlayOpen()).toBe(false);
+  await user.click(footer.getByRole("button", { name: "Focus message" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText("All done.")).toBeVisible();
+  // An open overlay stops the chat log from following new output; following
+  // it scrolled this row away, unmounted it and closed the focus view.
+  expect(isAnyChatOverlayOpen()).toBe(true);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(isAnyChatOverlayOpen()).toBe(false));
 });
 
 test("no footer actions while the agent is still generating", () => {
@@ -164,6 +181,8 @@ test("footer actions support keyboard navigation and restore disclosure focus", 
     "yes",
   );
 
+  await user.tab();
+  expect(footer.getByRole("button", { name: "Focus message" })).toHaveFocus();
   await user.tab();
   const more = footer.getByRole("button", { name: "More message actions" });
   expect(more).toHaveFocus();

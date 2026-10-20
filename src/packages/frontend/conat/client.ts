@@ -177,8 +177,17 @@ const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
 const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
 const PROJECT_HOST_BAY_MISMATCH_RETRY_MS = 60_000;
 const PROJECT_HOST_BROWSER_SESSION_SETTLE_MS = 100;
-const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
+// A restarted project host is usually back within 2-5 s (the host agent
+// respawns it on its next poll), so retry often at first: a single 5 s wait
+// after just missing it doubled the outage.
+const ROUTED_HOST_RECONNECT_DELAYS_MS = [
+  750, 1_000, 1_500, 1_500, 2_000, 2_000, 3_000, 5_000,
+] as const;
+// Refresh the host token and browser session only once reconnecting has
+// failed this many times AND for this long: a routine restart must not cost a
+// new sign-in.
 const ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS = 3;
+const ROUTED_HOST_REFRESH_AUTH_AFTER_MS = 10_000;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
 const FOREGROUND_WAKE_ACCOUNT_REPAIR_TIMEOUT_MS = 5_000;
@@ -267,6 +276,8 @@ type RoutedHubClientState = {
   reconnectTimer?: ReturnType<typeof setTimeout>;
   connectInFlight?: Promise<boolean>;
   reconnectAttempts: number;
+  // when the current run of failed reconnects started
+  reconnectFailingSince?: number;
   lastConnectError?: unknown;
 };
 
@@ -1848,9 +1859,26 @@ export class ConatClient extends EventEmitter {
         affectedProjectIds.add(project_id);
       }
     }
+    // Same host, same address, new session: the host restarted.  Reconnect in
+    // place instead of rebuilding every open editor; a move to another host
+    // or address still resets (projects/actions.ts).
     for (const project_id of affectedProjectIds) {
-      redux.getProjectActions?.(project_id)?.resetProjectHostRuntime?.();
+      const actions = redux.getProjectActions?.(project_id) as any;
+      if (actions?.reconnectProjectHostRuntime != null) {
+        actions.reconnectProjectHostRuntime();
+      } else {
+        actions?.resetProjectHostRuntime?.();
+      }
     }
+    // Not forced: the session is often learned long after the restart, when
+    // the editors have already reconnected, and a forced pass would rebuild
+    // their healthy changefeeds while the user types.
+    this.reconnectCoordinator.requestResourceReconnects({
+      includeBackground: true,
+      projectIds: affectedProjectIds,
+      reason: "project_host_session_changed",
+      resetBackoff: true,
+    });
   };
 
   private pickTrackedProjectForHost = (
@@ -2423,6 +2451,8 @@ export class ConatClient extends EventEmitter {
       reconnectAttempts: state.reconnectAttempts,
       ...this.reconnectDebugContext(),
     });
+    const wasOffline =
+      typeof navigator !== "undefined" && navigator.onLine === false;
     try {
       await waitForOnline();
     } catch {
@@ -2434,6 +2464,13 @@ export class ConatClient extends EventEmitter {
     }
     if (!this.isCurrentRoutedHostState(routing_key, state)) {
       return;
+    }
+    // Only time spent failing while online counts toward refreshing auth.
+    if (wasOffline || state.reconnectFailingSince == null) {
+      state.reconnectFailingSince = Date.now();
+    } else if (lastBrowserOnlineAt > state.reconnectFailingSince) {
+      // offline and back again since the clock started
+      state.reconnectFailingSince = lastBrowserOnlineAt;
     }
     reconnectDebugLog(
       `browser is online for routed host reconnect ${host_id}`,
@@ -2508,13 +2545,28 @@ export class ConatClient extends EventEmitter {
       });
       this.invalidateProjectHostBrowserSession(routing_key);
     }
-    if (state.reconnectAttempts >= ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS) {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      // went offline while refreshing the routing info: the next pass waits
+      // for the browser to be online and restarts the clock
+      this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
+      return;
+    }
+    if (lastBrowserOnlineAt > (state.reconnectFailingSince ?? 0)) {
+      // offline and back again while refreshing the routing info
+      state.reconnectFailingSince = lastBrowserOnlineAt;
+    }
+    if (
+      state.reconnectAttempts >= ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS &&
+      Date.now() - (state.reconnectFailingSince ?? Date.now()) >=
+        ROUTED_HOST_REFRESH_AUTH_AFTER_MS
+    ) {
       const tokenState = this.projectHostTokens[host_id];
       if (!(tokenState?.retryAfter != null && tokenState.lastError != null)) {
         this.invalidateProjectHostToken(host_id);
         this.invalidateProjectHostBrowserSession(routing_key);
       }
       state.reconnectAttempts = 0;
+      state.reconnectFailingSince = Date.now();
     }
     if (state.client.conn?.connected) {
       return;
@@ -2535,6 +2587,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected || state.reconnectTimer != null) {
       return;
     }
+    trackBrowserOnline();
     const delayMs =
       ROUTED_HOST_RECONNECT_DELAYS_MS[
         Math.min(
@@ -2822,6 +2875,7 @@ export class ConatClient extends EventEmitter {
         public_directory_share_id: state.public_directory_share_id,
       });
       state.reconnectAttempts = 0;
+      delete state.reconnectFailingSince;
       if (state.reconnectTimer != null) {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
@@ -3930,6 +3984,19 @@ export class ConatClient extends EventEmitter {
       ...opts,
     });
   };
+}
+
+// When the browser last came back online.  A reconnect callback samples
+// navigator.onLine only when it runs, so a short offline spell between two
+// callbacks would go unseen; this records it.
+let lastBrowserOnlineAt = 0;
+let browserOnlineTrackerInstalled = false;
+function trackBrowserOnline(): void {
+  if (browserOnlineTrackerInstalled || typeof window === "undefined") return;
+  browserOnlineTrackerInstalled = true;
+  window.addEventListener("online", () => {
+    lastBrowserOnlineAt = Date.now();
+  });
 }
 
 async function waitForOnline(): Promise<void> {

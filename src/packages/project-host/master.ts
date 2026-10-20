@@ -1680,12 +1680,14 @@ export async function startMasterRegistration({
       project_id,
       users,
       runtime_lifecycle_revision,
+      users_revision,
       content_epoch,
     }) {
       await updateProjectUsers({
         project_id,
         users,
         runtime_lifecycle_revision,
+        users_revision,
         content_epoch,
       });
     },
@@ -2324,6 +2326,7 @@ export async function startMasterRegistration({
       project_id: string;
       users: any;
       runtime_lifecycle_revision: number;
+      users_revision?: number;
       content_epoch?: number;
       updated_ms: number;
     }>,
@@ -2339,6 +2342,10 @@ export async function startMasterRegistration({
           runtime_lifecycle_revision: Number(
             row?.runtime_lifecycle_revision ?? 0,
           ),
+          users_revision:
+            row?.users_revision == null
+              ? undefined
+              : Number(row.users_revision),
           // Re-delivers a revocation whose immediate push failed.
           ...(row?.content_epoch == null
             ? {}

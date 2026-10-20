@@ -66,6 +66,19 @@ function responseId(): string {
   );
 }
 
+// Only the "list" reply carries the person's own saved answer (own_response);
+// other replies about the same question must not drop it from the card.
+export function keepOwnResponse(
+  next: AcpAttentionRecord,
+  current: AcpAttentionRecord,
+): AcpAttentionRecord {
+  return next.own_response == null &&
+    current.own_response != null &&
+    next.attention_id === current.attention_id
+    ? { ...next, own_response: current.own_response }
+    : next;
+}
+
 function stateLabel(state: AcpAttentionRecord["state"]): string {
   switch (state) {
     case "pending":
@@ -151,6 +164,10 @@ function RuntimeCodexAttentionCard({
   onDraftChange?: (update: CodexAttentionDraftUpdater) => void;
 }) {
   const [record, setRecord] = useState(initialRecord);
+  // Replies to the person's own actions (respond, continue, dismiss) carry
+  // the public record, without their saved answer.
+  const takeActionResult = (next: AcpAttentionRecord) =>
+    setRecord((current) => keepOwnResponse(next, current));
   // Questions come from any agent runtime (Codex, Claude, ...): name the agent
   // by the @alias the user gave it, not by one runtime.
   const { directory } = useNamedAgents(!lite);
@@ -191,7 +208,9 @@ function RuntimeCodexAttentionCard({
 
   const acceptRecord = (next: AcpAttentionRecord) => {
     setRecord((current) =>
-      next.updated_at > current.updated_at ? next : current,
+      next.updated_at > current.updated_at
+        ? keepOwnResponse(next, current)
+        : current,
     );
   };
 
@@ -204,7 +223,9 @@ function RuntimeCodexAttentionCard({
 
   useEffect(() => {
     setRecord((current) =>
-      initialRecord.updated_at > current.updated_at ? initialRecord : current,
+      initialRecord.updated_at > current.updated_at
+        ? keepOwnResponse(initialRecord, current)
+        : current,
     );
   }, [initialRecord]);
 
@@ -312,7 +333,7 @@ function RuntimeCodexAttentionCard({
         decline,
       });
       if (result.state === "already_submitted") {
-        if (result.record) setRecord(result.record);
+        if (result.record) takeActionResult(result.record);
         throw new Error(
           "This question already has a response. Your draft was not submitted.",
         );
@@ -327,7 +348,7 @@ function RuntimeCodexAttentionCard({
           ...current,
           submitted: { answers: decline ? {} : answers, declined: decline },
         }));
-        setRecord(result.record);
+        takeActionResult(result.record);
       }
       if (!result.ok || !result.record) {
         throw new Error(result.error ?? "The response was not accepted.");
@@ -354,7 +375,7 @@ function RuntimeCodexAttentionCard({
       if (!result.ok || !result.record) {
         throw new Error(result.error ?? "The request could not be updated.");
       }
-      setRecord(result.record);
+      takeActionResult(result.record);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -375,7 +396,7 @@ function RuntimeCodexAttentionCard({
       if (!result.ok || !result.record) {
         throw new Error(result.error ?? "The answer could not be continued.");
       }
-      setRecord(result.record);
+      takeActionResult(result.record);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -407,7 +428,7 @@ function RuntimeCodexAttentionCard({
           result.error ?? "The authorization could not be checked.",
         );
       }
-      setRecord(result.record);
+      takeActionResult(result.record);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -418,7 +439,16 @@ function RuntimeCodexAttentionCard({
   const pending = record.state === "pending";
   const lateQuestion =
     record.state === "stale" && record.source_kind === "codex_sync_question";
-  const submitted = draft.submitted;
+  // This browser's just-submitted draft, else the answer saved with the
+  // question (listed only for its author), so it survives a reload.
+  const submitted =
+    draft.submitted ??
+    (record.own_response
+      ? {
+          answers: record.own_response.answers,
+          declined: record.own_response.declined === true,
+        }
+      : undefined);
   const hasResponse = record.response_submitted_at != null || submitted != null;
   const answerable = (pending || lateQuestion) && !hasResponse;
   const pendingFreshAuth =

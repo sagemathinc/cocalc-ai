@@ -136,7 +136,10 @@ import {
   type BulkProjectControlResult,
 } from "@cocalc/conat/hub/api/projects";
 import type { HubApiCall } from "./edge-routing";
-import { normalizeProjectIds } from "@cocalc/conat/hub/api/routes";
+import {
+  MAX_LEAVE_OR_DELETE_PER_BAY,
+  normalizeProjectIds,
+} from "@cocalc/conat/hub/api/routes";
 import type {
   ProjectRehomeOperationSummary,
   ProjectRehomeResponse,
@@ -4059,6 +4062,11 @@ export async function repairAcceptedCourseStudentInviteAccounts({
   if (!Array.isArray(students)) {
     throw new Error("students must be an array");
   }
+  // Routed to the course project's owning bay (see routes), which alone may
+  // vouch for access to the course to other bays.
+  await (
+    await projectControlHandlers()
+  ).assertCurrentProjectOwnership({ project_id: course_project_id });
   await assertCollabAllowRemoteProjectAccess({
     account_id,
     project_id: course_project_id,
@@ -4135,6 +4143,7 @@ export async function repairAcceptedCourseStudentInviteAccounts({
       ...(await getInterBayBridge()
         .projectCollabInvite(bay_id)
         .repairAcceptedCourseStudentInviteAccounts({
+          source_bay_id: getConfiguredBayId(),
           account_id,
           course_project_id,
           students: remoteStudents,
@@ -4183,6 +4192,12 @@ export async function ensureCourseManagerAccess({
   if (!isValidUUID(course_project_id)) {
     throw new Error("invalid course_project_id");
   }
+  // Routed to the course project's owning bay (see routes): its managers are
+  // read here, where the course lives, and only this bay may vouch for them
+  // to the bays of the student projects.
+  await (
+    await projectControlHandlers()
+  ).assertCurrentProjectOwnership({ project_id: course_project_id });
   await assertCollabAllowRemoteProjectAccess({
     account_id,
     project_id: course_project_id,
@@ -4244,6 +4259,7 @@ export async function ensureCourseManagerAccess({
       .projectCollabInvite(bay_id)
       .ensureCourseManagerAccess({
         ...common,
+        source_bay_id: getConfiguredBayId(),
         project_ids: remoteProjectIds,
       })) {
       resultsByProjectId.set(result.project_id, result);
@@ -5867,85 +5883,62 @@ export async function leaveOrDeleteProjects({
     session_hash,
   });
 
-  const localProjectIds: string[] = [];
-  const remoteProjectIdsByBay = new Map<string, string[]>();
-  for (const project_id of [...new Set(project_ids)]) {
-    const ownership = await resolveProjectBay(project_id);
-    if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-      localProjectIds.push(project_id);
-      continue;
-    }
-    remoteProjectIdsByBay.set(ownership.bay_id, [
-      ...(remoteProjectIdsByBay.get(ownership.bay_id) ?? []),
-      project_id,
-    ]);
+  if (!Array.isArray(project_ids)) {
+    throw new Error("project_ids must be an array");
   }
 
-  const results: ProjectLeaveOrDeleteResult[] = [];
-  if (localProjectIds.length > 0) {
-    results.push(
-      ...(await leaveOrDeleteProjectsForAccount({
-        account_id,
-        project_ids: localProjectIds,
-        hardDeleteOwnedProject: async (project_id) =>
-          await hardDeleteProject({
-            account_id,
-            browser_id,
-            session_hash,
-            project_id,
-          }),
-      })),
-    );
-  }
-  for (const [bay_id, remoteProjectIds] of remoteProjectIdsByBay.entries()) {
-    const remoteResults = await getInterBayBridge()
-      .projectCollabInvite(bay_id)
-      .leaveOrDeleteProjects({
-        account_id,
-        project_ids: remoteProjectIds,
+  // Routed by project (see @cocalc/conat/hub/api/routes): each bay leaves
+  // or deletes the projects it owns; a project owned elsewhere means a
+  // stale route.
+  const ids = normalizeProjectIds(project_ids);
+  const here = getConfiguredBayId();
+  const owners = await resolveProjectBays(ids.filter((id) => isValidUUID(id)));
+  const results = new Map<string, ProjectLeaveOrDeleteResult>();
+  const localProjectIds: string[] = [];
+  for (const project_id of ids) {
+    const bay_id = owners.get(project_id)?.bay_id;
+    if (!isValidUUID(project_id)) {
+      results.set(project_id, {
+        project_id,
+        action: "error",
+        error: "invalid project_id",
       });
-    for (const result of remoteResults) {
-      switch (result.action) {
-        case "removed_self":
-        case "hard_deleted":
-          results.push({
-            project_id: result.project_id,
-            action: result.action,
-          });
-          break;
-        case "hard_delete_queued":
-          results.push({
-            project_id: result.project_id,
-            action: result.action,
-            op_id: result.op_id,
-          });
-          break;
-        case "transferred":
-          if (result.new_owner_account_id) {
-            results.push({
-              project_id: result.project_id,
-              action: result.action,
-              new_owner_account_id: result.new_owner_account_id,
-            });
-          } else {
-            results.push({
-              project_id: result.project_id,
-              action: "error",
-              error: "remote transfer result missing new owner account id",
-            });
-          }
-          break;
-        case "error":
-          results.push({
-            project_id: result.project_id,
-            action: "error",
-            error: result.error ?? "unknown remote project leave/delete error",
-          });
-          break;
-      }
+    } else if (bay_id && bay_id !== here) {
+      results.set(project_id, {
+        project_id,
+        action: "error",
+        error: `stale route: project ${project_id} is owned by ${bay_id}, not ${here}; retry`,
+      });
+    } else {
+      localProjectIds.push(project_id);
     }
   }
-  return results;
+  if (localProjectIds.length > MAX_LEAVE_OR_DELETE_PER_BAY) {
+    throw new Error(
+      `at most ${MAX_LEAVE_OR_DELETE_PER_BAY} project(s) on one bay may be left or deleted in one call`,
+    );
+  }
+  for (const result of await leaveOrDeleteProjectsForAccount({
+    account_id,
+    project_ids: localProjectIds,
+    hardDeleteOwnedProject: async (project_id) =>
+      await hardDeleteProject({
+        account_id,
+        browser_id,
+        session_hash,
+        project_id,
+      }),
+  })) {
+    results.set(result.project_id, result);
+  }
+  return ids.map(
+    (project_id) =>
+      results.get(project_id) ?? {
+        project_id,
+        action: "error",
+        error: "project was not processed",
+      },
+  );
 }
 
 export async function updateAuthorizedKeysOnHost({

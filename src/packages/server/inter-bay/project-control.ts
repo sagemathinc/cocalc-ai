@@ -741,6 +741,7 @@ export async function handleProjectReferenceGet(
     users: Record<string, any> | null;
     api_key_membership_revocation: unknown;
     runtime_lifecycle_revision: number | string | null;
+    users_revision: number | string | null;
     usage_account_id: string | null;
     allow_collaborator_destructive_storage_actions: boolean | null;
   }>(
@@ -750,6 +751,7 @@ export async function handleProjectReferenceGet(
         api_key_membership_revocations->$2::text AS api_key_membership_revocation,
         COALESCE(runtime_lifecycle_revision, 0)::bigint
           AS runtime_lifecycle_revision,
+        COALESCE(runtime_authority_revision, 0)::bigint AS users_revision,
         usage_account_id,
         allow_collaborator_destructive_storage_actions
       FROM projects
@@ -770,6 +772,9 @@ export async function handleProjectReferenceGet(
     runtime_lifecycle_revision: Number(
       rows[0]?.runtime_lifecycle_revision ?? 0,
     ),
+    ...(rows[0]?.users_revision == null
+      ? {}
+      : { users_revision: Number(rows[0].users_revision) }),
     allow_collaborator_destructive_storage_actions:
       rows[0]?.allow_collaborator_destructive_storage_actions ?? null,
   };

@@ -6,7 +6,7 @@ import {
   type AgentSnapshotMetadata,
 } from "./attachments";
 import { verifyAttachmentPayload } from "./attachments-integrity";
-import { AgentRpcCapacity } from "./rpc-capacity";
+import { AgentRpcCapacity, type AgentRpcCapacityFull } from "./rpc-capacity";
 import type { AgentRpcEnvelope, AgentRpcOutcome } from "./rpc";
 import {
   validateAgentRpcOutcome,
@@ -36,6 +36,8 @@ export class AttachmentAdmissionError extends Error {
       | "project_overloaded"
       | "attachment_preparation_expired"
       | "attachment_preparation_unavailable",
+    /** Set when capacity was full, for a reason the sender can act on. */
+    readonly full?: AgentRpcCapacityFull,
   ) {
     super(code);
   }
@@ -225,8 +227,10 @@ export class AgentAttachmentReservations {
     )
       throw new AttachmentAdmissionError("attachment_preparation_expired");
     await this.authorize(request.envelope);
-    const lease = this.capacity.acquire(request.envelope.target.project_id);
-    if ("code" in lease) throw new AttachmentAdmissionError(lease.code);
+    const lease = this.capacity.acquire(request.envelope.target.project_id, {
+      attachments: true,
+    });
+    if ("code" in lease) throw new AttachmentAdmissionError(lease.code, lease);
     const id = randomUUID();
     const expires = Math.min(request.envelope.deadline, Date.now() + 30_000);
     const entry: Entry = {

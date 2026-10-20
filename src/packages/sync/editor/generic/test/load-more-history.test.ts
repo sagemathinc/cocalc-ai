@@ -113,3 +113,37 @@ describe("patchesHaveFullHistoryFromPatches", () => {
     ).toBe(false);
   });
 });
+
+describe("prevSeqForMoreHistoryFromHistory with where the loaded history starts", () => {
+  // The latest snapshot (patch at seq 29288, prev 28989) is loaded, and so is
+  // the previous snapshot's record (patch at seq 28989, prev 301), appended
+  // after seq 29288.
+  const history = [
+    {
+      time: legacyPatchId(100),
+      isSnapshot: true,
+      seqInfo: { seq: 28989, prev_seq: 301 },
+    },
+    {
+      time: legacyPatchId(200),
+      isSnapshot: true,
+      seqInfo: { seq: 29288, prev_seq: 28989 },
+    },
+  ];
+
+  it("steps back to the nearest snapshot before the loaded start", () => {
+    expect(prevSeqForMoreHistoryFromHistory(history, 29288)).toBe(28989);
+  });
+
+  it("then to the one before it", () => {
+    expect(prevSeqForMoreHistoryFromHistory(history, 28989)).toBe(301);
+  });
+
+  it("loads everything when no snapshot is before the loaded start", () => {
+    expect(prevSeqForMoreHistoryFromHistory(history, 301)).toBe(0);
+  });
+
+  it("keeps the old rule when the loaded start is unknown", () => {
+    expect(prevSeqForMoreHistoryFromHistory(history)).toBe(301);
+  });
+});

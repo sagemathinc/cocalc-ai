@@ -1,10 +1,10 @@
 import register from "./register";
-import { Javascript } from "../javascript";
 import { UntrustedJavascript } from "../untrusted-javascript";
 
-register("application/javascript", 2.5, ({ value, trust }) => {
-  if (trust) {
-    return <Javascript value={value} />;
-  }
-  return <UntrustedJavascript value={value} />;
+// JavaScript output is never evaluated in the app page.  In a trusted
+// notebook it runs in a sandboxed frame together with the cell's HTML output
+// (see ../active-output-group.tsx), so this renderer is only reached when it
+// is not run at all.
+register("application/javascript", 2.5, () => {
+  return <UntrustedJavascript />;
 });

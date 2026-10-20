@@ -103,6 +103,8 @@ export interface GetAllInfo<
   TCheckpointData extends JSONValue = JSONValue,
 > {
   messages: StoredMessage[];
+  // the server instance of an ephemeral stream (see PersistentStream.instance)
+  instance?: string;
   effective_start_seq?: number;
   oldest_retained_seq?: number;
   newest_retained_seq?: number;
@@ -136,6 +138,7 @@ const stats = {
   socketReadyRecoveryScheduled: 0,
   socketReadyRecoveryErrors: 0,
   getMissedRuns: 0,
+  instanceResets: 0,
   getMissedRetries: 0,
   getMissedSuccess: 0,
   getMissedJoined: 0,
@@ -191,6 +194,12 @@ class PersistStreamClient extends EventEmitter {
   private changefeeds: any[] = [];
   private state: "ready" | "closed" = "ready";
   private lastSeq?: number;
+  // The server instance of an ephemeral stream (see PersistentStream.instance):
+  // undefined until the first read, null if the server sent none (a disk
+  // stream, or a server from before instances), and how many times it has
+  // changed under this client.
+  private instance?: string | null;
+  private instanceResets = 0;
   private changefeedDesired = false;
   private changefeedActive = false;
   private reconnecting = false;
@@ -269,6 +278,39 @@ class PersistStreamClient extends EventEmitter {
   };
 
   getRecoveryState = (): PersistRecoveryState => this.recoveryState;
+
+  getInstance = (): string | null | undefined => this.instance;
+
+  // A new instance of an ephemeral stream starts again from seq 1 with none
+  // of the old messages, so resuming from lastSeq would skip everything it
+  // has.  Start over, and tell the stream so it drops its old state first.
+  private noteInstance = (header: unknown) => {
+    const instance = typeof header == "string" && header ? header : null;
+    // A change from "none" counts too: an old server restarted as a new one
+    // lost the stream just the same.
+    if (this.instance !== undefined && this.instance !== instance) {
+      this.instance = instance;
+      this.instanceResets += 1;
+      this.lastSeq = 0;
+      stats.instanceResets += 1;
+      this.emit("instance-changed", instance);
+      return;
+    }
+    this.instance = instance;
+  };
+
+  // getAll from the last seq received, from the start if the server instance
+  // changed meanwhile.
+  private getAllSinceLastSeq = async (
+    opts: Omit<GetAllOpts, "start_seq">,
+  ): Promise<StoredMessage[]> => {
+    const resets = this.instanceResets;
+    const updates = await this.getAll({ ...opts, start_seq: this.lastSeq });
+    if (this.instanceResets === resets) {
+      return updates;
+    }
+    return await this.getAll({ ...opts, start_seq: this.lastSeq });
+  };
 
   pauseRecovery = (_reason = "paused") => {
     this.recoveryPaused = true;
@@ -533,8 +575,7 @@ class PersistStreamClient extends EventEmitter {
     this.catchingUp = (async () => {
       try {
         this.changefeedEmit(
-          await this.getAll({
-            start_seq: this.lastSeq,
+          await this.getAllSinceLastSeq({
             timeout,
             changefeed: true,
           }),
@@ -597,8 +638,7 @@ class PersistStreamClient extends EventEmitter {
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
             }
-            const updates = await this.getAll({
-              start_seq: this.lastSeq,
+            const updates = await this.getAllSinceLastSeq({
               timeout: attemptTimeout,
               changefeed: true,
             });
@@ -1139,6 +1179,9 @@ class PersistStreamClient extends EventEmitter {
         if (headers?.error) {
           throw errorFromHeaders(headers);
         }
+        if (seq == 0) {
+          this.noteInstance(headers?.instance);
+        }
         // Completion frames participate in sequencing too. A dropped first or
         // last data frame must not turn into an empty successful bootstrap.
         if (headers?.seq !== seq) {
@@ -1268,6 +1311,7 @@ class PersistStreamClient extends EventEmitter {
       let effective_start_seq: number | undefined;
       let oldest_retained_seq: number | undefined;
       let newest_retained_seq: number | undefined;
+      let instance: string | undefined;
       const sub = this.getAllResponses({
         ...opts,
         includeConfig: true,
@@ -1307,6 +1351,9 @@ class PersistStreamClient extends EventEmitter {
         ) {
           newest_retained_seq = Number(headers.newest_retained_seq);
         }
+        if (typeof headers?.instance == "string" && instance === undefined) {
+          instance = headers.instance;
+        }
         if (data == null) {
           break;
         }
@@ -1345,6 +1392,7 @@ class PersistStreamClient extends EventEmitter {
       });
       return {
         messages,
+        instance,
         effective_start_seq,
         oldest_retained_seq,
         newest_retained_seq,

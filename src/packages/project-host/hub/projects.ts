@@ -82,7 +82,10 @@ import {
   reconcileManagedProjectVolumeQuota,
 } from "../file-server";
 import { currentProjectVolumeLifecycleGeneration } from "../project-volume-lifecycle";
-import { withProjectRuntimeLifecycle } from "../runtime-lifecycle";
+import {
+  applyProjectRuntimeAuthorityUpdate,
+  withProjectRuntimeLifecycle,
+} from "../runtime-lifecycle";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import type { Configuration } from "@cocalc/conat/project/runner/types";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -757,6 +760,7 @@ type StartMetadata = {
   run_quota?: any;
   run_quota_revision?: number;
   runtime_lifecycle_revision?: number;
+  users_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   secrets?: Record<string, string>;
@@ -767,6 +771,8 @@ type StartMetadata = {
 
 type LocalProjectOptions = CreateProjectOptions & {
   users?: any;
+  /** See updateProjectUsers. */
+  users_revision?: number;
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
@@ -896,6 +902,7 @@ async function resolveStartMetadata({
         resolved = {
           title: authoritative.title ?? existing?.title,
           users: authoritative.users,
+          users_revision: authoritative.users_revision,
           image: resolved.image ?? authoritative.image ?? undefined,
           authorized_keys:
             resolved.authorized_keys ?? authoritative.authorized_keys,
@@ -1054,9 +1061,14 @@ export function ensureProjectRow({
     }
     if ((opts as any)?.users !== undefined) {
       row.users = (opts as any).users;
-      // [ ] TODO -- for now we always included the default user;
-      // this is obviously temporary
-      row.users[account_id] = { group: "owner" };
+      if (opts.users_revision != null) {
+        // The owning bay's list, as it is: nobody added here.
+        row.users_revision = opts.users_revision;
+      } else {
+        // [ ] TODO -- for now we always included the default user;
+        // this is obviously temporary
+        row.users[account_id] = { group: "owner" };
+      }
     }
     row.local_only = opts.local_only === true;
     row.exam_run_id = opts.exam_run_id ?? null;
@@ -2373,6 +2385,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           opts: {
             title: startMetadata.title,
             users: startMetadata.users,
+            users_revision: startMetadata.users_revision,
             authorized_keys: startMetadata.authorized_keys,
             run_quota: startMetadata.run_quota,
             run_quota_revision: startMetadata.run_quota_revision,
@@ -2536,6 +2549,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           opts: {
             title: startMetadata.title,
             users: startMetadata.users,
+            users_revision: startMetadata.users_revision,
             authorized_keys: startMetadata.authorized_keys,
             run_quota: startMetadata.run_quota,
             run_quota_revision: startMetadata.run_quota_revision,
@@ -2611,6 +2625,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         opts: {
           title: resolved?.title,
           users: resolved?.users,
+          users_revision: resolved?.users_revision,
           authorized_keys: resolved?.authorized_keys,
           run_quota: resolved?.run_quota,
           run_quota_revision: resolved?.run_quota_revision,
@@ -3825,6 +3840,9 @@ export async function updateAuthorizedKeys({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
+  // Unlike the collaborator map, the key list has no revision of its own, and
+  // start() writes the keys it captured; so key updates stay queued behind
+  // start and stop. They are rare, and the queue is capped per project.
   await withProjectRuntimeLifecycle({
     project_id,
     revision: runtime_lifecycle_revision,
@@ -3837,29 +3855,50 @@ export async function updateProjectUsers({
   project_id,
   users,
   runtime_lifecycle_revision,
+  users_revision,
   content_epoch,
 }: {
   project_id: string;
   users?: any;
   runtime_lifecycle_revision?: number;
+  /** Only the newest collaborator list is kept (sqlite/projects.ts). */
+  users_revision?: number;
   content_epoch?: number;
 }) {
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
+  const apply = () => {
+    // Store collaborator map in the generic sqlite row mirror used by conat auth.
+    // This is separate from the concrete projects SQL table schema.
+    upsertProject({
+      project_id,
+      users,
+      users_revision,
+      ...(content_epoch == null ? {} : { content_epoch }),
+    });
+    clearProjectHostConatAuthCaches();
+  };
+  // A versioned update is not queued behind start and stop: a start that hangs
+  // would otherwise block every agent and browser token for the project (each
+  // token first syncs users), and the waiting requests would use up the host's
+  // API handlers. That is safe because only the newest users_revision is kept
+  // (sqlite/projects.ts), so an older start cannot restore an older list.
+  // An unversioned update (an older bay during a rolling upgrade) has no such
+  // guard against a start that captured an older unversioned list, so it stays
+  // queued as before.
+  if (Number.isFinite(users_revision) && Number(users_revision) >= 0) {
+    applyProjectRuntimeAuthorityUpdate({
+      project_id,
+      revision: runtime_lifecycle_revision,
+      fn: apply,
+    });
+    return;
+  }
   await withProjectRuntimeLifecycle({
     project_id,
     revision: runtime_lifecycle_revision,
-    fn: async () => {
-      // Store collaborator map in the generic sqlite row mirror used by conat auth.
-      // This is separate from the concrete projects SQL table schema.
-      upsertProject({
-        project_id,
-        users,
-        ...(content_epoch == null ? {} : { content_epoch }),
-      });
-      clearProjectHostConatAuthCaches();
-    },
+    fn: async () => apply(),
   });
 }
 

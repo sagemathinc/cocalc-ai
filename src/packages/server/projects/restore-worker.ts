@@ -96,7 +96,13 @@ function progressEvent({
       progress: progressSteps[step],
       detail,
     },
-  });
+  }).catch((err) =>
+    logger.warn("failed to publish restore progress", {
+      op_id: op.op_id,
+      step,
+      err: `${err}`,
+    }),
+  );
 }
 
 function defaultSafetySnapshotName(snapshot: string): string {

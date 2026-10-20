@@ -1,5 +1,19 @@
 import rustic from "@cocalc/backend/sandbox/rustic";
-import { isMissingRusticRepositoryError } from "./backup-index-errors";
+import {
+  missingInventorySnapshot,
+  SNAPSHOT_INVENTORY_RETRY_DELAYS_MS,
+} from "@cocalc/file-server/btrfs/subvolume-rustic";
+import {
+  isMissingRusticRepositoryError,
+  looksLikeMissingBackupBucketError,
+} from "./backup-index-errors";
+
+const INVENTORY_TIMEOUT_MS = 60_000;
+
+// Callers refresh the backup profile on this (see
+// looksLikeMissingBackupBucketError); never include raw stderr.
+export const MISSING_BACKUP_BUCKET_MESSAGE =
+  "restore backup inventory failed: backup bucket not found (NoSuchBucket)";
 
 type Backup = {
   id: string;
@@ -59,22 +73,66 @@ export async function listRestoreBackups({
   // Project backup configuration resolves to TOML; never initialize it here.
   if (!profilePath.endsWith(".toml"))
     throw Error("restore inventory requires a repository profile");
-  let output;
-  try {
-    output = await rustic(["snapshots", "--json"], {
-      repo: profilePath,
-      host: `project-${projectId}`,
-      timeout: 60_000,
-      maxSize: 100_000_000,
-    });
-  } catch {
-    throw Error("restore backup inventory command failed");
+  const deadline = Date.now() + INVENTORY_TIMEOUT_MS;
+  for (let attempt = 0; ; attempt++) {
+    let output;
+    try {
+      output = await rustic(["snapshots", "--json"], {
+        repo: profilePath,
+        host: `project-${projectId}`,
+        timeout: Math.max(1, deadline - Date.now()),
+        maxSize: 100_000_000,
+      });
+    } catch {
+      throw Error("restore backup inventory command failed");
+    }
+    if (output.truncated)
+      throw Error("restore backup inventory exceeded its time or output limit");
+    if (output.code === 0) {
+      return parseRestoreBackupInventory(output.stdout, projectId);
+    }
+    const stderr = `${output.stderr ?? ""}`;
+    if (isMissingRusticRepositoryError(stderr)) return [];
+    if (looksLikeMissingBackupBucketError(stderr)) {
+      throw Error(MISSING_BACKUP_BUCKET_MESSAGE);
+    }
+    // A listed snapshot can disappear before Rustic reads it (retention in a
+    // shared repository): retry the read-only inventory within the deadline.
+    const wait = SNAPSHOT_INVENTORY_RETRY_DELAYS_MS[attempt];
+    if (
+      !missingInventorySnapshot(stderr) ||
+      wait == null ||
+      Date.now() + wait >= deadline
+    ) {
+      throw Error("restore backup inventory command failed");
+    }
+    await new Promise((resolve) => setTimeout(resolve, wait));
   }
-  if (output.truncated)
-    throw Error("restore backup inventory exceeded its time or output limit");
-  if (output.code !== 0) {
-    if (isMissingRusticRepositoryError(output.stderr)) return [];
-    throw Error("restore backup inventory command failed");
-  }
-  return parseRestoreBackupInventory(output.stdout, projectId);
+}
+
+/**
+ * The ids and times of a project's backups, oldest first, for the host's own
+ * bookkeeping: the backup limit, the parent of a new backup, and confirming a
+ * recorded backup. This reads only snapshot files, with a timeout. The backup
+ * browser's WebDAV helper first loads the whole repository index, and
+ * repositories are shared by many projects: one stalled object-store read left
+ * it unready for its whole 5-minute start timeout, which failed archive
+ * backups on prod (2026-10-16). `browse` lists a directory repository
+ * (development), which has no profile for the inventory.
+ */
+export async function listBackupIds({
+  profilePath,
+  projectId,
+  browse,
+}: {
+  profilePath: string;
+  projectId: string;
+  browse: () => Promise<{ id: string; time: Date }[]>;
+}): Promise<{ id: string; time: Date }[]> {
+  const backups = profilePath.endsWith(".toml")
+    ? await listRestoreBackups({ profilePath, projectId })
+    : await browse();
+  return backups
+    .map(({ id, time }) => ({ id, time }))
+    .sort((a, b) => a.time.getTime() - b.time.getTime());
 }

@@ -414,6 +414,64 @@ describe("Codex question attention", () => {
     );
   });
 
+  it("keeps the saved answer on screen after a successful retry", async () => {
+    const user = userEvent.setup();
+    const questionId = questionRecord.questions[0].id;
+    const stale = {
+      ...questionRecord,
+      state: "stale" as const,
+      response_submitted_at: 10,
+      own_response: { answers: { [questionId]: ["US"] } },
+    };
+    // The continue reply is the public record, without own_response.
+    const { own_response: _omit, ...publicAnswered } = {
+      ...stale,
+      state: "answered" as const,
+      updated_at: stale.updated_at + 5,
+    };
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) =>
+        request.action === "continue"
+          ? { ok: true, record: publicAnswered }
+          : { ok: true, records: [] },
+      );
+    render(<CodexAttentionCard initialRecord={stale} />);
+    await user.click(
+      screen.getByRole("button", { name: "Continue with this answer" }),
+    );
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "continue" }),
+      ),
+    );
+    const region = screen.getByRole("region", { name: "Response for Region" });
+    expect(region).toHaveTextContent("US");
+    expect(region).not.toHaveTextContent("not available");
+  });
+
+  it("shows the person's own saved answer after a reload", () => {
+    const stale = {
+      ...questionRecord,
+      state: "stale" as const,
+      response_submitted_at: 10,
+      own_response: { answers: { [questionRecord.questions[0].id]: ["US"] } },
+    };
+    render(<CodexAttentionCard initialRecord={stale} />);
+    const region = screen.getByRole("region", { name: "Response for Region" });
+    expect(region).toHaveTextContent("US");
+    expect(region).not.toHaveTextContent("not available");
+
+    const declined = {
+      ...stale,
+      own_response: { answers: {}, declined: true },
+    };
+    render(<CodexAttentionCard initialRecord={declined} />);
+    expect(
+      screen.getAllByRole("region", { name: "Response for Region" })[1],
+    ).toHaveTextContent("Declined to answer");
+  });
+
   it("does not replace a submitted receipt with an older in-flight poll", async () => {
     let finishPoll!: (value: any) => void;
     const oldPoll = new Promise<any>((resolve) => {

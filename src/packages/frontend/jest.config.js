@@ -43,6 +43,7 @@ module.exports = {
     "^pdfjs-dist/webpack\\.mjs$": "<rootDir>/test/mocks/pdfjs-webpack.js",
     "\\.(css|less|sass|scss)$": "<rootDir>/test/mocks/style.js",
     "\\.txt$": "<rootDir>/test/mocks/text.js",
+    "\\?raw$": "<rootDir>/test/mocks/text.js",
   },
   testMatch: ["**/?(*.)+(spec|test).ts?(x)", "!**/playwright/**"],
   testPathIgnorePatterns: [

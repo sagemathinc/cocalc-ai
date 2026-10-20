@@ -55,6 +55,7 @@ export class SharedBrowserConnection extends EventEmitter {
     super();
     this.reconnectResource =
       webapp_client.conat_client.registerReconnectResource?.({
+        project_id: this.project_id,
         canReconnect: () => !this.closed,
         isConnected: () => this.socket?.state === "ready",
         probeOnForeground: () => !this.closed,

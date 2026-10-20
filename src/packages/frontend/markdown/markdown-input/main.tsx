@@ -23,6 +23,8 @@ import { labels } from "@cocalc/frontend/i18n";
 // Sibling Libraries
 import { COLORS } from "@cocalc/util/theme";
 import { markdown_to_html } from "../index";
+import HTML from "@cocalc/frontend/components/html-ssr";
+import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import type { MarkdownWidgetActions } from "./actions";
 import * as info from "./info";
 import { init } from "./init";
@@ -151,13 +153,16 @@ export function MarkdownInput({
     }
   }
 
-  function to_html() {
-    if (default_value) {
-      const html = markdown_to_html(default_value);
-      return { __html: html };
-    } else {
-      return { __html: "" };
-    }
+  // Course descriptions and similar are written by other people (e.g. a
+  // co-instructor), so they are rendered by the central sanitizing renderer,
+  // even inside a project editor that otherwise sets noSanitize.
+  const fileContext = useFileContext();
+  function renderMarkdown() {
+    return (
+      <FileContext.Provider value={{ ...fileContext, noSanitize: false }}>
+        <HTML value={markdown_to_html(default_value ?? "")} />
+      </FileContext.Provider>
+    );
   }
 
   function renderTip() {
@@ -210,11 +215,10 @@ export function MarkdownInput({
       </div>
     );
   } else {
-    const html = to_html();
-    const style = html?.__html ? rendered_style : undefined;
+    const style = default_value ? rendered_style : undefined;
     return (
       <div>
-        <div dangerouslySetInnerHTML={html} style={style} />
+        <div style={style}>{default_value ? renderMarkdown() : null}</div>
         {!hide_edit_button ? (
           <Button onClick={edit}>
             <Icon name="edit" /> {intl.formatMessage(labels.edit)}

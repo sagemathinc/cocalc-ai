@@ -2125,6 +2125,169 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
     ]);
   });
 
+  describe("bounded managed component verification", () => {
+    const row = {
+      id: "host-1",
+      status: "running",
+      metadata: { owner: "account-1", software: { project_host: "ph-v1" } },
+    };
+    const common = {
+      account_id: "account-1",
+      id: "host-1",
+      components: ["conat-router"] as any,
+      reason: "host_software_upgrade",
+      loadHostForStartStop: async () => row,
+      assertHostRunningForUpgrade: () => undefined,
+      waitForHostHeartbeatAfter: async () => undefined,
+      installedProjectHostArtifactVersion: (r: any) =>
+        r?.metadata?.software?.project_host,
+      recordProjectHostLocalRollbackInternal: async () => ({
+        host_id: "host-1",
+        rollback_version: "ph-v1",
+        source: "host-agent" as const,
+      }),
+      project_host_local_rollback_error_code: "project_host_local_rollback",
+      setLastKnownGoodArtifactVersionInternal: async () => undefined,
+      runtimeDeploymentsForComponentRollout: () => [],
+      requestedByForRuntimeDeployments: () => "account-1",
+      setProjectHostRuntimeDeployments: async () => undefined,
+      loadEffectiveRuntimeDeployments: async () => [],
+      projectHostRolloutPollMs: 0,
+    };
+    const never = () => new Promise<never>(() => undefined);
+
+    it("ends when creating the status client never returns (alpha, 2026-10-16)", async () => {
+      const rolloutClient = {
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => {
+          throw new Error("socket has been disconnected");
+        },
+      };
+      let calls = 0;
+      const hostControlClient = jest.fn(async () => {
+        calls += 1;
+        // The rollout's own client works; every later one hangs, as right
+        // after a project-host restart.
+        return calls === 1 ? rolloutClient : await never();
+      });
+      const startedAt = Date.now();
+      await expect(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: hostControlClient as any,
+          projectHostRolloutSettleTimeoutMs: 50,
+          hostControlClientTimeoutMs: 100,
+        }),
+      ).rejects.toThrow(/managed component alignment could not be verified/);
+      // Without the bounds this never settles (the hung client is awaited).
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
+      expect(hostControlClient.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    // Settles a rollout or reports "hung" after 3 s, recording the error.
+    const settled = async (
+      p: Promise<unknown>,
+    ): Promise<{ outcome: string; error?: unknown }> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          p.then(
+            () => ({ outcome: "resolved" }),
+            (error) => ({ outcome: "rejected", error }),
+          ),
+          new Promise<{ outcome: string }>((resolve) => {
+            timer = setTimeout(() => resolve({ outcome: "hung" }), 3_000);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+
+    it("ends when the first host-control client never returns", async () => {
+      const { outcome, error } = await settled(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: never as any,
+          projectHostRolloutSettleTimeoutMs: 50,
+          hostControlClientTimeoutMs: 100,
+        }),
+      );
+      expect(outcome).toBe("rejected");
+      expect(`${error}`).toMatch(
+        /managed component rollout RPC did not return/,
+      );
+    });
+
+    it("ends when a project-host settle reload never returns", async () => {
+      // project-host is installed and restarted in place (as in "verifies
+      // project-host convergence ..."), but the host keeps reporting the old
+      // process, so the settle loop polls; its row reloads then hang.
+      const row = {
+        id: "host-1",
+        status: "running",
+        version: "ph-v2",
+        last_seen: "2026-04-25T05:00:05.000Z",
+        metadata: { owner: "account-1", software: { project_host: "ph-v2" } },
+      };
+      let loads = 0;
+      const loadHostForStartStop = jest.fn(async () => {
+        loads += 1;
+        // The row reads before the settle loop work; every later one hangs.
+        return loads <= 2 ? row : await never();
+      });
+      const { outcome, error } = await settled(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          components: ["project-host"] as any,
+          loadHostForStartStop: loadHostForStartStop as any,
+          hostControlClient: async () => ({
+            getRuntimeLog: async ({ source }) => ({
+              source: source ?? "project-host",
+              lines: 25,
+              text: "",
+            }),
+            rolloutManagedComponents: async () => new Promise(() => undefined),
+            getManagedComponentStatus: async () => [
+              projectHostStatus({ desiredVersion: "ph-v2", pid: 100 }),
+            ],
+          }),
+          managedComponentRolloutRpcTimeoutMs: 20,
+          projectHostRolloutSettleTimeoutMs: 100,
+          projectHostRolloutMinObservationMs: 10_000,
+          hostControlClientTimeoutMs: 1_000,
+        }),
+      );
+      expect(outcome).toBe("rejected");
+      expect(`${error}`).toMatch(/did not replace the running process/);
+      expect(loadHostForStartStop.mock.calls.length).toBeGreaterThan(2);
+    });
+
+    it("does not let hanging diagnostics hold the rollout error", async () => {
+      const startedAt = Date.now();
+      await expect(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: async () => ({
+            getRuntimeLog: never,
+            rolloutManagedComponents: async () => {
+              throw new Error("project-host conat router exited");
+            },
+          }),
+          projectHostRolloutSettleTimeoutMs: 5,
+          rolloutDiagnosticTimeoutMs: 50,
+        }),
+      ).rejects.toThrow(
+        /rollout request error: project-host conat router exited/,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    });
+  });
+
   it("uses the effective runtime deployment target as the desired project-host version", async () => {
     const runtimeDeploymentsForComponentRollout = jest.fn(() => []);
     const upgradeSoftware = jest.fn(async () => ({

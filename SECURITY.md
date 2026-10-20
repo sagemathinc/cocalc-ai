@@ -49,20 +49,24 @@ below and coordinate with maintainers.
 
 ### Released or Deployed Code
 
-Maintainers must handle fixes for privately reported vulnerabilities through
-a draft repository security advisory. Pre-merge findings that meet the
-exception above can instead be fixed and reviewed in the original public pull
-request.
+Maintainers fix vulnerabilities in released or deployed code in the private
+repository `sagemathinc/cocalc-ai-private`, following
+[`src/scripts/security/README.md`](src/scripts/security/README.md). Pre-merge
+findings that meet the exception above can instead be fixed and reviewed in
+the original public pull request.
 
-1. Create or accept a draft advisory under the repository's Security tab.
+1. Start a `security/*` branch from public main with
+   `src/scripts/security/private-fix.sh start <topic>`, and open a pull
+   request in the private repository. CI and review run there.
 2. Add only the collaborators needed to investigate and review the issue.
-3. Create the advisory's temporary private fork and develop the fix there.
-4. Open the pull request from the advisory page. Do not push the fix or its
-   details to the public repository before deployment.
-5. Validate locally because GitHub Actions and other integrations do not run
-   on temporary private forks.
-6. Merge the advisory pull request, deploy the mitigation promptly, and only
-   then publish the advisory or otherwise disclose the vulnerability.
-
-See GitHub's documentation on
-[collaborating in a temporary private fork](https://docs.github.com/code-security/security-advisories/working-with-repository-security-advisories/collaborating-in-a-temporary-private-fork-to-resolve-a-repository-security-vulnerability).
+3. Do not push the fix or its details to the public repository before
+   deployment. The pre-push guard (`src/scripts/security/install-hooks.sh`)
+   refuses such pushes.
+4. Deploy the fix from a release branch that merges the private branch, then
+   disclose it promptly with `src/scripts/security/disclose.sh`. Self-hosted
+   installs are built from the public repository, so they only get the fix
+   once it is disclosed.
+5. A draft repository security advisory can still track a private report,
+   credit the reporter and request a CVE. Publish it after disclosure. Its
+   temporary private fork is not used for development: GitHub Actions do not
+   run on it, and a release often needs several fixes together.

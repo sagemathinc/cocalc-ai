@@ -93,6 +93,39 @@ export function isFileServerNotInitializedError(err: unknown): boolean {
   return message.toLowerCase().includes(FILE_SERVER_NOT_INITIALIZED);
 }
 
+// A save that failed only because the connection to the project dropped (a
+// project-host restart, a brief network or tunnel blip) is retried like an
+// uninitialized file server: the connection is usually back within seconds,
+// and showing "Error saving file to disk" for that is alarming and wrong.
+export function isTransientDisconnectSaveError(err: unknown): boolean {
+  // conat's structured code when a request's reply inbox was lost with the
+  // connection (the message is "request reply inbox was replaced or closed")
+  if ((err as { code?: unknown })?.code === "CONNECTION_LOST") {
+    return true;
+  }
+  const message = (
+    typeof err === "string"
+      ? err
+      : typeof (err as { message?: unknown })?.message === "string"
+        ? (err as { message: string }).message
+        : `${err}`
+  )
+    .toLowerCase()
+    .trim();
+  return (
+    message.includes("socket has been disconnected") ||
+    message.includes("socket is disconnected") ||
+    message === "disconnected" ||
+    message === "error: disconnected"
+  );
+}
+
+function isRetryableSaveError(err: unknown): boolean {
+  return (
+    isFileServerNotInitializedError(err) || isTransientDisconnectSaveError(err)
+  );
+}
+
 export async function saveToDiskWithFileServerRetry({
   retryDelaysMs = SAVE_TO_DISK_FILE_SERVER_RETRY_DELAYS_MS,
   save,
@@ -110,7 +143,7 @@ export async function saveToDiskWithFileServerRetry({
       return;
     } catch (err) {
       if (
-        !isFileServerNotInitializedError(err) ||
+        !isRetryableSaveError(err) ||
         attempt >= retryDelaysMs.length ||
         !shouldRetry()
       ) {
@@ -1265,6 +1298,7 @@ export class BaseEditorActions<
     }
     this.reconnectResource =
       webapp_client.conat_client.registerReconnectResource({
+        project_id: this.project_id,
         canReconnect: () =>
           !this.isClosed() &&
           this._syncstring != null &&
@@ -2387,7 +2421,9 @@ export class BaseEditorActions<
   }
 
   private openAnywaysModalIsOpen = false;
-  async save(explicit: boolean): Promise<void> {
+  // With strict, a failed save to disk is also thrown to the caller, e.g.,
+  // so course assign can refuse to copy a stale file.
+  async save(explicit: boolean, opts?: { strict?: boolean }): Promise<void> {
     if (
       !this.store.get("is_loaded") ||
       this._syncstring == null ||
@@ -2435,6 +2471,7 @@ export class BaseEditorActions<
           error: "Error saving file -- has_unsaved_changes",
         });
       }
+      if (opts?.strict) throw err;
     } finally {
       this.setState({ is_saving: false });
     }

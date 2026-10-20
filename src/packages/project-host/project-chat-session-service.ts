@@ -23,6 +23,7 @@ import type { Client } from "@cocalc/conat/core/client";
 import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isValidUUID } from "@cocalc/util/misc";
+import { normalizeAgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 
 const logger = getLogger("project-host:project-chat-session");
@@ -461,18 +462,23 @@ export async function initProjectChatSessionService(client: Client) {
         thread_id: string;
         text: string;
         send_mode?: "immediate";
+        user_locale?: unknown;
       },
     ) {
       const session = getSession(this.subject, opts?.session_id);
+      // From the client: only a well-formed time zone and place pass.
+      const user_locale = normalizeAgentUserLocale(opts?.user_locale);
       if (opts?.send_mode === "immediate") {
         return await session.backend.sendGuidanceToCodexThread({
           thread_id: `${opts?.thread_id ?? ""}`,
           text: `${opts?.text ?? ""}`,
+          user_locale,
         });
       }
       return await session.backend.sendToExistingCodexThread({
         thread_id: `${opts?.thread_id ?? ""}`,
         text: `${opts?.text ?? ""}`,
+        user_locale,
       });
     },
 

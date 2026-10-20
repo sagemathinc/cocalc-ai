@@ -398,6 +398,7 @@ import {
   reserveProjectRuntimeSlotLocal,
   startProjectRuntimeSlotHeartbeat,
 } from "@cocalc/server/projects/runtime-slots";
+import { assertSentByCourseBay } from "@cocalc/server/inter-bay/course-access";
 import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
@@ -456,7 +457,6 @@ import {
   drainHost,
   forceDeprovisionHost,
   gcDeletedHostRootfsImages,
-  getHostExamState,
   setHostExamConfig,
   createHostExamRun,
   rotateHostExamToken,
@@ -465,12 +465,7 @@ import {
   increaseHostExamCapacity,
   stopAndEraseHostExamRun,
   getBackupConfigLocal,
-  getHostAvailability,
-  getHostLog,
-  getHostManagedComponentStatus,
-  getHostMetricsHistory,
   getHostRuntimeDeploymentStatus,
-  getHostRuntimeLog,
   getAccountEffectiveLimitsLocal,
   getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
@@ -490,14 +485,10 @@ import {
   startHost,
   stopHost,
   upgradeHostSoftware,
-  listHostRootfsImages,
-  listHostSshAuthorizedKeys,
   listHostProjects,
-  listHostRuntimeDeployments,
   pullHostRootfsImage,
   addHostSshAuthorizedKey,
   issueProjectHostAuthTokenLocal,
-  listHostAccess,
   listHostsLocal,
   markProjectChanged as markProjectChangedLocal,
   recordProjectBackupIndexLocal,
@@ -574,7 +565,6 @@ import {
   getCourseManagedProjectStatesLocal,
   reconcileCourseManagedProjectLocal,
 } from "@cocalc/server/projects/course/reconcile-managed-project";
-import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
   assertOwnershipRecipientLocal,
   getOwnershipUsageCountLocal,
@@ -2675,25 +2665,33 @@ async function startProjectCollabInviteService(): Promise<void> {
     deleteInbox: async ({ invite_id }) => {
       await deleteProjectedCollabInviteDirect(invite_id);
     },
-    repairAcceptedCourseStudentInviteAccounts: async (opts) =>
-      await repairAcceptedCourseStudentInviteAccountsLocal({
+    repairAcceptedCourseStudentInviteAccounts: async ({
+      source_bay_id,
+      ...opts
+    }) => {
+      await assertSentByCourseBay({
+        source_bay_id,
+        course_project_id: opts.course_project_id,
+      });
+      return await repairAcceptedCourseStudentInviteAccountsLocal({
         ...opts,
         trustedCourseAccess: true,
-      }),
-    ensureCourseManagerAccess: async (opts) =>
-      await ensureCourseManagerAccessLocal({
+      });
+    },
+    ensureCourseManagerAccess: async ({ source_bay_id, ...opts }) => {
+      await assertSentByCourseBay({
+        source_bay_id,
+        course_project_id: opts.course_project_id,
+      });
+      return await ensureCourseManagerAccessLocal({
         ...opts,
         trustedCourseAccess: true,
-      }),
+      });
+    },
     reconcileCourseManagedProject: async (opts) =>
       await reconcileCourseManagedProjectLocal(opts),
     getCourseManagedProjectStates: async (opts) =>
       await getCourseManagedProjectStatesLocal(opts),
-    leaveOrDeleteProjects: async ({ account_id, project_ids }) =>
-      await leaveOrDeleteProjectsForAccount({
-        account_id,
-        project_ids,
-      }),
     respond: async ({
       account_id,
       invite_id,
@@ -2749,7 +2747,6 @@ async function startHostConnectionService(): Promise<void> {
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
       }),
-    listHostAccess: async (opts) => await listHostAccess(opts),
     setHostAccess: async (opts) => await setHostAccess(opts),
     removeHostAccess: async (opts) => await removeHostAccess(opts),
     setHostProjectRamLimit: async (opts) => await setHostProjectRamLimit(opts),
@@ -2758,39 +2755,8 @@ async function startHostConnectionService(): Promise<void> {
     setHostPoolAccess: async (opts) => await setHostPoolAccess(opts),
     setHostDeletionProtection: async (opts) =>
       await setHostDeletionProtection(opts),
-    getHostLog: async ({ account_id, id, limit }) =>
-      await getHostLog({
-        account_id,
-        id,
-        limit,
-      }),
-    getHostAvailability: async ({ account_id, id, days }) =>
-      await getHostAvailability({
-        account_id,
-        id,
-        days,
-      }),
     annotateHostAvailabilityEvent: async (opts) =>
       await annotateHostAvailabilityEvent(opts),
-    getHostRuntimeLog: async ({ account_id, id, lines, source }) =>
-      await getHostRuntimeLog({
-        account_id,
-        id,
-        lines,
-        source,
-      }),
-    getHostMetricsHistory: async ({
-      account_id,
-      id,
-      window_minutes,
-      max_points,
-    }) =>
-      await getHostMetricsHistory({
-        account_id,
-        id,
-        window_minutes,
-        max_points,
-      }),
     getHostRuntimeDeploymentStatus: async ({ account_id, id }) =>
       await getHostRuntimeDeploymentStatus({
         account_id,
@@ -2968,11 +2934,6 @@ async function startHostConnectionService(): Promise<void> {
         internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
       }),
-    listHostRootfsImages: async ({ account_id, id }) =>
-      await listHostRootfsImages({
-        account_id,
-        id,
-      }),
     pullHostRootfsImage: async ({ account_id, session_hash, id, image }) =>
       await pullHostRootfsImage({
         account_id,
@@ -2996,7 +2957,6 @@ async function startHostConnectionService(): Promise<void> {
         internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
       }),
-    getHostExamState: async (opts) => await getHostExamState(opts),
     setHostExamConfig: async (opts) =>
       await setHostExamConfig({
         ...opts,
@@ -3032,11 +2992,6 @@ async function startHostConnectionService(): Promise<void> {
         ...opts,
         internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
       }),
-    listHostSshAuthorizedKeys: async ({ account_id, id }) =>
-      await listHostSshAuthorizedKeys({
-        account_id,
-        id,
-      }),
     addHostSshAuthorizedKey: async ({
       account_id,
       session_hash,
@@ -3065,12 +3020,6 @@ async function startHostConnectionService(): Promise<void> {
         id,
         public_key,
       }),
-    listHostRuntimeDeployments: async ({ account_id, scope_type, id }) =>
-      await listHostRuntimeDeployments({
-        account_id,
-        scope_type,
-        id,
-      }),
     setHostRuntimeDeployments: async ({
       account_id,
       scope_type,
@@ -3086,11 +3035,6 @@ async function startHostConnectionService(): Promise<void> {
         deployments,
         replace,
         align_runtime_stack,
-      }),
-    getHostManagedComponentStatus: async ({ account_id, id }) =>
-      await getHostManagedComponentStatus({
-        account_id,
-        id,
       }),
     getProjectStartMetadata: async ({ host_id, project_id }) => {
       const metadata = await getProjectStartMetadataLocal({

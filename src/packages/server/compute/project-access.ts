@@ -147,13 +147,30 @@ export async function updateComputeVmProjectAccessState(opts: {
   project_id: string;
   state: ComputeVmProjectAccessState;
   error?: string | null;
+  /** Count a failed project sync (metadata.sync_failures, for backoff);
+   * any other update resets the count. */
+  sync_failed?: boolean;
 }): Promise<ComputeVmProjectAccessRow | undefined> {
   const { rows } = await pool().query<ComputeVmProjectAccessRow>(
     `UPDATE compute_vm_project_access
-        SET state=$3, error=$4, updated_at=NOW()
+        SET state=$3, error=$4, updated_at=NOW(),
+            metadata=CASE
+              WHEN $5::boolean THEN jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{sync_failures}',
+                to_jsonb(COALESCE((metadata->>'sync_failures')::int, 0) + 1)
+              )
+              ELSE COALESCE(metadata, '{}'::jsonb) - 'sync_failures'
+            END
       WHERE vm_id=$1 AND project_id=$2
       RETURNING *`,
-    [opts.vm_id, opts.project_id, opts.state, opts.error ?? null],
+    [
+      opts.vm_id,
+      opts.project_id,
+      opts.state,
+      opts.error ?? null,
+      opts.sync_failed === true,
+    ],
   );
   return rows[0];
 }

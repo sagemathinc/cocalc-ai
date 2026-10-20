@@ -87,9 +87,12 @@ export async function download_file(
   // NOTE: the file has to be served with
   //    res.setHeader('Content-disposition', 'attachment')
 
-  // Create hidden iframe that causes download to happen:
+  // Create hidden iframe that causes download to happen.  It is sandboxed
+  // with only allow-downloads, so if a response is ever rendered instead of
+  // downloaded (e.g. a project HTML file served inline), nothing in it runs.
   const iframe = $("<iframe>")
     .addClass("hide")
+    .attr("sandbox", "allow-downloads")
     .attr("src", effectiveSrc)
     .appendTo($("body"));
 

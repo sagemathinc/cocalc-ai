@@ -3,18 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export type LeaveOrDeleteProjectResult = {
-  project_id: string;
-  action:
-    | "removed_self"
-    | "transferred"
-    | "hard_deleted"
-    | "hard_delete_queued"
-    | "error";
-  new_owner_account_id?: string;
-  op_id?: string;
-  error?: string;
-};
+import type { LeaveOrDeleteProjectResult } from "@cocalc/conat/hub/api/projects";
+export type { LeaveOrDeleteProjectResult };
 
 export type BulkLeaveOrDeleteProgressPhase = "submitting" | "waiting" | "done";
 
@@ -69,10 +59,15 @@ export async function runLeaveOrDeleteProjectsSequentially({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      const code = (err as { code?: unknown })?.code;
       results.push({
         project_id,
         action: "error",
         error: `${err}`,
+        // E.g. OUTCOME_UNKNOWN: the delete may or may not have happened.
+        ...(typeof code === "string" || typeof code === "number"
+          ? { code }
+          : {}),
       });
       continue;
     }
@@ -87,6 +82,16 @@ export async function runLeaveOrDeleteProjectsSequentially({
         error: "No result was returned.",
       });
       continue;
+    }
+    // A project on another bay that needs a fresh sign-in says so in its
+    // result; ask for it as if the call had thrown.
+    if (
+      result.action === "error" &&
+      isFreshAuthRequiredError({ code: result.code, message: result.error })
+    ) {
+      throw Object.assign(new Error(result.error ?? "fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
     }
 
     if (result.action === "hard_delete_queued" && result.op_id) {

@@ -509,18 +509,13 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("publishes a submitted completion notice when config hydration lags", async () => {
+  it("never notifies when a turn completes, whatever the old preferences", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
     const { syncdb } = makeFakeSyncDB();
-    let releaseNotice: (() => void) | undefined;
-    callHubMock.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseNotice = resolve;
-        }),
-    );
     const writer: any = new ChatStreamWriter({
       metadata: {
         ...baseMetadata,
+        completion_notification_enabled: true,
         notify_on_turn_finish: true,
       },
       client: makeFakeClient(),
@@ -533,30 +528,45 @@ describe("ChatStreamWriter", () => {
     });
     await writer.waitUntilReady();
 
-    let resolved = false;
-    const pending = writer
-      .handle({
-        type: "summary",
-        finalResponse: "done",
-        seq: 0,
-      } as AcpStreamMessage)
-      .then(() => {
-        resolved = true;
-      });
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+
+    expect(callHubMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "notifications.createCodexTurnNotice" }),
+    );
+    writer.dispose?.(true);
+  });
+
+  it("notifies when a turn fails, even with completion notices turned off", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        completion_notification_enabled: false,
+        notify_on_turn_finish: false,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    await writer.handle({ type: "error", error: "model capacity exceeded" });
+    await writer.handle(null);
+    await flush(writer);
 
     await waitForCondition(() => callHubMock.mock.calls.length > 0);
     expect(callHubMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project_id: "p",
-        name: "notifications.createCodexTurnNotice",
-        timeout: 20_000,
-      }),
+      expect.objectContaining({ name: "notifications.createCodexTurnNotice" }),
     );
-    expect(resolved).toBe(false);
-
-    releaseNotice?.();
-    await pending;
-    expect(resolved).toBe(true);
     writer.dispose?.(true);
   });
 
@@ -588,38 +598,6 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
-  it("creates completion notifications by default", async () => {
-    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
-    const { syncdb } = makeFakeSyncDB();
-    const writer: any = new ChatStreamWriter({
-      metadata: {
-        ...baseMetadata,
-        completion_notification_enabled: true,
-      },
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb as any,
-      logStoreFactory: () =>
-        ({
-          set: async () => {},
-        }) as any,
-    });
-    await writer.waitUntilReady();
-
-    await writer.handle({
-      type: "summary",
-      finalResponse: "done",
-      seq: 0,
-    } as AcpStreamMessage);
-
-    expect(callHubMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "notifications.createCodexTurnNotice",
-      }),
-    );
-    writer.dispose?.(true);
-  });
-
   it("preserves a legacy completion notification opt-out", async () => {
     delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
     const { syncdb } = makeFakeSyncDB();
@@ -645,74 +623,6 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
 
     expect(callHubMock).not.toHaveBeenCalled();
-    writer.dispose?.(true);
-  });
-
-  it("keeps a submitted notify preference despite stale live config", async () => {
-    const { syncdb } = makeFakeSyncDB();
-    syncdb.set({
-      event: "chat-thread-config",
-      sender_id: "__thread_config__:thread-0",
-      date: CHAT_THREAD_META_ROW_DATE,
-      thread_id: "thread-0",
-      acp_config: { notifyOnTurnFinish: false },
-    });
-    const writer: any = new ChatStreamWriter({
-      metadata: {
-        ...baseMetadata,
-        notify_on_turn_finish: true,
-      },
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb as any,
-      logStoreFactory: () =>
-        ({
-          set: async () => {},
-        }) as any,
-    });
-    await writer.waitUntilReady();
-
-    await writer.handle({
-      type: "summary",
-      finalResponse: "done",
-      seq: 0,
-    } as AcpStreamMessage);
-
-    expect(callHubMock).toHaveBeenCalledTimes(1);
-    writer.dispose?.(true);
-  });
-
-  it("honors a live notify opt-in made after submission", async () => {
-    const { syncdb } = makeFakeSyncDB();
-    const writer: any = new ChatStreamWriter({
-      metadata: {
-        ...baseMetadata,
-        notify_on_turn_finish: false,
-      },
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb as any,
-      logStoreFactory: () =>
-        ({
-          set: async () => {},
-        }) as any,
-    });
-    await writer.waitUntilReady();
-    syncdb.set({
-      event: "chat-thread-config",
-      sender_id: "__thread_config__:thread-0",
-      date: CHAT_THREAD_META_ROW_DATE,
-      thread_id: "thread-0",
-      acp_config: { notifyOnTurnFinish: true },
-    });
-
-    await writer.handle({
-      type: "summary",
-      finalResponse: "done",
-      seq: 0,
-    } as AcpStreamMessage);
-
-    expect(callHubMock).toHaveBeenCalledTimes(1);
     writer.dispose?.(true);
   });
 

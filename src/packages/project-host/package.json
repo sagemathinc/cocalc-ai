@@ -54,6 +54,7 @@
     "@cocalc/sync": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@isaacs/ttlcache": "^1.4.1",
+    "@sagemathinc/sagebrush-board": "0.3.0",
     "compression": "^1.8.2",
     "express": "^5.2.1",
     "formidable": "^3.5.4",

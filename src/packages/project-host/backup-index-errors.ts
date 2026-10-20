@@ -8,3 +8,14 @@ export function isMissingRusticRepositoryError(err: unknown): boolean {
       text.includes("the configuration"))
   );
 }
+
+// The repository's bucket is gone (deleted or reassigned): the cached backup
+// profile is stale and should be refreshed.
+export function looksLikeMissingBackupBucketError(err: unknown): boolean {
+  const s = `${err ?? ""}`.toLowerCase();
+  return (
+    s.includes("nosuchbucket") ||
+    s.includes("specified bucket does not exist") ||
+    s.includes("path `config` does not exist")
+  );
+}

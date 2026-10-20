@@ -121,6 +121,18 @@ export interface ProjectRow {
   last_seen?: number;
   updated_at?: number;
   users?: Record<string, any>;
+  /**
+   * The owning bay's revision of users (runtime_authority_revision): an
+   * older copy never replaces a newer one. Absent: an unversioned (local or
+   * legacy) copy, accepted only while no versioned copy is stored.
+   */
+  users_revision?: number;
+  /**
+   * An unversioned copy arrived after the stored versioned one and was
+   * ignored: it may be newer (from a process that doesn't send revisions
+   * yet), so computers are refused until the next versioned copy.
+   */
+  users_unverified?: boolean;
   http_port?: number | null;
   ssh_port?: number | null;
   project_bundle_version?: string | null;
@@ -363,10 +375,39 @@ export function upsertProject(row: ProjectRow) {
     : (row.scratch ?? diskFromQuota ?? existing.scratch ?? null);
   const last_seen = row.last_seen ?? (existing as any).last_seen ?? now;
   const updated_at = row.updated_at ?? now;
+  // Collaborators: like run_quota, only the newest revision is kept, so a
+  // copy sent before a collaborator change and delivered after it can't
+  // bring back the old list (a computer would stay allowed: computers.ts).
+  const existingUsersRevision = Number.isFinite(
+    Number((existing as any).users_revision),
+  )
+    ? Math.floor(Number((existing as any).users_revision))
+    : undefined;
+  const incomingUsersRevision =
+    row.users_revision != null && Number.isFinite(Number(row.users_revision))
+      ? Math.max(0, Math.floor(Number(row.users_revision)))
+      : undefined;
+  const acceptIncomingUsers =
+    row.users !== undefined &&
+    (incomingUsersRevision == null
+      ? existingUsersRevision == null
+      : existingUsersRevision == null ||
+        incomingUsersRevision >= existingUsersRevision);
   const users =
-    row.users ??
+    (acceptIncomingUsers ? row.users : undefined) ??
     existing.users ??
     (account_id ? { [account_id]: { group: "owner" } } : undefined);
+  const users_revision = acceptIncomingUsers
+    ? (incomingUsersRevision ?? existingUsersRevision)
+    : existingUsersRevision;
+  const users_unverified =
+    row.users !== undefined
+      ? !acceptIncomingUsers && incomingUsersRevision == null
+        ? true
+        : acceptIncomingUsers && incomingUsersRevision != null
+          ? false
+          : (existing as any).users_unverified === true
+      : (existing as any).users_unverified === true;
   const hasHttpPort = Object.prototype.hasOwnProperty.call(row, "http_port");
   const hasSshPort = Object.prototype.hasOwnProperty.call(row, "ssh_port");
   const http_port = hasHttpPort
@@ -548,6 +589,8 @@ export function upsertProject(row: ProjectRow) {
     scratch: scratch ?? existing.scratch,
     last_edited: updated_at,
     users,
+    users_revision,
+    users_unverified,
     state_reported: state_reported ?? existingProjectsRow.state_reported,
     http_port,
     ssh_port,
@@ -725,6 +768,12 @@ export function getProject(project_id: string): ProjectRow | undefined {
   const mirror = getRow("projects", JSON.stringify({ project_id })) as any;
   if (mirror?.users != null) {
     row.users = mirror.users;
+  }
+  if (mirror?.users_revision != null) {
+    row.users_revision = Number(mirror.users_revision);
+  }
+  if (mirror?.users_unverified === true) {
+    row.users_unverified = true;
   }
   if (row?.run_quota) {
     row.run_quota = parseRunQuota(row.run_quota);

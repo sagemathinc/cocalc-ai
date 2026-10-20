@@ -71,9 +71,7 @@ const STAR_HIDDEN_ADMIN_SECTIONS = new Set<string>([
 ]);
 
 type AdminMenuKey =
-  | AdminSection
-  | typeof NEWS_MENU_KEY
-  | typeof OVERVIEW_MENU_KEY;
+  AdminSection | typeof NEWS_MENU_KEY | typeof OVERVIEW_MENU_KEY;
 
 interface AdminSectionDefinition {
   component: () => ReactNode;
@@ -95,11 +93,7 @@ interface AdminNavigationItem {
 }
 
 type AdminGroupKey =
-  | "launch"
-  | "operations"
-  | "access"
-  | "content"
-  | "commercial";
+  "launch" | "operations" | "access" | "content" | "commercial";
 
 const ADMIN_GROUPS: Record<AdminGroupKey, { icon: IconName; title: string }> = {
   launch: { icon: "check-square", title: "Launch Readiness" },
@@ -668,9 +662,9 @@ function getAdminSections({
     },
     {
       key: "codex-pools",
-      title: "Codex Pools",
+      title: "AI Pool",
       description:
-        "Monitor and configure site-funded Codex budgets, policy, and OpenAI reconciliation.",
+        "Monitor and configure the site-funded AI pool that Codex and speech share: budgets, Codex policy, and OpenAI reconciliation.",
       icon: "robot",
       group: "commercial",
       component: () => (

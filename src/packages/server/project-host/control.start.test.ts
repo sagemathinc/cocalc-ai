@@ -585,6 +585,7 @@ describe("startProjectOnHost placement", () => {
             {
               title: "OCI test",
               users: { owner: { group: "owner" } },
+              users_revision: 7,
               image: "sagemathinc/sagemath-x86_64:10.7",
               host_id: loadProjectCalls === 1 ? null : "host-1",
               region: "wnam",
@@ -658,6 +659,7 @@ describe("startProjectOnHost placement", () => {
       project_id: "proj-1",
       title: "OCI test",
       users: { owner: { group: "owner" } },
+      users_revision: 7,
       image: "sagemathinc/sagemath-x86_64:10.7",
       start: false,
       ensure_volume: false,
@@ -937,6 +939,7 @@ describe("startProjectOnHost placement", () => {
             {
               title: "OCI test",
               users: { owner: { group: "owner" } },
+              users_revision: 7,
               image: "sagemathinc/sagemath-x86_64:10.7",
               host_id: loadProjectCalls === 1 ? null : "host-1",
               region: "wnam",
@@ -1055,6 +1058,7 @@ describe("startProjectOnHost placement", () => {
             {
               title: "OCI test",
               users: { owner: { group: "owner" } },
+              users_revision: 7,
               image: "sagemathinc/sagemath-x86_64:10.7",
               host_id: loadProjectCalls === 1 ? null : "host-1",
               region: "wnam",
@@ -1175,6 +1179,7 @@ describe("startProjectOnHost placement", () => {
             {
               title: "OCI test",
               users: { owner: { group: "owner" } },
+              users_revision: 7,
               image: "sagemathinc/sagemath-x86_64:10.7",
               host_id: loadProjectCalls === 1 ? null : "host-1",
               region: "wnam",

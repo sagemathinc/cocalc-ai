@@ -12,6 +12,7 @@ import {
   type MembershipTierOrderInput,
 } from "./membership-tier-order";
 import { currency } from "./misc";
+import { getPublicCustomerOperatedSummary } from "./public-products-content";
 
 export type BillingInterval = "month" | "year";
 
@@ -55,10 +56,16 @@ export const PUBLIC_PRICING_PROJECT_HOSTS = {
   title: "Dedicated project hosts",
 } as const;
 
-export const PUBLIC_PRICING_CUSTOMER_OPERATED = {
-  body: "Compare local CoCalc Plus, one-VM CoCalc Star, and the Launchpad and Rocket private-deployment paths. You or your organization operate the infrastructure, recovery, and ongoing service.",
-  title: "Customer-operated deployments",
-} as const;
+// It names only the products the public pages show.
+export function getPublicPricingCustomerOperated(): {
+  body: string;
+  title: string;
+} {
+  return {
+    body: getPublicCustomerOperatedSummary(),
+    title: "Customer-operated deployments",
+  };
+}
 
 export const PUBLIC_PRICING_PRODUCT_QUOTES = {
   body: "For a customer-operated product purchase or billing workflow that does not fit self-service, contact CoCalc with the product, operating environment, and timeline.",

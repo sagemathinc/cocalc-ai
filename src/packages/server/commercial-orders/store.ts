@@ -46,6 +46,7 @@ import type {
   CommercialQuotePreviewRequest,
   CommercialQuoteVoidRequest,
   CommercialStripeQuoteCreateRequest,
+  CommercialProviderOperationResolveRequest,
   CommercialStripeEventRetryRequest,
   CommercialStripeEventRetryResult,
 } from "@cocalc/conat/hub/api/commercial-orders";
@@ -3553,7 +3554,12 @@ export async function setCommercialProviderOperationStatus(opts: {
        attempt_count=attempt_count+CASE WHEN $2::varchar='remote_started' THEN 1 ELSE 0 END,
        remote_started_at=CASE WHEN $2::varchar='remote_started' THEN NOW() ELSE remote_started_at END,
        completed_at=CASE WHEN $2::varchar IN ('succeeded','failed') THEN NOW() ELSE completed_at END,
-       updated_at=NOW() WHERE id=$1 RETURNING *`,
+       updated_at=NOW()
+     WHERE id=$1
+       -- An operation an admin resolved is final: a retry admitted before the
+       -- resolution must not reopen it.
+       AND NOT (status='failed' AND result ? 'admin_resolution')
+     RETURNING *`,
     [
       opts.id,
       opts.status,
@@ -3561,7 +3567,18 @@ export async function setCommercialProviderOperationStatus(opts: {
       opts.error == null ? null : `${opts.error}`.slice(0, 5_000),
     ],
   );
-  if (!rows[0]) throw Error("commercial provider operation not found");
+  if (!rows[0]) {
+    const { rows: existing } = await getPool().query(
+      "SELECT id FROM commercial_provider_operations WHERE id=$1",
+      [opts.id],
+    );
+    if (existing[0]) {
+      throw Error(
+        "commercial provider operation was resolved by an admin and is final",
+      );
+    }
+    throw Error("commercial provider operation not found");
+  }
   const operation = normalizeProviderOperation(rows[0]);
   if (
     operation.status === "succeeded" &&
@@ -3897,6 +3914,128 @@ export async function retryCommercialStripeEvent(
       status: "pending",
       commercial_order_id: before.commercial_order_id,
     };
+  });
+}
+
+const RESOLVABLE_PROVIDER_OPERATIONS = new Set(["provision-site-license"]);
+
+// An operator resolves an indeterminate provider operation as failed once they
+// have established that it wrote nothing (e.g., it was rejected by validation).
+// This releases the fence it holds on later operations of the same kind.
+export async function resolveCommercialProviderOperation(
+  opts: CommercialProviderOperationResolveRequest,
+): Promise<CommercialOrder> {
+  assertSeedAuthority();
+  const reason = requireReason(opts.reason);
+  assertProviderMutationEnums({ source: opts.source });
+  if (!opts.account_id) throw Error("account_id is required");
+  if (opts.resolution !== "failed") {
+    throw Error("a provider operation can only be resolved as failed");
+  }
+  const evidence = `${opts.evidence ?? ""}`.trim();
+  if (evidence.length < 10) {
+    throw Error("evidence that the operation wrote nothing is required");
+  }
+  if (evidence.length > 2_000) {
+    throw Error("evidence must be at most 2000 characters");
+  }
+  const key = commercialIdempotencyKey(
+    "provider-operation-resolve",
+    opts as any,
+  );
+  return await withTransaction(async (client) => {
+    const replay = await replayOrderId(client, key, {
+      action: "provider-operation-resolved",
+      payload: opts as any,
+    });
+    if (replay) return await loadOrder(client, replay);
+    const before = await loadOrder(client, opts.id, true);
+    requireExpectedVersion(before.version, opts.expected_version);
+    const { rows } = await client.query(
+      "SELECT * FROM commercial_provider_operations WHERE id=$1 AND commercial_order_id=$2 FOR UPDATE",
+      [opts.operation_id, before.id],
+    );
+    if (!rows[0]) throw Error("provider operation not found on this order");
+    const operation = normalizeProviderOperation(rows[0]);
+    // Fail closed: each kind needs its own proof that nothing was written.
+    // Stripe invoice/quote operations and end-site-license can commit
+    // external or partial state, so they are not resolvable here.
+    if (!RESOLVABLE_PROVIDER_OPERATIONS.has(operation.operation)) {
+      throw Error(
+        `provider operations of kind ${operation.operation} cannot be resolved by an admin`,
+      );
+    }
+    if (operation.status !== "indeterminate") {
+      throw Error(
+        `only an indeterminate provider operation can be resolved (this one is ${operation.status})`,
+      );
+    }
+    if (operation.operation === "provision-site-license") {
+      // The one durable trace a provisioning attempt leaves. (Without the
+      // site_licenses table, which is created lazily, no license can exist.)
+      // Schema-qualified so a session's temporary table cannot shadow it.
+      const { rows: table } = await client.query(
+        "SELECT to_regclass('public.site_licenses') IS NOT NULL AS present",
+      );
+      const licenses = table[0]?.present
+        ? await client.query(
+            "SELECT id FROM public.site_licenses WHERE metadata->>'commercial_order_id'=$1 LIMIT 1",
+            [before.id],
+          )
+        : { rows: [] as { id: string }[] };
+      if (licenses.rows[0]) {
+        throw Error(
+          `site license ${licenses.rows[0].id} is associated with this order, so the provisioning may have written it`,
+        );
+      }
+    }
+    const resolution = {
+      actor_account_id: opts.account_id,
+      evidence,
+      resolved_at: new Date().toISOString(),
+      previous_status: operation.status,
+      previous_error: operation.last_error ?? null,
+    };
+    const updated = await client.query(
+      `UPDATE commercial_provider_operations SET status='failed',
+         completed_at=NOW(),updated_at=NOW(),last_error=$2,
+         result=result || jsonb_build_object('admin_resolution', $3::jsonb)
+       WHERE id=$1 AND status='indeterminate' RETURNING *`,
+      [
+        operation.id,
+        `resolved as failed by an admin: ${evidence}`.slice(0, 5_000),
+        resolution,
+      ],
+    );
+    if (!updated.rows[0]) {
+      throw Error("provider operation changed while it was being resolved");
+    }
+    await client.query(
+      "UPDATE commercial_orders SET updated_at=NOW(),version=version+1 WHERE id=$1",
+      [before.id],
+    );
+    const after = await loadOrder(client, before.id);
+    await insertEvent(client, {
+      commercial_order_id: before.id,
+      event_type: "provider-operation-resolved",
+      actor_account_id: opts.account_id,
+      source: opts.source ?? "cli",
+      reason,
+      idempotency_key: key,
+      before: before as any,
+      after: after as any,
+      metadata: {
+        operation_id: operation.id,
+        operation: operation.operation,
+        previous_status: operation.status,
+        resolution: "failed",
+        evidence,
+        operation_before: operation as any,
+        operation_after: normalizeProviderOperation(updated.rows[0]) as any,
+      },
+      identity_payload: opts as any,
+    });
+    return after;
   });
 }
 

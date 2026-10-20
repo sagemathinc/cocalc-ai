@@ -34,6 +34,7 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
     mockArchiveSiteLicensePool(...args),
   getSiteLicenseOverview: (...args: any[]) =>
     mockGetSiteLicenseOverview(...args),
+  isSiteLicenseProvisionRejected: (err: any) => err?.rejectedBeforeCommit,
   removeSiteLicenseManager: (...args: any[]) =>
     mockRemoveSiteLicenseManager(...args),
   setSiteLicenseManager: (...args: any[]) => mockSetSiteLicenseManager(...args),
@@ -369,6 +370,34 @@ describe("commercial site-license fulfillment", () => {
     });
   });
 
+  it.each([
+    ["rejected before commit", true, "failed"],
+    ["with an unknown outcome", false, "indeterminate"],
+  ])(
+    "records a license creation %s as %s",
+    async (_, rejectedBeforeCommit, status) => {
+      const err = Object.assign(
+        Error("site license domain 'example.edu' overlaps"),
+        { rejectedBeforeCommit },
+      );
+      mockAdminProvisionSiteLicense.mockRejectedValue(err);
+
+      await expect(
+        provisionCommercialSiteLicense({
+          id: "co_1",
+          account_id: "admin-1",
+          expected_version: 7,
+          reason: "Provision accepted pilot",
+        }),
+      ).rejects.toThrow("overlaps");
+
+      expect(mockSetCommercialProviderOperationStatus).toHaveBeenLastCalledWith(
+        { id: "op_1", status, error: err },
+      );
+      expect(mockSetCommercialFulfillment).not.toHaveBeenCalled();
+    },
+  );
+
   it("removes managers not present in the approved plan", async () => {
     const order = orderFixture({ site_license_id: "sl_1" });
     const exactOverview = matchingOverview();
@@ -438,6 +467,172 @@ describe("commercial site-license fulfillment", () => {
       expect(mockUpdateSiteLicense).not.toHaveBeenCalled();
     },
   );
+
+  it("links an existing license to a complete paid order that never stored one", async () => {
+    // A historical sale imported after payment: complete, no plan, no license.
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({
+        workflow_state: "complete",
+        site_license_id: null,
+        terms_snapshot: {},
+      }),
+    );
+    mockGetSiteLicenseOverview.mockResolvedValue(matchingOverview());
+    mockUpdateSiteLicense.mockResolvedValue(
+      matchingOverview({
+        site_license: { metadata: { commercial_order_id: "co_1" } },
+      }),
+    );
+
+    await provisionCommercialSiteLicense({
+      id: "co_1",
+      account_id: "admin-1",
+      expected_version: 7,
+      existing_site_license_id: "sl_1",
+      reason: "Link the license sold before receivables existed",
+    });
+
+    expect(mockAdminProvisionSiteLicense).not.toHaveBeenCalled();
+    expect(mockUpdateSiteLicense).toHaveBeenCalledWith({
+      actor_account_id: "admin-1",
+      site_license_id: "sl_1",
+      metadata: {
+        commercial_order_id: "co_1",
+        commercial_order_number: "AR-2026-000001",
+      },
+    });
+    expect(mockSetCommercialFulfillment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        site_license_id: "sl_1",
+        fulfillment_state: "provisioned",
+      }),
+    );
+  });
+
+  it("links the license already stored on a complete paid order when named", async () => {
+    // A legacy import stored the target but never recorded fulfillment.
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({
+        workflow_state: "complete",
+        site_license_id: "sl_1",
+        terms_snapshot: {},
+      }),
+    );
+    mockGetSiteLicenseOverview.mockResolvedValue(matchingOverview());
+    mockUpdateSiteLicense.mockResolvedValue(
+      matchingOverview({
+        site_license: { metadata: { commercial_order_id: "co_1" } },
+      }),
+    );
+
+    await provisionCommercialSiteLicense({
+      id: "co_1",
+      account_id: "admin-1",
+      expected_version: 7,
+      existing_site_license_id: "sl_1",
+      reason: "Record fulfillment of the imported license",
+    });
+
+    expect(mockSetCommercialFulfillment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        site_license_id: "sl_1",
+        fulfillment_state: "provisioned",
+      }),
+    );
+  });
+
+  it("previews linking the license already stored on a complete paid order", async () => {
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({
+        workflow_state: "complete",
+        site_license_id: "sl_1",
+        terms_snapshot: {},
+      }),
+    );
+    mockGetSiteLicenseOverview.mockResolvedValue(matchingOverview());
+
+    await expect(
+      commercialFulfillmentPreview({
+        id: "co_1",
+        account_id: "admin-1",
+        existing_site_license_id: "sl_1",
+        reason: "Review linking the imported license",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        site_license_id: "sl_1",
+        ready: true,
+        blockers: [],
+        planned_changes: ["commercial-order-association"],
+      }),
+    );
+    expect(mockReserveCommercialProviderOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["without naming it", undefined, "cannot be provisioned"],
+    ["naming a different license", "sl_2", "cannot be provisioned"],
+  ])(
+    "still rejects a complete order with a stored license %s",
+    async (_label, existing, message) => {
+      mockGetCommercialOrder.mockResolvedValue(
+        orderFixture({
+          workflow_state: "complete",
+          site_license_id: "sl_1",
+          terms_snapshot: {},
+        }),
+      );
+
+      await expect(
+        provisionCommercialSiteLicense({
+          id: "co_1",
+          account_id: "admin-1",
+          expected_version: 7,
+          existing_site_license_id: existing,
+          reason: "Provision accepted pilot",
+        }),
+      ).rejects.toThrow(message);
+
+      expect(mockReserveCommercialProviderOperation).not.toHaveBeenCalled();
+      expect(mockUpdateSiteLicense).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["without a named license", {}, undefined],
+    ["with a license plan", { terms_snapshot: undefined }, "sl_1"],
+    ["that is unpaid", { collection_state: "open" }, "sl_1"],
+    ["that is waived", { collection_state: "waived" }, "sl_1"],
+    [
+      "that is complimentary",
+      { collection_mode: "complimentary", collection_state: "waived" },
+      "sl_1",
+    ],
+  ])("still rejects a complete order %s", async (_label, changes, existing) => {
+    const base = orderFixture({
+      workflow_state: "complete",
+      site_license_id: null,
+      terms_snapshot: {},
+    });
+    const order = { ...base, ...(changes as any) };
+    if ("terms_snapshot" in (changes as any)) {
+      order.terms_snapshot = orderFixture().terms_snapshot;
+    }
+    mockGetCommercialOrder.mockResolvedValue(order);
+
+    await expect(
+      provisionCommercialSiteLicense({
+        id: "co_1",
+        account_id: "admin-1",
+        expected_version: 7,
+        existing_site_license_id: existing,
+        reason: "Provision accepted pilot",
+      }),
+    ).rejects.toThrow("cannot be provisioned");
+
+    expect(mockReserveCommercialProviderOperation).not.toHaveBeenCalled();
+    expect(mockUpdateSiteLicense).not.toHaveBeenCalled();
+  });
 
   it("rejects a target that differs from the license stored on the order", async () => {
     mockGetCommercialOrder.mockResolvedValue(

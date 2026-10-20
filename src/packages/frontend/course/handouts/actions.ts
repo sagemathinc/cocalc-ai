@@ -204,6 +204,7 @@ export class HandoutsActions {
     student_id: string,
     overwrite: boolean,
   ): Promise<void> => {
+    if (!(await this.course_actions.save_course_project_files())) return;
     if (this.handout_start_copy(handout_id, student_id)) {
       return;
     }
@@ -302,6 +303,7 @@ export class HandoutsActions {
       "Copying handouts to all students " +
       (new_only ? "who have not already received it" : "");
     const short_desc = "copy handout to student";
+    if (!(await this.course_actions.save_course_project_files())) return;
 
     const id = this.course_actions.set_activity({ desc });
     const finish = (err?) => {

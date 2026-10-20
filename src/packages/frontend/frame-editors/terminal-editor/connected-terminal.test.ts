@@ -318,6 +318,33 @@ describe("connected terminal TUI selection", () => {
     terminal.close();
   });
 
+  it("routes OSC 8 hyperlinks to the terminal link handler", () => {
+    const { Terminal } = loadTerminalModule();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const terminal = new Terminal(makeActions(), 0, "term-1", parent);
+
+    expect(terminal["terminal"].options.linkHandler?.activate).toBe(
+      require("./terminal-links").activateTerminalLink,
+    );
+
+    terminal.close();
+  });
+
+  it("opens plain-URL terminal links without giving them window.opener", () => {
+    loadTerminalModule();
+    const { handleLink } = require("./connected-terminal");
+    const tab: any = { closed: false, opener: window };
+    const open = jest.spyOn(window, "open").mockImplementation(() => tab);
+    try {
+      handleLink({} as MouseEvent, "https://example.com/");
+      expect(open).toHaveBeenCalledWith("https://example.com/", "_blank");
+      expect(tab.opener).toBeNull();
+    } finally {
+      open.mockRestore();
+    }
+  });
+
   it("handles uppercase copy shortcuts when xterm owns the selection", () => {
     const { Terminal, alertMessage } = loadTerminalModule();
     const parent = document.createElement("div");

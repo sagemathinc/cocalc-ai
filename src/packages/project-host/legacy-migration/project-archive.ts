@@ -38,6 +38,7 @@ import {
   assertSafeArchiveMemberPath,
   unsafeArchiveMemberPathReason,
 } from "./archive-member-path";
+import { grantOwnerAccessToExtractedTree } from "./owner-access";
 import { parseTarExtractedLine, parseTarVerboseLine } from "./tar-output";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
@@ -846,6 +847,28 @@ async function scanRestorableProjectArchive({
   return scan;
 }
 
+async function grantExtractedTreeOwnerAccess({
+  project_id,
+  root,
+  exclude,
+  logger,
+}: {
+  project_id: string;
+  root: string;
+  exclude?: string[];
+  logger: LegacyProjectArchiveDeps["logger"];
+}): Promise<void> {
+  const { adjusted_count, adjusted_paths } =
+    await grantOwnerAccessToExtractedTree({ root, exclude });
+  if (adjusted_count > 0) {
+    logger.warn("legacy project archive restore granted owner access", {
+      project_id,
+      adjusted_count,
+      adjusted_paths: adjusted_paths.slice(0, 20),
+    });
+  }
+}
+
 function defaultSafetySnapshotName(): string {
   return `before-final-cocalc-com-safe-restore-${new Date().toISOString()}`;
 }
@@ -961,6 +984,12 @@ export function createLegacyProjectArchiveHandlers({
             lro,
           });
           missingArchiveFiles = extraction.missing_archive_files;
+          await grantExtractedTreeOwnerAccess({
+            project_id,
+            root: extractedPath,
+            exclude,
+            logger,
+          });
           workSnapshotPath = join(
             snapshotsDir,
             `.final-cocalc-com-archive-work-${randomUUID()}`,
@@ -1218,6 +1247,14 @@ export function createLegacyProjectArchiveHandlers({
           lro,
         });
         const missingArchiveFiles = extraction.missing_archive_files;
+        // Restrictive modes from the archive would make the apply rsync fail
+        // (exit 23) and abort the whole restore.
+        await grantExtractedTreeOwnerAccess({
+          project_id,
+          root: workSnapshotPath,
+          exclude,
+          logger,
+        });
         const safetySnapshotName = assertValidSnapshotName(
           `before-legacy-restore-${new Date().toISOString()}`,
         );

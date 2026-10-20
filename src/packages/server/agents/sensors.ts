@@ -28,7 +28,7 @@ import { nextSensorRunAt } from "@cocalc/util/ai/sensor-schedule";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { assertActor, assertAgent } from "./access";
 import { agentStore, type AgentRun } from "./store";
-import { sensorBudget } from "./cocalc-connector-routing";
+import { sensorBudget, sensorConnectors } from "./cocalc-connector-routing";
 import { NO_SENSORS, sensorLimits } from "./sensor-budget";
 import { kickSensorScheduler } from "./sensor-kick";
 import type { PoolClient } from "@cocalc/database/pool";
@@ -40,6 +40,11 @@ export { sensorLimits, type SensorLimits } from "./sensor-budget";
 
 const NO_INTERNET =
   "Sensors need a project with internet access. Upgrade the project's membership to enable internet access, then try again.";
+
+// The agent is told, not the person: a watcher that could never run would
+// otherwise be paused on its first run, with a notice nobody can act on.
+const CI_WATCH_NEEDS_GITHUB =
+  "A ci watcher uses the GitHub connector, which this agent does not have (the person who owns it turns it on in the agent's Connectors menu). Instead, watch the checks with the project's own GitHub login: cocalc sensor watch exit -- gh pr checks <number> --repo <owner/name> --watch";
 
 /** Projects reach the internet only when their run quota says so. */
 export async function projectHasInternet(project_id: string): Promise<boolean> {
@@ -364,6 +369,16 @@ async function createWatcher(
   const spec = validateSensorWatch(request.watch, { hours: request.hours });
   if (!(await projectHasInternet(agent.project_id)))
     throw new Error(NO_INTERNET);
+  if (
+    spec.watch.type === "ci" &&
+    !(await sensorConnectors.hasCli({
+      account_id: run.account_id,
+      agent_id: agent.agent_id,
+      source_project_id: agent.project_id,
+      connector: "github",
+    }))
+  )
+    throw new Error(CI_WATCH_NEEDS_GITHUB);
   const hash = sensorSpecHash(spec);
   const first =
     spec.watch.type === "at"
@@ -371,8 +386,9 @@ async function createWatcher(
       : new Date(Date.now() + 30_000);
   const sensor_id = randomUUID();
   // Counted on the account's home bay, whichever bay this project is on: a
-  // few active at once, and no more set per day than the account may be
-  // woken. Finishing or deleting a watcher never resets the daily count.
+  // few active at once, refused once the day's wakes are used up, and a
+  // generous daily cap against churn. Finishing or deleting a watcher never
+  // resets the daily counts.
   await sensorBudget.reserveWatcher({
     account_id: run.account_id,
     project_id: agent.project_id,

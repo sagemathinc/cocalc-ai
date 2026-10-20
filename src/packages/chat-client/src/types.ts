@@ -5,15 +5,12 @@
 
 import type { ChatThreadRuntimeState, CodexThreadConfig } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 
 export type { CodexThreadConfig } from "@cocalc/chat";
 
 export type ChatConnectionState =
-  | "closed"
-  | "connecting"
-  | "connected"
-  | "disconnected"
-  | "error";
+  "closed" | "connecting" | "connected" | "disconnected" | "error";
 
 export type ChatMessageRole = "human" | "agent" | "system";
 
@@ -94,10 +91,12 @@ export interface HeadlessChatClient {
   sendToExistingCodexThread(opts: {
     thread_id: string;
     text: string;
+    user_locale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }>;
   sendGuidanceToCodexThread(opts: {
     thread_id: string;
     text: string;
+    user_locale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }>;
   updateCodexThreadConfig(opts: {
     thread_id: string;

@@ -251,6 +251,9 @@ export type BrowserCommandContext = {
   };
   hub: {
     system: {
+      getPublicSiteUrl?: (opts?: Record<string, never>) => Promise<{
+        url: string;
+      }>;
       listBrowserSessions: (opts: {
         include_stale?: boolean;
         max_age_ms?: number;

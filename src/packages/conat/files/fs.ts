@@ -180,6 +180,40 @@ export interface FilesystemJupyterHandlers {
   }) => Promise<JupyterSaveIpynbResult>;
 }
 
+// A Sagebrush board (.board.json) open on the project host: its live
+// document is the syncdb at syncdbPath, which the host loads from the file,
+// saves to it and keeps in step with it.
+export interface BoardOpenResult {
+  // The file, as the host names it, and its syncdb's path.
+  path: string;
+  syncdbPath: string;
+  // "missing": there is no file, or it was deleted or moved while open, and
+  // the host never writes it again. "too-large": the file or the document
+  // is over the editable limits, so the host neither loads nor saves it.
+  state: "ok" | "invalid" | "missing" | "too-large";
+  // Why the state is not "ok".
+  message?: string;
+  // The file's size when last read or written (state "ok"), or its size
+  // (state "too-large").
+  bytes?: number;
+}
+
+export interface FilesystemBoardHandlers {
+  // Start (or keep alive) the board's host; call again while the board is
+  // shown. The host stops a while after the last call, saving first.
+  open: (opts: {
+    subject: string;
+    path: string;
+    fs: Filesystem;
+  }) => Promise<BoardOpenResult>;
+  // Save the board to its file now, if it changed.
+  save: (opts: {
+    subject: string;
+    path: string;
+    fs: Filesystem;
+  }) => Promise<BoardOpenResult>;
+}
+
 export interface CopyOptions {
   dereference?: boolean;
   errorOnExist?: boolean;
@@ -300,6 +334,8 @@ export interface Filesystem {
     path: string,
     ipynb: object,
   ) => Promise<JupyterSaveIpynbResult>;
+  boardOpen?: (path: string) => Promise<BoardOpenResult>;
+  boardSave?: (path: string) => Promise<BoardOpenResult>;
   // Signal interest in a file so the backend can keep a shared watcher alive.
   // active=false drops interest immediately; otherwise the backend prunes stale
   // interest after COCALC_SYNC_FS_HEARTBEAT_TTL_MS (default 60s).
@@ -491,6 +527,8 @@ interface Options {
     path?: string;
   }) => void | Promise<void>;
   jupyter: FilesystemJupyterHandlers;
+  // Board hosts; without them, board calls fail as not implemented.
+  board?: FilesystemBoardHandlers;
 }
 
 interface ReadOnlyOptions {
@@ -644,6 +682,7 @@ export async function fsServer({
   project_id,
   onMutation,
   jupyter,
+  board,
 }: Options) {
   const resolvedClient = requireClient(client, "fsServer");
   if (jupyter == null) {
@@ -926,6 +965,32 @@ export async function fsServer({
           fs: await fs(this.subject),
         });
         void reportMutation(this.subject, "jupyterSaveIpynb", path);
+        return result;
+      },
+      async boardOpen(path: string) {
+        if (board == null) {
+          throw Object.assign(new Error("boards are not implemented"), {
+            code: "ENOSYS",
+          });
+        }
+        return await board.open({
+          subject: this.subject!,
+          path,
+          fs: await fs(this.subject),
+        });
+      },
+      async boardSave(path: string) {
+        if (board == null) {
+          throw Object.assign(new Error("boards are not implemented"), {
+            code: "ENOSYS",
+          });
+        }
+        const result = await board.save({
+          subject: this.subject!,
+          path,
+          fs: await fs(this.subject),
+        });
+        void reportMutation(this.subject, "boardSave", path);
         return result;
       },
       // @ts-ignore

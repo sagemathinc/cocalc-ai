@@ -7,6 +7,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import HTML from "./html-ssr";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
+import {
+  isAllowedHtmlTag,
+  sanitizeHtmlAttributes,
+  shouldDropHtmlTagContents,
+} from "./sanitize-html";
 
 function renderHtml(value: string): string {
   return renderToStaticMarkup(
@@ -43,6 +48,25 @@ describe("HTML SSR sanitization", () => {
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("onclick");
     expect(html).not.toContain("onerror");
+  });
+});
+
+describe("iframes on the sanitized path", () => {
+  it.each([
+    '<iframe src="https://example.com/page"></iframe>',
+    '<iframe srcdoc="<p>hello</p>"></iframe>',
+    "<iframe></iframe>",
+    '<iframe src="data:text/html,hello"></iframe>',
+  ])("renders no frame for an unvetted %s", (html) => {
+    expect(renderHtml(`<p>before</p>${html}<p>after</p>`)).toBe(
+      "<div><p>before</p><p>after</p></div>",
+    );
+  });
+
+  it("keeps a vetted embed", () => {
+    expect(
+      renderHtml('<iframe src="https://www.youtube.com/embed/abc"></iframe>'),
+    ).toContain('<iframe src="https://www.youtube.com/embed/abc">');
   });
 });
 
@@ -100,6 +124,44 @@ describe("safety floor (applies even when noSanitize is set)", () => {
     expect(renderTrusted('<embed src="x.swf">')).not.toContain("<embed");
   });
 
+  // Server-rendered markup (e.g., notebook export, also written into a print
+  // popup of the app's origin) is parsed as a document, so a <script> element
+  // in it runs.
+  it("never emits a script element, except inline math", () => {
+    const html = renderTrusted(
+      '<p>a</p><script>window.ran = 1</script><SCRIPT type="text/javascript">window.ran = 2</SCRIPT><script type="math/tex">x^2</script>',
+    );
+    expect(html).not.toMatch(/<script/i);
+    expect(html).not.toContain("window.ran");
+    expect(html).toContain("x^2");
+  });
+
+  it("drops script URLs, however they are written", () => {
+    const html = renderTrusted(
+      [
+        '<a href="javascript:alert(1)">a</a>',
+        '<a href=" JaVaScRiPt:alert(2)">b</a>',
+        '<a href="java&#x09;script:alert(3)">c</a>',
+        '<a href="&#x01;javascript:alert(4)">d</a>',
+        '<a href="vbscript:msgbox(5)">e</a>',
+        '<form action="javascript:alert(6)"><button formaction="javascript:alert(7)">f</button></form>',
+        '<iframe src="javascript:alert(8)"></iframe>',
+        '<a href="https://example.com/javascript:ok">g</a>',
+      ].join(""),
+    );
+    // (not even React's neutralized javascript: replacement)
+    expect(html).not.toMatch(/="\s*(java|vb)script:/i);
+    expect(html).toContain("https://example.com/javascript:ok");
+  });
+
+  it("drops event handler attributes", () => {
+    const html = renderTrusted(
+      '<b onclick="alert(1)" ONMOUSEOVER="alert(2)">x</b><img src="x.png" onerror="alert(3)">',
+    );
+    expect(html).not.toMatch(/\son[a-z]+=/i);
+    expect(html).toContain("x.png");
+  });
+
   it("still keeps classes and styles, which is what noSanitize is for", () => {
     const html = renderTrusted('<div class="keep" style="color:red">hi</div>');
     expect(html).toContain('class="keep"');
@@ -119,5 +181,43 @@ describe("safety floor (applies even when noSanitize is set)", () => {
     expect(html).toContain("Visible body");
     expect(html).not.toContain("Hidden title");
     expect(html).not.toMatch(/<\/?(?:html|head|body|title)\b/i);
+  });
+});
+
+describe("central policy: template and checkboxes", () => {
+  it("drops template with its contents", () => {
+    expect(shouldDropHtmlTagContents("template")).toBe(true);
+    expect(shouldDropHtmlTagContents("TEMPLATE")).toBe(true);
+  });
+
+  it("allows only checkbox inputs, always disabled", () => {
+    expect(isAllowedHtmlTag("input", { type: "checkbox" })).toBe(true);
+    expect(isAllowedHtmlTag("input", { type: "text" })).toBe(false);
+    expect(isAllowedHtmlTag("input")).toBe(false);
+    expect(
+      sanitizeHtmlAttributes("input", {
+        type: "checkbox",
+        checked: "",
+        name: "x",
+        style: "position:fixed",
+        onclick: "z",
+      }),
+    ).toEqual({ type: "checkbox", disabled: "", checked: "" });
+    expect(
+      sanitizeHtmlAttributes("input", { type: "image", src: "x" }),
+    ).toEqual({});
+  });
+});
+
+describe("HTML (sanitized) with template content", () => {
+  it("never renders template children", () => {
+    const html = renderToStaticMarkup(
+      <HTML
+        value={`<template><iframe srcdoc="<script>parent.__xss=1</script>"></iframe><img src=x onerror="parent.__xss=2"></template>ok`}
+      />,
+    );
+    expect(html).not.toContain("iframe");
+    expect(html).not.toContain("img");
+    expect(html).toContain("ok");
   });
 });

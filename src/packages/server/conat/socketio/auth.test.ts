@@ -129,6 +129,13 @@ jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   resolveProjectAccessAllowRemote: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/bay-public-origin", () => ({
+  ...jest.requireActual("@cocalc/server/bay-public-origin"),
+  getSitePublicOrigin: jest.fn(async () => "https://cocalc.example"),
+  getSiteBrowserOrigins: jest.fn(async () => ["https://cocalc.example"]),
+  getClusterBayPublicOrigins: jest.fn(async () => ({})),
+}));
+
 jest.mock("@cocalc/server/projects/control/secret-token", () => ({
   __esModule: true,
   getProjectSecretToken: jest.fn(),
@@ -139,7 +146,12 @@ import {
   resolveProjectAccessAllowRemote,
 } from "@cocalc/server/conat/project-remote-access";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
-import { API_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
+import {
+  API_COOKIE_NAME,
+  HUB_PASSWORD_COOKIE_NAME,
+  PROJECT_ID_COOKIE_NAME,
+  PROJECT_SECRET_COOKIE_NAME,
+} from "@cocalc/backend/auth/cookie-names";
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import {
   getRememberMeCookieValuesFromHeader,
@@ -1733,5 +1745,172 @@ describe("remember_me socket auth", () => {
       auth_session_hash: "valid-token-hash",
     });
     expect(getAccountIdFromRememberMe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("cookie origin policy on hub sockets", () => {
+  const savedMode = process.env.COCALC_CONAT_ORIGIN_POLICY;
+  beforeEach(() => {
+    process.env.COCALC_CONAT_ORIGIN_POLICY = "enforce";
+    (getAccountIdFromRememberMe as jest.Mock).mockReset();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReset();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash");
+    (getAccountIdFromRememberMe as jest.Mock).mockResolvedValue(account_id);
+    getHubManagedEgressBlockedMessageMock.mockReset();
+    getAccountWithApiKeyMock.mockReset();
+  });
+  afterAll(() => {
+    if (savedMode == null) delete process.env.COCALC_CONAT_ORIGIN_POLICY;
+    else process.env.COCALC_CONAT_ORIGIN_POLICY = savedMode;
+  });
+
+  const socket = (headers: Record<string, string>) => ({
+    handshake: { auth: {}, headers: { host: "cocalc.example", ...headers } },
+  });
+
+  it("refuses a remember_me socket opened by another site before any lookup", async () => {
+    await expect(
+      getUser(
+        socket({ cookie: "remember_me=token", origin: "https://evil.example" }),
+      ),
+    ).rejects.toThrow("cross-site connection refused");
+    expect(getAccountIdFromRememberMe).not.toHaveBeenCalled();
+  });
+
+  it("accepts a remember_me socket from the site", async () => {
+    await expect(
+      getUser(
+        socket({
+          cookie: "remember_me=token",
+          origin: "https://cocalc.example",
+        }),
+      ),
+    ).resolves.toMatchObject({ account_id });
+  });
+
+  it("keeps remember_me clients without an Origin (CLI, mobile) working", async () => {
+    await expect(
+      getUser(socket({ cookie: "remember_me=token" })),
+    ).resolves.toMatchObject({ account_id });
+  });
+
+  it("does not let the request Host approve a foreign origin", async () => {
+    await expect(
+      getUser({
+        handshake: {
+          auth: {},
+          headers: {
+            cookie: "remember_me=token",
+            origin: "https://evil.example",
+            host: "evil.example",
+            "x-forwarded-host": "evil.example",
+          },
+        },
+      }),
+    ).rejects.toThrow("cross-site connection refused");
+  });
+
+  it("refuses a project-secret cookie from another site before any lookup", async () => {
+    (getProjectSecretToken as jest.Mock).mockReset();
+    await expect(
+      getUser(
+        socket({
+          cookie: `${PROJECT_ID_COOKIE_NAME}=00000000-0000-4000-8000-000000000099; ${PROJECT_SECRET_COOKIE_NAME}=s`,
+          origin: "https://evil.example",
+        }),
+      ),
+    ).rejects.toThrow("cross-site connection refused");
+    expect(getProjectSecretToken).not.toHaveBeenCalled();
+  });
+
+  it("does not check internal cookies (hub password) or explicit bearer credentials", async () => {
+    await expect(
+      getUser(
+        socket({
+          cookie: `${HUB_PASSWORD_COOKIE_NAME}=hub-secret`,
+          origin: "https://evil.example",
+        }),
+      ),
+    ).resolves.toMatchObject({ hub_id: "hub" });
+  });
+
+  it("refuses an API-key cookie from another site, keeps non-browser clients working", async () => {
+    await expect(
+      getUser(
+        socket({
+          cookie: `${API_COOKIE_NAME}=test-key`,
+          origin: "https://evil.example",
+        }),
+      ),
+    ).rejects.toThrow("cross-site connection refused");
+    expect(getAccountWithApiKeyMock).not.toHaveBeenCalled();
+    getAccountWithApiKeyMock.mockResolvedValue({ account_id });
+    await expect(
+      getUser(socket({ cookie: `${API_COOKIE_NAME}=test-key` })),
+    ).resolves.toMatchObject({ account_id });
+  });
+});
+
+describe("connected browser sessions count as used", () => {
+  const { connectedSessionCount } = jest.requireActual(
+    "@cocalc/server/auth/session-expiry",
+  );
+  const { EventEmitter } = jest.requireActual("events");
+
+  function browserSocket() {
+    const socket = new EventEmitter() as any;
+    socket.connected = true;
+    socket.handshake = {
+      auth: { browser_id: "browser123" },
+      headers: { cookie: "remember_me=token" },
+    };
+    return socket;
+  }
+
+  beforeEach(() => {
+    (getAccountIdFromRememberMe as jest.Mock).mockReset();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReset();
+    getHubManagedEgressBlockedMessageMock.mockReset();
+  });
+
+  it("tracks an admitted socket until it disconnects", async () => {
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash-a");
+    (getAccountIdFromRememberMe as jest.Mock).mockResolvedValue(account_id);
+    const socket = browserSocket();
+    await getUser(socket);
+    expect(connectedSessionCount("hash-a")).toBe(1);
+    // Revalidating the same socket does not count it twice.
+    await getUser(socket, undefined, { revalidation: true });
+    expect(connectedSessionCount("hash-a")).toBe(1);
+    socket.connected = false;
+    socket.emit("disconnect");
+    expect(connectedSessionCount("hash-a")).toBe(0);
+  });
+
+  it("never tracks a socket that closed while it was authenticating", async () => {
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash-b");
+    const socket = browserSocket();
+    (getAccountIdFromRememberMe as jest.Mock).mockImplementation(async () => {
+      // The transport closes during the check; its disconnect has fired.
+      socket.connected = false;
+      socket.emit("disconnect");
+      return account_id;
+    });
+    await getUser(socket);
+    expect(connectedSessionCount("hash-b")).toBe(0);
+  });
+
+  it("never tracks a socket rejected after its cookie is checked", async () => {
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash-c");
+    (getAccountIdFromRememberMe as jest.Mock).mockResolvedValue(account_id);
+    getHubManagedEgressBlockedMessageMock.mockReturnValue(
+      "interactive blocked",
+    );
+    const socket = browserSocket();
+    await expect(getUser(socket)).rejects.toMatchObject({
+      message: "interactive blocked",
+    });
+    expect(connectedSessionCount("hash-c")).toBe(0);
+    expect(socket.listenerCount("disconnect")).toBe(0);
   });
 });

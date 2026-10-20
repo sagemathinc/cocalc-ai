@@ -3,7 +3,11 @@ import getLogger from "@cocalc/backend/logger";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
-import { AgentRpcCapacity } from "@cocalc/conat/agents/rpc-capacity";
+import {
+  AgentRpcCapacity,
+  agentRpcCapacityReason,
+  type AgentRpcCapacityFull,
+} from "@cocalc/conat/agents/rpc-capacity";
 import { validateAttachmentLocation } from "@cocalc/conat/agents/attachments";
 import type { AgentSnapshot } from "@cocalc/conat/agents/attachments";
 import { AgentAttachmentReservations } from "@cocalc/conat/agents/attachment-reservations";
@@ -219,8 +223,7 @@ export function createAgentRpcService(
         if ("code" in lease)
           return rpcOutcome(e, "rejected", {
             code: lease.code,
-            reason:
-              "Recipient messaging capacity is full; no message was submitted or queued for retry",
+            reason: agentRpcCapacityReason(lease),
             chat_effect: "none",
           });
         let admissionStarted = false;
@@ -517,16 +520,22 @@ export function createAgentRpcService(
         };
       } catch (error) {
         const code = (error as { code?: string })?.code;
+        const full = (error as { full?: AgentRpcCapacityFull })?.full;
         const failure =
           error instanceof PreparationFailure
             ? error.failure
-            : code === "host_overloaded" ||
-                code === "project_overloaded" ||
-                code === "attachment_preparation_expired" ||
-                code === "attachment_invalid" ||
-                code === "attachment_limit_exceeded"
-              ? ({ code, reason: code } as const)
-              : executionFailure(error);
+            : full
+              ? ({
+                  code: full.code,
+                  reason: agentRpcCapacityReason(full),
+                } as const)
+              : code === "host_overloaded" ||
+                  code === "project_overloaded" ||
+                  code === "attachment_preparation_expired" ||
+                  code === "attachment_invalid" ||
+                  code === "attachment_limit_exceeded"
+                ? ({ code, reason: code } as const)
+                : executionFailure(error);
         return rpcOutcome(e, "rejected", { ...failure, chat_effect: "none" });
       }
     },

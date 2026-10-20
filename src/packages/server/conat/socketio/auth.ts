@@ -3,6 +3,7 @@
 // Both adapters intentionally share subject-policy logic from
 // src/packages/conat/auth/subject-policy.ts.
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
+import { trackConnectedSession } from "@cocalc/server/auth/session-expiry";
 import { parse } from "cookie";
 import {
   getRememberMeCookieNamesForRequest,
@@ -39,6 +40,7 @@ import {
   isBayCredentialUserActive,
 } from "@cocalc/server/inter-bay/bay-credentials";
 import { getLogger } from "@cocalc/backend/logger";
+import { assertCookieOrigin } from "./browser-origin";
 import {
   getConfiguredClusterId,
   getConfiguredClusterRole,
@@ -138,6 +140,25 @@ function assertHubInteractiveEgressAllowed(
   if (getHubManagedEgressBlockedMessage(user.account_id)) {
     throwManagedEgressBlocked(user.account_id);
   }
+}
+
+// A connected browser is using its session: keep it from going idle while
+// connected. The connection itself is never cut by expiry. Called only once
+// the socket is admitted, and synchronously with checking that it is still
+// connected, so its disconnect always releases the session: a socket that
+// closed while it was authenticating is never tracked.
+export function trackConnectedBrowserSession({
+  socket,
+  account_id,
+  hash,
+}: {
+  socket: any;
+  account_id: string;
+  hash: string;
+}): void {
+  if (socket?.connected !== true || typeof socket?.once !== "function") return;
+  const release = trackConnectedSession({ hash, account_id });
+  socket.once("disconnect", release);
 }
 
 type CoCalcUserWithAgent = CoCalcUser & {
@@ -401,6 +422,7 @@ export async function getUser(
 
   if (cookies[API_COOKIE_NAME]) {
     // account API key
+    await assertCookieOrigin(socket.handshake.headers, "api-key-cookie");
     const user = await getAccountWithApiKey(cookies[API_COOKIE_NAME]!, {
       recordActivity: !options?.revalidation,
     });
@@ -414,6 +436,7 @@ export async function getUser(
     };
   }
   if (cookies[PROJECT_SECRET_COOKIE_NAME]) {
+    await assertCookieOrigin(socket.handshake.headers, "project-secret-cookie");
     const project_id = cookies[PROJECT_ID_COOKIE_NAME];
     if (!project_id) {
       throw Error(
@@ -433,6 +456,7 @@ export async function getUser(
     }
   }
 
+  await assertCookieOrigin(socket.handshake.headers, "remember-me");
   const values = getRememberMeCookieValuesFromHeader(
     socket.handshake.headers.cookie,
     getRememberMeCookieNamesForRequest({
@@ -470,6 +494,9 @@ export async function getUser(
     });
     const user = { account_id, auth_session_hash: hash };
     assertHubInteractiveEgressAllowed(socket, user);
+    if (!options?.revalidation) {
+      trackConnectedBrowserSession({ socket, account_id, hash });
+    }
     return user;
   }
   if (!sawValidHash) {

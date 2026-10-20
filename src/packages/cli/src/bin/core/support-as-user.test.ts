@@ -119,7 +119,7 @@ test("keeps the basePath of the bay that issued the session", async () => {
   const signOuts: string[] = [];
   const signOutFetch = (async (url: URL) => {
     signOuts.push(url.toString());
-    return response("{}");
+    return response(JSON.stringify({ status: "success" }));
   }) as unknown as typeof fetch;
   assert.equal(await signOutSession(api, "remember_me=s", signOutFetch), true);
   assert.deepEqual(signOuts, [
@@ -191,7 +191,7 @@ test("signs out only the impersonation session", async () => {
   let request: { url: string; init: RequestInit } | undefined;
   const fakeFetch = (async (url: URL, init: RequestInit) => {
     request = { url: url.toString(), init };
-    return response("{}");
+    return response(JSON.stringify({ status: "success" }));
   }) as unknown as typeof fetch;
   assert.equal(
     await signOutSession("https://cocalc.ai", "remember_me=s", fakeFetch),
@@ -204,6 +204,28 @@ test("signs out only the impersonation session", async () => {
     cookie: "remember_me=s",
     "content-type": "application/json",
   });
+});
+
+test("sign-out is confirmed only by a success status", async () => {
+  // The endpoint reports a failed revocation as HTTP 200 with {error}.
+  const reply = (body: string, status = 200) =>
+    (async () => response(body, { status })) as unknown as typeof fetch;
+  const signOut = (fetchImpl: typeof fetch) =>
+    signOutSession("https://cocalc.ai", "remember_me=s", fetchImpl);
+  assert.equal(
+    await signOut(reply(JSON.stringify({ status: "success" }))),
+    true,
+  );
+  assert.equal(
+    await signOut(reply(JSON.stringify({ error: "database unavailable" }))),
+    false,
+  );
+  assert.equal(await signOut(reply("{}")), false);
+  assert.equal(await signOut(reply("not json")), false);
+  assert.equal(
+    await signOut(reply(JSON.stringify({ status: "success" }), 500)),
+    false,
+  );
 });
 
 test("cookie files must be private and replace every other credential", async () => {

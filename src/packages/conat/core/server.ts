@@ -32,8 +32,14 @@ import { stampFileReadPrincipal } from "../files/read-principal";
 import { fileMutationAuthority } from "../files/mutation-authority";
 import {
   validateMessageHeaders,
+  REPLY_HEADER,
   SOCKET_RETURN_HEADER,
 } from "./message-headers";
+import {
+  addEgressBytes,
+  CONTROL_KEY,
+  ReplySubjectAttribution,
+} from "./egress-attribution";
 import {
   isValidSubject,
   isValidSubjectWithoutWildcards,
@@ -401,6 +407,11 @@ export class ConatServer extends EventEmitter {
 
   private sockets: { [id: string]: any } = {};
   private stats: { [id: string]: ConnectionStats } = {};
+  // Egress attribution: the label of the routed message being emitted right
+  // now (packetCreate fires synchronously inside emit), and which subject
+  // each pending reply inbox answers.
+  private egressLabel?: string;
+  private replySubjects = new ReplySubjectAttribution();
   private usage: UsageMonitor;
   public state: State = "init";
   private readonly configuredMaxInboundEventsPerSocketWindow: number;
@@ -746,6 +757,10 @@ export class ConatServer extends EventEmitter {
         send: { ...stats.send },
         recv: { ...stats.recv },
         egress: stats.egress == null ? undefined : { ...stats.egress },
+        egress_by_subject:
+          stats.egress_by_subject == null
+            ? undefined
+            : { ...stats.egress_by_subject },
       };
     }
     return snapshot;
@@ -1514,9 +1529,28 @@ export class ConatServer extends EventEmitter {
     // Deliver the messages to these targets, which should all be
     // connected to this server. This is used for cluster routing only.
     for (const { pattern, target } of targets) {
-      this.io.to(target).emit(pattern, { subject, data });
+      this.emitRouted({ target, pattern, subject, data });
     }
     return targets.length;
+  };
+
+  private emitRouted = ({
+    target,
+    pattern,
+    subject,
+    data,
+  }: {
+    target: string;
+    pattern: string;
+    subject: string;
+    data: any;
+  }): void => {
+    this.egressLabel = this.replySubjects.label(subject);
+    try {
+      this.io.to(target).emit(pattern, { subject, data });
+    } finally {
+      this.egressLabel = undefined;
+    }
   };
 
   private authenticatedCaller = (user: any) => {
@@ -1612,6 +1646,10 @@ export class ConatServer extends EventEmitter {
     // Includes CN-Reply validation; malformed input must be rejected here,
     // not delivered to a service that would fail trying to answer it.
     validateMessageHeaders(data[5]);
+    const replySubject = data[5]?.[REPLY_HEADER];
+    if (typeof replySubject === "string") {
+      this.replySubjects.remember(replySubject, subject);
+    }
     const socketReturn = data[5]?.[SOCKET_RETURN_HEADER] as string | undefined;
     if (
       socketReturn &&
@@ -1677,7 +1715,7 @@ export class ConatServer extends EventEmitter {
             targets: g[queue],
           });
           if (target !== undefined) {
-            this.io.to(target).emit(pattern, { subject, data });
+            this.emitRouted({ target, pattern, subject, data });
             if (!isSilentPattern(pattern)) {
               count++;
             }
@@ -1706,7 +1744,7 @@ export class ConatServer extends EventEmitter {
           const { id, target } = t;
           if (id == this.id) {
             // another client of this server
-            this.io.to(target).emit(pattern, { subject, data });
+            this.emitRouted({ target, pattern, subject, data });
             if (!isSilentPattern(pattern)) {
               count++;
             }
@@ -1840,7 +1878,14 @@ export class ConatServer extends EventEmitter {
       if (stats == null) return;
       stats.egress ??= { messages: 0, bytes: 0 };
       stats.egress.messages += 1;
-      stats.egress.bytes += measureServerEgressPacketBytes(socket, packet);
+      const bytes = measureServerEgressPacketBytes(socket, packet);
+      stats.egress.bytes += bytes;
+      stats.egress_by_subject ??= {};
+      addEgressBytes(
+        stats.egress_by_subject,
+        this.egressLabel ?? CONTROL_KEY,
+        bytes,
+      );
       stats.active = Date.now();
     };
     socket.conn?.on?.("packetCreate", onServerPacketCreate);

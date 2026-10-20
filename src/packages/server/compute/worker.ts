@@ -1906,10 +1906,40 @@ function normalizedProjectAccessKeys(
   ).sort();
 }
 
+// A degraded project grant is retried with exponential backoff. Without it,
+// every provider observation (each 30 s per VM) retried every degraded grant;
+// each retry issues a project-host token, which pushes the collaborator map to
+// the project's host. A grant that fails every time (say, a conflicting Host
+// entry in the project's SSH config) then loaded that host forever, and when
+// the host was slow the waiting requests used up its whole API.
+const PROJECT_ACCESS_SYNC_BACKOFF_BASE_MS = 60_000;
+const PROJECT_ACCESS_SYNC_BACKOFF_MAX_MS = 30 * 60_000;
+
+export function projectAccessSyncBackoffMs(failures: number): number {
+  const n = Math.max(1, Math.floor(Number(failures) || 0));
+  return Math.min(
+    PROJECT_ACCESS_SYNC_BACKOFF_MAX_MS,
+    PROJECT_ACCESS_SYNC_BACKOFF_BASE_MS * 2 ** Math.min(n - 1, 16),
+  );
+}
+
+export function projectAccessSyncBackingOff(
+  grant: Pick<ComputeVmProjectAccessRow, "state" | "updated_at" | "metadata">,
+  now = Date.now(),
+): boolean {
+  if (grant.state !== "degraded") return false;
+  const updated = new Date(grant.updated_at as any).valueOf();
+  if (!Number.isFinite(updated)) return false;
+  return (
+    now - updated <
+    projectAccessSyncBackoffMs(grant.metadata?.sync_failures ?? 1)
+  );
+}
+
 export function managedVmProjectAccessNeedsSync(
   vm: Pick<ComputeVmRow, "metadata">,
   access: ComputeVmProjectAccessRow[],
-  opts: { require_provider_persistence?: boolean } = {},
+  opts: { require_provider_persistence?: boolean; now?: number } = {},
 ): boolean {
   const desiredKeys = normalizedProjectAccessKeys(access);
   const recordedKeys = Array.from(
@@ -1930,8 +1960,12 @@ export function managedVmProjectAccessNeedsSync(
     ((opts.require_provider_persistence ?? true) &&
       hasProjectAccessHistory &&
       providerFingerprint !== expectedProviderFingerprint) ||
-    access.some(({ revoked_at, state }) =>
-      revoked_at ? state !== "revoked" : state !== "ready",
+    access.some(
+      (grant) =>
+        (grant.revoked_at
+          ? grant.state !== "revoked"
+          : grant.state !== "ready") &&
+        !projectAccessSyncBackingOff(grant, opts.now),
     )
   );
 }
@@ -1980,6 +2014,9 @@ async function syncVmProjectAccess(
   for (const grant of access) {
     const shouldEnableConfig = managedVmProjectConfigShouldBeEnabled(grant);
     if (!shouldEnableConfig && grant.state === "revoked") continue;
+    // Another grant may have triggered this pass; a failing one waits out
+    // its backoff (the VM-level keys above are already in sync).
+    if (projectAccessSyncBackingOff(grant)) continue;
     if (shouldEnableConfig && !grant.ssh_public_key?.trim()) {
       await updateComputeVmProjectAccessState({
         vm_id: vm.id,
@@ -2008,10 +2045,13 @@ async function syncVmProjectAccess(
       });
     } catch (err) {
       const message = `${(err as Error)?.message ?? err}`.slice(0, 4000);
+      const failures = Number(grant.metadata?.sync_failures ?? 0) + 1;
       logger.warn("managed compute project access reconciliation degraded", {
         vm_id: vm.id,
         project_id: grant.project_id,
         enabled: shouldEnableConfig,
+        failures,
+        retry_in_ms: projectAccessSyncBackoffMs(failures),
         err: message,
       });
       await updateComputeVmProjectAccessState({
@@ -2019,6 +2059,7 @@ async function syncVmProjectAccess(
         project_id: grant.project_id,
         state: "degraded",
         error: message,
+        sync_failed: true,
       });
     }
   }
