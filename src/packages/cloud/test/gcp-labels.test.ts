@@ -25,6 +25,36 @@ describe("parseDefaultGcpLabels", () => {
     expect(parseDefaultGcpLabels("reviewed")).toEqual({ reviewed: "" });
   });
 
+  it("accepts international characters, as GCP does", () => {
+    expect(
+      parseDefaultGcpLabels(
+        "équipe=données,環境=本番,team=研究-1,ключ=значение",
+      ),
+    ).toEqual({
+      équipe: "données",
+      環境: "本番",
+      team: "研究-1",
+      ключ: "значение",
+    });
+    // decomposed accents (base letter + combining mark) are also lowercase
+    expect(parseDefaultGcpLabels("cafe\u0301=ok")).toEqual({
+      "cafe\u0301": "ok",
+    });
+  });
+
+  it("counts characters, not bytes, toward the 63-character limit", () => {
+    expect(parseDefaultGcpLabels(`k=${"é".repeat(63)}`)).toEqual({
+      k: "é".repeat(63),
+    });
+    expect(parseDefaultGcpLabels(`k=${"é".repeat(64)}`)).toEqual({});
+  });
+
+  it("rejects uppercase letters in any script", () => {
+    expect(
+      parseDefaultGcpLabels("Équipe=x,team=Données,ok=yes,КЛЮЧ=x"),
+    ).toEqual({ ok: "yes" });
+  });
+
   it("skips entries GCP would reject instead of failing the whole insert", () => {
     expect(
       parseDefaultGcpLabels(

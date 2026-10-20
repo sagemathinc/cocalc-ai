@@ -16,8 +16,14 @@ instance insert if any label is invalid.
 import logger from "./logger";
 
 // https://cloud.google.com/compute/docs/labeling-resources#requirements
-const LABEL_KEY = /^[a-z][a-z0-9_-]{0,62}$/;
-const LABEL_VALUE = /^[a-z0-9_-]{0,63}$/;
+// Keys and values may contain lowercase letters, numeric characters,
+// underscores, dashes and international characters (UTF-8), at most 63
+// characters each; a key must start with a lowercase letter or an
+// international character. Uppercase letters are not allowed. "Letter" here
+// means a lowercase (Ll) or caseless (Lo) letter, plus combining marks (M) so
+// that accented characters written in decomposed form are accepted.
+const LABEL_KEY = /^[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}\p{N}_-]{0,62}$/u;
+const LABEL_VALUE = /^[\p{Ll}\p{Lo}\p{M}\p{N}_-]{0,63}$/u;
 const MAX_LABELS = 64;
 
 export function parseDefaultGcpLabels(
