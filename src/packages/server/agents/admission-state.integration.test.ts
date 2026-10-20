@@ -6,6 +6,7 @@ import {
   claimAgentRpcAdmissionState,
   createAgentRpcAdmissionState,
   deleteAgentRpcAdmissionState,
+  findAgentRpcPreparation,
   getAgentRpcAdmissionState,
   hashAgentRpcAdmissionBinding,
 } from "./admission-state";
@@ -87,6 +88,42 @@ describeDb("shared agent RPC admission state", () => {
     ).toEqual([]);
   });
 
+  test("a send's own preparation covers its permit when permits are full", async () => {
+    const project_id = randomUUID();
+    const preparation = { ...state("preparation"), project_id };
+    await createAgentRpcAdmissionState(preparation);
+    // Fill the recipient's permit limit.
+    for (let i = 0; i < 32; i++)
+      await createAgentRpcAdmissionState({ ...state("permit"), project_id });
+    const permit = {
+      ...state("permit"),
+      project_id,
+      host_id: preparation.host_id,
+      account_id: preparation.account_id,
+    };
+    await expect(createAgentRpcAdmissionState(permit)).rejects.toMatchObject({
+      scope: "recipient",
+    });
+    // A binding that does not match the live preparation is no cover.
+    await expect(
+      createAgentRpcAdmissionState(permit, {
+        coveredBy: { ...preparation, binding_hash: "other" },
+      }),
+    ).rejects.toMatchObject({ scope: "recipient" });
+    expect(await findAgentRpcPreparation(preparation)).toMatchObject({
+      token_id: preparation.token_id,
+    });
+    await createAgentRpcAdmissionState(permit, { coveredBy: preparation });
+    // Finding never consumes: the preparation can still be claimed once.
+    expect(
+      await claimAgentRpcAdmissionState({
+        ...preparation,
+        kind: "preparation",
+      }),
+    ).toMatchObject({ token_id: preparation.token_id });
+    expect(await findAgentRpcPreparation(preparation)).toBeUndefined();
+  });
+
   test("project capacity is aggregate across independent callers", async () => {
     const first = state("preparation");
     const second = {
@@ -99,8 +136,11 @@ describeDb("shared agent RPC admission state", () => {
     };
     await createAgentRpcAdmissionState(first);
     await createAgentRpcAdmissionState(second);
-    await expect(createAgentRpcAdmissionState(rejected)).rejects.toThrow(
-      "recipient project messaging capacity full",
-    );
+    await expect(createAgentRpcAdmissionState(rejected)).rejects.toMatchObject({
+      message: "recipient project messaging capacity full",
+      scope: "recipient",
+      active: 2,
+      limit: 2,
+    });
   });
 });

@@ -18,6 +18,7 @@ import {
   getPublicFeaturePage,
   publicFeatureHref,
 } from "@cocalc/util/public-feature-pages";
+import { PUBLIC_PRODUCTS_PAGE_LINK } from "@cocalc/util/public-products-content";
 import { getPublicFeatureSignUpLabel } from "@cocalc/util/public-site-policy";
 import {
   BulletList,
@@ -154,7 +155,10 @@ export default function TerminalFeaturePage({
               href: `${GUIDE_BASE}/software-install/`,
               label: "Software install guide",
             },
-            { href: appPath("products"), label: "Compare operating models" },
+            {
+              href: appPath(PUBLIC_PRODUCTS_PAGE_LINK.href),
+              label: PUBLIC_PRODUCTS_PAGE_LINK.label,
+            },
           ]}
           title="Where the terminal earns its place"
         >

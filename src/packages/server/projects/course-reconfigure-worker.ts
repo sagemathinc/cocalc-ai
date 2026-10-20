@@ -166,7 +166,12 @@ async function updateProgress({
           : 100,
       detail: progress_summary,
     },
-  });
+  }).catch((err) =>
+    logger.warn("failed to publish course reconfigure progress", {
+      op_id: op.op_id,
+      err: `${err}`,
+    }),
+  );
   return updated;
 }
 

@@ -114,6 +114,54 @@ and reproducible builds.
 Keep figures, bibliography files, generated data, and scripts in the same
 project so collaborators and agents can inspect the complete paper workflow.
 
+## Choose how the document builds
+
+The **Build** tab in the output panel shows this file's build command, with
+the **Engine...** menu at its right, and a log for each stage of the last
+build.
+
+- In **Engine...**, choose **PDFLaTeX**, **XeLaTeX**, or **LuaTex** to set the
+  command. Each runs latexmk, which repeats LaTeX and runs BibTeX as needed.
+  For a \`.tex\` file, auxiliary files go to a temporary folder and the PDF is
+  copied next to the source; the **(no output dir)** variants keep everything
+  in the document's folder. **PDFLaTeX (shell-escape)** also builds there, and
+  lets the document run other programs during the build, as some packages
+  require.
+- To use your own command, edit the command line and press **Enter**. Commands
+  run in bash. Without a semicolon, the command must end with the file name,
+  without its folder; CoCalc replaces the last word with it. A command that
+  contains a semicolon, such as several commands in a row, runs exactly as
+  typed. Clearing the line restores the PDFLaTeX command.
+- CoCalc saves the command with the document, so collaborators and agents who
+  build it through CoCalc use the same command.
+- In the first 1,000 lines, \`% !TeX program = xelatex\` (or \`pdflatex\`,
+  \`lualatex\`) picks the engine for a document with no saved command.
+  \`% !TeX cocalc = <command>\` sets the command in the document itself; the
+  semicolon rule applies to it too. Builds use that command while the line is
+  present. When CoCalc reads the line, as it does when you open the file, it
+  makes that command the document's saved command and shows it under
+  **Hardcoded build-command** in the **Build** tab. After you add the line,
+  reopen the file; after you change or remove it, click **Rescan** there.
+  Removing the line leaves its command saved until you choose an engine or
+  edit the command.
+
+Some documents need a step before or between LaTeX runs. CoCalc runs it and
+shows its log in a tab of its own:
+
+- **Knitr**: for an \`.Rnw\` or \`.Rtex\` file, knitr runs the R code first
+  and writes the \`.tex\` file that LaTeX builds.
+- **SageTex**: when the document loads the sagetex package, Sage runs the
+  \`.sagetex.sage\` file that LaTeX wrote, then LaTeX runs again.
+- **PythonTeX**: when the document loads the pythontex package, pythontex runs
+  the document's PythonTeX code, then LaTeX runs again.
+
+Documents that use SageTeX or PythonTeX build in their own folder. Each stage
+needs its software installed where the project runs: R with knitr, Sage, or
+pythontex. In the output panel, **Force Build** runs every stage again instead
+of reusing earlier results, and **Delete Aux Files** (**Clean** in the menu
+beside the Build button) removes auxiliary files from earlier builds; the PDF
+stays.
+
 ## Edit a formula with Agent
 
 In the LaTeX editor's **Rich Text** mode, rendered formulas have an agent

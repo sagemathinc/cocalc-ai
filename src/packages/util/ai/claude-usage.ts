@@ -32,6 +32,50 @@ export interface ClaudeUsageWindow {
   resetsAt: string;
   // The window reset after Claude last reported it, so usedPercent is stale.
   resetSinceObserved?: boolean;
+  /**
+   * Present when, at the rate used so far in this window, the limit would be
+   * reached before it resets: when (limitAt) and how much would be used by
+   * the reset at that rate (percentAtReset, at least 100).
+   */
+  projection?: { limitAt: string; percentAtReset: number };
+}
+
+const HOUR_MS = 3600_000;
+const WINDOW_LENGTH_MS: Record<string, number> = {
+  five_hour: 5 * HOUR_MS,
+  seven_day: 7 * 24 * HOUR_MS,
+};
+// Too little of a window has passed before this for its rate to mean much.
+const MIN_ELAPSED_FRACTION = 0.2;
+
+/**
+ * Linear projection of one window: usage so far divided by the fraction of
+ * the window elapsed when it was observed. Undefined unless the limit is
+ * projected to be hit before the reset.
+ */
+export function claudeUsageProjection({
+  utilization,
+  resetsAtMs,
+  observedAtMs,
+  lengthMs,
+}: {
+  utilization: number;
+  resetsAtMs: number;
+  observedAtMs: number;
+  lengthMs: number;
+}): ClaudeUsageWindow["projection"] {
+  if (!(utilization > 0) || !(lengthMs > 0)) return;
+  const startMs = resetsAtMs - lengthMs;
+  const elapsed = (observedAtMs - startMs) / lengthMs;
+  if (!(elapsed >= MIN_ELAPSED_FRACTION) || elapsed >= 1) return;
+  const atReset = utilization / elapsed;
+  if (atReset < 1) return;
+  const limitAtMs = startMs + (observedAtMs - startMs) / utilization;
+  if (!(limitAtMs < resetsAtMs)) return;
+  return {
+    limitAt: new Date(Math.max(observedAtMs, limitAtMs)).toISOString(),
+    percentAtReset: Math.round(atReset * 100),
+  };
 }
 
 export interface ClaudeSubscriptionUsage {
@@ -126,11 +170,20 @@ export function claudeSubscriptionUsage(
     const reading = snapshot.windows[key];
     if (!reading) continue;
     const resetSinceObserved = reading.resets_at * 1000 <= now;
+    const projection = resetSinceObserved
+      ? undefined
+      : claudeUsageProjection({
+          utilization: reading.utilization,
+          resetsAtMs: reading.resets_at * 1000,
+          observedAtMs: Date.parse(snapshot.observed_at),
+          lengthMs: WINDOW_LENGTH_MS[key],
+        });
     windows.push({
       name,
       usedPercent: Math.round(reading.utilization * 100),
       resetsAt: new Date(reading.resets_at * 1000).toISOString(),
       ...(resetSinceObserved ? { resetSinceObserved } : {}),
+      ...(projection ? { projection } : {}),
     });
   }
   return { observedAt: snapshot.observed_at, windows };

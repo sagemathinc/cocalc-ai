@@ -1,5 +1,13 @@
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
+import {
+  parseTurnOutcome,
+  turnFailureOf,
+  turnOutcomeOf,
+  type TurnFailure,
+  type TurnOutcome,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import path from "node:path";
 import { hubApi } from "../api";
 import { installLiteCodexSpawner } from "../codex-runtime";
@@ -10,6 +18,7 @@ import {
   drainAgentRpcReports,
   noteAgentMessageTurnFailed,
 } from "./agent-rpc-report";
+import { toolUseTracker } from "./tool-use";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
@@ -241,6 +250,7 @@ import {
   type AcpSessionRow,
   type AcpSessionState,
 } from "../sqlite/acp-sessions";
+import { agentUserTimeContext } from "./user-locale";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
@@ -335,6 +345,7 @@ import {
   discoverHarnessControls,
   forkHarnessSession,
   harnessForkSource,
+  assertAnswerHarnessProfile,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
@@ -2826,25 +2837,24 @@ export class ChatStreamWriter {
       case "error":
         this.setThreadState("error");
         this.finalizeLease("error", this.lastErrorText ?? undefined);
-        await this.publishCodexTurnCompletionNoticeBestEffort("error");
+        await this.publishTurnErrorNoticeBestEffort();
         return;
       case "interrupt":
         this.setThreadState("interrupted");
         this.finalizeLease("completed");
         return;
       case "summary":
+        // A finished turn is not a notification: the sidebar shows unseen
+        // results. Only failures, which need someone, notify.
         this.setThreadState("complete");
         this.finalizeLease("completed");
-        await this.publishCodexTurnCompletionNoticeBestEffort("complete");
         return;
       default:
         return;
     }
   }
 
-  private async publishCodexTurnCompletionNoticeBestEffort(
-    terminalState: "complete" | "error",
-  ): Promise<void> {
+  private async publishTurnErrorNoticeBestEffort(): Promise<void> {
     if (
       this.completionNoticePublished ||
       process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS === "0"
@@ -2857,34 +2867,6 @@ export class ChatStreamWriter {
         return;
       }
       const threadConfig = preferredThreadConfigRow(this.syncdb, threadId);
-      const override = this.recordField<string>(
-        threadConfig,
-        "codex_completion_notification",
-      );
-      const liveAcpConfig = syncdbField(threadConfig, "acp_config");
-      const liveLegacyPreference = syncdbField<boolean>(
-        liveAcpConfig,
-        "notifyOnTurnFinish",
-      );
-      const submittedLegacyPreference = this.metadata.notify_on_turn_finish;
-      const legacyPreference =
-        submittedLegacyPreference === true || liveLegacyPreference === true
-          ? true
-          : submittedLegacyPreference === false ||
-              liveLegacyPreference === false
-            ? false
-            : true;
-      const shouldNotify =
-        override === "on"
-          ? true
-          : override === "off"
-            ? false
-            : typeof this.metadata.completion_notification_enabled === "boolean"
-              ? this.metadata.completion_notification_enabled
-              : legacyPreference;
-      if (!shouldNotify) {
-        return;
-      }
       const threadLabel =
         this.recordField<string>(threadConfig, "name") ?? undefined;
       const messageDateMs = Date.parse(`${this.metadata.message_date ?? ""}`);
@@ -2900,8 +2882,8 @@ export class ChatStreamWriter {
         stable_source_id:
           `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
           undefined,
-        terminal_state: terminalState,
-        error_text: terminalState === "error" ? this.lastErrorText : undefined,
+        terminal_state: "error",
+        error_text: this.lastErrorText,
         agent_label: this.agentLabel,
       });
       await publishCodexTurnNotice({
@@ -2911,7 +2893,7 @@ export class ChatStreamWriter {
       });
       this.completionNoticePublished = true;
     } catch (err) {
-      logger.warn("failed to publish codex turn completion notice", {
+      logger.warn("failed to publish an agent turn error notice", {
         chatKey: this.chatKey,
         project_id: this.metadata.project_id,
         path: this.metadata.path,
@@ -8068,6 +8050,7 @@ type AcpExecutionResult = {
   error?: string;
   recoveryCode?: CodexAcpRecoveryErrorCode;
   recoveryDetail?: string;
+  outcome: TurnOutcome;
 };
 
 function paymentSourceFromAuthSource({
@@ -8281,7 +8264,16 @@ async function executeAcpRequest({
 
     let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
     let recoveryDetail: string | undefined;
+    // What the turn did and how it failed, for its outcome.
+    const toolUse = toolUseTracker();
+    let streamedFailure: TurnFailure | undefined;
+    let streamedCode: string | undefined;
     const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
+      toolUse.observe(payload);
+      if (payload?.type === "error") {
+        streamedFailure ??= payload.failure;
+        streamedCode ??= payload.code;
+      }
       if (harness) return;
       if (payload?.type !== "error") return;
       const directive = failureRecoveryDirective(payload.code, payload.error);
@@ -8345,9 +8337,17 @@ async function executeAcpRequest({
         if (memory.event) {
           await wrappedStream({ type: "event", event: memory.event });
         }
+        // The person's local time (and place, if they allow it), so the
+        // agent does not assume UTC for "today" or "6am".
+        const userTimeContext = agentUserTimeContext(
+          request.account_id,
+          request.chat?.user_locale,
+        );
         await currentAgent.evaluate({
           ...request,
-          agent_memory_context: memory.context,
+          agent_memory_context:
+            [userTimeContext, memory.context].filter(Boolean).join("\n\n") ||
+            undefined,
           mentionReferences,
           readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
           prompt: withComputerNote(
@@ -8394,10 +8394,12 @@ async function executeAcpRequest({
               recoveryDetail = killed.detail;
             }
           }
+          const failure = turnFailureOf(err);
           try {
             await wrappedStream({
               type: "error",
               error: terminalFallbackError,
+              ...(failure ? { failure } : {}),
             });
           } catch (streamErr) {
             logger.warn("evaluate: failed to stream error", streamErr);
@@ -8458,6 +8460,13 @@ async function executeAcpRequest({
       error: terminalError,
       recoveryCode,
       recoveryDetail,
+      outcome: turnOutcomeOf({
+        terminalState,
+        failure: streamedFailure,
+        code: recoveryCode ?? streamedCode,
+        error: terminalError,
+        toolRan: toolUse.ran,
+      }),
     };
   } finally {
     await cleanup();
@@ -10152,6 +10161,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         result.terminalState === "error" ? result.recoveryCode : undefined,
       recovery_detail:
         result.terminalState === "error" ? result.recoveryDetail : undefined,
+      outcome: result.outcome,
     });
     let resumed: AcpJobRow | undefined;
     let recoveryPending = false;
@@ -10177,10 +10187,21 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     // A turn that is (or may still be) retried is not over; the others are
     // reported to the agent whose message started them.
     if (result.terminalState === "error" && !resumed && !recoveryPending)
-      reportFailedAgentMessageTurn(job, refreshedRequest, result.error);
+      reportFailedAgentMessageTurn(
+        job,
+        refreshedRequest,
+        result.error,
+        result.outcome,
+      );
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
     const message = `This agent turn could not run: ${(err as Error)?.message ?? err}`;
+    // Whether anything ran before it threw is not known here.
+    const outcome = turnOutcomeOf({
+      terminalState: "error",
+      failure: turnFailureOf(err),
+      error: message,
+    });
     logger.warn("queued acp job execution failed", {
       op_id: job.op_id,
       err,
@@ -10194,8 +10215,9 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       state: "error",
       error: message,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+      outcome,
     });
-    reportFailedAgentMessageTurn(job, request, message);
+    reportFailedAgentMessageTurn(job, request, message, outcome);
   }
 }
 
@@ -10204,6 +10226,7 @@ function reportFailedAgentMessageTurn(
   job: AcpJobRow,
   request: AcpRequest,
   error?: string,
+  outcome: TurnOutcome | undefined = parseTurnOutcome(job.outcome_json),
 ): void {
   // A recovery continuation carries the same message: the turn began when
   // the first of them started, and a reply from any of them counts.
@@ -10219,6 +10242,7 @@ function reportFailedAgentMessageTurn(
     op_id: job.op_id,
     request,
     error: `${error ?? ""}`.trim() || "The turn ended with an error.",
+    failure: outcome?.state === "failed" ? outcome.failure : undefined,
     turn_started_at: started,
   });
   if (report)
@@ -11184,6 +11208,29 @@ function publicAttentionRecord(
   return publicRecord;
 }
 
+// The account's own saved answer, so a reloaded card can show (and the person
+// can copy or resend) what they wrote. Only for "list", which is scoped to the
+// authenticated account; other public records reach every chat viewer.
+export function ownAttentionRecord(
+  record: NonNullable<ReturnType<typeof getAcpAttention>>,
+  account_id: string,
+) {
+  const publicRecord = publicAttentionRecord(record);
+  if (
+    record.account_id !== account_id ||
+    record.response_submitted_at == null ||
+    (record.response == null && !record.response_declined)
+  )
+    return publicRecord;
+  return {
+    ...publicRecord,
+    own_response: {
+      answers: record.response_declined ? {} : (record.response ?? {}),
+      ...(record.response_declined ? { declined: true } : {}),
+    },
+  };
+}
+
 function formatAttentionAnswer(
   record: NonNullable<ReturnType<typeof getAcpAttention>>,
 ): string {
@@ -11316,7 +11363,7 @@ async function deliverAsyncAttentionAnswer(
           throw Error(
             "The question's execution configuration is unavailable; send your answer in the agent conversation.",
           );
-        assertConfiguredHarnessRuntime(source, runtime?.toJS?.() ?? runtime);
+        assertAnswerHarnessProfile(source, runtime?.toJS?.() ?? runtime);
         // Admission can precede session creation. New questions carry the
         // actual native ID; old records are usable only with an admitted ID.
         const questionSessionId =
@@ -11333,7 +11380,9 @@ async function deliverAsyncAttentionAnswer(
           },
         );
         harnessExecution = {
-          runtime: source.runtime,
+          // The question's harness profile (checked above) with the thread's
+          // current model and effort, which the answer's turn then uses.
+          runtime: parseAcpHarnessRuntime(runtime?.toJS?.() ?? runtime),
           harness_credential: source.harness_credential,
           session_id: session.session_id,
         };
@@ -11715,7 +11764,7 @@ async function handleAcpAttentionRequest(
           path: request.path,
           thread_id: request.thread_id,
           state: request.state,
-        }).map(publicAttentionRecord),
+        }).map((record) => ownAttentionRecord(record, request.account_id)),
       };
     }
     case "register_action": {

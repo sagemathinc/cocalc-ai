@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
+import { URL_REJECTED } from "@cocalc/frontend/lib/url-transform";
 import { EventEmitter } from "events";
 import { fromJS } from "immutable";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
@@ -102,7 +103,10 @@ function MarkdownProbe({ value }) {
           path: context.path,
           sanitized: context.noSanitize === false,
           codebarDisabled: context.disableMarkdownCodebar,
-          image: context.urlTransform?.("image.png", "img"),
+          image:
+            context.urlTransform?.("image.png", "img") === URL_REJECTED
+              ? "rejected"
+              : context.urlTransform?.("image.png", "img"),
           link: context.urlTransform?.("notes.md", "a"),
         })}
       </output>
@@ -328,7 +332,7 @@ test("uses sanitized source context and follows live title/content updates, not 
       path: target.path,
       sanitized: true,
       codebarDisabled: true,
-      image: "",
+      image: "rejected",
       link: `${target.projectId}:${target.path}:notes.md`,
     }),
   );

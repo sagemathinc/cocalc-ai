@@ -786,8 +786,8 @@ describe("signing in to Cloudflare", () => {
     );
     expect(q.scope.split(" ").sort()).toEqual(
       [
-        "account:read",
-        "user:read",
+        "account-settings.read",
+        "user-details.read",
         "workers-r2.read",
         "workers-r2.write",
         "workers-r2-bucket-item.read",

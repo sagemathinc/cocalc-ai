@@ -27,6 +27,7 @@ import type {
   HostMaintenanceNotice,
   HostLroKind,
   HostPublicRouteMode,
+  HostRuntimeFleetLatencyGate,
   HostRuntimeFleetRolloutRequest,
   HostRuntimeFleetRolloutResponse,
   HostProjectRow,
@@ -1114,6 +1115,20 @@ async function resolveRemoteHostBayIfAuthoritative(
     return;
   }
   return bay_id;
+}
+
+// A method routed to the host's owning bay refuses to run anywhere else: a
+// stale route, which the caller retries after re-resolving the owner.
+async function assertHostOwnedHere(host_id: string): Promise<void> {
+  const owner = await resolveRemoteHostBayIfAuthoritative(host_id);
+  if (owner) {
+    throw Object.assign(
+      new Error(
+        `stale route: host ${host_id} is owned by ${owner}, not ${getConfiguredBayId()}; retry`,
+      ),
+      { code: 409 },
+    );
+  }
 }
 
 async function resolveHostProjectListingTarget({
@@ -2433,6 +2448,7 @@ export async function getProjectStartMetadata({
   run_quota?: any;
   run_quota_revision?: number;
   runtime_lifecycle_revision?: number;
+  users_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -2478,6 +2494,7 @@ export async function getProjectStartMetadataLocal({
   run_quota?: any;
   run_quota_revision?: number;
   runtime_lifecycle_revision?: number;
+  users_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -2493,7 +2510,8 @@ export async function getProjectStartMetadataLocal({
     ({ rows } = await pool().query(
       `SELECT title, users, rootfs_image AS image, run_quota,
               COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision,
-              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision, env,
+              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
+              COALESCE(runtime_authority_revision, 0)::bigint AS users_revision, env,
               autostart_enabled
          FROM projects
         WHERE project_id=$1
@@ -2539,6 +2557,9 @@ export async function getProjectStartMetadataLocal({
     run_quota: row.run_quota ?? undefined,
     run_quota_revision: Number(row.run_quota_revision ?? 0),
     runtime_lifecycle_revision: Number(row.runtime_lifecycle_revision ?? 0),
+    ...(row.users_revision == null
+      ? {}
+      : { users_revision: Number(row.users_revision) }),
     env: row.env ?? undefined,
     autostart_enabled: row.autostart_enabled,
     project_secrets_cache: await getProjectSecretsRuntimeCache({ project_id }),
@@ -4456,12 +4477,8 @@ export async function listHostAccess({
   id: string;
   include_revoked?: boolean;
 }): Promise<HostAccessEntry[]> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .listHostAccess({ account_id, id, include_revoked });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForView(id, account_id);
   await requireLoadedHostPermission({
     row,
@@ -5629,14 +5646,8 @@ export async function getHostLog({
     error?: string | null;
   }[]
 > {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).getHostLog({
-      account_id,
-      id,
-      limit,
-    });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadHostForView(id, account_id);
   const entries = await listCloudVmLog({ vm_id: id, limit });
   return entries.map((entry) => ({
@@ -5660,16 +5671,8 @@ export async function getHostAvailability({
   id: string;
   days?: number;
 }): Promise<HostAvailabilityReport> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .getHostAvailability({
-        account_id,
-        id,
-        days,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { full_view } = await loadHostForAvailability(id, account_id);
   const report = await getHostAvailabilityReport({ host_id: id, days });
   return full_view ? report : sanitizeAvailabilityReportForPlacement(report);
@@ -5744,17 +5747,8 @@ export async function getHostRuntimeLog({
   lines?: number;
   source?: HostRuntimeLogSource;
 }): Promise<{ host_id: string; source: string; lines: number; text: string }> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .getHostRuntimeLog({
-        account_id,
-        id,
-        lines,
-        source,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.getRuntimeLog({
@@ -5780,17 +5774,8 @@ export async function getHostMetricsHistory({
   window_minutes?: number;
   max_points?: number;
 }): Promise<HostMetricsHistory> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .getHostMetricsHistory({
-        account_id,
-        id,
-        window_minutes,
-        max_points,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const host = await loadHostForListing(id, account_id);
   const history = await loadProjectHostMetricsHistory({
     host_ids: [host.id],
@@ -5813,15 +5798,8 @@ export async function listHostRootfsImages({
   account_id?: string;
   id: string;
 }): Promise<HostRootfsImage[]> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .listHostRootfsImages({
-        account_id,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   const availability = computeHostOperationalAvailability(row);
   if (!availability.operational) {
@@ -6067,15 +6045,8 @@ export async function getHostExamState({
   account_id?: string;
   id: string;
 }): Promise<HostExamState> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .getHostExamState({
-        account_id,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row, eligible, eligibility_reason } = await loadHostForExam({
     id,
     account_id,
@@ -6478,15 +6449,8 @@ export async function listHostSshAuthorizedKeys({
   path: string;
   keys: string[];
 }> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .listHostSshAuthorizedKeys({
-        account_id,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.listHostSshAuthorizedKeys();
@@ -8817,10 +8781,12 @@ export async function rolloutHostRuntimeFleet({
   stabilize_seconds,
   promote_global,
   reason,
+  latency_gate,
 }: HostRuntimeFleetRolloutRequest & {
   account_id?: string;
 }): Promise<HostRuntimeFleetRolloutResponse> {
   const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
+  const latencyGate = normalizeFleetRolloutLatencyGate(latency_gate);
   if (artifact !== "project-host") {
     throw new Error("paced fleet rollout currently supports project-host only");
   }
@@ -8972,6 +8938,7 @@ export async function rolloutHostRuntimeFleet({
       stabilize_seconds: normalizedStabilizeSeconds,
       promote_global: promote_global === true,
       reason: `${reason ?? ""}`.trim() || "paced_runtime_fleet_rollout",
+      latency_gate: latencyGate,
     },
     dedupe_key: `${HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND}:${JSON.stringify({
       artifact,
@@ -9008,6 +8975,14 @@ export async function rolloutHostRuntimeFleet({
     kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
     host_ids: orderedHostIds,
   };
+}
+
+function normalizeFleetRolloutLatencyGate(
+  value: unknown,
+): HostRuntimeFleetLatencyGate {
+  if (value == null || value === "") return "enforce";
+  if (value === "enforce" || value === "advisory") return value;
+  throw new Error('latency_gate must be "enforce" or "advisory"');
 }
 
 export async function upgradeHostSoftware({
@@ -9470,16 +9445,8 @@ export async function listHostRuntimeDeployments({
     await assertRuntimeDeploymentGlobalAccess(account_id);
     return await listProjectHostRuntimeDeployments({ scope_type: "global" });
   }
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id ?? "");
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .listHostRuntimeDeployments({
-        account_id,
-        scope_type,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id ?? "");
   const row = await loadHostForRootfsManagement(id ?? "", account_id);
   return await listProjectHostRuntimeDeployments({
     scope_type: "host",
@@ -9904,15 +9871,8 @@ export async function getHostManagedComponentStatus({
   account_id?: string;
   id: string;
 }): Promise<HostManagedComponentStatus[]> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .getHostManagedComponentStatus({
-        account_id,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   const client = await hostControlClient(id, 30_000);

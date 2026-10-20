@@ -1,5 +1,6 @@
 import {
   claudeRateLimitSnapshot,
+  claudeUsageProjection,
   claudeSubscriptionUsage,
   parseClaudeRateLimitSnapshot,
 } from "./claude-usage";
@@ -109,5 +110,69 @@ describe("Claude subscription usage from rate limit reports", () => {
         },
       ],
     });
+  });
+});
+
+describe("claudeUsageProjection", () => {
+  const H = 3600_000;
+  const observed = Date.UTC(2026, 9, 16, 12);
+  test("60% of the week used with 3 days left reaches the limit early", () => {
+    // William's screenshot, 2026-10-16: 4 of 7 days elapsed, 15% a day.
+    const projection = claudeUsageProjection({
+      utilization: 0.6,
+      resetsAtMs: observed + 3 * 24 * H,
+      observedAtMs: observed,
+      lengthMs: 7 * 24 * H,
+    })!;
+    expect(projection.percentAtReset).toBe(105);
+    // 100% after 6.67 days, about 8 hours before the reset.
+    expect(Date.parse(projection.limitAt)).toBeCloseTo(
+      observed - 4 * 24 * H + (4 * 24 * H) / 0.6,
+      -3,
+    );
+  });
+  test("no warning when on track to stay under the limit", () => {
+    expect(
+      claudeUsageProjection({
+        utilization: 0.13,
+        resetsAtMs: observed + 2.5 * H,
+        observedAtMs: observed,
+        lengthMs: 5 * H,
+      }),
+    ).toBeUndefined();
+  });
+  test("no projection too early in a window or without usage", () => {
+    // 13% half an hour into a 5-hour session would project 130%: too noisy.
+    expect(
+      claudeUsageProjection({
+        utilization: 0.13,
+        resetsAtMs: observed + 4.5 * H,
+        observedAtMs: observed,
+        lengthMs: 5 * H,
+      }),
+    ).toBeUndefined();
+    expect(
+      claudeUsageProjection({
+        utilization: 0,
+        resetsAtMs: observed + H,
+        observedAtMs: observed,
+        lengthMs: 5 * H,
+      }),
+    ).toBeUndefined();
+  });
+  test("claudeSubscriptionUsage attaches the projection to its window", () => {
+    const t = observed / 1000;
+    const usage = claudeSubscriptionUsage(
+      {
+        observed_at: new Date(observed).toISOString(),
+        windows: {
+          five_hour: { utilization: 0.13, resets_at: t + 2.5 * 3600 },
+          seven_day: { utilization: 0.6, resets_at: t + 3 * 24 * 3600 },
+        },
+      },
+      observed,
+    )!;
+    expect(usage.windows[0].projection).toBeUndefined();
+    expect(usage.windows[1].projection?.percentAtReset).toBe(105);
   });
 });

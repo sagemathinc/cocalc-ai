@@ -24,7 +24,7 @@
     "innerHTML assignment": 1
   },
   "src/packages/frontend/components/html-ssr.tsx": {
-    "noSanitize": 4
+    "noSanitize": 6
   },
   "src/packages/frontend/components/html.tsx": {
     "dangerouslySetInnerHTML": 2
@@ -41,11 +41,7 @@
     "document.write": 1,
     "innerHTML assignment": 1
   },
-  "src/packages/frontend/components/math/katex.tsx": {
-    "dangerouslySetInnerHTML": 1,
-    "innerHTML assignment": 1
-  },
-  "src/packages/frontend/components/math/ssr.tsx": {
+  "src/packages/frontend/components/math/segments.tsx": {
     "dangerouslySetInnerHTML": 1
   },
   "src/packages/frontend/components/sanitize-html.ts": {
@@ -56,12 +52,6 @@
   },
   "src/packages/frontend/editors/slate/elements/code-block/index.tsx": {
     "dangerouslySetInnerHTML": 2
-  },
-  "src/packages/frontend/editors/slate/elements/code-block/mermaid-public-viewer.tsx": {
-    "innerHTML assignment": 2
-  },
-  "src/packages/frontend/editors/slate/elements/code-block/mermaid.tsx": {
-    "innerHTML assignment": 2
   },
   "src/packages/frontend/editors/slate/elements/code-block/public-viewer.tsx": {
     "dangerouslySetInnerHTML": 2
@@ -93,12 +83,6 @@
   "src/packages/frontend/frame-editors/chat-editor/workbench.tsx": {
     "noSanitize": 1
   },
-  "src/packages/frontend/frame-editors/frame-tree/print-code.ts": {
-    "document.write": 1
-  },
-  "src/packages/frontend/frame-editors/frame-tree/print.ts": {
-    "document.write": 1
-  },
   "src/packages/frontend/frame-editors/html-editor/iframe-html.tsx": {
     "srcDoc": 2
   },
@@ -126,9 +110,6 @@
   "src/packages/frontend/jupyter/browser-actions.ts": {
     "document.write": 1
   },
-  "src/packages/frontend/jupyter/cell-list.tsx": {
-    "noSanitize": 1
-  },
   "src/packages/frontend/jupyter/nbviewer/export.ts": {
     "noSanitize": 1
   },
@@ -136,10 +117,18 @@
     "dangerouslySetInnerHTML": 1,
     "srcDoc": 1
   },
+  "src/packages/frontend/jupyter/notebook-file-context.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/jupyter/output-messages/active-output-group.tsx": {
+    "innerHTML assignment": 1,
+    "srcDoc": 1
+  },
   "src/packages/frontend/jupyter/output-messages/autosized-iframe.tsx": {
     "srcDoc": 2
   },
-  "src/packages/frontend/jupyter/output-messages/iframe.tsx": {
+  "src/packages/frontend/jupyter/output-messages/html-output.tsx": {
+    "noSanitize": 1,
     "srcDoc": 2
   },
   "src/packages/frontend/jupyter/output-messages/mime-types/iframe-html.tsx": {
@@ -147,6 +136,9 @@
   },
   "src/packages/frontend/jupyter/status.tsx": {
     "dangerouslySetInnerHTML": 4
+  },
+  "src/packages/frontend/jupyter/trust-fidelity.browser-test.mjs": {
+    "noSanitize": 1
   },
   "src/packages/frontend/jupyter/widgets/manager.ts": {
     "noSanitize": 1
@@ -158,12 +150,15 @@
     "dangerouslySetInnerHTML": 3
   },
   "src/packages/frontend/markdown/markdown-input/main.tsx": {
-    "dangerouslySetInnerHTML": 1
+    "noSanitize": 1
   },
   "src/packages/frontend/misc/misc.ts": {
     "innerHTML assignment": 1
   },
   "src/packages/frontend/project/page/content.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/public-viewer/renderers/ipynb.tsx": {
     "noSanitize": 1
   },
   "src/packages/frontend/public-viewer/viewer-file-context.tsx": {

@@ -323,6 +323,55 @@ describe("acp job queue ordering", () => {
     expect(latestAcpJobUpdateForWorker("another-worker")).toBeUndefined();
   });
 
+  it("keeps how a turn ended with its job", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-outcome",
+        assistantMessageId: "assistant-outcome",
+        assistantDate: "2026-10-18T21:00:00.000Z",
+      }) as any,
+    );
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-outcome",
+    });
+    const outcome = {
+      version: 1,
+      state: "failed",
+      failure: { kind: "limit", scope: "credential", resets_at: 123 },
+      tool_ran: false,
+      classified_by: "signal",
+    } as const;
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "error",
+      error: "Claude could not run this request.",
+      worker_id: "worker-outcome",
+      outcome,
+    });
+    expect(
+      JSON.parse(getAcpJobByOpId(queued.op_id)?.outcome_json ?? "null"),
+    ).toEqual(outcome);
+    // A later state change without one keeps it.
+    setAcpJobState({ op_id: queued.op_id, state: "error" });
+    expect(
+      JSON.parse(getAcpJobByOpId(queued.op_id)?.outcome_json ?? "null"),
+    ).toEqual(outcome);
+    // A resent attempt starts without the earlier attempt's outcome.
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET state = 'queued' WHERE op_id = ?")
+      .run(queued.op_id);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-outcome",
+    });
+    expect(getAcpJobByOpId(queued.op_id)?.outcome_json).toBeNull();
+  });
+
   it("terminally fences queued and running work for one stopped project", () => {
     const queued = enqueueAcpJob(
       makeRequest({
@@ -696,9 +745,12 @@ describe("acp job queue ordering", () => {
       project_id: jobs[0].project_id,
       reason: "project stopped",
     });
-    db.prepare("UPDATE acp_jobs SET updated_at = ? WHERE op_id = ?").run(
-      1,
-      jobs[0].op_id,
+    // Pin every row's age: the fence stamps them all with Date.now(), and a
+    // touch in that same millisecond would tie and sort by op_id instead.
+    jobs.forEach((job, n) =>
+      db
+        .prepare("UPDATE acp_jobs SET updated_at = ? WHERE op_id = ?")
+        .run(n + 1, job.op_id),
     );
     expect(
       listAcpJobsWithFenceIntent({ ...FENCE_LIST, limit: 1 })[0].op_id,
@@ -711,7 +763,7 @@ describe("acp job queue ordering", () => {
     });
     expect(
       listAcpJobsWithFenceIntent({ ...FENCE_LIST, limit: 1 })[0].op_id,
-    ).not.toBe(jobs[0].op_id);
+    ).toBe(jobs[1].op_id);
   });
 
   it("adopts only the rows this fence ended without an intent", () => {

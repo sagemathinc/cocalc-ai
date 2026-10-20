@@ -10,6 +10,7 @@ import {
   preserveSnapshotHistory,
 } from "./snapshot-restore-history";
 import { dirname, join } from "node:path";
+import { writeManagedAuthorizedKeysFile } from "./managed-authorized-keys";
 import { tmpdir } from "node:os";
 import {
   chmod,
@@ -18,7 +19,6 @@ import {
   mkdtemp,
   readFile,
   readdir,
-  rename,
   rm,
   stat,
   writeFile,
@@ -55,7 +55,7 @@ import type {
   ProjectBackupIndexStoreConfig,
 } from "@cocalc/conat/hub/api/hosts";
 import { hubApi } from "@cocalc/lite/hub/api";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { assertValidSnapshotName } from "@cocalc/util/snapshot-name";
 import getLogger from "@cocalc/backend/logger";
@@ -178,7 +178,6 @@ import {
   withProjectVolumeLifecycleLock,
   type ProjectVolumeLifecycleLock,
 } from "./project-volume-lifecycle";
-import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { requireManagedSshKeyAccount } from "./ssh/managed-key-account";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
@@ -227,6 +226,7 @@ import {
 } from "@cocalc/project-runner/run/rootfs-base";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { importJupyterIpynb, saveJupyterIpynb } from "./jupyter-ipynb";
+import { boardHandlers } from "./board/service";
 import { resetClonedProjectState } from "./clone-state";
 import { withBackupParallelLimit } from "./backup-queue";
 import { createSharedWorkLimit } from "./shared-work-limit";
@@ -249,8 +249,11 @@ import {
   projectRusticBackup,
   projectRusticRestore,
 } from "./project-rustic";
-import { isMissingRusticRepositoryError } from "./backup-index-errors";
-import { listRestoreBackups } from "./restore-backup-inventory";
+import {
+  isMissingRusticRepositoryError,
+  looksLikeMissingBackupBucketError,
+} from "./backup-index-errors";
+import { listBackupIds, listRestoreBackups } from "./restore-backup-inventory";
 import {
   checkManagedBackupAllowedBestEffort,
   recordManagedBackupEgressBestEffort,
@@ -1769,15 +1772,6 @@ let backupConfigInvalidationSub: any = null;
 const BACKUP_CONFIG_FETCH_RETRY_MS = 5000;
 const BACKUP_CONFIG_FETCH_TIMEOUT_MS = 2 * 60 * 1000;
 
-function looksLikeMissingBackupBucketError(err: unknown): boolean {
-  const s = `${err ?? ""}`.toLowerCase();
-  return (
-    s.includes("nosuchbucket") ||
-    s.includes("specified bucket does not exist") ||
-    s.includes("path `config` does not exist")
-  );
-}
-
 export async function invalidateBackupConfig(
   project_id?: string,
 ): Promise<void> {
@@ -1897,7 +1891,7 @@ async function reportBackupSuccess(
 async function getLatestKnownBackupId(
   project_id: string,
 ): Promise<string | undefined> {
-  const backups = await getBackups({ project_id, indexed_only: true });
+  const backups = await listProjectBackupIds(project_id);
   return backups.at(-1)?.id;
 }
 
@@ -4150,12 +4144,7 @@ async function createBackup({
         op: "createBackup",
         run: async () => {
           const existingBackups =
-            limit == null
-              ? []
-              : await getBackups({
-                  project_id,
-                  indexed_only: true,
-                });
+            limit == null ? [] : await listProjectBackupIds(project_id);
           const retention = planBackupRetention({
             backups: existingBackups,
             limit,
@@ -5068,6 +5057,16 @@ export async function getBackups({
   }
 }
 
+export async function listProjectBackupIds(
+  project_id: string,
+): Promise<{ id: string; time: Date }[]> {
+  return await listBackupIds({
+    profilePath: await resolveRusticRepo(project_id),
+    projectId: project_id,
+    browse: async () => await getBackups({ project_id }),
+  });
+}
+
 async function getBackupFiles({
   project_id,
   id,
@@ -5259,6 +5258,10 @@ export async function initFsServer({
           fs,
         }),
     },
+    board: boardHandlers({
+      client,
+      projectIdOf: projectIdFromSubject,
+    }),
   });
 }
 
@@ -5818,11 +5821,11 @@ export async function initFileServer({
       }
       return {
         allowed: false as const,
-        message: [
-          "SSH traffic limit reached for this account.",
-          "New SSH traffic is temporarily blocked until the network usage window resets.",
-          ...formatManagedEgressPolicyDetails(policy),
-        ].join("\n"),
+        message: formatManagedEgressBlockedMessage({
+          category: policy.category ?? "",
+          policy,
+          blocked: "New SSH traffic is blocked.",
+        }),
       };
     };
     const recordManagedSshEgress = async ({
@@ -5988,13 +5991,6 @@ export async function writeManagedAuthorizedKeys(
   project_id: string,
   keys?: string,
 ): Promise<void> {
-  const content = (keys ?? "").trim();
-  const formatted = content
-    ? content.endsWith("\n")
-      ? content
-      : `${content}\n`
-    : "";
-  if (!formatted) return;
   let vol;
   try {
     vol = await getVolume(project_id);
@@ -6005,20 +6001,7 @@ export async function writeManagedAuthorizedKeys(
     });
     return;
   }
-  const managedPath = join(vol.path, INTERNAL_SSH_CONFIG, "authorized_keys");
-  const managedDir = join(vol.path, INTERNAL_SSH_CONFIG);
-  await mkdir(managedDir, { recursive: true, mode: 0o700 });
-  await chmod(managedDir, 0o700).catch(() => {});
-  const tmpPath = join(managedDir, `.tmp-authorized_keys-${randomUUID()}`);
-  try {
-    await writeFile(tmpPath, formatted, { mode: 0o600 });
-    await chmod(tmpPath, 0o600).catch(() => {});
-    await rename(tmpPath, managedPath);
-    await chmod(managedPath, 0o600).catch(() => {});
-  } catch (err) {
-    await rm(tmpPath, { force: true }).catch(() => {});
-    throw err;
-  }
+  await writeManagedAuthorizedKeysFile(vol.path, keys);
 }
 
 export function closeFileServer() {

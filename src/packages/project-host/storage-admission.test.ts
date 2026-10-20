@@ -11,8 +11,12 @@ describe("storage admission controller", () => {
   let starting = 0;
   let stopping = 0;
 
-  const create = (mode: "disabled" | "observe" | "enforce" = "enforce") =>
+  const create = (
+    mode: "disabled" | "observe" | "enforce" = "enforce",
+    extra: Parameters<typeof createStorageAdmissionController>[0] = {},
+  ) =>
     createStorageAdmissionController({
+      ...extra,
       mode,
       now: () => now,
       readInputs: () => ({
@@ -371,8 +375,40 @@ describe("storage admission controller", () => {
     expect(transitions).toEqual(["emergency", "recovery", "normal"]);
   });
 
-  it("keeps recovery blocked while lifecycle work is active", () => {
+  it("leaves recovery at low stall even while projects keep starting and stopping", () => {
+    // 2026-10-16: busy prod hosts at 1-2% stall with constant lifecycle work
+    // sat in recovery for hours, deferring scheduled snapshots.
     const controller = create();
+    full = 10;
+    controller.sample();
+    full = 2;
+    starting = 1;
+    now += 5_000;
+    expect(controller.sample().pressure_state).toBe("recovery");
+    now += 60_000;
+    expect(controller.sample().pressure_state).toBe("normal");
+    // Background work still waits for the lifecycle work itself.
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }),
+    ).toMatchObject({ admitted: false, reason: "lifecycle_active" });
+  });
+
+  it("stays in recovery between the exit and contended thresholds", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    for (let i = 0; i < 10; i++) {
+      now += 60_000;
+      expect(controller.sample().pressure_state).toBe("recovery");
+    }
+  });
+
+  it("can still require quiet lifecycle to leave recovery", () => {
+    const controller = create("enforce", {
+      recoveryRequiresQuietLifecycle: true,
+      recoveryFullAvg10: 1,
+    });
     full = 10;
     controller.sample();
     full = 0;
@@ -385,6 +421,185 @@ describe("storage admission controller", () => {
     controller.sample();
     now += 60_000;
     expect(controller.sample().pressure_state).toBe("normal");
+  });
+
+  it("paces scheduled snapshots through recovery, one at a time", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    expect(controller.sample().pressure_state).toBe("recovery");
+    const first = controller.admit({
+      operation_kind: "scheduled_snapshot",
+      project_id: "p1",
+    });
+    expect(first).toMatchObject({
+      admitted: true,
+      would_defer: true,
+      reason: "io_pressure_recovery",
+      recovery_paced: true,
+      starvation_override: false,
+    });
+    // One at a time, and backups are not paced.
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).admitted,
+    ).toBe(false);
+    expect(
+      controller.admit({ operation_kind: "scheduled_backup" }).admitted,
+    ).toBe(false);
+    first.release();
+    // Then at the pace.
+    now += 19_999;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).admitted,
+    ).toBe(false);
+    now += 1;
+    const second = controller.admit({ operation_kind: "scheduled_snapshot" });
+    expect(second.recovery_paced).toBe(true);
+    second.release();
+    expect(controller.getStatus()).toMatchObject({
+      recovery_paced_total: 2,
+      // The snapshot while one ran, the backup, and the one before the pace.
+      deferred_by_reason: { io_pressure_recovery: 3 },
+    });
+  });
+
+  it("keeps overdue snapshot overrides on the same recovery pace", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    controller.sample();
+    expect(controller.getStatus().recovery_snapshot_next_at).toBe(
+      new Date(now).toISOString(),
+    );
+    const paced = controller.admit({ operation_kind: "scheduled_snapshot" });
+    expect(paced.recovery_paced).toBe(true);
+    paced.release();
+    const pacedAt = now;
+    expect(controller.getStatus().recovery_snapshot_next_at).toBe(
+      new Date(pacedAt + 20_000).toISOString(),
+    );
+    // An overdue snapshot cannot start between paced ones...
+    now += 5_000;
+    expect(
+      controller.admit({
+        operation_kind: "scheduled_snapshot",
+        allow_starvation_override: true,
+      }),
+    ).toMatchObject({ admitted: false, starvation_override: false });
+    // ...nor a backup override (still allowed) restart the snapshot clock.
+    const backup = controller.admit({
+      operation_kind: "scheduled_backup",
+      allow_starvation_override: true,
+    });
+    expect(backup.starvation_override).toBe(true);
+    backup.release();
+    now = pacedAt + 20_000;
+    const override = controller.admit({
+      operation_kind: "scheduled_snapshot",
+      allow_starvation_override: true,
+    });
+    expect(override.starvation_override).toBe(true);
+    override.release();
+    // The override restarted the shared clock.
+    now += 10_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).admitted,
+    ).toBe(false);
+    now += 10_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).recovery_paced,
+    ).toBe(true);
+  });
+
+  it("gives the recovery slot only to the snapshot the caller allows", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    controller.sample();
+    for (const allow_starvation_override of [false, true]) {
+      expect(
+        controller.admit({
+          operation_kind: "scheduled_snapshot",
+          allow_starvation_override,
+          allow_recovery_pace: false,
+        }),
+      ).toMatchObject({
+        admitted: false,
+        recovery_paced: false,
+        starvation_override: false,
+      });
+    }
+    // Withheld attempts leave the slot open for the head.
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).recovery_paced,
+    ).toBe(true);
+  });
+
+  it("does not pace a snapshot alongside scheduled work that is still running", () => {
+    const controller = create();
+    // A backup admitted while normal keeps running into recovery.
+    const backup = controller.admit({ operation_kind: "scheduled_backup" });
+    expect(backup.admitted).toBe(true);
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    expect(controller.sample().pressure_state).toBe("recovery");
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }),
+    ).toMatchObject({ admitted: false, recovery_paced: false });
+    backup.release();
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).recovery_paced,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["contended", 6, 0],
+    ["emergency", 12, 0],
+    ["lifecycle", 3, 1],
+  ] as const)(
+    "never paces snapshots past a %s gate",
+    (_name, level, lifecycle) => {
+      const controller = create();
+      full = 10;
+      controller.sample();
+      full = 3;
+      now += 5_000;
+      controller.sample();
+      full = level;
+      starting = lifecycle;
+      now += 5_000;
+      controller.sample();
+      controller.sample();
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, recovery_paced: false });
+    },
+  );
+
+  it("reports time spent in each pressure state", () => {
+    const controller = create();
+    now += 10_000;
+    full = 10;
+    controller.sample();
+    now += 30_000;
+    full = 0;
+    controller.sample();
+    now += 5_000;
+    controller.sample();
+    expect(controller.getStatus().state_ms_total).toEqual({
+      normal: 10_000,
+      emergency: 30_000,
+      recovery: 5_000,
+      contended: 0,
+    });
   });
 
   it("enforces background deferral but preserves interactive work", () => {
@@ -535,11 +750,11 @@ describe("storage admission controller", () => {
     },
   );
 
-  it("allows both maintenance kinds at sustained 2.3% without relaxing recovery or scavengers", () => {
-    const controller = create();
+  it("allows both maintenance kinds at sustained 3.5% without relaxing recovery or scavengers", () => {
+    const controller = create("enforce", { recoverySnapshotIntervalMs: 0 });
     full = 10;
     controller.sample();
-    full = 2.3;
+    full = 3.5;
     for (let i = 0; i < 12; i++) {
       now += 5 * 60_000;
       expect(controller.sample().pressure_state).toBe("recovery");

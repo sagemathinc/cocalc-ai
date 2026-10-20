@@ -34,6 +34,7 @@ import {
   assertScopeProjectsCollaborator,
 } from "@cocalc/server/api/scope-project-access";
 import { recordApiKeyAuditEvent } from "@cocalc/server/api/api-key-audit";
+import { issuableConnectorScope } from "./cocalc-connector-scope";
 import { verifyActiveAgentRun } from "./identity-routing";
 import { getIdentity } from "./api";
 import { assertAccountHome } from "./cocalc-connector-config";
@@ -258,6 +259,11 @@ export async function beginManagedCocalcConnectorTurn({
   await assertAccountTrustedForProductAccess(owner, "create API keys");
   const scope = normalizeApiKeyScopeV1(config.scope);
   await assertScopeProjectsCollaborator({ account_id: owner, scope });
+  const issued = await issuableConnectorScope({
+    account_id: owner,
+    source_project_id,
+    scope,
+  });
   await ensureApiKeysV2Schema();
 
   const turn_id = randomUUID();
@@ -335,7 +341,7 @@ export async function beginManagedCocalcConnectorTurn({
         key.scope_revision !== 1 ||
         new Date(key.expire).valueOf() <= Date.now() ||
         JSON.stringify(normalizeApiKeyScopeV1(key.scope)) !==
-          JSON.stringify(scope)
+          JSON.stringify(issued)
       ) {
         throw Error("managed CoCalc connector key was changed or revoked");
       }
@@ -377,7 +383,7 @@ export async function beginManagedCocalcConnectorTurn({
           key_id,
           hash,
           `${secret.slice(0, 5)}...${secret.slice(-8)}`,
-          JSON.stringify(scope),
+          JSON.stringify(issued),
           issuance_sequence,
         ],
       );
@@ -442,7 +448,9 @@ export async function beginManagedCocalcConnectorTurn({
     hash: result.key.hash,
     capabilities: [],
     allowed_project_ids: [],
-    scope,
+    // What the key was actually issued, which may be narrower than the
+    // configured scope; other bays compare against the home row.
+    scope: issued,
     scope_revision: result.key.scope_revision,
     expire: result.key.expire,
   });
@@ -516,6 +524,11 @@ export async function renewManagedCocalcConnectorTurn({
   if (!config?.enabled) throw Error("CoCalc connector is disabled");
   const scope = normalizeApiKeyScopeV1(config.scope);
   await assertScopeProjectsCollaborator({ account_id: owner, scope });
+  const issued = await issuableConnectorScope({
+    account_id: owner,
+    source_project_id,
+    scope,
+  });
 
   // Resolve source delegation before taking transaction locks. Current
   // membership alone must not revive a turn after removal and re-addition.
@@ -576,7 +589,7 @@ export async function renewManagedCocalcConnectorTurn({
       key.scope_revision !== 1 ||
       new Date(key.expire).valueOf() <= Date.now() ||
       JSON.stringify(normalizeApiKeyScopeV1(key.scope)) !==
-        JSON.stringify(scope)
+        JSON.stringify(issued)
     ) {
       throw Error("managed CoCalc connector key was changed or revoked");
     }
@@ -618,7 +631,9 @@ export async function renewManagedCocalcConnectorTurn({
     hash: key.hash,
     capabilities: [],
     allowed_project_ids: [],
-    scope,
+    // What the key was actually issued, which may be narrower than the
+    // configured scope; other bays compare against the home row.
+    scope: issued,
     scope_revision: key.scope_revision,
     expire: expiresAt,
   });

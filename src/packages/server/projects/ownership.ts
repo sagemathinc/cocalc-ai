@@ -65,6 +65,8 @@ export type ProjectLeaveOrDeleteResult =
       project_id: string;
       action: "error";
       error: string;
+      // E.g. OUTCOME_UNKNOWN (the bay did not answer) or fresh_auth_required.
+      code?: string | number;
     };
 
 export type HardDeleteOwnedProject = (

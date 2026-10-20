@@ -1,19 +1,13 @@
 /*
-For full html messages, by default instead of sanitizing html via html-ssr.tsx, we just
-put the html in a big iframe.
-
-This makes it so, e.g., plotly plots, which are NOT embedded in an iframe, still just work with our
-public nbviewer.
-
-Note that some HTML, e.g., anything embedded in markdown cells, still gets rendered via sanitized html.
-Also if heuristics suggest the html is just math typesetting, e.g., as output by Sage, then
-we also use sanitized html.
+HTML output in the nbviewer takes the same path as in the notebook
+(../html-output.tsx): HTML that sanitizing leaves unchanged renders inline,
+sanitized; anything else, e.g. plotly plots with their scripts, renders in an
+opaque sandboxed frame.
 */
 
 import register from "./register";
 import AutosizedIframe from "../autosized-iframe";
-import HTML from "@cocalc/frontend/components/html-ssr";
-import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
+import HtmlOutput from "../html-output";
 
 export const IframeHtml = ({ value }) => {
   let src: undefined | string = undefined;
@@ -31,23 +25,17 @@ export const IframeHtml = ({ value }) => {
     <AutosizedIframe
       src={src}
       srcDoc={srcDoc}
-      sandbox="allow-forms allow-scripts allow-presentation"
+      profile="opaque-legacy"
       title="Jupyter HTML output"
     />
   );
 };
 
-export const Html = ({ value }) => {
-  const content = `${value ?? ""}`;
-  if (shouldIsolateHtmlOutput(content)) {
-    return <IframeHtml value={content} />;
-  }
-  return (
-    <div style={{ margin: "5px 0" }}>
-      <HTML value={content} />
-    </div>
-  );
-};
+export const Html = ({ value }) => (
+  <div style={{ margin: "5px 0" }}>
+    <HtmlOutput value={value} />
+  </div>
+);
 
 register("text/html", 5, ({ value }) => {
   return <Html value={value} />;

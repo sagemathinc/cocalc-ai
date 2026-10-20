@@ -8,7 +8,14 @@ import type {
   AuthSessionFactorLevel,
 } from "@cocalc/server/auth/auth-sessions";
 import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
-import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
+import getPool from "@cocalc/database/pool";
+import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
+import {
+  createRememberMeCookie,
+  getRememberMeCookieValues,
+  getRememberMeHashFromCookieValue,
+} from "@cocalc/server/auth/remember-me";
+import { BROWSER_SESSION_COOKIE_MAX_AGE_MS } from "@cocalc/server/auth/session-expiry";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getBrowserCookieDomainForRequest,
@@ -19,20 +26,21 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { clearLegacySharedAuthCookies } from "./clear-auth-cookies";
 import Cookies from "cookies";
 
-// 6 months by default, but sometimes (e.g., impersonate) is MUCH shorter.
-export const DEFAULT_MAX_AGE_MS = 24 * 3600 * 30 * 1000 * 6;
-
 export default async function setSignInCookies({
   req,
   res,
   account_id,
-  maxAge = DEFAULT_MAX_AGE_MS,
+  maxAge,
   session,
   home_bay_id,
 }: {
   req;
   res;
   account_id: string;
+  // A shorter session than the site's maximum lifetime (e.g., impersonation),
+  // in ms; the cookie then also ends with it. Without it, the session follows
+  // the site's idle timeout and maximum lifetime (see session-expiry.ts), and
+  // the browser keeps the cookie until the server says it has ended.
   maxAge?: number;
   session?: {
     authenticated_at?: Date;
@@ -47,7 +55,15 @@ export default async function setSignInCookies({
   home_bay_id?: string;
 }) {
   await clearLegacySharedAuthCookies({ req, res });
-  const opts = { req, res, account_id, maxAge, session, home_bay_id };
+  const opts = {
+    req,
+    res,
+    account_id,
+    lifetime_ms: maxAge,
+    maxAge: maxAge ?? BROWSER_SESSION_COOKIE_MAX_AGE_MS,
+    session,
+    home_bay_id,
+  };
   const [rememberMe] = await Promise.all([
     setRememberMeCookie(opts),
     setAccountIdCookie(opts),
@@ -76,10 +92,17 @@ async function cookieTargets({
     : [{ name }, { name: sharedName, domain }];
 }
 
-async function setRememberMeCookie({ req, res, account_id, maxAge, session }) {
+async function setRememberMeCookie({
+  req,
+  res,
+  account_id,
+  maxAge,
+  lifetime_ms,
+  session,
+}) {
   const { value, hash, expire } = await createRememberMeCookie(
     account_id,
-    maxAge / 1000,
+    lifetime_ms != null ? lifetime_ms / 1000 : undefined,
   );
   await recordNewAuthSession({
     account_id,
@@ -95,6 +118,11 @@ async function setRememberMeCookie({ req, res, account_id, maxAge, session }) {
     fresh_auth_until: session?.fresh_auth_until,
     metadata: session?.metadata,
   });
+  await writeRememberMeCookie({ req, res, value, maxAge });
+  return { value, hash, expire };
+}
+
+async function writeRememberMeCookie({ req, res, value, maxAge }) {
   const cookies = new Cookies(req, res);
   const { samesite_remember_me } = await getServerSettings();
   const sameSite = samesite_remember_me;
@@ -109,7 +137,50 @@ async function setRememberMeCookie({ req, res, account_id, maxAge, session }) {
       secure: req.protocol === "https",
     });
   }
-  return { value, hash, expire };
+}
+
+// The server decides when a session ends (idle timeout, maximum lifetime,
+// which re-entering the password or second factor extends), so the browser's
+// cookie must never end first: for a working session, set the same sign-in
+// cookies again for another BROWSER_SESSION_COOKIE_MAX_AGE_MS. An
+// impersonation session keeps its own short cookie.
+export async function refreshSignInCookies({
+  req,
+  res,
+}: {
+  req;
+  res;
+}): Promise<{ refreshed: boolean }> {
+  for (const value of getRememberMeCookieValues(req)) {
+    let hash: string | undefined;
+    try {
+      hash = getRememberMeHashFromCookieValue(value);
+    } catch {
+      continue;
+    }
+    if (!hash) continue;
+    const account_id = await getAccountIdFromRememberMe(hash);
+    if (!account_id) continue;
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM account_impersonation_sessions WHERE session_hash = $1::CHAR(127) LIMIT 1",
+      [hash],
+    );
+    if (rows.length > 0) return { refreshed: false };
+    const opts = {
+      req,
+      res,
+      account_id,
+      value,
+      maxAge: BROWSER_SESSION_COOKIE_MAX_AGE_MS,
+    };
+    await Promise.all([
+      writeRememberMeCookie(opts),
+      setAccountIdCookie(opts),
+      setHomeBayCookie(opts),
+    ]);
+    return { refreshed: true };
+  }
+  return { refreshed: false };
 }
 
 async function setAccountIdCookie({ req, res, account_id, maxAge }) {
@@ -129,7 +200,19 @@ async function setAccountIdCookie({ req, res, account_id, maxAge }) {
   }
 }
 
-async function setHomeBayCookie({ req, res, account_id, maxAge, home_bay_id }) {
+async function setHomeBayCookie({
+  req,
+  res,
+  account_id,
+  maxAge,
+  home_bay_id,
+}: {
+  req;
+  res;
+  account_id: string;
+  maxAge: number;
+  home_bay_id?: string;
+}) {
   const cookies = new Cookies(req, res);
   const account = await getClusterAccountById(account_id);
   const resolvedHomeBayId =

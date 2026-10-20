@@ -9,6 +9,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { ProjectAgent } from "@cocalc/util/people";
 import { AgentsOverview, filterAgents, sortAgents } from "./agents-overview";
 import { WithAgentRuntimeMark } from "./agent-runtime-mark";
+import { setListQuery } from "@cocalc/frontend/search/list-query";
 
 const bob = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const project = "11111111-1111-4111-8111-111111111111";
@@ -131,6 +132,8 @@ function props(extra = {}) {
 beforeEach(() => {
   jest.clearAllMocks();
   order = [];
+  // The search box is shared page state: start every test without a query.
+  setListQuery("");
   listAgents.mockResolvedValue({ agents: shared, unavailable_bays: 0 });
   listPaymentSelections.mockResolvedValue({
     selections: [
@@ -309,10 +312,30 @@ it("search matches names, project titles and creators", async () => {
   expect(screen.getByRole("button", { name: "Open @beta" })).toBeVisible();
 });
 
+it("search matches how an agent is paid, such as a subscription's name", async () => {
+  const user = userEvent.setup();
+  render(<AgentsOverview {...props()} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Open @alpha" }),
+    ).toHaveTextContent("ChatGPT: Personal"),
+  );
+  await user.type(screen.getByRole("searchbox"), "personal");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Open @beta" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole("button", { name: "Open @alpha" })).toBeVisible();
+});
+
 it("creates a new agent from the header, after search like every page", async () => {
   const onNewAgent = jest.fn();
   render(<AgentsOverview {...props()} onNewAgent={onNewAgent} />);
-  const header = screen.getByRole("heading", { name: "Agents" }).parentElement!;
+  const header = screen.getByRole("heading", {
+    level: 1,
+    name: "Agents",
+  }).parentElement!;
   const create = within(header).getByRole("button", { name: "New agent" });
   expect(header.lastElementChild).toBe(create);
   create.click();

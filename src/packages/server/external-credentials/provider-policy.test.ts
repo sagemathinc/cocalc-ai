@@ -9,9 +9,35 @@ import {
   CODEX_SUBSCRIPTION_KIND,
   EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY,
   EXTERNAL_CREDENTIAL_OPERATION_LEASE_KIND,
+  CLAUDE_SUBSCRIPTION_EXPIRY_METADATA_KEY,
+  CLAUDE_SUBSCRIPTION_KIND,
   defaultMetadataKeyForCredentialSelector,
   leaseExpirationMetadataKeyForCredentialSelector,
+  limitExpiryMetadataKeyForCredentialSelector,
 } from "./provider-policy";
+import {
+  ANTHROPIC_API_PROVIDER,
+  CLAUDE_SUBSCRIPTION_KIND as UTIL_CLAUDE_SUBSCRIPTION_KIND,
+} from "@cocalc/util/ai/external-credential-profiles";
+
+test("expired Claude subscription tokens do not count against the create limit", () => {
+  // The policy repeats util's values: keep them in step.
+  expect(CLAUDE_SUBSCRIPTION_KIND).toBe(UTIL_CLAUDE_SUBSCRIPTION_KIND);
+  expect(
+    limitExpiryMetadataKeyForCredentialSelector({
+      provider: ANTHROPIC_API_PROVIDER,
+      kind: UTIL_CLAUDE_SUBSCRIPTION_KIND,
+      scope: "account",
+    }),
+  ).toBe(CLAUDE_SUBSCRIPTION_EXPIRY_METADATA_KEY);
+  expect(
+    limitExpiryMetadataKeyForCredentialSelector({
+      provider: "openai",
+      kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+    }),
+  ).toBeUndefined();
+});
 
 test("retains the Codex default policy without coupling the store to Codex", () => {
   expect(

@@ -2646,6 +2646,7 @@ export async function updateSiteLicense({
   overage_policy,
   starts_at,
   expires_at,
+  owner_account_id,
 }: {
   account_id?: string;
   browser_id?: string;
@@ -2661,6 +2662,7 @@ export async function updateSiteLicense({
   overage_policy?: string | null;
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
+  owner_account_id?: string;
 } = {}): Promise<SiteLicenseOverview> {
   const actorId = requireAccount(account_id);
   const siteLicenseId = `${site_license_id ?? ""}`.trim();
@@ -2689,6 +2691,7 @@ export async function updateSiteLicense({
     overage_policy,
     starts_at,
     expires_at,
+    owner_account_id,
   };
   if (!isSeedBay()) {
     return await getSeedSiteLicenseClient().updateSiteLicense(opts);

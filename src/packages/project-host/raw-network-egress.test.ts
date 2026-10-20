@@ -12,6 +12,7 @@ jest.mock("@cocalc/lite/hub/api", () => ({
   },
 }));
 
+import { parseManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import {
   __test__,
   assertManagedRawNetworkStartAllowedBestEffort,
@@ -162,12 +163,21 @@ ens4\t0100B40A\t00000000\t0005
       },
     });
 
-    await expect(
-      assertManagedRawNetworkStartAllowedBestEffort({
-        project_id: "11111111-1111-4111-8111-111111111111",
-        raw_network_enabled: true,
-      }),
-    ).rejects.toThrow("Project outbound network traffic limit reached.");
+    const error = await assertManagedRawNetworkStartAllowedBestEffort({
+      project_id: "11111111-1111-4111-8111-111111111111",
+      raw_network_enabled: true,
+    }).then(
+      () => undefined,
+      (err) => err,
+    );
+    expect(error?.message).toContain(
+      "Project outbound network traffic limit reached for this account.",
+    );
+    // specific and machine-recognizable: the start UI and CLI show it as a block
+    expect(parseManagedEgressBlockedMessage(error?.message)).toMatchObject({
+      category: "raw-network",
+      window: "5h",
+    });
   });
 
   it("bypasses the raw network start policy for admin host drain", async () => {

@@ -1019,6 +1019,7 @@ ${details}
     assignment_id: string,
     new_only: boolean,
   ): Promise<void> => {
+    if (!(await this.course_actions.save_course_project_files())) return;
     const id = this.course_actions.set_activity({
       desc:
         "Returning assignments to all students " + new_only
@@ -1332,6 +1333,7 @@ ${details}
     // type = assigned, collected, graded, peer-assigned, peer-collected
     switch (type) {
       case "assigned":
+        if (!(await this.course_actions.save_course_project_files())) return;
         // make sure listing is up to date, since it sets "has_student_subdir",
         // which impacts the distribute semantics.
         await this.update_listing(assignment_id);
@@ -1343,9 +1345,11 @@ ${details}
         await this.copy_assignment_from_student(assignment_id, student_id);
         return;
       case "graded":
+        if (!(await this.course_actions.save_course_project_files())) return;
         await this.return_assignment_to_student(assignment_id, student_id);
         return;
       case "peer-assigned":
+        if (!(await this.course_actions.save_course_project_files())) return;
         await this.peer_copy_to_student(assignment_id, student_id);
         return;
       case "peer-collected":
@@ -1369,6 +1373,7 @@ ${details}
       new_only ? "who have not already received it" : ""
     }`;
     const short_desc = "copy to student";
+    if (!(await this.course_actions.save_course_project_files())) return;
     await this.update_listing(assignment_id); // make sure this is up to date
     if (this.course_actions.is_closed()) return;
     await this.copy_assignment_create_due_date_file(assignment_id);
@@ -1647,6 +1652,7 @@ ${details}
       this.course_actions.set_error("Select at least one assignment file.");
       return;
     }
+    if (!(await this.course_actions.save_course_project_files())) return;
     await this.update_listing(assignment_id);
     if (this.course_actions.is_closed()) return;
     const { store, assignment } = this.course_actions.resolve({
@@ -1987,6 +1993,7 @@ ${details}
     assignment_id: string,
     new_only: boolean,
   ): Promise<void> {
+    if (!(await this.course_actions.save_course_project_files())) return;
     let desc = "Copying assignments for peer grading to all students ";
     if (new_only) {
       desc += " who have not already received their copy";

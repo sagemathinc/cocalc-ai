@@ -426,6 +426,27 @@ it("repairs a missing projection when authenticated attention history is listed"
   expect(saved[1].history[0].content).toContain("Where should this run?\nEU");
 });
 
+it("lists the saved answer to its author only, never in shared activity", async () => {
+  await respond();
+  const list = async (account_id: string) =>
+    (await acpTestInternals.handleAcpAttentionRequest({
+      action: "list",
+      project_id: projectId,
+      account_id,
+      path: "agent.chat",
+      state: "all",
+    })) as any;
+  const mine = await list(accountId);
+  expect(mine.records).toHaveLength(1);
+  expect(mine.records[0].own_response).toEqual({
+    answers: { region: ["EU"] },
+  });
+  // Other accounts never see this account's records.
+  expect((await list("other-account")).records).toEqual([]);
+  // The stored answer itself stays out of the public record.
+  expect(mine.records[0]).not.toHaveProperty("response");
+});
+
 it("does not project another account's response", async () => {
   expect(
     await acpTestInternals.handleAcpAttentionRequest({

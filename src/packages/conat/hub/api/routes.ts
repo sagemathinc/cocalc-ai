@@ -24,6 +24,12 @@ export type HubApiRoute =
       key: (args: any[]) => unknown;
     }
   | {
+      // A project host; its owning bay is in the host directory.
+      owner: "host";
+      /** Extract the host id from the call's arguments. */
+      key: (args: any[]) => unknown;
+    }
+  | {
       // An email collaborator invite, found in the invite directory by id or
       // by its link token. Its owning bay is the project's.
       owner: "collab-invite";
@@ -44,6 +50,12 @@ export type HubApiRoute =
         error: string,
         code?: string | number,
       ) => Record<string, unknown>;
+      /**
+       * At most this many projects on any one bay per call, for methods that
+       * work through them one at a time: more is refused before any part
+       * runs, so a part always finishes within the call's time.
+       */
+      maxPerBay?: number;
     };
 
 export type CollabInviteRouteKey = { invite_id?: string; token?: string };
@@ -63,6 +75,17 @@ const courseProjectFromOpts: HubApiRoute = {
   key: (args) => args?.[0]?.course_project_id,
 };
 
+const hostFromOpts: HubApiRoute = {
+  owner: "host",
+  key: (args) => args?.[0]?.id,
+};
+
+// Global deployment listings ignore the id and read the bay's own rows.
+const hostDeploymentScope: HubApiRoute = {
+  owner: "host",
+  key: (args) => (args?.[0]?.scope_type === "host" ? args?.[0]?.id : undefined),
+};
+
 const collabInviteFromOpts: HubApiRoute = {
   owner: "collab-invite",
   key: (args) => ({
@@ -77,7 +100,36 @@ const hiddenProjects: HubApiRoute = {
   errorResult: (project_id, error) => ({ project_id, success: false, error }),
 };
 
+// Leaving or deleting is destructive and done one project at a time, so a
+// call takes at most one project per bay (the UI sends one project per
+// call).
+export const MAX_LEAVE_OR_DELETE_PER_BAY = 1;
+
+const leftOrDeletedProjects: HubApiRoute = {
+  owner: "projects",
+  key: (args) => args?.[0]?.project_ids,
+  // The code says, e.g., that the outcome is unknown or fresh auth is needed.
+  errorResult: (project_id, error, code) => ({
+    project_id,
+    action: "error",
+    error,
+    ...(code != null ? { code } : {}),
+  }),
+  maxPerBay: MAX_LEAVE_OR_DELETE_PER_BAY,
+};
+
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
+  // Host reads run on the host's owning bay.
+  "hosts.getHostLog": hostFromOpts,
+  "hosts.getHostAvailability": hostFromOpts,
+  "hosts.getHostRuntimeLog": hostFromOpts,
+  "hosts.getHostMetricsHistory": hostFromOpts,
+  "hosts.listHostRootfsImages": hostFromOpts,
+  "hosts.getHostExamState": hostFromOpts,
+  "hosts.listHostSshAuthorizedKeys": hostFromOpts,
+  "hosts.listHostAccess": hostFromOpts,
+  "hosts.listHostRuntimeDeployments": hostDeploymentScope,
+  "hosts.getHostManagedComponentStatus": hostFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,
@@ -86,6 +138,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // Hiding is per account, but stored in each project's users map.
   "projects.setProjectHidden": projectFromOpts,
   "projects.setProjectsHidden": hiddenProjects,
+  // Each bay leaves, transfers or deletes its own projects; fresh auth asks
+  // the caller's home bay.
+  "projects.leaveOrDeleteProjects": leftOrDeletedProjects,
   // Host placement and moves run where the project, its runtime slot and its
   // operations live; fresh auth for a move asks the caller's home bay.
   "projects.moveProject": projectFromOpts,
@@ -142,6 +197,12 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.startCourseSecretCleanup": courseProjectFromOpts,
   "projects.getCourseSecretSyncStatus": courseProjectFromOpts,
   "projects.revokeCourseSecretPolicy": courseProjectFromOpts,
+  // Course managers are the course project's collaborators, known on its
+  // bay; that bay grants them access to student projects on other bays.
+  "projects.ensureCourseManagerAccess": courseProjectFromOpts,
+  "projects.repairAcceptedCourseStudentInviteAccounts": courseProjectFromOpts,
+  // Sending an assignment patch grants the course's managers access first.
+  "projects.sendCourseAssignmentPatch": courseProjectFromOpts,
   // A document's edit history (TimeTravel) lives with its project.
   "sync.history": projectFromOpts,
   "sync.purgeHistory": projectFromOpts,
@@ -173,7 +234,7 @@ export function hubApiRouteKey(
   // A call on several projects is split by bay instead (splitProjectIds).
   if (route.owner === "projects") return;
   const key = route.key(args);
-  if (route.owner === "project") {
+  if (route.owner === "project" || route.owner === "host") {
     return typeof key === "string" && isValidUUID(key) ? key : undefined;
   }
   const { invite_id, token } = (key ?? {}) as Record<string, unknown>;

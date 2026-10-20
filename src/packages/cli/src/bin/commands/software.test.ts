@@ -4505,7 +4505,7 @@ for (const overlap of [true, false]) {
   test(`software smoke counts unique retained assets (overlap=${overlap})`, async () => {
     const dir = mkdtempSync(join(tmpdir(), "software-smoke-assets-"));
     const assets = Array.from(
-      { length: 6000 },
+      { length: 10001 },
       (_, i) => `chunk-${i}-0123456789abcdef.js`,
     );
     let heads = 0;
@@ -4539,9 +4539,9 @@ for (const overlap of [true, false]) {
     ]);
     if (overlap) {
       await run;
-      assert.equal(heads, 6000);
+      assert.equal(heads, 10001);
     } else {
-      await assert.rejects(run, /frontend asset history exceeds 10000 files/);
+      await assert.rejects(run, /frontend asset history exceeds 11000 files/);
     }
   });
 }

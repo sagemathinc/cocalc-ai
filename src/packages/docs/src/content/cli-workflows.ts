@@ -409,6 +409,10 @@ cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check that PR 992 merge
 cocalc sensor watch exit -- make test
 ~~~
 
+\`watch ci\` uses the agent's GitHub connector, and is refused when the agent
+does not have it. Then watch the checks with the project's own \`gh\` login:
+\`cocalc sensor watch exit -- gh pr checks 992 --repo sagemathinc/cocalc-ai --watch\`.
+
 \`watch exit\` starts the command in a project terminal, which keeps running
 after the turn ends, and the wake brings its exit code and the end of its
 output.

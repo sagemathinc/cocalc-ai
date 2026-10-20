@@ -53,6 +53,23 @@ import type {
 } from "@cocalc/conat/project-host/api";
 import type { ProjectBackupIndexStoreConfig } from "./hosts";
 
+// One project's outcome in leaveOrDeleteProjects.
+export interface LeaveOrDeleteProjectResult {
+  project_id: string;
+  action:
+    | "removed_self"
+    | "transferred"
+    | "hard_deleted"
+    | "hard_delete_queued"
+    | "error";
+  new_owner_account_id?: string;
+  op_id?: string;
+  error?: string;
+  // With an error, e.g. OUTCOME_UNKNOWN (its bay did not answer: it may or
+  // may not have happened) or fresh_auth_required.
+  code?: string | number;
+}
+
 // One project's outcome in stopProjects or restartProjects.
 export interface BulkProjectControlResult {
   project_id: string;
@@ -2468,20 +2485,7 @@ export interface Projects {
     browser_id?: string | null;
     session_hash?: string | null;
     project_ids: string[];
-  }) => Promise<
-    {
-      project_id: string;
-      action:
-        | "removed_self"
-        | "transferred"
-        | "hard_deleted"
-        | "hard_delete_queued"
-        | "error";
-      new_owner_account_id?: string;
-      op_id?: string;
-      error?: string;
-    }[]
-  >;
+  }) => Promise<LeaveOrDeleteProjectResult[]>;
   setProjectHidden: (opts: {
     account_id?: string;
     project_id: string;

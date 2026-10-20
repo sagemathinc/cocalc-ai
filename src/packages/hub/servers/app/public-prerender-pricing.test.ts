@@ -4,7 +4,7 @@
  */
 
 import {
-  PUBLIC_PRICING_CUSTOMER_OPERATED,
+  getPublicPricingCustomerOperated,
   PUBLIC_PRICING_INCLUDED_AI_ALERT,
   PUBLIC_PRICING_NO_TIERS,
   PUBLIC_PRICING_ORGANIZATION_LICENSING,
@@ -14,7 +14,10 @@ import {
   PUBLIC_PRICING_TEAMS_TITLE,
   type PublicPricingTier,
 } from "@cocalc/util/public-pricing";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import { renderPublicRoutePrerender } from "./public-prerender";
+
+const PUBLIC_PRICING_CUSTOMER_OPERATED = getPublicPricingCustomerOperated();
 
 // Shaped like rows of the membership_tiers table: numeric prices arrive as
 // strings, and the table also holds tiers that are not sold in the store.
@@ -160,6 +163,15 @@ describe("pricing initial HTML from membership tier data", () => {
     expect(html).not.toContain("<h3>Retired Plan</h3>");
   });
 
+  it("offers no private deployment to CoCalc Plus while Launchpad and Rocket are hidden", () => {
+    const html = renderPricing(undefined, "plus");
+
+    expect(html).toContain(
+      "<p>CoCalc Plus is the local, one-user runtime. Use the product paths below when you need hosted collaboration or a shared VM.</p>",
+    );
+    expect(html).not.toContain("private deployment");
+  });
+
   it("does not list membership tiers for CoCalc Plus", () => {
     const html = renderPricing(TIERS, "plus");
 
@@ -212,11 +224,46 @@ describe("pricing initial HTML team options", () => {
         '<a href="/prefix/auth/sign-up">Create account for team seats</a>',
       );
       expect(html).toContain(
-        '<a href="/prefix/products">Compare customer-operated options</a>',
+        '<a href="/prefix/products">Where to run CoCalc</a>',
       );
       expect(html.includes("/prefix/features/research-compute")).toBe(
         researchCompute,
       );
     },
   );
+});
+
+describe("pricing initial HTML customer-operated option", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("names only the products the public pages show", () => {
+    const html = renderPricing(undefined, "launchpad");
+
+    expect(html).toContain(
+      "<p>Run CoCalc on your own computer with CoCalc Plus, or on a computer or server you control with CoCalc Star. You operate either one, and CoCalc Star is free of charge.</p>",
+    );
+    expect(html).not.toMatch(/\b(Launchpad|Rocket)\b/);
+    expect(html).not.toContain("products/cocalc-");
+  });
+
+  it("names CoCalc Star alone once Plus is hidden again", () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+    const html = renderPricing(undefined, "launchpad");
+
+    expect(html).toContain(
+      "<p>Run CoCalc on a computer or server you control. CoCalc Star is free of charge, and you operate it.</p>",
+    );
+    expect(html).not.toMatch(/\b(Plus|Launchpad|Rocket)\b/);
+  });
+
+  it("compares every product path when every product is shown", () => {
+    for (const id of ["plus", "launchpad", "rocket"] as const) {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+    }
+    const html = renderPricing(undefined, "launchpad");
+
+    expect(html).toContain(
+      "<p>Compare local CoCalc Plus, one-VM CoCalc Star, and the Launchpad and Rocket private-deployment paths. You or your organization operate the infrastructure, recovery, and ongoing service.</p>",
+    );
+  });
 });

@@ -63,9 +63,13 @@ const BACKUP_EXCLUDE_GLOBS = ["!.snapshots", "!.snapshots/**"] as const;
 const RUSTIC_BACKUP_STAGING_DIR = ".rustic-backup-staging";
 const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 const MAX_STALE_TEMP_RUSTIC_SNAPSHOTS_PER_BACKUP = 32;
-const SNAPSHOT_INVENTORY_RETRY_DELAYS_MS = [250, 1000] as const;
+export const SNAPSHOT_INVENTORY_RETRY_DELAYS_MS = [250, 1000] as const;
 
-function missingInventorySnapshot(stderr: string): string | undefined {
+/**
+ * The id of a listed snapshot that disappeared before Rustic read it (e.g.
+ * removed by retention in a shared repository), or undefined.
+ */
+export function missingInventorySnapshot(stderr: string): string | undefined {
   const id = stderr.match(
     /Reading file `snapshots\/([a-f0-9]{64})` failed in the backend\./,
   )?.[1];

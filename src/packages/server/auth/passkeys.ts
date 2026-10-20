@@ -26,16 +26,13 @@ import {
   getCurrentAuthSession,
   requireFreshAuth,
   resolveFreshAuthDurationMs,
-  revokeOtherAuthSessions,
+  endOtherSignInSessions,
   setCurrentSessionFreshAuth,
   setSessionFreshAuth,
   type AuthPrimaryMethod,
   type FreshAuthDuration,
 } from "@cocalc/server/auth/auth-sessions";
-import {
-  deleteOtherRememberMe,
-  getRememberMeHash,
-} from "@cocalc/server/auth/remember-me";
+import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import {
   getWebAuthnRelyingPartyForRequest,
   validateWebAuthnRelyingParty,
@@ -549,8 +546,7 @@ export async function finishPasskeySetup({
     throw new Error("passkey setup failed");
   }
   if (currentHash) {
-    await deleteOtherRememberMe(accountId, currentHash);
-    await revokeOtherAuthSessions({
+    await endOtherSignInSessions({
       account_id: accountId,
       keep_session_hash: currentHash,
     });

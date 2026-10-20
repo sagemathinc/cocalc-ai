@@ -54,6 +54,18 @@ describe("content-origin access state on the host", () => {
     expect(hasProjectContentReadAccess({ account_id: member, project_id })).toBe(true);
   });
 
+  it("applies a newer epoch even when its collaborator list is stale", () => {
+    const owner = { [member]: { group: "owner" } };
+    upsertProject({ project_id, users: owner, users_revision: 5, content_epoch: 1 });
+    // A revoke resends the same (or an older, delayed) collaborator list; the
+    // users_revision guard drops the list but must not drop the revocation.
+    upsertProject({ project_id, users: {}, users_revision: 4, content_epoch: 2 });
+    expect(projectContentEpoch(project_id)).toBe(2);
+    expect(hasProjectContentReadAccess({ account_id: member, project_id })).toBe(true);
+    upsertProject({ project_id, users: owner, users_revision: 5, content_epoch: 3 });
+    expect(projectContentEpoch(project_id)).toBe(3);
+  });
+
   it("ignores invalid epochs", () => {
     upsertProject({ project_id, content_epoch: -1 as any });
     expect(projectContentEpoch(project_id)).toBe(0);

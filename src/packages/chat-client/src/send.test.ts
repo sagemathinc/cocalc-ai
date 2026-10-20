@@ -185,6 +185,24 @@ describe("ChatSendPipeline", () => {
     expect(request.chat.completion_notification_enabled).toBe(expected);
   });
 
+  it("passes the person's locale into the turn's chat context", async () => {
+    let request: any;
+    const transport: ChatSendTransport = {
+      stream: async function* (value) {
+        request = value;
+        yield { seq: 0, type: "status", state: "queued" };
+      },
+      interrupt: jest.fn(),
+      steer: jest.fn(),
+    };
+    await pipeline({ db: fakeDb([]), transport }).send({
+      thread_id: "thread-1",
+      text: "what time is it?",
+      user_locale: { time_zone: "Pacific/Auckland" },
+    });
+    expect(request.chat.user_locale).toEqual({ time_zone: "Pacific/Auckland" });
+  });
+
   it("interrupts before retrying an ambiguous missing acknowledgement", async () => {
     const events: string[] = [];
     let attempts = 0;
@@ -345,6 +363,7 @@ describe("ChatSendPipeline", () => {
       pipeline({ db, transport }).sendGuidance({
         thread_id: "thread-1",
         text: "focus on the regression",
+        user_locale: { time_zone: "Europe/Berlin" },
       }),
     ).resolves.toEqual({
       message_id: "user-message",
@@ -357,6 +376,7 @@ describe("ChatSendPipeline", () => {
         prompt: "focus on the regression",
         session_id: "codex-session-1",
         chat: expect.objectContaining({
+          user_locale: { time_zone: "Europe/Berlin" },
           send_mode: "immediate",
           parent_message_id: "user-message",
         }),

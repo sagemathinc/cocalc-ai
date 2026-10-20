@@ -19,8 +19,8 @@ import {
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import {
+  getPublicPricingCustomerOperated,
   membershipTiersIncludeAi,
-  PUBLIC_PRICING_CUSTOMER_OPERATED,
   PUBLIC_PRICING_INCLUDED_AI_ALERT,
   PUBLIC_PRICING_NO_TIERS,
   PUBLIC_PRICING_ORGANIZATION_LICENSING,
@@ -31,6 +31,10 @@ import {
   PUBLIC_PRICING_TEAMS_TITLE,
   publicStoreMembershipTiers,
 } from "@cocalc/util/public-pricing";
+import {
+  getPublicPlusPricingIntro,
+  PUBLIC_PRODUCTS_PAGE_LINK,
+} from "@cocalc/util/public-products-content";
 import { HELP_EMAIL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
@@ -124,6 +128,7 @@ export default function PricingPage({
     billingInterval,
   );
   const isPlusProduct = cocalcProduct === "plus";
+  const customerOperated = getPublicPricingCustomerOperated();
   const hasProjectHostTier = publicTiers.some(
     (tier) => tier.features?.create_hosts === true,
   );
@@ -146,7 +151,7 @@ export default function PricingPage({
         </Title>
         <Paragraph style={{ margin: 0 }}>
           {isPlusProduct
-            ? "CoCalc Plus is the local, one-user runtime. Use the product paths below when you need hosted collaboration, a shared VM, or a customer-operated private deployment."
+            ? getPublicPlusPricingIntro()
             : "The right setup depends on where CoCalc runs and how your team buys. The membership grid below applies to the hosted service on this site. For local, single-VM, and customer-operated paths, continue through the relevant product or contact page."}
         </Paragraph>
         {!isPlusProduct && hasIncludedAi ? (
@@ -165,8 +170,8 @@ export default function PricingPage({
                 : "Create account for hosted CoCalc"}
             </Button>
           ) : null}
-          <Button href={publicPath("products")}>
-            Compare operating models
+          <Button href={publicPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}>
+            {PUBLIC_PRODUCTS_PAGE_LINK.label}
           </Button>
         </Flex>
       </PublicSection>
@@ -311,13 +316,13 @@ export default function PricingPage({
           <PublicSection>
             <Space orientation="vertical" size="middle">
               <Title level={3} style={{ margin: 0 }}>
-                {PUBLIC_PRICING_CUSTOMER_OPERATED.title}
+                {customerOperated.title}
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                {PUBLIC_PRICING_CUSTOMER_OPERATED.body}
+                {customerOperated.body}
               </Paragraph>
-              <Button href={publicPath("products")}>
-                Compare customer-operated options
+              <Button href={publicPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}>
+                {PUBLIC_PRODUCTS_PAGE_LINK.label}
               </Button>
             </Space>
           </PublicSection>

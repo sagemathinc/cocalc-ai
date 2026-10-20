@@ -10,6 +10,7 @@ import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { isSafeHtmlUrl } from "@cocalc/frontend/components/sanitize-html";
 import { dict } from "@cocalc/util/misc";
 import { register, SlateElement } from "../register";
+import { applyUrlTransform } from "@cocalc/frontend/lib/url-transform";
 
 export const LINK_STYLE: CSSProperties = {
   backgroundColor: `var(--cocalc-slate-link-chip-bg, ${UI_COLORS.surface})`,
@@ -50,7 +51,7 @@ function isSafeInternalFileUrl(value: string): boolean {
   }
 }
 
-function isSafeSlateLinkUrl(value: string): boolean {
+export function isSafeSlateLinkUrl(value: string): boolean {
   return isSafeHtmlUrl(value) || isSafeInternalFileUrl(value);
 }
 
@@ -64,7 +65,9 @@ register({
       useFileContext();
     const style: CSSProperties = { ...LINK_STYLE, ...anchorStyle };
     const transformedUrl =
-      url == null ? undefined : (urlTransform?.(url, "a") ?? url);
+      url == null
+        ? undefined
+        : (applyUrlTransform(urlTransform, url, "a") ?? undefined);
     const safeUrl =
       transformedUrl == null || noSanitize || isSafeSlateLinkUrl(transformedUrl)
         ? transformedUrl

@@ -19,7 +19,6 @@ import {
 import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
@@ -30,9 +29,13 @@ import {
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
 import { ClaudeSubscriptionManage } from "./claude-subscription-manage";
+import { ClaudeCredentialList } from "./claude-credential-list";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import {
   ClaudePaymentStatus,
+  listClaudeCredentials,
+  onClaudeCredentialsChanged,
+  setClaudeCredentials,
   useClaudePaymentLabel,
 } from "./claude-payment-status";
 import {
@@ -42,7 +45,6 @@ import {
 import { Icon } from "@cocalc/frontend/components/icon";
 import { AgentSpeedControl } from "./agent-speed-control";
 import {
-  newAgentClaudeCredentialOptions,
   newAgentClaudeCredentialValue,
   preferredClaudeCredential,
 } from "@cocalc/frontend/agents/claude-credential-options";
@@ -104,6 +106,18 @@ interface HarnessRuntimeSummaryProps {
   leadingControl?: ReactNode;
 }
 
+// The account credentials a Claude agent can pay with.
+function claudeAccountCredentials(
+  rows: ExternalCredentialInfo[],
+): ExternalCredentialInfo[] {
+  return rows.filter(
+    (row) =>
+      !row.revoked &&
+      (row.kind === "anthropic-api-key" ||
+        row.kind === CLAUDE_SUBSCRIPTION_KIND),
+  );
+}
+
 function ClaudeCredentialControl({
   projectId,
   threadKey,
@@ -116,6 +130,8 @@ function ClaudeCredentialControl({
     | undefined;
   const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
+  // Set when the list came from the shared cache, so it isn't pushed back.
+  const fromSharedRef = useRef(false);
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [error, setError] = useState("");
   const selection = readHarnessCredentialSelection({
@@ -156,22 +172,25 @@ function ClaudeCredentialControl({
       );
     };
     refresh();
-    void webapp_client.conat_client.hub.system
-      .listExternalCredentials({
-        provider: "anthropic",
-        scope: "account",
-      })
+    // The same list (and usage) as the footer's payment popover: reloaded
+    // now, then kept current whenever anything reloads or edits it, because
+    // this dialog stays mounted between openings.
+    const showShared = (rows: ExternalCredentialInfo[]) => {
+      if (disposed) return;
+      fromSharedRef.current = true;
+      setCredentials(claudeAccountCredentials(rows));
+      setCredentialsLoaded(true);
+    };
+    const stopListening = onClaudeCredentialsChanged(
+      () =>
+        void listClaudeCredentials()
+          .then(showShared)
+          .catch(() => {}),
+    );
+    void listClaudeCredentials(true)
       .then((rows) => {
         if (!disposed) {
-          setCredentials(
-            rows.filter(
-              (row) =>
-                !row.revoked &&
-                (row.kind === "anthropic-api-key" ||
-                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
-            ),
-          );
-          setCredentialsLoaded(true);
+          showShared(rows);
           // A disconnected account credential: use the preferred current one.
           const current = readHarnessCredentialSelection({
             accountId,
@@ -199,9 +218,19 @@ function ClaudeCredentialControl({
     window.addEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
     return () => {
       disposed = true;
+      stopListening();
       window.removeEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
     };
   }, [accountId, projectId, threadKey]);
+  // Renames and disconnects here show in the footer at once.
+  useEffect(() => {
+    if (!credentialsLoaded) return;
+    if (fromSharedRef.current) {
+      fromSharedRef.current = false;
+      return;
+    }
+    setClaudeCredentials(credentials);
+  }, [credentials, credentialsLoaded]);
   const selectedSubscription = value.startsWith("account-subscription:")
     ? credentials.find(
         (row) =>
@@ -209,21 +238,12 @@ function ClaudeCredentialControl({
           row.id === value.slice("account-subscription:".length),
       )
     : undefined;
-  const credentialOptions = newAgentClaudeCredentialOptions(credentials);
-  if (!credentialOptions.some((option) => option.value === value)) {
-    credentialOptions.push({
-      value,
-      label: !credentialsLoaded
-        ? "Loading..."
-        : "Selected connection unavailable",
-    });
-  }
   return (
     <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-      <Select
-        aria-label="Claude credential"
+      <ClaudeCredentialList
+        credentials={credentials}
         value={value}
-        options={credentialOptions}
+        loaded={credentialsLoaded}
         onChange={(next) => {
           const credential = next.startsWith("account-subscription:")
             ? {
@@ -252,7 +272,6 @@ function ClaudeCredentialControl({
           });
           setValue(next);
         }}
-        style={{ width: "100%" }}
       />
       {value === "project-secret" && (
         <Button onClick={() => setSecretsOpen(true)}>
@@ -307,18 +326,8 @@ function ClaudeCredentialControl({
             },
           });
           setValue(`account-subscription:${credentialId}`);
-          const rows =
-            await webapp_client.conat_client.hub.system.listExternalCredentials(
-              { provider: "anthropic", scope: "account" },
-            );
-          setCredentials(
-            rows.filter(
-              (row) =>
-                !row.revoked &&
-                (row.kind === "anthropic-api-key" ||
-                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
-            ),
-          );
+          // Reloads the shared list, which this control (and the footer) show.
+          await listClaudeCredentials(true);
         }}
       >
         {value.startsWith("account-subscription:") &&
@@ -1016,6 +1025,11 @@ function HarnessRuntimeSummaryContent({
         }
         footer={null}
         onCancel={() => setOpen(false)}
+        afterOpenChange={(opened) => {
+          // Subscription usage changes with every turn: show the latest.
+          if (opened && claude)
+            void listClaudeCredentials(true).catch(() => {});
+        }}
         modalRender={(modal) => <KeyboardBoundary>{modal}</KeyboardBoundary>}
         styles={{
           container: { paddingInlineEnd: 8 },

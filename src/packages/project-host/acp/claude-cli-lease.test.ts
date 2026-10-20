@@ -163,6 +163,32 @@ describe("leased project executor", () => {
     expect(after).toMatchObject({ stdout: "2", cleanupConfirmed: true });
   });
 
+  test("a command gets the values of when it was asked for, even if its lease comes later", async () => {
+    let issue!: () => void;
+    const issued = new Promise<void>((resolve) => (issue = resolve));
+    const leases = createRenewableCliLease(async () => {
+      await issued;
+      return { id: 1, close: async () => {} };
+    });
+    let turn = "turn-1";
+    const execute = jest.fn(async (env, _script, _cwd, _signal, opts) => {
+      opts.onCleanupConfirmed();
+      return { stdout: "", stderr: "", code: 0, cleanupConfirmed: true };
+    });
+    const executor = leasedProjectExecutor({
+      leases,
+      envFor: (lease) => ({ LEASE: `${lease.id}`, TURN: "from-lease" }),
+      admissionEnv: () => ({ TURN: turn }),
+      execute,
+    });
+    const running = executor("x", undefined, signal, options());
+    // The turn ends (its values cleared) before the lease is issued.
+    turn = "";
+    issue();
+    await running;
+    expect(execute.mock.calls[0][0]).toEqual({ LEASE: "1", TURN: "turn-1" });
+  });
+
   test("a proof that arrives before the result does not leave a fence up", async () => {
     const { create } = fakeLeases();
     const leases = createRenewableCliLease(create);

@@ -387,7 +387,7 @@ Changing the RootFS changes the managed base filesystem. It is appropriate for
 course software, installed packages, system libraries, and base image updates.
 
 Important student data should live in persistent project storage such as
-${CODE_TICK}/root${CODE_TICK}. Treat ${CODE_TICK}/tmp${CODE_TICK} as temporary
+${CODE_TICK}/home/user${CODE_TICK}. Treat ${CODE_TICK}/tmp${CODE_TICK} as temporary
 workspace storage. Do not ask students to store important work only in paths
 that belong to the base RootFS image.
 

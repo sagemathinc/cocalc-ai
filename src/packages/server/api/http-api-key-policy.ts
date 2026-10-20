@@ -6,11 +6,20 @@ import {
 } from "./api-key-scope";
 import { recordApiKeyAuditEventSoon } from "./api-key-audit";
 import { assertApiKeyProjectMembership } from "./project-membership-revocation";
+import { SOLO_PROJECT_ACCOUNT_CAPABILITIES } from "./solo-project-capabilities";
 
 const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "system.getNames": "account:read",
   "projects.createProject": "project:create",
   "projects.listProjectSummaries": "project:list",
+  // Read the inbox and mark, save or archive notifications; never create
+  // them or change notification preferences.
+  "notifications.list": "notifications:manage",
+  "notifications.counts": "notifications:manage",
+  "notifications.summary": "notifications:manage",
+  "notifications.markRead": "notifications:manage",
+  "notifications.save": "notifications:manage",
+  "notifications.archive": "notifications:manage",
 };
 
 const HUB_API_KEY_HELLO_WORLD = new Set(["system.ping"]);
@@ -73,6 +82,11 @@ export async function assertHttpHubApiKeyAllowed({
   if (capability) {
     try {
       requireApiKeyCapability(principal, capability);
+      if (SOLO_PROJECT_ACCOUNT_CAPABILITIES.has(capability)) {
+        const { assertSoloProjectCapabilityInContext } =
+          await import("@cocalc/server/agents/cocalc-connector-scope");
+        await assertSoloProjectCapabilityInContext(principal);
+      }
     } catch (err) {
       auditHttpApiKeyDenial({
         principal,

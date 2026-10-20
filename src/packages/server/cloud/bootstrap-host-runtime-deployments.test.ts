@@ -662,5 +662,81 @@ describe("bootstrap-host promoted artifact defaults", () => {
       `${softwareBaseUrl}/project-host/ph-latest/bundle-linux.tar.xz`,
     );
     expect(scripts.projectHostVersion).toBe("ph-latest");
+    expect(scripts.projectHostFallbackManifestUrl).toBe("");
+  });
+
+  it("keeps a desired artifact version the store no longer serves when the host already has it installed", async () => {
+    // e.g. a build installed directly on the host: a reboot must not silently
+    // move the host to "latest" and back.
+    loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
+      {
+        scope_type: "host",
+        scope_id: "host-123",
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "missing-build",
+      },
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "tools",
+        desired_version: "missing-build",
+      },
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "project-bundle",
+        desired_version: "missing-build",
+      },
+    ]);
+
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts({
+      ...baseRow(),
+      metadata: {
+        ...baseRow().metadata,
+        software_inventory: [
+          {
+            artifact: "project-host",
+            current_version: "missing-build",
+            installed_versions: ["missing-build", "older-build"],
+          },
+          {
+            artifact: "tools",
+            current_version: "missing-build",
+            installed_versions: ["missing-build"],
+          },
+          {
+            // Installed but not current: the version directory still exists.
+            artifact: "project-bundle",
+            current_version: "older-build",
+            installed_versions: ["older-build", "missing-build"],
+          },
+        ],
+      },
+    } as any);
+
+    expect(scripts.projectHostVersion).toBe("missing-build");
+    expect(scripts.projectHostBundleUrl).toBe(
+      `${softwareBaseUrl}/project-host/missing-build/bundle-linux.tar.xz`,
+    );
+    expect(scripts.projectHostBundleSha256).toBe("");
+    expect(scripts.projectBundleVersion).toBe("missing-build");
+    // The persisted inventory can be stale (a fresh boot disk after a
+    // persistent stop or reprovision): bootstrap falls back to latest if the
+    // kept version directory is absent.
+    expect(scripts.projectHostFallbackManifestUrl).toBe(
+      `${softwareBaseUrl}/project-host/latest-linux.json`,
+    );
+    expect(scripts.projectBundleFallbackManifestUrl).toBe(
+      `${softwareBaseUrl}/project/latest-linux.json`,
+    );
+    // Tools are never kept without a checksum: the privileged rustic/bees
+    // install verifies the archive, so they use the latest manifest.
+    expect(scripts.toolsVersion).toBe("tools-latest");
+    expect(scripts.toolsSha256).toBe("c".repeat(64));
+    expect(scripts.toolsFallbackManifestUrl).toBe("");
   });
 });

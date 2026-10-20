@@ -43,6 +43,10 @@ const ACCOUNT_OPTIONS: Array<{
     capability: "api-key:revoke:request",
     label: "Request API key revocation (requires your approval)",
   },
+  {
+    capability: "notifications:manage",
+    label: "Read and manage my notifications",
+  },
 ];
 
 function sameCapabilities(

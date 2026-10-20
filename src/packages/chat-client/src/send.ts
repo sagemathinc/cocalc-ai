@@ -24,6 +24,7 @@ import type {
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
 import { uuid } from "@cocalc/util/misc";
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import { resolveCodexCompletionNotificationEnabled } from "@cocalc/util/notification-preferences";
 
 export const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
@@ -181,6 +182,7 @@ export class ChatSendPipeline {
   send(opts: {
     thread_id: string;
     text: string;
+    user_locale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }> {
     const threadId = opts.thread_id.trim();
     const text = opts.text.trim();
@@ -191,7 +193,11 @@ export class ChatSendPipeline {
     }
     const existing = this.pending.get(threadId);
     if (existing) return existing;
-    const operation = this.sendOnce({ threadId, text }).finally(() => {
+    const operation = this.sendOnce({
+      threadId,
+      text,
+      userLocale: opts.user_locale,
+    }).finally(() => {
       if (this.pending.get(threadId) === operation)
         this.pending.delete(threadId);
     });
@@ -202,6 +208,7 @@ export class ChatSendPipeline {
   sendGuidance(opts: {
     thread_id: string;
     text: string;
+    user_locale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }> {
     const threadId = opts.thread_id.trim();
     const text = opts.text.trim();
@@ -212,7 +219,11 @@ export class ChatSendPipeline {
     }
     const existing = this.pendingGuidance.get(threadId);
     if (existing) return existing;
-    const operation = this.sendGuidanceOnce({ threadId, text }).finally(() => {
+    const operation = this.sendGuidanceOnce({
+      threadId,
+      text,
+      userLocale: opts.user_locale,
+    }).finally(() => {
       if (this.pendingGuidance.get(threadId) === operation) {
         this.pendingGuidance.delete(threadId);
       }
@@ -306,9 +317,11 @@ export class ChatSendPipeline {
   private async sendOnce({
     threadId,
     text,
+    userLocale,
   }: {
     threadId: string;
     text: string;
+    userLocale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }> {
     if (!this.options.db.isReady()) {
       throw new Error("Chat is not ready.");
@@ -373,6 +386,7 @@ export class ChatSendPipeline {
         thread_id: threadId,
         message_id: assistantMessageId,
         parent_message_id: messageId,
+        userLocale,
         completionNotificationEnabled:
           resolveCodexCompletionNotificationEnabled({
             override: configRow.codex_completion_notification,
@@ -448,9 +462,11 @@ export class ChatSendPipeline {
   private async sendGuidanceOnce({
     threadId,
     text,
+    userLocale,
   }: {
     threadId: string;
     text: string;
+    userLocale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }> {
     if (!this.options.db.isReady()) throw new Error("Chat is not ready.");
     const allRows = rows(this.options.db);
@@ -525,6 +541,7 @@ export class ChatSendPipeline {
         message_id: assistantMessageId,
         parent_message_id: messageId,
         sendMode: "immediate",
+        userLocale,
         completionNotificationEnabled:
           resolveCodexCompletionNotificationEnabled({
             override: configRow.codex_completion_notification,

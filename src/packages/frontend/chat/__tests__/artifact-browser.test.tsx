@@ -73,6 +73,33 @@ test("Agents scope cannot include unrelated chatroom threads", async () => {
   ).toBeVisible();
 });
 
+test("the agent workspace drawer is resizable and keeps its width", () => {
+  localStorage.setItem("cocalc:chat:artifactDrawerWidth", "560");
+  const syncdb = Object.assign(new EventEmitter(), { get: () => [] });
+  render(
+    <ChatEmbeddingOptionsProvider value={{ agentWorkspace: true }}>
+      <ArtifactBrowser actions={{ syncdb } as any} onClose={() => {}} />
+    </ChatEmbeddingOptionsProvider>,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Artifacts" });
+  const wrapper = dialog.closest(".ant-drawer-content-wrapper")!;
+  expect(wrapper).toHaveStyle({ width: "560px" });
+  expect(wrapper.querySelector('[class*="dragger"]')).not.toBeNull();
+  // Keyboard users resize with buttons instead of dragging.
+  fireEvent.click(
+    screen.getByRole("button", { name: "Make the artifacts panel wider" }),
+  );
+  expect(wrapper).toHaveStyle({ width: "640px" });
+  expect(localStorage.getItem("cocalc:chat:artifactDrawerWidth")).toBe("640");
+  const narrower = screen.getByRole("button", {
+    name: "Make the artifacts panel narrower",
+  });
+  for (let i = 0; i < 6; i++) fireEvent.click(narrower);
+  expect(wrapper).toHaveStyle({ width: "280px" });
+  expect(narrower).toBeDisabled();
+  localStorage.removeItem("cocalc:chat:artifactDrawerWidth");
+});
+
 test("direct browser hides its portal for an inactive agent workspace", async () => {
   const actions = {
     syncdb: Object.assign(new EventEmitter(), { get: () => [] }),

@@ -6,6 +6,7 @@
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { isValidUUID } from "@cocalc/util/misc";
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import type {
   ChatSnapshot,
   HeadlessChatClient,
@@ -57,6 +58,9 @@ export interface CreateRemoteHeadlessChatClientOptions {
   initial_message_limit?: number;
   readyTimeoutMs?: number;
   onOpenPhase?: (phase: ProjectChatSessionOpenPhase) => void;
+  // The person's time zone (and place, if allowed) for each turn they send;
+  // the project cannot know it. Defaults to this device's time zone.
+  userLocale?: () => AgentUserLocale | undefined;
 }
 
 export function projectChatSessionSubject({
@@ -95,6 +99,18 @@ export class RemoteHeadlessChatClient implements HeadlessChatClient {
   private serverRevision = 0;
   private listeners = new Set<(snapshot: ChatSnapshot) => void>();
   private snapshot: ChatSnapshot;
+
+  private userLocale(): AgentUserLocale | undefined {
+    try {
+      if (this.options.userLocale) return this.options.userLocale();
+      // This device's time zone. Kept inline (no locale module) for the
+      // Essential frontend's bundle; the project normalizes what it gets.
+      const time_zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      return time_zone ? { time_zone } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
 
   constructor(options: CreateRemoteHeadlessChatClientOptions) {
     this.options = options;
@@ -218,19 +234,7 @@ export class RemoteHeadlessChatClient implements HeadlessChatClient {
   async sendToExistingCodexThread(opts: {
     thread_id: string;
     text: string;
-  }): Promise<{ message_id: string; thread_id: string }> {
-    return await this.withSessionRecovery(() =>
-      this.call(
-        "send",
-        [{ session_id: this.requireSession(), ...opts }],
-        OPERATION_TIMEOUT_MS,
-      ),
-    );
-  }
-
-  async sendGuidanceToCodexThread(opts: {
-    thread_id: string;
-    text: string;
+    user_locale?: AgentUserLocale;
   }): Promise<{ message_id: string; thread_id: string }> {
     return await this.withSessionRecovery(() =>
       this.call(
@@ -239,6 +243,27 @@ export class RemoteHeadlessChatClient implements HeadlessChatClient {
           {
             session_id: this.requireSession(),
             ...opts,
+            user_locale: opts.user_locale ?? this.userLocale(),
+          },
+        ],
+        OPERATION_TIMEOUT_MS,
+      ),
+    );
+  }
+
+  async sendGuidanceToCodexThread(opts: {
+    thread_id: string;
+    text: string;
+    user_locale?: AgentUserLocale;
+  }): Promise<{ message_id: string; thread_id: string }> {
+    return await this.withSessionRecovery(() =>
+      this.call(
+        "send",
+        [
+          {
+            session_id: this.requireSession(),
+            ...opts,
+            user_locale: opts.user_locale ?? this.userLocale(),
             send_mode: "immediate",
           },
         ],

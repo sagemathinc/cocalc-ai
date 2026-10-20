@@ -11,6 +11,7 @@ import {
   getProjectedNotificationCounts,
   listProjectedNotificationSnapshotForAccount,
   listProjectedNotificationsForAccount,
+  summarizeProjectedNotificationsForAccount,
   markProjectedNotificationsReadThrough,
   setProjectedNotificationArchivedState,
   setProjectedNotificationReadState,
@@ -35,6 +36,8 @@ import type {
   CreateMentionNotificationOptions,
   CreateNotificationResult,
   ListNotificationsOptions,
+  NotificationSummaryOptions,
+  NotificationSummaryResult,
   MarkAllNotificationsReadOptions,
   MarkAllNotificationsReadResult,
   MarkNotificationReadOptions,
@@ -815,6 +818,21 @@ export async function list(
     kind: opts.kind,
     project_id: opts.project_id,
     state: opts.state,
+    since: opts.since,
+    page: opts.page,
+  });
+}
+
+export async function summary(
+  opts: NotificationSummaryOptions = {},
+): Promise<NotificationSummaryResult> {
+  const account_id = requireAccountId(opts.account_id);
+  return await summarizeProjectedNotificationsForAccount({
+    account_id,
+    kind: opts.kind,
+    project_id: opts.project_id,
+    state: opts.state,
+    since: opts.since,
   });
 }
 
@@ -829,6 +847,8 @@ export async function listSnapshot(
     kind: opts.kind,
     project_id: opts.project_id,
     state: opts.state,
+    since: opts.since,
+    page: opts.page,
   });
 }
 

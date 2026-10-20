@@ -28,8 +28,8 @@ import {
 } from "@cocalc/util/public-about-content";
 import { PUBLIC_FEATURES_HEADLINE } from "@cocalc/util/public-features-index";
 import {
+  getPublicPricingCustomerOperated,
   membershipPriceDisplay,
-  PUBLIC_PRICING_CUSTOMER_OPERATED,
   PUBLIC_PRICING_INCLUDED_AI_ALERT,
   PUBLIC_PRICING_ORGANIZATION_LICENSING,
   PUBLIC_PRICING_PROJECT_HOSTS,
@@ -53,6 +53,26 @@ import {
 } from "../routes";
 import type { PublicProductsRoute } from "../products/routes";
 import { getProductsRouteFromPath } from "../products/routes";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
+import {
+  getPublicProductPageCopy,
+  getPublicWhereToRunHeadline,
+  getPublicWhereToRunIntro,
+  PUBLIC_PLUS_INSTALL_COMMAND,
+  PUBLIC_PLUS_INSTALL_SCRIPT_URL,
+  PUBLIC_PLUS_UNINSTALL_COMMAND,
+  PUBLIC_PRODUCT_PATH_DETAILS,
+  PUBLIC_STAR_INSTALL_COMMAND,
+  PUBLIC_STAR_REMOVE_COMMANDS,
+  PUBLIC_WHERE_TO_RUN_COMPARISON,
+  PUBLIC_WHERE_TO_RUN_CONTACT,
+  PUBLIC_WHERE_TO_RUN_PATHS_TITLE,
+  PUBLIC_WHERE_TO_RUN_WORKFLOW,
+  publicProductTextParts,
+  PUBLIC_PRODUCT_SHARED_NOTE,
+  type PublicProductBlock,
+  type PublicProductPageCopy,
+} from "@cocalc/util/public-products-content";
 
 const originalFetch = global.fetch;
 
@@ -84,7 +104,50 @@ afterEach(async () => {
   });
   window.localStorage.clear();
   global.fetch = originalFetch;
+  jest.restoreAllMocks();
 });
+
+// What a reader sees of a product page card's block.
+function blockText(block: PublicProductBlock): string {
+  if (typeof block === "string" || "text" in block) {
+    return publicProductTextParts(block)
+      .map((part) =>
+        "code" in part
+          ? part.code
+          : "link" in part
+            ? part.link.label
+            : part.text,
+      )
+      .join("");
+  }
+  return "note" in block ? block.note : block.code;
+}
+
+// Every string of a product page's shared words, as a reader sees them, with
+// the note that every product page shows; the crawler fallback renders them
+// too.
+function productCopyText(copy: PublicProductPageCopy): string[] {
+  return [
+    copy.lead.title,
+    ...copy.lead.paragraphs,
+    ...copy.lead.actions.map(({ label }) => label),
+    PUBLIC_PRODUCT_SHARED_NOTE.title,
+    PUBLIC_PRODUCT_SHARED_NOTE.body,
+    ...copy.points.flatMap(({ body, title }) => [title, body]),
+    ...copy.sections.flatMap(({ blocks, links = [], title }) => [
+      title,
+      ...blocks.map(blockText),
+      ...links.map(({ label }) => label),
+    ]),
+    ...(copy.notes.length > 0 ? [copy.notesTitle, ...copy.notes] : []),
+    ...copy.links.map(({ label }) => label),
+  ];
+}
+
+// The page's text, with runs of whitespace as one space.
+function pageText(): string {
+  return (document.body.textContent ?? "").replace(/\s+/g, " ");
+}
 
 const aboutRoute = (route: PublicAboutRoute) => ({
   route,
@@ -621,6 +684,33 @@ describe("PublicApp", () => {
         name: "Ready to choose how CoCalc runs?",
       }),
     ).not.toBeNull();
+    // CoCalc Plus is shown, so its guide is too.
+    expect(screen.getByRole("link", { name: /CoCalc Plus/ })).toHaveAttribute(
+      "href",
+      "https://sagemathinc.github.io/cocalc-guides/cocalc-plus/",
+    );
+    expect(
+      screen.getByText(
+        "Self-hosting, local evaluation, durable collaborative projects, and architecture.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("leaves out the CoCalc Plus guide once Plus is hidden again", async () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={{ section: "guides" }}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: /CoCalc Plus/ })).toBeNull();
+    expect(
+      screen.getByText(
+        "Self-hosting, durable collaborative projects, and architecture.",
+      ),
+    ).not.toBeNull();
   });
 
   it("does not link Plus users to hosted-only Codex documentation", async () => {
@@ -906,11 +996,12 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("link", { name: "Open project hosts" }),
     ).toHaveAttribute("href", "/hosts");
+    // The first section and the customer-operated option both link to it.
     expect(
-      screen.getByRole("link", {
-        name: "Compare customer-operated options",
-      }),
-    ).toHaveAttribute("href", "/products");
+      screen
+        .getAllByRole("link", { name: "Where to run CoCalc" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/products", "/products"]);
     expect(screen.getByText(/eligible membership or grant/i)).not.toBeNull();
     expect(screen.queryByText(/purchases above \$100/i)).toBeNull();
   });
@@ -963,11 +1054,12 @@ describe("PublicApp", () => {
     expect(
       screen.queryByRole("link", { name: "Open project hosts" }),
     ).toBeNull();
+    // The first section and the customer-operated option both link to it.
     expect(
-      screen.getByRole("link", {
-        name: "Compare customer-operated options",
-      }),
-    ).toHaveAttribute("href", "/products");
+      screen
+        .getAllByRole("link", { name: "Where to run CoCalc" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/products", "/products"]);
     expect(screen.getByText(/purchaser must sign in/i)).not.toBeNull();
     expect(screen.queryByText(/purchases above \$100/i)).toBeNull();
   });
@@ -1025,7 +1117,7 @@ describe("PublicApp", () => {
       PUBLIC_PRICING_TEAM_SEATS,
       PUBLIC_PRICING_ORGANIZATION_LICENSING,
       PUBLIC_PRICING_PROJECT_HOSTS,
-      PUBLIC_PRICING_CUSTOMER_OPERATED,
+      getPublicPricingCustomerOperated(),
     ]) {
       expect(
         screen.getByRole("heading", { name: option.title }),
@@ -1067,14 +1159,20 @@ describe("PublicApp", () => {
     expect(
       screen.queryByRole("heading", { name: "Dedicated project hosts" }),
     ).toBeNull();
+    // It offers only the shown products' paths: no private deployment while
+    // Launchpad and Rocket are hidden, as in the crawler fallback.
     expect(
-      screen.getByText(/CoCalc Plus is the local, one-user runtime/i),
+      screen.getByText(
+        "CoCalc Plus is the local, one-user runtime. Use the product paths below when you need hosted collaboration or a shared VM.",
+      ),
     ).not.toBeNull();
+    expect(screen.queryByText(/private deployment/)).toBeNull();
+    // The first section and the customer-operated option both link to it.
     expect(
-      screen.getByRole("link", {
-        name: "Compare customer-operated options",
-      }),
-    ).toHaveAttribute("href", "/products");
+      screen
+        .getAllByRole("link", { name: "Where to run CoCalc" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/products", "/products"]);
     const productQuoteHref = screen
       .getByRole("link", { name: "Request a product quote" })
       .getAttribute("href");
@@ -2316,28 +2414,123 @@ describe("PublicApp", () => {
     }
   });
 
-  it("renders the cocalc plus page", async () => {
+  it.each([
+    ["products-cocalc-launchpad", "CoCalc Launchpad"],
+    ["products-cocalc-rocket", "CoCalc Rocket"],
+  ] as const)(
+    "redirects the hidden %s page to the products page",
+    async (view, name) => {
+      window.history.replaceState(
+        {},
+        "",
+        `/products/${view.slice(9)}?ref=old-link`,
+      );
+      await renderPublicApp(
+        <PublicApp
+          config={{ site_name: "CoCalc" }}
+          initialRoute={productsRoute({ view })}
+        />,
+      );
+
+      // With the query string, as the server's redirect keeps it.
+      expect(window.location.pathname + window.location.search).toBe(
+        "/products?ref=old-link",
+      );
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Where to run CoCalc" }),
+      ).not.toBeNull();
+      expect(screen.queryByRole("heading", { name })).toBeNull();
+      expect(document.body.innerHTML).not.toMatch(
+        /products\/cocalc-(launchpad|rocket)/,
+      );
+      window.history.replaceState({}, "", "/");
+    },
+  );
+
+  it("redirects the Plus page to the products page once its switch is off", async () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+    window.history.replaceState({}, "", "/products/cocalc-plus");
     await renderPublicApp(
       <PublicApp
-        config={{ site_name: "Launchpad" }}
+        config={{ site_name: "CoCalc" }}
         initialRoute={productsRoute({ view: "products-cocalc-plus" })}
       />,
     );
 
+    expect(window.location.pathname).toBe("/products");
+    expect(screen.queryByRole("heading", { name: "CoCalc Plus" })).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/products\/cocalc-plus/);
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("renders the cocalc plus page", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products-cocalc-plus" })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "CoCalc Plus" }),
+    ).not.toBeNull();
     expect(screen.getByText("Install CoCalc Plus")).not.toBeNull();
     expect(
-      screen.getByText("Need local CoCalc before choosing a shared path?"),
+      screen.getByText("Your own CoCalc, on your own computer."),
     ).not.toBeNull();
-    expect(
-      screen.getByText(/project-centered workflow on your own machine/i),
-    ).not.toBeNull();
+    for (const text of productCopyText(getPublicProductPageCopy("plus"))) {
+      expect(pageText()).toContain(text.replace(/\s+/g, " "));
+    }
     expect(screen.queryByText(/projects intact/i)).toBeNull();
     expect(
       screen.getByText(/agent features depend on the product and deployment/i),
     ).not.toBeNull();
+    // Star is shown; Launchpad and Rocket are still hidden.
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Star" }),
+    ).toHaveAttribute("href", "/products/cocalc-star");
+    expect(
+      screen.getByText("Use Star when the group needs a shared deployment."),
+    ).not.toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/Launchpad|Rocket/);
   });
 
-  it("renders the software overview page", async () => {
+  it("shows each Plus command in the card for its step, as the crawler fallback does", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products-cocalc-plus" })}
+      />,
+    );
+
+    const install = screen.getByRole("region", {
+      name: "Install CoCalc Plus locally",
+    });
+    expect(install.id).toBe("install-cocalc-plus");
+    expect(
+      within(install).getByLabelText("Install command").textContent,
+    ).toContain(PUBLIC_PLUS_INSTALL_COMMAND);
+    expect(
+      within(install).getByRole("link", { name: "Open install script" }),
+    ).toHaveAttribute("href", PUBLIC_PLUS_INSTALL_SCRIPT_URL);
+    const update = screen.getByRole("region", { name: "Updates" });
+    expect(
+      within(update).getByLabelText("Update command").textContent,
+    ).toContain("cocalc-plus update");
+    const uninstall = screen.getByRole("region", { name: "Uninstall" });
+    expect(
+      within(uninstall).getByLabelText("Uninstall command").textContent,
+    ).toContain(PUBLIC_PLUS_UNINSTALL_COMMAND);
+    expect(uninstall.textContent).toContain(
+      "Uninstalling keeps your CoCalc Plus data",
+    );
+    // The steps are on this page; no older install page is linked.
+    expect(document.body.innerHTML).not.toMatch(
+      /software\.cocalc\.ai\/software\/cocalc(-plus)?\//,
+    );
+  });
+
+  it("renders the Where to run CoCalc page", async () => {
     await renderPublicApp(
       <PublicApp
         config={{ cocalc_product: "launchpad", site_name: "Launchpad" }}
@@ -2346,49 +2539,92 @@ describe("PublicApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
+      screen.getByRole("heading", { level: 1, name: "Where to run CoCalc" }),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "Choose who operates CoCalc and where it runs.",
+        level: 2,
+        name: getPublicWhereToRunHeadline(),
       }),
     ).not.toBeNull();
+    expect(screen.getByText(getPublicWhereToRunIntro())).not.toBeNull();
     expect(
-      screen.getByText(
-        /Every path keeps files, notebooks, terminals, and services in a project workspace/i,
-      ),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(/agent features depend on the product and deployment/i),
-    ).not.toBeNull();
-    const productChooser = screen.getByRole("list", {
-      name: "CoCalc operating model chooser",
-    });
-    expect(
-      within(productChooser).getByRole("heading", {
-        name: "Hosted by CoCalc",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(productChooser).getByRole("link", {
-        name: /CoCalc\.ai.*managed hosted projects/i,
-      }),
+      screen.getByRole("link", { name: "Start on CoCalc.ai" }),
     ).toHaveAttribute("href", "https://cocalc.ai/pricing");
     expect(
-      within(productChooser).getByRole("heading", {
-        name: "Run it yourself",
+      screen.getByRole("link", { name: "Install CoCalc Star" }),
+    ).toHaveAttribute("href", "/products/cocalc-star#install-cocalc-star");
+
+    // CoCalc.ai, CoCalc Plus and CoCalc Star; Launchpad and Rocket are
+    // hidden. Plus has a card of its own in the list, and the comparison
+    // stays CoCalc.ai and Star.
+    const paths = screen.getByRole("list", {
+      name: PUBLIC_WHERE_TO_RUN_PATHS_TITLE,
+    });
+    expect(
+      within(paths)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "https://cocalc.ai/pricing",
+      "/products/cocalc-plus",
+      "/products/cocalc-star",
+    ]);
+    expect(
+      within(paths).getByRole("link", {
+        name: `CoCalc Plus ${PUBLIC_PRODUCT_PATH_DETAILS.plus}`,
       }),
     ).not.toBeNull();
     expect(
-      within(productChooser).getByRole("heading", {
-        name: "Customer-operated private deployment",
+      within(paths).getByRole("link", {
+        name: /CoCalc Star.*Docker container/,
       }),
     ).not.toBeNull();
+    expect(document.body.innerHTML).not.toMatch(
+      /products\/cocalc-(launchpad|rocket)/,
+    );
+    // "Launchpad" is this test site's name, in the page header.
+    expect(screen.queryByText(/\bRocket\b/)).toBeNull();
+
+    const table = screen.getByRole("table", {
+      name: PUBLIC_WHERE_TO_RUN_COMPARISON.title,
+    });
+    expect(table).toHaveAccessibleDescription(
+      `${PUBLIC_WHERE_TO_RUN_COMPARISON.caption} On narrow screens, each row is shown as labelled stacked fields with the same column meaning.`,
+    );
     expect(
-      within(productChooser).getByRole("link", {
-        name: /CoCalc Launchpad.*bounded private deployment/,
-      }),
-    ).toHaveAttribute("href", "/products/cocalc-launchpad");
+      within(table)
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent),
+    ).toEqual(["CoCalc.ai", "CoCalc Star"]);
+    for (const {
+      cocalcAi,
+      label,
+      star,
+    } of PUBLIC_WHERE_TO_RUN_COMPARISON.rows) {
+      const row = within(table).getByRole("rowheader", {
+        name: label,
+      }).parentElement!;
+      expect(
+        within(row)
+          .getAllByRole("cell")
+          .map((cell) => cell.textContent),
+      ).toEqual([cocalcAi, star]);
+    }
+    expect(
+      screen.getByRole("link", { name: "See how agents work" }),
+    ).toHaveAttribute("href", "/features/ai");
+    // The guide to setting up the Codex access the table names.
+    expect(
+      screen.getByRole("link", { name: "Connect AI access" }),
+    ).toHaveAttribute("href", "/docs/ai/connect-credentials");
+    expect(screen.getByText(PUBLIC_WHERE_TO_RUN_CONTACT.body)).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Talk with us" }).getAttribute("href"),
+    ).toContain("/support/new?");
+    // The licensing paragraph is gone: Star and CoCalc.ai have their own
+    // sentences.
+    expect(screen.queryByText(/site licensing/i)).toBeNull();
     expect(
       screen.getByRole("link", { name: "Explore AI agent workflows" }),
     ).toHaveAttribute("href", "/features/ai");
@@ -2398,43 +2634,335 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("link", { name: "Compare with agent sandboxes" }),
     ).toHaveAttribute("href", "/features/compare");
+    // The workflow section reads as in the crawler fallback.
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: PUBLIC_WHERE_TO_RUN_WORKFLOW.title,
+      }),
+    ).not.toBeNull();
+    for (const text of [
+      PUBLIC_WHERE_TO_RUN_WORKFLOW.body,
+      ...PUBLIC_WHERE_TO_RUN_WORKFLOW.cards.map(({ body }) => body),
+    ]) {
+      expect(screen.getByText(text)).not.toBeNull();
+    }
   });
 
-  it("renders the cocalc launchpad page", async () => {
+  it("names only CoCalc.ai on Where to run CoCalc once Star is hidden", async () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "star", false);
     await renderPublicApp(
       <PublicApp
-        config={{ site_name: "Launchpad" }}
+        config={{ cocalc_product: "launchpad", site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products" })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: "Run your agents on CoCalc.ai.",
+      }),
+    ).not.toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByRole("main").textContent).not.toMatch(/\bStar\b/);
+  });
+
+  it("moves through the Where to run CoCalc actions and paths with the keyboard", async () => {
+    const user = userEvent.setup();
+    await renderPublicApp(
+      <PublicApp
+        config={{ cocalc_product: "launchpad", site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products" })}
+      />,
+    );
+    const paths = within(
+      screen.getByRole("list", { name: PUBLIC_WHERE_TO_RUN_PATHS_TITLE }),
+    ).getAllByRole("link");
+    const start = screen.getByRole("link", { name: "Start on CoCalc.ai" });
+    const follow = jest.fn((event: Event) => event.preventDefault());
+    paths[1].addEventListener("click", follow);
+
+    start.focus();
+    await user.tab();
+    expect(
+      screen.getByRole("link", { name: "Install CoCalc Star" }),
+    ).toHaveFocus();
+    await user.tab();
+    expect(paths[0]).toHaveFocus();
+    await user.tab();
+    expect(paths[1]).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(follow).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves from See how agents work to Connect AI access with the keyboard", async () => {
+    const user = userEvent.setup();
+    await renderPublicApp(
+      <PublicApp
+        config={{ cocalc_product: "launchpad", site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products" })}
+      />,
+    );
+    const access = screen.getByRole("link", { name: "Connect AI access" });
+    const follow = jest.fn((event: Event) => event.preventDefault());
+    access.addEventListener("click", follow);
+
+    screen.getByRole("link", { name: "See how agents work" }).focus();
+    await user.tab();
+    expect(access).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(follow).toHaveBeenCalledTimes(1);
+  });
+
+  it("links every product path from Where to run CoCalc when every product is shown", async () => {
+    for (const id of ["plus", "launchpad", "rocket"] as const) {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+    }
+    await renderPublicApp(
+      <PublicApp
+        config={{ cocalc_product: "launchpad", site_name: "Launchpad" }}
+        initialRoute={productsRoute({ view: "products" })}
+      />,
+    );
+
+    expect(
+      within(
+        screen.getByRole("list", { name: PUBLIC_WHERE_TO_RUN_PATHS_TITLE }),
+      )
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "https://cocalc.ai/pricing",
+      "/products/cocalc-plus",
+      "/products/cocalc-star",
+      "/products/cocalc-launchpad",
+      "/products/cocalc-rocket",
+    ]);
+  });
+
+  it("renders the cocalc launchpad page once its switch is on", async () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "launchpad", true);
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
         initialRoute={productsRoute({ view: "products-cocalc-launchpad" })}
       />,
     );
 
     expect(screen.getByText("Install CoCalc Launchpad")).not.toBeNull();
     expect(
-      screen.getByText("Need a bounded private CoCalc deployment?"),
+      screen.getByText(
+        "Run CoCalc for your team on infrastructure you operate.",
+      ),
     ).not.toBeNull();
+    for (const text of productCopyText(getPublicProductPageCopy("launchpad"))) {
+      expect(pageText()).toContain(text.replace(/\s+/g, " "));
+    }
     expect(
       screen.getByRole("link", { name: "Review Launchpad installer" }),
     ).toHaveAttribute("href", "#install-cocalc-launchpad");
+    expect(document.body.innerHTML).not.toContain("Rocket");
   });
 
   it("renders the cocalc star page", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ site_name: "Launchpad" }}
+        config={{ site_name: "CoCalc" }}
         initialRoute={productsRoute({ view: "products-cocalc-star" })}
       />,
     );
 
     expect(screen.getAllByText("Install CoCalc Star")).toHaveLength(2);
     expect(
-      screen.getByText("Run your own CoCalc with one Docker command."),
+      screen.getByRole("heading", {
+        level: 2,
+        name: "Your agents, on one machine you control.",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Star is for people you invite: signing up requires a registration link.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "CoCalc Star is free of charge. SageMath, Inc. publishes it on Docker Hub as sagemathinc/star. You run Star on your own computer or server, and you are responsible for operating it, including upgrades and backups. For a larger private deployment, or for support, talk with us.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Talk with us" }).getAttribute("href"),
+    ).toContain("/support/new?");
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Agents on Star" }),
+    ).not.toBeNull();
+    const agents = screen.getByRole("region", { name: "Agents on Star" });
+    expect(
+      within(agents).getByText(
+        "Codex is on by default in CoCalc Star. Each person connects their own OpenAI API key, or an administrator sets a site key.",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(agents).getByRole("link", { name: "Connect AI access" }),
+    ).toHaveAttribute("href", "/docs/ai/connect-credentials");
+    expect(
+      screen.getByText(
+        "With Docker Desktop on Windows, and on Linux kernels older than 6.7, projects share the volume's disk space without per-project quotas.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Try Star on your laptop, or run it on a Linux server with a DNS name so the people you invite can reach it.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Running projects stop during the upgrade and can be started again right away.",
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByText(/restarted after the upgrade/)).toBeNull();
+    // Only Codex: no other agent runtime is named for Star yet.
+    expect(screen.queryByText(/Claude/)).toBeNull();
+    for (const text of productCopyText(getPublicProductPageCopy("star"))) {
+      expect(pageText()).toContain(text.replace(/\s+/g, " "));
+    }
+    // Launchpad and Rocket are hidden: no link to them, and no note about
+    // them.
+    expect(document.body.innerHTML).not.toMatch(
+      /products\/cocalc-(launchpad|rocket)/,
+    );
+    expect(screen.queryByText(/Launchpad|Rocket/)).toBeNull();
+  });
+
+  it("shows each Star command in the card for its step, as the crawler fallback does", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products-cocalc-star" })}
+      />,
+    );
+
+    const install = screen.getByRole("region", { name: "Install CoCalc Star" });
+    expect(install.id).toBe("install-cocalc-star");
+    expect(
+      within(install).getByLabelText("Install command").textContent,
+    ).toContain(PUBLIC_STAR_INSTALL_COMMAND);
+    expect(
+      within(install).getByRole("link", { name: "Docker Desktop" }),
+    ).toHaveAttribute(
+      "href",
+      "https://www.docker.com/products/docker-desktop/",
+    );
+    const remove = screen.getByRole("region", { name: "Remove it completely" });
+    expect(
+      within(remove)
+        .getByLabelText("Remove commands")
+        .textContent?.replace(/\s+/g, " "),
+    ).toContain(PUBLIC_STAR_REMOVE_COMMANDS.replace(/\s+/g, " "));
+    expect(
+      within(remove).getByText(/On Linux hosts with AppArmor/),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("region", { name: "Boundary: one machine" }).textContent,
+    ).toContain("Star is one machine");
+    // Each card has a grid cell of its own.
+    const server = screen.getByRole("region", {
+      name: "On a server with a domain",
+    });
+    expect(install.parentElement).not.toBe(server.parentElement);
+    expect(install.parentElement?.children).toHaveLength(1);
+  });
+
+  it("lands a link from another page, and focus, on the Star page's install card", async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = jest.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+      writable: true,
+    });
+    window.history.replaceState(
+      {},
+      "",
+      "/products/cocalc-star#install-cocalc-star",
+    );
+    try {
+      await renderPublicApp(
+        <PublicApp
+          config={{ site_name: "CoCalc" }}
+          initialRoute={productsRoute({ view: "products-cocalc-star" })}
+        />,
+      );
+
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+      const card = scrollIntoView.mock.contexts[0] as HTMLElement;
+      expect(card.id).toBe("install-cocalc-star");
+      expect(
+        within(card).getByRole("heading", { name: "Install CoCalc Star" }),
+      ).not.toBeNull();
+      // Keyboard and screen reader users continue from the card, and the
+      // card is not a stop of its own in the tab order.
+      expect(card).toHaveFocus();
+      expect(card).toHaveAttribute("tabindex", "-1");
+      await user.tab();
+      expect(
+        within(card).getByRole("link", { name: "Docker Desktop" }),
+      ).toHaveFocus();
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown })
+        .scrollIntoView;
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("reaches the Star page's support link from its install link with the keyboard", async () => {
+    const user = userEvent.setup();
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products-cocalc-star" })}
+      />,
+    );
+    const install = screen.getByRole("link", { name: "Install CoCalc Star" });
+    const talk = screen.getByRole("link", { name: "Talk with us" });
+    const follow = jest.fn((event: Event) => event.preventDefault());
+    talk.addEventListener("click", follow);
+
+    install.focus();
+    await user.tab();
+    expect(talk).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(follow).toHaveBeenCalledTimes(1);
+  });
+
+  it("links Launchpad and Rocket from the Star page once they are shown", async () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "launchpad", true);
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "rocket", true);
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products-cocalc-star" })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Launchpad" }),
+    ).toHaveAttribute("href", "/products/cocalc-launchpad");
+    expect(
+      screen.getByRole("link", { name: "View CoCalc Rocket" }),
+    ).toHaveAttribute("href", "/products/cocalc-rocket");
+    expect(
+      screen.getByText(
+        "Use Launchpad or Rocket when private deployment or institutional rollout is the real decision.",
+      ),
     ).not.toBeNull();
   });
 
-  it("renders the cocalc rocket page", async () => {
+  it("renders the cocalc rocket page once its switch is on", async () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "rocket", true);
     await renderPublicApp(
       <PublicApp
-        config={{ site_name: "Launchpad" }}
+        config={{ site_name: "CoCalc" }}
         initialRoute={productsRoute({ view: "products-cocalc-rocket" })}
       />,
     );
@@ -2443,6 +2971,10 @@ describe("PublicApp", () => {
       screen.getByText("Planning an institutional private CoCalc deployment?"),
     ).not.toBeNull();
     expect(screen.getByText("Talk with CoCalc about Rocket")).not.toBeNull();
+    for (const text of productCopyText(getPublicProductPageCopy("rocket"))) {
+      expect(pageText()).toContain(text.replace(/\s+/g, " "));
+    }
+    expect(document.body.innerHTML).not.toContain("Launchpad");
   });
 });
 

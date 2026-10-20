@@ -6,7 +6,9 @@ import type {
 import {
   ensureDaemon,
   inspectProjectHostRuntime,
+  isDaemonPidRunning,
   restartProjectHost,
+  managedDaemonWatchPids,
 } from "./daemon";
 import {
   appendSupervisionEvent,
@@ -59,6 +61,49 @@ function getProjectHostRollbackTimeoutMs(): number {
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const DAEMON_EXIT_CHECK_MS = 250;
+
+// Wait for the next supervision pass: after pollMs, or as soon as one of the
+// watched processes exits (a crash or kill), so it is respawned in well under
+// a second rather than up to pollMs later.  An early pass is never sooner than
+// minDelayMs after the last one, so a process that dies right after starting
+// is not restarted in a tight loop.
+export async function waitForNextPass({
+  pollMs,
+  minDelayMs,
+  pids,
+  isRunning,
+  shouldStop = () => false,
+  wait = sleep,
+  now = Date.now,
+}: {
+  pollMs: number;
+  minDelayMs: number;
+  pids: number[];
+  isRunning: (pid: number) => boolean;
+  shouldStop?: () => boolean;
+  wait?: (ms: number) => Promise<void>;
+  now?: () => number;
+}): Promise<"exited" | "poll"> {
+  const start = now();
+  while (!shouldStop()) {
+    const elapsed = now() - start;
+    if (elapsed >= pollMs) {
+      return "poll";
+    }
+    await wait(Math.min(DAEMON_EXIT_CHECK_MS, pollMs - elapsed));
+    if (now() - start >= minDelayMs && pids.some((pid) => !isRunning(pid))) {
+      return "exited";
+    }
+  }
+  return "poll";
+}
+
+// minimum time before an early pass, after this many consecutive ones
+export function earlyPassDelayMs(consecutive: number, pollMs: number): number {
+  return consecutive <= 0 ? 0 : Math.min(pollMs, 1000 * 2 ** (consecutive - 1));
 }
 
 function recordHostAgentEvent(
@@ -648,6 +693,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     },
   );
 
+  let consecutiveEarlyPasses = 0;
   while (!stopping) {
     try {
       ensureDaemon(index, {
@@ -677,7 +723,30 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (stopping) {
       break;
     }
-    await sleep(pollMs);
+    let pids: number[] = [];
+    try {
+      pids = managedDaemonWatchPids(index);
+    } catch (err) {
+      logger.debug("host-agent could not read managed pids", {
+        err: `${err}`,
+      });
+    }
+    const result = await waitForNextPass({
+      pollMs,
+      minDelayMs: earlyPassDelayMs(consecutiveEarlyPasses, pollMs),
+      pids,
+      isRunning: isDaemonPidRunning,
+      shouldStop: () => stopping,
+    });
+    if (result == "exited") {
+      consecutiveEarlyPasses += 1;
+      logger.info("host-agent: a managed process exited; supervising now", {
+        index,
+        consecutive: consecutiveEarlyPasses,
+      });
+    } else {
+      consecutiveEarlyPasses = 0;
+    }
   }
 }
 

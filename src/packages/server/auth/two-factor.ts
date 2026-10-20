@@ -32,7 +32,7 @@ import {
   getCurrentAuthSession,
   requireFreshAuth,
   resolveFreshAuthDurationMs,
-  revokeOtherAuthSessions,
+  endOtherSignInSessions,
   setCurrentSessionFreshAuth,
   type AuthPrimaryMethod,
   type AuthSessionFactorLevel,
@@ -47,10 +47,7 @@ import {
   normalizeRecoveryCode,
   verifyTotpCode,
 } from "@cocalc/server/auth/totp";
-import {
-  deleteOtherRememberMe,
-  getRememberMeHash,
-} from "@cocalc/server/auth/remember-me";
+import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import {
   FACTOR_TYPE_PASSKEY,
   hasActivePasskey,
@@ -930,8 +927,7 @@ export async function confirmTwoFactorSetup({
     },
   });
   if (currentHash) {
-    await deleteOtherRememberMe(accountId, currentHash);
-    await revokeOtherAuthSessions({
+    await endOtherSignInSessions({
       account_id: accountId,
       keep_session_hash: currentHash,
     });

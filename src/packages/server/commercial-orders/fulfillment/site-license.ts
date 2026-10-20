@@ -20,6 +20,7 @@ import {
   adminProvisionSiteLicense,
   archiveSiteLicensePool,
   getSiteLicenseOverview,
+  isSiteLicenseProvisionRejected,
   removeSiteLicenseManager,
   setSiteLicenseManager,
   updateSiteLicense,
@@ -234,10 +235,36 @@ function fulfillmentMismatches(
   return mismatches;
 }
 
-function assertProvisionableOrder(order: CommercialOrder): void {
+// A complete, paid order that never recorded a site license and has no
+// license plan (e.g. a historical sale imported after it was paid) may still
+// have its existing license linked. Only the association is written: nothing
+// is created and no license terms change.
+function isLinkOnlyCompletedOrder(
+  order: CommercialOrder,
+  existingSiteLicenseId: unknown,
+): boolean {
+  const named = normalizedSiteLicenseId(existingSiteLicenseId);
+  return (
+    order.workflow_state === "complete" &&
+    // Either no license is stored yet, or the operator names exactly the one
+    // already stored (e.g., recorded by a legacy import without fulfillment).
+    (!order.site_license_id || order.site_license_id === named) &&
+    order.fulfillment_state === "not_provisioned" &&
+    order.terms_snapshot?.site_license == null &&
+    // Paid only: waived or complimentary orders keep the normal rules.
+    order.collection_state === "paid" &&
+    !!named
+  );
+}
+
+function assertProvisionableOrder(
+  order: CommercialOrder,
+  existingSiteLicenseId?: unknown,
+): void {
   if (!order.approved_at || !order.approved_by_account_id) {
     throw Error("the commercial order must be approved before fulfillment");
   }
+  if (isLinkOnlyCompletedOrder(order, existingSiteLicenseId)) return;
   if (["complete", "cancelled"].includes(order.workflow_state)) {
     throw Error(
       `a ${order.workflow_state} commercial order cannot be provisioned`,
@@ -435,7 +462,7 @@ export async function commercialFulfillmentPreview(
   const blockers: string[] = [];
   const plannedChanges: string[] = [];
   try {
-    assertProvisionableOrder(order);
+    assertProvisionableOrder(order, opts.existing_site_license_id);
   } catch (err) {
     blockers.push(`${err}`.replace(/^Error:\s*/, ""));
   }
@@ -676,7 +703,7 @@ export async function provisionCommercialSiteLicense(
     });
     return order;
   }
-  assertProvisionableOrder(order);
+  assertProvisionableOrder(order, opts.existing_site_license_id);
   if (!collectionSatisfied(order) && !opts.allow_before_payment) {
     throw Error(
       "payment is not complete; explicitly allow provision-before-payment to continue",
@@ -822,7 +849,9 @@ export async function provisionCommercialSiteLicense(
     recordCommercialProviderFailure("site-license-provision");
     await setCommercialProviderOperationStatus({
       id: reservation.operation.id,
-      status: "indeterminate",
+      // A license creation rejected before commit (e.g., a domain overlap)
+      // wrote nothing, so it must not fence later provisioning of this order.
+      status: isSiteLicenseProvisionRejected(err) ? "failed" : "indeterminate",
       error: err,
     });
     throw err;

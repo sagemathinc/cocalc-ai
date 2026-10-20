@@ -3538,6 +3538,14 @@ export class ChatActions extends Actions<ChatState> {
       selectedThreadKey: threadKey,
     });
   };
+
+  /** The person chose this thread (thread list, a link, find or search):
+   * select it and tell an embedding page. Code-driven selections use
+   * setSelectedThread alone, so they can never move the embedder. */
+  selectThreadByUser(threadKey: string): void {
+    this.setSelectedThread(threadKey);
+    (this.frameTreeActions as any)?.userSelectedThread?.(threadKey);
+  }
 }
 
 function asIsoDateString(value: unknown): string | undefined {

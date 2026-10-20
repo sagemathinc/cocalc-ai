@@ -4,6 +4,8 @@
  */
 
 import { __test__ } from "./runtime-fleet-rollout-worker";
+import { uxLatencyHealthAssessments } from "@cocalc/server/conat/api/system";
+import { DEFAULT_UX_LATENCY_SLA_THRESHOLDS } from "@cocalc/server/monitoring/ux-latency";
 import { after, before, getPool } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
 import {
@@ -500,6 +502,154 @@ describe("fleet recovery stop gates", () => {
     Object.assign(before.hosts.canary, { failed_attempts: 2 });
     Object.assign(after.hosts.canary, { failed_attempts: 3 });
     expect(gate(after, before)).toBeUndefined();
+  });
+
+  test("an advisory latency gate records a regression without stopping", () => {
+    const after = {
+      ...current(),
+      latency_level: "warning" as const,
+      latency_metrics: [
+        {
+          metric: "project_start_running",
+          segment: "warm_provisioned",
+          p95_ms: 8300,
+          count: 64,
+          min_samples: 50,
+          warning_ms: 7000,
+          critical_ms: 14000,
+          level: "warning" as const,
+        },
+      ],
+    };
+    expect(
+      __test__.recoveryStopGateFailure({
+        baseline: baseline(),
+        current: after,
+        host_ids: ["canary"],
+        latency_gate: "enforce",
+      }),
+    ).toMatch(/project_start_running\/warm_provisioned P95 8300ms n=64/);
+    expect(
+      __test__.recoveryStopGateFailure({
+        baseline: baseline(),
+        current: after,
+        host_ids: ["canary"],
+        latency_gate: "advisory",
+      }),
+    ).toBeUndefined();
+    expect(
+      __test__.recoveryStopGateAdvisories({
+        baseline: baseline(),
+        current: after,
+        host_ids: ["canary"],
+        latency_gate: "advisory",
+      }),
+    ).toEqual([expect.stringContaining("latency gate is advisory")]);
+    // The advisory mode never relaxes the other gates.
+    expect(
+      __test__.recoveryStopGateFailure({
+        baseline: baseline(),
+        current: { ...after, recovery_level: "critical" },
+        host_ids: ["canary"],
+        latency_gate: "advisory",
+      }),
+    ).toMatch(/recovery/);
+  });
+
+  test("a P95 from 20 samples does not decide a rollout", () => {
+    // Prod, 2026-10-17 07:37Z: lifecycle P95 8.3s from n=20 against a 7.0s SLA.
+    const summary = {
+      checked_at: "2026-10-17T07:37:00.000Z",
+      window_minutes: 60,
+      since: "2026-10-17T06:37:00.000Z",
+      metrics: [],
+      segments: [
+        {
+          metric: "project_start_running",
+          event_type: "project_start",
+          segment: "warm_provisioned",
+          count: 20,
+          account_count: 5,
+          project_count: 12,
+          avg_ms: 3000,
+          p50_ms: 2500,
+          p95_ms: 8300,
+          p99_ms: 9000,
+          max_ms: 9100,
+        },
+      ],
+      recent_slow_events: [],
+    };
+    const sla = {
+      ...DEFAULT_UX_LATENCY_SLA_THRESHOLDS,
+      project_start_warm_p95_ms: 7000,
+    };
+    const lifecycle = (min_samples?: number) =>
+      uxLatencyHealthAssessments({ summary, sla, min_samples }).find(
+        (assessment) => assessment.metric === "project_start_running",
+      );
+    // Launch health keeps its own minimum of 10 samples.
+    expect(lifecycle()?.level).toBe("warning");
+    expect(lifecycle(50)?.level).toBe("unknown");
+    expect(
+      __test__.rolloutLatencyLevel(
+        uxLatencyHealthAssessments({ summary, sla, min_samples: 50 }),
+      ),
+    ).toBe("unknown");
+  });
+
+  test("a failed latency read is critical, not a quiet site", () => {
+    const failed = __test__.rolloutLatencySnapshot({ error: "Error: boom" });
+    expect(failed).toEqual({
+      latency_level: "critical",
+      latency_error: "Error: boom",
+    });
+    const after = { ...current(), ...failed };
+    expect(gate(after)).toMatch(/latency summary unavailable \(Error: boom\)/);
+    // The advisory gate records it without stopping.
+    expect(
+      __test__.recoveryStopGateFailure({
+        baseline: baseline(),
+        current: after,
+        host_ids: ["canary"],
+        latency_gate: "advisory",
+      }),
+    ).toBeUndefined();
+    expect(__test__.rolloutLatencySnapshot({ metrics: [] }).latency_level).toBe(
+      "unknown",
+    );
+  });
+
+  test("only enforce and advisory are latency gate modes", () => {
+    expect(__test__.normalizedLatencyGateMode("advisory")).toBe("advisory");
+    expect(__test__.normalizedLatencyGateMode("enforce")).toBe("enforce");
+    expect(__test__.normalizedLatencyGateMode(undefined)).toBe("enforce");
+    expect(__test__.normalizedLatencyGateMode("off")).toBe("enforce");
+  });
+
+  test("rollout latency ignores metrics without enough samples", () => {
+    const metric = (level: "healthy" | "warning" | "critical" | "unknown") => ({
+      metric: "m",
+      p95_ms: 1,
+      count: 1,
+      min_samples: 50,
+      warning_ms: 1,
+      critical_ms: 2,
+      level,
+    });
+    expect(__test__.rolloutLatencyLevel([])).toBe("unknown");
+    expect(
+      __test__.rolloutLatencyLevel([metric("unknown"), metric("unknown")]),
+    ).toBe("unknown");
+    expect(
+      __test__.rolloutLatencyLevel([metric("unknown"), metric("healthy")]),
+    ).toBe("healthy");
+    expect(
+      __test__.rolloutLatencyLevel([metric("healthy"), metric("warning")]),
+    ).toBe("warning");
+    expect(
+      __test__.rolloutLatencyLevel([metric("critical"), metric("warning")]),
+    ).toBe("critical");
   });
 
   test("stops on lost pressure telemetry and rejects incomplete saved baselines", () => {

@@ -9,6 +9,7 @@ import type {
 import type { HarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
 import type { AgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 
@@ -91,6 +92,10 @@ export interface AcpChatContext {
   // Version 2 effective account + thread policy. Unlike the legacy field,
   // false here is an intentional effective opt-out.
   completion_notification_enabled?: boolean;
+  // The sender's time zone and (if they allow it) approximate location, from
+  // their browser; the host remembers the latest per account for turns that
+  // no browser started.
+  user_locale?: AgentUserLocale;
 }
 
 export type AcpRequest = {
@@ -298,6 +303,9 @@ export type AcpAttentionRecord = {
   snoozed_until?: number;
   response_submitted_at?: number;
   resolution_reason?: string;
+  // The saved answer, only in a "list" reply to the account that wrote it
+  // (never in chat activity, which every viewer of the chat sees).
+  own_response?: { answers: Record<string, string[]>; declined?: boolean };
 };
 
 export type AcpAttentionRequest =
@@ -493,6 +501,8 @@ export type AcpStreamEvent =
         signal?: string;
       };
       output?: string;
+      /** exit: the command was refused, so it never ran. */
+      declined?: boolean;
     }
   | ({ type: "peerMessage" } & Omit<
       AgentMessageRuntimeEvent,
@@ -528,6 +538,8 @@ export type AcpStreamPayload =
       error: string;
       code?: string;
       retryable?: boolean;
+      /** What the failure was, when the agent knows (turn-outcome.ts). */
+      failure?: import("./turn-outcome").TurnFailure;
     };
 
 export type AcpStreamMessage = AcpStreamPayload & {

@@ -9,33 +9,87 @@ import type { CSSProperties, SyntheticEvent } from "react";
 const RESIZE_MESSAGE_TYPE = "cocalc-jupyter-iframe-height";
 const DEFAULT_HEIGHT = 320;
 const MIN_HEIGHT = 20;
+// Content can ask for any height (and the resize id is not a secret from
+// it), so heights are capped and resize messages are rate limited.
+const MAX_HEIGHT = 25000;
+const MIN_RESIZE_INTERVAL_MS = 50;
 const HEIGHT_SLACK = 8;
+
+/*
+What a frame's content may do.  Every caller must choose; there is no
+default.
+
+- passive: no scripts at all (sandbox="").
+- opaque-scripts: scripts in an opaque origin, nothing else.
+- opaque-legacy: scripts, forms and presentation in an opaque origin.  This is
+  what untrusted Jupyter output has always used; tighten it to
+  opaque-scripts once measured.
+- trusted-same-origin: no sandbox, so the content runs with this page's
+  origin.  Only for content the user explicitly trusts.
+
+No profile ever combines allow-scripts with allow-same-origin, which would let
+the content remove its own sandbox.
+*/
+export type IframeProfile =
+  | "passive"
+  | "opaque-scripts"
+  | "opaque-legacy"
+  | "trusted-same-origin";
+
+const SANDBOX: Record<IframeProfile, string | undefined> = {
+  passive: "",
+  "opaque-scripts": "allow-scripts",
+  "opaque-legacy": "allow-forms allow-scripts allow-presentation",
+  "trusted-same-origin": undefined,
+};
+
+export function iframeSandbox(profile: IframeProfile): string | undefined {
+  return SANDBOX[profile];
+}
 
 interface Props {
   src?: string;
   srcDoc?: string;
-  sandbox?: string;
+  profile: IframeProfile;
   style?: CSSProperties;
   title?: string;
   onError?: (event: SyntheticEvent<HTMLIFrameElement>) => void;
+  // Called with the iframe after each load of its document (e.g., to post
+  // content to it).
+  onLoad?: (iframe: HTMLIFrameElement) => void;
 }
 
 export default function AutosizedIframe({
   src,
   srcDoc,
-  sandbox,
+  profile,
   style,
   title,
   onError,
+  onLoad,
 }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState<number>(DEFAULT_HEIGHT);
   const resizeId = `cocalc-jupyter-iframe-${useId()}`;
+  const sandbox = iframeSandbox(profile);
+  const lastResizeRef = useRef<number>(0);
   const sizedSrcDoc = useMemo(() => {
     return srcDoc == null ? undefined : injectResizeBridge(srcDoc, resizeId);
   }, [resizeId, srcDoc]);
 
   useEffect(() => {
+    // At most one resize per interval; a request inside the interval is
+    // applied at its end (only the latest one), never dropped, so the frame
+    // ends at the content's final height.
+    let pending: number | undefined = undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+    const apply = () => {
+      timer = undefined;
+      if (pending == null) return;
+      lastResizeRef.current = Date.now();
+      setHeight(normalizeHeight(pending));
+      pending = undefined;
+    };
     const onMessage = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
       const data = event.data;
@@ -46,10 +100,20 @@ export default function AutosizedIframe({
       ) {
         return;
       }
-      setHeight(normalizeHeight(data.height));
+      pending = data.height;
+      if (timer != null) return;
+      const wait = lastResizeRef.current + MIN_RESIZE_INTERVAL_MS - Date.now();
+      if (wait <= 0) {
+        apply();
+      } else {
+        timer = setTimeout(apply, wait);
+      }
     };
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      if (timer != null) clearTimeout(timer);
+    };
   }, [resizeId]);
 
   useEffect(() => {
@@ -98,9 +162,13 @@ export default function AutosizedIframe({
   return (
     <iframe
       ref={iframeRef}
+      onLoad={(event) => onLoad?.(event.currentTarget)}
       src={src}
       srcDoc={sizedSrcDoc}
       sandbox={sandbox}
+      referrerPolicy={
+        profile === "trusted-same-origin" ? undefined : "no-referrer"
+      }
       title={title}
       onError={onError}
       style={{
@@ -158,9 +226,29 @@ function resizeAccessibleChildIframes(doc: Document, depth: number): void {
   }
 }
 
+// For a static document (notebook export), which has no React to listen for
+// the bridge's height messages: sizes each frame from the messages its own
+// window sends, with the same cap.  (Unlike the app, no rate limit is needed:
+// the exported document is the user's to view.)
+export const STATIC_RESIZE_LISTENER = `<script>
+window.addEventListener("message", function (event) {
+  var data = event.data;
+  if (!data || data.type !== ${JSON.stringify(RESIZE_MESSAGE_TYPE)} || typeof data.height !== "number" || !isFinite(data.height)) return;
+  var frames = document.getElementsByTagName("iframe");
+  for (var i = 0; i < frames.length; i++) {
+    if (frames[i].contentWindow === event.source) {
+      frames[i].style.height = Math.min(${MAX_HEIGHT}, Math.max(${MIN_HEIGHT}, Math.ceil(data.height) + ${HEIGHT_SLACK})) + "px";
+    }
+  }
+});
+</script>`;
+
 function normalizeHeight(height: number): number {
   if (!Number.isFinite(height)) return DEFAULT_HEIGHT;
-  return Math.max(MIN_HEIGHT, Math.ceil(height) + HEIGHT_SLACK);
+  return Math.min(
+    MAX_HEIGHT,
+    Math.max(MIN_HEIGHT, Math.ceil(height) + HEIGHT_SLACK),
+  );
 }
 
 function injectResizeBridge(srcDoc: string, resizeId: string): string {
@@ -208,11 +296,13 @@ function injectResizeBridge(srcDoc: string, resizeId: string): string {
   function send() {
     parent.postMessage({ type: ${JSON.stringify(RESIZE_MESSAGE_TYPE)}, id: id, height: height() }, "*");
   }
-  if (typeof ResizeObserver !== "undefined") {
-    var observer = new ResizeObserver(send);
-    if (document.documentElement) observer.observe(document.documentElement);
-    if (document.body) observer.observe(document.body);
-  }
+  // This runs first, before the content (and its body) is parsed.
+  var observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(send) : null;
+  if (observer && document.documentElement) observer.observe(document.documentElement);
+  document.addEventListener("DOMContentLoaded", function () {
+    if (observer && document.body) observer.observe(document.body);
+    send();
+  });
   window.addEventListener("load", send);
   setTimeout(send, 0);
   setTimeout(send, 100);
@@ -221,11 +311,10 @@ function injectResizeBridge(srcDoc: string, resizeId: string): string {
   setTimeout(send, 2500);
 })();
 </script>`;
-  if (/<\/body\s*>/i.test(srcDoc)) {
-    return srcDoc.replace(/<\/body\s*>/i, `${script}</body>`);
-  }
-  if (/<\/html\s*>/i.test(srcDoc)) {
-    return srcDoc.replace(/<\/html\s*>/i, `${script}</html>`);
-  }
-  return `${srcDoc}${script}`;
+  // Prepended, never inserted: finding a place inside the content would mean
+  // parsing it like the browser does ("</body>" may be inside a script).  The
+  // parser keeps this in the head and merges a later <html>'s attributes, and
+  // an iframe srcdoc document is never in quirks mode, so a later doctype
+  // changes nothing.
+  return `${script}${srcDoc}`;
 }

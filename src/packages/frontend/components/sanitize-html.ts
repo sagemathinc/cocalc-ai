@@ -3,6 +3,20 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  PRESENTATION_TAGS,
+  sanitizeInlineStyle,
+  sanitizePresentationAttribute,
+  type SanitizeOptions,
+} from "./sanitize-presentation";
+import {
+  applyUrlTransform,
+  applyUrlTransformToSrcset,
+  parseSrcset,
+  serializeSrcset,
+  type UrlTransform,
+} from "@cocalc/frontend/lib/url-transform";
+
 const ALLOWED_TAGS = new Set([
   "address",
   "article",
@@ -84,6 +98,9 @@ const DROP_CONTENT_TAGS = new Set([
   "textarea",
   "option",
   "xmp",
+  // A template's children are inert in the DOM but become live if a later
+  // pass unwraps or clones them, so never keep any of it.
+  "template",
 ]);
 
 const IFRAME_HOSTNAMES = new Set([
@@ -166,6 +183,16 @@ function iframeNeedsSandbox(attribs: Record<string, string>): boolean {
   return !isAllowedIframeSrc(src);
 }
 
+// A URL that runs script when followed or loaded.  Browsers ignore ASCII
+// whitespace and control characters around and inside the scheme, so they are
+// ignored here too.
+function isScriptUrl(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    /^(?:javascript|vbscript):/i.test(value.replace(/[\u0000-\u0020]/g, ""))
+  );
+}
+
 /*
 The safety floor: the sanitization that applies even to content marked trusted.
 
@@ -182,6 +209,24 @@ export function enforceHtmlSafetyFloor(
   const tag = name.toLowerCase();
   if (NEVER_RENDERED_TAGS.has(tag)) {
     return null;
+  }
+  if (
+    tag === "script" &&
+    !(attribs?.type ?? "").trim().toLowerCase().startsWith("math/tex")
+  ) {
+    // Rendered on the client a script element never runs, but server-rendered
+    // markup (notebook export, also shown in a print popup of the app's
+    // origin) is parsed as a document, where it would.  Inline math scripts
+    // are typeset, and their type is not executable anyway.
+    return null;
+  }
+  if (attribs != null && Object.values(attribs).some(isScriptUrl)) {
+    // Never a script URL in any attribute (href, src, action, formaction,
+    // ...).  React neutralizes javascript: URLs in some attributes; the
+    // floor does not depend on that.
+    attribs = Object.fromEntries(
+      Object.entries(attribs).filter(([, value]) => !isScriptUrl(value)),
+    );
   }
   if (tag !== "iframe" || !iframeNeedsSandbox(attribs ?? {})) {
     // The overwhelmingly common case. Return the input untouched rather than
@@ -204,8 +249,21 @@ export function enforceHtmlSafetyFloor(
   return floored;
 }
 
-export function isAllowedHtmlTag(name: string): boolean {
-  return ALLOWED_TAGS.has(name.toLowerCase());
+export function isAllowedHtmlTag(
+  name: string,
+  attribs?: Record<string, string>,
+  options?: SanitizeOptions,
+): boolean {
+  const tag = name.toLowerCase();
+  if (tag === "input") {
+    // Only Markdown task-list checkboxes, rendered disabled (see
+    // sanitizeHtmlAttributes); every other input type is dropped.
+    return attribs?.type?.toLowerCase() === "checkbox";
+  }
+  return (
+    ALLOWED_TAGS.has(tag) ||
+    (!!options?.safeStyles && PRESENTATION_TAGS.has(tag))
+  );
 }
 
 export function shouldDropHtmlTagContents(name: string): boolean {
@@ -234,13 +292,21 @@ export function isSafeHtmlUrl(value: string): boolean {
   }
 }
 
-function sanitizeSrcset(value: string): string | undefined {
-  const candidates = value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .filter((part) => isSafeHtmlUrl(part.split(/\s+/)[0] ?? ""));
-  return candidates.length > 0 ? candidates.join(", ") : undefined;
+// An image URL: a safe URL, or a data: image (e.g., a Jupyter attachment, or
+// an image pasted into Markdown).  In an <img> an image never runs script.
+export function isSafeImageUrl(value: string): boolean {
+  return (
+    isSafeHtmlUrl(value) ||
+    /^data:image\/[a-z0-9.+-]+(;[a-z0-9.+=-]+)*,/i.test(value.trim())
+  );
+}
+
+function sanitizeSrcset(
+  value: string,
+  isSafe: (url: string) => boolean,
+): string | undefined {
+  const candidates = parseSrcset(value).filter(({ url }) => isSafe(url));
+  return candidates.length > 0 ? serializeSrcset(candidates) : undefined;
 }
 
 function isAllowedIframeSrc(value: string): boolean {
@@ -255,34 +321,72 @@ function isAllowedIframeSrc(value: string): boolean {
 export function sanitizeHtmlAttributes(
   name: string,
   attribs: Record<string, string> | undefined,
-  urlTransform?: (url: string, tag?: string) => string | undefined,
+  urlTransform?: UrlTransform,
+  options?: SanitizeOptions,
 ): Record<string, string> {
   const tag = name.toLowerCase();
+  if (tag === "input") {
+    if (attribs?.type?.toLowerCase() !== "checkbox") {
+      return {};
+    }
+    const checkbox: Record<string, string> = {
+      type: "checkbox",
+      disabled: "",
+    };
+    if (attribs.checked != null) {
+      checkbox.checked = "";
+    }
+    return checkbox;
+  }
   const allowed = ALLOWED_ATTRIBUTES[tag];
-  if (allowed == null || attribs == null) {
+  if (attribs == null) {
     return {};
   }
   const sanitized: Record<string, string> = {};
   for (const [rawAttr, rawValue] of Object.entries(attribs)) {
     const attr = rawAttr.toLowerCase();
-    if (!allowed.has(attr) || attr.startsWith("on")) {
+    if (rawValue == null || attr.startsWith("on")) {
       continue;
     }
-    if (rawValue == null) {
+    if (options?.safeStyles && !allowed?.has(attr)) {
+      const value =
+        attr === "style"
+          ? sanitizeInlineStyle(rawValue)
+          : sanitizePresentationAttribute(tag, attr, rawValue);
+      if (value != null) {
+        sanitized[attr] = value;
+      }
+      continue;
+    }
+    if (!allowed?.has(attr)) {
       continue;
     }
     const transformed =
-      URL_ATTRIBUTES.has(attr) && urlTransform != null
-        ? (urlTransform(rawValue, tag) ?? rawValue)
-        : rawValue;
+      attr === "srcset"
+        ? applyUrlTransformToSrcset(urlTransform, rawValue, tag)
+        : URL_ATTRIBUTES.has(attr)
+          ? applyUrlTransform(urlTransform, rawValue, tag)
+          : rawValue;
+    if (transformed == null) {
+      // rejected by urlTransform
+      continue;
+    }
     if (attr === "srcset") {
-      const clean = sanitizeSrcset(transformed);
+      const clean = sanitizeSrcset(
+        transformed,
+        tag === "img" ? isSafeImageUrl : isSafeHtmlUrl,
+      );
       if (clean != null) {
         sanitized[attr] = clean;
       }
       continue;
     }
-    if (URL_ATTRIBUTES.has(attr) && !isSafeHtmlUrl(transformed)) {
+    if (
+      URL_ATTRIBUTES.has(attr) &&
+      !(tag === "img" && attr === "src"
+        ? isSafeImageUrl(transformed)
+        : isSafeHtmlUrl(transformed))
+    ) {
       continue;
     }
     if (

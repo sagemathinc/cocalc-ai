@@ -7,7 +7,11 @@ import { Command } from "commander";
 import { createHash, randomUUID } from "node:crypto";
 import { readExternalAgentCredential } from "../core/external-agent-profile";
 
-import { registerAuthCommand, type AuthCommandDeps } from "./auth";
+import {
+  profileScopedFetch,
+  registerAuthCommand,
+  type AuthCommandDeps,
+} from "./auth";
 import { sanitizeProfileName } from "../../core/auth-config";
 import { cookieNameFor, normalizeSecretValue } from "../../core/auth-cookies";
 
@@ -96,6 +100,233 @@ test("auth ssh-network changes only the selected profile preference", async () =
     program.parseAsync(["node", "test", "auth", "ssh-network", "invalid"]),
     /network must be/,
   );
+});
+
+function logoutFixture(
+  revoke: (api: string, cookie: string) => Promise<boolean>,
+) {
+  const capture: { data?: any } = {};
+  const calls: Array<{ api: string; cookie: string }> = [];
+  const config = {
+    current_profile: "prod",
+    profiles: {
+      prod: { api: "https://cocalc.ai", cookie: "remember_me=prod-secret" },
+      staging: { cookie: "remember_me=staging-secret" },
+      keyonly: { api: "https://cocalc.ai", api_key: "sk-test" },
+    },
+  };
+  let saved: any;
+  const program = new Command();
+  registerAuthCommand(
+    program,
+    makeDeps(capture, {
+      loadAuthConfig: () => config,
+      saveAuthConfig: (value: any) => {
+        saved = value;
+      },
+      revokeSession: async (api: string, cookie: string) => {
+        calls.push({ api, cookie });
+        return await revoke(api, cookie);
+      },
+    }),
+  );
+  return { program, capture, calls, config, saved: () => saved };
+}
+
+test("auth logout signs out the profile's own server session, then removes it", async () => {
+  const f = logoutFixture(async () => true);
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.deepEqual(f.calls, [
+    { api: "https://cocalc.ai", cookie: "remember_me=prod-secret" },
+  ]);
+  assert.equal(f.capture.data.removed, "prod");
+  assert.equal(f.capture.data.server_session, "revoked");
+  assert.equal(f.capture.data.warning, undefined);
+  assert.equal(f.saved().profiles.prod, undefined);
+  assert.ok(f.saved().profiles.staging);
+});
+
+test("auth logout without a server confirmation still removes the profile and warns", async () => {
+  const f = logoutFixture(async () => false);
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.deepEqual(f.calls, [
+    { api: "https://cocalc.ai", cookie: "remember_me=prod-secret" },
+  ]);
+  assert.equal(f.capture.data.server_session, "not confirmed");
+  assert.match(f.capture.data.warning, /may still be valid/);
+  assert.equal(f.saved().profiles.prod, undefined);
+});
+
+test("auth logout never sends a cookie to an inferred API", async () => {
+  const f = logoutFixture(async () => true);
+  await f.program.parseAsync([
+    "node",
+    "test",
+    "auth",
+    "logout",
+    "--target-profile",
+    "staging",
+  ]);
+  // The staging profile has a cookie but no stored api: no request at all.
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.capture.data.server_session, "not confirmed");
+  assert.match(f.capture.data.warning, /may still be valid/);
+  assert.equal(f.saved().profiles.staging, undefined);
+});
+
+test("auth logout --local-only leaves the server session alone", async () => {
+  const f = logoutFixture(async () => true);
+  await f.program.parseAsync([
+    "node",
+    "test",
+    "auth",
+    "logout",
+    "--local-only",
+  ]);
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.capture.data.server_session, "skipped");
+  assert.equal(f.saved().profiles.prod, undefined);
+});
+
+test("auth logout --all signs out every browser-cookie profile", async () => {
+  const f = logoutFixture(async () => true);
+  await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
+  assert.equal(f.calls.length, 1);
+  assert.deepEqual(f.capture.data.server_sessions, {
+    prod: "revoked",
+    staging: "not confirmed",
+    keyonly: "no browser session",
+  });
+  assert.deepEqual(f.saved().profiles, {});
+});
+
+test("auth logout --all still removes every profile when a sign-out throws", async () => {
+  const f = logoutFixture(async (_api, cookie) => {
+    if (cookie.includes("prod")) throw new Error("unexpected failure");
+    return true;
+  });
+  await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
+  assert.deepEqual(f.capture.data.server_sessions, {
+    prod: "not confirmed",
+    staging: "not confirmed",
+    keyonly: "no browser session",
+  });
+  assert.match(f.capture.data.warning, /may still be valid/);
+  assert.deepEqual(f.saved().profiles, {});
+});
+
+test("auth logout --all keeps a profile added while it waited on the server", async () => {
+  let config: any;
+  const f = logoutFixture(async (_api, cookie) => {
+    // Another CLI process signs in to a new profile meanwhile.
+    if (cookie.includes("prod")) {
+      config.profiles.fresh = { cookie: "remember_me=fresh-secret" };
+    }
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
+  assert.deepEqual(Object.keys(f.saved().profiles), ["fresh"]);
+  assert.equal(f.capture.data.remaining_profiles, 1);
+  assert.equal(f.capture.data.server_sessions.fresh, undefined);
+});
+
+test("auth logout keeps a profile that was signed in again while it waited", async () => {
+  let config: any;
+  const f = logoutFixture(async () => {
+    config.profiles.prod = {
+      api: "https://cocalc.ai",
+      cookie: "remember_me=new-secret",
+    };
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.equal(f.capture.data.removed, null);
+  assert.deepEqual(f.capture.data.kept_changed_profiles, ["prod"]);
+  assert.equal(f.saved().profiles.prod.cookie, "remember_me=new-secret");
+});
+
+test("auth logout still removes a profile whose metadata changed while it waited", async () => {
+  let config: any;
+  const f = logoutFixture(async () => {
+    // Another CLI process edits only metadata, e.g. `auth ssh-network`.
+    config.profiles.prod = {
+      ...config.profiles.prod,
+      host_ssh_network: "public",
+    };
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.equal(f.capture.data.removed, "prod");
+  assert.equal(f.capture.data.kept_changed_profiles, undefined);
+  assert.equal(f.saved().profiles.prod, undefined);
+});
+
+test("auth logout removes a profile renamed while it waited on the server", async () => {
+  let config: any;
+  const f = logoutFixture(async () => {
+    // Another CLI process runs `auth rename prod work` meanwhile.
+    config.profiles.work = config.profiles.prod;
+    delete config.profiles.prod;
+    config.current_profile = "work";
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.equal(f.capture.data.removed, "work");
+  assert.equal(f.saved().profiles.work, undefined);
+  assert.equal(f.saved().profiles.prod, undefined);
+  assert.ok(f.saved().profiles.staging);
+});
+
+test("auth logout --all removes a profile renamed while it waited", async () => {
+  let config: any;
+  const f = logoutFixture(async (_api, cookie) => {
+    if (cookie.includes("prod")) {
+      config.profiles.work = config.profiles.prod;
+      delete config.profiles.prod;
+    }
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
+  assert.deepEqual(f.saved().profiles, {});
+  assert.equal(f.capture.data.remaining_profiles, 0);
+});
+
+test("auth logout survives malformed profile fields", async () => {
+  for (const profile of [
+    { api: "https://cocalc.ai", cookie: 42 },
+    { api: { url: "https://cocalc.ai" }, cookie: "remember_me=x-secret" },
+    { api: 7, cookie: ["remember_me=y"] },
+  ]) {
+    let config: any;
+    const f = logoutFixture(async () => true);
+    config = f.config;
+    config.profiles.prod = profile;
+    await f.program.parseAsync(["node", "test", "auth", "logout"]);
+    assert.deepEqual(f.calls, []);
+    assert.equal(f.capture.data.server_session, "not confirmed");
+    assert.equal(f.capture.data.removed, "prod");
+    assert.equal(f.saved().profiles.prod, undefined);
+  }
+});
+
+test("a profile's sign-out request is scoped to the profile's own site", async () => {
+  const calls: any[] = [];
+  const relayFetch = (async (...args: any[]) => {
+    calls.push(args);
+    return new Response(JSON.stringify({ status: "success" }));
+  }) as any;
+  const scoped = profileScopedFetch("https://bay-2.cocalc.ai", relayFetch);
+  await scoped("https://bay-2.cocalc.ai/api/v2/accounts/sign-out", {
+    method: "POST",
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][3], { credentialSite: "https://bay-2.cocalc.ai" });
+  assert.equal(calls[0][2], undefined);
 });
 
 test("external agent login creates only a separate scoped profile, despite ambient human credentials", async () => {

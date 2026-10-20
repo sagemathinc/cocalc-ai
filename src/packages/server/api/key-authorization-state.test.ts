@@ -93,6 +93,48 @@ describe("account-home API key authorization state", () => {
     expect(queryMock.mock.calls[0][1]).toEqual([accountId, "key-id-123"]);
   });
 
+  it("names the agent project of a turn key holding a solo-project privilege", async () => {
+    const { getApiKeyAuthorizationStateLocal } =
+      await import("./key-authorization-state");
+    const opts = { account_id: accountId, key_id: "key-id-123" };
+    const row = {
+      scope: { version: 1, account: ["notifications:manage"], projects: [] },
+      scope_revision: 2,
+      issuance_sequence: "7",
+      hash: "stored-hash",
+    };
+    const projectId = "00000000-0000-4000-8000-000000000005";
+    queryMock
+      .mockResolvedValueOnce({ rows: [row] })
+      .mockResolvedValueOnce({
+        rows: [{ name: "agent_cocalc_connector_turns" }],
+      })
+      .mockResolvedValueOnce({ rows: [{ source_project_id: projectId }] });
+    await expect(getApiKeyAuthorizationStateLocal(opts)).resolves.toMatchObject(
+      {
+        connector_source_project_id: projectId,
+      },
+    );
+    expect(queryMock.mock.calls[2][1]).toEqual([accountId, "key-id-123"]);
+    // A key the person made themselves: explicitly not a turn key.
+    queryMock
+      .mockResolvedValueOnce({ rows: [row] })
+      .mockResolvedValueOnce({
+        rows: [{ name: "agent_cocalc_connector_turns" }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    await expect(getApiKeyAuthorizationStateLocal(opts)).resolves.toMatchObject(
+      {
+        connector_source_project_id: null,
+      },
+    );
+    // Without such a privilege the turn table is not consulted.
+    queryMock.mockClear();
+    const state = await getApiKeyAuthorizationStateLocal(opts);
+    expect(state).not.toHaveProperty("connector_source_project_id");
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed on expiry, deletion, ban, and malformed scope", async () => {
     const { getApiKeyAuthorizationStateLocal } =
       await import("./key-authorization-state");

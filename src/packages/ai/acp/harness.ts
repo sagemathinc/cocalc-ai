@@ -11,6 +11,7 @@ export type {
   HarnessEvent,
   HarnessLauncher,
   HarnessProcess,
+  HarnessTurnPublicationContext,
 } from "./harness-client";
 export type {
   AcpHarnessProfile,

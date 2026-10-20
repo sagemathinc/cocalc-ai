@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import {
   ClaudeSubscriptionLoginService,
+  claudeSubscriptionSaveError,
   terminalText,
 } from "./claude-subscription-login";
 
@@ -402,6 +403,34 @@ test("verification cannot report cancellation after publication starts", async (
   } finally {
     await service.close();
   }
+});
+
+test("a full subscription list says so instead of a generic failure", async () => {
+  // 2026-10-16: a second subscription failed with only "could not be saved"
+  // because the account already had the maximum connected.
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish: async () => {
+      throw Error("callHub: at most 15 active credentials are allowed");
+    },
+  });
+  try {
+    const started = await service.start(projectId, accountId);
+    await verificationUrl(service, started.id);
+    service.submitCode(started.id, projectId, accountId, "fixture-code");
+    expect((await waitFor(service, started.id, "failed")).error).toBe(
+      "You already have 15 Claude subscriptions connected, the most allowed. Remove one you no longer use, or use Reconnect on an existing one.",
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+test("other save failures stay generic", () => {
+  expect(claudeSubscriptionSaveError(Error("hub unavailable"))).toBe(
+    "Claude subscription could not be saved",
+  );
 });
 
 test("shutdown cancels pending sign-in and rejects new login attempts", async () => {

@@ -35,9 +35,17 @@ With an Origin header, it must be approved (see above). Without one:
 
 COCALC_PROJECT_HOST_ORIGIN_POLICY=report logs violations but behaves as
 before (including CORS); "off" disables checks and logging.
+
+Only the project-host app process asks the hub for the site URL and origins.
+It also writes them to $COCALC_DATA/browser-origins.json, which every process
+reads: a conat router respawned by the host agent inherits neither the app's
+memory nor its runtime COCALC_SITE_URL, and would otherwise refuse every
+browser.
 */
 
+import fs from "node:fs";
 import type { IncomingMessage } from "node:http";
+import path from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { getPrivateAppHostnameProject } from "./private-app-hostname";
 
@@ -86,6 +94,117 @@ export function setHubBrowserOrigins(origins: unknown[]): void {
 
 export function resetHubBrowserOriginsForTests(): void {
   hubOrigins = [];
+  persistedCache = undefined;
+}
+
+const PERSISTED_ORIGINS_FILE = "browser-origins.json";
+// How often a process re-checks the file for a newer refresh by the app.
+const PERSISTED_ORIGINS_RECHECK_MS = 5_000;
+
+type PersistedBrowserOrigins = { site_url?: string; origins: string[] };
+
+let persistedCache:
+  | {
+      file: string;
+      checkedAt: number;
+      mtimeMs: number;
+      value: PersistedBrowserOrigins;
+    }
+  | undefined;
+
+function persistedOriginsFile(): string | undefined {
+  const dir = `${process.env.COCALC_DATA ?? process.env.DATA ?? ""}`.trim();
+  return dir ? path.join(dir, PERSISTED_ORIGINS_FILE) : undefined;
+}
+
+function readPersistedHubOrigins(file: string): string[] {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    return (Array.isArray(data?.browser_origins) ? data.browser_origins : [])
+      .map(originOfUrl)
+      .filter((x): x is string => !!x);
+  } catch {
+    return [];
+  }
+}
+
+// Record the hub-supplied site URL and origins for the host's other
+// processes. Like setHubBrowserOrigins, an empty result keeps the last
+// known-good file.
+export function persistHubBrowserOrigins({
+  site_url,
+  browser_origins,
+}: {
+  site_url?: unknown;
+  browser_origins?: unknown[];
+}): void {
+  const file = persistedOriginsFile();
+  if (!file) return;
+  const site = originOfUrl(site_url) ? `${site_url}`.trim() : undefined;
+  let origins = (browser_origins ?? [])
+    .map(originOfUrl)
+    .filter((x): x is string => !!x);
+  if (!site && origins.length === 0) return;
+  if (origins.length === 0) {
+    // The hub answers a failed bay lookup with the site URL but no origins.
+    // Keep the bay origins already on disk, as setHubBrowserOrigins keeps its
+    // in-memory ones.
+    origins = readPersistedHubOrigins(file);
+  }
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify({ site_url: site, browser_origins: origins }),
+      { mode: 0o600 },
+    );
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    logger.warn("unable to persist browser origins", { err: `${err}` });
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+// The site URL and origins last persisted by the app (cached; re-read only
+// when the file changes). A missing or unreadable file keeps the last value.
+export function persistedBrowserOrigins(): PersistedBrowserOrigins {
+  const empty = { origins: [] };
+  const file = persistedOriginsFile();
+  if (!file) return empty;
+  const now = Date.now();
+  if (
+    persistedCache?.file === file &&
+    now - persistedCache.checkedAt < PERSISTED_ORIGINS_RECHECK_MS
+  ) {
+    return persistedCache.value;
+  }
+  const previous = persistedCache?.file === file ? persistedCache : undefined;
+  try {
+    const { mtimeMs } = fs.statSync(file);
+    if (previous && previous.mtimeMs === mtimeMs) {
+      previous.checkedAt = now;
+      return previous.value;
+    }
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    const site = originOfUrl(data?.site_url)
+      ? `${data.site_url}`.trim()
+      : undefined;
+    const origins = [
+      ...(Array.isArray(data?.browser_origins) ? data.browser_origins : []),
+      site,
+    ]
+      .map(originOfUrl)
+      .filter((x): x is string => !!x);
+    const value = { site_url: site, origins };
+    persistedCache = { file, checkedAt: now, mtimeMs, value };
+    return value;
+  } catch {
+    if (previous) {
+      previous.checkedAt = now;
+      return previous.value;
+    }
+    return empty;
+  }
 }
 
 export function originPolicyMode(): OriginPolicyMode {
@@ -96,7 +215,10 @@ export function originPolicyMode(): OriginPolicyMode {
 }
 
 export function approvedBrowserOrigins(): Set<string> {
-  const origins = new Set(hubOrigins);
+  const origins = new Set([
+    ...hubOrigins,
+    ...persistedBrowserOrigins().origins,
+  ]);
   for (const value of [
     process.env.COCALC_SITE_URL,
     ...`${process.env.COCALC_PROJECT_HOST_ALLOWED_ORIGINS ?? ""}`.split(","),

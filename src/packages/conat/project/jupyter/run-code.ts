@@ -964,11 +964,16 @@ export class JupyterClient {
     return data;
   };
 
-  getKernelStatus = async (): Promise<KernelStatus> => {
-    const { data } = await this.socket.request({
-      cmd: "get-kernel-status",
-      path: this.path,
-    });
+  getKernelStatus = async (options?: {
+    timeout?: number;
+  }): Promise<KernelStatus> => {
+    const { data } = await this.socket.request(
+      {
+        cmd: "get-kernel-status",
+        path: this.path,
+      },
+      options,
+    );
     return data;
   };
 

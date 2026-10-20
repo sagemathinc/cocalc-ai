@@ -248,7 +248,12 @@ export interface HostRuntimeFleetRolloutRequest {
   stabilize_seconds?: number;
   promote_global?: boolean;
   reason?: string;
+  // "enforce" (default) stops the campaign when browser latency gets worse;
+  // "advisory" records the regression and continues. Other gates always block.
+  latency_gate?: HostRuntimeFleetLatencyGate;
 }
+
+export type HostRuntimeFleetLatencyGate = "enforce" | "advisory";
 
 export interface HostRuntimeFleetRolloutResponse {
   op_id: string;
@@ -993,6 +998,15 @@ export interface HostStorageAdmissionMetrics {
   deferred_total: number;
   observed_deferral_total: number;
   transition_count: number;
+  /** Milliseconds spent in each pressure state since the host process started. */
+  state_ms_total?: Record<HostStoragePressureState, number>;
+  /** Scheduled snapshots admitted at the recovery pace. */
+  recovery_paced_total?: number;
+  /** In recovery: when the next scheduled snapshot may start. */
+  recovery_snapshot_next_at?: string;
+  starvation_override_total?: number;
+  /** Deferred background operations, by reason. */
+  deferred_by_reason?: Record<string, number>;
   last_transition_reason?: string;
   last_decision?: HostStorageAdmissionDecision;
   sample_error?: string;
@@ -2321,6 +2335,9 @@ export interface Hosts {
     authorized_keys?: string;
     run_quota?: any;
     run_quota_revision?: number;
+    runtime_lifecycle_revision?: number;
+    /** runtime_authority_revision, read with users. */
+    users_revision?: number;
     env?: ProjectEnv;
     autostart_enabled?: boolean | null;
     project_secrets_cache?: ProjectSecretsRuntimeCache;

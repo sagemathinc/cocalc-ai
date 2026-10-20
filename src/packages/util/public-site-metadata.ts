@@ -14,6 +14,15 @@ import {
   isUnpublishedTeamProfile,
   PUBLIC_TEAM_MEMBERS,
 } from "./public-about-content";
+import {
+  getShownPublicProductByView,
+  getShownPublicProducts,
+  PUBLIC_PRODUCTS_PATH,
+} from "./public-product-availability";
+import {
+  getPublicWhereToRunDescription,
+  PUBLIC_WHERE_TO_RUN_TITLE,
+} from "./public-products-content";
 import { SITE_NAME } from "./theme";
 import {
   CANONICAL_PUBLIC_SITE_ORIGIN,
@@ -196,13 +205,16 @@ export function publicHomeTitle(config?: PublicRouteMetadataConfig): string {
     : siteName;
 }
 
-const PRODUCT_SITEMAP_PATHS = [
-  "products",
-  "products/cocalc-plus",
-  "products/cocalc-star",
-  "products/cocalc-launchpad",
-  "products/cocalc-rocket",
-] as const;
+// The products page and the pages of the products the public pages show; a
+// hidden product's page redirects instead.
+function productSitemapPaths(): string[] {
+  return [
+    PUBLIC_PRODUCTS_PATH,
+    ...getShownPublicProducts().map(
+      ({ slug }) => `${PUBLIC_PRODUCTS_PATH}/${slug}`,
+    ),
+  ];
+}
 
 const POLICY_SITEMAP_SLUGS = [
   "terms",
@@ -327,7 +339,7 @@ export function buildPublicSitemapPaths(
     publicPath("news"),
     ...policySitemapPaths(config),
     publicPath("pricing"),
-    ...PRODUCT_SITEMAP_PATHS.map((path) => publicPath(path)),
+    ...productSitemapPaths().map((path) => publicPath(path)),
     publicPath("rootfs"),
     publicPath("support"),
     publicPath("support/community"),
@@ -618,12 +630,18 @@ function productRouteMetadata(
   siteName: string,
   options?: PublicRouteMetadataOptions,
 ): PublicRouteMetadata {
-  switch (route?.view) {
+  // A hidden product's page redirects to the products page, so it has that
+  // page's metadata.
+  const view =
+    getShownPublicProductByView(route?.view) != null ? route?.view : "products";
+  switch (view) {
     case "products-cocalc-plus":
       return {
         canonicalPath: publicPath("products/cocalc-plus", options),
+        // The first sentence of the page's lead; its Codex sentence stays on
+        // the page, out of search results and link previews.
         description:
-          "CoCalc Plus is the local, self-directed CoCalc path for evaluating the project model on a single machine before choosing hosted or shared deployment.",
+          "CoCalc Plus runs CoCalc on your own computer, for your own projects.",
         imagePath: publicPath(PRODUCT_SOCIAL_IMAGE, options),
         title: pageTitle("CoCalc Plus", siteName),
       };
@@ -639,7 +657,7 @@ function productRouteMetadata(
       return {
         canonicalPath: publicPath("products/cocalc-launchpad", options),
         description:
-          "CoCalc Launchpad is the lightweight customer-operated private deployment path for pilots, labs, workshops, departments, and platform teams.",
+          "CoCalc Launchpad runs a private CoCalc site for a small group, on infrastructure your team operates.",
         imagePath: publicPath(PRODUCT_SOCIAL_IMAGE, options),
         title: pageTitle("CoCalc Launchpad", siteName),
       };
@@ -647,7 +665,7 @@ function productRouteMetadata(
       return {
         canonicalPath: publicPath("products/cocalc-rocket", options),
         description:
-          "CoCalc Rocket is the broader customer-operated private-cloud path for institutions and enterprises planning a larger CoCalc deployment.",
+          "CoCalc Rocket is for larger private-cloud deployments. Licensing, support and deployment terms are agreed with SageMath, Inc. before rollout.",
         imagePath: publicPath(PRODUCT_SOCIAL_IMAGE, options),
         title: pageTitle("CoCalc Rocket", siteName),
       };
@@ -655,10 +673,9 @@ function productRouteMetadata(
     default:
       return {
         canonicalPath: publicPath("products", options),
-        description:
-          "Compare the five CoCalc product paths: hosted CoCalc.ai, local CoCalc Plus, self-hosted CoCalc Star in Docker, CoCalc Launchpad, and CoCalc Rocket.",
+        description: getPublicWhereToRunDescription(),
         imagePath: publicPath(PRODUCT_SOCIAL_IMAGE, options),
-        title: pageTitle("Ways to Run CoCalc", siteName),
+        title: pageTitle(PUBLIC_WHERE_TO_RUN_TITLE, siteName),
       };
   }
 }
