@@ -425,4 +425,23 @@ test("withdraw names an attempt like inspect, with no body", () => {
   expect(() =>
     validateAgentRpcRequest({ ...bare, action: "withdraw", body: "hi" } as any),
   ).toThrow("unexpected agent RPC field");
+test("asking to hear of no reply is part of the attempt: a retry that changes it is refused", async () => {
+  for (const [first, retry] of [
+    [{}, { report_no_reply: true as const }],
+    [{ report_no_reply: true as const }, {}],
+  ]) {
+    const evidence = new AgentRpcAttempts();
+    const source = endpoint();
+    const send = request();
+    const execute = jest.fn(async () => rpcOutcome(send, "accepted"));
+    await evidence.send(source, { ...send, ...first }, execute);
+    expect(
+      (await evidence.send(source, { ...send, ...retry }, execute)).outcome,
+    ).toBe("rejected");
+    // The same request again is the same attempt.
+    expect(
+      (await evidence.send(source, { ...send, ...first }, execute)).outcome,
+    ).toBe("accepted");
+    expect(execute).toHaveBeenCalledTimes(1);
+  }
 });
