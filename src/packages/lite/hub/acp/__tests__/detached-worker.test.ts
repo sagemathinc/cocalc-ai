@@ -4630,13 +4630,15 @@ describe("the agent that sent a message is told how its turn ended", () => {
     const { request, execution } = agentRequest();
     const job = enqueueAcpJob(request);
     const resets_at = Date.now() + 60 * 60_000;
+    // The host was down for half an hour after the turn ended.
+    const ended = Date.now() - 30 * 60_000;
     getAcpDatabase()
       .prepare(
         "UPDATE acp_jobs SET state = 'error', started_at = ?, finished_at = ?, recovery_code = 'cocalc-hold', outcome_json = ? WHERE op_id = ?",
       )
       .run(
-        job.created_at + 1,
-        job.created_at + 2,
+        ended - 1,
+        ended,
         JSON.stringify({
           version: 1,
           state: "failed",
@@ -4653,6 +4655,8 @@ describe("the agent that sent a message is told how its turn ended", () => {
     });
     expect(held).toHaveLength(1);
     expect(held[0]).toMatchObject({ recovery_reason: "usage limit hold" });
+    // Still after the reset, though the delay was worked out later.
+    expect(Number(held[0].available_at)).toBeGreaterThan(resets_at);
     expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
     const due = reports();
     expect(due).toHaveLength(1);
@@ -4661,6 +4665,22 @@ describe("the agent that sent a message is told how its turn ended", () => {
       phase: "held",
       resets_at: held[0].available_at,
     });
+    // Its worker died again after queueing, before clearing the intent:
+    // the queued continuation is the hold, never a final report.
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET recovery_code = 'cocalc-hold' WHERE op_id = ?",
+      )
+      .run(job.op_id);
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as unknown as ConatClient,
+    });
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(1);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
+    for (const { report } of reports())
+      expect(report).toMatchObject({ phase: "held" });
   });
 
   it("when a newer message replaces the turn waiting to resume", () => {

@@ -9386,7 +9386,9 @@ async function enqueueLimitHold({
   job: AcpJobRow;
   outcome: TurnOutcome;
 }): Promise<AcpJobRow | undefined> {
-  const delayMs = limitHoldDelayMs(outcome);
+  // From when the turn ended, as the continuation is scheduled: a hold
+  // recovered after a restart still resumes after the reset, not early.
+  const delayMs = limitHoldDelayMs(outcome, job.finished_at ?? Date.now());
   if (delayMs == null) return undefined;
   const failed = decodeAcpJobRequest(job);
   // A delivery report starts one turn (the hub records it).
@@ -9418,6 +9420,13 @@ async function enqueueLimitHold({
   return held;
 }
 
+/** The continuation queued for this job, if one was. */
+function continuationOf(job: AcpJobRow): AcpJobRow | undefined {
+  return listAcpJobsByRecoveryParent({
+    recovery_parent_op_id: job.op_id,
+  })[0];
+}
+
 async function recoverPendingFailureRecoveryIntents({
   client,
   limit = 100,
@@ -9431,13 +9440,16 @@ async function recoverPendingFailureRecoveryIntents({
       // A hold whose worker died before its continuation was queued.
       try {
         const outcome = parseTurnOutcome(job.outcome_json);
-        const held = outcome
-          ? await enqueueLimitHold({ client, job, outcome })
-          : undefined;
+        // Its worker may also have died after queueing the continuation,
+        // before clearing the intent: then that continuation is the hold.
+        const held =
+          (outcome
+            ? await enqueueLimitHold({ client, job, outcome })
+            : undefined) ?? continuationOf(job);
         clearAcpJobRecoveryIntent(job.op_id);
         recovered += 1;
         const request = decodeAcpJobRequest(job);
-        if (held?.available_at)
+        if (held?.available_at != null && held.available_at > Date.now())
           reportFailedAgentMessageTurn(
             job,
             request,
@@ -9445,7 +9457,10 @@ async function recoverPendingFailureRecoveryIntents({
             outcome,
             { resume_at: held.available_at },
           );
-        else reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
+        // Resuming now (the reset passed while the host was down): the
+        // continuation reports how it ends.
+        else if (!held)
+          reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
       } catch (err) {
         logger.warn("failed recovering a persisted ACP hold", {
           op_id: job.op_id,
@@ -9463,8 +9478,9 @@ async function recoverPendingFailureRecoveryIntents({
       });
       clearAcpJobRecoveryIntent(job.op_id);
       recovered += 1;
-      // Declined: the turn is over after all.
-      if (!resumed)
+      // Declined: the turn is over after all (unless a continuation was
+      // queued before the worker died, and resumes it).
+      if (!resumed && !continuationOf(job))
         reportFailedAgentMessageTurn(
           job,
           decodeAcpJobRequest(job),
