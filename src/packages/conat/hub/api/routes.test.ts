@@ -61,6 +61,37 @@ describe("hub API routes", () => {
     ).toBeUndefined();
   });
 
+  // Every method routed by host id. A method missing from the route table
+  // would run on whichever bay received it and refuse with a stale route.
+  const HOST_ROUTED = [
+    "hosts.getHostLog",
+    "hosts.getHostAvailability",
+    "hosts.getHostRuntimeLog",
+    "hosts.getHostMetricsHistory",
+    "hosts.listHostRootfsImages",
+    "hosts.getHostExamState",
+    "hosts.listHostSshAuthorizedKeys",
+    "hosts.listHostAccess",
+    "hosts.getHostManagedComponentStatus",
+    "hosts.setHostAccess",
+    "hosts.removeHostAccess",
+    "hosts.setHostProjectRamLimit",
+    "hosts.setHostOwnerSpendLimits",
+    "hosts.setHostPoolAccess",
+    "hosts.annotateHostAvailabilityEvent",
+    "hosts.addHostSshAuthorizedKey",
+    "hosts.removeHostSshAuthorizedKey",
+    "hosts.setHostPublicRouteMode",
+    "hosts.setHostMaintenanceNotice",
+  ];
+
+  it.each(HOST_ROUTED)("routes %s by its host id", (name) => {
+    const route = getHubApiRoute(name);
+    expect(route?.owner).toBe("host");
+    expect(hubApiRouteKey(route!, [{ id: PROJECT }])).toBe(PROJECT);
+    expect(hubApiRouteKey(route!, [{ id: "x" }])).toBeUndefined();
+  });
+
   it("finds an email invite by id or link token", () => {
     const route = getHubApiRoute("projects.redeemEmailProjectInvite")!;
     expect(route.owner).toBe("collab-invite");
