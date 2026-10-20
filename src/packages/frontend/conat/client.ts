@@ -3514,7 +3514,10 @@ export class ConatClient extends EventEmitter {
               ...routing,
               project_id,
             });
-            const retryResp = await retryClient.request(
+            // Through requestHub too, so the retry is labelled for egress
+            // attribution like the first attempt.
+            const retryResp = await requestHub(
+              retryClient,
               subject,
               { name, args },
               { timeout },
