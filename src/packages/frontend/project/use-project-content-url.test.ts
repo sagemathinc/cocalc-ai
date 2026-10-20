@@ -13,7 +13,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useProjectContentUrl } from "./use-project-content-url";
 
 let n = 0;
@@ -72,12 +72,21 @@ it("a host that stays not ready is asked less and less often", async () => {
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(issue).toHaveBeenCalledTimes(1);
     // 30 s, then 60 s: the second retry must not come after another 30 s.
-    await jest.advanceTimersByTimeAsync(30_000);
-    await waitFor(() => expect(issue).toHaveBeenCalledTimes(2));
-    await jest.advanceTimersByTimeAsync(30_000);
+    // act() lets React re-render and run the retry effect before we look.
+    const advance = async (ms: number) => {
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(ms);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+    };
+    await advance(30_000);
     expect(issue).toHaveBeenCalledTimes(2);
-    await jest.advanceTimersByTimeAsync(30_000);
-    await waitFor(() => expect(issue).toHaveBeenCalledTimes(3));
+    await advance(30_000);
+    expect(issue).toHaveBeenCalledTimes(2);
+    await advance(30_000);
+    expect(issue).toHaveBeenCalledTimes(3);
   } finally {
     jest.useRealTimers();
   }
