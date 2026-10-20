@@ -338,7 +338,9 @@ test("keyboard: the placeholder hands focus to the frame, and leaving the frame 
     frame.previousElementSibling,
     frame.nextElementSibling,
   ] as HTMLElement[];
-  // Not in the page's ordinary tab order: only while focus is in the frame.
+  // The frame itself is out of the ordinary tab order (entered only through
+  // the placeholder), and so are its sentinels unless focus is in it.
+  expect(frame.tabIndex).toBe(-1);
   expect(before.tabIndex).toBe(-1);
   expect(after.tabIndex).toBe(-1);
   // Tab onto the placeholder: focus goes into the frame.

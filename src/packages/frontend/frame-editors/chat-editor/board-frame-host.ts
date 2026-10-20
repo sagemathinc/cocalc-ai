@@ -449,6 +449,10 @@ export function createBoardFrame({
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", sandbox);
   iframe.title = title;
+  // Out of the page's ordinary tab order (it lives at the end of the body):
+  // keyboard users enter it only through the card's placeholder, and leave
+  // through its sentinels.
+  iframe.tabIndex = -1;
   Object.assign(iframe.style, {
     position: "fixed",
     border: "none",
