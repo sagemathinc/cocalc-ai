@@ -20,10 +20,23 @@ function isEmptyObject(value: unknown): boolean {
   );
 }
 
+// Cell metadata that carries no work. Our exporter (cell_to_ipynb) always
+// writes `collapsed`, so an untouched placeholder exports as
+// {collapsed: false}; anything else, including collapsed: true, is content.
+function isRoutineCellMetadata(metadata: unknown): boolean {
+  if (isEmptyObject(metadata)) return true;
+  if (typeof metadata !== "object") return false;
+  const entries = Object.entries(metadata as object);
+  return entries.every(
+    ([key, value]) => key === "collapsed" && value === false,
+  );
+}
+
 // Whether an ipynb document is only an empty notebook: no cells, or a single
-// code cell with no source, outputs, attachments or metadata, and no
-// notebook metadata beyond the kernel description. Anything else, including
-// metadata-only cells (nbgrader, tags, slideshow), counts as content.
+// code cell with no source, outputs, attachments or metadata (other than the
+// exporter's `collapsed: false`), and no notebook metadata beyond the kernel
+// description. Anything else, including metadata-only cells (nbgrader, tags,
+// slideshow), counts as content.
 export function isPlaceholderIpynb(ipynb: any): boolean {
   if (ipynb == null || typeof ipynb !== "object") return false;
   const cells = ipynb.cells;
@@ -42,7 +55,7 @@ export function isPlaceholderIpynb(ipynb: any): boolean {
     source.trim() === "" &&
     (cell.outputs?.length ?? 0) === 0 &&
     isEmptyObject(cell.attachments) &&
-    isEmptyObject(cell.metadata)
+    isRoutineCellMetadata(cell.metadata)
   );
 }
 

@@ -4,11 +4,56 @@
  */
 
 import { fromJS, List } from "immutable";
+import { export_to_ipynb } from "./export-to-ipynb";
 import {
   cellRecordsAreGeneratedPlaceholder,
   ipynbTextHasContent,
   isPlaceholderIpynb,
 } from "./placeholder";
+
+// The generated placeholder exported by the real exporter, which always adds
+// metadata.collapsed (support ticket 21023 save path).
+function exportCell(cell: object) {
+  return export_to_ipynb({
+    cell_list: ["alpha"],
+    cells: { alpha: { type: "cell", id: "alpha", pos: 0, input: "", ...cell } },
+    kernelspec: { name: "python3", display_name: "Python 3" },
+    language_info: { name: "python" },
+  } as any);
+}
+
+describe("isPlaceholderIpynb on the real export", () => {
+  it("recognizes the exported generated placeholder", () => {
+    const ipynb = exportCell({});
+    expect(ipynb.cells[0].metadata).toEqual({ collapsed: false });
+    expect(isPlaceholderIpynb(ipynb)).toBe(true);
+    expect(ipynbTextHasContent(JSON.stringify(ipynb))).toBe(false);
+  });
+
+  it("treats any other exported cell state as content", () => {
+    expect(isPlaceholderIpynb(exportCell({ collapsed: true }))).toBe(false);
+    expect(isPlaceholderIpynb(exportCell({ scrolled: true }))).toBe(false);
+    expect(isPlaceholderIpynb(exportCell({ tags: { graded: true } }))).toBe(
+      false,
+    );
+    expect(isPlaceholderIpynb(exportCell({ last: 12 }))).toBe(false);
+    expect(
+      isPlaceholderIpynb(exportCell({ metadata: { nbgrader: { id: "q1" } } })),
+    ).toBe(false);
+    expect(isPlaceholderIpynb(exportCell({ input: "x = 1" }))).toBe(false);
+  });
+
+  it("only allows collapsed: false, not other falsy values", () => {
+    const cell = (metadata: object) => ({
+      cells: [{ cell_type: "code", source: "", outputs: [], metadata }],
+    });
+    expect(isPlaceholderIpynb(cell({ collapsed: false }))).toBe(true);
+    expect(isPlaceholderIpynb(cell({ collapsed: 0 }))).toBe(false);
+    expect(isPlaceholderIpynb(cell({ collapsed: false, foo: false }))).toBe(
+      false,
+    );
+  });
+});
 
 const PLACEHOLDER = {
   cells: [{ cell_type: "code", source: "", outputs: [], metadata: {} }],

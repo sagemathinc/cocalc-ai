@@ -14,7 +14,20 @@ jest.mock("../widgets/manager", () => ({
 }));
 
 import { fromJS, List, Map } from "immutable";
+import { export_to_ipynb } from "@cocalc/jupyter/ipynb/export-to-ipynb";
 import { JupyterActions } from "../browser-actions";
+
+// What toIpynb produces for these cell records: the real exporter, which
+// adds its own defaults (e.g. metadata.collapsed) that a hand-written mock
+// would miss.
+function exportRecords(cellList: List<any>) {
+  const cells = cellList.toJS() as any[];
+  return export_to_ipynb({
+    cell_list: cells.map((cell) => cell.id),
+    cells: Object.fromEntries(cells.map((cell) => [cell.id, cell])),
+    kernelspec: { name: "python3", display_name: "Python 3" },
+  } as any);
+}
 
 const LAB = {
   cells: [
@@ -45,12 +58,12 @@ function createActions({
   actions.setToIpynb = jest.fn(async () => {});
   actions.refreshKernelStatus = jest.fn(async () => {});
   actions.store = { emit: jest.fn() };
+  let cellList = List(cells.map((cell) => fromJS(cell)));
   // Classification must work from raw records, without exporting the
-  // notebook (which loads output blobs).
-  actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "" }] }));
+  // notebook (which loads output blobs); saving exports for real.
+  actions.toIpynb = jest.fn(async () => exportRecords(cellList));
   let version = "v1";
   actions.setVersion = (v: string) => (version = v);
-  let cellList = List(cells.map((cell) => fromJS(cell)));
   let settingsRecord: object = settings;
   actions.setCells = (next: object[]) =>
     (cellList = List(next.map((cell) => fromJS(cell))));
@@ -148,9 +161,6 @@ describe("saving", () => {
   it("never write the placeholder; load the file when it has content", async () => {
     const actions = createActions();
     actions.hasUnsavedChanges = true;
-    actions.toIpynb = jest.fn(async () => ({
-      cells: [{ cell_type: "code", source: "", outputs: [] }],
-    }));
 
     await actions.saveIpynb();
 
@@ -161,7 +171,6 @@ describe("saving", () => {
   it("never write the placeholder; nothing to save when the file is empty", async () => {
     const actions = createActions();
     actions.hasUnsavedChanges = true;
-    actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "" }] }));
     actions.syncdb.fs.readFile = jest.fn(async () => Buffer.from(""));
 
     await actions.saveIpynb();
@@ -174,7 +183,6 @@ describe("saving", () => {
   it("never write the placeholder over a partially written file", async () => {
     const actions = createActions();
     actions.hasUnsavedChanges = true;
-    actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "" }] }));
     actions.syncdb.fs.readFile = jest.fn(async () =>
       Buffer.from(LAB_TEXT.slice(0, 30)),
     );
@@ -187,7 +195,6 @@ describe("saving", () => {
   it("save real content", async () => {
     const actions = createActions({ cells: [{ ...ALPHA, input: "y = 2" }] });
     actions.hasUnsavedChanges = true;
-    actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "y = 2" }] }));
 
     await actions.saveIpynb();
 
@@ -200,7 +207,6 @@ describe("saving", () => {
   it("save an emptied notebook after every cell was deleted", async () => {
     const actions = createActions({ settings: { has_had_content: true } });
     actions.hasUnsavedChanges = true;
-    actions.toIpynb = jest.fn(async () => ({ cells: [{ source: "" }] }));
 
     await actions.saveIpynb();
 
