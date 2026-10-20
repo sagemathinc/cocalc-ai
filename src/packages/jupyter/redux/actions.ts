@@ -141,6 +141,13 @@ function getCellMetadataLastRuntimeMs(cell: immutable.Map<string, any>): any {
 // it to be recorded before taking it for an external edit (see isIpynbSave).
 const IPYNB_SAVE_RECORD_WAIT_MS = 3000;
 
+// What setToIpynb did: nothing (aborted, because the notebook changed while
+// the ipynb was prepared), or applied it with the RTC version of its own
+// commit (per call, so overlapping imports cannot confuse each other).
+export type SetToIpynbResult =
+  | { aborted: true }
+  | { aborted: false; commitVersion?: string };
+
 export class JupyterActions extends Actions<JupyterStoreState> {
   public is_project: boolean;
   readonly path: string;
@@ -3073,19 +3080,19 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     return ipynb;
   }
 
-  // The RTC version created by setToIpynb's own commit, so a caller can tell
-  // a later edit (a newer version) from the import itself.
-  importCommitVersion: string | undefined = undefined;
-
-  protected noteImportCommit = (): void => {
+  // At setToIpynb's own commit: return the RTC version it created (so the
+  // caller can tell a later edit, a newer version, from the import itself),
+  // and record the imported content before setToIpynb awaits the RTC save,
+  // so a clear made during that wait does not look like the placeholder.
+  protected noteImportCommit = (): string | undefined => {
+    let version: string | undefined;
     try {
-      this.importCommitVersion = (this.syncdb as any)?.newestVersion?.();
+      version = (this.syncdb as any)?.newestVersion?.();
     } catch {
-      this.importCommitVersion = undefined;
+      version = undefined;
     }
-    // Record the imported content now, before setToIpynb awaits the RTC save:
-    // a clear made during that wait must not look like the placeholder.
     this.noteNotebookContent();
+    return version;
   };
 
   setToIpynb = async (
@@ -3099,7 +3106,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       // the caller can retry rather than overwrite that edit.
       expectedVersion?: string;
     } = {},
-  ): Promise<"aborted" | undefined> => {
+  ): Promise<SetToIpynbResult> => {
     /*
      * set_to_ipynb - set from ipynb object.  This is
      * mainly meant to be run on the backend in the project,
@@ -3120,7 +3127,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       expectedVersion != null &&
       (this.syncdb as any)?.newestVersion?.() !== expectedVersion
     ) {
-      return "aborted";
+      return { aborted: true };
     }
 
     this._state = "load";
@@ -3193,7 +3200,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
     if (data_only) {
       importer.close();
-      return;
+      return { aborted: false };
     }
 
     // Set all the cells
@@ -3215,10 +3222,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     importer.close();
 
     this.syncdb.commit();
-    this.noteImportCommit();
+    const commitVersion = this.noteImportCommit();
     await this.syncdb.save();
     this.ensure_backend_kernel_setup();
     this._state = "ready";
+    return { aborted: false, commitVersion };
   };
 }
 

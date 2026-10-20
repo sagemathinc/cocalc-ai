@@ -4706,14 +4706,12 @@ export class JupyterActions extends JupyterActions0 {
     ipynb: any,
     expectedVersion?: string,
   ): Promise<boolean> => {
-    this.importCommitVersion = undefined;
-    if (
-      (await this.setToIpynb(ipynb, false, { expectedVersion })) === "aborted"
-    ) {
+    const applied = await this.setToIpynb(ipynb, false, { expectedVersion });
+    if (applied?.aborted) {
       // Edited while the ipynb was prepared: nothing was applied.
       return true;
     }
-    const importVersion = this.importCommitVersion;
+    const importVersion = applied?.commitVersion;
     return (
       importVersion != null &&
       (this.getRtcVersion() !== importVersion ||

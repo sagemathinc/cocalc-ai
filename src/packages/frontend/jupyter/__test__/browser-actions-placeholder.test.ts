@@ -311,8 +311,10 @@ describe("saving", () => {
     let finish: () => void = () => {};
     actions.setToIpynb = jest.fn(() => {
       actions.setVersion("imported");
-      actions.noteImportCommit();
-      return new Promise<void>((resolve) => (finish = resolve));
+      const commitVersion = actions.noteImportCommit();
+      return new Promise((resolve) => {
+        finish = () => resolve({ aborted: false, commitVersion });
+      });
     });
 
     const saving = actions.saveIpynb();
@@ -649,8 +651,10 @@ describe("applying a loaded file", () => {
     let finish: () => void = () => {};
     actions.setToIpynb = jest.fn(() => {
       actions.setVersion("imported");
-      actions.noteImportCommit();
-      return new Promise<void>((resolve) => (finish = resolve));
+      const commitVersion = actions.noteImportCommit();
+      return new Promise((resolve) => {
+        finish = () => resolve({ aborted: false, commitVersion });
+      });
     });
     return () => finish();
   }
@@ -687,8 +691,10 @@ describe("applying a loaded file", () => {
     actions.setToIpynb = jest.fn(() => {
       actions.setCells([{ ...ALPHA, input: "### Lab 3" }]); // the import commits
       actions.setVersion("imported");
-      actions.noteImportCommit();
-      return new Promise<void>((resolve) => (finish = resolve));
+      const commitVersion = actions.noteImportCommit();
+      return new Promise((resolve) => {
+        finish = () => resolve({ aborted: false, commitVersion });
+      });
     });
 
     const loading = actions.loadFromDisk({
@@ -705,6 +711,35 @@ describe("applying a loaded file", () => {
     expect(actions.saveIpynb).toHaveBeenCalledTimes(1);
     // The clear is real work, not the generated placeholder.
     expect(actions.rtcIsGeneratedPlaceholder()).toBe(false);
+  });
+
+  it("detect an edit during an import even if another import commits later", async () => {
+    // Import A commits, then a second import B commits while A awaits its
+    // save: A must compare against its own commit, not B's.
+    const actions = createActions();
+    actions.saveIpynb = jest.fn(async () => {});
+    let finishA: () => void = () => {};
+    actions.setToIpynb = jest.fn(() => {
+      actions.setVersion("import-a");
+      const commitVersion = actions.noteImportCommit();
+      return new Promise((resolve) => {
+        finishA = () => resolve({ aborted: false, commitVersion });
+      });
+    });
+
+    const loading = actions.loadFromDisk({
+      diskRead: LAB_READ,
+      expectedRtcVersion: "v1",
+      replacingPlaceholder: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    actions.setVersion("import-b"); // another import commits meanwhile
+    actions.noteImportCommit();
+    finishA();
+    await loading;
+
+    // The file holds A, but the notebook is now B: not marked saved.
+    expect(actions.saveIpynb).toHaveBeenCalledTimes(1);
   });
 
   it("mark the notebook saved when nothing changed while applying", async () => {

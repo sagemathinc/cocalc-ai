@@ -263,8 +263,9 @@ describe("project-side save of a changing notebook", () => {
     });
     actions.setToIpynb = jest.fn(async () => {
       edit("x = 1", "imported");
-      actions.noteImportCommit();
+      const commitVersion = actions.noteImportCommit();
       edit("x = 3", "v3"); // edited before the apply finished
+      return { aborted: false, commitVersion };
     });
 
     await actions.save_ipynb_file();
@@ -292,6 +293,29 @@ describe("project-side save of a changing notebook", () => {
     await actions.save_ipynb_file();
 
     expect(commits).toEqual([]); // the import never touched the notebook
+    expect(saved).toEqual(["x = 1", "x = 3"]);
+  });
+
+  it("compares against its own import, not an overlapping one", async () => {
+    // Save A's converted import commits, then while it awaits the RTC save a
+    // second import B commits the live x = 3: A must save again.
+    const { actions, edit, saved } = liveActions();
+    edit("x = 1", "v1");
+    actions.syncdb.fs.jupyterSaveIpynb = jest.fn(async (_path, ipynb) => {
+      saved.push(ipynb.cells[0].source.join(""));
+      return { bytes: 10, converted: saved.length === 1, ipynb };
+    });
+    actions.setToIpynb = jest.fn(async () => {
+      edit("x = 1", "imported-first");
+      const commitVersion = actions.noteImportCommit();
+      // B: another import commits while A awaits its save
+      edit("x = 3", "imported-second");
+      actions.noteImportCommit();
+      return { aborted: false, commitVersion };
+    });
+
+    await actions.save_ipynb_file();
+
     expect(saved).toEqual(["x = 1", "x = 3"]);
   });
 });
