@@ -10,7 +10,10 @@ import {
   listAcpJobsByRecoveryParent,
   listQueuedAcpJobs,
 } from "../../sqlite/acp-jobs";
-import { listDueAgentRpcReports } from "../../sqlite/agent-rpc-reports";
+import {
+  enqueueAgentRpcReport,
+  listDueAgentRpcReports,
+} from "../../sqlite/agent-rpc-reports";
 import { parseTurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
 import { acpTestInternals, withdrawAgentMessageTurn } from "../index";
 
@@ -18,7 +21,9 @@ jest.mock("@cocalc/chat/server", () => ({
   acquireChatSyncDB: jest.fn(async () => {
     throw new Error("no chat in this test");
   }),
+  releaseChatSyncDB: jest.fn(async () => {}),
 }));
+import * as chatServer from "@cocalc/chat/server";
 
 const ACCOUNT = "00000000-1000-4000-8000-000000000001";
 const PROJECT = "00000000-1000-4000-8000-000000000000";
@@ -231,5 +236,76 @@ describe("the sender takes back its message", () => {
     ).toBe(1);
     expect(projected).toEqual([mine.user_message_id]);
     expect(getAcpJobByOpId(mine.op_id)?.recovery_code ?? null).toBeNull();
+  });
+
+  it("drops a held report still waiting to be sent", async () => {
+    const attempt = randomUUID();
+    const first = job(attempt);
+    set(first.op_id, {
+      state: "error",
+      started_at: first.created_at + 1,
+      finished_at: first.created_at + 2,
+    });
+    const held = job(attempt);
+    set(held.op_id, {
+      created_at: first.created_at + 3,
+      recovery_parent_op_id: first.op_id,
+      available_at: Date.now() + 3_600_000,
+    });
+    enqueueAgentRpcReport({
+      op_id: `${first.op_id}:held`,
+      account_id: ACCOUNT,
+      report: { report_id: randomUUID(), phase: "held" } as any,
+    });
+    expect(listDueAgentRpcReports(Date.now() + 1)).toHaveLength(1);
+    expect(await withdraw(attempt)).toMatchObject({ outcome: "accepted" });
+    expect(listDueAgentRpcReports(Date.now() + 1)).toHaveLength(0);
+  });
+
+  it("withdrawn while the recovery poll queues its hold: no continuation, no report", async () => {
+    const attempt = randomUUID();
+    const mine = job(attempt);
+    set(mine.op_id, {
+      state: "error",
+      started_at: mine.created_at + 1,
+      finished_at: mine.created_at + 2,
+      recovery_code: "cocalc-hold",
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: {
+          kind: "limit",
+          scope: "credential",
+          resets_at: Date.now() + 3_600_000,
+        },
+        tool_ran: false,
+      },
+    });
+    // The poll has loaded the job; the sender withdraws it while the poll
+    // writes the hold's notice into the chat.
+    let withdrawal: any;
+    (chatServer.acquireChatSyncDB as jest.Mock).mockImplementationOnce(
+      async () => {
+        withdrawal = await withdraw(attempt);
+        return {
+          isReady: () => true,
+          get: () => [],
+          set: () => {},
+          commit: () => {},
+          save: async () => {},
+        };
+      },
+    );
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as any,
+    });
+    expect(withdrawal).toMatchObject({
+      outcome: "accepted",
+      reason: "Withdrawn: its turn will not resume",
+    });
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: mine.op_id }),
+    ).toHaveLength(0);
+    expect(listDueAgentRpcReports(Date.now() + 3_600_000)).toHaveLength(0);
   });
 });
