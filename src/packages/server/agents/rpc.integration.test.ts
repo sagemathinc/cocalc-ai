@@ -431,6 +431,7 @@ test("asking to hear of no reply is refused where no report could arrive", async
         report_no_reply: true,
       },
     });
+  process.env.COCALC_CLUSTER_SHARED_SECRET = "test-cluster-secret";
   try {
     // Queued, to a host that knows completed reports: sent.
     await expect(submit()).resolves.toMatchObject({ outcome: "accepted" });
@@ -445,6 +446,14 @@ test("asking to hear of no reply is refused where no report could arrive", async
       chat_effect: "none",
       reason: expect.stringMatching(/delivers live.*no message was sent/),
     });
+    // Without a secret to sign the report with: refused, unsent.
+    const secret = process.env.COCALC_CLUSTER_SHARED_SECRET;
+    delete process.env.COCALC_CLUSTER_SHARED_SECRET;
+    await expect(submit()).resolves.toMatchObject({
+      outcome: "rejected",
+      reason: expect.stringMatching(/cannot sign the report/),
+    });
+    process.env.COCALC_CLUSTER_SHARED_SECRET = secret ?? "test-cluster-secret";
     // A recipient host from before completed reports: refused too.
     hostVersion = 2;
     await expect(submit()).resolves.toMatchObject({
@@ -453,6 +462,7 @@ test("asking to hear of no reply is refused where no report could arrive", async
     });
     expect(submitAgentRpc).toHaveBeenCalledTimes(1);
   } finally {
+    delete process.env.COCALC_CLUSTER_SHARED_SECRET;
     query.mockImplementation((async () => ({
       rows: [{ host_id: host, state: "running" }],
     })) as any);
