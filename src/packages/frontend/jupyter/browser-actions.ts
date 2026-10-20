@@ -2608,9 +2608,9 @@ export class JupyterActions extends JupyterActions0 {
     });
   }
 
-  /* Wait until the syncdb is ready *and* there is at
-     least one cell in the notebook. For a brand new blank
-     notebook, the backend will create a blank cell.
+  /* Wait until the syncdb is ready and its cells are in the store. An empty
+     notebook is ready with no cells: none is created until the user starts
+     editing (see createFirstCell).
 
      If the current state is "closed" there is no way
      it'll ever be ready, so we throw an Error.
@@ -2623,9 +2623,10 @@ export class JupyterActions extends JupyterActions0 {
       case "closed":
         throw Error("syncdb is closed so will never be ready");
     }
-    // Wait until there is at least one cell.  The backend is
-    // responsible for ensuring there is at least one cell.
-    while ((this.store.get("cell_list")?.size ?? 0) <= 0) {
+    while (
+      (this.store.get("cell_list")?.size ?? 0) <= 0 &&
+      this.syncdb.get_one({ type: "cell" }) != null
+    ) {
       // wait for a change event:
       await once(this.store, "change");
     }
