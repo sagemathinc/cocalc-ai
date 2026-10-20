@@ -155,10 +155,10 @@ test("an astream with the writer's route asks as the hub, with its fence (as a b
   });
   // Through the board write service as the hub, fenced: accepted (as a project,
   // the write service would refuse the connection).
-  await s.publish({ edit: 1 });
+  await s.publish(rec(1));
   s.close();
   const reader = await readerStream(project_id, path);
-  expect(reader.getAll()).toEqual([{ edit: 1 }]);
+  expect(reader.getAll()).toEqual([rec(1)]);
   reader.close();
 });
 
