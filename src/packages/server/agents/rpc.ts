@@ -479,7 +479,14 @@ async function submitAgentRpcOperation(
           executionOfEnvelope(envelope),
         );
       } catch (err) {
-        // Reports are a courtesy: the message still goes, unreportable.
+        // Reports are a courtesy: the message still goes, unreportable,
+        // unless the sender asked to hear of no reply (it never would).
+        if (opts.request.report_no_reply)
+          return rpcOutcome(opts.request, "rejected", {
+            reason:
+              "--report-no-reply is not possible here: this hub cannot sign the report; no message was sent",
+            chat_effect: "none",
+          });
         logger.warn("agent message sent without a report capability", {
           attempt_id: envelope.attempt_id,
           err: `${err}`,

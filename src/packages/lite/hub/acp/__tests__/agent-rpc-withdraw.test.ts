@@ -66,7 +66,7 @@ function job(attempt_id: string) {
         principal_account_id: ACCOUNT,
         guidance: false,
         attempt_id,
-        report_capability: "1791800000000." + "c".repeat(43),
+        report_capability: `${Date.now()}.` + "c".repeat(43),
       },
     },
   } as any);
