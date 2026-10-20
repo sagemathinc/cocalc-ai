@@ -514,6 +514,8 @@ export async function revalidateNotificationEmail(opts: {
   db?: Queryable;
   // Server resolves the current directory home immediately before delivery.
   financial_home?: { current: string; local: string };
+  // The same, for an email that waits until the person is away.
+  home?: { current: string; local: string };
 }): Promise<NotificationEmailRevalidation> {
   const { row } = opts;
   if (isFinancialReceipt(row.summary_json?.summary)) {
@@ -549,7 +551,11 @@ export async function revalidateNotificationEmail(opts: {
   if (row.category === "ai" && !codexNotificationEmailEnabled()) {
     return { action: "skip", reason: "Codex notification email is disabled" };
   }
-  if (emailWaitsUntilAway(row)) {
+  // Activity and read state live on the account's home bay: once it moved
+  // elsewhere they are stale here, so the email goes out as it did before
+  // waiting for away existed.
+  const homedHere = !opts.home || opts.home.current === opts.home.local;
+  if (emailWaitsUntilAway(row) && homedHere) {
     const notificationId =
       row.summary_json?.projection_notification_id ?? row.notification_id;
     const { rows } = await queryable(opts.db).query(

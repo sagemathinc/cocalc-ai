@@ -110,5 +110,27 @@ describe("notification email only when you are away", () => {
       row.target_account_id,
       row.notification_id,
     ]);
+    // Homed here: the same answer.
+    await expect(
+      revalidateNotificationEmail({
+        row,
+        now,
+        db: db as any,
+        home: { current: "bay-1", local: "bay-1" },
+      }),
+    ).resolves.toMatchObject({ action: "reschedule" });
+    // The account moved to another bay (or the directory could not say):
+    // this bay's activity is stale, so the email goes out as it used to.
+    queries.length = 0;
+    for (const current of ["bay-2", ""])
+      await expect(
+        revalidateNotificationEmail({
+          row,
+          now,
+          db: db as any,
+          home: { current, local: "bay-1" },
+        }),
+      ).resolves.toEqual({ action: "send" });
+    expect(queries).toHaveLength(0);
   });
 });
