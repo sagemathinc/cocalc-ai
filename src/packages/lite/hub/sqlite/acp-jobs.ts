@@ -506,6 +506,31 @@ export function listAcpThreadsChangedSince(since: number): {
   });
 }
 
+/** Conversations with a job that ended at a sign-in or usage limit, of any
+ * age (a block can outlast every other activity), at most `limit`. */
+export function listAcpThreadsWithBlockingFailure(limit = 10_000): {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  account_id: string;
+}[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT project_id, path, thread_id, account_id FROM ${TABLE}
+       WHERE state = 'error'
+         AND json_extract(outcome_json, '$.failure.kind') IN ('sign-in', 'limit')
+       GROUP BY project_id, path, thread_id
+       LIMIT ?`,
+    )
+    .all(limit) as {
+    project_id: string;
+    path: string;
+    thread_id: string;
+    account_id: string;
+  }[];
+}
+
 /** What a conversation's jobs say now: how many run and wait, and the
  * latest that ended. */
 export function acpThreadJobSummary({

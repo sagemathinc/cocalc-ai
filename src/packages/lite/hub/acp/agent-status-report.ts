@@ -20,6 +20,7 @@ import { hubApi } from "../api";
 import {
   acpThreadJobSummary,
   listAcpThreadsChangedSince,
+  listAcpThreadsWithBlockingFailure,
 } from "../sqlite/acp-jobs";
 
 const logger = getLogger("lite:hub:acp:agent-status-report");
@@ -155,9 +156,12 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
     // still says something, sent only if it does.
     const onlyIfTrue = new Set<string>();
     if (since === now - FIRST_SWEEP_LOOKBACK_MS)
-      for (const thread of listAcpThreadsChangedSince(
-        now - FIRST_SWEEP_STILL_TRUE_MS,
-      )) {
+      for (const thread of [
+        ...listAcpThreadsChangedSince(now - FIRST_SWEEP_STILL_TRUE_MS),
+        // A sign-in or limit block of any age (it may have been kept fresh
+        // for weeks before this restart).
+        ...listAcpThreadsWithBlockingFailure(),
+      ]) {
         const key = keyOf(thread);
         if (candidates.has(key)) continue;
         candidates.set(key, thread);

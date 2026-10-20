@@ -358,9 +358,25 @@ describe("after a restart", () => {
       updated_at: now - 3 * 60 * 60_000,
       outcome_json: { version: 1, state: "completed" },
     });
+    // Blocked for weeks, kept fresh by refreshes until the restart.
+    const longBlocked = job("/tmp/c.chat", "long-blocked");
+    set(longBlocked.op_id, {
+      state: "error",
+      started_at: now - 30 * 24 * 60 * 60_000,
+      finished_at: now - 30 * 24 * 60 * 60_000,
+      updated_at: now - 30 * 24 * 60 * 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "sign-in" },
+      },
+    });
     // A fresh process: nothing sent yet.
     await sweepAgentStatus(now);
-    expect(reports.map((r) => r.thread_id)).toEqual(["blocked"]);
+    expect(reports.map((r) => r.thread_id).sort()).toEqual([
+      "blocked",
+      "long-blocked",
+    ]);
   });
 });
 
