@@ -728,8 +728,8 @@ export const cache = refCache<DStreamOptions & { client: Client }, DStream>({
       throw Error("name must be specified");
     }
     // Everything that decides what the stream may do and who it asks as:
-    // a board stream opened through the board write service (as the hub)
-    // and the same stream opened through the ordinary service are different
+    // a board stream opened through the board write service (as the hub,
+    // with its fence) and the same stream opened through the ordinary service are different
     // streams, never one cached for the other.
     const {
       name,
@@ -738,6 +738,7 @@ export const cache = refCache<DStreamOptions & { client: Client }, DStream>({
       host_id,
       service,
       persistUser,
+      writeFence,
       client,
     } = options;
     const id = client?.id;
@@ -748,6 +749,7 @@ export const cache = refCache<DStreamOptions & { client: Client }, DStream>({
       host_id,
       service,
       persistUser,
+      writeFence,
       id,
     })!;
   },

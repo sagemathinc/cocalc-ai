@@ -106,7 +106,13 @@ test("one client's reader and writer of a board stream are different streams, in
         project_id,
         name: name(path),
         noInventory: true,
-        ...(write ? { service: BOARD_WRITE_SERVICE, persistUser: {} } : {}),
+        ...(write
+          ? {
+              service: BOARD_WRITE_SERVICE,
+              persistUser: {},
+              writeFence: fence(),
+            }
+          : {}),
       });
     const first = await open(!readerFirst);
     const second = await open(readerFirst);
