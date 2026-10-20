@@ -13,6 +13,7 @@ import {
 import BoardArtifact from "./board-artifact";
 import { boardFrameUrl, isBoardPath } from "./board-artifact-frame";
 import {
+  BOARD_FRAME_HIDDEN_TTL_MS,
   BOARD_FRAME_MAX_HIDDEN,
   layoutBoardFrames,
   resetBoardFrames,
@@ -305,6 +306,36 @@ test("hidden frames beyond the limit are dropped, oldest first", async () => {
   }
   expect(frames[0].isConnected).toBe(false);
   expect(frames.slice(1).every((frame) => frame.isConnected)).toBe(true);
+});
+
+test("a hidden frame is dropped after its time, though nothing else happens", async () => {
+  const { view, frame } = await renderBoard();
+  jest.useFakeTimers({ now: Date.now() });
+  try {
+    view.unmount();
+    expect(frame.isConnected).toBe(true);
+    jest.advanceTimersByTime(BOARD_FRAME_HIDDEN_TTL_MS - 1000);
+    expect(frame.isConnected).toBe(true);
+    jest.advanceTimersByTime(2000);
+    expect(frame.isConnected).toBe(false);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("a frame shown again before its time is not dropped", async () => {
+  const { view, frame } = await renderBoard();
+  view.unmount();
+  render(<Board />);
+  await screen.findByText("Current saved board");
+  expect(screen.getAllByTitle(TITLE)).toEqual([frame]);
+  jest.useFakeTimers({ now: Date.now() });
+  try {
+    jest.advanceTimersByTime(2 * BOARD_FRAME_HIDDEN_TTL_MS);
+    expect(frame.isConnected).toBe(true);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("shown in two places, the newest has the frame", async () => {

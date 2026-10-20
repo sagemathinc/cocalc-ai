@@ -73,6 +73,7 @@ const entries = new Map<string, Entry>();
 let layer: HTMLDivElement | undefined;
 let listening = false;
 let animationFrame: number | undefined;
+let evictTimer: ReturnType<typeof setTimeout> | undefined;
 
 function getLayer(): HTMLDivElement {
   if (layer?.isConnected) return layer;
@@ -223,18 +224,39 @@ function schedule(): void {
   animationFrame = requestAnimationFrame(step);
 }
 
+// Drops hidden frames over the limit or past their time, and schedules the
+// next check for when the oldest hidden frame left would pass it: so a
+// hidden frame (and its interpreters) lives at most its time, even if
+// nothing else happens.
 function evictHidden(now = Date.now()): void {
   const hidden = [...entries.values()]
     .filter((entry) => entry.placeholders.length === 0)
     .sort((a, b) => (b.hiddenSince ?? 0) - (a.hiddenSince ?? 0));
+  let oldest: number | undefined;
   hidden.forEach((entry, index) => {
+    const since = entry.hiddenSince ?? now;
     if (
       index >= BOARD_FRAME_MAX_HIDDEN ||
-      now - (entry.hiddenSince ?? now) > BOARD_FRAME_HIDDEN_TTL_MS
+      now - since > BOARD_FRAME_HIDDEN_TTL_MS
     ) {
       destroyBoardFrame(entry.key);
+    } else {
+      oldest = Math.min(oldest ?? since, since);
     }
   });
+  if (evictTimer != null) {
+    clearTimeout(evictTimer);
+    evictTimer = undefined;
+  }
+  if (oldest != null) {
+    evictTimer = setTimeout(
+      () => {
+        evictTimer = undefined;
+        evictHidden();
+      },
+      Math.max(0, oldest + BOARD_FRAME_HIDDEN_TTL_MS - now) + 1,
+    );
+  }
 }
 
 /** The live frame for this view, if there is one. */
@@ -299,6 +321,8 @@ export function createBoardFrame({
   notify(entry);
   layoutBoardFrames();
   schedule();
+  // Created hidden (no placeholder yet): it expires like any hidden frame.
+  if (entry.hiddenSince != null) evictHidden();
   return entry;
 }
 
@@ -349,6 +373,8 @@ export function resetBoardFrames(): void {
     cancelAnimationFrame(animationFrame);
   }
   animationFrame = undefined;
+  if (evictTimer != null) clearTimeout(evictTimer);
+  evictTimer = undefined;
   layer?.remove();
   layer = undefined;
 }
