@@ -5036,8 +5036,9 @@ export class JupyterActions extends JupyterActions0 {
     // over a file with content (it exists when the file was read while still
     // empty, e.g. just as a course assignment was being copied).
     const rtcIsPlaceholder = this.rtcIsGeneratedPlaceholder();
-    const hasRtcCells =
-      !rtcIsPlaceholder && this.syncdb.get_one({ type: "cell" }) != null;
+    // Any live notebook that is not the generated placeholder is real,
+    // including one emptied on purpose (no cells, has_had_content).
+    const hasRtcCells = !rtcIsPlaceholder;
     const rtcLastChangedMs =
       typeof rtcLastChangedMsAtReady === "number" &&
       Number.isFinite(rtcLastChangedMsAtReady) &&

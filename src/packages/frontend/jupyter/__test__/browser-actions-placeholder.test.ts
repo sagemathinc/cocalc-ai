@@ -433,6 +433,27 @@ describe("opening", () => {
     },
   );
 
+  it("keep a notebook emptied on purpose that is newer than the file", async () => {
+    // Every cell was deleted (e.g. through the API), recorded durably.
+    const actions = createActions({
+      cells: [],
+      settings: { has_had_content: true },
+    });
+    const close = prepareOpen(actions);
+    close();
+    actions.isClosed = jest
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+
+    await actions.watchIpynb();
+
+    expect(actions.runDebug).toHaveBeenCalledWith(
+      "watch.initial_load.decision",
+      expect.objectContaining({ hasRtcCells: true, loadFromDisk: false }),
+    );
+  });
+
   it("decide to load the file over the untouched placeholder (control)", async () => {
     const actions = createActions();
     const close = prepareOpen(actions);
