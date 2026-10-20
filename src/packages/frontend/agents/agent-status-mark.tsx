@@ -58,27 +58,43 @@ function nextChange(
   return Number.isFinite(next) ? next : undefined;
 }
 
-export function AgentStatusMark({
-  status,
-  now: fixedNow,
-}: {
-  status?: AgentTurnStatus | null;
-  /** Tests only: a fixed time. */
-  now?: number;
-}) {
+/**
+ * The time to render these statuses at: the component re-renders when the
+ * first of them next changes what it says (a limit resets, or a status gets
+ * too old), even if nothing else changes. One timer for a whole list, so a
+ * row's label and its mark change together.
+ */
+export function useAgentStatusNow(
+  statuses: readonly (AgentTurnStatus | null | undefined)[],
+): number {
   const [tick, setTick] = useState(0);
-  const now = fixedNow ?? Date.now();
-  // Re-render when what it says changes, even if nothing else does.
+  const now = Date.now();
+  let next: number | undefined;
+  for (const status of statuses) {
+    const at = nextChange(status, now);
+    if (at != null && (next == null || at < next)) next = at;
+  }
   useEffect(() => {
-    if (fixedNow != null) return;
-    const next = nextChange(status, Date.now());
     if (next == null) return;
     const timer = setTimeout(
       () => setTick((n) => n + 1),
       Math.min(2 ** 31 - 1, Math.max(1_000, next - Date.now() + 1_000)),
     );
     return () => clearTimeout(timer);
-  }, [status, fixedNow, tick]);
+  }, [next, tick]);
+  return now;
+}
+
+export function AgentStatusMark({
+  status,
+  now: fixedNow,
+}: {
+  status?: AgentTurnStatus | null;
+  /** The time to render at (its list's useAgentStatusNow, or a test's). */
+  now?: number;
+}) {
+  const ownNow = useAgentStatusNow(fixedNow == null ? [status] : []);
+  const now = fixedNow ?? ownNow;
   const label = agentUnavailableLabel(status, now);
   if (!label) return null;
   return (

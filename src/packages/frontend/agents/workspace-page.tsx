@@ -338,7 +338,11 @@ import {
 } from "./agent-subscription-selection";
 import { copyPaymentSelection } from "@cocalc/frontend/chat/payment-selection-store";
 import { WithAgentRuntimeMark } from "./agent-runtime-mark";
-import { AgentStatusMark, agentRowLabel } from "./agent-status-mark";
+import {
+  AgentStatusMark,
+  agentRowLabel,
+  useAgentStatusNow,
+} from "./agent-status-mark";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -3910,6 +3914,8 @@ export function MyAgentsWorkspacePage({
       ?.focus();
   }, [agentSidebarHidden, mobileList, isNarrow]);
   const agents = directory?.agents ?? [];
+  // Rows (label and mark together) re-render when a status expires.
+  const statusNow = useAgentStatusNow(agents.map((agent) => agent.status));
   // Each agent's identity record keeps a copy of its theme, so badges and
   // titles are right before its chat loads; a loaded chat's theme wins.
   const agentAppearances = useMemo(
@@ -4682,6 +4688,7 @@ export function MyAgentsWorkspacePage({
             aria-label={agentRowLabel(
               { title: theme.title, name: agent.name, project: projectTitle },
               agent.status,
+              statusNow,
             )}
             title={`${theme.title} · @${agent.name}${showProjectTitle ? ` · ${projectTitle}` : ""}`}
             onClick={() => selectAgent(agent)}
@@ -4711,7 +4718,7 @@ export function MyAgentsWorkspacePage({
                 </Text>
               )}
             </Text>
-            <AgentStatusMark status={agent.status} />
+            <AgentStatusMark status={agent.status} now={statusNow} />
           </button>
         </div>
         {!hidden && (

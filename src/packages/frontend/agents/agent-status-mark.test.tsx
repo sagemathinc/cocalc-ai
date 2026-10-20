@@ -6,7 +6,11 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import { act } from "@testing-library/react";
-import { AgentStatusMark, agentRowLabel } from "./agent-status-mark";
+import {
+  AgentStatusMark,
+  agentRowLabel,
+  useAgentStatusNow,
+} from "./agent-status-mark";
 
 const NOW = Date.parse("2026-10-20T06:00:00Z");
 const status = (extra = {}) => ({
@@ -94,5 +98,57 @@ describe("an agent's status mark", () => {
     expect(
       agentRowLabel(parts, status({ unavailable: { reason: "sign-in" } }), NOW),
     ).toBe("Matlab, @matlab, Research, Unavailable (sign-in needs renewing)");
+  });
+});
+
+describe("a list of agent rows", () => {
+  function Rows({ statuses }: { statuses: any[] }) {
+    const now = useAgentStatusNow(statuses);
+    return (
+      <div>
+        {statuses.map((s, i) => (
+          <button
+            key={i}
+            aria-label={agentRowLabel(
+              { title: `Agent ${i}`, name: `a${i}`, project: "P" },
+              s,
+              now,
+            )}
+          >
+            <AgentStatusMark status={s} now={now} />
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  it("updates each row's label together with its mark when a limit resets", () => {
+    jest.useFakeTimers({ now: NOW });
+    try {
+      render(
+        <Rows
+          statuses={[
+            status({ unavailable: { reason: "limit", until: NOW + 60_000 } }),
+            status({ unavailable: { reason: "limit", until: NOW + 120_000 } }),
+          ]}
+        />,
+      );
+      const labels = () =>
+        screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"));
+      expect(labels().filter((l) => /Unavailable/.test(l!))).toHaveLength(2);
+      act(() => {
+        jest.advanceTimersByTime(62_000);
+      });
+      expect(labels()[0]).toBe("Agent 0, @a0, P");
+      expect(labels()[1]).toMatch(/Unavailable/);
+      expect(screen.getAllByRole("img")).toHaveLength(1);
+      act(() => {
+        jest.advanceTimersByTime(60_000);
+      });
+      expect(labels()[1]).toBe("Agent 1, @a1, P");
+      expect(screen.queryAllByRole("img")).toHaveLength(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

@@ -172,3 +172,54 @@ describe("reporting what each agent is doing", () => {
     expect(reports[0].status).toMatchObject({ running: 1, queued: 0 });
   });
 });
+
+describe("a failed report with no later change", () => {
+  it("is tried again with backoff, and stops once it is sent", async () => {
+    const now = Date.now();
+    let fail = true;
+    let attempts = 0;
+    setAgentStatusReporterForTests(async (opts) => {
+      attempts += 1;
+      if (fail) throw new Error("hub unreachable");
+      reports.push(opts);
+      return { registered: true };
+    });
+    // A turn that ended at its limit: its job never changes again.
+    const mine = job();
+    set(mine.op_id, {
+      state: "error",
+      started_at: now - 61_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: {
+          kind: "limit",
+          scope: "credential",
+          resets_at: now + 3_600_000,
+        },
+      },
+    });
+    await sweepAgentStatus(now);
+    expect(attempts).toBe(1);
+    // Not due yet (30 s): not tried.
+    await sweepAgentStatus(now + 10_000);
+    expect(attempts).toBe(1);
+    // Due: tried again, and fails again; the next wait is a minute.
+    await sweepAgentStatus(now + 31_000);
+    expect(attempts).toBe(2);
+    await sweepAgentStatus(now + 61_000);
+    expect(attempts).toBe(2);
+    fail = false;
+    await sweepAgentStatus(now + 92_000);
+    expect(attempts).toBe(3);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].status).toMatchObject({
+      unavailable: { reason: "limit" },
+    });
+    // Sent: nothing more.
+    await sweepAgentStatus(now + 30 * 60_000);
+    expect(attempts).toBe(3);
+  });
+});

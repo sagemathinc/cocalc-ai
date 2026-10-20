@@ -32,6 +32,11 @@ const SWEEP_OVERLAP_MS = 5_000;
 /** On start, what changed this recently is reported again. */
 const FIRST_SWEEP_LOOKBACK_MS = 10 * 60_000;
 const MAX_REMEMBERED = 10_000;
+/** A report that failed (hub unreachable) is tried again after this,
+ * doubling each time up to the cap, at most this many times. */
+const FAILED_RETRY_MS = 30_000;
+const FAILED_RETRY_MAX_MS = 10 * 60_000;
+const FAILED_RETRY_ATTEMPTS = 10;
 
 type Thread = { project_id: string; path: string; thread_id: string };
 type Reporter = (
@@ -49,12 +54,20 @@ const unregistered = new Map<
   { thread: Thread & { account_id: string }; until: number }
 >();
 
+// Not reported because the hub did not answer: tried again when due, even
+// if its jobs never change again (a turn that ended at a limit may not).
+const failed = new Map<
+  string,
+  { thread: Thread & { account_id: string }; until: number; attempts: number }
+>();
+
 /** Tests only. */
 export function setAgentStatusReporterForTests(next?: Reporter): void {
   reporter = next ?? ((opts) => hubApi.agent.reportStatus(opts));
   lastSweep = undefined;
   sent.clear();
   unregistered.clear();
+  failed.clear();
 }
 
 /** The status of one conversation's agent, from its jobs. */
@@ -100,6 +113,11 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
         retry.add(key);
         if (!candidates.has(key)) candidates.set(key, entry.thread);
       }
+    // Its last report failed, so `sent` still differs: it is sent once due.
+    for (const [key, entry] of failed) {
+      if (candidates.has(key)) continue;
+      if (entry.until <= now) candidates.set(key, entry.thread);
+    }
     for (const [key, thread] of candidates) {
       // Only chats have registered agents.
       if (!thread.path.endsWith(".chat")) continue;
@@ -109,6 +127,7 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
         continue;
       try {
         const { registered } = await reporter({ ...thread, status });
+        failed.delete(key);
         if (sent.size >= MAX_REMEMBERED) sent.clear();
         sent.set(key, status);
         if (!registered) {
@@ -119,8 +138,24 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
           });
         } else unregistered.delete(key);
       } catch (err) {
-        // An older hub, or unreachable: the next change tries again.
+        // Unreachable (or an older hub): tried again with backoff, and on
+        // the next change.
         logger.debug("agent status not reported", { err: `${err}` });
+        const attempts = (failed.get(key)?.attempts ?? 0) + 1;
+        if (attempts > FAILED_RETRY_ATTEMPTS) failed.delete(key);
+        else {
+          if (failed.size >= MAX_REMEMBERED) failed.clear();
+          failed.set(key, {
+            thread,
+            attempts,
+            until:
+              now +
+              Math.min(
+                FAILED_RETRY_MS * 2 ** (attempts - 1),
+                FAILED_RETRY_MAX_MS,
+              ),
+          });
+        }
       }
     }
   } finally {
