@@ -48,7 +48,8 @@ async function holdInOtherProcess(): Promise<ChildProcess> {
 test("the lock gives a fresh 128-bit nonce, chosen after the lock is held", async () => {
   const a = await acquireBoardWriteLock({ path });
   expect(a.nonce).toMatch(/^[0-9a-f]{32}$/);
-  expect(a.filesystem).toBe("btrfs");
+  // Whichever trusted local filesystem the test's tmpdir is on.
+  expect(["ext4", "xfs", "btrfs", "tmpfs"]).toContain(a.filesystem);
   a.assertWritable();
   a.close();
   const b = await acquireBoardWriteLock({ path });
