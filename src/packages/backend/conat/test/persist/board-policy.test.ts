@@ -5,6 +5,7 @@ reads it, and only the board write service (as the hub) writes it.
 
 import { before, after, connect } from "@cocalc/backend/conat/test/setup";
 import { dstream } from "@cocalc/conat/sync/dstream";
+import { astream } from "@cocalc/conat/sync/astream";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { boardSyncdbPath } from "@cocalc/util/board/names";
@@ -111,6 +112,26 @@ test("one client's reader and writer of a board stream are different streams, in
     writer.close();
     check.close();
   }
+});
+
+test("an astream with the writer's route asks as the hub (as a board's history reset does)", async () => {
+  const project_id = uuid();
+  const path = "/home/user/astream.board.json";
+  const s = astream({
+    client: connect(),
+    project_id,
+    name: name(path),
+    service: BOARD_WRITE_SERVICE,
+    persistUser: {},
+    noInventory: true,
+  });
+  // Through the board write service as the hub: accepted (as a project,
+  // the write service would refuse the connection).
+  await s.publish({ edit: 1 });
+  s.close();
+  const reader = await readerStream(project_id, path);
+  expect(reader.getAll()).toEqual([{ edit: 1 }]);
+  reader.close();
 });
 
 test("a reader can't make a board stream ephemeral", async () => {

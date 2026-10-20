@@ -67,7 +67,9 @@ export class AStream<T = any> {
     this.client = requireAstreamClient(options, "AStream").client;
     this.stream = stream({
       client: this.client,
-      user: this.user,
+      // Who to ask as: persistUser when given (a board's writer asks the
+      // board write service as the hub), as CoreStream does.
+      user: options.persistUser ?? this.user,
       storage: this.storage,
       service: options.service,
     });
