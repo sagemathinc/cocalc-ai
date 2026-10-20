@@ -9455,11 +9455,13 @@ async function enqueueSignInHold({
   job,
   outcome,
   now = Date.now(),
+  credentialUpdatedAt = defaultCredentialUpdatedAt,
 }: {
   client: ConatClient;
   job: AcpJobRow;
   outcome: TurnOutcome;
   now?: number;
+  credentialUpdatedAt?: CredentialUpdatedAt;
 }): Promise<AcpJobRow | undefined> {
   if (outcome.state !== "failed" || outcome.failure.kind !== "sign-in")
     return undefined;
@@ -9485,12 +9487,14 @@ async function enqueueSignInHold({
         : "It had not run any tools before it stopped.",
     ].join(" "),
   });
-  if (held)
+  if (held) {
     logger.info("held ACP turn until its sign-in is renewed", {
       failed_op_id: job.op_id,
       held_op_id: held.op_id,
       available_at: held.available_at ?? null,
     });
+    await takeSignInHoldBaseline(held, credentialUpdatedAt);
+  }
   return held;
 }
 
@@ -9539,12 +9543,60 @@ type CredentialUpdatedAt = (opts: {
 const SIGNIN_HOLD_SKEW_MS = 2 * 60_000;
 
 /**
- * The newest credential update each held sign-in turn has seen, by op_id.
- * Timestamps come from the home bay's clock, so comparing an answer with
- * the baseline never mixes clocks; only a turn's first look (no baseline
- * yet, e.g. after a restart) compares with its hold start, with slack.
+ * The newest credential update each held sign-in turn has seen, by op_id,
+ * taken when it was held. Timestamps come from the home bay's clock, so
+ * comparing an answer with the baseline never mixes clocks; only a turn
+ * without one (e.g. after a restart) compares with its hold start.
  */
 const signInHoldBaselines = new Map<string, number>();
+
+const defaultCredentialUpdatedAt: CredentialUpdatedAt = (opts) =>
+  hubApi.agent.credentialUpdatedAt(opts);
+
+/** The newest sign-in this answer shows, if it shows any. */
+function signInSeen(answer: {
+  updated_at?: number;
+  revoked?: boolean;
+  newest_updated_at?: number;
+}): number | undefined {
+  if (answer.updated_at == null && answer.newest_updated_at == null)
+    return undefined;
+  const own = !answer.revoked ? (answer.updated_at ?? 0) : 0;
+  return Math.max(own, answer.newest_updated_at ?? 0);
+}
+
+/**
+ * Record what the home bay shows when a turn is held, so that any update
+ * after it (even a sign-in seconds later) releases the turn, and any
+ * update the failing attempt made itself (a token refresh) does not.
+ */
+async function takeSignInHoldBaseline(
+  held: AcpJobRow,
+  credentialUpdatedAt: CredentialUpdatedAt,
+): Promise<void> {
+  const credential = heldSignInCredential(held);
+  if (!credential || !held.account_id) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const answer = await Promise.race([
+      credentialUpdatedAt({
+        account_id: held.account_id,
+        project_id: held.project_id,
+        ...credential,
+      }),
+      new Promise<{}>((resolve) => {
+        timer = setTimeout(() => resolve({}), 10_000);
+      }),
+    ]);
+    const seen = signInSeen(answer);
+    if (seen != null && !signInHoldBaselines.has(held.op_id))
+      signInHoldBaselines.set(held.op_id, seen);
+  } catch {
+    // No baseline: releaseRenewedSignInHolds falls back to the hold time.
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /**
  * Release every held sign-in turn whose account signed in again since it
@@ -9552,8 +9604,7 @@ const signInHoldBaselines = new Map<string, number>();
  * updated (not just revoked). An unanswered lookup changes nothing.
  */
 async function releaseRenewedSignInHolds(
-  credentialUpdatedAt: CredentialUpdatedAt = (opts) =>
-    hubApi.agent.credentialUpdatedAt(opts),
+  credentialUpdatedAt: CredentialUpdatedAt = defaultCredentialUpdatedAt,
   now = Date.now(),
 ): Promise<number> {
   // One lookup per account and credential per pass.
@@ -9581,14 +9632,18 @@ async function releaseRenewedSignInHolds(
           ...credential,
         }).catch(() => ({})),
       );
-    const answer = await asked.get(key)!;
-    if (answer.updated_at == null && answer.newest_updated_at == null) continue;
-    const own = !answer.revoked ? (answer.updated_at ?? 0) : 0;
-    const seen = Math.max(own, answer.newest_updated_at ?? 0);
+    const seen = signInSeen(await asked.get(key)!);
+    if (seen == null) continue;
     const baseline = signInHoldBaselines.get(job.op_id);
     if (baseline == null) {
-      signInHoldBaselines.set(job.op_id, seen);
-      if (seen <= start + SIGNIN_HOLD_SKEW_MS) continue;
+      // No baseline from the hold (its lookup failed, or this host
+      // restarted): only an update clearly before the hold becomes one.
+      // One near or after it releases; if that was not a sign-in, the turn
+      // fails the same way and is held again, with a baseline.
+      if (seen <= start - SIGNIN_HOLD_SKEW_MS) {
+        signInHoldBaselines.set(job.op_id, seen);
+        continue;
+      }
     } else if (seen <= baseline) continue;
     signInHoldBaselines.delete(job.op_id);
     if (releaseHeldAcpJob(job.op_id, now)) released += 1;

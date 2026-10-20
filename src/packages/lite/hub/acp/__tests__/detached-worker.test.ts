@@ -604,6 +604,11 @@ it.each([
       signIn?: boolean;
     },
   ) => {
+    // What the home bay shows: a token refresh the failing attempt made.
+    let updated_at = Date.now() + 5 * 60_000;
+    const originalUpdatedAt = hubApi.agent.credentialUpdatedAt;
+    const credentialUpdatedAt = jest.fn(async () => ({ updated_at }));
+    hubApi.agent.credentialUpdatedAt = credentialUpdatedAt as any;
     const previousEnabled = process.env.COCALC_ACP_HARNESSES;
     process.env.COCALC_ACP_HARNESSES = "1";
     setHarnessLauncher(async () => {
@@ -710,6 +715,17 @@ it.each([
         expect(`${decodeAcpJobRequest(held[0]).prompt}`).toMatch(
           /sign-in needed renewing/,
         );
+        // The hold asked the home bay what it shows now, so that update
+        // (whatever the clocks) does not release it, and the next one does.
+        expect(credentialUpdatedAt).toHaveBeenCalledWith(
+          expect.objectContaining({
+            credential_id: "33333333-3333-4333-8333-333333333333",
+          }),
+        );
+        const release = acpTestInternals.releaseRenewedSignInHolds;
+        expect(await release()).toBe(0);
+        updated_at += 1_000;
+        expect(await release()).toBe(1);
         return;
       }
       expect(held[0]).toMatchObject({
@@ -732,6 +748,7 @@ it.each([
     } finally {
       unregister();
       setHarnessLauncher();
+      hubApi.agent.credentialUpdatedAt = originalUpdatedAt;
       if (previousEnabled === undefined)
         delete process.env.COCALC_ACP_HARNESSES;
       else process.env.COCALC_ACP_HARNESSES = previousEnabled;
@@ -4928,8 +4945,8 @@ describe("held sign-in turns resume once the account signs in again", () => {
   };
 
   it.each([
-    ["an update before it was held", { updated_at: -1 }, false],
-    ["an update within the clock-skew slack", { updated_at: 1 }, false],
+    ["an update well before it was held", { updated_at: -3 }, false],
+    ["an update near the hold (it may be a sign-in)", { updated_at: -1 }, true],
     ["its credential signed in again", { updated_at: 3 }, true],
     [
       "a new credential replacing a revoked one",
@@ -4997,7 +5014,7 @@ describe("held sign-in turns resume once the account signs in again", () => {
     expect(lookup).toHaveBeenCalledTimes(1);
   });
 
-  it("after its first look, compares only the home bay's own times", async () => {
+  it("without a baseline, compares only the home bay's own times once one is clear", async () => {
     getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
     const heldAt = Date.now() - 60_000;
     const job = held(heldAt);
