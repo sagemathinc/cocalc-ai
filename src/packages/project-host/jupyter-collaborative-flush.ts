@@ -160,7 +160,9 @@ export async function flushJupyterNotebook({
       ) {
         // The live notebook is only the generated empty cell (it was opened
         // while the file was still empty, e.g. during a course copy): the
-        // file is the work, so collect it as it is (support ticket 21023).
+        // file is the work, so collect it as it is (support ticket 21023),
+        // unless the notebook was edited while the file was read.
+        if (doc.newestVersion() !== version) continue;
         return;
       }
       const contents = jupyterNotebookContents(

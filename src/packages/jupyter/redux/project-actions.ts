@@ -24,10 +24,7 @@ import {
   externalizeJupyterAttachments,
 } from "@cocalc/jupyter/ipynb/blob-attachments";
 import handleNbconvertChange from "./handle-nbconvert-change";
-import {
-  isPlaceholderIpynb,
-  notebookFileHasContent,
-} from "@cocalc/jupyter/ipynb/placeholder";
+import { isPlaceholderIpynb } from "@cocalc/jupyter/ipynb/placeholder";
 
 const logger = getLogger("jupyter:project-actions");
 
@@ -58,14 +55,11 @@ export class JupyterActions extends JupyterActions0 {
     }
     if (
       this.liveNotebookIsGeneratedPlaceholder() &&
-      isPlaceholderIpynb(ipynb) &&
-      (await notebookFileHasContent(
-        (path) => this.syncdb.fs.readFile(path),
-        this.path,
-      ))
+      isPlaceholderIpynb(ipynb)
     ) {
-      // The generated empty cell carries no work: never write it over a
-      // notebook file with content (e.g. one a course copy just filled in).
+      // The generated empty cell carries no work, so it is never written: a
+      // write could replace a file another writer (e.g. a course copy) is
+      // filling in, however a check of the file is ordered.
       return;
     }
     const saveIpynb = this.syncdb.fs.jupyterSaveIpynb;

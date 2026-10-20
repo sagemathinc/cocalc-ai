@@ -210,9 +210,60 @@ describe("collaborative Jupyter collection flush", () => {
     await expect(flush()).resolves.toBeUndefined();
     expect(saveJupyterIpynbMock).not.toHaveBeenCalled();
 
+    // Nor with a notebook that has no cells yet.
+    documentMock = { ...placeholderDoc({}), get: jest.fn(() => List()) };
+    await expect(flush()).resolves.toBeUndefined();
+    expect(saveJupyterIpynbMock).not.toHaveBeenCalled();
+
     // A notebook emptied on purpose is still flushed.
     documentMock = placeholderDoc({ has_had_content: true });
     await flush();
     expect(saveJupyterIpynbMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves an edit made while the placeholder check reads the file", async () => {
+    const { List, fromJS } = require("immutable");
+    const lab = JSON.stringify({
+      cells: [{ cell_type: "markdown", source: ["### Lab 3"], metadata: {} }],
+      metadata: {},
+      nbformat: 4,
+      nbformat_minor: 5,
+    });
+    let version = "version-1";
+    let reads = 0;
+    let cell: any = { type: "cell", id: "alpha", pos: 0, input: "" };
+    documentMock = {
+      wait_until_ready: jest.fn(async () => undefined),
+      newestVersion: jest.fn(() => version),
+      get_doc: jest.fn(() => ({})),
+      get: jest.fn(() => List([fromJS(cell)])),
+      get_one: jest.fn(() => fromJS({ type: "settings" })),
+      close: jest.fn(async () => undefined),
+    };
+    const filesystem = {
+      readFile: jest.fn(async () => {
+        // The first read is for metadata, before the stability loop; the
+        // student types into the cell while the placeholder guard reads.
+        reads += 1;
+        if (reads === 2) {
+          cell = { ...cell, input: "answer = 42" };
+          version = "version-2";
+        }
+        return Buffer.from(lab);
+      }),
+    };
+    const { flushJupyterNotebook } =
+      await import("./jupyter-collaborative-flush");
+
+    const result = await flushJupyterNotebook({
+      project_id: "project",
+      notebook_path: "assignment/lab3.ipynb",
+      actor_account_id: "instructor",
+      filesystem: filesystem as any,
+      syncClient: {} as any,
+    });
+
+    expect(saveJupyterIpynbMock).toHaveBeenCalledTimes(1);
+    expect(result?.version).toBe("version-2");
   });
 });

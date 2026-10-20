@@ -50,6 +50,7 @@ import { sha1 } from "@cocalc/util/misc";
 import { blobifyOutputData } from "@cocalc/jupyter/util/blobify-output";
 import {
   cellRecordsAreGeneratedPlaceholder,
+  notebookSettingsArePlaceholder,
   syncdbIsGeneratedPlaceholder,
 } from "@cocalc/jupyter/ipynb/placeholder";
 import { join } from "path";
@@ -2932,9 +2933,14 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     try {
       const cells = this.syncdb?.get({ type: "cell" });
       if (
-        cells != null &&
-        cells.size > 0 &&
-        !cellRecordsAreGeneratedPlaceholder(cells)
+        (cells != null &&
+          cells.size > 0 &&
+          !cellRecordsAreGeneratedPlaceholder(cells)) ||
+        // Notebook-level metadata (e.g. nbgrader) is content too, so that
+        // removing it is recorded like clearing a cell.
+        !notebookSettingsArePlaceholder(
+          this.syncdb?.get_one({ type: "settings" }),
+        )
       ) {
         this.sawNotebookContent = true;
       }

@@ -4651,30 +4651,13 @@ export class JupyterActions extends JupyterActions0 {
       }
       return;
     }
-    this.importCommitVersion = undefined;
-    await this.setToIpynb(ipynb);
+    const editedWhileApplying = await this.applyIpynb(ipynb);
     // setToIpynb runs with change handling paused, so note the loaded content
     // here (see ensureThereIsACell).
     this.noteNotebookContent();
-    // setToIpynb commits the file and then awaits the RTC save, and edits are
-    // allowed meanwhile. Such an edit is not in the file: keep it unsaved and
-    // save it, rather than marking the notebook as matching the file.
-    const importVersion = this.importCommitVersion;
-    if (
-      importVersion != null &&
-      (this.getRtcVersion() !== importVersion ||
-        this.syncdb?.has_uncommitted_changes?.() === true)
-    ) {
-      this.runDebug("ipynb.load.edited_while_applying", {
-        importVersion,
-        actualRtcVersion: this.getRtcVersion(),
-      });
-      this.hasUnsavedChanges = true;
-      if (this.saveIpynbInFlight == null) {
-        await this.saveIpynb();
-      } else {
-        this.saveIpynbRequested = true;
-      }
+    if (editedWhileApplying) {
+      this.runDebug("ipynb.load.edited_while_applying");
+      await this.saveNewerEdit();
       return;
     }
     this.markIpynbSaved();
@@ -4708,6 +4691,31 @@ export class JupyterActions extends JupyterActions0 {
       this.hasUnsavedChanges ||
       this.syncdb?.has_uncommitted_changes?.() === true
     );
+  };
+
+  // Apply an ipynb to the live notebook and report whether it was edited
+  // meanwhile: setToIpynb commits the file and then awaits the RTC save, and
+  // edits are allowed during that wait. Such an edit is not in the file.
+  private applyIpynb = async (ipynb: any): Promise<boolean> => {
+    this.importCommitVersion = undefined;
+    await this.setToIpynb(ipynb);
+    const importVersion = this.importCommitVersion;
+    return (
+      importVersion != null &&
+      (this.getRtcVersion() !== importVersion ||
+        this.syncdb?.has_uncommitted_changes?.() === true)
+    );
+  };
+
+  // Keep a newer edit unsaved and save it, rather than marking the notebook
+  // as matching the file.
+  private saveNewerEdit = async (): Promise<void> => {
+    this.hasUnsavedChanges = true;
+    if (this.saveIpynbInFlight == null) {
+      await this.saveIpynb();
+    } else {
+      this.saveIpynbRequested = true;
+    }
   };
 
   private markIpynbSaved = (): void => {
@@ -4758,6 +4766,10 @@ export class JupyterActions extends JupyterActions0 {
         });
       } else if (this.getRtcVersion() === snapshotVersion) {
         this.markIpynbSaved();
+      } else {
+        // Edited while the file was read: save that edit next.
+        this.hasUnsavedChanges = true;
+        this.saveIpynbRequested = true;
       }
       return;
     }
@@ -4779,8 +4791,13 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     if (result.converted) {
-      await this.setToIpynb(result.ipynb);
+      const editedWhileApplying = await this.applyIpynb(result.ipynb);
       if (this.isClosed()) return;
+      if (editedWhileApplying) {
+        this.runDebug("ipynb.save.edited_while_applying_conversion");
+        await this.saveNewerEdit();
+        return;
+      }
     }
     this.markIpynbSaved();
     this.runDebug("ipynb.save.done", { bytes: result.bytes });

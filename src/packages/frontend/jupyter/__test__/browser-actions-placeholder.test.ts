@@ -217,6 +217,70 @@ describe("saving", () => {
     );
   });
 
+  it("save an edit made while the placeholder save reads an empty file", async () => {
+    const actions = createActions();
+    actions.hasUnsavedChanges = true;
+    actions.syncdb.fs.readFile = jest.fn(async () => {
+      actions.setCells([{ ...ALPHA, input: "y = 2" }]); // typed meanwhile
+      actions.setVersion("v2");
+      return Buffer.from("");
+    });
+
+    await actions.saveIpynb();
+
+    expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledTimes(1);
+    expect(
+      actions.syncdb.fs.jupyterSaveIpynb.mock.calls[0][1].cells[0].source,
+    ).toEqual(["y = 2"]);
+  });
+
+  it("save an edit made while a converted save is applied", async () => {
+    const actions = createActions({ cells: [{ ...ALPHA, input: "x = 1" }] });
+    actions.hasUnsavedChanges = true;
+    actions.syncdb.fs.jupyterSaveIpynb = jest
+      .fn()
+      .mockImplementationOnce(async (_path, ipynb) => ({
+        bytes: 10,
+        converted: true,
+        ipynb,
+      }))
+      .mockImplementation(async (_path, ipynb) => ({
+        bytes: 10,
+        converted: false,
+        ipynb,
+      }));
+    let finish: () => void = () => {};
+    actions.setToIpynb = jest.fn(() => {
+      actions.setVersion("imported");
+      actions.noteImportCommit();
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+
+    const saving = actions.saveIpynb();
+    while (actions.setToIpynb.mock.calls.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    actions.setVersion("v2"); // the user edits while the conversion applies
+    finish();
+    await saving;
+
+    expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledTimes(2);
+  });
+
+  it("save a notebook whose custom notebook metadata was just removed", async () => {
+    const actions = createActions({
+      settings: { metadata: { nbgrader: { assignment: "lab3" } } },
+    });
+    actions.noteNotebookContent(); // seeded at open
+    actions.setSettings({}); // the user removes the notebook metadata
+    actions.hasUnsavedChanges = true;
+
+    await actions.saveIpynb();
+
+    expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledTimes(1);
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
+  });
+
   it("save a clear made just before saving, before the change event records it", async () => {
     // The user cleared the only cell's input and saved at once: the debounced
     // change event that writes has_had_content has not run yet.

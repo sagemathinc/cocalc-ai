@@ -129,8 +129,11 @@ export function notebookSettingsArePlaceholder(settings: any): boolean {
 // placeholder. Errors count as content.
 export function syncdbIsGeneratedPlaceholder(syncdb: any): boolean {
   try {
+    const cells = syncdb.get({ type: "cell" });
+    // No cells yet (before ensureThereIsACell adds the generated one) is the
+    // same empty notebook; an intentional empty has has_had_content.
     return (
-      cellRecordsAreGeneratedPlaceholder(syncdb.get({ type: "cell" })) &&
+      ((cells?.size ?? 0) === 0 || cellRecordsAreGeneratedPlaceholder(cells)) &&
       notebookSettingsArePlaceholder(syncdb.get_one({ type: "settings" }))
     );
   } catch {

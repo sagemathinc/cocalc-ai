@@ -100,9 +100,11 @@ describe("project-side save of the generated placeholder", () => {
   function placeholderActions({
     disk,
     settings = {},
+    cells = [ALPHA],
   }: {
     disk?: string;
     settings?: object;
+    cells?: object[];
   }) {
     const exported = export_to_ipynb({
       cell_list: ["alpha"],
@@ -110,7 +112,7 @@ describe("project-side save of the generated placeholder", () => {
       kernelspec: { name: "python3" },
     } as any);
     const { actions, writeFile } = createActions(exported);
-    actions.syncdb.get = () => List([fromJS(ALPHA)]);
+    actions.syncdb.get = () => List(cells.map((cell) => fromJS(cell)));
     actions.syncdb.get_one = () => fromJS({ type: "settings", ...settings });
     if (disk != null) {
       actions.syncdb.fs.readFile = jest.fn(async () => Buffer.from(disk));
@@ -132,10 +134,24 @@ describe("project-side save of the generated placeholder", () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
-  it("writes the placeholder when there is no file", async () => {
-    const { actions, writeFile } = placeholderActions({});
+  it("never writes the placeholder, even when the file looks empty", async () => {
+    // Checking the file first is not enough: a course copy can fill it in
+    // between that read and the write.
+    for (const disk of [undefined, ""]) {
+      const { actions, writeFile } = placeholderActions({ disk });
+      await actions.save_ipynb_file();
+      expect(writeFile).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not write a notebook with no cells yet over a file with content", async () => {
+    const { actions, writeFile } = placeholderActions({
+      disk: LAB_TEXT,
+      cells: [],
+    });
+    actions.toIpynb = jest.fn(async () => ({ cells: [], metadata: {} }));
     await actions.save_ipynb_file();
-    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(writeFile).not.toHaveBeenCalled();
   });
 
   it("writes a notebook that was emptied on purpose", async () => {
