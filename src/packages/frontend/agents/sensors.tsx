@@ -144,6 +144,8 @@ function watchText(spec: Extract<SensorSpec, { kind: "watch" }>): string {
   if (w.type === "file")
     return w.match ? `${w.path} contains "${w.match}"` : `${w.path} exists`;
   if (w.type === "exit") return `${w.command} exits`;
+  if (w.type === "agent-turn")
+    return `the turn my message started on ${w.name ? `@${w.name}` : "another agent"} ends`;
   return `${new Date(w.at).toLocaleString()}: ${w.note}`;
 }
 

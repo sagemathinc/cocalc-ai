@@ -98,7 +98,13 @@ export function registerAgentCommands(
       "attempt id (default: new); a deliberate retry needs a NEW id",
     )
     .option("--external-agent <profile>", "use an enrolled external agent")
+    .option(
+      "--watch-turn",
+      "wake me once when the turn this message starts ends (a sensor watcher; end your turn after sending)",
+    )
     .action(async (name: string, message: string[], opts, cmd) => {
+      if (opts.watchTurn && opts.externalAgent)
+        throw new Error("--watch-turn needs this agent's own sensors");
       const body = await messageBody(message, opts);
       const globals = globalsFrom(cmd);
       const sent = await sendAgentMessage({
@@ -110,9 +116,15 @@ export function registerAgentCommands(
         externalAgent: opts.externalAgent,
         api: globals.api,
       });
+      const watched = opts.watchTurn
+        ? await watchSentTurn(sent, globals.api)
+        : undefined;
       emitSuccess({ globals }, `${prefix} send`, {
-        summary: agentSendSummary(sent),
+        summary: [agentSendSummary(sent), watched?.summary]
+          .filter(Boolean)
+          .join(" "),
         ...sent.outcome,
+        ...(watched?.sensor_id ? { watch_sensor_id: watched.sensor_id } : {}),
       });
       process.exitCode = agentSendExitCode(sent.outcome.outcome);
     });
@@ -795,5 +807,46 @@ export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
         delivery_mode,
       })),
     })),
+  };
+}
+
+/**
+ * After `agent send --watch-turn`: a watcher that wakes this agent once when
+ * the turn its message started ends. Only an accepted message that queued a
+ * turn of its own has one to watch.
+ */
+export async function watchSentTurn(
+  sent: { outcome: AgentRpcOutcome; target_name?: string },
+  api?: string,
+): Promise<{ summary: string; sensor_id?: string }> {
+  const { outcome } = sent;
+  if (outcome.outcome !== "accepted")
+    return { summary: "No turn to watch: the message was not accepted." };
+  if (outcome.operation?.disposition === "steered")
+    return {
+      summary:
+        "No watcher set: the message joined the recipient's running turn rather than starting one.",
+    };
+  const target = outcome.target as { project_id?: string; agent_id?: string };
+  if (!target?.project_id || !target.agent_id)
+    return { summary: "No watcher set: the recipient is not a project agent." };
+  const set: any = await sendIdentityMessage(
+    {
+      action: "sensor",
+      op: "watch",
+      watch: {
+        type: "agent-turn",
+        attempt_id: outcome.attempt_id,
+        agent_network_id: outcome.agent_network_id,
+        target: { project_id: target.project_id, agent_id: target.agent_id },
+        ...(sent.target_name ? { name: sent.target_name } : {}),
+      },
+    },
+    api,
+  );
+  return {
+    summary:
+      "You will get one [Sensor wake] turn when its turn ends; you can end your turn now.",
+    sensor_id: set?.sensor?.sensor_id,
   };
 }
