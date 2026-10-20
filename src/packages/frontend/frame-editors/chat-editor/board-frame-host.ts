@@ -197,7 +197,51 @@ function sentinel(onFocus: () => void): HTMLElement {
   return el;
 }
 
-// Focus the mark the card renders beside its placeholder.
+// What Tab can reach, in document order (positive tabIndex is not
+// reordered: nothing here uses it).
+const TABBABLE =
+  'a[href], area[href], button, input, select, textarea, iframe, summary, [tabindex], [contenteditable=""], [contenteditable="true"]';
+
+function isTabbable(el: HTMLElement): boolean {
+  if (el.tabIndex < 0 || (el as HTMLButtonElement).disabled) return false;
+  // Not the frames themselves, nor anything the user can't see.
+  if (layer?.contains(el)) return false;
+  if (el.closest('[inert], [hidden], [aria-hidden="true"]') != null) {
+    return false;
+  }
+  for (
+    let node: HTMLElement | null = el;
+    node != null;
+    node = node.parentElement
+  ) {
+    if (getComputedStyle(node).display === "none") return false;
+  }
+  return getComputedStyle(el).visibility === "visible";
+}
+
+// The control Tab (or Shift+Tab) reaches from this mark: the first tabbable
+// element after it, or the last before it.
+function adjacentControl(
+  mark: HTMLElement,
+  forward: boolean,
+): HTMLElement | undefined {
+  const all = [...document.querySelectorAll<HTMLElement>(TABBABLE)];
+  const beyond = all.filter((el) => {
+    const position = mark.compareDocumentPosition(el);
+    return forward
+      ? (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+          (position & Node.DOCUMENT_POSITION_CONTAINED_BY) === 0
+      : (position & Node.DOCUMENT_POSITION_PRECEDING) !== 0 &&
+          (position & Node.DOCUMENT_POSITION_CONTAINS) === 0;
+  });
+  if (!forward) beyond.reverse();
+  return beyond.find(isTabbable);
+}
+
+// Leaving the frame: focus goes to the control before or after the card's
+// placeholder (past the marks it renders beside it), as if the board were
+// there; at the page's very end or start, to the mark itself, so the next
+// Tab continues from the board's place.
 function focusMark(entry: Entry, which: "enter" | "exit"): void {
   setSentinels(entry, false);
   const placeholder = entry.placeholders[entry.placeholders.length - 1];
@@ -210,7 +254,7 @@ function focusMark(entry: Entry, which: "enter" | "exit"): void {
     sibling.dataset[which === "enter" ? "boardFrameEnter" : "boardFrameExit"] !=
       null
   ) {
-    sibling.focus();
+    (adjacentControl(sibling, which === "exit") ?? sibling).focus();
   } else {
     (document.activeElement as HTMLElement | null)?.blur?.();
   }

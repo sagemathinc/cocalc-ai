@@ -346,20 +346,33 @@ test("keyboard: the placeholder hands focus to the frame, and leaving the frame 
   expect(document.activeElement).toBe(frame);
   expect(before.tabIndex).toBe(0);
   expect(after.tabIndex).toBe(0);
-  // Tab out of the frame: back to the card, just after the placeholder.
+  // Tab out of the frame: to the next visible control after the board's
+  // place (past the card's empty marks), not to the end of the page.
   act(() => after.focus());
-  expect(document.activeElement).toBe(shown.nextElementSibling);
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "after" }),
+  );
   // Out of the frame: out of the tab order again.
   expect(before.tabIndex).toBe(-1);
   expect(after.tabIndex).toBe(-1);
-  expect((document.activeElement as HTMLElement).dataset.boardFrameExit).toBe(
-    "",
-  );
-  // Shift+Tab out of the frame: just before the placeholder.
+  // Shift+Tab out of the frame: the card's last control before the board.
   act(() => shown.focus());
   act(() => before.focus());
-  expect(document.activeElement).toBe(shown.previousElementSibling);
-  expect((document.activeElement as HTMLElement).dataset.boardFrameEnter).toBe(
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Refresh" }),
+  );
+  // With nothing after the board, focus waits at its place (the mark), so
+  // the next Tab continues from there.
+  view.rerender(
+    <div>
+      <button>before</button>
+      <Board />
+    </div>,
+  );
+  act(() => shown.focus());
+  act(() => after.focus());
+  expect(document.activeElement).toBe(shown.nextElementSibling);
+  expect((document.activeElement as HTMLElement).dataset.boardFrameExit).toBe(
     "",
   );
   // A hidden frame takes no focus, and its sentinels leave the tab order.
