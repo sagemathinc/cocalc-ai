@@ -5015,6 +5015,19 @@ describe("hosts.authoritative remote host actions", () => {
         "removeSelfHostConnector",
         () => hosts.removeSelfHostConnector({ ...session, id: HOST_ID }),
       ],
+      [
+        "backupHostProjects",
+        () => hosts.backupHostProjects({ account_id: ACCOUNT_ID, id: HOST_ID }),
+      ],
+      [
+        "setHostDeletionProtection",
+        () =>
+          hosts.setHostDeletionProtection({
+            ...session,
+            id: HOST_ID,
+            enabled: false,
+          }),
+      ],
     ];
     for (const [, call] of calls) {
       await expect(call()).rejects.toMatchObject({ code: 409 });
@@ -5027,6 +5040,7 @@ describe("hosts.authoritative remote host actions", () => {
       hostConnectionDeleteHostMock,
       hostConnectionForceDeprovisionHostMock,
       hostConnectionRemoveSelfHostConnectorMock,
+      hostConnectionBackupHostProjectsMock,
     ]) {
       expect(mock).not.toHaveBeenCalled();
     }
