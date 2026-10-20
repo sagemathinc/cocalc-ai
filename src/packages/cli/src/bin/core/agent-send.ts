@@ -45,6 +45,8 @@ export interface AgentSendOptions {
   attemptId?: string;
   externalAgent?: string;
   api?: string;
+  /** Be told if the recipient's turn ends without replying. */
+  reportNoReply?: boolean;
 }
 
 export interface AgentSendResult {
@@ -184,6 +186,7 @@ export async function sendAgentMessage(
   }
   const outcome = (await send({
     ...request,
+    ...(opts.reportNoReply ? { report_no_reply: true as const } : {}),
     action: "send",
     ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
   })) as AgentRpcOutcome;

@@ -350,6 +350,24 @@ describe("the recipient's host reports a failed turn", () => {
     ).toMatchObject({ kind: "host-lost" });
   });
 
+  it("a success only when the sender asked to hear of no reply", () => {
+    const success = { version: 1, state: "completed" };
+    expect(ended("op-done", success)).toBeUndefined();
+    const asked = noteAgentMessageTurnFailed({
+      op_id: "op-done-asked",
+      request: {
+        chat: {
+          agent_rpc_execution: { ...execution, report_no_reply: true },
+        },
+      },
+      outcome: success as any,
+      turn_started_at: STARTED,
+      now: STARTED + 60_000,
+    });
+    expect(asked).toMatchObject({ kind: "completed", attempt_id });
+    expect(asked).not.toHaveProperty("tool_ran");
+  });
+
   it("for a stop, a cancel or a superseded turn too, but never a success", () => {
     expect(
       ended("op-stop", {

@@ -98,6 +98,10 @@ export function registerAgentCommands(
       "attempt id (default: new); a deliberate retry needs a NEW id",
     )
     .option("--external-agent <profile>", "use an enrolled external agent")
+    .option(
+      "--report-no-reply",
+      "tell me if the recipient's turn ends without replying to me (errors are always reported)",
+    )
     .action(async (name: string, message: string[], opts, cmd) => {
       const body = await messageBody(message, opts);
       const globals = globalsFrom(cmd);
@@ -109,6 +113,7 @@ export function registerAgentCommands(
         attemptId: opts.attemptId,
         externalAgent: opts.externalAgent,
         api: globals.api,
+        reportNoReply: opts.reportNoReply === true,
       });
       emitSuccess({ globals }, `${prefix} send`, {
         summary: agentSendSummary(sent),

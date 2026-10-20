@@ -180,6 +180,18 @@ test.each([
   },
 );
 
+test("the sender's request to hear of no reply rides on the turn", async () => {
+  for (const asked of [true, false]) {
+    const { e, deps, service } = fixture();
+    if (asked) (e as any).report_no_reply = true;
+    expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+    const request = (deps.admit as jest.Mock).mock.calls[0][0].request;
+    expect(request.chat.agent_rpc_execution.report_no_reply).toBe(
+      asked ? true : undefined,
+    );
+  }
+});
+
 test("a same-project sender is named as sharing the recipient's project", async () => {
   const { e, deps, service } = fixture();
   e.source = { ...e.source, project_id: e.target.project_id };

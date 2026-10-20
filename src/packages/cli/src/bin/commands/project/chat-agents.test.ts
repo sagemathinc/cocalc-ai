@@ -351,3 +351,30 @@ test("stdin stops at the message limit instead of buffering everything", async (
     transport.mock.restore();
   }
 });
+
+test("agent send --report-no-reply asks to hear of a turn without a reply", async () => {
+  const { directory } = peers();
+  for (const flag of [true, false]) {
+    const requests: any[] = [];
+    const transport = fakeHub(directory, requests);
+    const stderr = mock.method(process.stderr, "write", () => true);
+    try {
+      await topLevel([]).parseAsync(
+        [
+          "agent",
+          "send",
+          "reviewer",
+          ...(flag ? ["--report-no-reply"] : []),
+          "Please",
+          "review",
+        ],
+        { from: "user" },
+      );
+      const send = requests.find((request) => request.action === "send");
+      assert.equal(send.report_no_reply, flag ? true : undefined);
+    } finally {
+      stderr.mock.restore();
+      transport.mock.restore();
+    }
+  }
+});

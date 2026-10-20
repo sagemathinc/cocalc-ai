@@ -398,3 +398,20 @@ test("changing attached file references conflicts with an existing attempt", asy
   );
   expect(execute).toHaveBeenCalledTimes(1);
 });
+
+test("a send may ask to hear of no reply, with exactly true, and only a send", () => {
+  const send = { ...request(), action: "send" as const };
+  expect(() =>
+    validateAgentRpcRequest({ ...send, report_no_reply: true }),
+  ).not.toThrow();
+  expect(() =>
+    validateAgentRpcRequest({ ...send, report_no_reply: false } as any),
+  ).toThrow("invalid report_no_reply");
+  expect(() =>
+    validateAgentRpcRequest({
+      ...request(),
+      action: "inspect",
+      report_no_reply: true,
+    } as any),
+  ).toThrow("unexpected agent RPC field");
+});
