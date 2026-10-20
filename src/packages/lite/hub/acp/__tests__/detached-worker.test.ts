@@ -4308,13 +4308,17 @@ describe("the agent that sent a message is told how its turn ended", () => {
       const due = reports();
       // Only the held report: the turn is not over.
       expect(due).toHaveLength(1);
+      // The time it is scheduled to resume, not the raw reset.
       expect(due[0].report).toMatchObject({
         attempt_id: execution.attempt_id,
         kind: "limit",
         phase: "held",
-        resets_at,
+        resets_at: held[0].available_at,
         tool_ran: false,
       });
+      expect(held[0].available_at).toBeGreaterThan(resets_at);
+      // Queued, so the durable hold intent is gone.
+      expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
     } finally {
       unregister();
       hubApi.agent.authorizeRpcExecution = originalAuthorize;
@@ -4643,6 +4647,43 @@ describe("the agent that sent a message is told how its turn ended", () => {
         delete process.env.COCALC_ACP_HARNESSES;
       else process.env.COCALC_ACP_HARNESSES = previousEnabled;
     }
+  });
+
+  it("a hold whose worker died before it was queued is finished later", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    const resets_at = Date.now() + 60 * 60_000;
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET state = 'error', started_at = ?, finished_at = ?, recovery_code = 'cocalc-hold', outcome_json = ? WHERE op_id = ?",
+      )
+      .run(
+        job.created_at + 1,
+        job.created_at + 2,
+        JSON.stringify({
+          version: 1,
+          state: "failed",
+          failure: { kind: "limit", scope: "credential", resets_at },
+          tool_ran: false,
+        }),
+        job.op_id,
+      );
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as unknown as ConatClient,
+    });
+    const held = listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: job.op_id,
+    });
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatchObject({ recovery_reason: "usage limit hold" });
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      phase: "held",
+      resets_at: held[0].available_at,
+    });
   });
 
   it("when a newer message replaces the turn waiting to resume", () => {
