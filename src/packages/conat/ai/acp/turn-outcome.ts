@@ -44,7 +44,7 @@ export type TurnOutcome = {
       state: "failed";
       failure: TurnFailure;
       /** Any tool ran before it ended, so it may have changed something.
-       * Absent when it is not known. */
+       * Absent when it is not known (e.g. the host lost track of it). */
       tool_ran?: boolean;
     }
   | {
@@ -247,6 +247,26 @@ export function parseTurnOutcome(value: unknown): TurnOutcome | undefined {
     default:
       return undefined;
   }
+}
+
+/** Whether one attempt ran tools: unknown when it did not record it. */
+export function toolRanOf(
+  outcome: TurnOutcome | undefined,
+): boolean | undefined {
+  return outcome?.state === "failed" || outcome?.state === "canceled"
+    ? outcome.tool_ran
+    : outcome?.state === "never-started"
+      ? false
+      : undefined;
+}
+
+/** For a turn's attempts (a cut-off turn and its continuations): tools ran
+ * if any attempt ran them; none ran only if every attempt is known not to. */
+export function chainToolRan(
+  attempts: (boolean | undefined)[],
+): boolean | undefined {
+  if (attempts.includes(true)) return true;
+  return attempts.every((ran) => ran === false) ? false : undefined;
 }
 
 // An agent adapter attaches what it knows about a failure to the error it

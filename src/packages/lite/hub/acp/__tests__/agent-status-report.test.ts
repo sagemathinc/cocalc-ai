@@ -6,6 +6,7 @@ import {
 } from "../../sqlite/acp-database";
 import { enqueueAcpJob, listQueuedAcpJobs } from "../../sqlite/acp-jobs";
 import {
+  remember,
   setAgentStatusReporterForTests,
   sweepAgentStatus,
 } from "../agent-status-report";
@@ -402,5 +403,74 @@ describe("a refresh that keeps failing", () => {
     expect(attempts - 1).toBe(11);
     await sweepAgentStatus(t + 7 * 60 * 60_000);
     expect(attempts - 1).toBe(12);
+  });
+});
+
+describe("bounded memory", () => {
+  it("at its cap, forgets only the oldest entry", () => {
+    const map = new Map<string, number>();
+    for (const key of ["a", "b", "c"]) remember(map, key, 1, 2);
+    expect([...map.keys()]).toEqual(["b", "c"]);
+    // Updating an entry keeps the others.
+    remember(map, "b", 2, 2);
+    expect([...map.entries()]).toEqual([
+      ["c", 1],
+      ["b", 2],
+    ]);
+  });
+});
+
+describe("one account's turn running", () => {
+  it("does not hide another account's own block", async () => {
+    const now = Date.now();
+    const other = "00000000-1000-4000-8000-000000000002";
+    const mine = job();
+    set(mine.op_id, {
+      state: "error",
+      started_at: now - 61_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "sign-in" },
+      },
+    });
+    const theirs = job();
+    set(theirs.op_id, {
+      account_id: other,
+      state: "running",
+      started_at: now - 10_000,
+      updated_at: now - 10_000,
+    });
+    await sweepAgentStatus(now);
+    expect(reports[0].status).toMatchObject({
+      running: 1,
+      by_account: { [ACCOUNT]: { reason: "sign-in" } },
+    });
+  });
+
+  it("its own running turn clears its block", async () => {
+    const now = Date.now();
+    const failed = job();
+    set(failed.op_id, {
+      state: "error",
+      started_at: now - 61_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "sign-in" },
+      },
+    });
+    const again = job();
+    set(again.op_id, {
+      state: "running",
+      started_at: now - 10_000,
+      updated_at: now - 10_000,
+    });
+    await sweepAgentStatus(now);
+    expect(reports[0].status.by_account).toBeUndefined();
   });
 });

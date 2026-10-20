@@ -148,7 +148,7 @@ export function agentTurnStatusOf(opts: {
   running: number;
   queued: number;
   last?: { outcome?: TurnOutcome; at: number };
-  byAccount?: Record<string, { outcome?: TurnOutcome }>;
+  byAccount?: Record<string, { outcome?: TurnOutcome; running?: number }>;
   now: number;
 }): AgentTurnStatus {
   const outcome = opts.last?.outcome;
@@ -157,6 +157,9 @@ export function agentTurnStatusOf(opts: {
   if (opts.byAccount) {
     by_account = {};
     for (const [account_id, last] of Object.entries(opts.byAccount)) {
+      // That account's own turn running now: it is not stuck on its failure
+      // (another account's turn says nothing about it).
+      if ((last.running ?? 0) > 0) continue;
       const u = unavailableAfter(last.outcome, opts.now);
       if (u) by_account[account_id] = u;
     }
@@ -170,9 +173,7 @@ export function agentTurnStatusOf(opts: {
     queued: opts.queued,
     // A turn running now means it is not stuck on the last failure.
     ...(unavailable && opts.running === 0 ? { unavailable } : {}),
-    ...(by_account && opts.running === 0 && Object.keys(by_account).length
-      ? { by_account }
-      : {}),
+    ...(by_account && Object.keys(by_account).length ? { by_account } : {}),
     ...(opts.last && outcome
       ? {
           last: {

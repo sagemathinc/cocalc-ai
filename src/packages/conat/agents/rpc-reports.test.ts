@@ -1,7 +1,9 @@
+import type { TurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
 import {
   AGENT_RPC_REPORT_DETAIL_MAX,
   agentRpcReportBinding,
   agentRpcReportDetail,
+  agentRpcReportKindOf,
   agentRpcReportText,
   classifyAgentTurnError,
   validateAgentRpcTurnFailureReport,
@@ -77,7 +79,7 @@ test("the detail is one bounded line", () => {
 test("the sender is told what happened, by CoCalc", () => {
   const text = agentRpcReportText(report(), "@reviewer");
   expect(text).toMatch(
-    /^\[Delivery report\] @reviewer's turn ended with an error before it replied to your message: the model refused/,
+    /^\[Delivery report\] @reviewer's turn ended before it replied to your message: the model refused/,
   );
   expect(text).toContain(
     "Error: This content was flagged for possible cybersecurity risk.",
@@ -86,6 +88,79 @@ test("the sender is told what happened, by CoCalc", () => {
   expect(agentRpcReportText(report({ detail: undefined }), "@r")).not.toMatch(
     /Error:/,
   );
+});
+
+test("how it ended, the limit's reset and whether resending is safe", () => {
+  const now = Date.parse("2026-10-18T20:00:00Z");
+  const limited = agentRpcReportText(
+    report({
+      kind: "limit",
+      detail: undefined,
+      resets_at: now + 5 * 3600_000,
+      tool_ran: false,
+    }),
+    "@matlab",
+    now,
+  );
+  expect(limited).toContain(
+    "@matlab's turn ended before it replied to your message: a usage, credit or subscription limit.",
+  );
+  expect(limited).toContain(
+    "The limit resets at 2026-10-19T01:00:00.000Z (in about 5 hours).",
+  );
+  expect(limited).toContain("it is safe to send it again");
+  expect(limited).toContain("You can send it again after the reset");
+
+  const stopped = agentRpcReportText(
+    report({ kind: "stopped", tool_ran: true }),
+    "@B",
+  );
+  expect(stopped).toMatch(
+    /^\[Delivery report\] @B did not reply to your message: someone in its project stopped the turn\./,
+  );
+  // A cancel or stop has no error to quote.
+  expect(stopped).not.toMatch(/Error:/);
+  expect(stopped).toContain("check what it did before you send it again");
+
+  const canceled = agentRpcReportText(report({ kind: "canceled" }), "@B");
+  expect(canceled).toContain("canceled your message before it ran");
+  expect(canceled).toContain("it is safe to send it again");
+  // Unknown: say nothing either way.
+  const lost = agentRpcReportText(
+    report({ kind: "host-lost", detail: undefined }),
+    "@B",
+  );
+  expect(lost).not.toMatch(/safe to send|check what it did/);
+  expect(lost).toContain(
+    "It is not known whether @B had started working on it, so check before you send it again.",
+  );
+});
+
+test.each<[TurnOutcome, string | undefined]>([
+  [{ version: 1, state: "completed" }, undefined],
+  [
+    {
+      version: 1,
+      state: "failed",
+      failure: { kind: "limit", scope: "credential" },
+      tool_ran: false,
+    },
+    "limit",
+  ],
+  [
+    { version: 1, state: "failed", failure: { kind: "host-lost" } },
+    "host-lost",
+  ],
+  [{ version: 1, state: "canceled", by: "person", tool_ran: true }, "stopped"],
+  [{ version: 1, state: "canceled", by: "superseded" }, "superseded"],
+  [{ version: 1, state: "never-started", reason: "canceled" }, "canceled"],
+  [
+    { version: 1, state: "never-started", reason: "project-stopped" },
+    "project-stopped",
+  ],
+  [{ version: 1, state: "never-started", reason: "expired" }, "error"],
+])("a turn that ended %j is reported as %s", (outcome, kind) => {
+  expect(agentRpcReportKindOf(outcome)).toBe(kind);
 });
 
 test("a report of a queued message is valid", () => {
@@ -100,6 +175,8 @@ test.each<[string, () => AgentRpcTurnFailureReport]>([
       report({ authorization: { ...report().authorization, guidance: true } }),
   ],
   ["extra fields", () => ({ ...report(), body: "hi" }) as any],
+  ["a bad reset time", () => report({ resets_at: -1 })],
+  ["a bad tool_ran", () => ({ ...report(), tool_ran: "no" }) as any],
   ["a multi-line detail", () => report({ detail: "a\nb" })],
   ["a long detail", () => report({ detail: "x".repeat(301) })],
   ["an unknown kind", () => report({ kind: "other" as any })],

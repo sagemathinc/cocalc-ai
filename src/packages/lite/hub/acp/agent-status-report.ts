@@ -79,6 +79,22 @@ export function setAgentStatusReporterForTests(next?: Reporter): void {
   failed.clear();
 }
 
+/** Set, evicting only the oldest entry at the cap (never all of them, or
+ * every scheduled recheck would be lost at once). */
+export function remember<V>(
+  map: Map<string, V>,
+  key: string,
+  value: V,
+  cap = MAX_REMEMBERED,
+): void {
+  map.delete(key);
+  if (map.size >= cap) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+  map.set(key, value);
+}
+
 /** Busy, or unavailable for someone: worth keeping fresh. */
 function saysSomething(status: AgentTurnStatus): boolean {
   return Boolean(
@@ -94,14 +110,18 @@ export function agentThreadStatus(
   thread: Thread,
   now = Date.now(),
 ): AgentTurnStatus {
-  const { running, queued, last, lastByAccount } = acpThreadJobSummary(thread);
+  const { running, queued, last, lastByAccount, runningByAccount } =
+    acpThreadJobSummary(thread);
   return agentTurnStatusOf({
     running,
     queued,
     byAccount: Object.fromEntries(
       Object.entries(lastByAccount).map(([account_id, job]) => [
         account_id,
-        { outcome: parseTurnOutcome(job.outcome_json) },
+        {
+          outcome: parseTurnOutcome(job.outcome_json),
+          running: runningByAccount[account_id] ?? 0,
+        },
       ]),
     ),
     ...(last
@@ -179,11 +199,9 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
       try {
         const { registered } = await reporter({ ...thread, status });
         failed.delete(key);
-        if (sent.size >= MAX_REMEMBERED) sent.clear();
-        sent.set(key, { status, thread });
+        remember(sent, key, { status, thread });
         if (!registered) {
-          if (unregistered.size >= MAX_REMEMBERED) unregistered.clear();
-          unregistered.set(key, {
+          remember(unregistered, key, {
             thread,
             until: now + UNREGISTERED_RECHECK_MS,
           });
@@ -203,8 +221,7 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
           if (last)
             sent.set(key, { ...last, status: { ...last.status, at: now } });
         } else {
-          if (failed.size >= MAX_REMEMBERED) failed.clear();
-          failed.set(key, {
+          remember(failed, key, {
             thread,
             attempts,
             until:

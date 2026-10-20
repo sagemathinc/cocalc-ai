@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   friendlyAgentDestinations,
+  watchSentTurn,
   registerAgentCommands,
   registerChatAgentCommands,
 } from "./chat-agents";
@@ -381,6 +382,129 @@ test("stdin stops at the message limit instead of buffering everything", async (
   } finally {
     clearInterval(pump);
     Object.defineProperty(process, "stdin", stdin);
+    transport.mock.restore();
+  }
+});
+
+test("agent send --watch-turn sets a watcher on the turn it started", async () => {
+  const { network, directory } = peers();
+  const requests: any[] = [];
+  const transport = fakeHub(directory, requests);
+  const stderr = mock.method(process.stderr, "write", () => true);
+  try {
+    await topLevel([]).parseAsync(
+      ["agent", "send", "reviewer", "--watch-turn", "Please", "review"],
+      { from: "user" },
+    );
+    const send = requests.find((request) => request.action === "send");
+    const watch = requests.find((request) => request.action === "sensor");
+    assert.deepEqual(watch, {
+      action: "sensor",
+      op: "watch",
+      watch: {
+        type: "agent-turn",
+        attempt_id: send.attempt_id,
+        agent_network_id: network,
+        target: directory.peers[0].member.endpoint,
+        name: "reviewer",
+      },
+    });
+    await assert.rejects(
+      topLevel([]).parseAsync(
+        [
+          "agent",
+          "send",
+          "reviewer",
+          "--watch-turn",
+          "--external-agent",
+          "laptop",
+          "hi",
+        ],
+        { from: "user" },
+      ),
+      /--watch-turn needs this agent's own sensors/,
+    );
+  } finally {
+    stderr.mock.restore();
+    transport.mock.restore();
+  }
+});
+
+test("no watcher when there is no turn of its own to watch", async () => {
+  const base = {
+    version: 3 as const,
+    attempt_id: randomUUID(),
+    agent_network_id: randomUUID(),
+    target: { project_id: randomUUID(), agent_id: randomUUID() },
+    observed_at: Date.now(),
+  };
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async () => assert.fail("no watcher should be set"),
+  );
+  try {
+    assert.match(
+      (await watchSentTurn({ outcome: { ...base, outcome: "rejected" } }))
+        .summary,
+      /not accepted/,
+    );
+    assert.match(
+      (
+        await watchSentTurn({
+          outcome: {
+            ...base,
+            outcome: "accepted",
+            operation: { id: "op", disposition: "steered" },
+          },
+        })
+      ).summary,
+      /joined the recipient's running turn/,
+    );
+  } finally {
+    transport.mock.restore();
+  }
+});
+
+test("a watcher that cannot be set leaves the send a success", async () => {
+  const { directory } = peers();
+  const requests: any[] = [];
+  const hub = fakeHub(directory, requests);
+  hub.mock.restore();
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      requests.push(request);
+      if (request.action === "sensor")
+        throw new Error("too many active watchers");
+      if (request.action === "destinations") return directory;
+      return {
+        version: 3,
+        attempt_id: request.attempt_id,
+        agent_network_id: request.agent_network_id,
+        target: request.target,
+        outcome: "accepted",
+        observed_at: Date.now(),
+        chat_effect: "saved",
+      };
+    },
+  );
+  const stderr = mock.method(process.stderr, "write", () => true);
+  const output: any[] = [];
+  try {
+    await topLevel(output).parseAsync(
+      ["agent", "send", "reviewer", "--watch-turn", "Please", "review"],
+      { from: "user" },
+    );
+    assert.equal(output[0].outcome, "accepted");
+    assert.match(
+      output[0].summary,
+      /No watcher was set \(too many active watchers\)/,
+    );
+    assert.match(output[0].summary, /do not send it again/);
+  } finally {
+    stderr.mock.restore();
     transport.mock.restore();
   }
 });
