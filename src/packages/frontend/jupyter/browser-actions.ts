@@ -4626,7 +4626,7 @@ export class JupyterActions extends JupyterActions0 {
     // The live notebook is only the generated placeholder, whose own pending
     // change carries no work; only the version check applies.
     replacingPlaceholder?: boolean;
-  } = {}) => {
+  } = {}): Promise<"rtc_changed" | undefined> => {
     this.runDebug("ipynb.load.start");
     const read = diskRead ?? (await this.readIpynbFromDisk());
     if (read.bytes == 0) {
@@ -4638,6 +4638,9 @@ export class JupyterActions extends JupyterActions0 {
     if (
       expectedRtcVersion != null &&
       ((!replacingPlaceholder && this.hasPendingIpynbChanges()) ||
+        // An edit made while the file was read may not be committed yet, so
+        // the version alone does not show it; the live records do.
+        (replacingPlaceholder && !this.rtcIsGeneratedPlaceholder()) ||
         this.getRtcVersion() !== expectedRtcVersion)
     ) {
       this.runDebug("ipynb.load.skipped.rtc_changed", {
@@ -4649,7 +4652,7 @@ export class JupyterActions extends JupyterActions0 {
       if (!replacingPlaceholder && this.saveIpynbInFlight == null) {
         await this.saveIpynb();
       }
-      return;
+      return "rtc_changed";
     }
     const editedWhileApplying = await this.applyIpynb(ipynb);
     // setToIpynb runs with change handling paused, so note the loaded content
@@ -4759,11 +4762,16 @@ export class JupyterActions extends JupyterActions0 {
       const read = await this.readIpynbFromDisk().catch(() => undefined);
       if (this.isClosed()) return;
       if (read != null && read.bytes > 0 && ipynbTextHasContent(read.text)) {
-        await this.loadFromDisk({
+        const outcome = await this.loadFromDisk({
           diskRead: read,
           expectedRtcVersion: snapshotVersion,
           replacingPlaceholder: true,
         });
+        if (outcome === "rtc_changed") {
+          // Edited while the file was read: the edit wins and is saved next.
+          this.hasUnsavedChanges = true;
+          this.saveIpynbRequested = true;
+        }
       } else if (this.getRtcVersion() === snapshotVersion) {
         this.markIpynbSaved();
       } else {

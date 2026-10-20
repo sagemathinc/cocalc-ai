@@ -76,6 +76,8 @@ function createActions({
   actions.toIpynb = jest.fn(async () => exportRecords(cellList));
   let version = "v1";
   actions.setVersion = (v: string) => (version = v);
+  let uncommitted = false;
+  actions.setUncommitted = (v: boolean) => (uncommitted = v);
   let settingsRecord: object = settings;
   actions.setCells = (next: object[]) =>
     (cellList = List(next.map((cell) => fromJS(cell))));
@@ -97,7 +99,7 @@ function createActions({
       where?.type === "settings"
         ? fromJS({ type: "settings", ...settingsRecord })
         : cellList.first(),
-    has_uncommitted_changes: () => false,
+    has_uncommitted_changes: () => uncommitted,
     newestVersion: () => version,
     last_changed: () => 2000,
   };
@@ -151,6 +153,21 @@ describe("file events", () => {
     await actions.watchLoadFromDisk({ diskRead: LAB_READ });
 
     expect(actions.saveIpynb).toHaveBeenCalledTimes(1);
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
+  });
+
+  it("abandon the load on an uncommitted edit made while the file is read", async () => {
+    const actions = createActions();
+    actions.hasUnsavedChanges = true;
+    actions.saveIpynb = jest.fn(async () => {});
+    actions.syncdb.fs.readFile = jest.fn(async () => {
+      actions.setCells([{ ...ALPHA, input: "y = 2" }]);
+      actions.setUncommitted(true);
+      return Buffer.from(LAB_TEXT);
+    });
+
+    await actions.watchLoadFromDisk({});
+
     expect(actions.setToIpynb).not.toHaveBeenCalled();
   });
 
@@ -232,6 +249,40 @@ describe("saving", () => {
     expect(
       actions.syncdb.fs.jupyterSaveIpynb.mock.calls[0][1].cells[0].source,
     ).toEqual(["y = 2"]);
+  });
+
+  it("save an edit made while the placeholder save reads a file with content", async () => {
+    const actions = createActions();
+    actions.hasUnsavedChanges = true;
+    actions.syncdb.fs.readFile = jest.fn(async () => {
+      actions.setCells([{ ...ALPHA, input: "y = 2" }]); // typed meanwhile
+      actions.setVersion("v2");
+      return Buffer.from(LAB_TEXT);
+    });
+
+    await actions.saveIpynb();
+
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
+    expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledTimes(1);
+    expect(
+      actions.syncdb.fs.jupyterSaveIpynb.mock.calls[0][1].cells[0].source,
+    ).toEqual(["y = 2"]);
+  });
+
+  it("keep an uncommitted edit made while the placeholder save reads the file", async () => {
+    // The edit is in the live records but not committed, so the version is
+    // unchanged.
+    const actions = createActions();
+    actions.hasUnsavedChanges = true;
+    actions.syncdb.fs.readFile = jest.fn(async () => {
+      actions.setCells([{ ...ALPHA, input: "y = 2" }]);
+      actions.setUncommitted(true);
+      return Buffer.from(LAB_TEXT);
+    });
+
+    await actions.saveIpynb();
+
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
   });
 
   it("save an edit made while a converted save is applied", async () => {
@@ -387,6 +438,24 @@ describe("opening", () => {
       "watch.initial_load.decision",
       expect.objectContaining({ hasRtcCells: false, loadFromDisk: true }),
     );
+  });
+
+  it("abandon the initial load on an uncommitted edit made during conversion", async () => {
+    const actions = createActions();
+    actions.syncdb.fs.jupyterImportIpynb = jest.fn(async (ipynb) => {
+      actions.setCells([{ ...ALPHA, input: "y = 2" }]);
+      actions.setUncommitted(true);
+      return { ipynb };
+    });
+
+    await actions.watchLoadFromDisk({
+      initial: true,
+      diskRead: LAB_READ,
+      expectedRtcVersion: "v1",
+      replacingPlaceholder: true,
+    });
+
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
   });
 
   it("abandon the initial load if the placeholder is edited during conversion", async () => {
