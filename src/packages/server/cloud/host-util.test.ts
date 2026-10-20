@@ -47,7 +47,7 @@ describe("buildHostSpec", () => {
     ]);
   });
 
-  it("defaults new hosts to a 25GB boot disk", async () => {
+  it("defaults new hosts to a 50GB boot disk", async () => {
     const spec = await buildHostSpec({
       id: "832da43c-d18e-406d-8e1d-c28973378b24",
       metadata: {
@@ -57,7 +57,21 @@ describe("buildHostSpec", () => {
       },
     });
 
-    expect(spec.metadata.boot_disk_gb).toBe(25);
+    expect(spec.metadata.boot_disk_gb).toBe(50);
+  });
+
+  it("keeps an explicitly configured boot disk size", async () => {
+    const spec = await buildHostSpec({
+      id: "832da43c-d18e-406d-8e1d-c28973378b24",
+      metadata: {
+        machine: {
+          cloud: "gcp",
+          metadata: { boot_disk_gb: 35 },
+        },
+      },
+    });
+
+    expect(spec.metadata.boot_disk_gb).toBe(35);
   });
 
   it("passes runtime shared scratch disk identity into recreate specs", async () => {
