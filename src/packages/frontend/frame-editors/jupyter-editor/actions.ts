@@ -37,6 +37,7 @@ export interface JupyterEditorState extends CodeEditorState {
   slideshow?: {
     state?: "built" | "building" | "";
     url?: string;
+    path?: string; // the slides' HTML file, shown on the content origin
   };
 }
 
