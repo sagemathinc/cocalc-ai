@@ -524,6 +524,34 @@ export function countQueuedAcpJobsAhead(job: AcpJobRow): number {
   return Number(row?.n ?? 0);
 }
 
+/** Turns held for this reason that are not due yet (e.g. "sign-in hold"). */
+export function listHeldAcpJobs(
+  recovery_reason: string,
+  now = Date.now(),
+  limit = 100,
+): AcpJobRow[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE state = 'queued' AND recovery_reason = ? AND available_at > ?
+       ORDER BY available_at ASC LIMIT ?`,
+    )
+    .all(recovery_reason, now, limit) as AcpJobRow[];
+}
+
+/** A held turn may run now (it was waiting for available_at). */
+export function releaseHeldAcpJob(op_id: string, now = Date.now()): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET available_at = NULL, updated_at = ?
+       WHERE op_id = ? AND state = 'queued' AND available_at > ?`,
+    )
+    .run(now, op_id, now);
+  return Number(result?.changes ?? 0) === 1;
+}
+
 export function listAcpJobsByRecoveryParent({
   recovery_parent_op_id,
 }: {

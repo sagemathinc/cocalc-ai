@@ -592,11 +592,17 @@ it.each([
   ["a limit with a reset time", { resets: true, ranTool: true }],
   ["a limit without one", { resets: false, ranTool: false }],
   ["any other failure", { other: true }],
+  ["a sign-in that needs renewing", { signIn: true }],
 ] as const)(
   "holds a turn that hit a usage limit until it resets: %s",
   async (
     _name,
-    how: { resets?: boolean; ranTool?: boolean; other?: boolean },
+    how: {
+      resets?: boolean;
+      ranTool?: boolean;
+      other?: boolean;
+      signIn?: boolean;
+    },
   ) => {
     const previousEnabled = process.env.COCALC_ACP_HARNESSES;
     process.env.COCALC_ACP_HARNESSES = "1";
@@ -661,11 +667,15 @@ it.each([
         });
       throw how.other
         ? new Error("boom")
-        : withTurnFailure(new Error("Claude could not run this request."), {
-            kind: "limit",
-            scope: "credential",
-            ...(how.resets ? { resets_at } : {}),
-          });
+        : how.signIn
+          ? withTurnFailure(new Error("Please sign in again."), {
+              kind: "sign-in",
+            })
+          : withTurnFailure(new Error("Claude could not run this request."), {
+              kind: "limit",
+              scope: "credential",
+              ...(how.resets ? { resets_at } : {}),
+            });
     });
     const unregister = acpTestInternals.registerInterruptAgentForTests(
       harnessRuntimeKey(request),
@@ -689,6 +699,19 @@ it.each([
         return;
       }
       expect(held).toHaveLength(1);
+      if (how.signIn) {
+        expect(held[0]).toMatchObject({
+          state: "queued",
+          recovery_reason: "sign-in hold",
+        });
+        expect(
+          Math.abs(Number(held[0].available_at) - (before + 24 * 60 * 60_000)),
+        ).toBeLessThan(10_000);
+        expect(`${decodeAcpJobRequest(held[0]).prompt}`).toMatch(
+          /sign-in needed renewing/,
+        );
+        return;
+      }
       expect(held[0]).toMatchObject({
         state: "queued",
         recovery_reason: "usage limit hold",
@@ -4819,5 +4842,116 @@ describe("the agent that sent a message is told how its turn ended", () => {
     } as any);
     expect(reports()).toHaveLength(0);
     expect(getAcpJobByOpId(job.op_id)?.outcome_json).toBeNull();
+  });
+});
+
+describe("held sign-in turns resume once the account signs in again", () => {
+  const credentialId = "33333333-3333-4333-8333-333333333333";
+  const held = (heldAt: number) => {
+    const request = {
+      ...makeRequest(),
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId,
+      },
+      chat: {
+        ...makeRequest().chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    } as any;
+    const job = enqueueAcpJob(request, {
+      available_at: heldAt + 24 * 60 * 60_000,
+    } as any);
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET recovery_reason = 'sign-in hold', created_at = ? WHERE op_id = ?",
+      )
+      .run(heldAt, job.op_id);
+    return job;
+  };
+
+  it.each([
+    ["an update before it was held", { updated_at: -1 }, false],
+    ["its credential signed in again", { updated_at: 1 }, true],
+    [
+      "a new credential replacing a revoked one",
+      { updated_at: 1, revoked: true, newest_updated_at: 2 },
+      true,
+    ],
+    ["only revoked", { updated_at: 1, revoked: true }, false],
+    ["no answer (the home bay is down)", "fail", false],
+  ] as const)("%s", async (_name, answer, release) => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    const job = held(heldAt);
+    const lookup = jest.fn(async () => {
+      if (answer === "fail") throw new Error("timeout");
+      const a = answer as any;
+      const at = (delta?: number) =>
+        delta == null ? undefined : heldAt + delta * 1_000;
+      return {
+        updated_at: at(a.updated_at),
+        revoked: a.revoked,
+        newest_updated_at: at(a.newest_updated_at),
+      };
+    });
+    expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(
+      release ? 1 : 0,
+    );
+    expect(lookup).toHaveBeenCalledWith({
+      account_id: job.account_id,
+      project_id: job.project_id,
+      credential_id: credentialId,
+      provider: "anthropic",
+    });
+    expect(getAcpJobByOpId(job.op_id)?.available_at ?? null).toBe(
+      release ? null : heldAt + 24 * 60 * 60_000,
+    );
+  });
+
+  it("a turn held again keeps the day from when it was first held", () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const T0 = Date.now() - 2 * 60 * 60_000;
+    const failed = held(T0 - 1_000);
+    const first = held(T0);
+    const again = held(T0 + 60 * 60_000);
+    const set = getAcpDatabase().prepare(
+      "UPDATE acp_jobs SET recovery_reason = ?, recovery_parent_op_id = ? WHERE op_id = ?",
+    );
+    set.run(null, null, failed.op_id);
+    set.run("sign-in hold", failed.op_id, first.op_id);
+    set.run("sign-in hold", first.op_id, again.op_id);
+    expect(
+      acpTestInternals.signInHoldStart(getAcpJobByOpId(again.op_id)!),
+    ).toBe(T0);
+    expect(
+      acpTestInternals.signInHoldStart(getAcpJobByOpId(failed.op_id)!),
+    ).toBeUndefined();
+  });
+
+  it("asks once per credential per pass", async () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    held(heldAt);
+    held(heldAt);
+    const lookup = jest.fn(async () => ({ updated_at: heldAt + 1_000 }));
+    expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(2);
+    expect(lookup).toHaveBeenCalledTimes(1);
   });
 });

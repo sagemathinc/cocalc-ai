@@ -18,6 +18,10 @@ jest.mock("./identity-routing", () => ({
 jest.mock("./personal", () => ({
   withPersonalHome: (...args) => withPersonalHome(...args),
 }));
+const listCredentials = jest.fn();
+jest.mock("@cocalc/server/external-credentials/routing", () => ({
+  listAccountExternalCredentialsRouted: (...args) => listCredentials(...args),
+}));
 jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
   assertProjectHostAgentTokenAccess: (...args) => assertHost(...args),
 }));
@@ -27,7 +31,7 @@ import {
   notifyIdentityWatchers,
   watchIdentity,
 } from "./identity-watchers";
-import { reportRuntime } from "./api";
+import { credentialUpdatedAt, reportRuntime } from "./api";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -183,5 +187,65 @@ describeDb("agent identity watchers", () => {
     await expect(
       reportRuntime({ ...report, runtime: { kind: "bogus" } as any }),
     ).rejects.toThrow("invalid agent runtime");
+  });
+
+  test("credentialUpdatedAt: when the account signed in again, nothing else", async () => {
+    const at = (iso: string) => new Date(iso);
+    const credential = (id: string, extra = {}) => ({
+      id,
+      provider: "anthropic",
+      kind: "claude-subscription",
+      scope: "account",
+      owner_account_id: alice,
+      metadata: { label: "Max A", secret_hint: "should not leave" },
+      created: at("2026-10-01T00:00:00Z"),
+      updated: at("2026-10-20T01:00:00Z"),
+      revoked: null,
+      last_used: null,
+      ...extra,
+    });
+    const id = randomUUID();
+    listCredentials.mockResolvedValue([
+      credential(id, { revoked: at("2026-10-20T02:00:00Z") }),
+      credential(randomUUID(), { updated: at("2026-10-20T03:00:00Z") }),
+      // Another kind or provider does not count.
+      credential(randomUUID(), {
+        kind: "anthropic-api-key",
+        updated: at("2026-10-20T05:00:00Z"),
+      }),
+      credential(randomUUID(), {
+        revoked: at("2026-10-20T04:00:00Z"),
+        updated: at("2026-10-20T04:00:00Z"),
+      }),
+    ]);
+    const answer = await credentialUpdatedAt({
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      credential_id: id,
+      provider: "anthropic",
+    });
+    expect(answer).toEqual({
+      updated_at: Date.parse("2026-10-20T01:00:00Z"),
+      revoked: true,
+      newest_updated_at: Date.parse("2026-10-20T03:00:00Z"),
+    });
+    expect(JSON.stringify(answer)).not.toMatch(/Max A|secret/);
+    expect(listCredentials).toHaveBeenCalledWith({
+      owner_account_id: alice,
+      includeRevoked: true,
+      provider: "anthropic",
+    });
+    expect(assertHost).toHaveBeenCalledWith(
+      expect.objectContaining({ account_id: alice, project_id }),
+    );
+    await expect(
+      credentialUpdatedAt({
+        host_id: randomUUID(),
+        account_id: alice,
+        project_id,
+        credential_id: "not-a-uuid",
+      }),
+    ).rejects.toThrow();
   });
 });

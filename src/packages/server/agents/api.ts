@@ -567,6 +567,55 @@ export const describeNetworkSelf: AgentApi["describeNetworkSelf"] = async (
   return directory.self;
 };
 
+// Host-attested: the project host holding a turn whose sign-in failed asks
+// when the turn's account last updated that credential, to resume the turn
+// once it was signed in again (I4c). Routed to the account's home bay by the
+// credential store; only the time and whether it is revoked come back.
+export const credentialUpdatedAt: AgentApi["credentialUpdatedAt"] = async (
+  opts,
+) => {
+  requireUuid(opts.credential_id, "credential_id");
+  await assertProjectHostAgentTokenAccess({
+    host_id: opts.host_id!,
+    account_id: opts.account_id!,
+    project_id: opts.project_id,
+  });
+  const provider =
+    typeof opts.provider === "string" &&
+    /^[a-z0-9_-]{1,64}$/.test(opts.provider)
+      ? opts.provider
+      : undefined;
+  const { listAccountExternalCredentialsRouted } =
+    await import("@cocalc/server/external-credentials/routing");
+  // Summaries only (never the secret), from the account's home bay.
+  const credentials = await listAccountExternalCredentialsRouted({
+    owner_account_id: opts.account_id!,
+    includeRevoked: true,
+    ...(provider ? { provider } : {}),
+  });
+  const found = credentials.find(
+    (credential) => credential.id === opts.credential_id,
+  );
+  const ms = (value: Date | string) => new Date(value).valueOf();
+  const peers = credentials.filter(
+    (credential) =>
+      credential.revoked == null &&
+      (found
+        ? credential.provider === found.provider &&
+          credential.kind === found.kind
+        : provider != null && credential.provider === provider),
+  );
+  const newest = peers.length
+    ? Math.max(...peers.map((credential) => ms(credential.updated)))
+    : undefined;
+  return {
+    ...(found
+      ? { updated_at: ms(found.updated), revoked: found.revoked != null }
+      : {}),
+    ...(newest != null ? { newest_updated_at: newest } : {}),
+  };
+};
+
 // Host-attested: the project host admitting a turn reports the agent's
 // runtime, which fills in identities registered before runtimes were recorded.
 export const reportRuntime: AgentApi["reportRuntime"] = async (opts) => {

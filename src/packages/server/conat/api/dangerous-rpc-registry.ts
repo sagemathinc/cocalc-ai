@@ -135,6 +135,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.credentialUpdatedAt": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.describeNetworkSelf": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,

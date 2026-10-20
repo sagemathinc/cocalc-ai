@@ -87,6 +87,7 @@ export const agent = {
   copyPaymentSelection: authFirstRequireAccount,
   resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
   reportRuntime: authFirstRequireHostWithAccountTarget,
+  credentialUpdatedAt: authFirstRequireHostWithAccountTarget,
   describeNetworkSelf: authFirstRequireHostWithAccountTarget,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
@@ -597,6 +598,25 @@ export interface AgentApi {
   ): Promise<
     import("@cocalc/conat/agents/personal").AgentNetworkSelf | undefined
   >;
+  /**
+   * Host holding a turn whose sign-in failed (I4c): when the turn's account
+   * last updated this credential (signed in again), and whether it is
+   * revoked. Never anything else about it.
+   */
+  credentialUpdatedAt(
+    opts: AgentHostAuth & {
+      project_id: string;
+      credential_id: string;
+      /** e.g. "anthropic" or "openai": narrows the lookup. */
+      provider?: string;
+    },
+  ): Promise<{
+    updated_at?: number;
+    revoked?: boolean;
+    /** Newest update of any unrevoked credential of the same provider and
+     * kind: signing in again may make a new one rather than update it. */
+    newest_updated_at?: number;
+  }>;
   /** Host admitting a turn: which runtime the agent uses. */
   reportRuntime(
     opts: AgentHostAuth & {

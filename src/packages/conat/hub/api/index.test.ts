@@ -229,6 +229,7 @@ describe("hub API argument transforms", () => {
       "agent.authorizeSensorExecution",
       "agent.beginCliConnectorTurn",
       "agent.beginCocalcConnectorTurn",
+      "agent.credentialUpdatedAt",
       "agent.describeNetworkSelf",
       "agent.endCocalcConnectorTurn",
       "agent.endIdentityRun",
@@ -269,6 +270,7 @@ describe("hub API argument transforms", () => {
     "agent.beginCliConnectorTurn",
     "agent.resolvePaymentSelection",
     "agent.reportRuntime",
+    "agent.credentialUpdatedAt",
     "agent.describeNetworkSelf",
     "apiKeys.getViewerReadPolicy",
   ])(
