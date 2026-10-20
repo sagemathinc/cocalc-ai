@@ -170,4 +170,49 @@ describe("collaborative Jupyter collection flush", () => {
     ).resolves.toBeUndefined();
     expect(saveJupyterIpynbMock).not.toHaveBeenCalled();
   });
+
+  it("does not overwrite a notebook with content with the generated placeholder", async () => {
+    // Support ticket 21023: a student opened the lab while it was still
+    // empty, so the live notebook is only the generated empty cell.
+    const { List, fromJS } = require("immutable");
+    const lab = JSON.stringify({
+      cells: [{ cell_type: "markdown", source: ["### Lab 3"], metadata: {} }],
+      metadata: {},
+      nbformat: 4,
+      nbformat_minor: 5,
+    });
+    const placeholderDoc = (settings: object) => ({
+      wait_until_ready: jest.fn(async () => undefined),
+      newestVersion: jest.fn(() => "version-1"),
+      get_doc: jest.fn(() => ({})),
+      get: jest.fn(() =>
+        List([fromJS({ type: "cell", id: "alpha", pos: 0, input: "" })]),
+      ),
+      get_one: jest.fn(() => fromJS({ type: "settings", ...settings })),
+      close: jest.fn(async () => undefined),
+    });
+    const filesystem = {
+      readFile: jest.fn(async () => Buffer.from(lab)),
+      stat: jest.fn(async () => stat("file")),
+    };
+    const { flushJupyterNotebook } =
+      await import("./jupyter-collaborative-flush");
+    const flush = () =>
+      flushJupyterNotebook({
+        project_id: "project",
+        notebook_path: "assignment/lab3.ipynb",
+        actor_account_id: "instructor",
+        filesystem: filesystem as any,
+        syncClient: {} as any,
+      });
+
+    documentMock = placeholderDoc({});
+    await expect(flush()).resolves.toBeUndefined();
+    expect(saveJupyterIpynbMock).not.toHaveBeenCalled();
+
+    // A notebook emptied on purpose is still flushed.
+    documentMock = placeholderDoc({ has_had_content: true });
+    await flush();
+    expect(saveJupyterIpynbMock).toHaveBeenCalledTimes(1);
+  });
 });

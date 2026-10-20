@@ -14,6 +14,10 @@ import {
   type FilesystemClient,
 } from "@cocalc/conat/files/fs";
 import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
+import {
+  notebookFileHasContent,
+  syncdbIsGeneratedPlaceholder,
+} from "@cocalc/jupyter/ipynb/placeholder";
 import { SYNCDB_OPTIONS } from "@cocalc/jupyter/redux/sync";
 import { SyncDB } from "@cocalc/sync/editor/db";
 import type { DBDocument } from "@cocalc/sync/editor/db/doc";
@@ -147,6 +151,18 @@ export async function flushJupyterNotebook({
       await delay(STABILITY_DELAY_MS);
       const version = doc.newestVersion();
       if (version == null) return;
+      if (
+        syncdbIsGeneratedPlaceholder(doc) &&
+        (await notebookFileHasContent(
+          (file) => filesystem.readFile(file) as Promise<Buffer | string>,
+          notebook_path,
+        ))
+      ) {
+        // The live notebook is only the generated empty cell (it was opened
+        // while the file was still empty, e.g. during a course copy): the
+        // file is the work, so collect it as it is (support ticket 21023).
+        return;
+      }
       const contents = jupyterNotebookContents(
         doc.get_doc() as DBDocument,
         requestedNotebook,

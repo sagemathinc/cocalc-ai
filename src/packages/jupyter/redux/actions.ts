@@ -48,7 +48,10 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { outputLimitBytes } from "@cocalc/jupyter/execute/output-budget";
 import { sha1 } from "@cocalc/util/misc";
 import { blobifyOutputData } from "@cocalc/jupyter/util/blobify-output";
-import { cellRecordsAreGeneratedPlaceholder } from "@cocalc/jupyter/ipynb/placeholder";
+import {
+  cellRecordsAreGeneratedPlaceholder,
+  syncdbIsGeneratedPlaceholder,
+} from "@cocalc/jupyter/ipynb/placeholder";
 import { join } from "path";
 import {
   isActiveJupyterRuntimeCellState,
@@ -2907,6 +2910,23 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   // change handling starts (noteNotebookContent), and updated on changes.
   private sawNotebookContent = false;
 
+  // Whether this client has seen real content, including a clear whose
+  // durable has_had_content record is still waiting on the debounced change
+  // event (ensureThereIsACell).
+  notebookHadContent = (): boolean => {
+    this.noteNotebookContent();
+    return this.sawNotebookContent;
+  };
+
+  // Whether the live notebook is only the empty cell created for an empty
+  // notebook (ensureThereIsACell) and never held content, so it must not
+  // win over, or be saved on top of, a notebook file with content.
+  liveNotebookIsGeneratedPlaceholder = (): boolean => {
+    return (
+      syncdbIsGeneratedPlaceholder(this.syncdb) && !this.notebookHadContent()
+    );
+  };
+
   noteNotebookContent = (): void => {
     if (this.sawNotebookContent) return;
     try {
@@ -3028,6 +3048,18 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     return ipynb;
   }
 
+  // The RTC version created by setToIpynb's own commit, so a caller can tell
+  // a later edit (a newer version) from the import itself.
+  importCommitVersion: string | undefined = undefined;
+
+  protected noteImportCommit = (): void => {
+    try {
+      this.importCommitVersion = (this.syncdb as any)?.newestVersion?.();
+    } catch {
+      this.importCommitVersion = undefined;
+    }
+  };
+
   setToIpynb = async (
     ipynb: any,
     data_only: boolean = false,
@@ -3141,6 +3173,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     importer.close();
 
     this.syncdb.commit();
+    this.noteImportCommit();
     await this.syncdb.save();
     this.ensure_backend_kernel_setup();
     this._state = "ready";

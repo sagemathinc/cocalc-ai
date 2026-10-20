@@ -83,3 +83,67 @@ describe("project-side portable ipynb save", () => {
     expect(saveLast).toBe(true);
   });
 });
+
+// Support ticket 21023: the project-side save (nbconvert, the Jupyter API)
+// must not write the generated empty cell over a notebook file with content.
+describe("project-side save of the generated placeholder", () => {
+  const { List, fromJS } = require("immutable");
+  const { export_to_ipynb } = require("../ipynb/export-to-ipynb");
+  const ALPHA = { type: "cell", id: "alpha", pos: 0, input: "" };
+  const LAB_TEXT = JSON.stringify({
+    cells: [{ cell_type: "markdown", source: ["### Lab 3"], metadata: {} }],
+    metadata: {},
+    nbformat: 4,
+    nbformat_minor: 5,
+  });
+
+  function placeholderActions({
+    disk,
+    settings = {},
+  }: {
+    disk?: string;
+    settings?: object;
+  }) {
+    const exported = export_to_ipynb({
+      cell_list: ["alpha"],
+      cells: { alpha: { ...ALPHA } },
+      kernelspec: { name: "python3" },
+    } as any);
+    const { actions, writeFile } = createActions(exported);
+    actions.syncdb.get = () => List([fromJS(ALPHA)]);
+    actions.syncdb.get_one = () => fromJS({ type: "settings", ...settings });
+    if (disk != null) {
+      actions.syncdb.fs.readFile = jest.fn(async () => Buffer.from(disk));
+    }
+    return { actions, writeFile };
+  }
+
+  it("does not write the placeholder over a file with content", async () => {
+    const { actions, writeFile } = placeholderActions({ disk: LAB_TEXT });
+    await actions.save_ipynb_file();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("does not write over a file it cannot parse (e.g. still being copied)", async () => {
+    const { actions, writeFile } = placeholderActions({
+      disk: LAB_TEXT.slice(0, 20),
+    });
+    await actions.save_ipynb_file();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("writes the placeholder when there is no file", async () => {
+    const { actions, writeFile } = placeholderActions({});
+    await actions.save_ipynb_file();
+    expect(writeFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes a notebook that was emptied on purpose", async () => {
+    const { actions, writeFile } = placeholderActions({
+      disk: LAB_TEXT,
+      settings: { has_had_content: true },
+    });
+    await actions.save_ipynb_file();
+    expect(writeFile).toHaveBeenCalledTimes(1);
+  });
+});

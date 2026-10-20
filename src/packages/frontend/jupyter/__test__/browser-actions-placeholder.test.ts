@@ -39,6 +39,18 @@ const LAB_TEXT = JSON.stringify(LAB);
 const LAB_READ = { bytes: LAB_TEXT.length, text: LAB_TEXT, ipynb: LAB };
 const ALPHA = { type: "cell", id: "alpha", pos: 0, input: "" };
 
+// An empty-looking notebook whose only work is state the exporter writes
+// (and isPlaceholderIpynb treats as content). It must not yield to the file.
+const METADATA_ONLY_WORK: [string, object][] = [
+  ["the cell is collapsed", { cells: [{ ...ALPHA, collapsed: true }] }],
+  ["the cell is scrolled", { cells: [{ ...ALPHA, scrolled: true }] }],
+  ["the cell was run", { cells: [{ ...ALPHA, exec_count: 1, last: 5 }] }],
+  [
+    "the notebook has custom metadata",
+    { settings: { metadata: { nbgrader: { assignment: "lab3" } } } },
+  ],
+];
+
 function createActions({
   cells = [ALPHA],
   settings = {},
@@ -130,6 +142,7 @@ describe("file events", () => {
     ["the cell has output", { cells: [{ ...ALPHA, output: { 0: "x" } }] }],
     ["it is not the generated cell", { cells: [{ ...ALPHA, id: "c1" }] }],
     ["it is a markdown cell", { cells: [{ ...ALPHA, cell_type: "markdown" }] }],
+    ...METADATA_ONLY_WORK,
   ])("treat the empty notebook as real when %s", async (_label, opts) => {
     const actions = createActions(opts as any);
     actions.hasUnsavedChanges = true;
@@ -204,6 +217,20 @@ describe("saving", () => {
     );
   });
 
+  it("save a clear made just before saving, before the change event records it", async () => {
+    // The user cleared the only cell's input and saved at once: the debounced
+    // change event that writes has_had_content has not run yet.
+    const actions = createActions({ cells: [{ ...ALPHA, input: "x = 1" }] });
+    actions.noteNotebookContent();
+    actions.setCells([ALPHA]);
+    actions.hasUnsavedChanges = true;
+
+    await actions.saveIpynb();
+
+    expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledTimes(1);
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
+  });
+
   it("save an emptied notebook after every cell was deleted", async () => {
     const actions = createActions({ settings: { has_had_content: true } });
     actions.hasUnsavedChanges = true;
@@ -257,6 +284,45 @@ describe("opening", () => {
     await actions.watchIpynb();
 
     expect(actions.watchLoadFromDisk).not.toHaveBeenCalled();
+  });
+
+  it.each(METADATA_ONLY_WORK)(
+    "keep the live notebook newer than the file when %s",
+    async (_label, opts) => {
+      const actions = createActions(opts as any);
+      const close = prepareOpen(actions);
+      close();
+      actions.isClosed = jest
+        .fn()
+        .mockReturnValueOnce(false)
+        .mockReturnValue(true);
+      actions.watchLoadFromDisk = jest.fn(async () => {});
+
+      await actions.watchIpynb();
+
+      expect(actions.runDebug).toHaveBeenCalledWith(
+        "watch.initial_load.decision",
+        expect.objectContaining({ hasRtcCells: true, loadFromDisk: false }),
+      );
+      expect(actions.watchLoadFromDisk).not.toHaveBeenCalled();
+    },
+  );
+
+  it("decide to load the file over the untouched placeholder (control)", async () => {
+    const actions = createActions();
+    const close = prepareOpen(actions);
+    close();
+    actions.isClosed = jest
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+
+    await actions.watchIpynb();
+
+    expect(actions.runDebug).toHaveBeenCalledWith(
+      "watch.initial_load.decision",
+      expect.objectContaining({ hasRtcCells: false, loadFromDisk: true }),
+    );
   });
 
   it("abandon the initial load if the placeholder is edited during conversion", async () => {
@@ -428,5 +494,59 @@ describe("watcher hand-off", () => {
     await actions.watchIpynb();
 
     expect(actions.setToIpynb).toHaveBeenCalledWith(LAB);
+  });
+});
+
+describe("applying a loaded file", () => {
+  // setToIpynb commits the file, then awaits the RTC save; edits are allowed
+  // meanwhile and are not in the file.
+  function deferredSetToIpynb(actions) {
+    let finish: () => void = () => {};
+    actions.setToIpynb = jest.fn(() => {
+      actions.setVersion("imported");
+      actions.noteImportCommit();
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+    return () => finish();
+  }
+
+  it("keep an edit made while the file is applied unsaved, and save it", async () => {
+    const actions = createActions();
+    actions.saveIpynb = jest.fn(async () => {});
+    const finish = deferredSetToIpynb(actions);
+
+    const loading = actions.loadFromDisk({
+      diskRead: LAB_READ,
+      expectedRtcVersion: "v1",
+      replacingPlaceholder: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(actions.setToIpynb).toHaveBeenCalledWith(LAB);
+    actions.setVersion("v2"); // the user edits the loaded lab
+    actions.hasUnsavedChanges = true;
+    finish();
+    await loading;
+
+    expect(actions.hasUnsavedChanges).toBe(true);
+    expect(actions.saveIpynb).toHaveBeenCalledTimes(1);
+  });
+
+  it("mark the notebook saved when nothing changed while applying", async () => {
+    const actions = createActions();
+    actions.saveIpynb = jest.fn(async () => {});
+    const finish = deferredSetToIpynb(actions);
+
+    const loading = actions.loadFromDisk({
+      diskRead: LAB_READ,
+      expectedRtcVersion: "v1",
+      replacingPlaceholder: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    actions.hasUnsavedChanges = true; // the import's own change event
+    finish();
+    await loading;
+
+    expect(actions.hasUnsavedChanges).toBe(false);
+    expect(actions.saveIpynb).not.toHaveBeenCalled();
   });
 });

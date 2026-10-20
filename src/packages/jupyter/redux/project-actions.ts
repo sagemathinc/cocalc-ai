@@ -24,6 +24,10 @@ import {
   externalizeJupyterAttachments,
 } from "@cocalc/jupyter/ipynb/blob-attachments";
 import handleNbconvertChange from "./handle-nbconvert-change";
+import {
+  isPlaceholderIpynb,
+  notebookFileHasContent,
+} from "@cocalc/jupyter/ipynb/placeholder";
 
 const logger = getLogger("jupyter:project-actions");
 
@@ -51,6 +55,18 @@ export class JupyterActions extends JupyterActions0 {
     const ipynb = await this.toIpynb();
     if (ipynb == null) {
       throw Error("notebook is not loaded");
+    }
+    if (
+      this.liveNotebookIsGeneratedPlaceholder() &&
+      isPlaceholderIpynb(ipynb) &&
+      (await notebookFileHasContent(
+        (path) => this.syncdb.fs.readFile(path),
+        this.path,
+      ))
+    ) {
+      // The generated empty cell carries no work: never write it over a
+      // notebook file with content (e.g. one a course copy just filled in).
+      return;
     }
     const saveIpynb = this.syncdb.fs.jupyterSaveIpynb;
     if (typeof saveIpynb === "function") {

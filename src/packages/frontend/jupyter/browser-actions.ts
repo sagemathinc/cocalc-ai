@@ -116,7 +116,6 @@ import {
   refineInitialWatchSourceDecision,
 } from "./watch-policy";
 import {
-  cellRecordsAreGeneratedPlaceholder,
   ipynbTextHasContent,
   isPlaceholderIpynb,
 } from "@cocalc/jupyter/ipynb/placeholder";
@@ -4652,10 +4651,32 @@ export class JupyterActions extends JupyterActions0 {
       }
       return;
     }
+    this.importCommitVersion = undefined;
     await this.setToIpynb(ipynb);
     // setToIpynb runs with change handling paused, so note the loaded content
     // here (see ensureThereIsACell).
     this.noteNotebookContent();
+    // setToIpynb commits the file and then awaits the RTC save, and edits are
+    // allowed meanwhile. Such an edit is not in the file: keep it unsaved and
+    // save it, rather than marking the notebook as matching the file.
+    const importVersion = this.importCommitVersion;
+    if (
+      importVersion != null &&
+      (this.getRtcVersion() !== importVersion ||
+        this.syncdb?.has_uncommitted_changes?.() === true)
+    ) {
+      this.runDebug("ipynb.load.edited_while_applying", {
+        importVersion,
+        actualRtcVersion: this.getRtcVersion(),
+      });
+      this.hasUnsavedChanges = true;
+      if (this.saveIpynbInFlight == null) {
+        await this.saveIpynb();
+      } else {
+        this.saveIpynbRequested = true;
+      }
+      return;
+    }
     this.markIpynbSaved();
     this.runDebug("ipynb.load.done", { bytes: read.bytes });
     // good time to refresh status
@@ -4668,18 +4689,11 @@ export class JupyterActions extends JupyterActions0 {
   // notebook (ensureThereIsACell) and has never held content. Such a
   // placeholder must not win over, or be saved on top of, a file with
   // content. Decided from the raw records (no blob loading); errors count as
-  // content, which keeps the previous behavior.
-  private rtcIsGeneratedPlaceholder = (): boolean => {
-    try {
-      return (
-        cellRecordsAreGeneratedPlaceholder(this.syncdb.get({ type: "cell" })) &&
-        this.syncdb.get_one({ type: "settings" })?.get("has_had_content") !==
-          true
-      );
-    } catch {
-      return false;
-    }
-  };
+  // content, which keeps the previous behavior. This client's own record of
+  // content counts too: a clear is not yet recorded as has_had_content until
+  // the debounced change event runs.
+  private rtcIsGeneratedPlaceholder = (): boolean =>
+    this.liveNotebookIsGeneratedPlaceholder();
 
   private getRtcVersion = (): string | undefined => {
     try {

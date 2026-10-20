@@ -9,6 +9,7 @@ import {
   cellRecordsAreGeneratedPlaceholder,
   ipynbTextHasContent,
   isPlaceholderIpynb,
+  notebookSettingsArePlaceholder,
 } from "./placeholder";
 
 // The generated placeholder exported by the real exporter, which always adds
@@ -139,9 +140,46 @@ describe("cellRecordsAreGeneratedPlaceholder", () => {
     ["tags", [{ ...ALPHA, tags: { exercise: true } }]],
     ["a slide type", [{ ...ALPHA, slide: "slide" }]],
     ["metadata", [{ ...ALPHA, metadata: { nbgrader: {} } }]],
+    ["collapsed", [{ ...ALPHA, collapsed: true }]],
+    ["scrolled", [{ ...ALPHA, scrolled: true }]],
+    ["an execution count", [{ ...ALPHA, exec_count: 1 }]],
+    ["a recorded run", [{ ...ALPHA, last: 12 }]],
   ])("treats %s as content", (_label, cells) => {
     expect(
       cellRecordsAreGeneratedPlaceholder(records(...(cells as object[]))),
     ).toBe(false);
+  });
+});
+
+describe("notebookSettingsArePlaceholder", () => {
+  it("accepts no settings, or only the kernel description", () => {
+    expect(notebookSettingsArePlaceholder(undefined)).toBe(true);
+    expect(notebookSettingsArePlaceholder(fromJS({ kernel: "python3" }))).toBe(
+      true,
+    );
+    expect(
+      notebookSettingsArePlaceholder(
+        fromJS({ metadata: { kernelspec: {}, language_info: {} } }),
+      ),
+    ).toBe(true);
+  });
+
+  it("treats a content record or custom notebook metadata as content", () => {
+    expect(
+      notebookSettingsArePlaceholder(fromJS({ has_had_content: true })),
+    ).toBe(false);
+    expect(
+      notebookSettingsArePlaceholder(fromJS({ metadata: { nbgrader: {} } })),
+    ).toBe(false);
+  });
+});
+
+describe("isPlaceholderIpynb execution count", () => {
+  it("treats an executed empty cell as content", () => {
+    const cell = (execution_count) => ({
+      cells: [{ cell_type: "code", source: "", outputs: [], execution_count }],
+    });
+    expect(isPlaceholderIpynb(cell(null))).toBe(true);
+    expect(isPlaceholderIpynb(cell(3))).toBe(false);
   });
 });
