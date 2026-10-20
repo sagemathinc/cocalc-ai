@@ -266,13 +266,18 @@ function agentLabel(summary: Record<string, unknown>): string {
     : "Agent";
 }
 
-function codexTurnToastDescription(summary: Record<string, unknown>): string {
+export function codexTurnToastDescription(
+  summary: Record<string, unknown>,
+): string {
   const threadLabel = isNonEmptyString(summary.thread_label)
     ? summary.thread_label.trim()
     : "this chat";
   const agent = isNonEmptyString(summary.agent_label)
     ? summary.agent_label.trim()
     : "The agent";
+  // Paused until a usage limit resets: not finished, and not lost.
+  if (summary.turn_state === "paused")
+    return `${agent} is paused in ${threadLabel} until its usage limit resets; it resumes automatically.`;
   return summary.severity === "warning"
     ? `${agent} ended with an error in ${threadLabel}.`
     : `${agent} finished working in ${threadLabel}.`;

@@ -2249,6 +2249,54 @@ function compactLivePreviewBatch(
   return compacted;
 }
 
+type StashedLimitNotice = {
+  client: ConatClient;
+  project_id: string;
+  paused: Parameters<typeof publishCodexTurnNotice>[0]["notice"];
+  ended: Parameters<typeof publishCodexTurnNotice>[0]["notice"];
+  timer?: ReturnType<typeof setTimeout>;
+};
+/** A limit notice waits here until the hold is decided. */
+const stashedLimitNotices = new Map<string, StashedLimitNotice>();
+/** Not claimed by then (no queued job decided it): published as ended. */
+const LIMIT_NOTICE_CLAIM_MS = 60_000;
+
+function stashLimitNotice(message_id: string, notice: StashedLimitNotice) {
+  const previous = stashedLimitNotices.get(message_id);
+  if (previous?.timer) clearTimeout(previous.timer);
+  notice.timer = setTimeout(
+    () => void publishLimitNoticeAfterHold(message_id, false),
+    LIMIT_NOTICE_CLAIM_MS,
+  );
+  notice.timer.unref?.();
+  stashedLimitNotices.set(message_id, notice);
+}
+
+/**
+ * Publish the limit notice for this turn once its hold is decided: the
+ * shared "paused" notice only if a continuation was queued, else the turn's
+ * ordinary error notice (it will not resume on its own).
+ */
+async function publishLimitNoticeAfterHold(
+  message_id: string | undefined,
+  held: boolean,
+): Promise<void> {
+  if (!message_id) return;
+  const stashed = stashedLimitNotices.get(message_id);
+  if (!stashed) return;
+  stashedLimitNotices.delete(message_id);
+  if (stashed.timer) clearTimeout(stashed.timer);
+  try {
+    await publishCodexTurnNotice({
+      client: stashed.client,
+      project_id: stashed.project_id,
+      notice: held ? stashed.paused : stashed.ended,
+    });
+  } catch (err) {
+    logger.warn("failed to publish an agent limit notice", { err });
+  }
+}
+
 export class ChatStreamWriter {
   assertSteerPrincipal(accountId: string): void {
     assertSameTurnPrincipal(this.approverAccountId, accountId);
@@ -2896,38 +2944,48 @@ export class ChatStreamWriter {
         this.recordField<string>(threadConfig, "name") ?? undefined;
       const messageDateMs = Date.parse(`${this.metadata.message_date ?? ""}`);
       const failure = this.lastFailure;
-      // A usage limit pauses the turn (it resumes on its own): one shared
-      // notice for every agent it paused, not an error per turn.
-      const notice =
-        failure?.kind === "limit"
-          ? buildAgentLimitNoticeOptions({
-              account_id: this.approverAccountId,
-              source_project_id: this.metadata.project_id,
-              source_path: this.metadata.path,
-              source_fragment_id: Number.isFinite(messageDateMs)
-                ? `chat=${Math.floor(messageDateMs)}`
-                : undefined,
-              thread_id: threadId,
-              thread_label: threadLabel,
-              failure,
-              agent_label: this.agentLabel,
-            })
-          : buildCodexTurnNoticeOptions({
-              account_id: this.approverAccountId,
-              source_project_id: this.metadata.project_id,
-              source_path: this.metadata.path,
-              source_fragment_id: Number.isFinite(messageDateMs)
-                ? `chat=${Math.floor(messageDateMs)}`
-                : undefined,
-              thread_id: threadId,
-              thread_label: threadLabel,
-              stable_source_id:
-                `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
-                undefined,
-              terminal_state: "error",
-              error_text: this.lastErrorText,
-              agent_label: this.agentLabel,
-            });
+      const errorNotice = () =>
+        buildCodexTurnNoticeOptions({
+          account_id: this.approverAccountId,
+          source_project_id: this.metadata.project_id,
+          source_path: this.metadata.path,
+          source_fragment_id: Number.isFinite(messageDateMs)
+            ? `chat=${Math.floor(messageDateMs)}`
+            : undefined,
+          thread_id: threadId,
+          thread_label: threadLabel,
+          stable_source_id:
+            `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
+            undefined,
+          terminal_state: "error",
+          error_text: this.lastErrorText,
+          agent_label: this.agentLabel,
+        });
+      // A usage limit pauses the turn, if it can be held: one shared notice
+      // for every agent it paused, published once the hold is queued (see
+      // publishLimitNoticeAfterHold); otherwise this turn's error notice.
+      if (failure?.kind === "limit" && this.metadata.message_id) {
+        stashLimitNotice(`${this.metadata.message_id}`, {
+          client: this.client,
+          project_id: this.metadata.project_id,
+          paused: buildAgentLimitNoticeOptions({
+            account_id: this.approverAccountId,
+            source_project_id: this.metadata.project_id,
+            source_path: this.metadata.path,
+            source_fragment_id: Number.isFinite(messageDateMs)
+              ? `chat=${Math.floor(messageDateMs)}`
+              : undefined,
+            thread_id: threadId,
+            thread_label: threadLabel,
+            failure,
+            agent_label: this.agentLabel,
+          }),
+          ended: errorNotice(),
+        });
+        this.completionNoticePublished = true;
+        return;
+      }
+      const notice = errorNotice();
       await publishCodexTurnNotice({
         client: this.client,
         project_id: this.metadata.project_id,
@@ -10387,6 +10445,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         });
         // Queued (or declined): the intent has done its job.
         clearAcpJobRecoveryIntent(job.op_id);
+        void publishLimitNoticeAfterHold(
+          refreshedRequest.chat?.message_id,
+          resumed?.available_at != null,
+        );
         // The agent that sent the message hears it is paused, and until when.
         if (resumed?.available_at)
           reportFailedAgentMessageTurn(
@@ -13631,6 +13693,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  publishLimitNoticeAfterHold,
   harnessKilledFailure,
   loadAgentMemoryContext,
   handleAcpAttentionRequest,

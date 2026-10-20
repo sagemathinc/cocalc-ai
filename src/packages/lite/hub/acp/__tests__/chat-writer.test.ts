@@ -570,6 +570,43 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("a usage limit that could not be held gets its error notice, not 'paused'", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: { ...baseMetadata },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    await writer.handle({
+      type: "error",
+      error: "Claude could not run this request.",
+      failure: { kind: "limit", scope: "credential" },
+    });
+    await writer.handle(null);
+    await flush(writer);
+    // E.g. a delivery report's turn, or one at its retry limit.
+    await acpTestInternals.publishLimitNoticeAfterHold(
+      baseMetadata.message_id,
+      false,
+    );
+    await waitForCondition(() => callHubMock.mock.calls.length > 0);
+    const notice = (
+      callHubMock.mock.calls.find(
+        ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
+      )![0] as any
+    ).args[0];
+    expect(notice.paused).toBeUndefined();
+    expect(notice.title).not.toMatch(/paused/);
+    writer.dispose?.(true);
+  });
+
   it("a usage limit gets the shared paused notice, not a turn error", async () => {
     delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
     const { syncdb } = makeFakeSyncDB();
@@ -597,6 +634,16 @@ describe("ChatStreamWriter", () => {
     });
     await writer.handle(null);
     await flush(writer);
+    // Nothing yet: it waits until the turn's hold is decided.
+    expect(
+      callHubMock.mock.calls.filter(
+        ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
+      ),
+    ).toHaveLength(0);
+    await acpTestInternals.publishLimitNoticeAfterHold(
+      baseMetadata.message_id,
+      true,
+    );
     await waitForCondition(() => callHubMock.mock.calls.length > 0);
     const call = callHubMock.mock.calls.find(
       ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
