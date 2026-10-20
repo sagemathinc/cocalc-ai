@@ -216,10 +216,23 @@ function focusMark(entry: Entry, which: "enter" | "exit"): void {
   }
 }
 
+// The live entry for a frame a card holds: the frame itself, or the frame
+// that replaced it (Refresh in another place showing the same view), which
+// took over its placeholders. A frame dropped and created anew for the
+// view is not it.
+function liveEntry(frame: BoardFrame): Entry | undefined {
+  const entry = entries.get(frame.key);
+  if (entry == null) return undefined;
+  if (entry === frame) return entry;
+  return entry.placeholders === (frame as Entry).placeholders
+    ? entry
+    : undefined;
+}
+
 /** Move focus into a shown frame (its placeholder's focus proxy). */
 export function focusBoardFrame(frame: BoardFrame): void {
-  const entry = entries.get(frame.key);
-  if (entry == null || entry !== frame) return;
+  const entry = liveEntry(frame);
+  if (entry == null) return;
   if (entry.iframe.style.visibility !== "visible") return;
   entry.iframe.focus();
 }
@@ -452,20 +465,23 @@ export function attachBoardFrame(
   element: HTMLElement,
   onState: (state: BoardFrameState) => void,
 ): () => void {
-  const entry = entries.get(frame.key);
-  if (entry == null || entry !== frame) return () => {};
+  const attached = liveEntry(frame);
+  if (attached == null) return () => {};
   const placeholder: Placeholder = {
     element,
     clipAncestors: clippingAncestors(element),
     onState,
   };
-  entry.placeholders.push(placeholder);
-  entry.hiddenSince = undefined;
-  entry.pendingSince = undefined;
-  notify(entry);
+  attached.placeholders.push(placeholder);
+  attached.hiddenSince = undefined;
+  attached.pendingSince = undefined;
+  notify(attached);
   layoutBoardFrames();
   schedule();
   return () => {
+    // The frame now showing the view, if Refresh replaced it meanwhile.
+    const entry = liveEntry(attached);
+    if (entry == null) return;
     const index = entry.placeholders.indexOf(placeholder);
     if (index < 0) return;
     entry.placeholders.splice(index, 1);

@@ -9,6 +9,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import BoardArtifact from "./board-artifact";
 import { boardFrameUrl, isBoardPath } from "./board-artifact-frame";
@@ -496,6 +497,47 @@ test("shown in two places, the newest has the frame", async () => {
       first.view.queryByText("This board is shown in another view."),
     ).toBeNull(),
   );
+});
+
+test("Refresh in one of two places: the other place shows, focuses and hides the new frame", async () => {
+  const first = await renderBoard();
+  const second = render(<Board />);
+  await waitFor(() =>
+    expect(
+      first.view.getByText("This board is shown in another view."),
+    ).toBeInTheDocument(),
+  );
+  fireEvent.click(
+    within(second.container).getByRole("button", { name: "Refresh" }),
+  );
+  const replaced = await waitFor(() => {
+    const f = screen.getByTitle(TITLE) as HTMLIFrameElement;
+    expect(f).not.toBe(first.frame);
+    return f;
+  });
+  expect(first.frame.isConnected).toBe(false);
+  // The refreshed place goes: the first place has the new frame.
+  second.unmount();
+  await waitFor(() =>
+    expect(
+      first.view.queryByText("This board is shown in another view."),
+    ).toBeNull(),
+  );
+  const shown = placeholder(first.view.container);
+  jest
+    .spyOn(shown, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 50, 400, 300));
+  act(() => layoutBoardFrames());
+  expect(replaced.style.visibility).toBe("visible");
+  expect(shown.tabIndex).toBe(0);
+  act(() => shown.focus());
+  expect(document.activeElement).toBe(replaced);
+  // Then the first place goes too: the new frame is hidden, not left over
+  // the page at its old position.
+  first.view.unmount();
+  expect(replaced.isConnected).toBe(true);
+  expect(replaced.style.visibility).toBe("hidden");
+  expect(replaced.style.pointerEvents).toBe("none");
 });
 
 test("refuses a board over the preview limit without reading it", async () => {
