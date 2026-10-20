@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { parseAgentTurnStatus } from "@cocalc/conat/agents/agent-status";
+import {
+  agentTurnStatusFor,
+  parseAgentTurnStatus,
+} from "@cocalc/conat/agents/agent-status";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { isActorDenial } from "./actor-denial";
@@ -89,14 +92,22 @@ function memberStatus(metadata: any) {
   return status ? { status } : {};
 }
 
-export function identitySnapshot(identity: AgentIdentity): NamedAgentSnapshot {
+/** The identity as `account_id` sees it (its own unavailability only). */
+export function identitySnapshot(
+  identity: AgentIdentity,
+  account_id: string,
+): NamedAgentSnapshot {
   return {
     path: identity.path,
     thread_id: identity.thread_id,
     appearance: identity.appearance ?? null,
     runtime: identity.runtime ?? null,
     available: !identity.disabled_at,
-    status: parseAgentTurnStatus(identity.turn_status) ?? null,
+    status:
+      agentTurnStatusFor(
+        parseAgentTurnStatus(identity.turn_status),
+        account_id,
+      ) ?? null,
   };
 }
 
@@ -261,7 +272,10 @@ export class PersonalAgentStore {
       appearance: snapshot.appearance ?? null,
       runtime: snapshot.runtime ?? null,
       available: snapshot.available !== false,
-      status: parseAgentTurnStatus(snapshot.status) ?? null,
+      // Only this account's view is stored (never another's).
+      status:
+        agentTurnStatusFor(parseAgentTurnStatus(snapshot.status), account) ??
+        null,
     };
     if (!value.path || !value.thread_id)
       throw new Error("invalid agent identity snapshot");
@@ -315,7 +329,10 @@ export class PersonalAgentStore {
         const endpoint = { project_id: row.project_id, agent_id: row.agent_id };
         let snapshot: NamedAgentSnapshot | undefined;
         try {
-          snapshot = identitySnapshot(await this.identity(account, endpoint));
+          snapshot = identitySnapshot(
+            await this.identity(account, endpoint),
+            account,
+          );
           // Make sure future changes reach this account.
           await this.hooks
             .watch?.(account, endpoint, true)
@@ -398,7 +415,7 @@ export class PersonalAgentStore {
       )
         throw new Error(`invalid ${key}`);
     const metadata = {
-      ...identitySnapshot(identity),
+      ...identitySnapshot(identity, account),
       description: opts.description,
       project_title: opts.project_title,
       thread_title: opts.thread_title,

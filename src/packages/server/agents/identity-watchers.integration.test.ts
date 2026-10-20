@@ -254,4 +254,46 @@ describeDb("agent identity watchers", () => {
       reportStatus({ ...report, status: { version: 1, running: -1 } as any }),
     ).rejects.toThrow("invalid agent status");
   });
+
+  test("each watcher sees only its own account's limit or sign-in", async () => {
+    for (const account_id of [alice, bob])
+      await watchIdentity({ account_id, project_id, agent_id, watching: true });
+    const at = Date.now() + 60 * 60_000;
+    await reportStatus({
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+      status: {
+        version: 1,
+        running: 0,
+        queued: 0,
+        by_account: { [alice]: { reason: "sign-in" } },
+        at,
+      },
+    });
+    await settle();
+    const snapshotFor = (account: string) =>
+      (withPersonalHome.mock.calls as any[]).find(
+        ([who]) => who === account,
+      )?.[1].options.snapshot;
+    expect(snapshotFor(alice).status).toEqual({
+      version: 1,
+      running: 0,
+      queued: 0,
+      unavailable: { reason: "sign-in" },
+      at,
+    });
+    // Bob's credentials may work: no warning, and no one else's account.
+    expect(snapshotFor(bob).status).toEqual({
+      version: 1,
+      running: 0,
+      queued: 0,
+      at,
+    });
+    expect(JSON.stringify(withPersonalHome.mock.calls)).not.toMatch(
+      /by_account/,
+    );
+  });
 });

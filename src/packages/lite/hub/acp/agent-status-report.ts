@@ -31,6 +31,9 @@ const UNREGISTERED_RECHECK_MS = 60 * 60_000;
 const SWEEP_OVERLAP_MS = 5_000;
 /** On start, what changed this recently is reported again. */
 const FIRST_SWEEP_LOOKBACK_MS = 10 * 60_000;
+/** ...and, further back, a status that still says something (an agent
+ * blocked on its sign-in for days), so its refresh starts again too. */
+const FIRST_SWEEP_STILL_TRUE_MS = 7 * 24 * 60 * 60_000;
 const MAX_REMEMBERED = 10_000;
 /** A report that failed (hub unreachable) is tried again after this,
  * doubling each time up to the cap, at most this many times. */
@@ -76,15 +79,31 @@ export function setAgentStatusReporterForTests(next?: Reporter): void {
   failed.clear();
 }
 
+/** Busy, or unavailable for someone: worth keeping fresh. */
+function saysSomething(status: AgentTurnStatus): boolean {
+  return Boolean(
+    status.unavailable ||
+    status.by_account ||
+    status.running > 0 ||
+    status.queued > 0,
+  );
+}
+
 /** The status of one conversation's agent, from its jobs. */
 export function agentThreadStatus(
   thread: Thread,
   now = Date.now(),
 ): AgentTurnStatus {
-  const { running, queued, last } = acpThreadJobSummary(thread);
+  const { running, queued, last, lastByAccount } = acpThreadJobSummary(thread);
   return agentTurnStatusOf({
     running,
     queued,
+    byAccount: Object.fromEntries(
+      Object.entries(lastByAccount).map(([account_id, job]) => [
+        account_id,
+        { outcome: parseTurnOutcome(job.outcome_json) },
+      ]),
+    ),
     ...(last
       ? {
           last: {
@@ -112,6 +131,18 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
     const candidates = new Map<string, Thread & { account_id: string }>();
     for (const thread of listAcpThreadsChangedSince(since))
       candidates.set(keyOf(thread), thread);
+    // After a restart (nothing sent yet): older conversations whose status
+    // still says something, sent only if it does.
+    const onlyIfTrue = new Set<string>();
+    if (since === now - FIRST_SWEEP_LOOKBACK_MS)
+      for (const thread of listAcpThreadsChangedSince(
+        now - FIRST_SWEEP_STILL_TRUE_MS,
+      )) {
+        const key = keyOf(thread);
+        if (candidates.has(key)) continue;
+        candidates.set(key, thread);
+        onlyIfTrue.add(key);
+      }
     // Due to be asked again: report even an unchanged status.
     const retry = new Set<string>();
     // A failed report waits out its backoff, whatever else is due.
@@ -124,7 +155,7 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
     // Still true, but getting old: sent again before it expires.
     for (const [key, { status, thread }] of sent)
       if (
-        (status.unavailable || status.running > 0 || status.queued > 0) &&
+        saysSomething(status) &&
         now - status.at >= STATUS_REFRESH_MS &&
         !unregistered.has(key) &&
         !backingOff(key)
@@ -142,6 +173,7 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
       if (!thread.path.endsWith(".chat")) continue;
       if (!retry.has(key) && unregistered.has(key)) continue;
       const status = agentThreadStatus(thread, now);
+      if (onlyIfTrue.has(key) && !saysSomething(status)) continue;
       if (!retry.has(key) && sameAgentTurnStatus(sent.get(key)?.status, status))
         continue;
       try {
@@ -161,8 +193,16 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
         // the next change.
         logger.debug("agent status not reported", { err: `${err}` });
         const attempts = (failed.get(key)?.attempts ?? 0) + 1;
-        if (attempts > FAILED_RETRY_ATTEMPTS) failed.delete(key);
-        else {
+        if (attempts > FAILED_RETRY_ATTEMPTS) {
+          failed.delete(key);
+          // Given up for now: what made it due waits its own interval
+          // again (else the next sweep would start the retries over).
+          const recheck = unregistered.get(key);
+          if (recheck) recheck.until = now + UNREGISTERED_RECHECK_MS;
+          const last = sent.get(key);
+          if (last)
+            sent.set(key, { ...last, status: { ...last.status, at: now } });
+        } else {
           if (failed.size >= MAX_REMEMBERED) failed.clear();
           failed.set(key, {
             thread,

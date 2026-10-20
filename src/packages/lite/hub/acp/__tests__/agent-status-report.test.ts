@@ -110,7 +110,7 @@ describe("reporting what each agent is doing", () => {
     expect(reports[1].status).toMatchObject({
       running: 0,
       queued: 0,
-      unavailable: { reason: "limit", until: resets_at },
+      by_account: { [ACCOUNT]: { reason: "limit", until: resets_at } },
       last: { state: "failed", kind: "limit" },
     });
     expect(JSON.stringify(reports[1])).not.toMatch(/credential/);
@@ -216,7 +216,7 @@ describe("a failed report with no later change", () => {
     expect(attempts).toBe(3);
     expect(reports).toHaveLength(1);
     expect(reports[0].status).toMatchObject({
-      unavailable: { reason: "limit" },
+      by_account: { [ACCOUNT]: { reason: "limit" } },
     });
     // Sent: nothing more.
     await sweepAgentStatus(now + 30 * 60_000);
@@ -241,14 +241,16 @@ describe("an unchanged status that is still true", () => {
     });
     await sweepAgentStatus(now);
     expect(reports).toHaveLength(1);
-    expect(reports[0].status.unavailable).toMatchObject({ reason: "sign-in" });
+    expect(reports[0].status.by_account[ACCOUNT]).toMatchObject({
+      reason: "sign-in",
+    });
     // Nothing changes for hours: not sent again until the refresh is due.
     await sweepAgentStatus(now + 60 * 60_000);
     expect(reports).toHaveLength(1);
     await sweepAgentStatus(now + 6 * 60 * 60_000 + 1);
     expect(reports).toHaveLength(2);
     expect(reports[1].status).toMatchObject({
-      unavailable: { reason: "sign-in" },
+      by_account: { [ACCOUNT]: { reason: "sign-in" } },
       at: now + 6 * 60 * 60_000 + 1,
     });
   });
@@ -293,5 +295,112 @@ describe("an unchanged status that is still true", () => {
     expect(attempts).toBe(2);
     await sweepAgentStatus(due + 31_000);
     expect(attempts).toBe(3);
+  });
+});
+
+describe("limits and sign-ins are per account", () => {
+  it("each account's own latest turn says whether it is unavailable", async () => {
+    const now = Date.now();
+    const other = "00000000-1000-4000-8000-000000000002";
+    const mine = job();
+    set(mine.op_id, {
+      state: "error",
+      started_at: now - 61_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "sign-in" },
+      },
+    });
+    // A collaborator's later turn on the same agent succeeded: that says
+    // nothing about this account's sign-in.
+    const theirs = job();
+    set(theirs.op_id, {
+      account_id: other,
+      state: "completed",
+      started_at: now - 31_000,
+      finished_at: now - 30_000,
+      updated_at: now - 30_000,
+      outcome_json: { version: 1, state: "completed" },
+    });
+    await sweepAgentStatus(now);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].status.by_account).toEqual({
+      [ACCOUNT]: { reason: "sign-in" },
+    });
+    expect(reports[0].status.unavailable).toBeUndefined();
+  });
+});
+
+describe("after a restart", () => {
+  it("an old status that is still true is sent again, so its refresh resumes", async () => {
+    const now = Date.now();
+    const blocked = job("/tmp/a.chat", "blocked");
+    set(blocked.op_id, {
+      state: "error",
+      started_at: now - 3 * 60 * 60_000,
+      finished_at: now - 3 * 60 * 60_000,
+      updated_at: now - 3 * 60 * 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "sign-in" },
+      },
+    });
+    const idle = job("/tmp/b.chat", "idle");
+    set(idle.op_id, {
+      state: "completed",
+      started_at: now - 3 * 60 * 60_000,
+      finished_at: now - 3 * 60 * 60_000,
+      updated_at: now - 3 * 60 * 60_000,
+      outcome_json: { version: 1, state: "completed" },
+    });
+    // A fresh process: nothing sent yet.
+    await sweepAgentStatus(now);
+    expect(reports.map((r) => r.thread_id)).toEqual(["blocked"]);
+  });
+});
+
+describe("a refresh that keeps failing", () => {
+  it("gives up for a while, then tries again at its own interval", async () => {
+    const now = Date.now();
+    let fail = false;
+    let attempts = 0;
+    setAgentStatusReporterForTests(async (opts) => {
+      attempts += 1;
+      if (fail) throw new Error("hub unreachable");
+      reports.push(opts);
+      return { registered: true };
+    });
+    const mine = job();
+    set(mine.op_id, {
+      state: "error",
+      started_at: now - 61_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "sign-in" },
+      },
+    });
+    await sweepAgentStatus(now);
+    expect(attempts).toBe(1);
+    fail = true;
+    // The refresh is due and fails: eleven tries with backoff (the cap is
+    // ten minutes apart), then it stops.
+    let t = now + 6 * 60 * 60_000 + 1;
+    for (let i = 0; i < 15; i++) {
+      await sweepAgentStatus(t);
+      t += 10 * 60_000;
+    }
+    expect(attempts - 1).toBe(11);
+    // Then it waits a full refresh interval, not the next sweep.
+    await sweepAgentStatus(t + 60 * 60_000);
+    expect(attempts - 1).toBe(11);
+    await sweepAgentStatus(t + 7 * 60 * 60_000);
+    expect(attempts - 1).toBe(12);
   });
 });

@@ -19,12 +19,22 @@ export interface AgentTurnStatus {
   running: number;
   queued: number;
   /** It can't take turns: its last turn hit a usage limit (until it resets,
-   * if known) or needs its sign-in renewed. */
-  unavailable?: { reason: "limit" | "sign-in"; until?: number };
+   * if known) or needs its sign-in renewed. As each account sees it: limits
+   * and sign-ins belong to the account whose credential paid. */
+  unavailable?: AgentUnavailable;
+  /** Host to hub only: each account's own unavailability, from its own
+   * latest turn. The hub turns it into `unavailable` for that account and
+   * never passes it on (see agentTurnStatusFor). */
+  by_account?: Record<string, AgentUnavailable>;
   /** How its last turn ended. */
   last?: { state: TurnOutcome["state"]; kind?: TurnFailureKind; at: number };
   /** When the host computed it (ms). */
   at: number;
+}
+
+export interface AgentUnavailable {
+  reason: "limit" | "sign-in";
+  until?: number;
 }
 
 /** Older than this, a status says nothing (its host stopped reporting). */
@@ -40,6 +50,21 @@ const FAILURE_KINDS = [
   "timeout",
   "error",
 ];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_ACCOUNTS = 100;
+
+function parseUnavailable(value: unknown): AgentUnavailable | undefined {
+  const u = value as AgentUnavailable;
+  if (
+    !u ||
+    typeof u !== "object" ||
+    !["limit", "sign-in"].includes(u.reason) ||
+    (u.until !== undefined && !time(u.until))
+  )
+    return;
+  return { reason: u.reason, ...(u.until ? { until: u.until } : {}) };
+}
+
 const count = (value: unknown) =>
   Number.isSafeInteger(value) && (value as number) >= 0;
 const time = (value: unknown) =>
@@ -59,13 +84,19 @@ export function parseAgentTurnStatus(
     !time(s.at)
   )
     return;
-  if (
-    s.unavailable !== undefined &&
-    (!s.unavailable ||
-      !["limit", "sign-in"].includes(s.unavailable.reason) ||
-      (s.unavailable.until !== undefined && !time(s.unavailable.until)))
-  )
-    return;
+  if (s.unavailable !== undefined && !parseUnavailable(s.unavailable)) return;
+  let by_account: Record<string, AgentUnavailable> | undefined;
+  if (s.by_account !== undefined) {
+    if (!s.by_account || typeof s.by_account !== "object") return;
+    const entries = Object.entries(s.by_account);
+    if (entries.length > MAX_ACCOUNTS) return;
+    by_account = {};
+    for (const [account_id, value] of entries) {
+      const u = parseUnavailable(value);
+      if (!UUID.test(account_id) || !u) return;
+      by_account[account_id] = u;
+    }
+  }
   if (
     s.last !== undefined &&
     (!s.last ||
@@ -79,14 +110,8 @@ export function parseAgentTurnStatus(
     version: 1,
     running: s.running,
     queued: s.queued,
-    ...(s.unavailable
-      ? {
-          unavailable: {
-            reason: s.unavailable.reason,
-            ...(s.unavailable.until ? { until: s.unavailable.until } : {}),
-          },
-        }
-      : {}),
+    ...(s.unavailable ? { unavailable: parseUnavailable(s.unavailable) } : {}),
+    ...(by_account ? { by_account } : {}),
     ...(s.last
       ? {
           last: {
@@ -100,32 +125,54 @@ export function parseAgentTurnStatus(
   };
 }
 
-/** The status from a turn's outcome and what is running and waiting. */
+/** Unavailable after a turn that ended this way, if it is. */
+function unavailableAfter(
+  outcome: TurnOutcome | undefined,
+  now: number,
+): AgentUnavailable | undefined {
+  const failure = outcome?.state === "failed" ? outcome.failure : undefined;
+  if (failure?.kind === "limit")
+    return failure.resets_at == null || failure.resets_at > now
+      ? {
+          reason: "limit",
+          ...(failure.resets_at ? { until: failure.resets_at } : {}),
+        }
+      : undefined;
+  if (failure?.kind === "sign-in") return { reason: "sign-in" };
+  return undefined;
+}
+
+/** The status from a turn's outcome and what is running and waiting. With
+ * `byAccount` (each account's latest turn), unavailability is per account. */
 export function agentTurnStatusOf(opts: {
   running: number;
   queued: number;
   last?: { outcome?: TurnOutcome; at: number };
+  byAccount?: Record<string, { outcome?: TurnOutcome }>;
   now: number;
 }): AgentTurnStatus {
   const outcome = opts.last?.outcome;
   const failure = outcome?.state === "failed" ? outcome.failure : undefined;
-  const unavailable =
-    failure?.kind === "limit"
-      ? failure.resets_at == null || failure.resets_at > opts.now
-        ? {
-            reason: "limit" as const,
-            ...(failure.resets_at ? { until: failure.resets_at } : {}),
-          }
-        : undefined
-      : failure?.kind === "sign-in"
-        ? { reason: "sign-in" as const }
-        : undefined;
+  let by_account: Record<string, AgentUnavailable> | undefined;
+  if (opts.byAccount) {
+    by_account = {};
+    for (const [account_id, last] of Object.entries(opts.byAccount)) {
+      const u = unavailableAfter(last.outcome, opts.now);
+      if (u) by_account[account_id] = u;
+    }
+  }
+  const unavailable = opts.byAccount
+    ? undefined
+    : unavailableAfter(outcome, opts.now);
   return {
     version: 1,
     running: opts.running,
     queued: opts.queued,
     // A turn running now means it is not stuck on the last failure.
     ...(unavailable && opts.running === 0 ? { unavailable } : {}),
+    ...(by_account && opts.running === 0 && Object.keys(by_account).length
+      ? { by_account }
+      : {}),
     ...(opts.last && outcome
       ? {
           last: {
@@ -137,6 +184,19 @@ export function agentTurnStatusOf(opts: {
       : {}),
     at: opts.now,
   };
+}
+
+/** The status as one account sees it: its own unavailability, and no
+ * other account's. */
+export function agentTurnStatusFor(
+  status: AgentTurnStatus | undefined | null,
+  account_id: string | undefined,
+): AgentTurnStatus | undefined {
+  if (!status) return undefined;
+  if (!status.by_account) return status;
+  const { by_account, unavailable: _shared, ...rest } = status;
+  const own = account_id ? by_account[account_id] : undefined;
+  return { ...rest, ...(own ? { unavailable: own } : {}) };
 }
 
 /** Whether two statuses say the same (the time computed aside). */

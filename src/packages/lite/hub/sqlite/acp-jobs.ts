@@ -516,7 +516,13 @@ export function acpThreadJobSummary({
   project_id: string;
   path: string;
   thread_id: string;
-}): { running: number; queued: number; last?: AcpJobRow } {
+}): {
+  running: number;
+  queued: number;
+  last?: AcpJobRow;
+  /** Each account's latest ended job (limits and sign-ins are per account). */
+  lastByAccount: Record<string, AcpJobRow>;
+} {
   ensureInit();
   const db = getAcpDatabase();
   const counts = db
@@ -537,10 +543,27 @@ export function acpThreadJobSummary({
        ORDER BY finished_at DESC, rowid DESC LIMIT 1`,
     )
     .get(project_id, path, thread_id) as AcpJobRow | undefined;
+  // SQLite returns the row holding MAX(finished_at) for each account.
+  const lastByAccount: Record<string, AcpJobRow> = {};
+  for (const row of db
+    .prepare(
+      `SELECT *, MAX(finished_at) AS latest_finished_at FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state IN ('completed', 'error', 'canceled', 'interrupted')
+         AND finished_at IS NOT NULL AND account_id IS NOT NULL
+       GROUP BY account_id LIMIT 100`,
+    )
+    .all(project_id, path, thread_id) as (AcpJobRow & {
+    latest_finished_at?: number;
+  })[]) {
+    const { latest_finished_at: _l, ...job } = row;
+    lastByAccount[`${job.account_id}`] = job as AcpJobRow;
+  }
   return {
     running: Number(counts?.running ?? 0),
     queued: Number(counts?.queued ?? 0),
     ...(last ? { last } : {}),
+    lastByAccount,
   };
 }
 
