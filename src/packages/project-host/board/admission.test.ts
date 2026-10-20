@@ -10,6 +10,11 @@ import {
 
 const KiB = 1024;
 
+// The tests' clock: the faked Date, which advances with the fake timers.
+const testClock = () => Date.now();
+const newHost = (limits = BOARD_ADMISSION) =>
+  new HostAdmission({ limits, now: testClock });
+
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(1_000_000);
@@ -21,7 +26,7 @@ afterEach(() => {
 
 // A board whose commits are recorded, acknowledged unless told otherwise.
 function board({
-  host = new HostAdmission(),
+  host = newHost(),
   measure = (edits: number[]) => edits.reduce((a, b) => a + b, 0),
   result = async (): Promise<CommitResult> => ({ status: "acknowledged" }),
 }: {
@@ -182,7 +187,7 @@ test("the board's rate: a burst of 20, then 5 a second across its clients", asyn
 
 test("a client's rate: a burst of 20, then 2 a second; other clients are not held back", async () => {
   const limits = { ...BOARD_ADMISSION, boardBurst: 1000, boardPerSecond: 1000 };
-  const { submit } = board({ host: new HostAdmission({ limits }) });
+  const { submit } = board({ host: newHost(limits) });
   for (let i = 0; i < 20; i++) {
     expect(await now(submit(1, "a"))).toBeUndefined();
   }
@@ -198,9 +203,7 @@ test("a client's rate: a burst of 20, then 2 a second; other clients are not hel
 
 test("a commit over the cap when encoded is refused whole, before anything is applied", async () => {
   // A budget of 200 ms, so a refund matters: the two edits cost about 150.
-  const host = new HostAdmission({
-    limits: { ...BOARD_ADMISSION, hostWorkBurstMs: 200 },
-  });
+  const host = newHost({ ...BOARD_ADMISSION, hostWorkBurstMs: 200 });
   // The envelope adds 100 KiB.
   const { commits, submit } = board({
     host,
@@ -248,7 +251,7 @@ test("a refused write refuses its commit's edits", async () => {
 });
 
 test("the next-commit slot is promoted with its reservations, each ended exactly once", async () => {
-  const host = new HostAdmission();
+  const host = newHost();
   const end = jest.spyOn(host, "end");
   const { submit, commits } = board({ host });
   const a = submit(400 * KiB, "a");
@@ -268,7 +271,7 @@ test("the next-commit slot is promoted with its reservations, each ended exactly
 });
 
 test("the host holds at most 64 waiting edits across its boards", async () => {
-  const host = new HostAdmission();
+  const host = newHost();
   const boards = Array.from({ length: 5 }, () =>
     board({ host, result: () => new Promise(() => {}) }),
   );
@@ -284,7 +287,7 @@ test("the host holds at most 64 waiting edits across its boards", async () => {
 });
 
 test("at most 2 commits apply at once across the host", async () => {
-  const host = new HostAdmission();
+  const host = newHost();
   const acks: (() => void)[] = [];
   let applying = 0;
   let most = 0;
@@ -319,7 +322,7 @@ test("at most 2 commits apply at once across the host", async () => {
 });
 
 test("the host's work budget refuses edits once spent, then refills", async () => {
-  const host = new HostAdmission();
+  const host = newHost();
   const boards = Array.from({ length: 8 }, () => board({ host }));
   // 500 KiB edits cost about 170 ms each; the budget is 500 ms.
   const outcomes: (Outcome | undefined)[] = [];
@@ -334,7 +337,7 @@ test("the host's work budget refuses edits once spent, then refills", async () =
 });
 
 test("a commit is charged the time its apply took", async () => {
-  const host = new HostAdmission();
+  const host = newHost();
   const { submit } = board({
     host,
     result: async () => {
@@ -376,7 +379,7 @@ test("closing refuses what waits and releases its reservations", async () => {
 });
 
 test("a board closed while its commit waits for a host slot applies nothing", async () => {
-  const host = new HostAdmission();
+  const host = newHost();
   const hold: (() => void)[] = [];
   const busy = () =>
     new Promise<CommitResult>((resolve) =>
@@ -403,7 +406,7 @@ test("a board closed while its commit waits for a host slot applies nothing", as
 
 test("a board remembers a bounded number of clients", async () => {
   const limits = { ...BOARD_ADMISSION, maxClients: 2 };
-  const host = new HostAdmission({ limits });
+  const host = newHost(limits);
   const { submit } = board({ host });
   expect(await now(submit(1, "a"))).toBeUndefined();
   expect(await now(submit(1, "b"))).toBeUndefined();
@@ -411,4 +414,114 @@ test("a board remembers a bounded number of clients", async () => {
   // Once their buckets are full again, they are forgotten.
   await settle(20_000);
   expect(await now(submit(1, "c"))).toBeUndefined();
+});
+
+test("the default clock is monotonic", () => {
+  const host = new HostAdmission();
+  const t = host.now();
+  expect(host.now()).toBeGreaterThanOrEqual(t);
+  // Not the wall clock.
+  jest.setSystemTime(Date.now() - 3_600_000);
+  expect(host.now()).toBeGreaterThanOrEqual(t);
+});
+
+describe("an injected clock that jumps", () => {
+  let t = 0;
+  const clock = () => t;
+  const host = () => new HostAdmission({ now: clock });
+
+  beforeEach(() => {
+    t = 1_000_000;
+  });
+
+  test("back: buckets grant nothing for the jump, refill from there, and commits aren't held back", async () => {
+    const { submit, commits } = board({ host: host() });
+    const burst = [];
+    for (let i = 0; i < 20; i++) burst.push(submit(1, `c${i}`));
+    await settle();
+    await Promise.all(burst);
+    t -= 3_600_000;
+    expect(await now(submit(1, "x"))).toMatchObject({ reason: "rate" });
+    t += 1000; // 5 edits' worth, counted from the jump
+    const later = submit(1, "y");
+    expect(await now(later)).toBeUndefined();
+    await settle(250);
+    expect(await later).toEqual({ status: "committed" });
+    expect(commits).toHaveLength(2);
+  });
+
+  test("forward: buckets refill only up to their burst", async () => {
+    const { submit } = board({ host: host() });
+    t += 3_600_000;
+    for (let i = 0; i < 20; i++) {
+      expect(await now(submit(1, `c${i}`))).toBeUndefined();
+    }
+    expect(await now(submit(1, "x"))).toMatchObject({ reason: "rate" });
+  });
+
+  test("back during an apply: the commit is charged nothing, not a negative time", async () => {
+    const h = host();
+    const { submit } = board({
+      host: h,
+      result: async () => {
+        t -= 10_000;
+        return { status: "acknowledged" };
+      },
+    });
+    const p = submit(1);
+    await settle();
+    expect(await p).toEqual({ status: "committed" });
+    // The work bucket was not credited: a 500 ms burst still holds back a
+    // second 500 KiB edit after one.
+    expect(h.reserve(500 * KiB)).not.toHaveProperty("reason");
+    expect(h.reserve(500 * KiB)).not.toHaveProperty("reason");
+    expect(h.reserve(500 * KiB)).toMatchObject({ reason: "host-busy" });
+  });
+});
+
+test("a write that never settles is unknown after the deadline, and frees the host", async () => {
+  const host = newHost();
+  const never = () => new Promise<CommitResult>(() => {});
+  const a = board({ host, result: never });
+  const b = board({ host, result: never });
+  const c = board({ host });
+  const stuck = [a.submit(1), b.submit(1)];
+  await settle();
+  expect(host.stats.applying).toBe(2);
+  const waiting = c.submit(1);
+  await settle(BOARD_ADMISSION.commitTimeoutMs - 1);
+  expect(await now(waiting)).toBeUndefined();
+  await settle(1);
+  for (const o of await Promise.all(stuck)) {
+    expect(o).toMatchObject({ status: "unknown" });
+  }
+  await settle();
+  expect(await waiting).toEqual({ status: "committed" });
+  await a.b.close();
+  await b.b.close();
+  expect(host.stats).toEqual({ waiting: 0, applying: 0 });
+});
+
+test("a commit's measured size must be a whole number of bytes within the cap", async () => {
+  for (const bad of [-1, -Infinity, NaN, 1.5, Infinity, 512 * KiB + 1]) {
+    const { submit, commits, host } = board({ measure: () => bad });
+    const p = submit(1);
+    await settle();
+    expect(await p).toMatchObject({ status: "refused", reason: "too-large" });
+    expect(commits).toEqual([]);
+    expect(host.stats.waiting).toBe(0);
+  }
+  for (const ok of [0, 512 * KiB]) {
+    const { submit } = board({ measure: () => ok });
+    const p = submit(1);
+    await settle();
+    expect(await p).toEqual({ status: "committed" });
+  }
+});
+
+test("an edit of exactly 512 KiB is admitted", async () => {
+  const { submit } = board();
+  const p = submit(512 * KiB);
+  await settle();
+  expect(await p).toEqual({ status: "committed" });
 });

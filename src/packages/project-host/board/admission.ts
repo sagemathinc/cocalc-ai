@@ -22,8 +22,14 @@ encoded size, and applies a commit's edits when this says to.
   (also at most 512 KiB), else it is refused; an edit over 512 KiB by itself
   is always refused. All of this happens before anything is applied, so an
   edit is never applied and then dropped.
-- At a flush the commit's final encoding is measured, and if it is over the
-  cap the whole commit is refused before anything is applied.
+- At a flush the commit's final encoding is measured, and if it is not a
+  size within the cap the whole commit is refused before anything is
+  applied.
+- A commit's write has a deadline (commitTimeoutMs). One that doesn't settle
+  by then is "unknown": its host slot is freed and its reservations consumed,
+  so a write that never settles can't hold the host.
+- Every duration and bucket uses one monotonic clock (the host's), never the
+  wall clock, so a clock change can't stall or flood the buckets.
 - Each admitted edit holds a reservation (a host queue slot and its work).
   It ends exactly once: consumed when its commit is applied, or released
   (its work refunded) when it is refused, cancelled or closed. A next-commit
@@ -42,6 +48,8 @@ export const BOARD_ADMISSION = {
   clientPerSecond: 2,
   maxCommitBytes: 512 * 1024,
   commitIntervalMs: 250,
+  // A commit's write that hasn't settled by then is an unknown outcome.
+  commitTimeoutMs: 30_000,
   hostMaxWaiting: 64,
   hostMaxApplying: 2,
   workBaseMs: 0.23,
@@ -73,7 +81,10 @@ export type Outcome =
   | ({ status: "refused" } & Refusal)
   | { status: "unknown"; message: string };
 
+// Milliseconds on a monotonic clock.
 type Clock = () => number;
+
+const monotonic: Clock = () => performance.now();
 
 export class TokenBucket {
   private tokens: number;
@@ -92,7 +103,11 @@ export class TokenBucket {
   }
 
   private refill(now: number): void {
-    if (now > this.last) {
+    if (now < this.last) {
+      // A clock that went back (only an injected one can): grant nothing,
+      // and count from here.
+      this.last = now;
+    } else if (now > this.last) {
       this.tokens = Math.min(
         this.burst,
         this.tokens + ((now - this.last) * this.perSecond) / 1000,
@@ -157,7 +172,8 @@ export class Reservation {
 // The host-wide budget, shared by every board on the host.
 export class HostAdmission {
   readonly limits: AdmissionLimits;
-  private readonly now: Clock;
+  // The one clock for the host and its boards.
+  readonly now: Clock;
   private readonly work: TokenBucket;
   private waiting = 0;
   private applying = 0;
@@ -165,7 +181,7 @@ export class HostAdmission {
 
   constructor({
     limits = BOARD_ADMISSION,
-    now = Date.now,
+    now = monotonic,
   }: { limits?: AdmissionLimits; now?: Clock } = {}) {
     this.limits = limits;
     this.now = now;
@@ -241,10 +257,11 @@ export interface BoardAdmissionOptions<E> {
   // The encoded size of a commit of these edits, envelope included: the
   // final check before anything is applied.
   measure: (edits: E[]) => number;
-  // Apply these edits as one commit and write it. A throw is an unknown
-  // outcome, never a refusal.
+  // Apply these edits as one commit and write it. A throw, or no result
+  // within commitTimeoutMs, is an unknown outcome, never a refusal; the
+  // write may still complete after that, so the caller reconciles by patch
+  // id before resubmitting.
   commit: (edits: E[]) => Promise<CommitResult>;
-  now?: Clock;
   log?: (message: string, extra?: object) => void;
 }
 
@@ -283,7 +300,7 @@ export class BoardAdmission<E> {
     this.limits = opts.host.limits;
     this.measure = opts.measure;
     this.commitEdits = opts.commit;
-    this.now = opts.now ?? Date.now;
+    this.now = opts.host.now;
     this.log = opts.log ?? (() => {});
     this.board = new TokenBucket(
       this.limits.boardBurst,
@@ -409,9 +426,13 @@ export class BoardAdmission<E> {
   private schedule(): void {
     if (this.closed || this.flushing || this.timer != null) return;
     if (this.pending.items.length === 0) return;
-    const delay = Math.max(
-      0,
-      this.lastCommitStart + this.limits.commitIntervalMs - this.now(),
+    // At most one interval, even if an injected clock went back.
+    const delay = Math.min(
+      this.limits.commitIntervalMs,
+      Math.max(
+        0,
+        this.lastCommitStart + this.limits.commitIntervalMs - this.now(),
+      ),
     );
     this.timer = setTimeout(() => {
       this.timer = undefined;
@@ -450,7 +471,11 @@ export class BoardAdmission<E> {
       });
       return;
     }
-    if (!(encoded <= this.limits.maxCommitBytes)) {
+    if (
+      !Number.isSafeInteger(encoded) ||
+      encoded < 0 ||
+      encoded > this.limits.maxCommitBytes
+    ) {
       // Nothing has been applied: refuse the whole commit.
       this.finish(batch.items, {
         status: "refused",
@@ -473,12 +498,26 @@ export class BoardAdmission<E> {
     const start = this.now();
     this.lastCommitStart = start;
     let result: CommitResult;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      result = await this.commitEdits(edits);
+      result = await Promise.race([
+        this.commitEdits(edits),
+        new Promise<CommitResult>((resolve) => {
+          timer = setTimeout(
+            () =>
+              resolve({
+                status: "unknown",
+                message: `the write did not finish in ${this.limits.commitTimeoutMs} ms`,
+              }),
+            this.limits.commitTimeoutMs,
+          );
+        }),
+      ]);
     } catch (err) {
       result = { status: "unknown", message: `${err}`.slice(0, 500) };
     } finally {
-      done(this.now() - start);
+      if (timer != null) clearTimeout(timer);
+      done(Math.max(0, this.now() - start));
     }
     if (result.status === "acknowledged") {
       for (const w of batch.items) w.reservation.consume();
