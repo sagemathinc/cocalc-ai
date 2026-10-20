@@ -9501,6 +9501,15 @@ export async function withdrawAgentMessageTurn(
         state: "canceled",
         by: "sender",
       });
+      // Its chat row was projected as queued (perhaps still being written):
+      // the recovery poll re-projects it once more, after this try.
+      markAcpJobRecoveryIntent(next.op_id, ACP_WITHDRAWN_PROJECTION_INTENT);
+      await projectWithdrawnMessage(next).catch((err) =>
+        logger.warn("withdrawn continuation's chat not updated yet", {
+          op_id: next.op_id,
+          err: `${err}`,
+        }),
+      );
     }
     dropHeldReport(jobs);
     recordAcpJobOutcome(job.op_id, {
