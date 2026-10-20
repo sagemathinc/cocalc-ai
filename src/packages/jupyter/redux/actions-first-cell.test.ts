@@ -52,7 +52,14 @@ describe("insert_cell_at", () => {
   it("trusts a notebook when its first cell is inserted", () => {
     const actions = createActions([]);
     actions.insert_cell_at(0);
-    expect(actions.set_trust_notebook).toHaveBeenCalledWith(true);
+    expect(actions.set_trust_notebook).toHaveBeenCalledWith(true, true);
+  });
+
+  it("keeps an uncommitted first insertion uncommitted", () => {
+    // e.g. the whiteboard inserts a cell with save=false before its input.
+    const actions = createActions([]);
+    actions.insert_cell_at(0, false, "w1");
+    expect(actions.set_trust_notebook).toHaveBeenCalledWith(true, false);
   });
 
   it("does not change trust when inserting into a notebook with cells", () => {

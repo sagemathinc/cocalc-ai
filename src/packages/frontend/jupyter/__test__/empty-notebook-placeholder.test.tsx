@@ -92,4 +92,30 @@ describe("EmptyNotebookPlaceholder", () => {
     fireEvent.blur(placeholder);
     expect(frame.enable_key_handler).toHaveBeenCalled();
   });
+
+  it("accepts characters typed with AltGr", () => {
+    const { actions, placeholder } = renderPlaceholder();
+
+    const event = new KeyboardEvent("keydown", {
+      key: "@",
+      ctrlKey: true,
+      altKey: true,
+      bubbles: true,
+    });
+    Object.defineProperty(event, "getModifierState", {
+      value: (key: string) => key === "AltGraph",
+    });
+    fireEvent(placeholder, event);
+
+    expect(actions.createFirstCell).toHaveBeenCalledWith("@");
+  });
+
+  it("does not turn shortcuts back on unless it turned them off", () => {
+    const actions: any = { createFirstCell: jest.fn(() => "alpha") };
+    const { unmount } = render(<EmptyNotebookPlaceholder actions={actions} />);
+
+    unmount(); // e.g. a collaborator added a cell to an unfocused frame
+
+    expect(frame.enable_key_handler).not.toHaveBeenCalled();
+  });
 });

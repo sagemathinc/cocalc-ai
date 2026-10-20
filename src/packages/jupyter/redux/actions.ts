@@ -1734,7 +1734,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     );
     if (wasEmpty) {
       // It is safe to trust a notebook the user started from empty.
-      this.set_trust_notebook(true);
+      this.set_trust_notebook(true, save);
     }
     return new_id; // violates CQRS... (this *is* used elsewhere)
   }

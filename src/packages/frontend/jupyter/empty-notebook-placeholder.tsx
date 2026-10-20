@@ -28,6 +28,14 @@ export function EmptyNotebookPlaceholder({
 }: Props) {
   const frameActions = useNotebookFrameActions();
   const ref = useRef<HTMLDivElement>(null);
+  // Whether this placeholder turned the command shortcuts off; only then
+  // does it turn them back on (another frame may own the handler).
+  const disabledKeys = useRef(false);
+  const restoreKeys = () => {
+    if (!disabledKeys.current) return;
+    disabledKeys.current = false;
+    frameActions.current?.enable_key_handler();
+  };
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -35,15 +43,13 @@ export function EmptyNotebookPlaceholder({
 
   // The notebook's command-mode shortcuts must not also act on keys typed
   // here (e.g. "b" would insert a second cell).
-  useEffect(() => {
-    return () => frameActions.current?.enable_key_handler();
-  }, []);
+  useEffect(() => restoreKeys, []);
 
   const start = (input: string = "") => {
     const id = actions.createFirstCell(input);
     const frame = frameActions.current;
     if (frame == null) return;
-    frame.enable_key_handler();
+    restoreKeys();
     frame.set_cur_id(id);
     frame.set_mode("edit");
     if (input) {
@@ -62,11 +68,16 @@ export function EmptyNotebookPlaceholder({
       tabIndex={0}
       aria-label="Empty notebook: click or start typing to add the first cell"
       data-testid="jupyter-empty-notebook-placeholder"
-      onFocus={() => frameActions.current?.disable_key_handler()}
-      onBlur={() => frameActions.current?.enable_key_handler()}
+      onFocus={() => {
+        disabledKeys.current = true;
+        frameActions.current?.disable_key_handler();
+      }}
+      onBlur={restoreKeys}
       onClick={() => start()}
       onKeyDown={(e) => {
-        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        // AltGr (reported as Ctrl+Alt on some layouts) types characters.
+        const altGraph = e.getModifierState?.("AltGraph") === true;
+        if (!altGraph && (e.ctrlKey || e.metaKey || e.altKey)) return;
         if (e.key === "Enter") {
           e.preventDefault();
           start();
