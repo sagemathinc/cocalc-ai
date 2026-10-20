@@ -60,3 +60,25 @@ it("a link", async () => {
   );
   await waitFor(() => expect(result.current.status).toBe("ready"));
 });
+
+it("a host that stays not ready is asked less and less often", async () => {
+  jest.useFakeTimers();
+  try {
+    issue.mockResolvedValue({ unavailable: "host-not-ready" });
+    const project_id = project();
+    const { result } = renderHook(() =>
+      useProjectContentUrl({ project_id, path: "/a.html" }),
+    );
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(issue).toHaveBeenCalledTimes(1);
+    // 30 s, then 60 s: the second retry must not come after another 30 s.
+    await jest.advanceTimersByTimeAsync(30_000);
+    await waitFor(() => expect(issue).toHaveBeenCalledTimes(2));
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(issue).toHaveBeenCalledTimes(2);
+    await jest.advanceTimersByTimeAsync(30_000);
+    await waitFor(() => expect(issue).toHaveBeenCalledTimes(3));
+  } finally {
+    jest.useRealTimers();
+  }
+});

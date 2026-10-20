@@ -108,7 +108,6 @@ export function useProjectContentUrl({
             path,
           });
         if (canceled) return;
-        failures.current = 0;
         if (!("url" in result)) {
           // Only a site without content origins gets the old behavior. The
           // host may already redirect raw HTML (no host yet, not ready,
@@ -117,6 +116,7 @@ export function useProjectContentUrl({
           if (result.unavailable !== "off" && result.unavailable !== "no-access") {
             throw new Error(`content origin: ${result.unavailable}`);
           }
+          failures.current = 0;
           const status =
             result.unavailable === "no-access" ? "no-access" : "unavailable";
           unavailableUntil.set(project_id, {
@@ -126,6 +126,7 @@ export function useProjectContentUrl({
           setState({ status });
           return;
         }
+        failures.current = 0;
         setState((prev) =>
           prev.status === "ready" && prev.url === result.url
             ? prev

@@ -18,7 +18,7 @@ jest.mock("@cocalc/backend/logger", () => ({
   default: () => ({ debug: jest.fn() }),
 }));
 
-import { contentFrameUrl, initContentView } from "./content-view";
+import { contentFrameUrl, contentViewPage, initContentView } from "./content-view";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const ACCOUNT = "22222222-2222-4222-8222-222222222222";
@@ -142,5 +142,13 @@ describe("the frame URL", () => {
     expect(contentFrameUrl(`${LINK}?v=link`, "v=page&w=2")).toBe(
       `${LINK}?v=link&w=2`,
     );
+  });
+});
+
+describe("the page", () => {
+  it("escapes the frame URL into its attribute", () => {
+    const html = contentViewPage({ url: 'https://c.test/a?x="><script>&y=1', nonce: "n" });
+    expect(html).toContain('data-src="https://c.test/a?x=&quot;&gt;&lt;script&gt;&amp;y=1"');
+    expect(html.match(/<script/g)?.length).toBe(1);
   });
 });

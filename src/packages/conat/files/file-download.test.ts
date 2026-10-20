@@ -180,8 +180,9 @@ describe("handleFileDownload", () => {
       expect(h["content-disposition"]).toMatch(/^attachment/);
     });
 
-    it("passive files are unchanged", async () => {
+    it("passive files are unchanged (but never sniffed)", async () => {
       const h = await headersFor("/projects/p/files/a.png", "attachment");
+      expect(h["x-content-type-options"]).toBe("nosniff");
       expect(h["content-security-policy"]).toBeUndefined();
       expect(h["content-disposition"]).toBeUndefined();
     });
