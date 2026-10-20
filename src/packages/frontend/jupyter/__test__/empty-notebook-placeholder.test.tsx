@@ -62,10 +62,10 @@ describe("EmptyNotebookPlaceholder", () => {
     expect(frame.set_mode).toHaveBeenCalledWith("edit");
   });
 
-  it("creates the first cell with a typed character and puts the cursor after it", () => {
+  it("creates the first cell with typed text and puts the cursor after it", () => {
     const { actions, placeholder } = renderPlaceholder();
 
-    fireEvent.keyDown(placeholder, { key: "x" });
+    fireEvent.input(placeholder, { target: { value: "x" } });
     jest.runAllTimers();
 
     expect(actions.createFirstCell).toHaveBeenCalledWith("x");
@@ -75,7 +75,39 @@ describe("EmptyNotebookPlaceholder", () => {
     });
   });
 
-  it("ignores modified keys and other non-text keys", () => {
+  it("creates the first cell once, on Enter", () => {
+    const { actions, placeholder } = renderPlaceholder();
+
+    fireEvent.keyDown(placeholder, { key: "Enter" });
+    fireEvent.click(placeholder);
+
+    expect(actions.createFirstCell).toHaveBeenCalledTimes(1);
+    expect(actions.createFirstCell).toHaveBeenCalledWith("");
+  });
+
+  it("takes composed text (IME, dead keys) when composition ends", () => {
+    const { actions, placeholder } = renderPlaceholder();
+
+    fireEvent.compositionStart(placeholder);
+    fireEvent.input(placeholder, { target: { value: "e" } });
+    fireEvent.keyDown(placeholder, { key: "Enter" }); // confirms the IME
+    expect(actions.createFirstCell).not.toHaveBeenCalled();
+    (placeholder as HTMLTextAreaElement).value = "é";
+    fireEvent.compositionEnd(placeholder);
+
+    expect(actions.createFirstCell).toHaveBeenCalledTimes(1);
+    expect(actions.createFirstCell).toHaveBeenCalledWith("é");
+  });
+
+  it("takes characters longer than one code unit, such as emoji", () => {
+    const { actions, placeholder } = renderPlaceholder();
+
+    fireEvent.input(placeholder, { target: { value: "😀" } });
+
+    expect(actions.createFirstCell).toHaveBeenCalledWith("😀");
+  });
+
+  it("ignores command keys, which insert no text", () => {
     const { actions, placeholder } = renderPlaceholder();
 
     fireEvent.keyDown(placeholder, { key: "s", ctrlKey: true });
@@ -91,23 +123,6 @@ describe("EmptyNotebookPlaceholder", () => {
     expect(frame.disable_key_handler).toHaveBeenCalled();
     fireEvent.blur(placeholder);
     expect(frame.enable_key_handler).toHaveBeenCalled();
-  });
-
-  it("accepts characters typed with AltGr", () => {
-    const { actions, placeholder } = renderPlaceholder();
-
-    const event = new KeyboardEvent("keydown", {
-      key: "@",
-      ctrlKey: true,
-      altKey: true,
-      bubbles: true,
-    });
-    Object.defineProperty(event, "getModifierState", {
-      value: (key: string) => key === "AltGraph",
-    });
-    fireEvent(placeholder, event);
-
-    expect(actions.createFirstCell).toHaveBeenCalledWith("@");
   });
 
   it("does not turn shortcuts back on unless it turned them off", () => {

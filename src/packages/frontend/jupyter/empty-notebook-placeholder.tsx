@@ -5,10 +5,14 @@
 
 // Shown in place of the cell list while a notebook has no cells. Nothing is
 // stored until the user starts editing: clicking it, pressing Enter or typing
-// creates the first cell (a typed character becomes its input) and puts the
-// cursor in it. A blank cell stored as soon as an empty notebook opened used
-// to win over, or be saved on top of, a notebook file that was still being
-// written (support ticket 21023).
+// creates the first cell (typed text becomes its input) and puts the cursor
+// in it. A blank cell stored as soon as an empty notebook opened used to win
+// over, or be saved on top of, a notebook file that was still being written
+// (support ticket 21023).
+//
+// It is a real text field, so whatever the browser inserts counts as typing:
+// IME and dead-key composition (taken when it ends), emoji and AltGr
+// characters. Command keys such as Ctrl+S insert nothing and are ignored.
 
 import { useEffect, useRef } from "react";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
@@ -27,7 +31,9 @@ export function EmptyNotebookPlaceholder({
   autoFocus,
 }: Props) {
   const frameActions = useNotebookFrameActions();
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
+  const started = useRef(false);
   // Whether this placeholder turned the command shortcuts off; only then
   // does it turn them back on (another frame may own the handler).
   const disabledKeys = useRef(false);
@@ -41,11 +47,11 @@ export function EmptyNotebookPlaceholder({
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
 
-  // The notebook's command-mode shortcuts must not also act on keys typed
-  // here (e.g. "b" would insert a second cell).
   useEffect(() => restoreKeys, []);
 
   const start = (input: string = "") => {
+    if (started.current) return;
+    started.current = true;
     const id = actions.createFirstCell(input);
     const frame = frameActions.current;
     if (frame == null) return;
@@ -53,20 +59,26 @@ export function EmptyNotebookPlaceholder({
     frame.set_cur_id(id);
     frame.set_mode("edit");
     if (input) {
-      // Put the cursor after the typed character once the editor exists.
-      const pos = { x: input.length, y: 0 };
+      // Put the cursor after the typed text once the editor exists.
+      const lines = input.split("\n");
+      const pos = { x: lines[lines.length - 1].length, y: lines.length - 1 };
       for (const ms of [0, 50, 250]) {
         setTimeout(() => frame.set_input_editor_cursor(id, pos), ms);
       }
     }
   };
 
+  const takeText = () => {
+    const text = ref.current?.value ?? "";
+    if (text) start(text);
+  };
+
   return (
-    <div
+    <textarea
       ref={ref}
-      role="button"
-      tabIndex={0}
+      rows={1}
       aria-label="Empty notebook: click or start typing to add the first cell"
+      placeholder="In [ ]:  Click here or start typing to add the first cell."
       data-testid="jupyter-empty-notebook-placeholder"
       onFocus={() => {
         disabledKeys.current = true;
@@ -75,30 +87,35 @@ export function EmptyNotebookPlaceholder({
       onBlur={restoreKeys}
       onClick={() => start()}
       onKeyDown={(e) => {
-        // AltGr (reported as Ctrl+Alt on some layouts) types characters.
-        const altGraph = e.getModifierState?.("AltGraph") === true;
-        if (!altGraph && (e.ctrlKey || e.metaKey || e.altKey)) return;
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !composing.current) {
           e.preventDefault();
           start();
-        } else if (e.key.length === 1) {
-          e.preventDefault();
-          start(e.key);
         }
       }}
+      onCompositionStart={() => {
+        composing.current = true;
+      }}
+      onCompositionEnd={() => {
+        composing.current = false;
+        takeText();
+      }}
+      onInput={() => {
+        if (!composing.current) takeText();
+      }}
       style={{
+        display: "block",
+        boxSizing: "border-box",
+        width: "calc(100% - 30px)",
         margin: "15px 15px 0 15px",
         padding: "10px 12px",
         border: `1px dashed ${UI_COLORS.muted}`,
         borderRadius: "4px",
-        color: UI_COLORS.muted,
+        resize: "none",
+        background: "transparent",
         fontFamily: "monospace",
         fontSize: fontSize ?? 14,
         cursor: "text",
       }}
-    >
-      <span style={{ marginRight: "10px" }}>In [ ]:</span>
-      Click here or start typing to add the first cell.
-    </div>
+    />
   );
 }

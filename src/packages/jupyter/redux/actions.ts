@@ -1727,7 +1727,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       {
         type: "cell",
         id: new_id,
-        pos,
+        // With no cells there is no neighbor to place it by (an insert
+        // above/below the missing current cell would compute NaN).
+        pos: wasEmpty ? 0 : pos,
         input: "",
       },
       save,

@@ -67,4 +67,14 @@ describe("insert_cell_at", () => {
     actions.insert_cell_at(1);
     expect(actions.set_trust_notebook).not.toHaveBeenCalled();
   });
+
+  it("places the first inserted cell at 0 even without a neighbor", () => {
+    // Insert above/below the missing current cell computes NaN.
+    const actions = createActions([]);
+    actions.insert_cell_at(NaN);
+    expect(actions._set).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "cell", pos: 0 }),
+      true,
+    );
+  });
 });
