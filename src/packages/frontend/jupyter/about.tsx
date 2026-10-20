@@ -187,7 +187,7 @@ export function About(props: AboutProps) {
       }
     >
       <FormattedMessage
-        id="jupyter.about.message"
+        id="jupyter.about.overview"
         description={
           "Notes about CoCalc's own Jupyter Notebook implementation."
         }
