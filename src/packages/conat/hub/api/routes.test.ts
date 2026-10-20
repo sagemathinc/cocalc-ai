@@ -46,6 +46,21 @@ describe("hub API routes", () => {
     expect(hubApiRouteKey(route, [])).toBeUndefined();
   });
 
+  it("finds a host method's host, and only for a host-scoped listing", () => {
+    const log = getHubApiRoute("hosts.getHostLog")!;
+    expect(log.owner).toBe("host");
+    expect(hubApiRouteKey(log, [{ id: PROJECT }])).toBe(PROJECT);
+    expect(hubApiRouteKey(log, [{ id: "x" }])).toBeUndefined();
+    const deployments = getHubApiRoute("hosts.listHostRuntimeDeployments")!;
+    expect(
+      hubApiRouteKey(deployments, [{ scope_type: "host", id: PROJECT }]),
+    ).toBe(PROJECT);
+    // A global listing reads this bay's rows, whatever id it carries.
+    expect(
+      hubApiRouteKey(deployments, [{ scope_type: "global", id: PROJECT }]),
+    ).toBeUndefined();
+  });
+
   it("finds an email invite by id or link token", () => {
     const route = getHubApiRoute("projects.redeemEmailProjectInvite")!;
     expect(route.owner).toBe("collab-invite");
