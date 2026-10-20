@@ -332,4 +332,50 @@ describe("collaborative Jupyter collection flush", () => {
       }),
     ]);
   });
+
+  it("never writes the generated placeholder, even when the file reads as empty", async () => {
+    // A course copy can truncate the file, so it reads as empty here, and
+    // fill it in right after: the flush keeps and records what is there.
+    const { List, fromJS } = require("immutable");
+    const placeholder = {
+      wait_until_ready: jest.fn(async () => undefined),
+      newestVersion: jest.fn(() => "version-1"),
+      get_doc: jest.fn(() => ({})),
+      get: jest.fn(() =>
+        List([fromJS({ type: "cell", id: "alpha", pos: 0, input: "" })]),
+      ),
+      get_one: jest.fn(() => fromJS({ type: "settings" })),
+      close: jest.fn(async () => undefined),
+    };
+    const { flushJupyterNotebook } =
+      await import("./jupyter-collaborative-flush");
+    const flush = (filesystem: any) =>
+      flushJupyterNotebook({
+        project_id: "project",
+        notebook_path: "assignment/lab3.ipynb",
+        actor_account_id: "instructor",
+        filesystem,
+        syncClient: {} as any,
+      });
+
+    documentMock = placeholder;
+    await expect(
+      flush({ readFile: jest.fn(async () => Buffer.from("")) }),
+    ).resolves.toEqual(expect.objectContaining({ bytes: 0 }));
+
+    // The file is removed after it was found: nothing to write and nothing
+    // to collect.
+    documentMock = placeholder;
+    let reads = 0;
+    const missing = jest.fn(async () => {
+      reads += 1;
+      if (reads === 1) return Buffer.from(""); // metadata read
+      const err: any = new Error("missing");
+      err.code = "ENOENT";
+      throw err;
+    });
+    await expect(flush({ readFile: missing })).resolves.toBeUndefined();
+
+    expect(saveJupyterIpynbMock).not.toHaveBeenCalled();
+  });
 });

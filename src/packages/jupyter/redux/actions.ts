@@ -2919,6 +2919,25 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     return this.sawNotebookContent;
   };
 
+  // Keep the record of content up to date on a change: seed it while the
+  // notebook has content, and once it had content but is now empty (every
+  // cell deleted or cleared), record that durably (has_had_content), so the
+  // empty notebook is saved rather than mistaken for the generated
+  // placeholder. Used where ensureThereIsACell does not run (the project).
+  recordContentProvenance = (): void => {
+    if (!this.sawNotebookContent) {
+      this.noteNotebookContent();
+      return;
+    }
+    try {
+      if (syncdbIsGeneratedPlaceholder(this.syncdb)) {
+        this._set({ type: "settings", has_had_content: true }, true);
+      }
+    } catch {
+      // not ready
+    }
+  };
+
   // Whether the live notebook is only the empty cell created for an empty
   // notebook (ensureThereIsACell) and never held content, so it must not
   // win over, or be saved on top of, a notebook file with content.

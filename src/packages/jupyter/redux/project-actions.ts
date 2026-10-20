@@ -48,6 +48,12 @@ export class JupyterActions extends JupyterActions0 {
     this.initIpywidgetsSupport();
   }
 
+  protected __syncdb_change_post_hook(_doInit: boolean) {
+    // The API and CLI can delete or clear every cell here, without a
+    // browser: record that the notebook had content (see save_ipynb_file).
+    this.recordContentProvenance();
+  }
+
   save_ipynb_file = async (_opts?) => {
     const ipynb = await this.toIpynb();
     if (ipynb == null) {

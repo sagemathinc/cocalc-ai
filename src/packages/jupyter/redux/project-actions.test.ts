@@ -154,6 +154,31 @@ describe("project-side save of the generated placeholder", () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
+  it("writes a notebook emptied through the API or CLI", async () => {
+    // A real cell when the actions load; then every cell is deleted (e.g.
+    // `project jupyter delete-cells`) and the notebook is saved.
+    const { actions, writeFile } = placeholderActions({
+      disk: LAB_TEXT,
+      cells: [{ ...ALPHA, input: "x = 1" }],
+    });
+    actions.syncdb.set = jest.fn();
+    actions.syncdb.commit = jest.fn();
+    actions.syncdb.save = jest.fn(async () => {});
+    actions.syncdb.get_state = () => "ready";
+    actions.store = { get: () => undefined };
+    actions.__syncdb_change_post_hook(true);
+    actions.syncdb.get = () => List();
+    actions.toIpynb = jest.fn(async () => ({ cells: [], metadata: {} }));
+    actions.__syncdb_change_post_hook(false);
+
+    await actions.save_ipynb_file();
+
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "settings", has_had_content: true }),
+    );
+  });
+
   it("writes a notebook that was emptied on purpose", async () => {
     const { actions, writeFile } = placeholderActions({
       disk: LAB_TEXT,

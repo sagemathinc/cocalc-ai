@@ -14,10 +14,7 @@ import {
   type FilesystemClient,
 } from "@cocalc/conat/files/fs";
 import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
-import {
-  notebookFileHasContent,
-  syncdbIsGeneratedPlaceholder,
-} from "@cocalc/jupyter/ipynb/placeholder";
+import { syncdbIsGeneratedPlaceholder } from "@cocalc/jupyter/ipynb/placeholder";
 import { SYNCDB_OPTIONS } from "@cocalc/jupyter/redux/sync";
 import { SyncDB } from "@cocalc/sync/editor/db";
 import type { DBDocument } from "@cocalc/sync/editor/db/doc";
@@ -153,19 +150,12 @@ export async function flushJupyterNotebook({
       if (version == null) return;
       // The live notebook may be only the generated empty cell (it was
       // opened while the file was still empty, e.g. during a course copy).
-      // Then the file is the work: keep it and record it as this version,
+      // It carries no work and is never written: a write could replace a
+      // file the copy is still filling in, whatever the file looked like a
+      // moment earlier. The file as it is is recorded as this version,
       // unless the notebook is edited meanwhile (support ticket 21023).
       const placeholder = syncdbIsGeneratedPlaceholder(doc);
-      const keepFile =
-        placeholder &&
-        (await notebookFileHasContent(
-          (file) => filesystem.readFile(file) as Promise<Buffer | string>,
-          notebook_path,
-        ));
-      if (placeholder && doc.newestVersion() !== version) {
-        continue;
-      }
-      if (!keepFile) {
+      if (!placeholder) {
         const contents = jupyterNotebookContents(
           doc.get_doc() as DBDocument,
           requestedNotebook,
@@ -180,7 +170,15 @@ export async function flushJupyterNotebook({
           continue;
         }
       }
-      const saved = await filesystem.readFile(notebook_path);
+      let saved: Buffer | string;
+      try {
+        saved = await filesystem.readFile(notebook_path);
+      } catch (err: any) {
+        if (!placeholder || err?.code !== "ENOENT") throw err;
+        if (doc.newestVersion() !== version) continue;
+        // No file and nothing to write: there is nothing to collect.
+        return;
+      }
       const bytes = Buffer.isBuffer(saved)
         ? saved
         : Buffer.from(saved as string, "utf8");
