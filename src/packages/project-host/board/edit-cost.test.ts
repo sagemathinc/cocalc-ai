@@ -19,8 +19,12 @@ import {
 import {
   BOARD_EDIT_WORK_CEILING,
   BOARD_EDIT_WORK_LIMITS,
+  BOARD_EDIT_WORK_SAFETY,
   REFERENCE_LOOP_MS,
   calibrateEditWorkLimits,
+  hostEditWorkLimits,
+  resetEditWorkCalibration,
+  startEditWorkCalibration,
   editWork,
   editWorkRefusal,
   fieldWork,
@@ -541,18 +545,66 @@ describe("the worst edits, end to end", () => {
     expect(r.hunks).toBeLessThanOrEqual(r.work.patches);
   });
 
-  test("calibration: a slower host gets a proportionally lower cap, never above the ceiling", () => {
+  test("calibration: the ceiling times the safety factor, lower on a slower host, never higher on a faster one", () => {
+    const admitted = BOARD_EDIT_WORK_CEILING * BOARD_EDIT_WORK_SAFETY;
+    expect(BOARD_EDIT_WORK_LIMITS.maxWork).toBe(admitted);
     expect(calibrateEditWorkLimits(REFERENCE_LOOP_MS / 2).maxWork).toBe(
-      BOARD_EDIT_WORK_CEILING,
+      admitted,
     );
-    expect(calibrateEditWorkLimits(REFERENCE_LOOP_MS).maxWork).toBe(
-      BOARD_EDIT_WORK_CEILING,
-    );
+    expect(calibrateEditWorkLimits(REFERENCE_LOOP_MS).maxWork).toBe(admitted);
     expect(calibrateEditWorkLimits(REFERENCE_LOOP_MS * 4).maxWork).toBe(
-      BOARD_EDIT_WORK_CEILING / 4,
+      admitted / 4,
     );
     expect(calibrateEditWorkLimits(NaN).maxWork).toBe(0);
     expect(calibrateEditWorkLimits(0).maxWork).toBe(0);
+  });
+
+  test("calibration runs in the background, one diff per task; edits meanwhile get the uncalibrated cap", async () => {
+    resetEditWorkCalibration();
+    try {
+      let last: number | undefined;
+      const tasks: number[] = [];
+      // The first edit doesn't wait: the cap is there at once.
+      const started = startEditWorkCalibration({
+        // Times each task: from one yield to the next is one diff.
+        yieldNow: () =>
+          new Promise<void>((resolve) => {
+            const now = performance.now();
+            if (last != null) tasks.push(now - last);
+            setImmediate(() => {
+              last = performance.now();
+              resolve();
+            });
+          }),
+      });
+      expect(hostEditWorkLimits()).toEqual(BOARD_EDIT_WORK_LIMITS);
+      // Independently, how long the event loop is held at a time.
+      let held = 0;
+      let tick = performance.now();
+      const ticker = setInterval(() => {
+        const now = performance.now();
+        held = Math.max(held, now - tick - 5);
+        tick = now;
+      }, 5);
+      await started;
+      clearInterval(ticker);
+      expect(tasks.length).toBeGreaterThanOrEqual(19);
+      expect(Math.max(...tasks)).toBeLessThan(60);
+      expect(held).toBeLessThan(60);
+      // Calibrated: never above the cap admitted meanwhile.
+      const limits = hostEditWorkLimits();
+      expect(limits.referenceMs).toBeGreaterThan(0);
+      expect(limits.maxWork).toBeLessThanOrEqual(
+        BOARD_EDIT_WORK_LIMITS.maxWork,
+      );
+      expect(limits.maxWork).toBe(
+        calibrateEditWorkLimits(limits.referenceMs!).maxWork,
+      );
+      // Once.
+      expect(startEditWorkCalibration()).toBe(started);
+    } finally {
+      resetEditWorkCalibration();
+    }
   });
 
   test("on this host's calibrated cap, the adversarial shapes tuned just under it commit within the normalized budget", () => {

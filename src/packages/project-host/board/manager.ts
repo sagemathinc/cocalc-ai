@@ -157,7 +157,8 @@ export interface BoardManagerOptions {
 const MAX_SAVE_ATTEMPTS = 3;
 
 type Parsed =
-  { ok: true; doc: any; records: any[] } | { ok: false; status: BoardStatus };
+  | { ok: true; doc: any; records: any[] }
+  | { ok: false; status: BoardStatus };
 
 export class BoardManager {
   private readonly lib: BoardLib;
@@ -171,7 +172,8 @@ export class BoardManager {
   private readonly hardMaxBytes: number;
   private readonly hardMaxRecords: number;
   private readonly log: (message: string, extra?: object) => void;
-  private readonly workLimits: EditWorkLimits;
+  // The work caps, if fixed (else this host's, as calibrated now).
+  private readonly workLimits?: EditWorkLimits;
 
   private status: BoardStatus = { state: "missing" };
   // The file's text as last read or written by this manager: the only
@@ -220,7 +222,7 @@ export class BoardManager {
         ? BOARD_HOST_HARD_RECORD_LIMIT
         : Math.ceil(1.5 * this.maxRecords));
     this.log = opts.log ?? (() => {});
-    this.workLimits = opts.workLimits ?? hostEditWorkLimits();
+    this.workLimits = opts.workLimits;
   }
 
   getStatus(): BoardStatus {
@@ -483,7 +485,10 @@ export class BoardManager {
         stringCols: STRING_COLS,
         keyOf: recordKey,
       });
-      const tooMuch = editWorkRefusal(work, this.workLimits);
+      const tooMuch = editWorkRefusal(
+        work,
+        this.workLimits ?? hostEditWorkLimits(),
+      );
       if (tooMuch) {
         this.log("board: the file's change is too much work to merge here", {
           work,

@@ -59,6 +59,8 @@ import {
 } from "./registry";
 import { assertBoardHistoryOpenable, BoardQuarantined } from "./history";
 
+import { startEditWorkCalibration } from "./edit-cost";
+
 const logger = getLogger("project-host:board");
 
 const PROJECT_HOME = "/home/user";
@@ -797,6 +799,9 @@ export function boardHandlers({
   env?: NodeJS.ProcessEnv;
 }): FilesystemBoardHandlers | undefined {
   if (env.COCALC_PROJECT_HOST_BOARD_EDITING !== "1") return undefined;
+  // The host's edit work cap, calibrated in the background from its start
+  // (edits meanwhile are admitted at the uncalibrated cap).
+  void startEditWorkCalibration();
   return {
     open: async ({ subject, path, fs }) =>
       await openBoard({ client, project_id: projectIdOf(subject), path, fs }),

@@ -25,18 +25,23 @@ new). A field's work is charged as
   bisection is O((m_a + m_b)·D), D ≤ m_a + m_b); a pure insertion or deletion
   is one diff, with no search.
 
-This is a conservative, calibrated cost model, not a proved runtime bound:
-diff_main's own wall-clock timeout (0.2 s) still stands behind it, and only a
-deterministic bound inside the diff (patchflow#26, P3) makes G2 more than
-empirical. It refuses some cheap edits too (many scattered edits across a
-large field, a large replacement), as "too-large" work, which the frame keeps
-for the user (keepUnsaved).
+This is a conservative, calibrated cost model for admission, not a proved
+runtime bound: diff_main's own wall-clock timeout (0.2 s) still stands behind
+it, and only a deterministic bound inside the diff (patchflow#26, P3) and
+running merges in isolation make the bound hard. It refuses some cheap edits
+too (many scattered edits across a large field, a large replacement), as
+"too-large" work, which the frame keeps for the user (keepUnsaved).
 
-The cap is per host: BOARD_EDIT_WORK_CEILING, the cap at which the worst
-measured admitted edit took about 170 ms on the reference host (an AMD EPYC
-7B13, 16 vCPU, under load), scaled down on a slower host by its reference
-loop (calibrateEditWorkLimits, measured at the host's first use). It is
-never raised above the ceiling. Figures: plans/boards (G2) and #1236.
+The cap is per host, and an admission policy: BOARD_EDIT_WORK_CEILING (the
+cap at which the worst measured admitted edit took about 170 ms, and one
+cold run 255 ms, on the reference host: an AMD EPYC 7B13, GCP t2d-standard-16,
+under load) times a safety factor, BOARD_EDIT_WORK_SAFETY, and scaled down on
+a slower host by its reference loop (calibrateEditWorkLimits). A faster host
+is not given more. The reference loop is telemetry for that scaling, not a
+wall-time proof: it runs in the background from the host's start, one diff
+per event-loop task (startEditWorkCalibration), and until it is done edits
+are admitted at the uncalibrated cap, never a higher one. Figures:
+plans/boards (G2) and #1236.
 */
 
 import type { Change, Key } from "@sagemathinc/sagebrush-board/submission";
@@ -47,39 +52,82 @@ import { getLogger } from "@cocalc/backend/logger";
 
 const logger = getLogger("project-host:board:edit-cost");
 
-// The work cap on the reference host, and the most any host is given.
+// The absolute ceiling on an edit's work: no host is given more.
 export const BOARD_EDIT_WORK_CEILING = 24_000_000;
 
+// The margin below the ceiling every host admits at (so 19.2M on the
+// reference host: the cold 255 ms there scales to about 204 ms, and 208 ms
+// with 8 saves at once to about 166 ms).
+export const BOARD_EDIT_WORK_SAFETY = 0.8;
+
 export const BOARD_EDIT_WORK_LIMITS = {
-  // The work (see above), summed over the edit's text fields.
-  maxWork: BOARD_EDIT_WORK_CEILING,
+  // The work (see above), summed over the edit's text fields: the cap a
+  // host admits at until (and unless) its calibration lowers it.
+  maxWork: Math.floor(BOARD_EDIT_WORK_CEILING * BOARD_EDIT_WORK_SAFETY),
   // Text fields one edit may change.
   maxFields: 64,
 };
 
 // The reference loop: 4 diffs of 1 KiB replaced by 1 KiB of other text (the
-// shape that costs the most per unit of work), timed; the median of 5 runs.
-// On the reference host it takes REFERENCE_LOOP_MS.
+// shape that costs the most per unit of work), each timed; their sum, the
+// median of 5 samples. On the reference host it takes REFERENCE_LOOP_MS.
 export const REFERENCE_LOOP_MS = 51;
+const REFERENCE_DIFFS = 4;
+const REFERENCE_SAMPLES = 5;
 
-export function referenceLoopMs(
-  makePatch: (a: string, b: string) => unknown,
-  runs = 5,
-): number {
+function referenceDiff(makePatch: (a: string, b: string) => unknown): number {
   const a = "a".repeat(1024);
   const b = "b".repeat(1024);
-  const times: number[] = [];
-  for (let r = 0; r < runs; r++) {
-    const t = performance.now();
-    for (let i = 0; i < 4; i++) makePatch(a, b);
-    times.push(performance.now() - t);
-  }
-  times.sort((x, y) => x - y);
-  return times[Math.floor(times.length / 2)];
+  const t = performance.now();
+  makePatch(a, b);
+  return performance.now() - t;
 }
 
-// This host's limits from its reference loop: the ceiling, scaled down by
-// how much slower than the reference host it is (never up).
+function median(samples: number[]): number {
+  const sorted = [...samples].sort((x, y) => x - y);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+// The reference loop at once (for tests, which compare it with work timed
+// in the same process).
+export function referenceLoopMs(
+  makePatch: (a: string, b: string) => unknown,
+  runs = REFERENCE_SAMPLES,
+): number {
+  const samples: number[] = [];
+  for (let r = 0; r < runs; r++) {
+    let ms = 0;
+    for (let i = 0; i < REFERENCE_DIFFS; i++) ms += referenceDiff(makePatch);
+    samples.push(ms);
+  }
+  return median(samples);
+}
+
+// The reference loop without holding the event loop: each diff is its own
+// task, and the loop yields between them (about 13 ms each on the
+// reference host).
+export async function referenceLoopMsInSlices(
+  makePatch: (a: string, b: string) => unknown,
+  {
+    runs = REFERENCE_SAMPLES,
+    yieldNow = () => new Promise<void>((resolve) => setImmediate(resolve)),
+  }: { runs?: number; yieldNow?: () => Promise<void> } = {},
+): Promise<number> {
+  const samples: number[] = [];
+  for (let r = 0; r < runs; r++) {
+    let ms = 0;
+    for (let i = 0; i < REFERENCE_DIFFS; i++) {
+      await yieldNow();
+      ms += referenceDiff(makePatch);
+    }
+    samples.push(ms);
+  }
+  return median(samples);
+}
+
+// This host's limits from its reference loop: the ceiling times the safety
+// factor, scaled down by how much slower than the reference host it is
+// (never up).
 export function calibrateEditWorkLimits(measuredMs: number): EditWorkLimits {
   const ratio =
     Number.isFinite(measuredMs) && measuredMs > 0
@@ -87,7 +135,10 @@ export function calibrateEditWorkLimits(measuredMs: number): EditWorkLimits {
       : 0;
   return {
     ...BOARD_EDIT_WORK_LIMITS,
-    maxWork: Math.floor(BOARD_EDIT_WORK_CEILING * ratio),
+    maxWork: Math.min(
+      BOARD_EDIT_WORK_LIMITS.maxWork,
+      Math.floor(BOARD_EDIT_WORK_CEILING * BOARD_EDIT_WORK_SAFETY * ratio),
+    ),
   };
 }
 
@@ -194,13 +245,25 @@ export function editWorkRefusal(
   return undefined;
 }
 
-// This host's limits, calibrated once, the first time they are needed (a
-// few hundred milliseconds of diffing).
-let hostLimits: (EditWorkLimits & { referenceMs: number }) | undefined;
+// This host's limits: the uncalibrated cap until its calibration is done.
+// Never waits for it.
+let hostLimits: (EditWorkLimits & { referenceMs?: number }) | undefined;
+let calibrating: Promise<void> | undefined;
 
-export function hostEditWorkLimits(): EditWorkLimits & { referenceMs: number } {
-  if (hostLimits == null) {
-    const referenceMs = referenceLoopMs(makePatch);
+export function hostEditWorkLimits(): EditWorkLimits & {
+  referenceMs?: number;
+} {
+  return hostLimits ?? BOARD_EDIT_WORK_LIMITS;
+}
+
+// Calibrate this host's cap in the background (at the host's start), one
+// diff per event-loop task, and log what it was calibrated on. Idempotent.
+export function startEditWorkCalibration(
+  opts: Parameters<typeof referenceLoopMsInSlices>[1] = {},
+): Promise<void> {
+  calibrating ??= (async () => {
+    const referenceMs = await referenceLoopMsInSlices(makePatch, opts);
+    // Never above the uncalibrated cap admitted meanwhile.
     hostLimits = { ...calibrateEditWorkLimits(referenceMs), referenceMs };
     // What the cap was calibrated on, so each host's figure can be compared
     // with the reference host's.
@@ -217,8 +280,17 @@ export function hostEditWorkLimits(): EditWorkLimits & { referenceMs: number } {
       cpuMax,
       load: loadavg(),
     });
-  }
-  return hostLimits;
+  })().catch((err) => {
+    // The uncalibrated cap stays.
+    logger.warn("board edit work calibration failed", { err: `${err}` });
+  });
+  return calibrating;
+}
+
+/** For tests. */
+export function resetEditWorkCalibration(): void {
+  hostLimits = undefined;
+  calibrating = undefined;
 }
 
 // The work of merging a changed file into the live document (the manager's

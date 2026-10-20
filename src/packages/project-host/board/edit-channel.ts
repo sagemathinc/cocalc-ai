@@ -112,7 +112,8 @@ export class EditChannel {
   private readonly currentRecord: (
     key: Key,
   ) => { [field: string]: unknown } | undefined;
-  private readonly workLimits: EditWorkLimits;
+  // The work caps, if fixed (else this host's, as calibrated now).
+  private readonly workLimits?: EditWorkLimits;
   private readonly send: (message: object) => void;
   private readonly now: Clock;
   private readonly count: TokenBucket;
@@ -131,7 +132,7 @@ export class EditChannel {
     now = monotonic,
     limits = EDIT_CHANNEL_LIMITS,
     // This host's calibrated limits (edit-cost.ts) unless given.
-    workLimits = hostEditWorkLimits(),
+    workLimits,
   }: {
     clientId: string;
     editState: EditState;
@@ -254,7 +255,10 @@ export class EditChannel {
     }
     // 5. The work its commit would take, before it is admitted.
     const work = editWork(r.changes, this.currentRecord, STRING_COLS);
-    const tooMuch = editWorkRefusal(work, this.workLimits);
+    const tooMuch = editWorkRefusal(
+      work,
+      this.workLimits ?? hostEditWorkLimits(),
+    );
     if (tooMuch) return this.refuse(id, tooMuch);
     this.pendingId = id;
     return { kind: "admit", id, message, editBytes: r.editBytes, work };
