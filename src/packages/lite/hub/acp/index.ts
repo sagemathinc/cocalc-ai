@@ -9775,8 +9775,6 @@ async function recoverPendingFailureRecoveryIntents({
           (outcome && hold
             ? await hold({ client, job, outcome })
             : undefined) ?? continuationOf(job);
-        clearAcpJobRecoveryIntent(job.op_id);
-        recovered += 1;
         const request = decodeAcpJobRequest(job);
         if (held?.available_at != null && held.available_at > Date.now())
           reportFailedAgentMessageTurn(
@@ -9790,6 +9788,10 @@ async function recoverPendingFailureRecoveryIntents({
         // continuation reports how it ends.
         else if (!held)
           reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
+        // Last, once its report is durable (a failed write throws, and the
+        // next poll tries again; the outbox keeps it to one report).
+        clearAcpJobRecoveryIntent(job.op_id);
+        recovered += 1;
       } catch (err) {
         logger.warn("failed recovering a persisted ACP hold", {
           op_id: job.op_id,
@@ -10673,8 +10675,6 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
           job: getAcpJobByOpId(job.op_id) ?? job,
           outcome: result.outcome,
         });
-        // Queued (or declined): the intent has done its job.
-        clearAcpJobRecoveryIntent(job.op_id);
         // The agent that sent the message hears it is paused, and until when.
         if (resumed?.available_at)
           reportFailedAgentMessageTurn(
@@ -10684,6 +10684,9 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
             result.outcome,
             { resume_at: resumed.available_at },
           );
+        // Queued (or declined), and its held report durable: the intent has
+        // done its job (cleared last, so a crash before here is recovered).
+        clearAcpJobRecoveryIntent(job.op_id);
       } catch (err) {
         // The persisted intent stays: the recovery poll holds it later.
         recoveryPending = true;

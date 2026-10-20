@@ -130,6 +130,9 @@ export function noteAgentMessageTurnFailed(opts: {
       op_id: opts.op_id,
       err: errorText(err),
     });
+    // A held report's hold intent stays until this is durable: the caller
+    // keeps it, and the recovery poll tries again.
+    if (opts.held) throw err;
     return;
   }
   return report;

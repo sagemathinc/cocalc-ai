@@ -4778,6 +4778,59 @@ describe("the agent that sent a message is told how its turn ended", () => {
     }
   });
 
+  it("keeps the hold intent until its held report is durable", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    const ended = Date.now();
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET state = 'error', started_at = ?, finished_at = ?, recovery_code = 'cocalc-hold', outcome_json = ? WHERE op_id = ?",
+      )
+      .run(
+        ended - 1,
+        ended,
+        JSON.stringify({
+          version: 1,
+          state: "failed",
+          failure: {
+            kind: "limit",
+            scope: "credential",
+            resets_at: ended + 60 * 60_000,
+          },
+          tool_ran: false,
+        }),
+        job.op_id,
+      );
+    const recover = () =>
+      acpTestInternals.recoverPendingFailureRecoveryIntents({
+        client: { sync: { akv: () => ({}) } } as unknown as ConatClient,
+      });
+    // The report outbox cannot be written (e.g. the disk is full).
+    const db = getAcpDatabase();
+    db.exec("ALTER TABLE acp_agent_rpc_reports RENAME TO reports_away");
+    try {
+      await recover();
+    } finally {
+      db.exec("ALTER TABLE reports_away RENAME TO acp_agent_rpc_reports");
+    }
+    // The continuation is queued, but the intent stays for the next poll.
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(1);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBe("cocalc-hold");
+    await recover();
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      phase: "held",
+    });
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(1);
+  });
+
   it("when a newer message replaces the turn waiting to resume", () => {
     const base = makeRequest();
     const { request, execution } = agentRequest(base);
