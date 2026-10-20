@@ -269,7 +269,7 @@ export async function handleFileDownload({
   if (
     explicitDownload ||
     (nonPassive === "attachment" && !passive) ||
-    (!allowUnsafe && DANGEROUS_CONTENT_TYPE.has(contentType))
+    (!allowUnsafe && !!contentType && DANGEROUS_CONTENT_TYPE.has(contentType))
   ) {
     const fileNameEncoded = encodeURIComponent(fileName)
       .replace(/['()]/g, escape)
