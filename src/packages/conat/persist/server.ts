@@ -74,6 +74,9 @@ import { getStream, SERVICE, MAX_PER_USER, MAX_GLOBAL, RESOURCE } from "./util";
 import {
   assertBoardCommandAllowed,
   boardStreamAccess,
+  BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
+  BOARD_WRITE_RECEIVE_LIMITS,
+  BOARD_WRITE_SERVICE,
   type BoardStreamAccess,
 } from "./board-policy";
 import { throttle } from "lodash";
@@ -177,9 +180,18 @@ export function server({
     throw Error("client must be specified");
   }
   const subject = `${service}.*`;
+  // The board write service is always bounded before reassembly; no caller
+  // can start it without these limits.
+  const boardWrite = service === BOARD_WRITE_SERVICE;
   const server: ConatSocketServer = client.socket.listen(subject, {
     id,
     keepAlive: 0,
+    ...(boardWrite
+      ? {
+          receiveLimits: BOARD_WRITE_RECEIVE_LIMITS,
+          statusReceiveLimits: BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
+        }
+      : {}),
   });
   log("server listening", { subject, id });
   if (!clusterMode) {

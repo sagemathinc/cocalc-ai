@@ -6,7 +6,11 @@ reads it, and only the board write service (as the hub) writes it.
 import { before, after, connect } from "@cocalc/backend/conat/test/setup";
 import { dstream } from "@cocalc/conat/sync/dstream";
 import { astream } from "@cocalc/conat/sync/astream";
-import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import {
+  BOARD_WRITE_RECEIVE_LIMITS,
+  BOARD_WRITE_SERVICE,
+} from "@cocalc/conat/persist/board-policy";
+import { messageData } from "@cocalc/conat/core/client";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { boardSyncdbPath } from "@cocalc/util/board/names";
 import { uuid } from "@cocalc/util/misc";
@@ -215,6 +219,82 @@ test("the write service refuses anyone but the hub", async () => {
       noInventory: true,
     }),
   ).rejects.toThrow(/only the host/);
+});
+
+describe("the write service's transport bounds", () => {
+  const MiB = 1024 * 1024;
+
+  function hubStream(project_id: string, path: string) {
+    return persistStream({
+      client: connect(),
+      user: {},
+      storage: { path: storagePath({ project_id, name: name(path) }) },
+      service: BOARD_WRITE_SERVICE,
+    });
+  }
+
+  test("the limits are the design's: 8 MiB a message, 16 MiB and 8 messages in flight", () => {
+    expect(BOARD_WRITE_RECEIVE_LIMITS).toEqual({
+      maxMessageBytes: 8 * MiB,
+      maxInflightBytes: 16 * MiB,
+      maxInflightMessages: 8,
+    });
+  });
+
+  test("a message too big to be a snapshot is dropped before reassembly; the stream still works", async () => {
+    const project_id = uuid();
+    const raw = hubStream(project_id, "/home/user/big.board.json");
+    // Never assembled, so never answered: the writer times out.
+    await expect(
+      raw.set({
+        messageData: messageData(null, { raw: Buffer.alloc(9 * MiB) }),
+        timeout: 3000,
+      }),
+    ).rejects.toThrow(/timeout/i);
+    const { seq } = await raw.set({
+      messageData: messageData({ edit: 1 }),
+      timeout: 10_000,
+    });
+    expect(seq).toBeGreaterThan(0);
+    raw.close();
+  });
+
+  test("a snapshot-sized message gets through", async () => {
+    const project_id = uuid();
+    const raw = hubStream(project_id, "/home/user/snapshot.board.json");
+    const { seq } = await raw.set({
+      messageData: messageData(null, { raw: Buffer.alloc(7 * MiB) }),
+      timeout: 20_000,
+    });
+    expect(seq).toBeGreaterThan(0);
+    raw.close();
+  });
+
+  test("the write service's load balancer ignores a large lookup", async () => {
+    const client = connect();
+    const subject = `${BOARD_WRITE_SERVICE}.hub.id`;
+    await expect(
+      client.request(subject, null, {
+        raw: Buffer.alloc(128 * 1024),
+        timeout: 2000,
+      }),
+    ).rejects.toThrow(/timeout/i);
+    const reply = await client.request(subject, null, { timeout: 5000 });
+    expect(reply.data).toBeTruthy();
+  });
+
+  test("the write service's status server ignores a large ping", async () => {
+    const client = connect();
+    const subject = `${BOARD_WRITE_SERVICE}.hub.server.status`;
+    await expect(
+      client.request(subject, null, {
+        raw: Buffer.alloc(128 * 1024),
+        timeout: 2000,
+      }),
+    ).rejects.toThrow(/timeout/i);
+    const reply = await client.request(subject, null, { timeout: 5000 });
+    expect(reply.data?.id).toBeTruthy();
+  });
 });
 
 async function waitFor(f: () => boolean, ms = 10_000) {
