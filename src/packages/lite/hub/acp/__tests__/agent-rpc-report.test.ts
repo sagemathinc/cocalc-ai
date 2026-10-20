@@ -187,6 +187,22 @@ describe("the sender's host writes the report", () => {
     ).resolves.toEqual({ skipped: "duplicate" });
   });
 
+  it("a held report that arrives after the final one is out of date", async () => {
+    syncdb.rows.push(
+      fromB("2026-10-12T20:00:09Z", {
+        delivery_report: { report_id: "final", attempt_id },
+      }),
+    );
+    await expect(
+      deliverAgentRpcReport(
+        {} as any,
+        { ...delivery, report: { ...delivery.report, phase: "held" } },
+        running,
+      ),
+    ).resolves.toEqual({ skipped: "duplicate" });
+    expect(admit).not.toHaveBeenCalled();
+  });
+
   it("pending on disk before its turn is admitted, then admitted", async () => {
     let onDisk: any;
     syncdb.save_to_disk.mockImplementationOnce(async () => {
@@ -404,7 +420,13 @@ describe("the recipient's host reports a failed turn", () => {
     // The same message's final report is still sent.
     expect(ended("op-held", limit)).toMatchObject({ kind: "limit" });
     expect(ended("op-held", limit)).toBeUndefined();
-    expect(listDueAgentRpcReports(STARTED + 60_000)).toHaveLength(2);
+    // And replaces the held one if that was not sent yet: it would only
+    // arrive out of date.
+    expect(
+      listDueAgentRpcReports(STARTED + 60_000).map(
+        ({ report }) => report.phase,
+      ),
+    ).toEqual([undefined]);
   });
 
   it("a success only when the sender asked to hear of no reply", () => {

@@ -92,7 +92,7 @@ export const AGENT_RPC_REPORT_DETAIL_MAX = 300;
  * kinds, no resets_at or tool_ran, and a text that always says the recipient
  * "did not act" and invites a resend.
  */
-export const AGENT_RPC_REPORT_VERSION = 3;
+export const AGENT_RPC_REPORT_VERSION = 4;
 const V1_KINDS: AgentRpcTurnFailureKind[] = [
   "refused",
   "limit",
@@ -111,8 +111,11 @@ export function agentRpcReportForVersion(
   version: number,
 ): AgentRpcTurnFailureReport | undefined {
   if (version >= AGENT_RPC_REPORT_VERSION) return report;
+  // Held reports (phase) came in version 4: an older host rejects them.
+  if (report.phase === "held") return undefined;
+  if (version >= 3) return report;
   // Before version 3 every report says the turn is over and did not succeed.
-  if (report.kind === "completed" || report.phase === "held") return undefined;
+  if (report.kind === "completed") return undefined;
   if (version >= 2) return report;
   const { resets_at: _r, tool_ran, ...v1 } = report;
   // Only when nothing ran is the old text ("did not act ... you can send

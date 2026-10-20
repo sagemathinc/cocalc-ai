@@ -251,6 +251,9 @@ function preparationKey(e: AgentRpcEnvelope) {
  * or advertised it for another build than the one it runs now (heartbeat
  * metadata is merged, so a rolled-back host keeps the newer build's value).
  */
+/** The report version that has "completed" reports (report_no_reply). */
+const REPORT_NO_REPLY_HOST_VERSION = 3;
+
 async function hostAgentRpcReportVersion(host_id: string): Promise<number> {
   const { rows } = await agentStore().query(
     `SELECT metadata->'agent_rpc_report'->>'version' AS version,
@@ -448,6 +451,25 @@ async function submitAgentRpcOperation(
       thread_id: target.thread_id,
       deadline: Date.now() + 30_000,
     };
+    // Asked to hear of a turn without a reply: refused, sending nothing, if
+    // no report could arrive (checked here, against the current network
+    // and the recipient's host, not the sender's earlier discovery).
+    if (phase === "send" && opts.request.report_no_reply) {
+      const why = envelope.guidance
+        ? `Agent Network "${proof.network_title}" delivers live, into the recipient's running turn`
+        : isExternalAgentSource(opts.source) ||
+            isExternalAgentSource(opts.request.target)
+          ? "external network members never get turn reports"
+          : (await hostAgentRpcReportVersion(host.host_id)) <
+              REPORT_NO_REPLY_HOST_VERSION
+            ? "the recipient's project host is too old to report it"
+            : undefined;
+      if (why)
+        return rpcOutcome(opts.request, "rejected", {
+          reason: `--report-no-reply is not possible here: ${why}; no message was sent`,
+          chat_effect: "none",
+        });
+    }
     // A queued message starts a turn of its own; if that turn fails, its
     // host may report it, but only this exact message (see
     // rpc-report-capability.ts).
