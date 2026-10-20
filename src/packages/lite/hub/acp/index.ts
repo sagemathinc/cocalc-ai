@@ -210,6 +210,9 @@ import {
   cancelQueuedAcpJobForControl,
   claimNextQueuedAcpJobForThread,
   clearAcpJobRecoveryIntent,
+  clearAcpJobRecoveryIntentIf,
+  listAcpJobsWithIntent,
+  markAcpJobRecoveryIntent,
   clearQueuedAcpJobWorkerAffinity,
   countQueuedAcpJobsForThread,
   countRunningAcpJobsForWorker,
@@ -731,6 +734,8 @@ const ACP_LIMIT_HOLD_MARGIN_MS = 60_000;
 // is queued (or the hold declined), so a worker that dies in between leaves
 // the hold for recoverPendingFailureRecoveryIntents to finish.
 const ACP_HOLD_INTENT = "cocalc-hold";
+/** A withdrawn message whose chat still shows it queued. */
+const ACP_WITHDRAWN_PROJECTION_INTENT = "cocalc-withdrawn-projection";
 const ACP_LIMIT_HOLD_MAX_RETRIES = 4;
 const LIMIT_HOLD_NOTICE =
   "**Conversation paused because a usage limit was reached.**";
@@ -9347,6 +9352,8 @@ async function enqueueFailureRecoveryContinuation({
     delayMs: directive.delayMs,
     maxRetries: directive.maxRetries,
     recoveryGuidance: directive.recoveryGuidance,
+    // Not after the sender withdrew it (that clears the intent).
+    requireParentFenceIntent: directive.code,
   });
   if (resumed) {
     logger.warn("queued ACP failure recovery continuation", {
@@ -9393,7 +9400,9 @@ async function enqueueLimitHold({
   job: AcpJobRow;
   outcome: TurnOutcome;
 }): Promise<AcpJobRow | undefined> {
-  const delayMs = limitHoldDelayMs(outcome);
+  // From when the turn ended, as the continuation is scheduled: a hold
+  // recovered after a restart still resumes after the reset, not early.
+  const delayMs = limitHoldDelayMs(outcome, job.finished_at ?? Date.now());
   if (delayMs == null) return undefined;
   const failed = decodeAcpJobRequest(job);
   // A delivery report starts one turn (the hub records it).
@@ -9408,6 +9417,8 @@ async function enqueueLimitHold({
     recoveryReason: "usage limit hold",
     delayMs,
     maxRetries: ACP_LIMIT_HOLD_MAX_RETRIES,
+    // Not after the sender withdrew it (that clears the intent).
+    requireParentFenceIntent: ACP_HOLD_INTENT,
     recoveryGuidance: [
       "The previous attempt stopped because a usage limit was reached; CoCalc held this turn until the limit reset.",
       ranTools
@@ -9433,6 +9444,7 @@ export async function withdrawAgentMessageTurn(
   source: AgentRpcSource,
   attempt: AgentRpcAttempt,
   accountId: string,
+  retried = false,
 ): Promise<AgentRpcOutcome> {
   const found = agentRpcWithdrawable(source, attempt, accountId);
   if (!found)
@@ -9444,7 +9456,39 @@ export async function withdrawAgentMessageTurn(
       ...rpcOutcome(attempt, "rejected", { reason: found.reason }),
       ...turnOf(source, attempt, accountId),
     };
-  const { job, jobs } = found;
+  const { job, jobs, intent } = found;
+  // A stopped turn waiting to be resumed: clearing its intent (only if
+  // still set) means the worker or recovery poll never queues it again.
+  // If it was queued meanwhile, that continuation is what is withdrawn.
+  if (intent) {
+    if (!clearAcpJobRecoveryIntentIf(job.op_id, intent)) {
+      if (retried)
+        return {
+          ...rpcOutcome(attempt, "rejected", {
+            reason: "Its turn changed just now, so it was not withdrawn.",
+          }),
+          ...turnOf(source, attempt, accountId),
+        };
+      return await withdrawAgentMessageTurn(source, attempt, accountId, true);
+    }
+    recordAcpJobOutcome(job.op_id, {
+      version: 1,
+      state: "canceled",
+      by: "sender",
+      ...(() => {
+        const tool_ran = chainToolRan(
+          jobs.map((row) => toolRanOf(parseTurnOutcome(row.outcome_json))),
+        );
+        return tool_ran !== undefined ? { tool_ran } : {};
+      })(),
+    });
+    return {
+      ...rpcOutcome(attempt, "accepted", {
+        reason: "Withdrawn: its turn will not resume",
+      }),
+      ...turnOf(source, attempt, accountId),
+    };
+  }
   const { canceled } = cancelQueuedAcpJobReportingChange({
     project_id: job.project_id,
     path: job.path,
@@ -9472,18 +9516,11 @@ export async function withdrawAgentMessageTurn(
     ...(tool_ran !== undefined ? { tool_ran } : {}),
   });
   try {
-    if (!conatClient) throw new Error("conat client unavailable");
-    await persistQueuedUserMessageProjection({
-      client: conatClient,
-      project_id: job.project_id,
-      path: job.path,
-      thread_id: job.thread_id,
-      user_message_id: job.user_message_id,
-      queued: false,
-    });
+    await projectWithdrawnMessage(job);
   } catch (err) {
-    // Withdrawn regardless; the chat catches up on its next projection.
-    logger.warn("withdrawn message's chat not updated", {
+    // Withdrawn regardless; the recovery poll updates the chat later.
+    markAcpJobRecoveryIntent(job.op_id, ACP_WITHDRAWN_PROJECTION_INTENT);
+    logger.warn("withdrawn message's chat not updated yet", {
       op_id: job.op_id,
       err: `${err}`,
     });
@@ -9496,6 +9533,46 @@ export async function withdrawAgentMessageTurn(
   };
 }
 
+/** The chat stops showing a withdrawn message as queued. */
+async function projectWithdrawnMessage(job: AcpJobRow): Promise<void> {
+  if (!conatClient) throw new Error("conat client unavailable");
+  await persistQueuedUserMessageProjection({
+    client: conatClient,
+    project_id: job.project_id,
+    path: job.path,
+    thread_id: job.thread_id,
+    user_message_id: job.user_message_id,
+    queued: false,
+  });
+}
+
+/** Retry the chat updates of withdrawn messages that failed. */
+async function retryWithdrawnProjections(
+  limit = 100,
+  project: (job: AcpJobRow) => Promise<void> = projectWithdrawnMessage,
+): Promise<number> {
+  let done = 0;
+  for (const job of listAcpJobsWithIntent(
+    "canceled",
+    ACP_WITHDRAWN_PROJECTION_INTENT,
+    limit,
+  )) {
+    try {
+      await project(job);
+      if (
+        clearAcpJobRecoveryIntentIf(job.op_id, ACP_WITHDRAWN_PROJECTION_INTENT)
+      )
+        done += 1;
+    } catch (err) {
+      logger.debug("withdrawn message's chat still not updated", {
+        op_id: job.op_id,
+        err: `${err}`,
+      });
+    }
+  }
+  return done;
+}
+
 function turnOf(
   source: AgentRpcSource,
   attempt: AgentRpcAttempt,
@@ -9503,6 +9580,13 @@ function turnOf(
 ) {
   const turn = agentRpcTurnState(source, attempt, accountId);
   return turn ? { turn } : {};
+}
+
+/** The continuation queued for this job, if one was. */
+function continuationOf(job: AcpJobRow): AcpJobRow | undefined {
+  return listAcpJobsByRecoveryParent({
+    recovery_parent_op_id: job.op_id,
+  })[0];
 }
 
 async function recoverPendingFailureRecoveryIntents({
@@ -9518,13 +9602,16 @@ async function recoverPendingFailureRecoveryIntents({
       // A hold whose worker died before its continuation was queued.
       try {
         const outcome = parseTurnOutcome(job.outcome_json);
-        const held = outcome
-          ? await enqueueLimitHold({ client, job, outcome })
-          : undefined;
+        // Its worker may also have died after queueing the continuation,
+        // before clearing the intent: then that continuation is the hold.
+        const held =
+          (outcome
+            ? await enqueueLimitHold({ client, job, outcome })
+            : undefined) ?? continuationOf(job);
         clearAcpJobRecoveryIntent(job.op_id);
         recovered += 1;
         const request = decodeAcpJobRequest(job);
-        if (held?.available_at)
+        if (held?.available_at != null && held.available_at > Date.now())
           reportFailedAgentMessageTurn(
             job,
             request,
@@ -9532,7 +9619,10 @@ async function recoverPendingFailureRecoveryIntents({
             outcome,
             { resume_at: held.available_at },
           );
-        else reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
+        // Resuming now (the reset passed while the host was down): the
+        // continuation reports how it ends.
+        else if (!held)
+          reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
       } catch (err) {
         logger.warn("failed recovering a persisted ACP hold", {
           op_id: job.op_id,
@@ -9550,8 +9640,9 @@ async function recoverPendingFailureRecoveryIntents({
       });
       clearAcpJobRecoveryIntent(job.op_id);
       recovered += 1;
-      // Declined: the turn is over after all.
-      if (!resumed)
+      // Declined: the turn is over after all (unless a continuation was
+      // queued before the worker died, and resumes it).
+      if (!resumed && !continuationOf(job))
         reportFailedAgentMessageTurn(
           job,
           decodeAcpJobRequest(job),
@@ -9564,6 +9655,11 @@ async function recoverPendingFailureRecoveryIntents({
         err,
       });
     }
+  }
+  try {
+    recovered += await retryWithdrawnProjections(limit);
+  } catch (err) {
+    logger.warn("failed retrying withdrawn messages' chats", { err });
   }
   return recovered;
 }
@@ -13666,6 +13762,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  retryWithdrawnProjections,
   harnessKilledFailure,
   loadAgentMemoryContext,
   handleAcpAttentionRequest,

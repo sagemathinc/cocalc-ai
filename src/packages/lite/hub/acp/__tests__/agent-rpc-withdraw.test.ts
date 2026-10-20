@@ -7,11 +7,12 @@ import {
 import {
   enqueueAcpJob,
   getAcpJobByOpId,
+  listAcpJobsByRecoveryParent,
   listQueuedAcpJobs,
 } from "../../sqlite/acp-jobs";
 import { listDueAgentRpcReports } from "../../sqlite/agent-rpc-reports";
 import { parseTurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
-import { withdrawAgentMessageTurn } from "../index";
+import { acpTestInternals, withdrawAgentMessageTurn } from "../index";
 
 jest.mock("@cocalc/chat/server", () => ({
   acquireChatSyncDB: jest.fn(async () => {
@@ -164,5 +165,71 @@ describe("the sender takes back its message", () => {
       turn: { state: "running" },
     });
     expect(getAcpJobByOpId(mine.op_id)?.state).toBe("running");
+  });
+
+  it("while stopped at a limit, before its hold is queued: it never resumes", async () => {
+    // Its worker recorded the hold intent, then died before queueing.
+    const attempt = randomUUID();
+    const mine = job(attempt);
+    set(mine.op_id, {
+      state: "error",
+      started_at: mine.created_at + 1,
+      finished_at: mine.created_at + 2,
+      recovery_code: "cocalc-hold",
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: {
+          kind: "limit",
+          scope: "credential",
+          resets_at: Date.now() + 3_600_000,
+        },
+        tool_ran: true,
+      },
+    });
+    expect(await withdraw(attempt)).toMatchObject({
+      outcome: "accepted",
+      reason: "Withdrawn: its turn will not resume",
+      turn: {
+        state: "ended",
+        outcome: { state: "canceled", by: "sender", tool_ran: true },
+      },
+    });
+    expect(getAcpJobByOpId(mine.op_id)?.recovery_code ?? null).toBeNull();
+    // The recovery poll has nothing left to hold.
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as any,
+    });
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: mine.op_id }),
+    ).toHaveLength(0);
+    expect(listDueAgentRpcReports(Date.now() + 3_600_000)).toHaveLength(0);
+  });
+
+  it("its chat is updated later if that fails now", async () => {
+    const attempt = randomUUID();
+    const mine = job(attempt);
+    // The chat is unavailable in this test.
+    expect(await withdraw(attempt)).toMatchObject({ outcome: "accepted" });
+    expect(getAcpJobByOpId(mine.op_id)?.recovery_code).toBe(
+      "cocalc-withdrawn-projection",
+    );
+    const projected: string[] = [];
+    // Still failing: kept for the next pass.
+    expect(
+      await acpTestInternals.retryWithdrawnProjections(10, async () => {
+        throw new Error("chat still unavailable");
+      }),
+    ).toBe(0);
+    expect(getAcpJobByOpId(mine.op_id)?.recovery_code).toBe(
+      "cocalc-withdrawn-projection",
+    );
+    expect(
+      await acpTestInternals.retryWithdrawnProjections(10, async (row) => {
+        projected.push(row.user_message_id);
+      }),
+    ).toBe(1);
+    expect(projected).toEqual([mine.user_message_id]);
+    expect(getAcpJobByOpId(mine.op_id)?.recovery_code ?? null).toBeNull();
   });
 });

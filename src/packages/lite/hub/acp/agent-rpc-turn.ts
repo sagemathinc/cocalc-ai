@@ -21,6 +21,7 @@ import {
   type TurnOutcome,
 } from "@cocalc/conat/ai/acp/turn-outcome";
 import {
+  ACP_FENCE_INTENT_PREFIX,
   acpJobHasLiveFenceResume,
   countQueuedAcpJobsAhead,
   decodeAcpJobRequest,
@@ -78,7 +79,10 @@ export function agentRpcWithdrawable(
   source: AgentRpcSource,
   attempt: AgentRpcAttempt,
   accountId: string,
-): { job: AcpJobRow; jobs: AcpJobRow[] } | { reason: string } | undefined {
+):
+  | { job: AcpJobRow; jobs: AcpJobRow[]; intent?: string }
+  | { reason: string }
+  | undefined {
   const jobs = turnJobs(source, attempt, accountId);
   const last = jobs.at(-1);
   if (!last) return undefined;
@@ -88,8 +92,22 @@ export function agentRpcWithdrawable(
     (last.state === "canceled" && acpJobHasLiveFenceResume(last))
   )
     return { job: last, jobs };
+  // Stopped with a recovery intent (a limit hold, say) whose continuation
+  // is not queued yet: the turn would run again, so withdrawing it clears
+  // the intent.
+  if (
+    last.state === "error" &&
+    last.recovery_code &&
+    !last.recovery_code.startsWith(ACP_FENCE_INTENT_PREFIX)
+  )
+    return { job: last, jobs, intent: last.recovery_code };
   if (last.state === "running")
     return { reason: "Its turn is already running, so it can't be withdrawn." };
+  if (acpJobHasLiveFenceResume(last))
+    return {
+      reason:
+        "Its turn already started and resumes when the recipient's project runs again, so it can't be withdrawn.",
+    };
   return { reason: "Its turn has already ended." };
 }
 
@@ -121,8 +139,9 @@ export function agentRpcTurnState(
       ...base,
       ahead_in_queue: countQueuedAcpJobsAhead(last),
     };
-  // Cut off by a project restart, waiting for the project to run again.
-  if (last.state === "canceled" && acpJobHasLiveFenceResume(last))
+  // Cut off by a project restart, waiting for the project to run again:
+  // queued (then canceled) or running (then error or interrupted).
+  if (acpJobHasLiveFenceResume(last))
     return { state: "queued", held: true, ...base };
   if (last.state === "running") return { state: "running", ...base };
   const outcome = parseTurnOutcome(last.outcome_json);
