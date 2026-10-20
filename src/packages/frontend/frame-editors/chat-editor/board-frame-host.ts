@@ -45,6 +45,10 @@ steps that use it (edits saved to the file, answers to the agent).
 
 export const BOARD_FRAME_MAX_HIDDEN = 4;
 export const BOARD_FRAME_HIDDEN_TTL_MS = 15 * 60_000;
+// A frame just created has had no chance to be attached yet (its card's
+// layout effect may not have run): it is pending, not hidden, for this long,
+// and isn't dropped to make room meanwhile.
+export const BOARD_FRAME_PENDING_MS = 10_000;
 
 // Below the app's popups, menus and dialogs, above ordinary page content.
 const LAYER_Z_INDEX = "1";
@@ -77,6 +81,8 @@ interface Entry extends BoardFrame {
   // Mounted placeholders, most recent last; the frame covers the last one.
   placeholders: Placeholder[];
   hiddenSince?: number;
+  // When it was created, until a placeholder first shows it.
+  pendingSince?: number;
 }
 
 interface Placeholder {
@@ -310,8 +316,19 @@ function schedule(): void {
 // hidden frame (and its interpreters) lives at most its time, even if
 // nothing else happens.
 function evictHidden(now = Date.now()): void {
+  // A frame created moments ago and not yet attached is pending: it neither
+  // counts against the limit nor is dropped for it (only once the grace
+  // period is over, as a hidden frame).
+  let pendingUntil: number | undefined;
+  const isPending = (entry: Entry) => {
+    if (entry.pendingSince == null) return false;
+    const until = entry.pendingSince + BOARD_FRAME_PENDING_MS;
+    if (now >= until) return false;
+    pendingUntil = Math.min(pendingUntil ?? until, until);
+    return true;
+  };
   const hidden = [...entries.values()]
-    .filter((entry) => entry.placeholders.length === 0)
+    .filter((entry) => entry.placeholders.length === 0 && !isPending(entry))
     .sort((a, b) => (b.hiddenSince ?? 0) - (a.hiddenSince ?? 0));
   let oldest: number | undefined;
   hidden.forEach((entry, index) => {
@@ -329,13 +346,17 @@ function evictHidden(now = Date.now()): void {
     clearTimeout(evictTimer);
     evictTimer = undefined;
   }
-  if (oldest != null) {
+  const next = Math.min(
+    oldest == null ? Infinity : oldest + BOARD_FRAME_HIDDEN_TTL_MS,
+    pendingUntil ?? Infinity,
+  );
+  if (next < Infinity) {
     evictTimer = setTimeout(
       () => {
         evictTimer = undefined;
         evictHidden();
       },
-      Math.max(0, oldest + BOARD_FRAME_HIDDEN_TTL_MS - now) + 1,
+      Math.max(0, next - now) + 1,
     );
   }
 }
@@ -407,6 +428,7 @@ export function createBoardFrame({
     frameError: "",
     placeholders,
     hiddenSince: placeholders.length === 0 ? Date.now() : undefined,
+    pendingSince: placeholders.length === 0 ? Date.now() : undefined,
   };
   // A second load is another document, which this card did not load.
   iframe.addEventListener("load", () => {
@@ -439,6 +461,7 @@ export function attachBoardFrame(
   };
   entry.placeholders.push(placeholder);
   entry.hiddenSince = undefined;
+  entry.pendingSince = undefined;
   notify(entry);
   layoutBoardFrames();
   schedule();

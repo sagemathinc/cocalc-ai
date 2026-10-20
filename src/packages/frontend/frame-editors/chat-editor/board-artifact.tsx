@@ -231,11 +231,14 @@ export default function BoardArtifact({
         <div
           ref={placeholderRef}
           data-board-frame-placeholder=""
-          tabIndex={0}
+          // Only the view that shows the frame is its focus proxy.
+          tabIndex={shownElsewhere ? -1 : 0}
           role="group"
           aria-label={`Sagebrush board: ${name}`}
           onFocus={(e) => {
-            if (e.target === e.currentTarget) focusBoardFrame(frame);
+            if (e.target === e.currentTarget && !shownElsewhere) {
+              focusBoardFrame(frame);
+            }
           }}
           style={{
             flex: "1 1 0",

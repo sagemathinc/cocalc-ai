@@ -15,6 +15,8 @@ import { boardFrameUrl, isBoardPath } from "./board-artifact-frame";
 import {
   BOARD_FRAME_HIDDEN_TTL_MS,
   BOARD_FRAME_MAX_HIDDEN,
+  BOARD_FRAME_PENDING_MS,
+  createBoardFrame,
   layoutBoardFrames,
   resetBoardFrames,
 } from "./board-frame-host";
@@ -435,6 +437,48 @@ test("a frame shown again before its time is not dropped", async () => {
   } finally {
     jest.useRealTimers();
   }
+});
+
+test("frames created before their cards attach are pending, not dropped to make room", () => {
+  jest.useFakeTimers({ now: Date.now() });
+  try {
+    // More reads finish at once than hidden frames are kept, before any
+    // card's layout effect has run.
+    const frames = Array.from({ length: BOARD_FRAME_MAX_HIDDEN + 2 }, (_, i) =>
+      createBoardFrame({
+        key: `pending-${i}`,
+        path: PATH,
+        frameUrl: FRAME,
+        sandbox: "allow-scripts",
+        text: TEXT,
+        name: "overnight.board.json",
+        title: TITLE,
+      }),
+    );
+    expect(frames.every((f) => f.iframe.isConnected)).toBe(true);
+    // Never attached: after the grace period they are hidden frames, and the
+    // oldest beyond the limit go.
+    jest.advanceTimersByTime(BOARD_FRAME_PENDING_MS + 10);
+    expect(frames.filter((f) => f.iframe.isConnected)).toHaveLength(
+      BOARD_FRAME_MAX_HIDDEN,
+    );
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("a view the frame isn't shown in is no focus proxy", async () => {
+  const first = await renderBoard();
+  render(<Board />);
+  await waitFor(() =>
+    expect(
+      first.view.getByText("This board is shown in another view."),
+    ).toBeInTheDocument(),
+  );
+  const older = placeholder(first.view.container);
+  expect(older.tabIndex).toBe(-1);
+  act(() => older.focus());
+  expect(document.activeElement).not.toBe(first.frame);
 });
 
 test("shown in two places, the newest has the frame", async () => {
