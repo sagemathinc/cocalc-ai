@@ -575,6 +575,7 @@ function specFor(
         "logical-vm": vm.id.replaceAll("-", "").slice(0, 40),
         owner: vm.owner_account_id.replaceAll("-", "").slice(0, 40),
         environment: config.environment,
+        application: "dedicated-vm",
       },
       shared_disk_name: volume?.provider_disk_id,
       shared_disk_id:
