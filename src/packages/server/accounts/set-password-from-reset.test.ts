@@ -15,17 +15,16 @@ jest.mock("@cocalc/backend/auth/password-hash", () => ({
   default: () => "hashed-password",
 }));
 
-const revokeContentLinks = jest.fn(async (_account_id: string) => {});
+const endOtherSessions = jest.fn(async (_opts: any) => {});
 jest.mock("@cocalc/server/accounts/revocation", () => ({
-  revokeContentLinksBestEffort: (account_id: string) =>
-    revokeContentLinks(account_id),
+  endOtherSessionsOrExplain: (opts: any) => endOtherSessions(opts),
 }));
 
 import setPasswordFromReset from "./set-password-from-reset";
 
 beforeEach(() => {
   query.mockReset();
-  revokeContentLinks.mockClear();
+  endOtherSessions.mockClear();
 });
 
 it("updates only when the reset email is still current", async () => {
@@ -45,10 +44,11 @@ it("updates only when the reset email is still current", async () => {
       "user@example.com",
     ],
   );
-  // Content links minted with the old password stop working.
-  expect(revokeContentLinks).toHaveBeenCalledWith(
-    "00000000-0000-4000-8000-000000000001",
-  );
+  // Whoever knew the old password is signed out everywhere (no session to
+  // keep: the reset page isn't signed in).
+  expect(endOtherSessions).toHaveBeenCalledWith({
+    account_id: "00000000-0000-4000-8000-000000000001",
+  });
 });
 
 it("rejects a reset after the account email changes", async () => {
@@ -61,5 +61,5 @@ it("rejects a reset after the account email changes", async () => {
       password: "not-used-by-mock",
     }),
   ).rejects.toThrow("Password reset no longer valid");
-  expect(revokeContentLinks).not.toHaveBeenCalled();
+  expect(endOtherSessions).not.toHaveBeenCalled();
 });

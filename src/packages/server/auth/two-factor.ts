@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { revokeContentLinksBestEffort } from "@cocalc/server/accounts/revocation";
+import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
 import { v4 as uuid } from "uuid";
 
 import passwordHash, {
@@ -32,7 +32,6 @@ import {
   getCurrentAuthSession,
   requireFreshAuth,
   resolveFreshAuthDurationMs,
-  endOtherSignInSessions,
   setCurrentSessionFreshAuth,
   type AuthPrimaryMethod,
   type AuthSessionFactorLevel,
@@ -927,12 +926,12 @@ export async function confirmTwoFactorSetup({
     },
   });
   if (currentHash) {
-    await endOtherSignInSessions({
+    // Other sessions are signed out, on the hub and on project hosts, and
+    // their content-origin links go too.
+    await endOtherSessionsOrExplain({
       account_id: accountId,
       keep_session_hash: currentHash,
     });
-    // Other sessions are signed out; their content-origin links go too.
-    await revokeContentLinksBestEffort(accountId);
     await setCurrentSessionFreshAuth({
       req,
       account_id: accountId,

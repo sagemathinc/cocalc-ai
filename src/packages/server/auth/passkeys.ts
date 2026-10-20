@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { revokeContentLinksBestEffort } from "@cocalc/server/accounts/revocation";
+import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
 import type { Request } from "express";
 import { v4 as uuid } from "uuid";
 import {
@@ -26,7 +26,6 @@ import {
   getCurrentAuthSession,
   requireFreshAuth,
   resolveFreshAuthDurationMs,
-  endOtherSignInSessions,
   setCurrentSessionFreshAuth,
   setSessionFreshAuth,
   type AuthPrimaryMethod,
@@ -546,12 +545,12 @@ export async function finishPasskeySetup({
     throw new Error("passkey setup failed");
   }
   if (currentHash) {
-    await endOtherSignInSessions({
+    // Other sessions are signed out, on the hub and on project hosts, and
+    // their content-origin links go too.
+    await endOtherSessionsOrExplain({
       account_id: accountId,
       keep_session_hash: currentHash,
     });
-    // Other sessions are signed out; their content-origin links go too.
-    await revokeContentLinksBestEffort(accountId);
     await setCurrentSessionFreshAuth({
       req,
       account_id: accountId,

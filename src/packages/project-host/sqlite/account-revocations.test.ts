@@ -67,6 +67,33 @@ describe("account revocations on the host", () => {
     expect(getAccountContentRevokedBeforeMs(account_id)).toBe(3000);
   });
 
+  it("revokes browser credentials, not an agent's, on a password change", () => {
+    upsertAccountRevocation({
+      account_id,
+      revoked_before_ms: 0,
+      content_revoked_before_ms: 4000,
+      browser_revoked_before_ms: 4000,
+      updated_ms: 1,
+    });
+    expect(getAccountRevokedBeforeMs(account_id)).toBe(4000);
+    expect(getAccountRevokedBeforeMs(account_id, { auth_actor: "account" })).toBe(
+      4000,
+    );
+    expect(
+      getAccountRevokedBeforeMs(account_id, { auth_actor: "agent" }),
+    ).toBeUndefined();
+    expect(getAccountContentRevokedBeforeMs(account_id)).toBe(4000);
+    // Never moves back (older hubs don't send it).
+    upsertAccountRevocation({ account_id, revoked_before_ms: 0, updated_ms: 2 });
+    expect(getAccountRevokedBeforeMs(account_id)).toBe(4000);
+    // Sign out everywhere later on covers agents too.
+    upsertAccountRevocation({ account_id, revoked_before_ms: 6000, updated_ms: 3 });
+    expect(getAccountRevokedBeforeMs(account_id, { auth_actor: "agent" })).toBe(
+      6000,
+    );
+    expect(getAccountRevokedBeforeMs(account_id)).toBe(6000);
+  });
+
   it("adds the column to a table created by an older host", () => {
     const db = getDatabase();
     db.exec(`

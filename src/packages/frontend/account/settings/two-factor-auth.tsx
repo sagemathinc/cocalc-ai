@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { notifyAllContentLinksRevoked } from "@cocalc/frontend/project/content-link-revocations";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   Alert,
   Button,
@@ -179,8 +179,8 @@ export default function TwoFactorAuthSetting({ showHeader = true }: Props) {
           code: setupCode,
         },
       });
-      // Other sessions were signed out, and the account's content links revoked.
-      notifyAllContentLinksRevoked();
+      // Other sessions were signed out, everywhere.
+      webapp_client.account_client.afterOtherSessionsEnded();
       setRecoveryCodes(result.recovery_codes ?? []);
       setSetup(null);
       setSetupCode("");
@@ -204,8 +204,8 @@ export default function TwoFactorAuthSetting({ showHeader = true }: Props) {
 
   async function addPasskey() {
     const result = await registerPasskey({ origin: authApiOrigin });
-    // Other sessions were signed out, and the account's content links revoked.
-    notifyAllContentLinksRevoked();
+    // Other sessions were signed out, everywhere.
+    webapp_client.account_client.afterOtherSessionsEnded();
     setRecoveryCodes(result.recovery_codes ?? []);
     await loadStatus();
   }
