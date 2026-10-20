@@ -10160,14 +10160,16 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       error,
       toolRan: false,
     });
-    setAcpJobState({
+    // A fence (project stop) may have taken the job meanwhile: it reports.
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state,
       error,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
       outcome,
     });
-    reportFailedAgentMessageTurn(job, request, error, outcome);
+    if (ended) reportFailedAgentMessageTurn(job, request, error, outcome);
   };
   if (!project_id || !path || !thread_id || !user_message_id) {
     endWithoutRunning(
