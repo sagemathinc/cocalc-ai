@@ -415,3 +415,14 @@ test("a send may ask to hear of no reply, with exactly true, and only a send", (
     } as any),
   ).toThrow("unexpected agent RPC field");
 });
+
+test("withdraw names an attempt like inspect, with no body", () => {
+  const { action: _, ...attempt } = { ...request(), action: "send" as const };
+  const { body: __, ...bare } = attempt as any;
+  expect(() =>
+    validateAgentRpcRequest({ ...bare, action: "withdraw" }),
+  ).not.toThrow();
+  expect(() =>
+    validateAgentRpcRequest({ ...bare, action: "withdraw", body: "hi" } as any),
+  ).toThrow("unexpected agent RPC field");
+});

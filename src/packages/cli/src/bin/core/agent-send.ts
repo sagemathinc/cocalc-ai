@@ -259,6 +259,15 @@ export function agentSendSummary(result: AgentSendResult): string {
 }
 
 /** One plain sentence for `agent rpc inspect`: where the turn is, if known. */
+/** One line for `agent rpc withdraw`. */
+export function agentRpcWithdrawSummary(outcome: AgentRpcOutcome): string {
+  if (outcome.outcome === "accepted")
+    return "Withdrawn: the recipient will not run it, and you will get no report about it.";
+  if (outcome.outcome === "rejected")
+    return `Not withdrawn: ${outcome.reason ?? "it can no longer be withdrawn"}${outcome.turn ? ` ${agentRpcTurnSummary(outcome.turn)}` : ""}`;
+  return `Unknown: ${outcome.reason ?? "no answer"}. Check with agent rpc inspect.`;
+}
+
 export function agentRpcInspectSummary(outcome: AgentRpcOutcome): string {
   if (outcome.turn) return agentRpcTurnSummary(outcome.turn);
   const why = outcome.reason ?? outcome.code ?? "no reason given";

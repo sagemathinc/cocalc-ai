@@ -71,7 +71,9 @@ function outcomeText(outcome: TurnOutcome | undefined): string {
         ? "someone in the recipient's project stopped it"
         : outcome.by === "superseded"
           ? "a newer message in the recipient's conversation replaced it"
-          : `it was canceled (${outcome.by})`;
+          : outcome.by === "sender"
+            ? "you withdrew it"
+            : `it was canceled (${outcome.by})`;
     case "never-started":
       return outcome.reason === "canceled"
         ? "someone in the recipient's project canceled it before it ran"

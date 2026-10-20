@@ -81,6 +81,12 @@ export interface AgentRpcExecutionAdapter {
     attempt: AgentRpcAttempt,
     accountId: string,
   ): AgentRpcTurnState | undefined;
+  /** withdraw: take back a message whose turn has not started. */
+  withdraw?(
+    source: AgentRpcSource,
+    attempt: AgentRpcAttempt,
+    accountId: string,
+  ): Promise<AgentRpcOutcome>;
   admit(prepared: Prepared): Promise<void>;
 }
 
@@ -521,6 +527,17 @@ export function createAgentRpcService(
         };
       return { ...result, turn };
     },
+    async withdraw(
+      source: AgentRpcSource,
+      attempt: AgentRpcAttempt,
+      accountId?: string,
+    ): Promise<AgentRpcOutcome> {
+      if (!accountId || !deps.withdraw)
+        return rpcOutcome(attempt, "unknown", {
+          reason: "This host cannot withdraw messages",
+        });
+      return deps.withdraw(source, attempt, accountId);
+    },
     async prepareAttachments(
       e: AgentRpcEnvelope,
     ): Promise<AgentRpcPreparation> {
@@ -657,6 +674,13 @@ export function createLocalAgentRpcService(
         });
       },
       turnState: agentRpcTurnState,
+      // The ACP module owns the queue and the chat projection.
+      withdraw: async (source, attempt, accountId) =>
+        (await import("./index")).withdrawAgentMessageTurn(
+          source,
+          attempt,
+          accountId,
+        ),
       validateFileReferences: async (e) => {
         const fs = client.fs({
           project_id: e.target.project_id,

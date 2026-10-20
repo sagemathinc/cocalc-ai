@@ -22,6 +22,13 @@ import {
 } from "./agent-rpc-report";
 import { toolUseTracker } from "./tool-use";
 import {
+  rpcOutcome,
+  type AgentRpcAttempt,
+  type AgentRpcOutcome,
+  type AgentRpcSource,
+} from "@cocalc/conat/agents/rpc";
+import { agentRpcTurnState, agentRpcWithdrawable } from "./agent-rpc-turn";
+import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
 } from "./agent-delivery-authorization";
@@ -9412,6 +9419,86 @@ async function enqueueLimitHold({
       recovery_count: held.recovery_count,
     });
   return held;
+}
+
+/**
+ * The sender takes back its message (I2-E): its turn's job is canceled if it
+ * has not started, and that is all. No delivery report: the sender asked.
+ */
+export async function withdrawAgentMessageTurn(
+  source: AgentRpcSource,
+  attempt: AgentRpcAttempt,
+  accountId: string,
+): Promise<AgentRpcOutcome> {
+  const found = agentRpcWithdrawable(source, attempt, accountId);
+  if (!found)
+    return rpcOutcome(attempt, "unknown", {
+      reason: "The recipient's host has no record of this message's turn",
+    });
+  if ("reason" in found)
+    return {
+      ...rpcOutcome(attempt, "rejected", { reason: found.reason }),
+      ...turnOf(source, attempt, accountId),
+    };
+  const { job, jobs } = found;
+  const { canceled } = cancelQueuedAcpJobReportingChange({
+    project_id: job.project_id,
+    path: job.path,
+    user_message_id: job.user_message_id,
+    account_id: job.account_id ?? accountId,
+    thread_id: job.thread_id,
+  });
+  if (!canceled)
+    return {
+      ...rpcOutcome(attempt, "rejected", {
+        reason: "Its turn started or ended just now, so it was not withdrawn.",
+      }),
+      ...turnOf(source, attempt, accountId),
+    };
+  // A continuation that never ran still belongs to a turn that may have.
+  const tool_ran = chainToolRan(
+    jobs.map((row) =>
+      row === job ? false : toolRanOf(parseTurnOutcome(row.outcome_json)),
+    ),
+  );
+  recordAcpJobOutcome(job.op_id, {
+    version: 1,
+    state: "canceled",
+    by: "sender",
+    ...(tool_ran !== undefined ? { tool_ran } : {}),
+  });
+  try {
+    if (!conatClient) throw new Error("conat client unavailable");
+    await persistQueuedUserMessageProjection({
+      client: conatClient,
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      user_message_id: job.user_message_id,
+      queued: false,
+    });
+  } catch (err) {
+    // Withdrawn regardless; the chat catches up on its next projection.
+    logger.warn("withdrawn message's chat not updated", {
+      op_id: job.op_id,
+      err: `${err}`,
+    });
+  }
+  return {
+    ...rpcOutcome(attempt, "accepted", {
+      reason: "Withdrawn: its turn will not run",
+    }),
+    ...turnOf(source, attempt, accountId),
+  };
+}
+
+function turnOf(
+  source: AgentRpcSource,
+  attempt: AgentRpcAttempt,
+  accountId: string,
+) {
+  const turn = agentRpcTurnState(source, attempt, accountId);
+  return turn ? { turn } : {};
 }
 
 async function recoverPendingFailureRecoveryIntents({

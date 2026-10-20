@@ -378,3 +378,59 @@ test("agent send --report-no-reply asks to hear of a turn without a reply", asyn
     }
   }
 });
+
+test("agent rpc withdraw takes back an exact attempt and says what happened", async () => {
+  const attempt_id = randomUUID();
+  const network = randomUUID();
+  const target = { project_id: randomUUID(), agent_id: randomUUID() };
+  const requests: any[] = [];
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      requests.push(request);
+      return {
+        version: 3,
+        attempt_id,
+        agent_network_id: network,
+        target,
+        outcome: "accepted",
+        observed_at: Date.now(),
+        reason: "Withdrawn: its turn will not run",
+      };
+    },
+  );
+  const output: any[] = [];
+  try {
+    await topLevel(output).parseAsync(
+      [
+        "agent",
+        "rpc",
+        "withdraw",
+        attempt_id,
+        "--agent-network",
+        network,
+        "--to-agent",
+        target.agent_id,
+        "--target-project",
+        target.project_id,
+      ],
+      { from: "user" },
+    );
+    assert.deepEqual(requests, [
+      {
+        version: 3,
+        action: "withdraw",
+        attempt_id,
+        agent_network_id: network,
+        target,
+      },
+    ]);
+    assert.match(
+      output[0].summary,
+      /^Withdrawn: the recipient will not run it/,
+    );
+  } finally {
+    transport.mock.restore();
+  }
+});

@@ -743,6 +743,11 @@ export interface HostControlApi {
     source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
     request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt;
   }) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcOutcome>;
+  withdrawAgentRpc: (opts: {
+    account_id?: string;
+    source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
+    request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt;
+  }) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcOutcome>;
   /** Run an approved sensor script once; the hub interprets the result. */
   runAgentSensor: (
     opts: import("@cocalc/conat/agents/sensors").RunSensorRequest,

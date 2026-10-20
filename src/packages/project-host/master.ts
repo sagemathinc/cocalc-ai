@@ -1437,6 +1437,18 @@ export async function startMasterRegistration({
         opts.account_id,
       );
     },
+    async withdrawAgentRpc(opts) {
+      await awaitReadyForControl("withdrawAgentRpc", waitUntilReady);
+      if (!controlClient)
+        throw new Error("host messaging transport unavailable");
+      const { createLocalAgentRpcService } =
+        await import("@cocalc/lite/hub/acp/agent-rpc-service");
+      return createLocalAgentRpcService(controlClient, hubApi.agent).withdraw(
+        opts.source,
+        opts.request,
+        opts.account_id,
+      );
+    },
     async runAgentSensor(opts) {
       await awaitReadyForControl("runAgentSensor", waitUntilReady);
       const { runSensor } = await import("./sensors");

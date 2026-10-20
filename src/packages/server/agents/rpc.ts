@@ -706,6 +706,36 @@ export const agentRpcControl: AgentRpcControlApi = {
       });
     }
   },
+  withdraw: async (opts) => {
+    await local(opts, opts.request.target);
+    validateAgentRpcRequest({ ...opts.request, action: "withdraw" });
+    const proof = await networkProof(
+      opts.account_id,
+      opts.source,
+      opts.run_id,
+      opts.request.target,
+      opts.request.agent_network_id,
+    );
+    if ("denied" in proof)
+      return rpcOutcome(opts.request, "unknown", {
+        reason: "Operational evidence unavailable",
+      });
+    try {
+      const outcome = await (
+        await hostFor(opts.request.target)
+      ).api.withdrawAgentRpc({
+        source: opts.source,
+        request: opts.request,
+        account_id: proof.account_id,
+      });
+      validateAgentRpcOutcome(outcome, opts.request);
+      return outcome;
+    } catch {
+      return rpcOutcome(opts.request, "unknown", {
+        reason: "Operational evidence unavailable",
+      });
+    }
+  },
 };
 
 /** The execution authorization the recipient's host builds from an envelope. */
@@ -1100,10 +1130,10 @@ export async function acceptAgentRpc(
           }),
     );
   }
-  if (request.action === "inspect") {
-    const { action: _, ...attempt } = request;
+  if (request.action === "inspect" || request.action === "withdraw") {
+    const { action, ...attempt } = request;
     return routed(target.project_id, (api, route) =>
-      api.inspect({
+      api[action]({
         ...route,
         account_id: run.account_id,
         source,
@@ -1192,10 +1222,10 @@ export async function acceptExternalAgentRpc(
     return submitExternalInbox(account_id, source, undefined, request);
   }
   const target = request.target;
-  if (request.action === "inspect") {
-    const { action: _, ...attempt } = request;
+  if (request.action === "inspect" || request.action === "withdraw") {
+    const { action, ...attempt } = request;
     return routed(target.project_id, (api, route) =>
-      api.inspect({
+      api[action]({
         ...route,
         account_id,
         source,
