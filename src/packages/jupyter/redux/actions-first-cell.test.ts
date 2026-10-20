@@ -26,14 +26,29 @@ function createActions(cellIds: string[]) {
 }
 
 describe("createFirstCell", () => {
-  it("creates the first cell, with the typed input, and trusts the notebook", () => {
+  it("creates the first cell and trusts the notebook", () => {
     const actions = createActions([]);
 
-    expect(actions.createFirstCell("x")).toBe(FIRST_CELL_ID);
+    expect(actions.createFirstCell()).toBe(FIRST_CELL_ID);
 
     expect(actions._set).toHaveBeenCalledWith({
       type: "cell",
       id: FIRST_CELL_ID,
+      pos: 0,
+      input: "",
+    });
+    expect(actions.set_trust_notebook).toHaveBeenCalledWith(true);
+  });
+
+  it("gives typed text a cell of its own, so concurrent starts both keep theirs", () => {
+    const actions = createActions([]);
+    actions.new_id = jest.fn(() => "typed-1");
+
+    expect(actions.createFirstCell("x")).toBe("typed-1");
+
+    expect(actions._set).toHaveBeenCalledWith({
+      type: "cell",
+      id: "typed-1",
       pos: 0,
       input: "x",
     });

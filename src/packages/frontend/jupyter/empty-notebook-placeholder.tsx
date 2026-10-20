@@ -27,6 +27,11 @@ interface Props {
   autoFocus?: boolean;
 }
 
+// Both the visible prompt and the accessible name, so voice control users
+// can address the field by what they see.
+export const EMPTY_NOTEBOOK_PROMPT =
+  "In [ ]: Click here or start typing to add the first cell.";
+
 export function EmptyNotebookPlaceholder({
   actions,
   fontSize,
@@ -96,8 +101,8 @@ export function EmptyNotebookPlaceholder({
     <textarea
       ref={ref}
       rows={1}
-      aria-label="Empty notebook: click or start typing to add the first cell"
-      placeholder="In [ ]:  Click here or start typing to add the first cell."
+      aria-label={EMPTY_NOTEBOOK_PROMPT}
+      placeholder={EMPTY_NOTEBOOK_PROMPT}
       onFocus={() => {
         disabledKeys.current = true;
         frameActions.current?.disable_key_handler();

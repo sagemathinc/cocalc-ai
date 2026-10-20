@@ -239,8 +239,10 @@ export class JupyterActions extends JupyterActions0 {
   private optimisticFastOpenToken: number = 0;
   private optimisticFastOpenApplied: boolean = false;
   // Settles once the open has chosen between the stored (RTC) notebook and
-  // the .ipynb file and applied it (or the first load from disk failed):
-  // until then an empty notebook may just not have been loaded yet.
+  // the .ipynb file and applied it (or the editor closed): until then an
+  // empty notebook may just not have been loaded yet. A failing load from
+  // disk is retried and keeps it pending, since a later successful load
+  // replaces every cell.
   private resolveInitialSource: () => void = () => {};
   private initialSourceSettled: Promise<void> = new Promise((resolve) => {
     this.resolveInitialSource = resolve;
@@ -4994,8 +4996,6 @@ export class JupyterActions extends JupyterActions0 {
           } catch (err) {
             this.runDebug("watch.initial_load.failed", { err: `${err}` });
             console.warn(`Issue watching ipynb file`, err);
-            // Retries go on, but readiness does not wait on a broken file.
-            this.settleInitialSource();
             return false;
           }
         },

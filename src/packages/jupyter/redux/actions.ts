@@ -2915,7 +2915,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   // the user starts editing, and only then is the first cell created. A blank
   // cell stored as soon as a notebook opens empty used to win over, or be
   // saved on top of, a notebook file that was still being written (support
-  // ticket 21023). The fixed id makes clients that start at once converge.
+  // ticket 21023). Clients that start an empty cell at once converge on one
+  // fixed id; typed text gets a cell of its own, so concurrent starts cannot
+  // overwrite each other's text.
   createFirstCell = (input: string = ""): string => {
     const cell_list = this.store.get_cell_list();
     if (cell_list != null && cell_list.size > 0) {
@@ -2926,10 +2928,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       this.set_cell_input(id, input);
       return id;
     }
-    this._set({ type: "cell", id: FIRST_CELL_ID, pos: 0, input });
+    const id = input ? this.new_id() : FIRST_CELL_ID;
+    this._set({ type: "cell", id, pos: 0, input });
     // It is safe to trust a notebook the user started from empty.
     this.set_trust_notebook(true);
-    return FIRST_CELL_ID;
+    return id;
   };
 
   processOutput = (content: any) => {

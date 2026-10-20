@@ -50,7 +50,7 @@ function renderPlaceholder() {
   return {
     actions,
     placeholder: screen.getByRole("textbox", {
-      name: "Empty notebook: click or start typing to add the first cell",
+      name: "In [ ]: Click here or start typing to add the first cell.",
     }),
   };
 }
