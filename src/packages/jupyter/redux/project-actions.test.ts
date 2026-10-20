@@ -188,3 +188,87 @@ describe("project-side save of the generated placeholder", () => {
     expect(writeFile).toHaveBeenCalledTimes(1);
   });
 });
+
+// The project-side save writes one consistent snapshot, retrying from a fresh
+// one when the notebook changes while it is taken, written or applied.
+describe("project-side save of a changing notebook", () => {
+  const { List, fromJS } = require("immutable");
+  const { export_to_ipynb } = require("../ipynb/export-to-ipynb");
+
+  function liveActions() {
+    let version = "v1";
+    let input = "";
+    const exportNow = () =>
+      export_to_ipynb({
+        cell_list: ["alpha"],
+        cells: { alpha: { type: "cell", id: "alpha", pos: 0, input } },
+        kernelspec: { name: "python3" },
+      } as any);
+    const { actions } = createActions(undefined);
+    actions.syncdb.get = () =>
+      List([fromJS({ type: "cell", id: "alpha", pos: 0, input })]);
+    actions.syncdb.get_one = () => fromJS({ type: "settings" });
+    actions.syncdb.newestVersion = () => version;
+    const edit = (next: string, v: string) => {
+      input = next;
+      version = v;
+    };
+    actions.toIpynb = jest.fn(async () => exportNow());
+    const saved: string[] = [];
+    actions.syncdb.fs.jupyterSaveIpynb = jest.fn(async (_path, ipynb) => {
+      saved.push(ipynb.cells[0].source.join(""));
+      return { bytes: 10, converted: false, ipynb };
+    });
+    actions.recordIpynbSave = jest.fn();
+    return { actions, edit, saved };
+  }
+
+  it("does not write a blank snapshot taken just before the notebook changed", async () => {
+    const { actions, edit, saved } = liveActions();
+    const snapshot = actions.toIpynb;
+    actions.toIpynb = jest.fn(async () => {
+      const ipynb = await snapshot();
+      if (saved.length === 0 && actions.toIpynb.mock.calls.length === 1) {
+        edit("answer = 42", "v2"); // typed while the snapshot was taken
+      }
+      return ipynb;
+    });
+
+    await actions.save_ipynb_file();
+
+    expect(saved).toEqual(["answer = 42"]);
+  });
+
+  it("saves again when the notebook changes during the write", async () => {
+    const { actions, edit, saved } = liveActions();
+    edit("x = 1", "v1");
+    const write = actions.syncdb.fs.jupyterSaveIpynb;
+    actions.syncdb.fs.jupyterSaveIpynb = jest.fn(async (path, ipynb) => {
+      const result = await write(path, ipynb);
+      if (saved.length === 1) edit("x = 2", "v2");
+      return result;
+    });
+
+    await actions.save_ipynb_file();
+
+    expect(saved).toEqual(["x = 1", "x = 2"]);
+  });
+
+  it("saves again when the notebook changes while a conversion is applied", async () => {
+    const { actions, edit, saved } = liveActions();
+    edit("x = 1", "v1");
+    actions.syncdb.fs.jupyterSaveIpynb = jest.fn(async (_path, ipynb) => {
+      saved.push(ipynb.cells[0].source.join(""));
+      return { bytes: 10, converted: saved.length === 1, ipynb };
+    });
+    actions.setToIpynb = jest.fn(async () => {
+      edit("x = 1", "imported");
+      actions.noteImportCommit();
+      edit("x = 3", "v3"); // edited before the apply finished
+    });
+
+    await actions.save_ipynb_file();
+
+    expect(saved).toEqual(["x = 1", "x = 3"]);
+  });
+});

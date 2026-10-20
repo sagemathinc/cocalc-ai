@@ -41,6 +41,9 @@ function isFilesystemJupyterUnsupported(err: unknown): boolean {
   );
 }
 
+// Attempts to save a consistent snapshot of a notebook that keeps changing.
+const MAX_SAVE_ATTEMPTS = 5;
+
 export class JupyterActions extends JupyterActions0 {
   private clearKernelErrorTimeout?: ReturnType<typeof setTimeout>;
 
@@ -54,29 +57,63 @@ export class JupyterActions extends JupyterActions0 {
     this.recordContentProvenance();
   }
 
+  // Save the live notebook to its .ipynb file. Each attempt saves one
+  // snapshot and is retried from a fresh snapshot if the notebook changes
+  // while it is taken, written or applied, so the file never ends with a
+  // stale snapshot.
   save_ipynb_file = async (_opts?) => {
-    const ipynb = await this.toIpynb();
-    if (ipynb == null) {
-      throw Error("notebook is not loaded");
-    }
-    if (
-      this.liveNotebookIsGeneratedPlaceholder() &&
-      isPlaceholderIpynb(ipynb)
-    ) {
-      // The generated empty cell carries no work, so it is never written: a
-      // write could replace a file another writer (e.g. a course copy) is
-      // filling in, however a check of the file is ordered.
+    for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt += 1) {
+      const version = this.rtcVersion();
+      const ipynb = await this.toIpynb();
+      if (ipynb == null) {
+        throw Error("notebook is not loaded");
+      }
+      if (this.rtcVersion() !== version) continue;
+      if (
+        this.liveNotebookIsGeneratedPlaceholder() &&
+        isPlaceholderIpynb(ipynb)
+      ) {
+        // The generated empty cell carries no work, so it is never written:
+        // a write could replace a file another writer (e.g. a course copy)
+        // is filling in, however a check of the file is ordered.
+        return;
+      }
+      const result = await this.writeIpynbFile(ipynb);
+      if (this.rtcVersion() !== version) continue;
+      if (result?.converted) {
+        // Apply the converted file only over the version that was saved;
+        // an edit made while it is applied is saved by the next attempt.
+        this.importCommitVersion = undefined;
+        await this.setToIpynb(result.ipynb);
+        const importVersion = this.importCommitVersion;
+        if (importVersion != null && this.rtcVersion() !== importVersion) {
+          continue;
+        }
+      }
       return;
     }
+    throw Error(
+      `notebook kept changing while it was being saved: ${this.path}`,
+    );
+  };
+
+  private rtcVersion = (): string | undefined => {
+    try {
+      return (this.syncdb as any)?.newestVersion?.();
+    } catch {
+      return undefined;
+    }
+  };
+
+  // Write one snapshot; returns the filesystem save result when the
+  // filesystem Jupyter save is available (it may convert the notebook).
+  private writeIpynbFile = async (ipynb: any): Promise<any> => {
     const saveIpynb = this.syncdb.fs.jupyterSaveIpynb;
     if (typeof saveIpynb === "function") {
       try {
         const result = await saveIpynb(this.path, ipynb);
         this.recordIpynbSave(result);
-        if (result.converted) {
-          await this.setToIpynb(result.ipynb);
-        }
-        return;
+        return result;
       } catch (err) {
         if (!isFilesystemJupyterUnsupported(err)) {
           throw err;
@@ -103,6 +140,7 @@ export class JupyterActions extends JupyterActions0 {
       JSON.stringify(portableIpynb, undefined, 2),
       true,
     );
+    return undefined;
   };
 
   protected override async prepareIpynbForSyncdoc(ipynb: any): Promise<any> {
