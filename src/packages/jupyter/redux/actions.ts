@@ -136,6 +136,9 @@ function getCellMetadataLastRuntimeMs(cell: immutable.Map<string, any>): any {
 // it to be recorded before taking it for an external edit (see isIpynbSave).
 const IPYNB_SAVE_RECORD_WAIT_MS = 3000;
 
+// The id of the first cell of a notebook started from empty.
+export const FIRST_CELL_ID = "alpha";
+
 export class JupyterActions extends Actions<JupyterStoreState> {
   public is_project: boolean;
   readonly path: string;
@@ -1719,6 +1722,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       throw Error("document is read only");
     }
     const new_id = id ?? this.new_id();
+    const wasEmpty = (this.store.get_cell_list()?.size ?? 0) === 0;
     this._set(
       {
         type: "cell",
@@ -1728,6 +1732,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       },
       save,
     );
+    if (wasEmpty) {
+      // It is safe to trust a notebook the user started from empty.
+      this.set_trust_notebook(true);
+    }
     return new_id; // violates CQRS... (this *is* used elsewhere)
   }
 
@@ -2901,23 +2909,20 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.setState({ runProgress: total > 0 ? (100 * ran) / total : 100 });
   };
 
-  ensureThereIsACell = () => {
-    if (this._state !== "ready") {
-      return;
+  // An empty notebook stores no cells. The editor shows a placeholder until
+  // the user starts editing, and only then is the first cell created. A blank
+  // cell stored as soon as a notebook opens empty used to win over, or be
+  // saved on top of, a notebook file that was still being written (support
+  // ticket 21023). The fixed id makes clients that start at once converge.
+  createFirstCell = (input: string = ""): string => {
+    const cell_list = this.store.get_cell_list();
+    if (cell_list != null && cell_list.size > 0) {
+      return cell_list.get(0)!;
     }
-    const cells = this.store.get("cells");
-    if (cells == null || cells.size === 0) {
-      this._set({
-        type: "cell",
-        // by using the same id across clients we solve the problem of multiple
-        // clients creating a cell at the same time.
-        id: "alpha",
-        pos: 0,
-        input: "",
-      });
-      // It is safe to trust an empty notebook.
-      this.set_trust_notebook(true);
-    }
+    this._set({ type: "cell", id: FIRST_CELL_ID, pos: 0, input });
+    // It is safe to trust a notebook the user started from empty.
+    this.set_trust_notebook(true);
+    return FIRST_CELL_ID;
   };
 
   processOutput = (content: any) => {

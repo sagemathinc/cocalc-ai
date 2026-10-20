@@ -4989,11 +4989,8 @@ export class JupyterActions extends JupyterActions0 {
     if (done()) return;
     // if no kernel, let use select one:
     this.initKernel();
-    // now that we've loaded from disk if necessary we can
-    // ensure there is a cell.  This causes trust if it happens.
-    this.syncdb.on("change", () => {
-      this.ensureThereIsACell();
-    });
+    // An empty notebook stays empty (no cell is stored) until the user starts
+    // editing; see createFirstCell.
 
     const fs = this.syncdb.fs;
 
