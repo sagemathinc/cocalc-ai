@@ -9399,7 +9399,9 @@ async function enqueueLimitHold({
   job: AcpJobRow;
   outcome: TurnOutcome;
 }): Promise<AcpJobRow | undefined> {
-  const delayMs = limitHoldDelayMs(outcome);
+  // From when the turn ended, as the continuation is scheduled: a hold
+  // recovered after a restart still resumes after the reset, not early.
+  const delayMs = limitHoldDelayMs(outcome, job.finished_at ?? Date.now());
   if (delayMs == null) return undefined;
   const failed = decodeAcpJobRequest(job);
   // A delivery report starts one turn (the hub records it).
@@ -9470,7 +9472,8 @@ async function enqueueSignInHold({
   const count = Math.floor(Number(job.recovery_count ?? 0));
   if (count >= ACP_SIGNIN_HOLD_MAX) return undefined;
   const deadline = (signInHoldStart(job) ?? now) + ACP_SIGNIN_HOLD_MS;
-  const delayMs = deadline - now;
+  // From when the turn ended, as the continuation is scheduled.
+  const delayMs = deadline - (job.finished_at ?? now);
   if (delayMs < 60_000) return undefined;
   const ranTools = toolRanOf(outcome) === true;
   const held = await enqueueRecoveryContinuationForJob({
@@ -9480,6 +9483,8 @@ async function enqueueSignInHold({
     recoveryReason: SIGNIN_HOLD_REASON,
     delayMs,
     maxRetries: ACP_SIGNIN_HOLD_MAX,
+    // Not after the sender withdrew it (that clears the intent).
+    requireParentFenceIntent: ACP_HOLD_INTENT,
     recoveryGuidance: [
       "The previous attempt stopped because the subscription's sign-in needed renewing; CoCalc held this turn until it was signed in again.",
       ranTools
@@ -9660,6 +9665,13 @@ function holdFor(outcome: TurnOutcome | undefined) {
   return undefined;
 }
 
+/** The continuation queued for this job, if one was. */
+function continuationOf(job: AcpJobRow): AcpJobRow | undefined {
+  return listAcpJobsByRecoveryParent({
+    recovery_parent_op_id: job.op_id,
+  })[0];
+}
+
 async function recoverPendingFailureRecoveryIntents({
   client,
   limit = 100,
@@ -9674,12 +9686,16 @@ async function recoverPendingFailureRecoveryIntents({
       try {
         const outcome = parseTurnOutcome(job.outcome_json);
         const hold = holdFor(outcome);
+        // Its worker may also have died after queueing the continuation,
+        // before clearing the intent: then that continuation is the hold.
         const held =
-          outcome && hold ? await hold({ client, job, outcome }) : undefined;
+          (outcome && hold
+            ? await hold({ client, job, outcome })
+            : undefined) ?? continuationOf(job);
         clearAcpJobRecoveryIntent(job.op_id);
         recovered += 1;
         const request = decodeAcpJobRequest(job);
-        if (held?.available_at)
+        if (held?.available_at != null && held.available_at > Date.now())
           reportFailedAgentMessageTurn(
             job,
             request,
@@ -9687,7 +9703,10 @@ async function recoverPendingFailureRecoveryIntents({
             outcome,
             { resume_at: held.available_at },
           );
-        else reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
+        // Resuming now (the reset passed while the host was down): the
+        // continuation reports how it ends.
+        else if (!held)
+          reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
       } catch (err) {
         logger.warn("failed recovering a persisted ACP hold", {
           op_id: job.op_id,
@@ -9705,8 +9724,9 @@ async function recoverPendingFailureRecoveryIntents({
       });
       clearAcpJobRecoveryIntent(job.op_id);
       recovered += 1;
-      // Declined: the turn is over after all.
-      if (!resumed)
+      // Declined: the turn is over after all (unless a continuation was
+      // queued before the worker died, and resumes it).
+      if (!resumed && !continuationOf(job))
         reportFailedAgentMessageTurn(
           job,
           decodeAcpJobRequest(job),
