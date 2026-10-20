@@ -221,6 +221,7 @@ import {
   listAcpJobsByRecoveryParent,
   listHeldAcpJobs,
   releaseHeldAcpJob,
+  setQueuedAcpJobRequest,
   listAcpJobsWithFenceIntent,
   listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobsForThread,
@@ -9542,7 +9543,52 @@ type CredentialUpdatedAt = (opts: {
   updated_at?: number;
   revoked?: boolean;
   newest_updated_at?: number;
+  newest_credential_id?: string;
 }>;
+
+/**
+ * The credential a released turn should run with: the one it was held for,
+ * unless signing in made a newer one of the same kind (or revoked it), in
+ * which case that newer one, by id.
+ */
+function replacementCredentialId(
+  held: string,
+  answer: Awaited<ReturnType<CredentialUpdatedAt>>,
+): string | undefined {
+  const replacement = answer.newest_credential_id;
+  if (!replacement || replacement === held) return undefined;
+  return answer.revoked ||
+    (answer.newest_updated_at ?? 0) > (answer.updated_at ?? 0)
+    ? replacement
+    : undefined;
+}
+
+/** Pin this queued job to another credential of the same kind (false if
+ * it was pinned to the old one and could not be changed). */
+function repinHeldCredential(
+  job: AcpJobRow,
+  from: string,
+  to: string,
+): boolean {
+  const request = decodeAcpJobRequest(job) as AcpJobRequest & {
+    harness_credential?: { credentialId?: string };
+    config?: { credentialId?: string };
+  };
+  let changed = false;
+  if (request.harness_credential?.credentialId === from) {
+    request.harness_credential = {
+      ...request.harness_credential,
+      credentialId: to,
+    };
+    changed = true;
+  }
+  if (request.config?.credentialId === from) {
+    request.config = { ...request.config, credentialId: to };
+    changed = true;
+  }
+  // Nothing pinned to it: the turn takes the account's current credential.
+  return !changed || setQueuedAcpJobRequest(job.op_id, request);
+}
 
 /** Slack for clock skew between this host and the account's home bay. */
 const SIGNIN_HOLD_SKEW_MS = 2 * 60_000;
@@ -9637,7 +9683,8 @@ async function releaseRenewedSignInHolds(
           ...credential,
         }).catch(() => ({})),
       );
-    const seen = signInSeen(await asked.get(key)!);
+    const answer = await asked.get(key)!;
+    const seen = signInSeen(answer);
     if (seen == null) continue;
     const baseline = signInHoldBaselines.get(job.op_id);
     if (baseline == null) {
@@ -9651,6 +9698,18 @@ async function releaseRenewedSignInHolds(
       }
     } else if (seen <= baseline) continue;
     signInHoldBaselines.delete(job.op_id);
+    // Signed in as a new credential: the turn runs with it, not the old one.
+    const replacement = replacementCredentialId(
+      credential.credential_id,
+      answer,
+    );
+    if (
+      replacement &&
+      !repinHeldCredential(job, credential.credential_id, replacement)
+    )
+      logger.warn("held sign-in turn not repinned to its new credential", {
+        op_id: job.op_id,
+      });
     if (releaseHeldAcpJob(job.op_id, now)) released += 1;
   }
   if (released > 0) scheduleNextDelayedAcpQueueWake();

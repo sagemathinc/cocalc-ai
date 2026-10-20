@@ -522,6 +522,26 @@ describe("a held sign-in turn asks the account's home bay (I4c)", () => {
     assert.equal(revoked.revoked, true);
     // No unrevoked credential of that kind is left to resume with.
     assert.equal(revoked.newest_updated_at, undefined);
+    assert.equal(revoked.newest_credential_id, undefined);
+    // Signing in again as a new credential: the held turn learns its id
+    // (only the id), to run with it instead of the revoked one.
+    const replacement = (
+      await onHome(
+        `return await server("external-credentials/store.js").createExternalCredential({
+           selector: ${JSON.stringify(selector())},
+           payload: "another-fake-token",
+           metadata: { label: "Max C" },
+         });`,
+      )
+    ).id;
+    const replaced = await ask();
+    assert.equal(replaced.revoked, true);
+    assert.equal(replaced.newest_credential_id, replacement);
+    assert.equal(typeof replaced.newest_updated_at, "number");
+    assert.doesNotMatch(
+      JSON.stringify(replaced),
+      /another-fake-token|not-a-real-token|Max [ABC]/,
+    );
   });
 
   it("refuses a host that does not run the project", async () => {

@@ -605,14 +605,21 @@ export const credentialUpdatedAt: AgentApi["credentialUpdatedAt"] = async (
           credential.kind === found.kind
         : provider != null && credential.provider === provider),
   );
-  const newest = peers.length
-    ? Math.max(...peers.map((credential) => ms(credential.updated)))
-    : undefined;
+  const newestCredential = peers.reduce<(typeof peers)[number] | undefined>(
+    (best, credential) =>
+      !best || ms(credential.updated) > ms(best.updated) ? credential : best,
+    undefined,
+  );
   return {
     ...(found
       ? { updated_at: ms(found.updated), revoked: found.revoked != null }
       : {}),
-    ...(newest != null ? { newest_updated_at: newest } : {}),
+    ...(newestCredential
+      ? {
+          newest_updated_at: ms(newestCredential.updated),
+          newest_credential_id: newestCredential.id,
+        }
+      : {}),
   };
 };
 

@@ -5024,6 +5024,41 @@ describe("held sign-in turns resume once the account signs in again", () => {
     ).toBeUndefined();
   });
 
+  it("signed in as a new credential: the released turn runs with it", async () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    const job = held(heldAt);
+    const replacement = "44444444-4444-4444-8444-444444444444";
+    const lookup = jest.fn(async () => ({
+      updated_at: heldAt - 60 * 60_000,
+      revoked: true,
+      newest_updated_at: heldAt + 3 * 60_000,
+      newest_credential_id: replacement,
+    }));
+    expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(1);
+    const row = getAcpJobByOpId(job.op_id)!;
+    expect(row.available_at ?? null).toBeNull();
+    expect(
+      (decodeAcpJobRequest(row) as any).harness_credential.credentialId,
+    ).toBe(replacement);
+  });
+
+  it("renewed in place: it keeps its credential", async () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    const job = held(heldAt);
+    const lookup = jest.fn(async () => ({
+      updated_at: heldAt + 3 * 60_000,
+      newest_updated_at: heldAt + 3 * 60_000,
+      newest_credential_id: credentialId,
+    }));
+    expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(1);
+    expect(
+      (decodeAcpJobRequest(getAcpJobByOpId(job.op_id)!) as any)
+        .harness_credential.credentialId,
+    ).toBe(credentialId);
+  });
+
   it("asks once per credential per pass", async () => {
     getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
     const heldAt = Date.now() - 60_000;

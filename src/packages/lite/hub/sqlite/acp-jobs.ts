@@ -540,6 +540,23 @@ export function listHeldAcpJobs(
     .all(recovery_reason, now, limit) as AcpJobRow[];
 }
 
+/** Replace a queued job's request (e.g. to pin a replacement credential
+ * before a held turn runs). */
+export function setQueuedAcpJobRequest(
+  op_id: string,
+  request: AcpJobRequest,
+  now = Date.now(),
+): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET request_json = ?, updated_at = ?
+       WHERE op_id = ? AND state = 'queued'`,
+    )
+    .run(JSON.stringify(request), now, op_id);
+  return Number(result?.changes ?? 0) === 1;
+}
+
 /** A held turn may run now (it was waiting for available_at). */
 export function releaseHeldAcpJob(op_id: string, now = Date.now()): boolean {
   ensureInit();

@@ -616,6 +616,9 @@ export interface AgentApi {
     /** Newest update of any unrevoked credential of the same provider and
      * kind: signing in again may make a new one rather than update it. */
     newest_updated_at?: number;
+    /** That newest credential's id (an id only, never its secret or
+     * label), so a turn held for a revoked credential resumes with it. */
+    newest_credential_id?: string;
   }>;
   /** Host admitting a turn: which runtime the agent uses. */
   reportRuntime(
