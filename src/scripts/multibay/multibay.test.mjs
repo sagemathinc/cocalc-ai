@@ -289,9 +289,14 @@ describe("agent delivery reports across bays", () => {
         software: { project_host: "build-2" },
         agent_rpc_report: { version: 2, project_host: "build-2" },
       },
-      "held-report": {
+      // Knows completed reports (version 3), not held ones (4).
+      "completed-report": {
         software: { project_host: "build-3" },
         agent_rpc_report: { version: 3, project_host: "build-3" },
+      },
+      "held-report": {
+        software: { project_host: "build-4" },
+        agent_rpc_report: { version: 4, project_host: "build-4" },
       },
     };
     const hostIds = Object.fromEntries(
@@ -370,7 +375,7 @@ describe("agent delivery reports across bays", () => {
     }
 
     it("holds a held report for a host that predates it", async () => {
-      for (const name of ["old", "current"]) {
+      for (const name of ["old", "current", "completed-report"]) {
         await onHost(name);
         assert.match(
           await deliverFromSeed({
@@ -399,6 +404,18 @@ describe("agent delivery reports across bays", () => {
             ...(phase ? { phase } : {}),
           }),
         );
+    });
+
+    it("forwards a completed report to a version-3 host", async () => {
+      await onHost("completed-report");
+      forwarded(
+        await deliverFromSeed({
+          project_id,
+          agent_id,
+          kind: "completed",
+          tool_ran: true,
+        }),
+      );
     });
 
     it("forwards every report to a current host", async () => {
