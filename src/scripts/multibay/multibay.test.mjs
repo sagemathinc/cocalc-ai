@@ -23,6 +23,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { MultibayCluster, SRC } from "./cluster.mjs";
 import {
   AccountClient,
+  connectBayDatabase,
   createAccount,
   eventually,
   runInBay,
@@ -919,6 +920,74 @@ describe("bulk project stop across bays", () => {
   });
 });
 
+describe("host reads across bays", () => {
+  // A host on the attached bay, owned by alice (homed on the seed): reading
+  // its log runs on the host's bay, which records the forwarded call.
+  const host_id = randomUUID();
+  const forwardedReads = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const t = await getPool().query("SELECT to_regclass('hub_api_forwarded_calls') AS t");
+       if (t.rows[0].t == null) return 0; // nothing forwarded to this bay yet
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.getHostLog' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("reads a host's log on the host's bay", async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO project_hosts (id, name, status, metadata, created, updated, bay_id) VALUES ($1, 'routed-host', 'off', $2, NOW(), NOW(), $3)",
+         [${JSON.stringify(host_id)}, ${JSON.stringify({ owner: alice.account_id })}, ${JSON.stringify(ATTACHED)}]);
+       await getPool().query(
+         "INSERT INTO cloud_vm_log (id, vm_id, ts, action, status) VALUES ($1, $2, NOW(), 'create', 'success')",
+         [${JSON.stringify(randomUUID())}, ${JSON.stringify(host_id)}]);`,
+    );
+    const before = await forwardedReads();
+    const log = await alice.client.call("hosts.getHostLog", { id: host_id });
+    assert.deepEqual(
+      log.map(({ vm_id, action, status }) => ({ vm_id, action, status })),
+      [{ vm_id: host_id, action: "create", status: "success" }],
+    );
+    assert.equal(await forwardedReads(), before + 1);
+  });
+
+  it("waits as long as the caller asked for a slow read", async () => {
+    // The log read is held up 26 s on the host's bay: past what the default
+    // forwarding budget covers (two 12 s attempts, a repeat waiting 9 s),
+    // within the 300 s this call asks for, and within the bay's own 30 s
+    // statement timeout. Its 120 s attempts exceed fast RPC's 90 s ack
+    // limit, so they go by request/reply.
+    const BLOCKED_MS = 26_000;
+    const db = await connectBayDatabase(cluster, ATTACHED);
+    let released;
+    try {
+      await db.query("BEGIN");
+      await db.query("LOCK TABLE cloud_vm_log IN ACCESS EXCLUSIVE MODE");
+      released = sleep(BLOCKED_MS).then(() => db.query("COMMIT"));
+      const started = Date.now();
+      const log = await alice.client.call("hosts.getHostLog", {
+        id: host_id,
+        timeout: 300_000,
+      });
+      assert.ok(Date.now() - started > 22_000, "the read was held up");
+      assert.deepEqual(
+        log.map(({ vm_id, action }) => ({ vm_id, action })),
+        [{ vm_id: host_id, action: "create" }],
+      );
+    } finally {
+      await released?.catch(() => undefined);
+      await db.end();
+    }
+  });
+});
+
 describe("course reconfiguration across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, reconfigures it. The operation lives on the course
@@ -1521,6 +1590,67 @@ describe("sensor budgets on the account's home bay", () => {
     assert.deepEqual(await countsFor(SEED), {});
   });
 
+  it("reads a ci watcher's GitHub grant on the home bay, from another bay", async () => {
+    // A ci watcher is refused, or gives up, unless the agent has the GitHub
+    // connector. Grants live on the account's home bay (here the attached
+    // one); the check runs where the project is (the seed) and issues no
+    // token.
+    const grant_id = randomUUID();
+    const hasGithub = async (opts = {}) =>
+      await runInBay(
+        cluster,
+        SEED,
+        `const { sensorConnectors } = server("agents/cocalc-connector-routing.js");
+         return await sensorConnectors.hasCli(${JSON.stringify({
+           account_id: carol.account_id,
+           agent_id,
+           source_project_id: project_id,
+           connector: "github",
+           ...opts,
+         })});`,
+      );
+    const setGrant = async (sql, params) =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(${JSON.stringify(sql)}, ${JSON.stringify(params)});`,
+      );
+    assert.equal(await hasGithub(), false);
+    await setGrant(
+      "INSERT INTO agent_connector_grants (grant_id, account_id, agent_id, source_project_id, connector, connection_id, scope, enabled) VALUES ($1, $2, $3, $4, 'github', $5, '{}'::jsonb, true)",
+      [grant_id, carol.account_id, agent_id, project_id, randomUUID()],
+    );
+    assert.equal(await hasGithub(), true);
+    // Only this agent, this project and this connector.
+    assert.equal(await hasGithub({ agent_id: randomUUID() }), false);
+    assert.equal(await hasGithub({ connector: "cloudflare" }), false);
+    // Turned off, or its connection gone: no longer counts.
+    await setGrant(
+      "UPDATE agent_connector_grants SET enabled=false WHERE grant_id=$1",
+      [grant_id],
+    );
+    assert.equal(await hasGithub(), false);
+    await setGrant(
+      "UPDATE agent_connector_grants SET enabled=true, connection_id=NULL WHERE grant_id=$1",
+      [grant_id],
+    );
+    assert.equal(await hasGithub(), false);
+    // Nothing about the grant reached the seed's own database.
+    assert.equal(
+      await runInBay(
+        cluster,
+        SEED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT count(*)::int AS n FROM agent_connector_grants WHERE account_id=$1",
+           [${JSON.stringify(carol.account_id)}]);
+         return rows[0].n;`,
+      ),
+      0,
+    );
+  });
+
   async function countsFor(bay) {
     return await runInBay(
       cluster,
@@ -2013,5 +2143,226 @@ describe("CLI logout across bays", () => {
     assert.equal(output.data.server_session, "revoked");
     assert.equal(await sessions(), 0);
     assert.deepEqual(JSON.parse(readFileSync(config, "utf8")).profiles, {});
+  });
+});
+
+describe("session idle timeout across bays", () => {
+  // Sessions live on the account's home bay. A cookie checked through
+  // another bay (inter-bay getAccountIdFromRememberMe) must count as use
+  // there, and an idle session must be refused there.
+  it("keeps a session used through another bay alive, and refuses it once idle", async () => {
+    const dana = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "dana",
+    });
+    const session = await new AccountClient(cluster, dana).signIn();
+    session.close();
+    const hashCode = `const { getRememberMeHashFromCookieValue } = server("auth/remember-me.js");
+       const getPool = require("@cocalc/database/pool").default;
+       const hash = getRememberMeHashFromCookieValue(${JSON.stringify(session.cookie)}).slice(0, 127);`;
+    const onHome = (sql) =>
+      runInBay(
+        cluster,
+        ATTACHED,
+        `${hashCode}
+         const { rows } = await getPool().query(${JSON.stringify(sql)}, [hash]);
+         return rows[0] ?? null;`,
+      );
+    const checkThroughSeed = () =>
+      runInBay(
+        cluster,
+        SEED,
+        `${hashCode}
+         const { createInterBayAccountLocalClient } = require("@cocalc/conat/inter-bay/api");
+         const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+         const client = createInterBayAccountLocalClient({
+           client: getInterBayFabricClient(),
+           dest_bay: ${JSON.stringify(ATTACHED)},
+           timeout: 10000,
+         });
+         return (await client.getAccountIdFromRememberMe({ hash })).account_id ?? null;`,
+      );
+
+    // About to go idle: last used 13 days ago, with a long lifetime left
+    // (the harness signs in with short sessions).
+    await onHome(
+      "UPDATE remember_me SET last_used = NOW() - INTERVAL '13 days', expire = NOW() + INTERVAL '1 day', max_expire = NOW() + INTERVAL '30 days' WHERE hash = $1::CHAR(127) RETURNING hash",
+    );
+    assert.equal(await checkThroughSeed(), dana.account_id);
+    await eventually(async () => {
+      const row = await onHome(
+        "SELECT EXTRACT(EPOCH FROM expire - NOW()) / 86400 AS days_left FROM remember_me WHERE hash = $1::CHAR(127)",
+      );
+      assert.ok(Number(row.days_left) > 13, `days left: ${row.days_left}`);
+      return true;
+    });
+
+    // Unused past the idle timeout: refused through the other bay too, and
+    // maintenance deletes it.
+    await onHome(
+      "UPDATE remember_me SET last_used = NOW() - INTERVAL '15 days', expire = NOW() - INTERVAL '1 day' WHERE hash = $1::CHAR(127) RETURNING hash",
+    );
+    assert.equal(await checkThroughSeed(), null);
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { runSessionMaintenance } = server("auth/session-expiry.js");
+       return await runSessionMaintenance();`,
+    );
+    assert.equal(
+      await onHome(
+        "SELECT hash FROM remember_me WHERE hash = $1::CHAR(127)",
+      ),
+      null,
+    );
+  });
+});
+
+describe("managed egress notices", () => {
+  // The bay that evaluates an egress policy (e.g. the one owning the
+  // project's host) is often not the account's home bay. The notice must
+  // still reach the account's own notification list.
+  //
+  // A notice's id depends on its UTC day: every send and lookup here uses
+  // this one instant, so a run across midnight cannot mix two days' ids.
+  const NOW = new Date().toISOString();
+  const notifyOn = async (bay, account) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const { notifyManagedEgressLimit } = server("notifications/managed-egress.js");
+       return await notifyManagedEgressLimit({ ...${JSON.stringify({
+         account_id: account.account_id,
+         pool: "shared",
+         window: "7d",
+         used: 2100,
+         limit: 2000,
+         blocked: true,
+       })}, now: new Date(${JSON.stringify(NOW)}) });`,
+    );
+
+  // This notice's own outbox rows: earlier scenarios leave other
+  // notifications for the same accounts.
+  const outbox = async (bay, account) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { managedEgressNotificationId } = server("notifications/managed-egress.js");
+       const id = managedEgressNotificationId(
+         "managed-egress:shared:7d:blocked:" + ${JSON.stringify(account.account_id)},
+         new Date(${JSON.stringify(NOW)}));
+       const { rows } = await getPool().query(
+         "SELECT target_home_bay_id, published_at IS NOT NULL AS published FROM notification_target_outbox WHERE target_account_id=$1 AND notification_id=$2",
+         [${JSON.stringify(account.account_id)}, id]);
+       return rows;`,
+    );
+
+  const noticeIn = async (account) =>
+    (await account.client.call("notifications.list", { limit: 50 })).filter(
+      (row) => row.summary?.notice_type === "managed_egress_blocked",
+    );
+
+  for (const [evaluating, who] of [
+    [SEED, "bob"],
+    [ATTACHED, "alice"],
+  ]) {
+    it(`delivers a block notice evaluated on ${evaluating} to ${who}'s home bay, once a day`, async () => {
+      const account = who === "bob" ? bob : alice;
+      assert.notEqual(account.home_bay_id, evaluating);
+      assert.equal(await notifyOn(evaluating, account), true);
+      const [notice] = await eventually(
+        async () => {
+          const rows = await noticeIn(account);
+          return rows.length > 0 ? rows : undefined;
+        },
+        { timeoutMs: 60_000, what: `the egress notice to reach ${who}` },
+      );
+      assert.equal(
+        notice.summary.title,
+        "Managed network traffic limit reached",
+      );
+      assert.match(notice.summary.body_markdown, /2\.1 KB of 2 KB/);
+      // the source bay addressed and published it to the home bay
+      await eventually(
+        async () => {
+          const rows = await outbox(evaluating, account);
+          return (
+            rows.length === 1 &&
+            rows[0].target_home_bay_id === account.home_bay_id &&
+            rows[0].published
+          );
+        },
+        { what: `${evaluating}'s outbox row for ${who} to be published` },
+      );
+      // deduplicated on the evaluating bay
+      assert.equal(await notifyOn(evaluating, account), false);
+      await sleep(2_000);
+      assert.equal((await noticeIn(account)).length, 1);
+    });
+  }
+
+  it("merges the same notice sent by both bays into one notice and one email on the home bay", async () => {
+    // bob's projects can be metered on both bays; each may send the notice
+    const input = {
+      account_id: bob.account_id,
+      pool: "control-plane",
+      window: "5h",
+      used: 11_000_000_000,
+      limit: 10_000_000_000,
+      blocked: true,
+    };
+    const send = async (bay) =>
+      await runInBay(
+        cluster,
+        bay,
+        `const { notifyManagedEgressLimit, managedEgressNotificationId } =
+           server("notifications/managed-egress.js");
+         const now = new Date(${JSON.stringify(NOW)});
+         const sent = await notifyManagedEgressLimit({ ...${JSON.stringify(input)}, now });
+         return { sent, id: managedEgressNotificationId(
+           "managed-egress:control-plane:5h:blocked:" + ${JSON.stringify(bob.account_id)}, now) };`,
+      );
+    const fromSeed = await send(SEED);
+    const fromHome = await send(ATTACHED);
+    assert.deepEqual([fromSeed.sent, fromHome.sent], [true, true]);
+    assert.equal(fromSeed.id, fromHome.id);
+    const isThisNotice = (row) =>
+      row.summary?.title === "Browser control traffic limit reached";
+    await eventually(
+      async () =>
+        (await runInBay(
+          cluster,
+          SEED,
+          `const getPool = require("@cocalc/database/pool").default;
+             const { rows } = await getPool().query(
+               "SELECT 1 FROM notification_target_outbox WHERE notification_id=$1 AND published_at IS NOT NULL",
+               [${JSON.stringify(fromSeed.id)}]);
+             return rows.length;`,
+        )) === 1,
+      { what: "the seed's copy to be published to bob's home bay" },
+    );
+    await eventually(
+      async () =>
+        (await bob.client.call("notifications.list", { limit: 50 })).some(
+          isThisNotice,
+        ),
+      { timeoutMs: 60_000, what: "the control-plane notice to reach bob" },
+    );
+    await sleep(3_000);
+    const notices = (
+      await bob.client.call("notifications.list", { limit: 50 })
+    ).filter(isThisNotice);
+    assert.equal(notices.length, 1);
+    const emails = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT count(*)::INT AS n FROM notification_email_outbox WHERE target_account_id=$1 AND notification_id=$2",
+         [${JSON.stringify(bob.account_id)}, ${JSON.stringify(fromSeed.id)}]);
+       return rows[0].n;`,
+    );
+    assert.equal(emails, 1, `${emails} email outbox rows for one notice`);
   });
 });

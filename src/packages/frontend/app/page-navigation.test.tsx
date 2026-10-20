@@ -119,6 +119,9 @@ jest.mock("./version-warning", () => ({
 jest.mock("./impersonation-banner", () => ({
   ImpersonationBanner: () => null,
 }));
+jest.mock("./session-lifetime-banner", () => ({
+  SessionLifetimeBanner: () => null,
+}));
 jest.mock("./visible-viewport", () => ({
   useVisibleViewportBottom: () => undefined,
 }));

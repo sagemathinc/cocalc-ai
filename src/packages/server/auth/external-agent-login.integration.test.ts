@@ -6,6 +6,7 @@ import {
   startExternalAgentLoginChallenge,
   claimExternalAgentLoginChallenge,
   getCliAuthChallengeStatus,
+  getCliAuthApprovalInfo,
   approveCliLoginChallenge,
   redeemCliLoginChallenge,
 } from "./cli-auth";
@@ -40,16 +41,15 @@ describeDb(
     beforeAll(async () => {
       await syncSchema({
         account_cli_auth_challenges: SCHEMA.account_cli_auth_challenges,
+        accounts: SCHEMA.accounts,
       });
     });
     beforeEach(async () => {
       await getPool().query("DELETE FROM account_cli_auth_challenges");
-      mockEnrollmentStatus
-        .mockReset()
-        .mockResolvedValue({
-          installation: null,
-          api_url: "https://home.test",
-        });
+      mockEnrollmentStatus.mockReset().mockResolvedValue({
+        installation: null,
+        api_url: "https://home.test",
+      });
     });
 
     test("start is unbound to an account and stores only poll and credential hashes", async () => {
@@ -67,9 +67,9 @@ describeDb(
         label: "Security agent",
       });
       expect(JSON.stringify(row)).not.toContain(request.poll_token);
-      expect(
-        new Date(request.expires_at).getTime() - Date.now(),
-      ).toBeLessThanOrEqual(900_000);
+      const ttl = new Date(request.expires_at).getTime() - Date.now();
+      expect(ttl).toBeLessThanOrEqual(60 * 60_000);
+      expect(ttl).toBeGreaterThan(55 * 60_000);
       expect(request.approval_url).toBe(
         `https://origin.test/auth/cli-login/${request.challenge_id}`,
       );
@@ -162,6 +162,68 @@ describeDb(
         request.challenge_id,
         secret_hash,
       );
+    });
+
+    test("the approval page learns an enrollment was approved from the installation", async () => {
+      const request = await start();
+      const first = await getCliAuthApprovalInfo({
+        challenge_id: request.challenge_id,
+      });
+      expect(first).toMatchObject({ kind: "external-agent", state: "pending" });
+      // Time left by the server's clock, for pages whose clock is off.
+      expect(first.expires_in_ms).toBeGreaterThan(55 * 60_000);
+      expect(first.expires_in_ms).toBeLessThanOrEqual(60 * 60_000);
+      await claimExternalAgentLoginChallenge(request.challenge_id, account);
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "pending" });
+      // The challenge row itself stays pending after approval.
+      mockEnrollmentStatus.mockResolvedValue({
+        installation: {
+          installation_id: request.challenge_id,
+          account_id: account,
+          agent_id: randomUUID(),
+          state: "active",
+        },
+        api_url: "https://home.test",
+      });
+      const { rows } = await getPool().query(
+        "SELECT status FROM account_cli_auth_challenges WHERE id=$1",
+        [request.challenge_id],
+      );
+      expect(rows[0].status).toBe("pending");
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "approved", expires_at: expect.any(Date) });
+      expect(mockEnrollmentStatus).toHaveBeenLastCalledWith(
+        account,
+        request.challenge_id,
+        secret_hash,
+      );
+      // Approved, then revoked or expired: the request is over.
+      mockEnrollmentStatus.mockRejectedValueOnce(
+        new Error("external_credential_inactive"),
+      );
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "canceled" });
+      // Revoked by an account-wide sign-out.
+      mockEnrollmentStatus.mockRejectedValueOnce(
+        new Error("external_credential_revoked"),
+      );
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "canceled" });
+      // The approving account was disabled since.
+      mockEnrollmentStatus.mockRejectedValueOnce(new Error("account_disabled"));
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "canceled" });
+      // If the home bay can't be asked, the page still opens (as pending).
+      mockEnrollmentStatus.mockRejectedValue(new Error("home bay unreachable"));
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "pending" });
     });
 
     test("external starts share the existing IP login rate limit", async () => {

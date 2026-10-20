@@ -71,6 +71,10 @@ const isNebiusGpuFamily = (family?: string | null) =>
 
 const MIN_UBUNTU_VERSION = 2404;
 const GCP_PROJECT_HOST_ISOLATION_TAG = "cocalc-project-host-isolated";
+// The root disk holds every tools release (~1.1 GB each) that a running
+// project still mounts, so with daily releases and long-lived projects 25 GB
+// filled up on prod (2026-10-20). Resizing later needs a manual online grow.
+const DEFAULT_HOST_BOOT_DISK_GB = 50;
 
 const parseUbuntuVersion = (value?: string | null): number | undefined => {
   if (!value) return undefined;
@@ -426,7 +430,7 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     sanitizedMetadata.shared_disk_name = runtimeMetadata.shared_disk_name;
   }
   if (sanitizedMetadata.boot_disk_gb == null) {
-    sanitizedMetadata.boot_disk_gb = 25;
+    sanitizedMetadata.boot_disk_gb = DEFAULT_HOST_BOOT_DISK_GB;
   }
   if (
     providerId === "nebius" &&

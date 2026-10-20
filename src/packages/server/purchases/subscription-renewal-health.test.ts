@@ -77,6 +77,65 @@ describe("subscription renewal health alert", () => {
     expect(body).toContain("Affected renewals: 2");
   });
 
+  it("does not count payments waiting for the customer during the grace period", async () => {
+    const waitingAccount = uuid();
+    const expiredAccount = uuid();
+    await createTestAccount(waitingAccount);
+    await createTestAccount(expiredAccount);
+    const waiting = await createTestMembershipSubscription(waitingAccount, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(2, "day").toDate(),
+    });
+    const expired = await createTestMembershipSubscription(expiredAccount, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(8, "day").toDate(),
+    });
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts
+          SET customer_action_required_at=NOW(),
+              customer_action_notified_at=NOW(),
+              next_attempt_at=NOW() + INTERVAL '6 hours'
+        WHERE subscription_id = ANY($1)`,
+      [[waiting.subscription_id, expired.subscription_id]],
+    );
+
+    // Still open after the grace period is an operational problem.
+    await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(1);
+    const body = mockAdminAlert.mock.calls[0][0].body;
+    expect(body).toContain(expiredAccount);
+    expect(body).not.toContain(waitingAccount);
+  });
+
+  it.each([
+    [
+      "the recheck is overdue",
+      "customer_action_notified_at=NOW(), next_attempt_at=NOW() - INTERVAL '1 hour'",
+    ],
+    [
+      "the customer was never notified",
+      "next_attempt_at=NOW() + INTERVAL '6 hours'",
+    ],
+  ])("alerts on a waiting payment when %s", async (_label, set) => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        start: dayjs().subtract(1, "month").toDate(),
+        end: dayjs().subtract(2, "day").toDate(),
+      },
+    );
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts
+          SET customer_action_required_at=NOW(), ${set}
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+
+    await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(1);
+    expect(mockAdminAlert.mock.calls[0][0].body).toContain(account_id);
+  });
+
   it("does not alert when no attempt has crossed the warning threshold", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);

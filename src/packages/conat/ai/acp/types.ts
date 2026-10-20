@@ -235,7 +235,9 @@ export type AcpControlResponse = {
 };
 
 export type AcpAttentionSourceKind =
-  "codex_sync_question" | "codex_async_question" | "cocalc_action";
+  | "codex_sync_question"
+  | "codex_async_question"
+  | "cocalc_action";
 
 export type AcpAttentionKind =
   | "question"
@@ -499,6 +501,8 @@ export type AcpStreamEvent =
         signal?: string;
       };
       output?: string;
+      /** exit: the command was refused, so it never ran. */
+      declined?: boolean;
     }
   | ({ type: "peerMessage" } & Omit<
       AgentMessageRuntimeEvent,
@@ -534,6 +538,8 @@ export type AcpStreamPayload =
       error: string;
       code?: string;
       retryable?: boolean;
+      /** What the failure was, when the agent knows (turn-outcome.ts). */
+      failure?: import("./turn-outcome").TurnFailure;
     };
 
 export type AcpStreamMessage = AcpStreamPayload & {

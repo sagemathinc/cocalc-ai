@@ -379,23 +379,109 @@ describe("watchers", () => {
 
   it("the CI watcher's script waits for pending checks and reports failures", () => {
     const dir = mkdtempSync(join(tmpdir(), "watch-ci-"));
-    const gh = join(dir, "gh");
+    // A fake `gh api --paginate PATH --jq JQ`: one JSON value per line, as
+    // the real one prints them (the image's gh has no `pr checks --json`).
+    writeFileSync(
+      join(dir, "gh"),
+      `#!/usr/bin/env python3
+import json, os, sys
+if sys.argv[1:3] != ["api", "--paginate"] or sys.argv[4] != "--jq":
+    sys.exit(2)
+path = sys.argv[3]
+data = json.load(open(os.environ["FAKE_GH"]))
+if path == "repos/a/b/pulls/7":
+    rows = [{"sha": "abc"}]
+elif path == "repos/a/b/commits/abc/check-runs?filter=latest&per_page=100":
+    rows = data["runs"]
+elif path == "repos/a/b/commits/abc/status":
+    rows = data["statuses"]
+else:
+    print("HTTP 404: Not Found", file=sys.stderr)
+    sys.exit(1)
+for row in rows:
+    print(json.dumps(row))
+`,
+      { mode: 0o755 },
+    );
     const script = sensorWatchScript({ type: "ci", repo: "a/b", pr: 7 })!;
-    const run = (json: string) => {
-      writeFileSync(gh, `#!/bin/sh\necho '${json}'\n`, { mode: 0o755 });
+    const run = (data: { runs: object[]; statuses?: object[] }) => {
+      writeFileSync(
+        join(dir, "data.json"),
+        JSON.stringify({ statuses: [], ...data }),
+      );
       return execFileSync("python3", ["-c", script], {
         encoding: "utf8",
-        env: { PATH: `${dir}:/usr/bin:/bin` },
+        env: {
+          PATH: `${dir}:/usr/bin:/bin`,
+          FAKE_GH: join(dir, "data.json"),
+        },
       });
     };
-    expect(run('[{"name":"build","bucket":"pending"}]')).toBe("");
+    const done = (name: string, conclusion: string) => ({
+      name,
+      status: "completed",
+      conclusion,
+    });
+    // Nothing reported yet, or something still running: keep waiting.
+    expect(run({ runs: [] })).toBe("");
+    expect(
+      run({
+        runs: [
+          done("build", "success"),
+          { name: "test", status: "in_progress", conclusion: null },
+        ],
+      }),
+    ).toBe("");
+    expect(
+      run({
+        runs: [done("build", "success")],
+        statuses: [{ context: "deploy", state: "pending" }],
+      }),
+    ).toBe("");
+    // Not known to be finished (as in gh pr checks): keep waiting.
+    expect(run({ runs: [done("build", "stale")] })).toBe("");
     expect(
       parseSensorWake(
-        run(
-          '[{"name":"build","bucket":"pass"},{"name":"test","bucket":"fail"}]',
-        ),
+        run({
+          runs: [done("build", "skipped"), done("lint", "neutral")],
+          statuses: [{ context: "deploy", state: "success" }],
+        }),
+      )?.summary,
+    ).toBe("CI finished on a/b#7: all 3 checks passed");
+    // Same-named checks of different workflows are different checks (GitHub
+    // already gives only the latest attempt of each).
+    expect(
+      parseSensorWake(
+        run({ runs: [done("test", "failure"), done("test", "success")] }),
       )?.summary,
     ).toBe("CI finished on a/b#7: 1 of 2 checks failed: test");
+    expect(
+      parseSensorWake(
+        run({
+          runs: [
+            done("build", "success"),
+            done("test", "timed_out"),
+            done("lint", "cancelled"),
+          ],
+          statuses: [{ context: "deploy", state: "error" }],
+        }),
+      )?.summary,
+    ).toBe("CI finished on a/b#7: 3 of 4 checks failed: test, lint, deploy");
+    // A GitHub error is a failed run (its log shows why), never a wake.
+    expect(() =>
+      execFileSync(
+        "python3",
+        ["-c", sensorWatchScript({ type: "ci", repo: "a/c", pr: 7 })!],
+        {
+          encoding: "utf8",
+          stdio: "pipe",
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            FAKE_GH: join(dir, "data.json"),
+          },
+        },
+      ),
+    ).toThrow(/HTTP 404/);
   });
 });
 

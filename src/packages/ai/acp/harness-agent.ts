@@ -23,6 +23,11 @@ import {
   joinTurnContext,
 } from "./harness-context";
 import { takeRateLimit } from "./harness-rate-limit";
+import {
+  turnFailureFromRateLimit,
+  withTurnFailure,
+  type TurnFailure,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
 import type {
@@ -46,6 +51,9 @@ export class HarnessAgent implements AcpAgent {
   private binding: HarnessBinding;
   private conversation: { path: string; threadId: string };
   private attentionContext?: CodexAttentionContext;
+  // Claude said this turn's credential is out (its rate_limit_event), so a
+  // failure of this turn is that limit, not a generic error.
+  private limitRejection?: TurnFailure;
 
   constructor(
     binding: HarnessBinding,
@@ -114,6 +122,7 @@ export class HarnessAgent implements AcpAgent {
       throw Error("ACP native session binding mismatch");
 
     this.busy = true;
+    this.limitRejection = undefined;
     this.interrupted = false;
     // The client whose CoCalc connector credential this turn issued.
     let connectorClient: AcpHarnessClient | undefined;
@@ -257,6 +266,14 @@ export class HarnessAgent implements AcpAgent {
           "rejected",
           "ACP prompt interrupted before submission",
         );
+      const turnChat = request.chat;
+      if (turnChat?.path && turnChat.thread_id && turnChat.message_date)
+        client.setTurnPublicationContext({
+          path: turnChat.path,
+          thread_id: turnChat.thread_id,
+          message_date: turnChat.message_date,
+          workbench: turnChat.workbench !== false,
+        });
       if (request.chat && isQualifiedClaudeCodeProfile(this.binding.profile)) {
         // The agent's scoped CoCalc connector credential lives only as long
         // as this turn (as for Codex); it is revoked in finally. Only the
@@ -331,6 +348,14 @@ export class HarnessAgent implements AcpAgent {
               const { update, rateLimit } = takeRateLimit(event.update);
               data = { ...update };
               if (rateLimit !== undefined) {
+                const credential = this.binding.credential;
+                // The latest report counts: a later "allowed" lifts it.
+                this.limitRejection = turnFailureFromRateLimit(
+                  rateLimit,
+                  "credentialId" in credential
+                    ? credential.credentialId
+                    : undefined,
+                );
                 try {
                   this.recordRateLimit?.(this.binding, rateLimit);
                 } catch (error) {
@@ -397,6 +422,7 @@ export class HarnessAgent implements AcpAgent {
         threadId: client.sessionId,
       });
     } catch (error) {
+      if (this.limitRejection) withTurnFailure(error, this.limitRejection);
       // Never silently start a fresh native session after an ambiguous failure.
       return await disposeFailedHarness(error, () => this.dispose());
     } finally {
@@ -406,6 +432,8 @@ export class HarnessAgent implements AcpAgent {
         });
       });
       this.attentionContext = undefined;
+      this.limitRejection = undefined;
+      this.client?.setTurnPublicationContext(undefined);
       this.busy = false;
     }
   }

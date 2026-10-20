@@ -6,9 +6,8 @@
 const poolQueryMock = jest.fn();
 const disposeOwnedProjectsForAccountDeletionMock = jest.fn();
 const deleteRootfsImagesForAccountDeletionMock = jest.fn();
-const deleteAllRememberMeMock = jest.fn();
 const deleteBlobsForAccountDeletionMock = jest.fn();
-const revokeAllAuthSessionsMock = jest.fn();
+const endAllSignInSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const withAccountRehomeWriteFenceMock = jest.fn();
 const cancelEverythingMock = jest.fn();
@@ -35,11 +34,6 @@ jest.mock("@cocalc/server/rootfs/catalog", () => ({
     deleteRootfsImagesForAccountDeletionMock(...args),
 }));
 
-jest.mock("@cocalc/server/auth/remember-me", () => ({
-  __esModule: true,
-  deleteAllRememberMe: (...args: any[]) => deleteAllRememberMeMock(...args),
-}));
-
 jest.mock("@cocalc/server/membership/blob-limits", () => ({
   __esModule: true,
   deleteBlobsForAccountDeletion: (...args: any[]) =>
@@ -54,7 +48,7 @@ jest.mock("@cocalc/server/membership/account-deletion", () => ({
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   __esModule: true,
-  revokeAllAuthSessions: (...args: any[]) => revokeAllAuthSessionsMock(...args),
+  endAllSignInSessions: (...args: any[]) => endAllSignInSessionsMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/revocation", () => ({
@@ -104,9 +98,8 @@ describe("delete account", () => {
     poolQueryMock.mockReset();
     disposeOwnedProjectsForAccountDeletionMock.mockReset();
     deleteRootfsImagesForAccountDeletionMock.mockReset();
-    deleteAllRememberMeMock.mockReset();
     deleteBlobsForAccountDeletionMock.mockReset();
-    revokeAllAuthSessionsMock.mockReset();
+    endAllSignInSessionsMock.mockReset();
     recordAccountRevocationMock.mockReset();
     withAccountRehomeWriteFenceMock.mockReset();
     cancelEverythingMock.mockReset();
@@ -130,8 +123,7 @@ describe("delete account", () => {
     });
     deleteClusterAccountDirectoryEntryMock.mockResolvedValue(undefined);
     cleanupSiteLicenseAccessForAccountDeletionMock.mockResolvedValue(undefined);
-    deleteAllRememberMeMock.mockResolvedValue(undefined);
-    revokeAllAuthSessionsMock.mockResolvedValue(undefined);
+    endAllSignInSessionsMock.mockResolvedValue(undefined);
     recordAccountRevocationMock.mockResolvedValue(undefined);
     disposeOwnedProjectsForAccountDeletionMock.mockResolvedValue([]);
     deleteRootfsImagesForAccountDeletionMock.mockResolvedValue([]);

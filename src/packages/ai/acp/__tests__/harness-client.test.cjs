@@ -659,6 +659,7 @@ function adapter(
   validateAuthority,
   subscription = false,
   connector,
+  processExtras = {},
 ) {
   let launches = 0;
   const launchedSessions = [];
@@ -726,6 +727,7 @@ function adapter(
               endConnectorTurn: connector.end,
             }
           : {}),
+        ...processExtras,
       };
     },
     attention,
@@ -1055,6 +1057,84 @@ test("failed first sign-in never publishes an unresumable native session ID", as
   );
   await reconnected.agent.evaluate(reconnected.request);
   assert.equal(reconnected.events.at(-1).type, "summary");
+});
+
+test("a Claude limit rejection is the failure of the turn it ended", async (t) => {
+  const { turnFailureOf } = require("@cocalc/conat/ai/acp/turn-outcome");
+  for (const [prompt, limited] of [
+    ["limit-rejected", true],
+    ["limit-warning", false],
+  ]) {
+    const { agent, request } = adapter(
+      t,
+      ["--claude-adapter", "--subscription-status"],
+      undefined,
+      false,
+      undefined,
+      true,
+    );
+    const before = Date.now();
+    const error = await agent.evaluate({ ...request, prompt }).then(
+      () => assert.fail("the turn should fail"),
+      (error) => error,
+    );
+    const failure = turnFailureOf(error);
+    if (!limited) {
+      // A warning is not a rejection: the error stays unclassified here.
+      assert.equal(failure, undefined);
+      continue;
+    }
+    assert.equal(failure.kind, "limit");
+    assert.equal(failure.scope, "credential");
+    assert.equal(failure.credential_id, "11111111-1111-4111-8111-111111111111");
+    assert.equal(failure.window, "seven_day");
+    assert.ok(
+      failure.resets_at > before && failure.resets_at <= before + 3_700_000,
+    );
+  }
+});
+
+test("each turn gives its publication context to the process, and takes it back after", async (t) => {
+  const contexts = [];
+  const { agent, request } = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    undefined,
+    false,
+    undefined,
+    { setTurnPublicationContext: (context) => contexts.push(context) },
+  );
+  const chat = {
+    ...request.chat,
+    message_date: "2026-10-19T04:24:28.000Z",
+  };
+  await agent.evaluate({ ...request, chat });
+  await agent.evaluate({
+    ...request,
+    chat: {
+      ...chat,
+      message_date: "2026-10-19T05:00:00.000Z",
+      workbench: false,
+    },
+  });
+  assert.deepEqual(contexts, [
+    {
+      path: "a.chat",
+      thread_id: "conversation-a",
+      message_date: "2026-10-19T04:24:28.000Z",
+      workbench: true,
+    },
+    undefined,
+    {
+      path: "a.chat",
+      thread_id: "conversation-a",
+      message_date: "2026-10-19T05:00:00.000Z",
+      workbench: false,
+    },
+    undefined,
+  ]);
 });
 
 const textChunk = (text, messageId) => ({

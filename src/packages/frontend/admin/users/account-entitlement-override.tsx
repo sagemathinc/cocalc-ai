@@ -229,6 +229,36 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
     toStored: (value) => Math.round(value * BYTES_PER_GB),
   },
   {
+    id: "control_plane_egress_5h",
+    section: "usage_limits",
+    key: "control_plane_egress_5h_bytes",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .control_plane_egress_5h_bytes.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .control_plane_egress_5h_bytes.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .control_plane_egress_5h_bytes.adminDescription,
+    fromStored: (value) => value / BYTES_PER_GB,
+    toStored: (value) => Math.round(value * BYTES_PER_GB),
+  },
+  {
+    id: "control_plane_egress_7d",
+    section: "usage_limits",
+    key: "control_plane_egress_7d_bytes",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .control_plane_egress_7d_bytes.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .control_plane_egress_7d_bytes.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .control_plane_egress_7d_bytes.adminDescription,
+    fromStored: (value) => value / BYTES_PER_GB,
+    toStored: (value) => Math.round(value * BYTES_PER_GB),
+  },
+  {
     id: "cpu_5h",
     section: "usage_limits",
     key: "cpu_5h_seconds",
@@ -535,6 +565,8 @@ const STORAGE_EGRESS_FIELD_IDS = new Set([
   "total_storage_hard",
   "egress_5h",
   "egress_7d",
+  "control_plane_egress_5h",
+  "control_plane_egress_7d",
 ]);
 
 const AI_FIELD_IDS = new Set(["ai_units_5h", "ai_units_7d"]);
@@ -1011,6 +1043,8 @@ function NumericFieldGroup({
     </Space>
   );
 }
+
+export const __test__ = { describeOverride, resetFormFields };
 
 export function AccountEntitlementOverridePanel({
   account_id,

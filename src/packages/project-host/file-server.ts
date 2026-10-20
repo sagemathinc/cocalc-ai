@@ -54,7 +54,7 @@ import type {
   ProjectBackupIndexStoreConfig,
 } from "@cocalc/conat/hub/api/hosts";
 import { hubApi } from "@cocalc/lite/hub/api";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { assertValidSnapshotName } from "@cocalc/util/snapshot-name";
 import getLogger from "@cocalc/backend/logger";
@@ -225,6 +225,7 @@ import {
 } from "@cocalc/project-runner/run/rootfs-base";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { importJupyterIpynb, saveJupyterIpynb } from "./jupyter-ipynb";
+import { boardHandlers } from "./board/service";
 import { resetClonedProjectState } from "./clone-state";
 import { withBackupParallelLimit } from "./backup-queue";
 import { createSharedWorkLimit } from "./shared-work-limit";
@@ -5256,6 +5257,10 @@ export async function initFsServer({
           fs,
         }),
     },
+    board: boardHandlers({
+      client,
+      projectIdOf: projectIdFromSubject,
+    }),
   });
 }
 
@@ -5809,11 +5814,11 @@ export async function initFileServer({
       }
       return {
         allowed: false as const,
-        message: [
-          "SSH traffic limit reached for this account.",
-          "New SSH traffic is temporarily blocked until the network usage window resets.",
-          ...formatManagedEgressPolicyDetails(policy),
-        ].join("\n"),
+        message: formatManagedEgressBlockedMessage({
+          category: policy.category ?? "",
+          policy,
+          blocked: "New SSH traffic is blocked.",
+        }),
       };
     };
     const recordManagedSshEgress = async ({

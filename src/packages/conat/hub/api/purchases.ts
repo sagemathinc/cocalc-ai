@@ -46,6 +46,10 @@ export interface MembershipUsageLimits {
   max_backups_per_project?: number;
   egress_5h_bytes?: number;
   egress_7d_bytes?: number;
+  // Account control traffic (browser control-plane conat), a separate pool;
+  // unset means the site default (COCALC_CONTROL_PLANE_EGRESS_*_BYTES).
+  control_plane_egress_5h_bytes?: number;
+  control_plane_egress_7d_bytes?: number;
   cpu_5h_seconds?: number;
   cpu_7d_seconds?: number;
   egress_policy?: MembershipEgressPolicy;
@@ -93,6 +97,10 @@ export interface MembershipUsageLimits {
   sagebrush_storage_bytes?: number;
   sagebrush_max_file_bytes?: number;
   sagebrush_private_links?: boolean;
+  sagebrush_sync_enabled?: boolean;
+  sagebrush_sync_version_bytes?: number;
+  sagebrush_sync_read_bytes_per_day?: number;
+  sagebrush_sync_retention_days?: number;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}
@@ -147,6 +155,8 @@ export interface AccountUsageLimitOverrides {
   max_backups_per_project?: NumericLimitRule;
   egress_5h_bytes?: NumericLimitRule;
   egress_7d_bytes?: NumericLimitRule;
+  control_plane_egress_5h_bytes?: NumericLimitRule;
+  control_plane_egress_7d_bytes?: NumericLimitRule;
   cpu_5h_seconds?: NumericLimitRule;
   cpu_7d_seconds?: NumericLimitRule;
   egress_policy?: EnumOverride<MembershipEgressPolicy>;
@@ -1109,6 +1119,12 @@ export interface MembershipUsageStatus {
   managed_egress_categories_5h_bytes?: Record<string, number>;
   managed_egress_categories_7d_bytes?: Record<string, number>;
   managed_egress_recent_events?: ManagedEgressEventSummary[];
+  // Browser control traffic (control-plane-conat): a separate rolling pool
+  // with its own limits; reaching a limit blocks new browser sessions.
+  managed_control_plane_egress_5h_bytes?: number;
+  managed_control_plane_egress_7d_bytes?: number;
+  managed_control_plane_egress_5h_limit_bytes?: number;
+  managed_control_plane_egress_7d_limit_bytes?: number;
   managed_cpu_5h_seconds?: number;
   managed_cpu_7d_seconds?: number;
   managed_cpu_5h_remaining_seconds?: number;

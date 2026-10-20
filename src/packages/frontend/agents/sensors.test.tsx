@@ -1,5 +1,11 @@
 import React from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentSensor } from "@cocalc/conat/agents/sensors";
 import { AgentSensorsModal } from "./sensors";
@@ -111,7 +117,7 @@ test("a proposal shows its facts and script and approves the revision reviewed",
   expect(within(card).getAllByRole("button", { name: "Delete" })).toHaveLength(
     1,
   );
-  expect(within(card).queryByRole("button", { name: "Run log" })).toBeNull();
+  expect(within(card).queryByRole("button", { name: "Show log" })).toBeNull();
   await userEvent.click(
     within(card).getByRole("button", { name: "Approve and run" }),
   );
@@ -186,7 +192,7 @@ test("an active sensor offers run, pause and its log, and shows errors", async (
     await screen.findByText("this sensor ran less than a minute ago"),
   ).toBeTruthy();
   expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
-  await userEvent.click(screen.getByRole("button", { name: "Run log" }));
+  await userEvent.click(screen.getByRole("button", { name: "Show log" }));
   expect(await screen.findByText(/Woke the agent · 1 new issue/)).toBeTruthy();
   expect(screen.getByText("Used GitHub")).toBeTruthy();
   expect(
@@ -377,8 +383,83 @@ test("a watcher shows what it waits for, and is done once it fired", () => {
       refresh={() => {}}
     />,
   );
+  // Finished sensors stay out of the way until asked for.
+  expect(
+    screen.queryByRole("region", { name: "Sensor CI on a/b#7" }),
+  ).toBeNull();
+  expect(
+    screen.getByText(
+      "Nothing is watching or scheduled for @watcher right now.",
+    ),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Show 1 finished/ }));
   const card = screen.getByRole("region", { name: "Sensor CI on a/b#7" });
   expect(within(card).getByText("CI checks on a/b#7 finish")).toBeTruthy();
   expect(within(card).getByText("done")).toBeTruthy();
   expect(within(card).queryByRole("button", { name: "Run now" })).toBeNull();
+});
+
+test("current sensors come first; finished ones are behind a toggle", async () => {
+  const watch = (
+    title: string,
+    status: AgentSensor["status"],
+    pending = false,
+  ) =>
+    sensor({
+      sensor_id: title,
+      status,
+      pending_spec: pending ? spec : null,
+      spec: {
+        kind: "watch",
+        title,
+        watch: { type: "ci", repo: "a/b", pr: 7 },
+        schedule: { kind: "interval", minutes: 2, timezone: "UTC" },
+        max_wakes_per_day: 1,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      },
+    });
+  render(
+    <AgentSensorsModal
+      agent={agent}
+      open
+      onClose={() => {}}
+      sensors={[
+        watch("Watching CI", "active"),
+        // A fired watcher the agent proposed to replace: awaits review.
+        watch("Fired, with a proposed revision", "done", true),
+        // Watchers cannot be resumed, so a paused one is finished even
+        // before it would have given up.
+        watch("Paused", "paused"),
+        watch("Fired", "done"),
+      ]}
+      error=""
+      refresh={() => {}}
+    />,
+  );
+  const shown = () =>
+    screen
+      .queryAllByRole("region", { name: /^Sensor / })
+      .map((region) => region.getAttribute("aria-label"));
+  expect(shown()).toEqual([
+    "Sensor Watching CI",
+    expect.stringMatching(/^Sensor /),
+  ]);
+  expect(shown()).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: /Show 2 finished/ }));
+  expect(shown()).toHaveLength(4);
+  expect(shown().slice(2)).toEqual(["Sensor Paused", "Sensor Fired"]);
+
+  // By keyboard: the toggle is a real button that keeps focus while the
+  // cards it shows or hides come and go below it.
+  const toggle = screen.getByRole("button", { name: "Hide finished" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  toggle.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(shown()).toHaveLength(2);
+  const show = screen.getByRole("button", { name: /Show 2 finished/ });
+  expect(show).toHaveAttribute("aria-expanded", "false");
+  expect(show).toHaveFocus();
+  await userEvent.keyboard(" ");
+  expect(shown()).toHaveLength(4);
+  expect(screen.getByRole("button", { name: "Hide finished" })).toHaveFocus();
 });

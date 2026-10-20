@@ -81,7 +81,8 @@ export class AccountClient {
       auth_session_hash: this.client.info?.user?.auth_session_hash ?? null,
       name,
       args,
-      timeout: 30_000,
+      // As the hub API clients do: a call may ask for a longer timeout.
+      timeout: args[0]?.timeout ?? 30_000,
     });
   }
 
@@ -97,6 +98,32 @@ function parseEnvFile(text) {
     if (m) out[m[1]] = m[2].replace(/^['"]|['"]$/g, "");
   }
   return out;
+}
+
+const serverRequire = createRequire(
+  path.join(SRC, "packages/server/package.json"),
+);
+
+/**
+ * A connection of the test's own to a bay's database, for what a snippet is
+ * too slow to start for: holding a lock for a set time, say. End it.
+ */
+export async function connectBayDatabase(cluster, bayId) {
+  const { Client } = serverRequire("pg");
+  const env = parseEnvFile(
+    readFileSync(
+      path.join(cluster.postgresDir(bayId), "local-postgres.env"),
+      "utf8",
+    ),
+  );
+  const db = new Client({
+    host: env.PGHOST,
+    user: env.PGUSER,
+    database: env.PGDATABASE,
+    ...(env.PGPORT ? { port: Number(env.PGPORT) } : {}),
+  });
+  await db.connect();
+  return db;
 }
 
 /**
