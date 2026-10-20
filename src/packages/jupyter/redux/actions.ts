@@ -2919,7 +2919,12 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   createFirstCell = (input: string = ""): string => {
     const cell_list = this.store.get_cell_list();
     if (cell_list != null && cell_list.size > 0) {
-      return cell_list.get(0)!;
+      // A cell arrived (from a collaborator or the file) just before the
+      // user started: keep what they typed in a cell of its own at the end.
+      if (!input) return cell_list.get(0)!;
+      const id = this.insert_cell_adjacent(cell_list.last()!, 1);
+      this.set_cell_input(id, input);
+      return id;
     }
     this._set({ type: "cell", id: FIRST_CELL_ID, pos: 0, input });
     // It is safe to trust a notebook the user started from empty.

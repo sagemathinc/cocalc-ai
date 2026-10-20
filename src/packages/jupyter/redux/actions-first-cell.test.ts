@@ -20,6 +20,8 @@ function createActions(cellIds: string[]) {
   };
   actions._set = jest.fn();
   actions.set_trust_notebook = jest.fn();
+  actions.insert_cell_adjacent = jest.fn(() => "typed");
+  actions.set_cell_input = jest.fn();
   return actions;
 }
 
@@ -41,8 +43,20 @@ describe("createFirstCell", () => {
   it("does nothing when the notebook already has a cell", () => {
     const actions = createActions(["c1", "c2"]);
 
-    expect(actions.createFirstCell("x")).toBe("c1");
+    expect(actions.createFirstCell()).toBe("c1");
 
+    expect(actions._set).not.toHaveBeenCalled();
+    expect(actions.insert_cell_adjacent).not.toHaveBeenCalled();
+    expect(actions.set_trust_notebook).not.toHaveBeenCalled();
+  });
+
+  it("keeps typed text in a new last cell when a cell arrived first", () => {
+    const actions = createActions(["c1", "c2"]);
+
+    expect(actions.createFirstCell("x")).toBe("typed");
+
+    expect(actions.insert_cell_adjacent).toHaveBeenCalledWith("c2", 1);
+    expect(actions.set_cell_input).toHaveBeenCalledWith("typed", "x");
     expect(actions._set).not.toHaveBeenCalled();
     expect(actions.set_trust_notebook).not.toHaveBeenCalled();
   });

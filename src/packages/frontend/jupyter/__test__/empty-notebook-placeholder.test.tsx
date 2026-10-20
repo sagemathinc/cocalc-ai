@@ -75,6 +75,18 @@ describe("EmptyNotebookPlaceholder", () => {
     });
   });
 
+  it("places the cursor once, as soon as the editor exists", () => {
+    const { placeholder } = renderPlaceholder();
+    frame.set_input_editor_cursor
+      .mockReturnValueOnce(false) // editor not mounted yet
+      .mockReturnValue(true);
+
+    fireEvent.input(placeholder, { target: { value: "x" } });
+    jest.runAllTimers();
+
+    expect(frame.set_input_editor_cursor).toHaveBeenCalledTimes(2);
+  });
+
   it("creates the first cell once, on Enter", () => {
     const { actions, placeholder } = renderPlaceholder();
 

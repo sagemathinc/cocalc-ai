@@ -59,12 +59,18 @@ export function EmptyNotebookPlaceholder({
     frame.set_cur_id(id);
     frame.set_mode("edit");
     if (input) {
-      // Put the cursor after the typed text once the editor exists.
+      // Put the cursor after the typed text once the editor exists, and
+      // only then: a later reset would move the cursor the user has since
+      // moved by typing on.
       const lines = input.split("\n");
       const pos = { x: lines[lines.length - 1].length, y: lines.length - 1 };
-      for (const ms of [0, 50, 250]) {
-        setTimeout(() => frame.set_input_editor_cursor(id, pos), ms);
-      }
+      const place = (delays: number[]) => {
+        if (delays.length == 0) return;
+        setTimeout(() => {
+          if (!frame.set_input_editor_cursor(id, pos)) place(delays.slice(1));
+        }, delays[0]);
+      };
+      place([0, 50, 200]);
     }
   };
 

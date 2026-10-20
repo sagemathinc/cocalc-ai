@@ -792,15 +792,16 @@ export class NotebookFrameActions {
       - pos = {x:?, y:?} coordinates in a cell
      use y=-1 for last line.
 
-     No-op if no input editor for this cell.
+     No-op if no input editor for this cell; returns whether there was one.
   */
   public set_input_editor_cursor(
     id: string,
     pos: { x: number; y: number },
-  ): void {
+  ): boolean {
     this.validate({ id });
-    if (this.input_editors[id] == null) return;
+    if (this.input_editors[id] == null) return false;
     this.call_input_editor_method(id, "set_cursor", pos);
+    return true;
   }
 
   // Call this to save the state of the current (or specified)
