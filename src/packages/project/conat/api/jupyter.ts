@@ -10,7 +10,11 @@ import * as control from "@cocalc/jupyter/control";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { type ServerSocket } from "@cocalc/conat/socket";
 import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
-import { restartHistoryFromIpynb as restartHistory } from "@cocalc/jupyter/history-restart";
+import {
+  restartHistoryFromIpynb as restartHistory,
+  seedOversizedHistory as seedHistory,
+} from "@cocalc/jupyter/history-restart";
+import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
 
 let fs: SandboxedFilesystem | null = null;
 function projectFs(): SandboxedFilesystem {
@@ -121,3 +125,25 @@ export async function ipywidgetsGetBuffer(opts) {
 
 import apiExecute from "@cocalc/jupyter/stateless-api/execute";
 export { apiExecute };
+
+// The live-writer seed (option A): only from a notebook this backend has open
+// and ready; never starts one.
+// One SyncClient per request, released however the request ends: each
+// listens to the long-lived conat client until released (LIMIT-H1B3C-1).
+export async function seedOversizedHistory(opts: {
+  path: string;
+  epoch: number;
+  oversizedSeq: number;
+}) {
+  const syncClient = new SyncClient(getClient().conat());
+  try {
+    return await seedHistory({
+      ...opts,
+      project_id,
+      syncdbOf: (path) => control.liveSyncdb(path),
+      syncClient,
+    });
+  } finally {
+    syncClient.release();
+  }
+}

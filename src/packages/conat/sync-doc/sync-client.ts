@@ -344,6 +344,36 @@ export class SyncClient extends EventEmitter implements Client0 {
     }
   };
 
+  // see Client.askLiveWriterToSeed: the project's Jupyter backend, waited
+  // for at most 60 s (its own deadline is shorter)
+  askLiveWriterToSeed = async ({
+    project_id,
+    path,
+    epoch,
+    oversizedSeq,
+  }: {
+    project_id: string;
+    path: string;
+    epoch: number;
+    oversizedSeq: number;
+  }) => {
+    const api = projectApiClient({
+      project_id,
+      client: this.client,
+      timeout: 60_000,
+    });
+    // a project that is not running has no live writer: say so at once,
+    // rather than waiting out the timeout before the user is offered (B)
+    if (!(await api.isReady())) {
+      return { seeded: false as const, reason: "not-running" as const };
+    }
+    return await api.jupyter.seedOversizedHistory({
+      path,
+      epoch,
+      oversizedSeq,
+    });
+  };
+
   ipywidgetsGetBuffer = async ({
     project_id,
     path,

@@ -52,7 +52,27 @@ export const jupyter = {
   // the user-confirmed restart of an unloadable edit history from the saved
   // notebook (bounded history plan H1b-3, option B)
   restartHistoryFromIpynb: true,
+  // the live-writer seed of an unloadable history (option A)
+  seedOversizedHistory: true,
 };
+
+export type SeedOversizedHistoryResult =
+  | { seeded: true; history_epoch: number; repeated?: boolean }
+  | {
+      seeded: false;
+      reason:
+        | "not-running"
+        | "not-ready"
+        | "epoch"
+        | "not-caught-up"
+        | "busy"
+        | "too-large"
+        | "moved"
+        | "deadline"
+        | "invalid"
+        | "failed";
+      message?: string;
+    };
 
 export type RestartHistoryFromIpynbResult =
   | { restarted: true; history_epoch: number; repeated?: boolean }
@@ -127,6 +147,15 @@ export interface Jupyter {
     epoch: number;
     revision: { seq: number; count: number };
   }) => Promise<RestartHistoryFromIpynbResult>;
+
+  // Seed a new history of the notebook from its live value, if this project's
+  // backend has it open and ready in that epoch (bounded history plan H1b-3,
+  // option A): see SyncDoc.seedHistoryFromLiveValue.  Never starts it.
+  seedOversizedHistory: (opts: {
+    path: string;
+    epoch: number;
+    oversizedSeq: number;
+  }) => Promise<SeedOversizedHistoryResult>;
 
   sendCommMessageToKernel: (opts: {
     path: string;
