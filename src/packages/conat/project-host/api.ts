@@ -1256,6 +1256,9 @@ export interface HostStatusApi {
       revoked_before_ms: number;
       // Content-origin links only (absent from older hubs).
       content_revoked_before_ms?: number;
+      // Browser sessions and tokens on hosts (password change, sign out other
+      // sessions); absent from older hubs.
+      browser_revoked_before_ms?: number;
       updated_ms: number;
     }>;
     next_cursor_updated_ms?: number;

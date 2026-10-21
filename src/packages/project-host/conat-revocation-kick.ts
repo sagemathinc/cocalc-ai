@@ -58,6 +58,7 @@ export function startConatRevocationKickLoop({
             isAccountSessionRevoked({
               account_id,
               issued_at_s: getIssuedAtSeconds(user),
+              auth_actor: user?.auth_actor,
             })
           ) {
             ids.add(socketId);

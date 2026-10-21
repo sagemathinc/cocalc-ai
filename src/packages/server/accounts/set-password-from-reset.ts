@@ -5,7 +5,7 @@
 
 import passwordHash from "@cocalc/backend/auth/password-hash";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
-import { revokeContentLinksBestEffort } from "@cocalc/server/accounts/revocation";
+import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
 
 export default async function setPasswordFromReset({
   account_id,
@@ -33,5 +33,7 @@ export default async function setPasswordFromReset({
       }
     },
   });
-  await revokeContentLinksBestEffort(account_id);
+  // A reset means the password may be known to someone else: every session
+  // ends, on the hub and on project hosts, and every content link.
+  await endOtherSessionsOrExplain({ account_id });
 }
