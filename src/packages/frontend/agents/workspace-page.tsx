@@ -344,6 +344,14 @@ import {
   useAgentStatusNow,
 } from "./agent-status-mark";
 import {
+  SIDEBAR_RECENT_AGENTS_CHOICES,
+  SIDEBAR_RECENT_AGENTS_SETTING,
+  sidebarRecentAgents,
+  sidebarRecentAgentsCount,
+  waitingKey,
+  waitingThreads,
+} from "./sidebar-recent";
+import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
   createAgentWorkingDirectory,
@@ -3575,7 +3583,6 @@ function AgentWorkspace({
 }
 
 const SIDEBAR_SECTIONS_STORAGE_KEY = "cocalc-sidebar-sections-v1";
-const SIDEBAR_RECENT_AGENTS = 3;
 
 interface SidebarSections {
   agents: boolean;
@@ -3737,6 +3744,17 @@ export function MyAgentsWorkspacePage({
   const aiDisabled = !!useTypedRedux("account", "other_settings")?.get(
     "openai_disabled",
   );
+  // How many recent agents the sidebar shows (a per-account setting), and
+  // those waiting for this person's answer, always shown until answered.
+  const recentAgentsCount = sidebarRecentAgentsCount(
+    useTypedRedux("account", "other_settings")?.get(
+      SIDEBAR_RECENT_AGENTS_SETTING,
+    ),
+  );
+  const mentions = useTypedRedux("mentions", "mentions");
+  const waiting = useMemo(() => waitingThreads(mentions), [mentions]);
+  const isWaiting = (agent: NamedAgent) =>
+    waiting.has(waitingKey(agent.endpoint.project_id, agent.thread_id));
   // The sidebar's sections (Agents, Projects, Artifacts, People) stay where
   // they are: navigating never expands, collapses or swaps one. A collapsed
   // section still shows the item that is open.
@@ -4685,11 +4703,11 @@ export function MyAgentsWorkspacePage({
           <button
             type="button"
             aria-current={active ? "page" : undefined}
-            aria-label={agentRowLabel(
+            aria-label={`${agentRowLabel(
               { title: theme.title, name: agent.name, project: projectTitle },
               agent.status,
               statusNow,
-            )}
+            )}${isWaiting(agent) ? ", waiting for your answer" : ""}`}
             title={`${theme.title} · @${agent.name}${showProjectTitle ? ` · ${projectTitle}` : ""}`}
             onClick={() => selectAgent(agent)}
             style={{
@@ -4719,6 +4737,17 @@ export function MyAgentsWorkspacePage({
               )}
             </Text>
             <AgentStatusMark status={agent.status} now={statusNow} />
+            {isWaiting(agent) && (
+              <Tooltip title="Waiting for your answer">
+                <Tag
+                  color="orange"
+                  aria-hidden
+                  style={{ marginInlineEnd: 0, fontWeight: 600 }}
+                >
+                  ?
+                </Tag>
+              </Tooltip>
+            )}
           </button>
         </div>
         {!hidden && (
@@ -4966,14 +4995,11 @@ export function MyAgentsWorkspacePage({
           // recent few and the open agent; "All agents" shows the rest.
           const unpinnedAgents = visibleGroups.unpinned;
           if (!search) {
-            const shown = unpinnedAgents.slice(0, SIDEBAR_RECENT_AGENTS);
-            if (
-              selected &&
-              unpinnedAgents.includes(selected) &&
-              !shown.includes(selected)
-            )
-              shown.push(selected);
-            visibleGroups.unpinned = shown;
+            visibleGroups.unpinned = sidebarRecentAgents(unpinnedAgents, {
+              count: recentAgentsCount,
+              isWaiting,
+              selected,
+            });
             // Hidden agents are on the Agents page (and found by a search).
             visibleGroups.hidden = [];
           }
@@ -5259,12 +5285,47 @@ export function MyAgentsWorkspacePage({
                         ) : (
                           recencySections.map((section) => (
                             <div key={section.key}>
-                              <Text
-                                type="secondary"
-                                style={{ display: "block", padding: 6 }}
-                              >
-                                {section.title}
-                              </Text>
+                              {search ? (
+                                <Text
+                                  type="secondary"
+                                  style={{ display: "block", padding: 6 }}
+                                >
+                                  {section.title}
+                                </Text>
+                              ) : (
+                                <Dropdown
+                                  trigger={["click"]}
+                                  menu={{
+                                    selectable: true,
+                                    selectedKeys: [`${recentAgentsCount}`],
+                                    items: SIDEBAR_RECENT_AGENTS_CHOICES.map(
+                                      (n) => ({
+                                        key: `${n}`,
+                                        label: `Show ${n} recent agents`,
+                                      }),
+                                    ),
+                                    onClick: ({ key }) =>
+                                      void redux
+                                        .getActions("account")
+                                        .set_other_settings(
+                                          SIDEBAR_RECENT_AGENTS_SETTING,
+                                          Number(key),
+                                        ),
+                                  }}
+                                >
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    aria-label={`Recent agents: showing ${recentAgentsCount}. Change how many`}
+                                    style={{
+                                      color: UI_COLORS.secondary,
+                                      padding: "0 6px",
+                                    }}
+                                  >
+                                    {section.title} <Icon name="caret-down" />
+                                  </Button>
+                                </Dropdown>
+                              )}
                               {renderSortableAgentGroup(
                                 section.agents,
                                 false,
