@@ -56,6 +56,18 @@ export function boardHistoryActions(
   }
 }
 
+// The ways out of every state in which a board can't be edited, not only
+// an unloadable history: a missing file can only be restored; a file over
+// the host's limits, or not a board, can still be opened as text and
+// downloaded.
+export function boardStateActions(
+  state: "missing" | "too-large" | "invalid",
+): BoardHistoryAction[] {
+  return state == "missing"
+    ? ["restore", "retry"]
+    : ["open-as-text", "download", "retry"];
+}
+
 // What the board shows once after its history was rebuilt.
 export function boardRebuiltNotice(path: string): string {
   return `The edit history of ${path} could not be loaded. It was archived, and the board was rebuilt from its saved file; edits not yet saved to the file may be missing.`;

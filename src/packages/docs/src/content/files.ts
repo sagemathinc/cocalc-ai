@@ -532,8 +532,9 @@ host rebuilds the board from that file automatically. You then see: "The edit
 history of the board could not be loaded. It was archived, and the board was
 rebuilt from its saved file; edits not yet saved to the file may be missing."
 
-If the board cannot be rebuilt, it says why, and offers what does not depend
-on the rebuild:
+If the board cannot be rebuilt, or cannot be edited at all (its file is
+missing, too large, or not a board), the board's card in chat says why, and
+offers what does not depend on the rebuild:
 
 | Why | What you can do |
 | --- | --- |

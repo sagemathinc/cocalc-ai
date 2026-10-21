@@ -42,6 +42,7 @@ import {
 import {
   BOARD_FILE_RESET_REASON,
   boardHistoryActions,
+  boardStateActions,
   HISTORY_UNLOADABLE_DOCS,
   type BoardHistoryCause,
 } from "@cocalc/util/board/history-unloadable";
@@ -750,12 +751,29 @@ function result(
   manager: { getStatus: BoardManager["getStatus"] },
 ): BoardOpenResult {
   const recovered = recoveredOf.get(manager);
-  return {
+  return withWayOut({
     path,
     syncdbPath: boardSyncdbPath(path),
     ...manager.getStatus(),
     ...(recovered != null ? { recovered } : {}),
-  } as BoardOpenResult;
+  } as BoardOpenResult);
+}
+
+// Every state in which the board can't be edited says what the user can do
+// instead, with the docs page (CORR-H1B4-1).  Paths only.
+function withWayOut(status: BoardOpenResult): BoardOpenResult {
+  if (
+    status.state == "missing" ||
+    status.state == "too-large" ||
+    status.state == "invalid"
+  ) {
+    return {
+      ...status,
+      actions: boardStateActions(status.state),
+      docs: HISTORY_UNLOADABLE_DOCS,
+    };
+  }
+  return status;
 }
 
 // A board whose history could not be loaded nor rebuilt: why, and the ways
@@ -817,17 +835,20 @@ async function managerFor(opts: BoardRequest): Promise<ManagerFor> {
     // paths take no slot and no memory.
     const info = await fileOf(opts.fs, path).info();
     if (info === undefined) {
-      return { path, status: { ...boardPaths(path), state: "missing" } };
+      return {
+        path,
+        status: withWayOut({ ...boardPaths(path), state: "missing" }),
+      };
     }
     if (info.size > BOARD_HOST_BYTE_LIMIT) {
       return {
         path,
-        status: {
+        status: withWayOut({
           ...boardPaths(path),
           state: "too-large",
           bytes: info.size,
           message: `the board is ${info.size} bytes, over the ${BOARD_HOST_BYTE_LIMIT} a board can be edited at`,
-        },
+        }),
       };
     }
     // A board may grow to the host's hard limit before its manager closes

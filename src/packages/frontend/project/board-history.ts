@@ -9,8 +9,9 @@ history plan H1b-4), from the host's boardOpen result:
 
 - rebuilt from its saved file (state "ok", recovered): a notice, once per
   history epoch in this browser;
-- not rebuilt (state "history-unloadable"): why, and the ways to the board's
-  content that do not depend on a rebuild: open the .board.json as text,
+- not rebuilt (state "history-unloadable"), or not editable at all (the
+  file missing, too large, or not a board): why, and the ways to the board's
+  content that do not depend on the host: open the .board.json as text,
   download it (the project's streaming download, at any size), restore it,
   retry, and the docs page.
 
@@ -20,7 +21,9 @@ content.
 
 import type { BoardOpenResult } from "@cocalc/conat/files/fs";
 import {
+  boardHistoryActions,
   boardRebuiltNotice,
+  boardStateActions,
   HISTORY_UNLOADABLE_DOCS,
   type BoardHistoryAction,
 } from "@cocalc/util/board/history-unloadable";
@@ -62,23 +65,23 @@ export function boardHistoryView({
   // the app's base path
   basePath: string;
 }): BoardHistoryView | undefined {
-  if (result.state != "history-unloadable") return;
-  const links = (result.actions ?? ["retry"]).map(
-    (action): BoardHistoryLink => {
-      const link: BoardHistoryLink = { action, label: LABELS[action] };
-      if (action == "download") {
-        link.href = downloadHref(project_id, result.path);
-      } else if (action == "open-as-text") {
-        link.open = { path: result.path, ext: "json" };
-      }
-      return link;
-    },
-  );
+  if (result.state == "ok") return;
+  const actions =
+    result.actions ??
+    (result.state == "history-unloadable"
+      ? boardHistoryActions(result.cause ?? "failed")
+      : boardStateActions(result.state));
+  const links = actions.map((action): BoardHistoryLink => {
+    const link: BoardHistoryLink = { action, label: LABELS[action] };
+    if (action == "download") {
+      link.href = downloadHref(project_id, result.path);
+    } else if (action == "open-as-text") {
+      link.open = { path: result.path, ext: "json" };
+    }
+    return link;
+  });
   return {
-    title:
-      result.cause == "reset-unknown"
-        ? "The board's history may already have been rebuilt"
-        : "The board's edit history can't be loaded",
+    title: titleOf(result),
     message: result.message ?? "",
     links,
     docsHref: joinUrlPath(
@@ -87,6 +90,21 @@ export function boardHistoryView({
       result.docs ?? HISTORY_UNLOADABLE_DOCS,
     ),
   };
+}
+
+function titleOf(result: BoardOpenResult): string {
+  switch (result.state) {
+    case "missing":
+      return "The board's file is missing";
+    case "too-large":
+      return "The board is too large to edit here";
+    case "invalid":
+      return "The saved file is not a board that can be edited";
+    default:
+      return result.cause == "reset-unknown"
+        ? "The board's history may already have been rebuilt"
+        : "The board's edit history can't be loaded";
+  }
 }
 
 export interface SeenStore {

@@ -335,8 +335,10 @@ test("every open of the rebuilt board says so; the browser shows it once per epo
   expect(again.recovered).toEqual(first.recovered);
 });
 
-// What the download link and "Open as text" reach: the project's own file
-// services, never the board host.
+// What the card's "Download the file" and "Open the saved file as text"
+// buttons reach (their URL and open_file call are checked through the real
+// component in frontend/frame-editors/chat-editor/board-artifact.test.tsx):
+// the project's own file services, never the board host.
 async function download(project_id: string, path: string): Promise<Buffer> {
   const chunks: Buffer[] = [];
   const res: any = Object.assign(new EventEmitter(), {
@@ -358,7 +360,11 @@ async function download(project_id: string, path: string): Promise<Buffer> {
     headersSent: true,
   });
   await handleFileDownload({
-    req: { method: "GET", url: `/${project_id}/files${path}?download` },
+    // exactly the URL download_href builds for the button
+    req: {
+      method: "GET",
+      url: `/${project_id}/files${path}?download&ts=${Date.now()}`,
+    },
     res,
     client,
   });
@@ -599,6 +605,57 @@ describe("the fallbacks work while the rebuild keeps failing", () => {
     expectFallbacks(c, "file-invalid");
     expect(JSON.stringify(c).length).toBe(JSON.stringify(a).length);
     expect(JSON.stringify(c).length).toBeLessThan(2000);
+  });
+});
+
+describe("every state in which a board can't be edited has its way out (CORR-H1B4-1)", () => {
+  test("a missing file: Restore and Retry (no download), and the docs page", async () => {
+    const project_id = uuid();
+    projects.push(project_id);
+    // the project's home exists; the board does not
+    await client
+      .fs({ project_id, service: fileserver.service })
+      .writeFile("home-exists.txt", "");
+    const result = await openBoard({
+      client,
+      project_id,
+      path: "/home/user/nothing-here.board.json",
+      fs: localFs(project_id),
+      service: fileserver.service,
+    });
+    expect(result).toMatchObject({
+      state: "missing",
+      actions: ["restore", "retry"],
+      docs: HISTORY_UNLOADABLE_DOCS,
+    });
+  });
+
+  test("a file over the host's 4 MiB: Open as text, Download, Retry, and the docs page; the download is exact", async () => {
+    const project_id = uuid();
+    projects.push(project_id);
+    const fs: any = client.fs({ project_id, service: fileserver.service });
+    const path = "/home/user/big.board.json";
+    const text = canonical({
+      ...BOARD,
+      nodes: [{ id: "a", text: "x".repeat(5 * 1024 * 1024), x: 0, y: 0 }],
+      edges: [],
+    });
+    await fs.writeFile(path, text);
+    await serveFileReads(project_id);
+    const result = await openBoard({
+      client,
+      project_id,
+      path,
+      fs: localFs(project_id),
+      service: fileserver.service,
+    });
+    expect(result).toMatchObject({
+      state: "too-large",
+      actions: ["open-as-text", "download", "retry"],
+      docs: HISTORY_UNLOADABLE_DOCS,
+    });
+    expect(JSON.stringify(result).length).toBeLessThan(2000);
+    expect((await download(project_id, result.path)).toString()).toBe(text);
   });
 });
 
