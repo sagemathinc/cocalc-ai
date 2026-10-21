@@ -1223,6 +1223,56 @@ describe("project-host daemon stop", () => {
     expect(fs.existsSync(pidPath)).toBe(true);
   });
 
+  it.each([
+    [{}, "9003", "9302"],
+    [{ COCALC_PROJECT_HOST_APP_PORT: "9500" }, "9500", "9302"],
+    [{ PORT: "9010" }, "9011", "9310"],
+    [{ COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "9555" }, "9003", "9555"],
+    [{ COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "nope" }, "9003", "9302"],
+    [{ COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "" }, "9003", "9302"],
+  ] as Array<[Record<string, string>, string, string]>)(
+    "pins the site-funded Codex proxy port from the env files' PORT, not the app port: %j",
+    (extraEnv, appPort, proxyPort) => {
+      const dataDir = mkTempDir("cocalc-project-host-daemon-");
+      process.env.COCALC_DATA = dataDir;
+      process.env.PORT = "9002";
+      process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+      process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "0";
+      delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+      delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+      delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+      delete process.env.COCALC_PROJECT_HOST_APP_PORT;
+      delete process.env.COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT;
+      Object.assign(process.env, extraEnv);
+
+      jest
+        .spyOn(__test__.processRuntime, "spawnSync")
+        .mockReturnValue({ status: 0 } as any);
+      const spawnSpy = mockSpawn().mockImplementation(((
+        _command: any,
+        _args: any,
+        opts?: any,
+      ) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 1111, unref: () => {} } as any;
+        }
+        return { pid: 2222, unref: () => {} } as any;
+      }) as typeof __test__.processRuntime.spawn);
+
+      startDaemon(0);
+
+      // The ACP worker inherits the app's env, so this is the port it binds.
+      expect((spawnSpy.mock.calls[1]?.[2] as any)?.argv0).toBe(
+        "project-host:app",
+      );
+      expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).toMatchObject({
+        PORT: appPort,
+        COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: proxyPort,
+      });
+    },
+  );
+
   it("starts a managed conat router before project-host in external router mode", () => {
     const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;

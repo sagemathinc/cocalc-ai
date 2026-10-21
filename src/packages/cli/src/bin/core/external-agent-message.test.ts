@@ -60,6 +60,14 @@ test("external transport pins profile and preserves network send semantics", asy
       ((await sendExternalAgentMessage("security", request)) as any).outcome,
       "unknown",
     );
+    // A lost answer to a withdraw: it may have been withdrawn.
+    const { body: _, ...attempt } = request;
+    const withdrawn = (await sendExternalAgentMessage("security", {
+      ...attempt,
+      action: "withdraw",
+    } as any)) as any;
+    assert.equal(withdrawn.outcome, "unknown");
+    assert.match(withdrawn.reason, /whether it was withdrawn/);
   } finally {
     connect.mock.restore();
     profile.mock.restore();

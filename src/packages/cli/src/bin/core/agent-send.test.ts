@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import {
   agentRpcInspectSummary,
+  agentRpcWithdrawSummary,
   agentSendExitCode,
   agentSendSummary,
 } from "./agent-send";
@@ -138,4 +139,29 @@ test("agent rpc inspect says where the turn is when the recipient knows", () => 
     }),
     /do not resend automatically/,
   );
+});
+
+test("a withdrawal says whether an earlier attempt may already have acted", () => {
+  const accepted = { ...base, outcome: "accepted" as const };
+  assert.match(
+    agentRpcWithdrawSummary(accepted),
+    /^Withdrawn: the recipient will not run it/,
+  );
+  // Held after it started (a usage limit): only its continuation stops.
+  const held = (tool_ran?: boolean) =>
+    agentRpcWithdrawSummary({
+      ...accepted,
+      turn: {
+        state: "ended",
+        queued_at: Date.now() - 60_000,
+        started_at: Date.now() - 50_000,
+        ...(tool_ran !== undefined ? { tool_ran } : {}),
+      },
+    } as any);
+  assert.match(
+    held(true),
+    /will not resume.*may have run tools: check what it did/,
+  );
+  assert.match(held(), /may have run tools/);
+  assert.match(held(false), /it ran no tools/);
 });

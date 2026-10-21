@@ -273,6 +273,19 @@ export function agentSendSummary(result: AgentSendResult): string {
 }
 
 /** One plain sentence for `agent rpc inspect`: where the turn is, if known. */
+/** One line for `agent rpc withdraw`. */
+export function agentRpcWithdrawSummary(outcome: AgentRpcOutcome): string {
+  if (outcome.outcome === "accepted")
+    // A turn held after it started (e.g. at a usage limit) may already
+    // have acted: only its continuation is stopped.
+    return outcome.turn?.started_at != null
+      ? `Withdrawn: it will not resume, and you will get no report about it. Its earlier attempt had already started${outcome.turn.tool_ran === false ? " (it ran no tools)" : " and may have run tools"}: check what it did before sending it again.`
+      : "Withdrawn: the recipient will not run it, and you will get no report about it.";
+  if (outcome.outcome === "rejected")
+    return `Not withdrawn: ${outcome.reason ?? "it can no longer be withdrawn"}${outcome.turn ? ` ${agentRpcTurnSummary(outcome.turn)}` : ""}`;
+  return `Unknown: ${outcome.reason ?? "no answer"}. Check with agent rpc inspect.`;
+}
+
 export function agentRpcInspectSummary(outcome: AgentRpcOutcome): string {
   if (outcome.turn) return agentRpcTurnSummary(outcome.turn);
   const why = outcome.reason ?? outcome.code ?? "no reason given";

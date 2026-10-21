@@ -192,6 +192,35 @@ test("the sender's request to hear of no reply rides on the turn", async () => {
   }
 });
 
+test("withdraw goes to the host's queue, and says so when it can't", async () => {
+  const { e, deps } = fixture();
+  const attempt = {
+    version: 3 as const,
+    attempt_id: e.attempt_id,
+    agent_network_id: e.agent_network_id,
+    target: e.target,
+  };
+  const withdraw = jest.fn(async () =>
+    rpcOutcome(attempt, "accepted", { reason: "Withdrawn" }),
+  );
+  const service = createAgentRpcService({ ...deps, withdraw } as any);
+  await expect(
+    service.withdraw(e.source, attempt, e.account_id),
+  ).resolves.toMatchObject({ outcome: "accepted" });
+  expect(withdraw).toHaveBeenCalledWith(e.source, attempt, e.account_id);
+  // No principal, or a host without it: unknown, never a guess.
+  await expect(service.withdraw(e.source, attempt)).resolves.toMatchObject({
+    outcome: "unknown",
+  });
+  await expect(
+    createAgentRpcService({ ...deps } as any).withdraw(
+      e.source,
+      attempt,
+      e.account_id,
+    ),
+  ).resolves.toMatchObject({ outcome: "unknown" });
+});
+
 test("a same-project sender is named as sharing the recipient's project", async () => {
   const { e, deps, service } = fixture();
   e.source = { ...e.source, project_id: e.target.project_id };

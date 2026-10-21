@@ -30,6 +30,7 @@ import getLogger from "@cocalc/backend/logger";
 import { getAcpJob } from "../sqlite/acp-jobs";
 import {
   deleteAgentRpcReport,
+  claimAgentRpcReport,
   deleteAgentRpcReportByOpId,
   enqueueAgentRpcReport,
   listDueAgentRpcReports,
@@ -151,6 +152,9 @@ export function drainAgentRpcReports(
   draining ??= (async () => {
     try {
       for (const row of listDueAgentRpcReports(now)) {
+        // Claimed first: a withdrawal may have taken it back since it was
+        // listed (and then never sees it go out after it was accepted).
+        if (!claimAgentRpcReport(row.report_id, now)) continue;
         try {
           const result = await api.reportRpcTurnFailure({
             account_id: row.account_id,
