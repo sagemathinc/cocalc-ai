@@ -17,6 +17,12 @@ import {
   type SiteFundedCodexReservation,
   type SiteFundedCodexUsageEvent,
 } from "@cocalc/util/ai/site-funded-codex";
+import { siteFundedCodexProxyPorts } from "./site-funded-proxy-port";
+
+export {
+  SITE_FUNDED_CODEX_PROXY_PORT_COUNT,
+  siteFundedCodexProxyPorts,
+} from "./site-funded-proxy-port";
 
 const logger = getLogger("project-host:codex:site-funded-proxy");
 const DEFAULT_UPSTREAM_BASE_URL = "https://api.openai.com/v1";
@@ -26,49 +32,6 @@ const UNBILLED_PROVIDER_TOOL_TYPES = new Set([
   "function",
   "local_shell",
 ]);
-
-// Projects reach this proxy through pasta as a host-local port, and the
-// project egress block (cocalc-runtime-storage, emit_project_metadata_rules in
-// bootstrap.py) drops new project connections to host-local ports except DNS,
-// the conat router and this range. Each ACP worker binds the first free port:
-// a draining worker keeps its port while the new one takes the next. Keep the
-// derivation and the range size in sync with project_site_codex_proxy_port.
-export const SITE_FUNDED_CODEX_PROXY_PORT_COUNT = 16;
-const SITE_FUNDED_CODEX_PROXY_PORT_OFFSET = 300;
-const DEFAULT_PROJECT_HOST_PORT = 9002;
-
-// Number(value) when it is a valid TCP port, as the bootstrap helper reads it.
-function tcpPort(value: string | undefined): number | undefined {
-  if (!value?.trim()) return undefined;
-  const port = Number(value);
-  return Number.isInteger(port) && port >= 1 && port <= 65535
-    ? port
-    : undefined;
-}
-
-export function siteFundedCodexProxyPorts(
-  env: NodeJS.ProcessEnv = process.env,
-): number[] {
-  let first = tcpPort(env.COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT);
-  if (first == null) {
-    // PORT as daemon.ts parsePort reads it: the text after the last ":".
-    first =
-      (tcpPort(env.PORT?.slice(env.PORT.lastIndexOf(":") + 1)) ??
-        DEFAULT_PROJECT_HOST_PORT) + SITE_FUNDED_CODEX_PROXY_PORT_OFFSET;
-    if (first > 65535) {
-      first = DEFAULT_PROJECT_HOST_PORT + SITE_FUNDED_CODEX_PROXY_PORT_OFFSET;
-    }
-  }
-  const ports: number[] = [];
-  for (
-    let port = first;
-    port <= 65535 && ports.length < SITE_FUNDED_CODEX_PROXY_PORT_COUNT;
-    port++
-  ) {
-    ports.push(port);
-  }
-  return ports;
-}
 
 export function siteFundedUsageEventId(
   reservationId: string,
