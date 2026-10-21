@@ -6,7 +6,16 @@ them or bounds the cost of reading them.
 */
 
 import { DatabaseSync } from "node:sqlite";
-import { copyFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -20,6 +29,7 @@ import { initContext, syncFiles } from "./context";
 import {
   PersistentStream,
   persistSqliteBusyTimeoutMs,
+  persistSqliteLockingMode,
   storedRowToMessage,
   unexpectedPersistSchema,
 } from "./storage";
@@ -37,12 +47,16 @@ beforeAll(() => {
       zstdDecompressSync(data, maxOutputLength ? { maxOutputLength } : {}),
     decompressAsync: (data, maxOutputLength) =>
       zstdDecompressAsync(data, maxOutputLength ? { maxOutputLength } : {}),
+    // files in dir/project are "in a project"
+    isProjectOwnedDatabasePath: (path) =>
+      path.startsWith(join(dir, "project") + "/"),
     syncFiles,
     statSync,
     copyFileSync,
     ensureContainingDirectoryExists: async () => undefined,
   });
   dir = mkdtempSync(join(tmpdir(), "persist-hardening-"));
+  mkdirSync(join(dir, "project"));
 });
 
 afterAll(() => {
@@ -50,8 +64,10 @@ afterAll(() => {
 });
 
 // a stream file created by the server itself, then closed
-function serverFile(): string {
-  const path = join(dir, `stream-${n++}`);
+function serverFile({
+  inProject = false,
+}: { inProject?: boolean } = {}): string {
+  const path = join(dir, inProject ? "project" : "", `stream-${n++}`);
   const stream = new PersistentStream({ path, noCache: true } as any);
   stream.set({ encoding: 1 as any, raw: Buffer.from('{"a":1}') });
   stream.close();
@@ -165,7 +181,70 @@ describe("the connection to a stored database", () => {
     stream.close();
   });
 
+  it("keeps the WAL index of project files in memory, so a project cannot crash the server through -shm", () => {
+    const path = serverFile({ inProject: true });
+    // e.g., left by an older server; a mapped -shm that the project
+    // truncates raises SIGBUS in the server
+    writeFileSync(path + ".db-shm", Buffer.alloc(32 * 1024));
+    const stream = open(path);
+    stream.set({ encoding: 1 as any, raw: Buffer.from('{"b":2}') });
+    const db = (stream as any).db as DatabaseSync;
+    expect(db.prepare("PRAGMA locking_mode").get()).toEqual({
+      locking_mode: "exclusive",
+    });
+    if (existsSync("/proc/self/maps")) {
+      expect(readFileSync("/proc/self/maps", "utf8")).not.toContain(
+        path + ".db-shm",
+      );
+    }
+    // nothing else can use the file while the server has it open
+    expect(() => tamper(path, "CREATE TABLE other(x)")).toThrow(
+      /database is locked/,
+    );
+    stream.close();
+    const reopened = open(path);
+    expect(reopened.get({ seq: 2, key: undefined })).toBeDefined();
+    reopened.close();
+  });
+
+  it("shares files that are not in a project, unless configured otherwise", () => {
+    const inProject = join(dir, "project", "a.db");
+    const elsewhere = join(dir, "a.db");
+    expect(persistSqliteLockingMode(inProject, {})).toBe("exclusive");
+    expect(persistSqliteLockingMode(elsewhere, {})).toBe("normal");
+    expect(persistSqliteLockingMode(":memory:", {})).toBe("normal");
+    const normal = { COCALC_PERSIST_SQLITE_LOCKING_MODE: "normal" };
+    expect(persistSqliteLockingMode(inProject, normal)).toBe("normal");
+    const exclusive = { COCALC_PERSIST_SQLITE_LOCKING_MODE: "exclusive" };
+    expect(persistSqliteLockingMode(elsewhere, exclusive)).toBe("exclusive");
+    // e.g., several persist servers, or test workers, using the same file
+    const path = serverFile();
+    const stream = open(path);
+    tamper(path, "CREATE TABLE other(x); DROP TABLE other");
+    stream.close();
+  });
+
+  it("waits for locks also on the first read", () => {
+    const path = serverFile({ inProject: true });
+    const reader = new DatabaseSync(path + ".db", { readOnly: true });
+    reader.exec("BEGIN");
+    reader.prepare("SELECT count(*) FROM messages").get();
+    process.env.COCALC_PERSIST_SQLITE_BUSY_TIMEOUT_MS = "300";
+    const start = Date.now();
+    try {
+      expect(() => open(path)).toThrow(/database is locked/);
+      expect(Date.now() - start).toBeGreaterThanOrEqual(250);
+    } finally {
+      delete process.env.COCALC_PERSIST_SQLITE_BUSY_TIMEOUT_MS;
+      reader.exec("COMMIT");
+      reader.close();
+    }
+    open(path).close();
+  });
+
   it("runs nothing from a trigger the project adds while it is open", () => {
+    // A project can change the bytes of its files whatever the locking mode;
+    // this file is not in a project, so this test can do it through SQLite.
     const path = serverFile();
     const stream = open(path);
     // the project changes the file after the schema was checked
@@ -210,7 +289,7 @@ describe("stored messages", () => {
     size,
     headers = null,
   }: {
-    raw: Buffer;
+    raw: Buffer | string;
     compress: number;
     size: number;
     headers?: string | null;
@@ -274,6 +353,21 @@ describe("stored messages", () => {
     } finally {
       delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
     }
+  });
+
+  it("that are not stored as bytes are corrupt, and never read", async () => {
+    // a TEXT value, whose length() SQLite would have to scan
+    const stream = open(
+      hostileRow({ raw: "x".repeat(100_000), compress: 0, size: 2 }),
+    );
+    expect(
+      stream.planPage({ after_seq: 9, maxRows: 10, maxBytes: 1e9 }),
+    ).toEqual([{ seq: 10, size: Number.MAX_SAFE_INTEGER }]);
+    expect(() => stream.get({ seq: 10, key: undefined })).toThrow(/is corrupt/);
+    expect(() => [...stream.getAll()]).toThrow(/is corrupt/);
+    const [row] = stream.readPage(9, 10);
+    await expect(storedRowToMessage(row)).rejects.toThrow(/is corrupt/);
+    stream.close();
   });
 
   it("with huge headers are not parsed", () => {

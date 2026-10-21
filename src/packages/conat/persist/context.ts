@@ -40,6 +40,10 @@ export let decompressAsync: (
 // directory.  The backend sets it; by default it allows everything.
 export let assertSafeDatabasePath: (path: string) => void = () => {};
 
+// Whether a database file is in a project, which can change it (and its -wal
+// and -shm files) at any time.  The backend sets it; by default nothing is.
+export let isProjectOwnedDatabasePath: (path: string) => boolean = () => false;
+
 export let syncFiles = {
   local: "",
   localProjects: "",
@@ -71,6 +75,7 @@ export function initContext(opts: {
   decompress: (data: Buffer, maxOutputLength?: number) => Buffer;
   decompressAsync?: (data: Buffer, maxOutputLength?: number) => Promise<Buffer>;
   assertSafeDatabasePath?: (path: string) => void;
+  isProjectOwnedDatabasePath?: (path: string) => boolean;
   syncFiles: {
     local: string;
     localProjects: string;
@@ -93,6 +98,7 @@ export function initContext(opts: {
     (async (data: Buffer, maxOutputLength?: number) =>
       opts.decompress(data, maxOutputLength));
   assertSafeDatabasePath = opts.assertSafeDatabasePath ?? (() => {});
+  isProjectOwnedDatabasePath = opts.isProjectOwnedDatabasePath ?? (() => false);
   syncFiles = opts.syncFiles;
   ensureContainingDirectoryExists = opts.ensureContainingDirectoryExists;
   statSync = opts.statSync;
