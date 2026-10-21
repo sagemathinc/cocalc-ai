@@ -522,11 +522,18 @@ function trashTick() {
     if (until <= now) trashBlocked.delete(worker);
   }
   const all = [...trashQueue.keys()];
-  const blocked = all.filter((w) => trashBlocked.has(w));
-  const picked: TrashWorker[] = rotate(blocked, trashRound).slice(
-    0,
-    TRASH_FOREGROUND_STEPS,
+  const blocked = rotate(
+    all.filter((w) => trashBlocked.has(w)),
+    trashRound,
   );
+  // the foreground share: TRASH_FOREGROUND_STEPS slots, round-robin among
+  // the blocked streams, so a lone blocked stream gets all of them and each
+  // of b gets about TRASH_FOREGROUND_STEPS / b (LIMIT-H1C-IMPL-2)
+  const picked: TrashWorker[] = [];
+  for (let i = 0; blocked.length > 0 && i < TRASH_FOREGROUND_STEPS; i++) {
+    picked.push(blocked[i % blocked.length]);
+  }
+  // then one step each for the others, round-robin
   for (const w of rotate(all, trashRound)) {
     if (picked.length >= TRASH_STEPS_PER_TICK) break;
     if (!picked.includes(w)) picked.push(w);
@@ -541,11 +548,13 @@ function trashTick() {
       unregisterTrashWork(worker);
       continue;
     }
-    let done = true;
+    let done: boolean;
     try {
       done = worker.runTrashStep();
     } catch (err) {
+      // e.g. SQLITE_BUSY: the stream keeps its place, and tries next tick
       logger.debug("trash step failed", { err: `${err}` });
+      done = false;
     }
     if (done) unregisterTrashWork(worker);
   }
@@ -574,6 +583,9 @@ export function setResetAdmissionHook(hook?: ResetAdmissionHook): void {
 // the WAL a reset's transaction can add beyond its seed: schema rows, the
 // ledger and epoch rows, and pages touched by its bounded steps
 const RESET_WAL_BOUND_BYTES = 8 * 1024 * 1024;
+
+// thrown inside a reset's transaction to roll it back as "trash-pending"
+class TrashPendingAbort extends Error {}
 
 // for tests
 export function trashSchedulerState(): {
@@ -1836,8 +1848,10 @@ export class PersistentStream extends EventEmitter {
       )
       .all() as any[]) {
       if (item.kind === "messages") {
-        // a renamed messages table: trimArchivedHistory removes it as
-        // unindexed archive; it is gone once its table is
+        // a renamed messages table, or an archive's unindexed remainder:
+        // trimArchivedHistory removes it; it is gone once its table is, or,
+        // for an archive still kept, once nothing older than its first
+        // segment is left
         const table = archiveTableName(item.target);
         const exists =
           table != null &&
@@ -1846,7 +1860,20 @@ export class PersistentStream extends EventEmitter {
               "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
             )
             .get(table) != null;
-        if (!exists) {
+        let gone = !exists;
+        if (exists) {
+          const kept = this.db
+            .prepare(
+              "SELECT (SELECT MIN(first_seq) FROM history_segments AS s WHERE s.epoch_id = e.id) AS lo FROM history_epochs AS e WHERE e.archive=?",
+            )
+            .get(table) as { lo: number | null } | undefined;
+          gone =
+            kept?.lo != null &&
+            this.db
+              .prepare(`SELECT 1 FROM "${table}" WHERE seq < ? LIMIT 1`)
+              .get(kept.lo) == null;
+        }
+        if (gone) {
           this.finishTrash(item);
         } else {
           done = false;
@@ -2170,6 +2197,17 @@ export class PersistentStream extends EventEmitter {
       logger.debug("WARNING: error creating a backup", dest, err);
     }
   });
+
+  // a reset's transaction; true if it was rolled back as "trash-pending"
+  private runResetTransaction = (fn: () => void): boolean => {
+    try {
+      this.runTransaction(fn);
+      return false;
+    } catch (err) {
+      if (err instanceof TrashPendingAbort) return true;
+      throw err;
+    }
+  };
 
   private runTransaction = <T>(fn: () => T): T => {
     this.db.exec("BEGIN");
@@ -2741,7 +2779,8 @@ export class PersistentStream extends EventEmitter {
     let through: number | undefined;
     let trashPending = false;
     let seedChange = undefined as SetOperation | undefined;
-    this.runTransaction(() => {
+    let epochBefore = 0;
+    const aborted = this.runResetTransaction(() => {
       if (opId != null) {
         const done = this.db
           .prepare("SELECT result_json FROM history_ops WHERE op_id=?")
@@ -2760,6 +2799,7 @@ export class PersistentStream extends EventEmitter {
         ? currentRecord.settings
         : {};
       const currentEpoch = Math.max(epochOf(currentSettings), epochOf(fence));
+      epochBefore = currentEpoch;
       const refuse = (refused: ResetHistoryRefusal) => {
         result = {
           reset: false,
@@ -2967,12 +3007,31 @@ export class PersistentStream extends EventEmitter {
         this.db
           .prepare("UPDATE history_epochs SET archive=? WHERE id=?")
           .run(archiveTable, closing.id);
-        const { segments, dropped } = this.segmentArchive(
+        const { segments, dropped, scanned } = this.segmentArchive(
           closing.id,
           archiveTable,
           limits,
         );
+        // what segmentArchive did not scan is the archive's unindexed
+        // remainder: trash, charged now (H1c §3.1 (e), LIMIT-H1C-IMPL-1,
+        // CORR-H1C-1), from the live counts, so nothing is measured
+        const remainder = {
+          records: Math.max(0, liveCount - scanned.records),
+          bytes: Math.max(0, liveBytes - scanned.bytes),
+        };
+        if (remainder.records > 0 || !countExact) {
+          this.addTrash({
+            kind: "messages",
+            target: archiveTable,
+            epoch_id: closing.id,
+            records: remainder.records,
+            bytes: remainder.bytes,
+            exact: countExact,
+          });
+        }
         if (segments == 0) {
+          // nothing kept: the table is the remainder alone (or empty)
+          this.releaseArchiveTable(archiveTable);
           archiveTable = undefined;
         }
         const quota = this.enforceArchiveQuota(limits);
@@ -3007,7 +3066,11 @@ export class PersistentStream extends EventEmitter {
         for (const t of prospective) {
           if (t.kind === "messages") t.target = trashTable;
         }
-        this.dropArchivedHistory(limits, { records: 0, bytes: 0, used: true });
+        this.dropArchivedHistory(limits, {
+          records: 0,
+          bytes: 0,
+          used: true,
+        });
         this.db
           .prepare(
             "UPDATE history_epochs SET dropped_records=?, dropped_bytes=? WHERE id=?",
@@ -3021,6 +3084,21 @@ export class PersistentStream extends EventEmitter {
       this.pruneEpochRows();
       for (const t of prospective) {
         this.addTrash({ ...t, epoch_id: closing.id });
+      }
+      // Admission again, on what this reset actually added (the archive's
+      // remainder and the tables it released are known only now): the same
+      // rule as above, so the first reset is always admitted, and a later one
+      // that does not fit rolls back, changing nothing (CORR-H1C-1)
+      if (pending.items > 0) {
+        const after = this.trashTotals();
+        if (
+          after.unknown > 0 ||
+          after.items > limits.maxTrashItems ||
+          after.records > limits.maxTrashRecords ||
+          after.bytes > limits.maxTrashBytes
+        ) {
+          throw new TrashPendingAbort();
+        }
       }
       // the new history's counts start now, exact
       this.db
@@ -3096,6 +3174,17 @@ export class PersistentStream extends EventEmitter {
           .run();
       }
     });
+    if (aborted) {
+      // rolled back: nothing changed
+      trashPending = true;
+      seedChange = undefined;
+      result = {
+        reset: false,
+        history_epoch: epochBefore,
+        count: 0,
+        refused: "trash-pending",
+      };
+    }
     if (trashPending) {
       // its stream drains in the foreground share (H1c §5)
       registerTrashWork(this, true);
@@ -3144,7 +3233,13 @@ export class PersistentStream extends EventEmitter {
     epochId: number,
     table: string,
     limits: HistoryLimits,
-  ): { segments: number; dropped: { records: number; bytes: number } } => {
+  ): {
+    segments: number;
+    dropped: { records: number; bytes: number };
+    // the newest stretch scanned (and kept or removed); the rest of the
+    // table, older, is left to trimArchivedHistory
+    scanned: { records: number; bytes: number };
+  } => {
     const epoch = this.db
       .prepare("SELECT starts_empty FROM history_epochs WHERE id=?")
       .get(epochId) as { starts_empty: number };
@@ -3170,7 +3265,11 @@ export class PersistentStream extends EventEmitter {
     }
     if (tailStart == null) {
       // nothing can be kept: the whole table is left to trimArchivedHistory
-      return { segments: 0, dropped: { records: 0, bytes: 0 } };
+      return {
+        segments: 0,
+        dropped: { records: 0, bytes: 0 },
+        scanned: { records: 0, bytes: 0 },
+      };
     }
     const { first } = this.db
       .prepare(`SELECT MIN(seq) AS first FROM "${table}"`)
@@ -3366,7 +3465,11 @@ export class PersistentStream extends EventEmitter {
         dropped.bytes,
         epochId,
       );
-    return { segments, dropped };
+    return {
+      segments,
+      dropped,
+      scanned: { records: tailRecords, bytes: tailBytes },
+    };
   };
 
   // Archived history per stream is bounded in bytes (with a conservative
@@ -3407,9 +3510,13 @@ export class PersistentStream extends EventEmitter {
       ),
     };
     const unregister = (epochId: number) => {
+      const { archive } = this.db
+        .prepare("SELECT archive FROM history_epochs WHERE id=?")
+        .get(epochId) as { archive: string | null };
       this.db
         .prepare("UPDATE history_epochs SET archive=NULL WHERE id=?")
         .run(epochId);
+      if (archive != null) this.releaseArchiveTable(archive);
       usage.tables -= 1;
       usage.bytes -= ARCHIVE_TABLE_OVERHEAD_BYTES;
     };
@@ -3556,6 +3663,43 @@ export class PersistentStream extends EventEmitter {
     return { ...trimmed, done: false };
   };
 
+  // An archive table no epoch refers to any more (its segments, if any, are
+  // already deleted) is trash (H1c §3.1 (e), LIMIT-H1C-IMPL-1): covered by
+  // its own item if it has one (its unindexed remainder, charged when it was
+  // archived); else dropped now if empty (O(1)); else -- a table from before
+  // H1c -- an item of unknown size.
+  private releaseArchiveTable = (name: string): void => {
+    const table = archiveTableName(name);
+    if (table == null) return;
+    if (
+      this.db
+        .prepare(
+          "SELECT 1 FROM history_trash WHERE kind='messages' AND target=? LIMIT 1",
+        )
+        .get(table) != null
+    ) {
+      return;
+    }
+    if (
+      this.db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+        .get(table) == null
+    ) {
+      return;
+    }
+    if (this.db.prepare(`SELECT 1 FROM "${table}" LIMIT 1`).get() == null) {
+      this.db.exec(`DROP TABLE "${table}"`);
+      return;
+    }
+    this.addTrash({
+      kind: "messages",
+      target: table,
+      records: 0,
+      bytes: 0,
+      exact: false,
+    });
+  };
+
   // Drop all archived history: the segments of indexed archives (each
   // within an open's envelope, at most maxArchiveSegments), then a bounded
   // amount of archived history without an index (trimArchivedHistory); done
@@ -3584,11 +3728,17 @@ export class PersistentStream extends EventEmitter {
         .run(s.first_seq, s.last_seq);
     }
     this.db.prepare("DELETE FROM history_segments").run();
+    const released = (
+      this.db
+        .prepare("SELECT archive FROM history_epochs WHERE archive IS NOT NULL")
+        .all() as { archive: string }[]
+    ).map(({ archive }) => archive);
     this.db
       .prepare(
         "UPDATE history_epochs SET archive=NULL, dropped_records=dropped_records+kept_records, dropped_bytes=dropped_bytes+kept_bytes, kept_records=0, kept_bytes=0 WHERE archive IS NOT NULL",
       )
       .run();
+    for (const table of released) this.releaseArchiveTable(table);
     const trimmed = this.trimArchivedHistory(limits, budget);
     return {
       records: Number(records ?? 0) + trimmed.records,
@@ -3922,6 +4072,8 @@ export class PersistentStream extends EventEmitter {
     const dropped = this.runTransaction(() =>
       this.dropArchivedHistory(historyLimits()),
     );
+    // the tables it released are removed in bounded steps (H1c §5)
+    registerTrashWork(this);
     this.throttledBackup();
     return dropped;
   };

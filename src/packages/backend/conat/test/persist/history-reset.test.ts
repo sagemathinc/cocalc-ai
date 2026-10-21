@@ -8,6 +8,7 @@ import { before, after, connect } from "@cocalc/backend/conat/test/setup";
 import { stream } from "@cocalc/conat/persist/client";
 import { messageData } from "@cocalc/conat/core/client";
 import { DataEncoding, encode, decode } from "@cocalc/conat/core/codec";
+import { retryWhileResetBusy } from "@cocalc/conat/persist/reset-busy";
 
 beforeAll(before);
 afterAll(after);
@@ -127,4 +128,66 @@ describe("the delete notification of a reset, to an open dstream", () => {
       }
     });
   }
+});
+
+// H1c §3.3 with real trash (astra, daybreak2): an earlier purge's trash is
+// still pending on the persist server, so a real reset through it is refused
+// as trash-pending, through every retry, changing nothing; once the trash is
+// gone the same reset is admitted
+describe("a real reset behind an earlier reset's real trash", () => {
+  const ENV = [
+    "COCALC_HISTORY_MAX_TRIM_RECORDS",
+    "COCALC_HISTORY_MAX_TRASH_ITEMS",
+  ];
+  afterEach(() => {
+    for (const name of ENV) delete process.env[name];
+  });
+
+  it("is refused trash-pending through the retries, then admitted", async () => {
+    // one row per step, and one pending item at most
+    process.env.COCALC_HISTORY_MAX_TRIM_RECORDS = "1";
+    process.env.COCALC_HISTORY_MAX_TRASH_ITEMS = "1";
+    const client = connect();
+    const persisted = stream({
+      client,
+      user: { hub_id: "test" },
+      storage: { path: `hub/history-trash-${Math.random()}` },
+    });
+    try {
+      for (let i = 0; i < 200; i++) {
+        await persisted.set({ messageData: messageData(i), msgID: `m${i}` });
+      }
+      // the first reset is always admitted; its 200 messages (and their
+      // ids) are trash, removed one row per step
+      expect(await persisted.resetHistory({})).toMatchObject({
+        reset: true,
+        history_epoch: 1,
+      });
+      let attempts = 0;
+      const refused = await retryWhileResetBusy(
+        async () => {
+          attempts += 1;
+          return await persisted.resetHistory({ ifInitEpoch: 1 });
+        },
+        { attempts: 3, delayMs: 10 },
+      );
+      expect(refused).toMatchObject({
+        reset: false,
+        history_epoch: 1,
+        refused: "trash-pending",
+      });
+      expect(attempts).toBe(3);
+      expect((await persisted.inventory()).count).toBe(0);
+      // the trash goes, in bigger steps: the same reset is admitted
+      process.env.COCALC_HISTORY_MAX_TRIM_RECORDS = "10000";
+      const admitted = await retryWhileResetBusy(
+        () => persisted.resetHistory({ ifInitEpoch: 1 }),
+        { attempts: 5, delayMs: 10 },
+      );
+      expect(admitted).toMatchObject({ reset: true, history_epoch: 2 });
+    } finally {
+      persisted.close();
+      client.close();
+    }
+  });
 });

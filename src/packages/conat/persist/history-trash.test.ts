@@ -31,6 +31,7 @@ const LIMIT_ENV = [
   "COCALC_HISTORY_MAX_TRASH_RECORDS",
   "COCALC_HISTORY_MAX_TRASH_BYTES",
   "COCALC_HISTORY_MAX_ARCHIVED_ID_EPOCHS",
+  "COCALC_HISTORY_MAX_ARCHIVE_RECORDS",
 ];
 
 beforeAll(() => {
@@ -404,6 +405,135 @@ describe("non-circular admission (H1c §3.3)", () => {
   });
 });
 
+// Archived history no epoch keeps -- whole unreferenced tables, and the rows
+// of a kept archive older than its first segment -- must each be covered by a
+// ledger item (H1c §3.1 (e); CORR-H1C-1, LIMIT-H1C-IMPL-1)
+function archiveObligations(s: PersistentStream) {
+  const tables = sql(
+    s,
+    "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'messages_archived_%'",
+  ).map(({ name }: any) => name as string);
+  const ledgered = new Set(
+    sql(s, "SELECT target FROM history_trash WHERE kind='messages'").map(
+      ({ target }: any) => target,
+    ),
+  );
+  let rows = 0;
+  const unledgered: string[] = [];
+  for (const table of tables) {
+    const kept = sql(
+      s,
+      "SELECT (SELECT MIN(first_seq) FROM history_segments AS g WHERE g.epoch_id = e.id) AS lo FROM history_epochs AS e WHERE e.archive=?",
+      table,
+    )[0];
+    const n =
+      kept == null
+        ? sql(s, `SELECT COUNT(*) AS n FROM "${table}"`)[0].n
+        : sql(
+            s,
+            `SELECT COUNT(*) AS n FROM "${table}" WHERE seq < ?`,
+            kept.lo,
+          )[0].n;
+    rows += n;
+    if (n > 0 && !ledgered.has(table)) unledgered.push(table);
+  }
+  return { rows, unledgered };
+}
+
+describe("archived history no epoch keeps is trash (H1c §3.1 (e))", () => {
+  it("repeated archive resets cannot pile up unledgered archive tails (astra's 12 resets)", () => {
+    process.env.COCALC_HISTORY_MAX_TRASH_RECORDS = "1";
+    process.env.COCALC_HISTORY_MAX_TRASH_ITEMS = "1";
+    process.env.COCALC_HISTORY_MAX_ARCHIVE_RECORDS = "1";
+    process.env.COCALC_HISTORY_MAX_TRIM_RECORDS = "1";
+    const s = open(newPath());
+    let admitted = 0;
+    let refused = 0;
+    for (let round = 0; round < 12; round++) {
+      for (let i = 0; i < 18; i++) {
+        write(s, { epoch: s.historyEpochNow(), msgID: `r${round}-${i}` });
+      }
+      const live = s.inventory().count;
+      const result = s.resetHistory({ archive: true });
+      if (result.reset) {
+        admitted += 1;
+        // admitted only with no pending trash (caps of 1): what is pending
+        // now is this reset's own remainder, at most the history it closed
+        expect(archiveObligations(s).rows).toBeLessThan(live);
+      } else {
+        refused += 1;
+        expect(result.refused).toBe("trash-pending");
+      }
+      const { rows, unledgered } = archiveObligations(s);
+      // every row no epoch keeps is ledgered, charged and counted
+      expect(unledgered).toEqual([]);
+      if (rows > 0) expect(counts(s).trash_items).toBeGreaterThan(0);
+    }
+    expect(admitted).toBeGreaterThan(0);
+    expect(refused).toBeGreaterThan(0);
+    drain(s);
+    expect(archiveObligations(s).rows).toBe(0);
+    expect(counts(s)).toMatchObject({
+      trash_items: 0,
+      trash_records: 0,
+      trash_bytes: 0,
+      trash_unknown_items: 0,
+    });
+  });
+
+  it("a later archive reset whose own remainder does not fit is refused, changing nothing", () => {
+    process.env.COCALC_HISTORY_MAX_ARCHIVE_RECORDS = "1";
+    process.env.COCALC_HISTORY_MAX_TRIM_RECORDS = "1";
+    process.env.COCALC_HISTORY_MAX_TRASH_RECORDS = "30";
+    const s = open(newPath());
+    for (let i = 0; i < 20; i++) write(s, { msgID: `a${i}` });
+    // the first reset is always admitted: its remainder (19 rows) is trash
+    expect(s.resetHistory({ archive: true }).reset).toBe(true);
+    const epoch = s.historyEpochNow();
+    for (let i = 0; i < 20; i++) write(s, { epoch, msgID: `b${i}` });
+    const tables = archiveObligations(s);
+    // pending (about 15 after the 4 steps) plus this remainder (19) > 30
+    const result = s.resetHistory({ archive: true });
+    expect(result).toMatchObject({ reset: false, refused: "trash-pending" });
+    expect(s.historyEpochNow()).toBe(epoch);
+    expect(s.inventory().count).toBe(20);
+    expect(archiveObligations(s).unledgered).toEqual([]);
+    expect(archiveObligations(s).rows).toBeLessThan(tables.rows);
+  });
+
+  it("a purge releases the earlier archives as trash; empty ones are dropped at once", () => {
+    process.env.COCALC_HISTORY_MAX_ARCHIVE_RECORDS = "1";
+    process.env.COCALC_HISTORY_MAX_TRIM_RECORDS = "1";
+    process.env.COCALC_HISTORY_MAX_TRASH_ITEMS = "1";
+    const s = open(newPath());
+    for (let i = 0; i < 10; i++) write(s, { msgID: `a${i}` });
+    s.resetHistory({ archive: true });
+    drain(s);
+    // one kept archive, nothing older than its segment
+    expect(archiveObligations(s).rows).toBe(0);
+    for (let i = 0; i < 10; i++) {
+      write(s, { epoch: s.historyEpochNow(), msgID: `b${i}` });
+    }
+    s.resetHistory({ archive: true });
+    expect(s.resetHistory({}).reset).toBe(false);
+    drain(s);
+    expect(s.resetHistory({}).reset).toBe(true);
+    // no epoch keeps an archive; what is left is all ledgered
+    expect(
+      sql(s, "SELECT 1 FROM history_epochs WHERE archive IS NOT NULL"),
+    ).toEqual([]);
+    expect(archiveObligations(s).unledgered).toEqual([]);
+    drain(s);
+    expect(archiveObligations(s).rows).toBe(0);
+    expect(
+      sql(
+        s,
+        "SELECT name FROM sqlite_master WHERE name LIKE 'messages_archived_%'",
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("one step, one budget (H1c §5)", () => {
   it("removes at most maxTrimRecords rows and maxTrimBytes plus one message across every kind", () => {
     process.env.COCALC_HISTORY_MAX_ARCHIVED_ID_EPOCHS = "1";
@@ -509,6 +639,54 @@ describe("the one scheduler (H1c §5)", () => {
     // round-robin: the other blocked streams get their turn
     expect(ran.slice(0, 4).every((name) => name.startsWith("b"))).toBe(true);
     for (const w of [...idle, ...blocked]) unregisterTrashWorkForTests(w);
+  });
+
+  it("a lone blocked stream gets all 4 foreground steps; two get 2 each (LIMIT-H1C-IMPL-2)", () => {
+    const ran: string[] = [];
+    const worker = (name: string) => ({
+      trashGeneration: 0,
+      isClosing: () => false,
+      runTrashStep: () => {
+        ran.push(name);
+        return false;
+      },
+    });
+    const idle = Array.from({ length: 10 }, (_, i) => worker(`idle${i}`));
+    const b0 = worker("b0");
+    for (const w of idle) registerTrashWorkForTests(w);
+    registerTrashWorkForTests(b0, true);
+    runTrashTickForTests();
+    expect(ran).toHaveLength(8);
+    expect(ran.filter((name) => name == "b0")).toHaveLength(4);
+    // the background still progresses: 4 other streams, one step each
+    expect(new Set(ran.filter((name) => name != "b0")).size).toBe(4);
+    const b1 = worker("b1");
+    registerTrashWorkForTests(b1, true);
+    ran.length = 0;
+    runTrashTickForTests();
+    expect(ran.filter((name) => name == "b0")).toHaveLength(2);
+    expect(ran.filter((name) => name == "b1")).toHaveLength(2);
+    expect(ran).toHaveLength(8);
+    for (const w of [...idle, b0, b1]) unregisterTrashWorkForTests(w);
+  });
+
+  it("a step that fails keeps its stream registered, to try again next tick", () => {
+    let calls = 0;
+    const w = {
+      trashGeneration: 0,
+      isClosing: () => false,
+      runTrashStep: () => {
+        calls += 1;
+        if (calls == 1) throw Error("database is locked");
+        return true;
+      },
+    };
+    registerTrashWorkForTests(w);
+    runTrashTickForTests();
+    expect(trashSchedulerState().queued).toBe(1);
+    runTrashTickForTests();
+    expect(calls).toBe(2);
+    expect(trashSchedulerState().queued).toBe(0);
   });
 
   it("never runs work selected for an old generation (close, or a restore)", () => {
