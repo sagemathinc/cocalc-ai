@@ -15,6 +15,7 @@ import callHub from "@cocalc/conat/hub/call-hub";
 import { getLogger } from "@cocalc/conat/logger";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { readFile } from "@cocalc/conat/files/read";
+import { retryWhileResetBusy } from "@cocalc/conat/persist/reset-busy";
 import type {
   HistoryInclusion,
   ResetHistoryOptions,
@@ -178,14 +179,17 @@ export class SyncClient extends EventEmitter implements Client0 {
       ...(persist ?? {}),
     });
     try {
-      const { history_epoch, reset } = await stream.resetHistory({
-        ifOversizedSeq: oversized_seq,
-        archive: true,
-        settings: {
-          history_purged_at: Date.now(),
-          history_purged_by: this.accountId() ?? null,
-        },
-      });
+      // while another reset of this history is in progress, wait for it
+      const { history_epoch, reset } = await retryWhileResetBusy(() =>
+        stream.resetHistory({
+          ifOversizedSeq: oversized_seq,
+          archive: true,
+          settings: {
+            history_purged_at: Date.now(),
+            history_purged_by: this.accountId() ?? null,
+          },
+        }),
+      );
       return { history_epoch, reset };
     } finally {
       stream.close();
@@ -314,7 +318,8 @@ export class SyncClient extends EventEmitter implements Client0 {
       ...(persist ?? {}),
     });
     try {
-      return await stream.resetHistory(options);
+      // while another reset of this history is in progress, wait for it
+      return await retryWhileResetBusy(() => stream.resetHistory(options));
     } finally {
       stream.close();
     }

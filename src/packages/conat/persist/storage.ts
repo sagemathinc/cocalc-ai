@@ -553,7 +553,10 @@ export type ResetHistoryRefusal =
   | "moved"
   | "epoch"
   | "seed-too-large"
-  | "seed-invalid";
+  | "seed-invalid"
+  // another reset of this stream is in progress on the persist server (see
+  // the reset slot in server.ts); nothing was done, try again later
+  | "busy";
 
 export interface ResetHistoryResult {
   // false if a condition did not hold; see refused
@@ -1187,6 +1190,9 @@ export class PersistentStream extends EventEmitter {
   };
 
   // The history epoch in effect: the fence's, or the metadata's if higher.
+  // The history epoch in effect, for answers that do not open a reset.
+  historyEpochNow = (): number => this.currentEpoch();
+
   private currentEpoch = (): number => {
     const fence = isPlainRecord(this.conf?.required_headers)
       ? this.conf.required_headers

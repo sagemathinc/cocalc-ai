@@ -212,6 +212,17 @@ export function server({
     usage.close();
   });
 
+  // At most one resetHistory request per stream is held on this server at a
+  // time, with its payload (a seed of up to 40 MiB): bounded history plan
+  // H1b-3 r4, LIMIT-H1B3P-2.  A request takes its stream's slot as it
+  // arrives, before any await (the only place a received request waits is
+  // the stream's initialization); another one is answered at once and its
+  // payload dropped.  Keyed by storage path; a reset that arrives before its
+  // socket said which stream it is (the path is not known yet) is refused at
+  // once as well, so one stream never has two keys (LIMIT-H1B3A-1).  The
+  // value identifies the holder.
+  const resetSlots = new Map<string, object>();
+
   server.on("connection", (socket: ServerSocket) => {
     log("server: got new connection", {
       id,
@@ -387,6 +398,43 @@ export function server({
       const request = mesg.headers;
       // log("got request", request);
 
+      let resetSlot: { key: string; holder: object } | undefined;
+      if (request.cmd == "resetHistory") {
+        if (storage?.path == null) {
+          // the client retries busy (retryWhileResetBusy)
+          mesg.respondSync(null, {
+            headers: {
+              error:
+                "resetHistory: busy -- this connection has not said which stream it is yet; try again",
+              code: 409,
+            },
+          });
+          return;
+        }
+        const key = `path:${storage.path}`;
+        if (resetSlots.has(key)) {
+          if (stream != null) {
+            mesg.respondSync({
+              reset: false,
+              refused: "busy",
+              history_epoch: stream.historyEpochNow(),
+              count: 0,
+            });
+          } else {
+            mesg.respondSync(null, {
+              headers: {
+                error:
+                  "resetHistory: busy -- another reset of this history is in progress; try again later",
+                code: 409,
+              },
+            });
+          }
+          return;
+        }
+        resetSlot = { key, holder: {} };
+        resetSlots.set(key, resetSlot.holder);
+      }
+
       try {
         if (stream == null && initializing == null && !error) {
           await once(socket, "stream-initialized", request.timeout ?? 30000);
@@ -552,6 +600,14 @@ export function server({
               : {}),
           },
         });
+      } finally {
+        // answered, applied, refused or failed alike
+        if (
+          resetSlot != null &&
+          resetSlots.get(resetSlot.key) === resetSlot.holder
+        ) {
+          resetSlots.delete(resetSlot.key);
+        }
       }
     });
   });
