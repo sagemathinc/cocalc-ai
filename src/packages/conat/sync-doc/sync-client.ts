@@ -14,6 +14,16 @@ import { base64ToBuffer } from "@cocalc/util/base64";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { getLogger } from "@cocalc/conat/logger";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
+import { readFile } from "@cocalc/conat/files/read";
+import type {
+  ResetHistoryOptions,
+  ResetHistoryResult,
+} from "@cocalc/conat/persist/storage";
+import type {
+  HistoryResetState,
+  SavedFileRead,
+} from "@cocalc/sync/editor/generic/history-restart";
+import { SAVED_FILE_CHECKPOINT } from "@cocalc/sync/editor/generic/file-proof";
 
 const logger = getLogger("conat:sync-doc:sync-client");
 
@@ -176,6 +186,107 @@ export class SyncClient extends EventEmitter implements Client0 {
         },
       });
       return { history_epoch, reset };
+    } finally {
+      stream.close();
+    }
+  };
+
+  // see Client.historyResetState
+  historyResetState = async ({
+    project_id,
+    path,
+    persist,
+  }: {
+    project_id: string;
+    path: string;
+    persist?: { service: string; persistUser: Record<string, never> };
+  }): Promise<HistoryResetState> => {
+    const stream = this.client.sync.astream({
+      project_id,
+      name: patchesStreamName({ path }),
+      noInventory: true,
+      ...(persist ?? {}),
+    });
+    try {
+      const [inventory, checkpoints, metadata] = await Promise.all([
+        stream.inventory(),
+        stream.getCheckpoints(),
+        stream.getMetadata(),
+      ]);
+      const epoch = (metadata as any)?.settings?.history_epoch;
+      return {
+        seq: inventory.seq,
+        count: inventory.count,
+        epoch: typeof epoch === "number" && Number.isFinite(epoch) ? epoch : 0,
+        proof: checkpoints?.[SAVED_FILE_CHECKPOINT],
+      };
+    } finally {
+      stream.close();
+    }
+  };
+
+  // see Client.readFileBounded: the project's read stream, asked for at most
+  // maxBytes + 1 bytes, so a larger file is detected without reading it
+  readFileBounded = async ({
+    project_id,
+    path,
+    maxBytes,
+  }: {
+    project_id: string;
+    path: string;
+    maxBytes: number;
+  }): Promise<SavedFileRead> => {
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    try {
+      for await (const chunk of readFile({
+        client: this.client,
+        project_id,
+        path,
+        start: 0,
+        end: maxBytes,
+      })) {
+        bytes += chunk.length;
+        if (bytes > maxBytes) {
+          return { status: "too-large" };
+        }
+        chunks.push(chunk);
+      }
+    } catch (err) {
+      if ((err as any)?.code == "ENOENT") {
+        return { status: "missing" };
+      }
+      return { status: "unavailable", error: `${err}` };
+    }
+    const data = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return { status: "ok", data };
+  };
+
+  // see Client.resetHistory
+  resetHistory = async ({
+    project_id,
+    path,
+    persist,
+    options,
+  }: {
+    project_id: string;
+    path: string;
+    persist?: { service: string; persistUser: Record<string, never> };
+    options: ResetHistoryOptions;
+  }): Promise<ResetHistoryResult> => {
+    const stream = this.client.sync.astream({
+      project_id,
+      name: patchesStreamName({ path }),
+      noInventory: true,
+      ...(persist ?? {}),
+    });
+    try {
+      return await stream.resetHistory(options);
     } finally {
       stream.close();
     }

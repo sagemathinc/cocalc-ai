@@ -1089,6 +1089,55 @@ export class BaseEditorActions<
         })();
       }
     });
+    this._syncstring.on("history-unloadable", () => {
+      // The edit history holds an entry too large to load, and the saved
+      // file does not provably include every edit, so nothing was reset
+      // automatically.  Let the user choose (bounded history plan r3, §2.3).
+      (async () => {
+        const page = this.redux.getActions("page");
+        const restart = await page.popconfirm({
+          title: `The edit history of ${this.path} cannot be loaded`,
+          description:
+            "Its edit history (TimeTravel) contains an entry too large to load, most likely a huge output. The file on disk is unchanged, but edits made after it was last saved are only in the edit history. You can restart the edit history from the saved file, or close the file and download it from the file explorer first.",
+          okText: "Restart history from the saved file…",
+          cancelText: "Close the file",
+        });
+        if (!restart) {
+          closeSyncdocAndFile();
+          return;
+        }
+        const confirmed = await page.popconfirm({
+          title: "Restart the edit history from the saved file?",
+          description:
+            "Edits made after the file was last saved will be removed from the live document. They are moved to the archived history, which keeps only what can be loaded and is limited in size, so some of them may not be recoverable.",
+          okText: "Restart history",
+          cancelText: "Cancel and close the file",
+        });
+        if (!confirmed) {
+          closeSyncdocAndFile();
+          return;
+        }
+        try {
+          const result = await this._syncstring.restartHistoryFromSavedFile();
+          const lost =
+            (result.dropped?.records ?? 0) +
+            (result.droppedArchived?.records ?? 0);
+          alert_message({
+            type: "info",
+            title: "Edit history restarted",
+            message: `The edit history of ${this.path} was restarted from the saved file, which is opening now. Newer edits were moved to the archived history.${lost > 0 ? ` ${lost} history entries could not be kept in the archive.` : ""}`,
+            block: true,
+          });
+        } catch (err) {
+          alert_message({
+            type: "error",
+            title: "The edit history was not restarted",
+            message: `${err}`,
+          });
+          closeSyncdocAndFile();
+        }
+      })();
+    });
     this._syncstring.on("history-reset", () => {
       // Another session purged TimeTravel history for this file.
       // Close this file so stale editors don't remain visible.

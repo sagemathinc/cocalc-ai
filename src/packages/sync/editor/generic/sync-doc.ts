@@ -79,7 +79,23 @@ import { getLogger } from "@cocalc/conat/logger";
 import * as remote from "./remote";
 import type { JSONValue } from "@cocalc/util/types";
 import { rebaseLocalDocument } from "./rebase-local-document";
-import { type FileProof, SAVED_FILE_CHECKPOINT, fileProof } from "./file-proof";
+import {
+  FILE_PROOF_MAX_BYTES,
+  type FileProof,
+  SAVED_FILE_CHECKPOINT,
+  fileProof,
+} from "./file-proof";
+import {
+  ProofReads,
+  type SavedFile,
+  proofCoversHistory,
+  resetOptions,
+  savedFileOf,
+  savesThroughWriteFile,
+  seedFor,
+  validProof,
+} from "./history-restart";
+import type { ResetHistoryResult } from "@cocalc/conat/persist/storage";
 
 const fallbackCursorPresence = new PatchflowMemoryPresenceAdapter();
 
@@ -746,11 +762,17 @@ export class SyncDoc extends EventEmitter {
   private oversizedHistoryReset = false;
   private resetOversizedHistory = async (err: unknown): Promise<boolean> => {
     const oversized_seq = (err as any)?.oversizedHistorySeq;
-    if (
-      typeof oversized_seq != "number" ||
-      this.oversizedHistoryReset ||
-      typeof this.client.resetOversizedHistory != "function"
-    ) {
+    if (typeof oversized_seq != "number" || this.oversizedHistoryReset) {
+      return false;
+    }
+    if (savesThroughWriteFile(this.syncPath)) {
+      // saved with writeFile, so with a proof of what the file covers
+      return await this.resetOversizedHistoryFromFile();
+    }
+    // Documents whose file is written elsewhere (a notebook's .ipynb, a
+    // board's file) have no proof yet; they keep this unseeded reset for now
+    // (bounded history H1b-3).
+    if (typeof this.client.resetOversizedHistory != "function") {
       return false;
     }
     this.oversizedHistoryReset = true;
@@ -786,6 +808,174 @@ export class SyncDoc extends EventEmitter {
       });
     }
     return true;
+  };
+
+  // The history holds an entry too large to load (a 413).  Reset it from the
+  // saved file only if nothing can be lost: the file's proof is valid for
+  // its exact bytes and covers every accepted message (bounded history plan
+  // r3, §2.3 case 1).  Otherwise nothing is reset automatically: the editor
+  // is told ("history-unloadable") and the user can choose to restart the
+  // history from the saved file (restartHistoryFromSavedFile).
+  private proofReads = new ProofReads();
+  private resetOversizedHistoryFromFile = async (): Promise<boolean> => {
+    const client = this.client;
+    if (
+      typeof client.historyResetState != "function" ||
+      typeof client.readFileBounded != "function" ||
+      typeof client.resetHistory != "function"
+    ) {
+      this.reportUnloadableHistory();
+      return false;
+    }
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const state = await client.historyResetState({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+        });
+        if (!proofCoversHistory(state)) break;
+        // Read the file only once per proof: if its bytes do not match,
+        // reading it again on every retry of the open would not help.
+        if (!this.proofReads.shouldRead(state)) break;
+        const file = (await this.readSavedFile()).file;
+        const proof = file != null ? validProof(state, file) : undefined;
+        if (file == null || proof == null) {
+          this.proofReads.reject(state);
+          break;
+        }
+        const result = await client.resetHistory({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+          options: resetOptions({
+            mode: "oversized",
+            state,
+            file,
+            proof,
+            seed: this.seedOf(file.value),
+          }),
+        });
+        if (result.reset) {
+          this.oversizedHistoryReset = true;
+          this.history_epoch = result.history_epoch;
+          const lost =
+            (result.dropped?.records ?? 0) +
+            (result.droppedArchived?.records ?? 0);
+          // only the client whose reset ran tells its user (another one that
+          // made the same request got its result back, as repeated)
+          if (result.repeated) return true;
+          this.client.alert_message?.({
+            type: "info",
+            title: "Edit history archived and restarted",
+            message: `The edit history (TimeTravel) of ${this.path} had an entry too large to load, most likely a huge output. It was archived and restarted from the saved file, which includes every edit, and the file opened normally.${lost > 0 ? ` ${lost} older history entries could not be kept in the archive.` : ""}`,
+            block: true,
+          });
+          return true;
+        }
+        if (result.refused !== "moved" && result.refused !== "epoch") break;
+      }
+    } catch (err) {
+      // e.g., no connection: the open retries, and so does this
+      this.dbg("resetOversizedHistoryFromFile")(`failed -- ${err}`);
+      return false;
+    }
+    this.reportUnloadableHistory();
+    return false;
+  };
+
+  private patchesPersistOpts = () =>
+    this.opts.patchesPersist ? { persist: this.opts.patchesPersist } : {};
+
+  // the saved file, read with a bound (at most FILE_PROOF_MAX_BYTES)
+  private readSavedFile = async (): Promise<{
+    file?: SavedFile;
+    problem?: string;
+  }> => {
+    const read = await this.client.readFileBounded!({
+      project_id: this.project_id,
+      path: this.path,
+      maxBytes: FILE_PROOF_MAX_BYTES,
+    });
+    if (read.status != "ok") {
+      return {
+        problem:
+          read.status == "missing"
+            ? "the file does not exist"
+            : read.status == "too-large"
+              ? "the file is larger than 32 MiB"
+              : `the file could not be read (${read.error ?? ""})`,
+      };
+    }
+    const file = savedFileOf(read.data);
+    return file == null ? { problem: "the file is not UTF-8 text" } : { file };
+  };
+
+  // The first message of a restarted history: a snapshot of value, by the
+  // filesystem user (the first user of a document).
+  private seedOf = (value: string) =>
+    seedFor({
+      value,
+      time: legacyPatchId(Date.now()),
+      wall: Date.now(),
+      userId: 0,
+    });
+
+  private unloadableHistoryReported = false;
+  private reportUnloadableHistory = (): void => {
+    if (this.unloadableHistoryReported) return;
+    this.unloadableHistoryReported = true;
+    this.emit("history-unloadable", { path: this.path });
+  };
+
+  // The user's choice when the history cannot be loaded: restart it from the
+  // saved file, removing newer edits from the live document (they are kept
+  // in the archived history, as far as its limits allow).  With a valid
+  // proof the file covers what it proves; without one, nothing.  Resolves to
+  // the reset's result; the document then opens with the restarted history.
+  restartHistoryFromSavedFile = async (): Promise<ResetHistoryResult> => {
+    const client = this.client;
+    if (
+      typeof client.historyResetState != "function" ||
+      typeof client.readFileBounded != "function" ||
+      typeof client.resetHistory != "function"
+    ) {
+      throw Error("restarting the history is not supported here");
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const state = await client.historyResetState({
+        project_id: this.project_id,
+        path: this.syncPath,
+        ...this.patchesPersistOpts(),
+      });
+      const { file, problem } = await this.readSavedFile();
+      if (file == null) {
+        throw Error(
+          `cannot restart the history from the saved file: ${problem}`,
+        );
+      }
+      const result = await client.resetHistory({
+        project_id: this.project_id,
+        path: this.syncPath,
+        ...this.patchesPersistOpts(),
+        options: resetOptions({
+          mode: "user-restart-from-file",
+          state,
+          file,
+          proof: validProof(state, file),
+          seed: this.seedOf(file.value),
+        }),
+      });
+      if (result.reset) {
+        this.oversizedHistoryReset = true;
+        this.history_epoch = result.history_epoch;
+        return result;
+      }
+      if (result.refused !== "moved" && result.refused !== "epoch") {
+        throw Error(`the history was not restarted (${result.refused})`);
+      }
+    }
+    throw Error("the history kept changing; please try again");
   };
 
   // A 413 while loading the patches means the edit history itself holds a
