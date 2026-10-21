@@ -182,13 +182,28 @@ function RuntimeCodexAttentionCard({
   const agentName = namedAgent ? `@${namedAgent.name}` : undefined;
   // @agents in a custom answer are checked as in the composer (an active
   // Agent Network with this agent, approved here if needed) before sending.
+  // Each custom answer's editor, and the one last typed in: focus goes back
+  // there after the network approval dialog closes.
+  const answerControls = useRef(new Map<string, { current: any }>());
+  const answerControl = (id: string) => {
+    let control = answerControls.current.get(id);
+    if (!control) {
+      control = { current: null };
+      answerControls.current.set(id, control);
+    }
+    return control;
+  };
+  const lastAnswer = useRef<string | undefined>(undefined);
   const agentMentions = useAgentMentions({
     projectId: record.project_id,
     path: record.path,
     threadId: record.thread_id,
     threadTitle: agentName,
     runnable: !lite,
-    restoreFocus: () => {},
+    restoreFocus: () => {
+      const id = lastAnswer.current;
+      if (id) answerControls.current.get(id)?.current?.focus?.();
+    },
   });
   const agentMentionContext = {
     ...agentMentions.context,
@@ -712,8 +727,10 @@ function RuntimeCodexAttentionCard({
                             onUploadEnd={() =>
                               setUploads((n) => Math.max(0, n - 1))
                             }
+                            controlRef={answerControl(question.id)}
                             value={draft.other[question.id] ?? ""}
                             onChange={(value) => {
+                              lastAnswer.current = question.id;
                               updateDraft((current) => ({
                                 other: {
                                   ...current.other,
@@ -787,7 +804,11 @@ function RuntimeCodexAttentionCard({
                   loading={submitting}
                   onClick={() =>
                     void agentMentions.preflight(
-                      Object.values(answers).flat().join("\n"),
+                      // Only what the person wrote: an agent's own choices may
+                      // name agents, with no picker to bind them.
+                      Object.values(draft.other)
+                        .filter((value) => value?.trim())
+                        .join("\n"),
                       () => respond(false),
                     )
                   }
