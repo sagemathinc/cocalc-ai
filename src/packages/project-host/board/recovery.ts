@@ -266,13 +266,24 @@ export class RecoveryRunner {
           reason: `the history couldn't be read: ${err}`.slice(0, 300),
         };
       }
-      const outcome = await new Job(
-        this.launcher,
-        this.identity,
-        this.limits,
-        this.now,
-        records,
-      ).run();
+      let outcome: RecoveryOutcome;
+      try {
+        outcome = await new Job(
+          this.launcher,
+          this.identity,
+          this.limits,
+          this.now,
+          records,
+        ).run();
+      } catch (err) {
+        // Never an escape: an unexpected failure is a crash whose cleanup
+        // isn't confirmed, so its slot stays held.
+        outcome = {
+          state: "crash",
+          reason: `the runner failed: ${err}`.slice(0, 300),
+          held: true,
+        };
+      }
       held = outcome.state !== "complete" && outcome.held === true;
       return outcome;
     } finally {
@@ -328,7 +339,24 @@ class Job {
 
   private end(state: "timeout" | "protocol-error" | "refused", reason: string) {
     this.causes[state] ??= reason;
+    // Anything before a verified hello, once the setup deadline has passed,
+    // is that deadline's (astra CORR-DFC-4): not a refusal or a protocol
+    // error that only won a race with the setup timer.
+    if (
+      this.hello == null &&
+      state !== "timeout" &&
+      this.now() - this.start > this.limits.setupMs
+    ) {
+      this.causes.timeout ??= "setup";
+    }
     this.settle?.();
+    // Any terminal cause ends the wait for the output too: every wait shares
+    // the one report deadline (astra CORR-DFC-3).
+    this.wakeStdoutWaiters();
+  }
+
+  private wakeStdoutWaiters() {
+    for (const f of this.stdoutWaiters.splice(0)) f();
   }
 
   private get ending(): boolean {
@@ -350,6 +378,8 @@ class Job {
       this.settle?.();
     });
     proc.on("error", (err) => this.end("refused", `the launcher: ${err}`));
+    // (A stderr failure loses only diagnostics.)
+    proc.stderr?.on("error", () => {});
     proc.stderr?.on("data", (chunk: Buffer) => {
       if (this.stderr.length < this.limits.stderrBytes) {
         this.stderr += chunk
@@ -370,12 +400,20 @@ class Job {
         this.end("protocol-error", reader.error.message);
       }
     });
-    const ended = () => {
+    // Only "end" is a clean EOF; a close or an error before it is a broken
+    // transport, never a completed protocol (astra CORR-DFC-2).
+    proc.stdout?.on("end", () => {
       this.stdoutEnded = true;
-      for (const f of this.stdoutWaiters.splice(0)) f();
-    };
-    proc.stdout?.on("end", ended);
-    proc.stdout?.on("close", ended);
+      this.wakeStdoutWaiters();
+    });
+    proc.stdout?.on("close", () => {
+      if (!this.stdoutEnded) {
+        this.end("protocol-error", "the child's output closed without an end");
+      }
+    });
+    proc.stdout?.on("error", (err) => {
+      this.end("protocol-error", `the child's output failed: ${err}`);
+    });
     this.timers.push(
       setTimeout(() => {
         if (this.hello == null) this.end("timeout", "setup");
@@ -409,14 +447,15 @@ class Job {
   private onFrame(kind: FrameKind, body: Uint8Array): void {
     if (this.ending) return;
     if (kind === "hello") {
+      // The setup deadline first: a hello after it is late, whatever it says.
+      if (this.now() - this.start > this.limits.setupMs) {
+        this.end("timeout", "setup");
+        return;
+      }
       const hello = decodeFrameBody("hello", body);
       const wrong = verifyHello(hello, this.jobId, this.identity);
       if (wrong != null) {
         this.end("refused", `isolation-unverified: ${wrong}`);
-        return;
-      }
-      if (this.now() - this.start > this.limits.setupMs) {
-        this.end("timeout", "setup");
         return;
       }
       this.hello = hello;
@@ -534,10 +573,20 @@ class Job {
         budget,
       );
     });
+    if (budget <= 0) {
+      return { state: "failed", message: "no time left to stop" };
+    }
     try {
       return await Promise.race([
-        this.launcher
-          .stop(this.jobId, Math.max(500, budget - STOP_TRANSPORT_MS))
+        // Invoked inside a promise: a synchronous throw is a failed stop
+        // too, never an escape that frees the slot (astra CORR-DFC-3).
+        Promise.resolve()
+          .then(() =>
+            this.launcher.stop(
+              this.jobId,
+              Math.max(1, budget - STOP_TRANSPORT_MS),
+            ),
+          )
           .catch((err): StopReport => ({ state: "failed", message: `${err}` })),
         late,
       ]);
@@ -549,10 +598,10 @@ class Job {
   private async cleanup(): Promise<{ report: StopReport; confirmed: boolean }> {
     const { stopWaitMs, stopRetryGapMs, stopRetries, firstStopMinMs } =
       this.limits;
-    // The first stop always runs, with at least firstStopMinMs.
-    let report = await this.stopOnce(
-      Math.min(30_000, Math.max(firstStopMinMs, this.remainingMs())),
-    );
+    // The first stop gets what is left of the one report deadline (its
+    // margin, firstStopMinMs, was reserved once: the wall deadline ends the
+    // job that much before it).
+    let report = await this.stopOnce(Math.min(30_000, this.remainingMs()));
     // Retries only while a full wait and its gap fit.
     for (
       let i = 0;

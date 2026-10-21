@@ -720,3 +720,191 @@ describe("astra's #1240 review (CORR-DFC-2..5) and the lazy queue", () => {
     expect(load).toHaveBeenCalledTimes(1);
   }, 30_000);
 });
+
+// A stand-in child process: the runner's whole lifecycle, driven exactly.
+describe("astra's round-2 re-review (CORR-DFC-2/3/4), with a stand-in child", () => {
+  const { EventEmitter } = require("node:events");
+  const { PassThrough } = require("node:stream");
+  const { createHash } = require("node:crypto");
+
+  class StandIn implements RecoveryLauncher {
+    procs: any[] = [];
+    ids: string[] = [];
+    stopImpl: (jobId: string, budget: number) => Promise<StopReport> =
+      async () => ({ state: "removed", oom_kill: 0 });
+    spawn(jobId: string): ChildProcess {
+      const proc: any = new EventEmitter();
+      proc.stdin = new PassThrough();
+      proc.stdout = new PassThrough();
+      proc.stderr = new PassThrough();
+      this.procs.push(proc);
+      this.ids.push(jobId);
+      return proc;
+    }
+    stop(jobId: string, budget: number) {
+      return this.stopImpl(jobId, budget);
+    }
+    async cpuUsageUsec() {
+      return 0;
+    }
+  }
+
+  const hello = (jobId: string, uid = process.getuid!()) =>
+    encodeFrame({
+      v: 1,
+      type: "hello",
+      job_id: jobId,
+      uid,
+      gid: process.getgid!(),
+      groups: [],
+      no_new_privs: 1,
+      cap_eff: "0",
+      cap_prm: "0",
+      fds: [],
+      cgroup: `/cocalc-board-recovery/job-${jobId}`,
+      limits: { memory_max: MEMORY_MAX, swap_max: "0" },
+    });
+
+  // Reads the job the runner sends, and answers with a valid result.
+  async function answer(proc: any, jobId: string) {
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      proc.stdin.on("data", (b: Buffer) => chunks.push(b));
+      proc.stdin.on("end", resolve);
+    });
+    const body = Buffer.concat(chunks).subarray(4);
+    proc.stdout.write(
+      encodeFrame({
+        v: 1,
+        type: "result",
+        job_id: jobId,
+        input_sha256: createHash("sha256").update(body).digest("hex"),
+        verdict: "clean",
+        value: "{}",
+        identifiers: [],
+      }),
+    );
+  }
+
+  async function started(launcher: StandIn) {
+    while (launcher.procs.length === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    return { proc: launcher.procs[0], jobId: launcher.ids[0] };
+  }
+
+  test("CORR-DFC-2: output destroyed without an end is never complete", async () => {
+    const launcher = new StandIn();
+    const running = runner(launcher as any).run(() => []);
+    const { proc, jobId } = await started(launcher);
+    proc.stdout.write(hello(jobId));
+    await answer(proc, jobId);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    proc.stdout.destroy();
+    proc.emit("exit", 0, null);
+    const out = await running;
+    expect(out).toMatchObject({
+      state: "protocol-error",
+      reason: "the child's output closed without an end",
+    });
+  });
+
+  test("CORR-DFC-2: an output error is a protocol error", async () => {
+    const launcher = new StandIn();
+    const running = runner(launcher as any).run(() => []);
+    const { proc, jobId } = await started(launcher);
+    proc.stdout.write(hello(jobId));
+    await answer(proc, jobId);
+    proc.stdout.destroy(new Error("EPIPE"));
+    proc.emit("exit", 0, null);
+    expect(await running).toMatchObject({ state: "protocol-error" });
+  });
+
+  test("CORR-DFC-2: a clean end after a valid result is complete", async () => {
+    const launcher = new StandIn();
+    const running = runner(launcher as any).run(() => []);
+    const { proc, jobId } = await started(launcher);
+    proc.stdout.write(hello(jobId));
+    await answer(proc, jobId);
+    proc.stdout.end();
+    proc.emit("exit", 0, null);
+    expect(await running).toMatchObject({ state: "complete", value: "{}" });
+  });
+
+  test.each([
+    [
+      "a synchronous throw",
+      () => {
+        throw new Error("sync stop EIO");
+      },
+    ],
+    ["a rejected promise", async () => Promise.reject(new Error("stop EIO"))],
+  ])(
+    "CORR-DFC-3: a stop that fails with %s: a terminal state, the slot held",
+    async (_name, stop) => {
+      const launcher = new StandIn();
+      launcher.stopImpl = stop as any;
+      const r = runner(launcher as any, { maxActive: 1, maxQueue: 0 });
+      const running = r.run(() => []);
+      const { proc, jobId } = await started(launcher);
+      proc.stdout.write(hello(jobId));
+      await answer(proc, jobId);
+      proc.stdout.end();
+      proc.emit("exit", 0, null);
+      const out = await running;
+      expect(out).toMatchObject({
+        state: "crash",
+        reason: "cleanup unconfirmed",
+        held: true,
+        report: { state: "failed", message: expect.stringContaining("EIO") },
+      });
+      expect(r.counts).toMatchObject({ active: 0, held: 1 });
+    },
+  );
+
+  test("CORR-DFC-3: output held open and a stop that hangs: reported by wall + one margin", async () => {
+    const launcher = new StandIn();
+    launcher.stopImpl = () => new Promise<StopReport>(() => {});
+    const r = runner(launcher as any, {
+      wallMs: 300,
+      firstStopMinMs: 200,
+      setupMs: 250,
+    });
+    const start = performance.now();
+    const running = r.run(() => []);
+    const { proc, jobId } = await started(launcher);
+    proc.stdout.write(hello(jobId));
+    await answer(proc, jobId);
+    // Exit, with the output never ended.
+    proc.emit("exit", 0, null);
+    const out = await running;
+    const took = performance.now() - start;
+    expect(out).toMatchObject({ state: "timeout", reason: "wall", held: true });
+    // One envelope (wall 300 + margin 200), not the margin twice (700).
+    expect(took).toBeLessThan(600);
+    expect(took).toBeGreaterThanOrEqual(490);
+  });
+
+  test.each([
+    ["a wrong-UID hello", (jobId: string) => hello(jobId, 0)],
+    ["a malformed hello", () => Uint8Array.from([0, 0, 0, 2, 0xc1, 0xc1])],
+  ])(
+    "CORR-DFC-4: %s after a blocked setup deadline is timeout(setup)",
+    async (_name, frame) => {
+      const launcher = new StandIn();
+      const running = runner(launcher as any, { setupMs: 5 }).run(() => []);
+      const { proc, jobId } = await started(launcher);
+      // The loop is held past the setup deadline; then the hello arrives,
+      // before the setup timer's callback can run.
+      const until = performance.now() + 20;
+      while (performance.now() < until) {}
+      proc.stdout.write(frame(jobId));
+      proc.stdout.end();
+      proc.emit("exit", 0, null);
+      expect(await running).toMatchObject({
+        state: "timeout",
+        reason: "setup",
+      });
+    },
+  );
+});
