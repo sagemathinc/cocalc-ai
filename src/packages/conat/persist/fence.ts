@@ -16,8 +16,9 @@ fenceProject:
 4. streams waiting in the release queue are released now, so their databases
    close (checkpointing their WAL);
 5. it resolves once no disk-backed stream of the project is open in this
-   process.  If that takes longer than timeoutMs, the fence is released and it
-   fails, so the caller never replaces files that are open.
+   process, and no other work on its files is under way (claimPersistFile,
+   e.g., SQLite maintenance).  If that takes longer than timeoutMs, the fence
+   is released and it fails, so the caller never replaces files that are open.
 
 unfenceProject releases it.  With replaced, the project's streams report a
 new instance from then on, so clients drop what they have and load the new
@@ -49,6 +50,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { randomId } from "@cocalc/conat/names";
 import { isValidUUID } from "@cocalc/util/misc";
 import { delay } from "awaiting";
+import { resolve } from "node:path";
 import { openDiskStreamPaths } from "./storage";
 import { releaseQueuedStreams } from "./server";
 import { resolveLocalPath } from "./util";
@@ -56,6 +58,7 @@ import {
   beginProjectFence,
   closeProjectSockets,
   endProjectFence,
+  fencedProjects,
   isProjectFencedBy,
   setProjectReplacedInstance,
   waitForProjectOpens,
@@ -76,6 +79,36 @@ function projectStreamsRoot(project_id: string): string {
 
 function underRoot(root: string): (path: string) => boolean {
   return (path) => path === root || path.startsWith(`${root}/`);
+}
+
+// Work on a project's persist files other than through its streams (e.g.,
+// SQLite maintenance, backend/conat/persist-maintenance): a fence waits for it
+// as for an open stream, and none starts while the project is fenced.
+const claimedFiles = new Map<string, number>();
+
+// Claims the file at path for such work: undefined if it is a fenced
+// project's, else the function to call once the work is done.
+export function claimPersistFile(path: string): (() => void) | undefined {
+  const file = resolve(path);
+  if (
+    fencedProjects().some((project_id) =>
+      underRoot(resolve(projectStreamsRoot(project_id)))(file),
+    )
+  ) {
+    return;
+  }
+  claimedFiles.set(file, (claimedFiles.get(file) ?? 0) + 1);
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    const n = (claimedFiles.get(file) ?? 1) - 1;
+    if (n > 0) {
+      claimedFiles.set(file, n);
+    } else {
+      claimedFiles.delete(file);
+    }
+  };
 }
 
 export function openProjectStreamPaths(project_id: string): string[] {
@@ -102,12 +135,15 @@ export async function fenceProject({
         { code: 504 },
       );
     }
-    const under = underRoot(projectStreamsRoot(project_id));
+    const root = projectStreamsRoot(project_id);
+    const under = underRoot(root);
+    const claimedUnder = underRoot(resolve(root));
     const closed_sockets = closeProjectSockets(project_id);
     while (true) {
       await releaseQueuedStreams(under);
       const open = openDiskStreamPaths().filter(under);
-      if (open.length == 0) {
+      const claimed = [...claimedFiles.keys()].filter(claimedUnder);
+      if (open.length == 0 && claimed.length == 0) {
         logger.debug("fenced project", { project_id, closed_sockets });
         return { closed_sockets };
       }
@@ -115,9 +151,12 @@ export async function fenceProject({
         logger.warn("project fence: streams did not close", {
           project_id,
           open: open.slice(0, 10),
+          claimed: claimed.slice(0, 10),
         });
         throw new ConatError(
-          `timed out closing ${open.length} of this project's persistent streams`,
+          open.length > 0
+            ? `timed out closing ${open.length} of this project's persistent streams`
+            : `timed out waiting for work on ${claimed.length} of this project's persist files (e.g., maintenance)`,
           { code: 504 },
         );
       }

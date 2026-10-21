@@ -9,6 +9,7 @@ pnpm test ./project-fence.test.ts
 import { before, after, connect, wait } from "@cocalc/backend/conat/test/setup";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import {
+  claimPersistFile,
   initPersistFenceService,
   openProjectStreamPaths,
   PERSIST_FENCE_SUBJECT,
@@ -29,6 +30,7 @@ import { join } from "node:path";
 import { uuid } from "@cocalc/util/misc";
 import { messageData } from "@cocalc/conat/core/client";
 import { stream } from "@cocalc/conat/persist/client";
+import { resolveLocalPath } from "@cocalc/conat/persist/util";
 
 beforeAll(before);
 afterAll(after);
@@ -249,6 +251,35 @@ describe("fence a project, replace its history, and clients reload it", () => {
       ),
     ).rejects.toThrow("not a running process");
     expect(isProjectFenced(project_id)).toBe(false);
+  });
+
+  it("waits for other work on the project's files, and none starts while it is fenced", async () => {
+    const fileOf = (id: string) =>
+      join(resolveLocalPath(`projects/${id}`, { ephemeral: true }), "x.db");
+    const file = fileOf(project_id);
+    const release = claimPersistFile(file)!;
+    expect(release).toBeDefined();
+    await expect(
+      withPersistFence(
+        { client: connect(), project_id, holder, timeoutMs: 1000 },
+        async () => {},
+      ),
+    ).rejects.toThrow("work on 1 of this project's persist files");
+    expect(isProjectFenced(project_id)).toBe(false);
+    setTimeout(release, 300);
+    await withPersistFence(
+      { client: connect(), project_id, holder, replaces: false },
+      async () => {
+        expect(claimPersistFile(file)).toBeUndefined();
+        // another project's files are not affected
+        const other = claimPersistFile(fileOf(uuid()));
+        expect(other).toBeDefined();
+        other!();
+      },
+    );
+    const after = claimPersistFile(file);
+    expect(after).toBeDefined();
+    after!();
   });
 
   it("reports when no fence service is running", async () => {

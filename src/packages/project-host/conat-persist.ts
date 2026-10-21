@@ -16,7 +16,10 @@ import getLogger from "@cocalc/backend/logger";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
-import { initPersistFenceService } from "@cocalc/conat/persist/fence";
+import {
+  claimPersistFile,
+  initPersistFenceService,
+} from "@cocalc/conat/persist/fence";
 import {
   fileFenceStore,
   isFenceHolderAlive,
@@ -207,19 +210,6 @@ export async function startStandaloneProjectHostConatPersist({
     systemAccountPassword,
   });
   const id = resolveProjectHostConatPersistId();
-  const maintenanceConfig = loadPersistMaintenanceConfig();
-  let maintenance: PersistMaintenanceCoordinator | undefined;
-  if (maintenanceConfig.enabled) {
-    try {
-      maintenance = createPersistMaintenanceCoordinator({
-        expectedWorkerIds: [id],
-        config: maintenanceConfig,
-      });
-    } catch (err) {
-      // Catalog failure must not prevent the data plane from starting.
-      logger.error("failed starting persist maintenance coordinator", err);
-    }
-  }
   // Before the persist server serves: it holds again the fences it held
   // before a restart, and its capability file tells the host's main process
   // that it has fences (persist-fence.ts).
@@ -234,6 +224,22 @@ export async function startStandaloneProjectHostConatPersist({
     fenceService.close();
     removeFenceCapability(fenceDir);
   };
+  const maintenanceConfig = loadPersistMaintenanceConfig();
+  let maintenance: PersistMaintenanceCoordinator | undefined;
+  if (maintenanceConfig.enabled) {
+    try {
+      maintenance = createPersistMaintenanceCoordinator({
+        expectedWorkerIds: [id],
+        config: maintenanceConfig,
+        // never on the files of a fenced project, e.g., being restored (and
+        // after the fences held before a restart are held again)
+        claim: claimPersistFile,
+      });
+    } catch (err) {
+      // Catalog failure must not prevent the data plane from starting.
+      logger.error("failed starting persist maintenance coordinator", err);
+    }
+  }
   // Both services share this process's stream cache, and so its maintenance
   // hooks.
   const maintenanceHooks = maintenance?.createLocalHooks(id);

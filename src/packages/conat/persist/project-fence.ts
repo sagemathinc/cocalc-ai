@@ -46,6 +46,10 @@ export function isProjectFenced(project_id: string): boolean {
   return fences.has(project_id);
 }
 
+export function fencedProjects(): string[] {
+  return [...fences.keys()];
+}
+
 // Whether token holds the project's fence.
 export function isProjectFencedBy(project_id: string, token: string): boolean {
   return fences.get(project_id)?.token === token;
