@@ -240,6 +240,11 @@ export class RecoveryRunner {
   // load reads the job's history: called only once a slot is reserved, so a
   // queued job holds no history (astra, for daybreak2: the queue holds
   // references, not up to 8 maximal histories).
+  //
+  // CALLERS: pass a function that READS the history when called, e.g.
+  // `() => readBoardHistory(stream)`. Never a closure over records already
+  // read (`const records = await read(); run(() => records)`): the queue
+  // would hold them all the same, whether or not load is ever called.
   async run(
     load: () => JobRecord[] | Promise<JobRecord[]>,
   ): Promise<RecoveryOutcome> {
