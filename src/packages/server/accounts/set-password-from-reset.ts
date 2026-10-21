@@ -5,6 +5,7 @@
 
 import passwordHash from "@cocalc/backend/auth/password-hash";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { revokeContentLinksBestEffort } from "@cocalc/server/accounts/revocation";
 
 export default async function setPasswordFromReset({
   account_id,
@@ -32,4 +33,5 @@ export default async function setPasswordFromReset({
       }
     },
   });
+  await revokeContentLinksBestEffort(account_id);
 }

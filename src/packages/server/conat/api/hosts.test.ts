@@ -224,6 +224,16 @@ jest.mock("@cocalc/server/conat/socketio/browser-auth-sessions", () => ({
     getBrowserAuthSessionHashMock(...args),
 }));
 
+const issueProjectContentUrlLocalMock = jest.fn(async (_opts: any) => ({
+  url: "https://content.example/_c/cap/files/a.html",
+  expires_at: 1,
+}));
+jest.mock("./project-content-url", () => ({
+  __esModule: true,
+  issueProjectContentUrlLocal: (opts: any) =>
+    issueProjectContentUrlLocalMock(opts),
+}));
+
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   __esModule: true,
   getCurrentAuthSessionForSessionHash: (...args: any[]) =>
@@ -4149,6 +4159,43 @@ describe("hosts browser fresh auth gating", () => {
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
+  it("requires fresh auth before queueing a public route mode change", async () => {
+    const { setHostPublicRouteMode } = await import("./hosts");
+    // Later tests rely on the shared query mock.
+    const previousQueryMock = queryMock;
+    try {
+      queryMock = jest.fn();
+      createLroMock.mockClear();
+      // No session at all.
+      await expect(
+        setHostPublicRouteMode({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          mode: "cloudflare-proxy",
+        }),
+      ).rejects.toMatchObject({ code: "fresh_auth_required" });
+      // A session that is not freshly authenticated.
+      requireFreshAuthForSessionHashMock = jest.fn(async () => {
+        throw Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        });
+      });
+      await expect(
+        setHostPublicRouteMode({
+          account_id: ACCOUNT_ID,
+          session_hash: "stale-session-hash",
+          id: HOST_ID,
+          mode: "cloudflare-proxy",
+        }),
+      ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(createLroMock).not.toHaveBeenCalled();
+    } finally {
+      queryMock = previousQueryMock;
+    }
+  });
+
   it("uses browser fresh auth before queueing host stop", async () => {
     getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
 
@@ -7164,6 +7211,35 @@ describe("hosts.issueProjectHostAuthToken", () => {
         browser_session_exp_s: Math.floor(expiresAtMs / 1000),
       }),
     );
+  });
+
+  it("caps a content link by a testing session's expiration", async () => {
+    const expiresAtMs = Date.now() + 3_600_000;
+    getCurrentAuthSessionForSessionHashMock = jest.fn(async () => ({
+      account_id: ACCOUNT_UUID,
+      expire: new Date(expiresAtMs),
+      metadata: { testing_account: true },
+    }));
+    issueProjectContentUrlLocalMock.mockClear();
+    const { issueProjectContentUrl } = await import("./hosts");
+
+    await issueProjectContentUrl({
+      account_id: ACCOUNT_UUID,
+      session_hash: "authenticated-testing-session",
+      project_id: PROJECT_UUID,
+      path: "/home/user/a.html",
+    });
+
+    expect(getCurrentAuthSessionForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      session_hash: "authenticated-testing-session",
+    });
+    expect(issueProjectContentUrlLocalMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      project_id: PROJECT_UUID,
+      path: "/home/user/a.html",
+      browser_session_exp_s: Math.floor(expiresAtMs / 1000),
+    });
   });
 
   it("issues a browser token for a project with an available public share without syncing collaborator ACLs", async () => {

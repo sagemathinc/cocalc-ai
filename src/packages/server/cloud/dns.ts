@@ -307,14 +307,25 @@ async function getClient(): Promise<{
   return { token, dns, settings };
 }
 
-async function getZoneClientForHostname(hostname: string): Promise<{
+async function getZoneClientForHostname(
+  hostname: string,
+  tokenOverride?: string,
+): Promise<{
   token: string;
   zoneId: string;
   zoneHostname: string;
 }> {
-  const { token } = await getClient();
-  const { zoneId, zoneHostname } = await getZoneForHostname(token, hostname);
+  const token = tokenOverride ?? (await getClient()).token;
+  const { zoneId, zoneHostname } = await getZoneForHostname(
+    token,
+    zoneLookupHostname(hostname),
+  );
   return { token, zoneId, zoneHostname };
+}
+
+// A wildcard record's zone is found from the name without its "*." label.
+function zoneLookupHostname(hostname: string): string {
+  return `${hostname ?? ""}`.trim().replace(/^\*\./, "");
 }
 
 export async function ensureHostDns(opts: {
@@ -417,15 +428,15 @@ export async function listManagedVmDnsRecords(): Promise<ManagedVmDnsRecord[]> {
 }
 
 async function ensureAddressDns(
-  opts: { name: string; ipAddress: string; record_id?: string },
+  opts: { name: string; ipAddress: string; record_id?: string; token?: string },
   proxied: boolean,
 ): Promise<{ name: string; record_id: string }> {
   const name = `${opts.name ?? ""}`.trim().toLowerCase();
   if (!name) throw new Error("hostname required for DNS");
   if (!opts.ipAddress) throw new Error("ipAddress required for DNS");
 
-  const { token } = await getClient();
-  const zoneId = await getZoneIdForHostname(token, name);
+  const token = opts.token ?? (await getClient()).token;
+  const zoneId = await getZoneIdForHostname(token, zoneLookupHostname(name));
 
   const updateRecord = async (record_id: string) => {
     const newData = {
@@ -763,10 +774,14 @@ const ROUTE_RECORD_TYPES = new Set(["A", "AAAA", "CNAME"]);
 export async function deleteHostnameDns(opts: {
   hostname: string;
   record_id?: string;
+  token?: string;
 }): Promise<void> {
   const hostname = `${opts.hostname ?? ""}`.trim().toLowerCase();
   if (!hostname) throw new Error("hostname required to delete DNS");
-  const { token, zoneId } = await getZoneClientForHostname(hostname);
+  const { token, zoneId } = await getZoneClientForHostname(
+    hostname,
+    opts.token,
+  );
   const remove = async (record_id: string) => {
     try {
       await cloudflareRequest(
@@ -1006,4 +1021,48 @@ export async function deleteAppSubdomainDns(opts: {
     if (isNotFoundError(err)) return;
     throw err;
   }
+}
+
+// Content-origin DNS (trust-free step 6) lives in host-content-dns.ts; these
+// are the zone primitives it needs, with its own API token.
+export async function ensureProxiedAddressDnsWithToken(opts: {
+  name: string;
+  ipAddress: string;
+  token: string;
+}): Promise<{ name: string; record_id: string }> {
+  return await ensureAddressDns(opts, true);
+}
+
+export async function listRouteRecordsUnder(opts: {
+  domain: string;
+  token: string;
+}): Promise<{ id: string; name: string; type: string; content: string }[]> {
+  const domain = `${opts.domain ?? ""}`.trim().toLowerCase();
+  const { zoneId } = await getZoneClientForHostname(domain, opts.token);
+  const out: { id: string; name: string; type: string; content: string }[] = [];
+  const perPage = 1000;
+  for (let page = 1; ; page += 1) {
+    const qs = new URLSearchParams({
+      "name.endswith": `.${domain}`,
+      page: `${page}`,
+      per_page: `${perPage}`,
+    });
+    const batch = await cloudflareRequest<DnsRecord[]>(
+      opts.token,
+      "GET",
+      `zones/${zoneId}/dns_records?${qs.toString()}`,
+    );
+    for (const record of batch ?? []) {
+      const type = `${record.type ?? ""}`.trim().toUpperCase();
+      if (!record.id || !ROUTE_RECORD_TYPES.has(type)) continue;
+      out.push({
+        id: record.id,
+        name: `${record.name ?? ""}`.trim().toLowerCase(),
+        type,
+        content: `${record.content ?? ""}`.trim(),
+      });
+    }
+    if ((batch ?? []).length < perPage) break;
+  }
+  return out;
 }

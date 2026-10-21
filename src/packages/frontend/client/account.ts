@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { notifyAllContentLinksRevoked } from "@cocalc/frontend/project/content-link-revocations";
 import { callback } from "awaiting";
 declare const $: any; // jQuery
 import { WebappClient } from "./client";
@@ -40,6 +41,8 @@ export class AccountClient {
     newPassword: string = "",
   ): Promise<void> => {
     await api("/accounts/set-password", { currentPassword, newPassword });
+    // The server revoked this account's content links; reload open previews.
+    notifyAllContentLinksRevoked();
   };
 
   change_email = async (

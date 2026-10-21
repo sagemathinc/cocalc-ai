@@ -865,6 +865,8 @@ export interface HostControlApi {
      * newest copy (an older one arriving late must never replace it).
      */
     users_revision?: number;
+    // Content-origin revocation counter (trust-free step 6).
+    content_epoch?: number;
   }) => Promise<void>;
   /**
    * A paired computer was revoked: refuse it from now on (its socket closes
@@ -1252,6 +1254,8 @@ export interface HostStatusApi {
     rows: Array<{
       account_id: string;
       revoked_before_ms: number;
+      // Content-origin links only (absent from older hubs).
+      content_revoked_before_ms?: number;
       updated_ms: number;
     }>;
     next_cursor_updated_ms?: number;
@@ -1299,6 +1303,8 @@ export interface HostRegistryApi {
       users: any;
       runtime_lifecycle_revision: number;
       users_revision?: number;
+      // Content-origin revocation counter; absent from older hubs.
+      content_epoch?: number;
       updated_ms: number;
     }>;
     next_since_ms: number;
@@ -1314,6 +1320,8 @@ export interface HostRegistryApi {
       users: any;
       runtime_lifecycle_revision: number;
       users_revision?: number;
+      // Content-origin revocation counter; absent from older hubs.
+      content_epoch?: number;
       updated_ms: number;
     }>;
     as_of_ms: number;

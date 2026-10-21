@@ -1,12 +1,10 @@
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
-import cpExec from "@cocalc/backend/sandbox/cp";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
-import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { getMasterConatClient } from "./master-status";
 import { getLocalHostId } from "./sqlite/hosts";
 import callHub from "@cocalc/conat/hub/call-hub";
@@ -24,10 +22,10 @@ import {
   projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
 import { installPathFromStaging } from "./path-copy-archive";
+import { beneathRelative, kindBeneath } from "./beneath-copy";
 
 const logger = getLogger("project-host:pending-copies");
 
-const COPY_STAGING_DIR = ".copy-staging";
 const RESTORE_TIMEOUT_MS = 30 * 60 * 1000;
 // The hub hands an 'applying' row to another worker 35 minutes after the claim
 // (STALE_APPLYING_MS in server/projects/copy-db.ts). Every row of a claimed
@@ -72,17 +70,6 @@ function normalizeBackupPath(raw: string): string {
     return normalized.replace(/^\/+/, "");
   }
   return normalized;
-}
-
-async function statIfExists(p: string) {
-  try {
-    return await stat(p);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return undefined;
-    }
-    throw err;
-  }
 }
 
 function isSnapshotNotFoundError(err: unknown): boolean {
@@ -171,14 +158,18 @@ async function applyCopyRow(
     scratch: getScratchMountpoint(row.dest_project_id),
     homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
-  const destAbs = await destFs.safeAbsPath(destPath);
-  if (destAbs === projectRoot) {
+  // The destination project's user can plant symlinks anywhere in its tree:
+  // the install below is anchored beneath its root and refuses them.
+  const destination = await destFs.resolveAnchoredPath(destPath);
+  if (!destination.path) {
     throw new Error("dest_path cannot be project root");
   }
 
-  const destStat = await statIfExists(destAbs);
-  const destExists = destStat != null;
-  if (row.exact && destExists && !(row.options?.force ?? true)) {
+  if (
+    row.exact &&
+    !(row.options?.force ?? true) &&
+    (await kindBeneath(destination.root, destination.path)) !== "missing"
+  ) {
     if (row.options?.errorOnExist) {
       const err = new Error(
         "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
@@ -194,16 +185,20 @@ async function applyCopyRow(
     });
     return;
   }
-  const stagingId = randomUUID();
-  const stagingRel = path.posix.join(COPY_STAGING_DIR, stagingId, destPath);
-  const stagingRoot = path.join(projectRoot, COPY_STAGING_DIR, stagingId);
-  await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+  // Restore into a host-private directory, never inside the project (where
+  // its user could swap in a symlink and redirect the restore's writes). The
+  // host's TMPDIR is on the same filesystem, so the install can clone.
+  const stagingRoot = await mkdtemp(
+    path.join(tmpdir(), "cocalc-pending-copy-"),
+  );
+  const stagingRel = beneathRelative(
+    path.posix.join("restore", destination.path),
+  );
 
   const repo = await resolveRusticRepo(row.src_project_id);
-  const restoreFs = new SandboxedFilesystem(projectRoot, {
+  const restoreFs = new SandboxedFilesystem(stagingRoot, {
     rusticRepo: repo,
     host: `project-${row.src_project_id}`,
-    homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
 
   try {
@@ -214,23 +209,23 @@ async function applyCopyRow(
       stagingRel,
       deadline,
     });
-    const stagingAbs = await restoreFs.safeAbsPath(stagingRel);
-    if (!(await exists(stagingAbs))) {
+    if ((await kindBeneath(stagingRoot, stagingRel)) === "missing") {
       throw new Error(`restore produced no data at ${stagingRel}`);
     }
     const installed = await installPathFromStaging({
-      source: stagingAbs,
-      destination: destAbs,
-      destinationExists: destExists,
+      source: { root: stagingRoot, path: stagingRel },
+      destination,
       exact: row.exact,
-      options: row.options ?? undefined,
-      copy: async (source, destination) => {
-        await cpExec(source, destination, {
-          ...row.options,
-          recursive: row.options?.recursive ?? true,
-          reflink: true,
-          timeout: remainingMs(deadline),
-        });
+      options: {
+        force: row.options?.force,
+        errorOnExist: row.options?.errorOnExist,
+        preserveTimestamps: row.options?.preserveTimestamps,
+        recursive: row.options?.recursive ?? true,
+        dereference: row.options?.dereference,
+        // Stop between files once the claim's budget is spent.
+        checkpoint: () => {
+          remainingMs(deadline);
+        },
       },
     });
     if (installed) {
