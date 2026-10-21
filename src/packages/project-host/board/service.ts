@@ -796,9 +796,49 @@ const REFUSAL_MEMORY_MS = 60 * 60 * 1000;
 const MAX_REFUSALS = 1000;
 const refusals = new Map<string, NonNullable<BoardOpenResult["lastRefusal"]>>();
 
-// Held unsaved text (unsaved "memory") is bounded in all: past it, the
-// oldest is dropped, and that is logged as the loss it is.
+/*
+Held unsaved text (unsaved "memory": no place on disk took a refused
+writer's edits). Kept apart from the refusal messages, as UTF-8 bytes,
+charged at their encoded size plus HELD_ENTRY_OVERHEAD each, at most
+MAX_HELD_BYTES in all, in this project-host process (a restart loses it:
+it is volatile, and must be shown as such). It is never dropped on time or
+for the refusal messages' count; only the byte bound drops it, oldest
+first, and every drop is logged and counted (heldUnsavedStats).
+*/
 const MAX_HELD_BYTES = 64 * 1024 * 1024;
+const HELD_ENTRY_OVERHEAD = 4096;
+const held = new Map<string, Buffer>();
+let heldBytes = 0;
+let heldDropped = 0;
+
+function holdText(key: string, text: string): void {
+  releaseHeld(key);
+  const buf = Buffer.from(text, "utf8");
+  held.set(key, buf);
+  heldBytes += buf.byteLength + HELD_ENTRY_OVERHEAD;
+  while (heldBytes > MAX_HELD_BYTES && held.size > 0) {
+    const [oldest, bytes] = held.entries().next().value!;
+    heldDropped += 1;
+    logger.warn("board: DROPPED held unsaved edits: over the held bound", {
+      key: oldest,
+      bytes: bytes.byteLength,
+      dropped: heldDropped,
+    });
+    releaseHeld(oldest);
+  }
+}
+
+function releaseHeld(key: string): void {
+  const buf = held.get(key);
+  if (buf == null) return;
+  heldBytes -= buf.byteLength + HELD_ENTRY_OVERHEAD;
+  held.delete(key);
+}
+
+// For tests and telemetry.
+export function heldUnsavedStats() {
+  return { entries: held.size, bytes: heldBytes, dropped: heldDropped };
+}
 
 export function rememberRefusal(
   key: string,
@@ -810,21 +850,12 @@ export function rememberRefusal(
     at: Date.now(),
     message: status.message,
     unsaved: status.unsaved,
-    ...(status.unsaved.in === "memory" && text != null ? { text } : {}),
   });
-  while (refusals.size > MAX_REFUSALS) {
-    refusals.delete(refusals.keys().next().value!);
-  }
-  let held = 0;
-  for (const r of [...refusals.values()].reverse()) {
-    if (r.text == null) continue;
-    held += r.text.length;
-    if (held > MAX_HELD_BYTES) {
-      logger.warn("board: dropping held unsaved edits over the bound", {
-        bytes: r.text.length,
-      });
-      delete r.text;
-    }
+  if (status.unsaved.in === "memory" && text != null) holdText(key, text);
+  // The messages' count bound never evicts a refusal whose text is held.
+  for (const k of refusals.keys()) {
+    if (refusals.size <= MAX_REFUSALS) break;
+    if (!held.has(k)) refusals.delete(k);
   }
 }
 
@@ -836,13 +867,19 @@ async function saveHeldUnsaved(
   fs: BoardFilesystem,
   path: string,
 ): Promise<void> {
-  const refusal = refusals.get(key);
-  if (refusal?.text == null) return;
+  const buf = held.get(key);
+  if (buf == null) return;
   try {
-    const copy = await fileOf(fs, path).keepCopy!(refusal.text, "unsaved");
-    refusal.unsaved = { in: "copy", path: copy };
-    refusal.message = `${refusal.message} (since saved as ${copy})`;
-    delete refusal.text;
+    const copy = await fileOf(fs, path).keepCopy!(
+      buf.toString("utf8"),
+      "unsaved",
+    );
+    releaseHeld(key);
+    const refusal = refusals.get(key);
+    if (refusal != null) {
+      refusal.unsaved = { in: "copy", path: copy };
+      refusal.message = `${refusal.message} (since saved as ${copy})`;
+    }
   } catch (err) {
     logger.warn("board: still couldn't save held unsaved edits", {
       path,
@@ -851,14 +888,16 @@ async function saveHeldUnsaved(
   }
 }
 
-function lastRefusal(key: string): BoardOpenResult["lastRefusal"] {
+export function lastRefusal(key: string): BoardOpenResult["lastRefusal"] {
   const refusal = refusals.get(key);
   if (refusal == null) return;
-  if (Date.now() - refusal.at > REFUSAL_MEMORY_MS) {
+  const text = held.get(key);
+  // A refusal whose text is still held never expires on time.
+  if (text == null && Date.now() - refusal.at > REFUSAL_MEMORY_MS) {
     refusals.delete(key);
     return;
   }
-  return refusal;
+  return text == null ? refusal : { ...refusal, text: text.toString("utf8") };
 }
 
 export async function saveBoard(opts: BoardRequest): Promise<BoardOpenResult> {
