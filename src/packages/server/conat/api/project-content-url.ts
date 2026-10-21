@@ -48,10 +48,13 @@ import {
 } from "@cocalc/util/project-content-origin";
 import {
   issueProjectAppCapability,
+  normalizeProjectAppPath,
   projectAppHostLabel,
   projectAppKey,
   projectAppRouteFromPath,
 } from "@cocalc/conat/auth/project-app-capability";
+
+export { normalizeProjectAppPath };
 import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
@@ -234,34 +237,6 @@ export async function issueProjectContentUrlLocal({
     url: `https://${hostname}/_c/${token}/files/${filePath}`,
     expires_at,
   };
-}
-
-const MAX_APP_PATH_LENGTH = 4096;
-
-// The path (and query) an app link opens, normalized: it must be in this
-// project's app namespace, with no dot segments, encoded slashes or
-// backslashes; the host re-checks and builds the redirect from it.
-export function normalizeProjectAppPath(
-  project_id: string,
-  path: unknown,
-): string {
-  const raw = `${path ?? ""}`;
-  const q = raw.indexOf("?");
-  const pathname = q === -1 ? raw : raw.slice(0, q);
-  const query = q === -1 ? "" : raw.slice(q);
-  if (
-    raw.length > MAX_APP_PATH_LENGTH ||
-    !pathname.startsWith(`/${project_id}/`) ||
-    pathname.includes("//") ||
-    /[\\\0#]/.test(raw) ||
-    /%2f|%5c|%00/i.test(pathname) ||
-    pathname.split("/").some((segment) => segment === "." || segment === "..") ||
-    pathname.startsWith(`/${project_id}/files/`) ||
-    pathname === `/${project_id}/upload`
-  ) {
-    throw new Error("invalid app path");
-  }
-  return `${pathname}${query}`;
 }
 
 // A link that opens a project's web server or app on its own app origin

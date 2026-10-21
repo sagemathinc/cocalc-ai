@@ -571,3 +571,49 @@ describe("content hostname upgrade guard", () => {
     expect(upgrades).toEqual(["host-1.example.org"]);
   });
 });
+
+describe("app hostname upgrades", () => {
+  it("lets through only upgrades the app origin authorizes", async () => {
+    const appHost = `ap8000-${projectA.replace(/-/g, "")}.h-${hostId.replace(/-/g, "")}.${domain}`;
+    const own = createServer();
+    const upgrades: string[] = [];
+    let allow = true;
+    let authorizer: ((req: any) => Promise<boolean>) | undefined;
+    installContentHostnameUpgradeGuard(own, domain, () => authorizer);
+    own.on("upgrade", (req, socket) => {
+      upgrades.push(`${req.headers.host}`);
+      socket.end(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+      );
+    });
+    await new Promise<void>((resolve) => own.listen(0, "127.0.0.1", resolve));
+    const ownPort = (own.address() as AddressInfo).port;
+    const tryUpgrade = (host: string) =>
+      new Promise<string>((resolve) => {
+        const req = request({
+          host: "127.0.0.1",
+          port: ownPort,
+          path: `/${projectA}/port/8000/ws`,
+          headers: { host, connection: "Upgrade", upgrade: "websocket" },
+        });
+        req.on("upgrade", () => resolve("upgraded"));
+        req.on("error", () => resolve("closed"));
+        req.on("close", () => resolve("closed"));
+        req.end();
+      });
+    try {
+      // Not ready yet: refused.
+      expect(await tryUpgrade(appHost)).toBe("closed");
+      authorizer = async () => allow;
+      expect(await tryUpgrade(appHost)).toBe("upgraded");
+      allow = false;
+      expect(await tryUpgrade(appHost)).toBe("closed");
+      allow = true;
+      // File hostnames never upgrade.
+      expect(await tryUpgrade(hostA)).toBe("closed");
+      expect(upgrades).toEqual([appHost]);
+    } finally {
+      await new Promise<void>((resolve) => own.close(() => resolve()));
+    }
+  });
+});

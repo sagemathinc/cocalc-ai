@@ -52,7 +52,9 @@ import {
   clearProjectHostHttpProxyAuthCaches,
   createProjectHostHttpProxyAuth,
   createProjectHostHttpSessionToken,
+  getProjectHostHttpAuthContext,
   resolveProjectHostHttpSessionFromCookieHeader,
+  setAppOriginRequestAuth,
   verifyProjectHostHttpSessionToken,
 } from "./http-proxy-auth";
 import { EventEmitter } from "node:events";
@@ -1296,5 +1298,89 @@ describe("project-host HTTP session cookie", () => {
       auth.authorizeHttpRequest(req, res, project_id),
     ).rejects.toThrow("permission denied");
     expect(mockCallHub).not.toHaveBeenCalled();
+  });
+});
+
+describe("app origin requests", () => {
+  const project_id = "00000000-1000-4000-8000-000000000000";
+  const account_id = "00000000-1000-4000-8000-000000000001";
+  let row: any;
+  beforeEach(() => {
+    clearProjectHostHttpProxyAuthCaches();
+    row = { users: { [account_id]: { group: "collaborator" } }, content_epoch: 0 };
+    getRowMock.mockReset();
+    getRowMock.mockImplementation(() => row);
+    getAccountRevokedBeforeMsMock.mockReset();
+    getAccountRevokedBeforeMsMock.mockReturnValue(undefined);
+    mockVerifyProjectHostAuthToken.mockReset();
+  });
+
+  const appRequest = (url = `/${project_id}/port/8000/`) => {
+    const req = {
+      url,
+      headers: { authorization: "Bearer for-the-app" },
+    } as any;
+    const now = Math.floor(Date.now() / 1000);
+    setAppOriginRequestAuth(req, {
+      account_id,
+      issued_at_s: now,
+      exp_s: now + 3600,
+      project_id,
+      epoch: 0,
+    });
+    return req;
+  };
+
+  it("uses only the app session: no host token, cookie or Authorization", async () => {
+    const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+    const req = appRequest();
+    const res = createResponse();
+    await auth.authorizeHttpRequest(req, res, project_id);
+    expect(mockVerifyProjectHostAuthToken).not.toHaveBeenCalled();
+    expect(res.setHeader).not.toHaveBeenCalled();
+    // Passed through to the user's server.
+    expect(req.headers.authorization).toBe("Bearer for-the-app");
+    expect(getProjectHostHttpAuthContext(req)).toMatchObject({
+      account_id,
+      actor: "account",
+      revalidate_collaborator: true,
+      app_epoch: 0,
+    });
+  });
+
+  it("refuses an app session for another project", async () => {
+    const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+    const other = "00000000-1000-4000-8000-000000000009";
+    await expect(
+      auth.authorizeHttpRequest(appRequest(`/${other}/port/8000/`), createResponse(), other),
+    ).rejects.toThrow("permission denied");
+    await expect(
+      auth.authorizeUpgradeRequest(appRequest(`/${other}/port/8000/`), other),
+    ).rejects.toThrow("permission denied");
+  });
+
+  it("sweeps app websockets when the project's links are revoked", async () => {
+    jest.useFakeTimers();
+    try {
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      const stop = auth.startUpgradeRevocationKickLoop();
+      const sockets: any[] = [];
+      for (let i = 0; i < 2; i++) {
+        const req = appRequest();
+        await auth.authorizeUpgradeRequest(req, project_id);
+        const socket = Object.assign(new EventEmitter(), { destroy: jest.fn(), destroyed: false });
+        auth.trackUpgradedSocket(req, socket as any);
+        sockets.push(socket);
+      }
+      jest.advanceTimersByTime(30_000);
+      expect(sockets[0].destroy).not.toHaveBeenCalled();
+      row = { ...row, content_epoch: 1 };
+      jest.advanceTimersByTime(30_000);
+      expect(sockets[0].destroy).toHaveBeenCalled();
+      expect(sockets[1].destroy).toHaveBeenCalled();
+      stop();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

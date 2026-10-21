@@ -104,6 +104,34 @@ export function projectAppRouteFromPath(
   return;
 }
 
+const MAX_APP_PATH_LENGTH = 4096;
+
+// The path (and query) an app link opens, normalized: it must be in this
+// project's app namespace, with no dot segments, encoded slashes or
+// backslashes; the hub checks it before signing, and the host again before redirecting.
+export function normalizeProjectAppPath(
+  project_id: string,
+  path: unknown,
+): string {
+  const raw = `${path ?? ""}`;
+  const q = raw.indexOf("?");
+  const pathname = q === -1 ? raw : raw.slice(0, q);
+  const query = q === -1 ? "" : raw.slice(q);
+  if (
+    raw.length > MAX_APP_PATH_LENGTH ||
+    !pathname.startsWith(`/${project_id}/`) ||
+    pathname.includes("//") ||
+    /[\\\0#]/.test(raw) ||
+    /%2f|%5c|%00/i.test(pathname) ||
+    pathname.split("/").some((segment) => segment === "." || segment === "..") ||
+    pathname.startsWith(`/${project_id}/files/`) ||
+    pathname === `/${project_id}/upload`
+  ) {
+    throw new Error("invalid app path");
+  }
+  return `${pathname}${query}`;
+}
+
 export function projectAppHostLabel({
   project_id,
   key,
