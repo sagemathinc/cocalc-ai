@@ -746,7 +746,13 @@ export async function restoreHistoryFromBackup({
     if (source == null) return false;
     try {
       await restoreInto(candidate, source);
-      await mergeRestoredHistory({ project_id, source, env, ops });
+      await mergeRestoredHistory({
+        project_id,
+        source,
+        from: candidate,
+        env,
+        ops,
+      });
     } finally {
       await ops.removeTree(source).catch(() => {});
     }
@@ -946,42 +952,44 @@ async function swapInVolume(
   return previous;
 }
 
-// Removes what a restore left of the project's history in its new home: a
-// copy of CoCalc's (never a directory of the project's own), and the old
-// directory.
+// Removes from the project's home the history a restore imported from it:
+// `from` (HISTORY_IN_SNAPSHOTS, only while it is CoCalc's, or the old
+// directory of a backup or snapshot from before the import).  Anything else
+// there, e.g., files of the project's own at the old path in a newer backup,
+// is kept.
 async function cleanRestoredHome({
   project_id,
+  from,
   env,
   ops,
 }: {
   project_id: string;
+  from?: string;
   env: NodeJS.ProcessEnv;
   ops: PersistVolumeOps;
 }): Promise<void> {
   const { legacy } = projectPersistTemplates(env);
-  if (legacy == null) return;
+  if (legacy == null || from == null) return;
   const home = legacy.home.split("[project_id]").join(project_id);
-  // removeFromHome never follows a symlink
-  const marker = await lstat(
-    join(home, HISTORY_IN_SNAPSHOTS, READY_MARKER),
-  ).catch(() => undefined);
-  const reserved = await lstat(join(home, HISTORY_IN_SNAPSHOTS)).catch(
-    () => undefined,
-  );
-  for (const relative of [
-    ...(reserved?.isDirectory() && marker?.isFile()
-      ? [HISTORY_IN_SNAPSHOTS]
-      : []),
-    legacy.relative,
-  ]) {
-    await ops.removeFromHome(home, relative).catch((err) => {
-      logger.warn("unable to remove restored history from the home", {
-        project_id,
-        relative,
-        err: `${err}`,
-      });
-    });
+  if (from === HISTORY_IN_SNAPSHOTS) {
+    // removeFromHome never follows a symlink
+    const marker = await lstat(
+      join(home, HISTORY_IN_SNAPSHOTS, READY_MARKER),
+    ).catch(() => undefined);
+    const reserved = await lstat(join(home, HISTORY_IN_SNAPSHOTS)).catch(
+      () => undefined,
+    );
+    if (!reserved?.isDirectory() || !marker?.isFile()) return;
+  } else if (from !== legacy.relative) {
+    return;
   }
+  await ops.removeFromHome(home, from).catch((err) => {
+    logger.warn("unable to remove restored history from the home", {
+      project_id,
+      relative: from,
+      err: `${err}`,
+    });
+  });
 }
 
 // Replaces the project's home with `replacement` (by `swap`) and its history
@@ -1052,7 +1060,7 @@ export async function replaceProjectHome<T>({
     });
   }
   if (staged != null) {
-    await cleanRestoredHome({ project_id, env, ops });
+    await cleanRestoredHome({ project_id, from: staged.from, env, ops });
   }
   return result;
 }
@@ -1065,11 +1073,14 @@ export async function replaceProjectHome<T>({
 export async function mergeRestoredHistory({
   project_id,
   source,
+  from,
   env = process.env,
   ops = btrfsOps,
 }: {
   project_id: string;
   source: string;
+  // where in the backup the history came from, restored into the home too
+  from?: string;
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<void> {
@@ -1128,7 +1139,7 @@ export async function mergeRestoredHistory({
   if (previous != null) {
     await ops.removeTree(previous).catch(() => {});
   }
-  await cleanRestoredHome({ project_id, env, ops });
+  await cleanRestoredHome({ project_id, from, env, ops });
 }
 
 // Deletes persist volumes of projects without a home on this host: left by a

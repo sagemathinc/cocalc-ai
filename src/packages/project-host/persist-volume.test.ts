@@ -606,8 +606,13 @@ describe("in the project-host", () => {
     // the project's own files at the old path in that snapshot
     await mkdir(join(snapshotPath, LEGACY), { recursive: true });
     await writeFile(join(snapshotPath, LEGACY, "a.db"), "forged");
+    await writeFile(join(snapshotPath, LEGACY, "note.txt"), "mine");
     await restoreHome(snapshotPath);
     expect(read(join(root, "a.db"))).toBe("live");
+    // which stay the project's files in its restored home
+    expect(read(join(home, LEGACY, "a.db"))).toBe("forged");
+    expect(read(join(home, LEGACY, "note.txt"))).toBe("mine");
+    expect(existsSync(join(home, HISTORY_IN_SNAPSHOTS))).toBe(false);
   });
 
   it("never takes a .cocalc-persist of the project's own for its history, nor deletes it", async () => {
@@ -902,6 +907,52 @@ describe("in the project-host", () => {
     ).toBe(true);
     expect(backup.restored).toEqual([HISTORY_IN_SNAPSHOTS]);
     expect(read(join(root, "a.db"))).toBe("backup");
+  });
+
+  it("after restoring a newer backup over the home, keeps the project's own files at the old path", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+      [`${LEGACY}/note.txt`]: "mine",
+    });
+    // what the restore of the whole backup put in the home
+    await mkdir(join(home, HISTORY_IN_SNAPSHOTS), { recursive: true });
+    await writeFile(join(home, HISTORY_IN_SNAPSHOTS, "a.db"), "backup");
+    await writeFile(join(home, HISTORY_IN_SNAPSHOTS, READY_MARKER), "{}");
+    await mkdir(join(home, LEGACY), { recursive: true });
+    await writeFile(join(home, LEGACY, "note.txt"), "mine");
+    expect(
+      await restoreHistoryFromBackup({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        ...backup,
+        env,
+        ops: fakeOps(),
+      }),
+    ).toBe(true);
+    expect(read(join(root, "a.db"))).toBe("backup");
+    expect(existsSync(join(home, HISTORY_IN_SNAPSHOTS))).toBe(false);
+    expect(read(join(home, LEGACY, "note.txt"))).toBe("mine");
+  });
+
+  it("after restoring an older backup over the home, removes its history from the old path", async () => {
+    await readyVolume();
+    const backup = backupWith({ [`${LEGACY}/a.db`]: "old backup" });
+    await mkdir(join(home, LEGACY), { recursive: true });
+    await writeFile(join(home, LEGACY, "a.db"), "old backup");
+    expect(
+      await restoreHistoryFromBackup({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        ...backup,
+        env,
+        ops: fakeOps(),
+      }),
+    ).toBe(true);
+    expect(backup.restored).toEqual([LEGACY]);
+    expect(read(join(root, "a.db"))).toBe("old backup");
+    expect(existsSync(join(home, LEGACY))).toBe(false);
   });
 
   it("restores no partial history from a backup", async () => {
