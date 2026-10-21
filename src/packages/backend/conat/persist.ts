@@ -21,7 +21,10 @@ import { syncFiles } from "@cocalc/backend/data";
 import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-containing-directory-exists";
 import { statSync, copyFileSync } from "node:fs";
 import type { PersistMaintenanceHooks } from "@cocalc/conat/persist/maintenance/types";
-import { assertSafePersistDatabasePath } from "./persist-path-safety";
+import {
+  assertSafePersistDatabasePath,
+  projectRootForPersistPath,
+} from "./persist-path-safety";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
 
@@ -35,6 +38,8 @@ initContext({
   decompressAsync: (data: Buffer, maxOutputLength?: number) =>
     zstdDecompressAsync(data, maxOutputLength ? { maxOutputLength } : {}),
   assertSafeDatabasePath: (path: string) => assertSafePersistDatabasePath(path),
+  isProjectOwnedDatabasePath: (path: string) =>
+    projectRootForPersistPath(path) != null,
   syncFiles,
   ensureContainingDirectoryExists,
   statSync,
