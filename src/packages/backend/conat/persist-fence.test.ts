@@ -66,11 +66,21 @@ describe("fileFenceStore", () => {
     expect(store.load().map((r) => r.project_id)).toEqual([Q]);
   });
 
-  it("drops records it can't read", () => {
-    writeFileSync(join(dir, `${P}.json`), "{not json");
+  it("fails, keeping it, on a record it can't read", () => {
     writeFileSync(join(dir, "notes.txt"), "x");
     expect(fileFenceStore(dir).load()).toEqual([]);
-    expect(readdirSync(dir).sort()).toEqual(["notes.txt"]);
+    writeFileSync(join(dir, `${P}.json`), "{not json");
+    expect(() => fileFenceStore(dir).load()).toThrow("not valid JSON");
+    writeFileSync(join(dir, `${P}.json`), JSON.stringify({ project_id: P }));
+    expect(() => fileFenceStore(dir).load()).toThrow("malformed");
+    expect(readdirSync(dir).sort()).toEqual([`${P}.json`, "notes.txt"]);
+  });
+
+  it("fails on replacement instances it can't read, rather than forget them", () => {
+    writeFileSync(join(dir, "instances.json"), "{oops");
+    const store = fileFenceStore(dir);
+    expect(() => store.loadInstances()).toThrow("not valid JSON");
+    expect(() => store.saveInstance(P, "i")).toThrow("not valid JSON");
   });
 });
 
@@ -81,6 +91,11 @@ describe("the fence capability file", () => {
     expect(fenceCapableServerRunning(dir)).toBe(true);
     removeFenceCapability(dir);
     expect(fenceCapableServerRunning(dir)).toBe(false);
+  });
+
+  it("a file that can't be read counts as running", () => {
+    writeFileSync(join(dir, "capability.json"), "{oops");
+    expect(fenceCapableServerRunning(dir)).toBe(true);
   });
 
   it("a file left by a process that is gone does not count", () => {
@@ -113,5 +128,56 @@ describe("replacement instances", () => {
     expect(() => fileFenceStore(dir).saveInstance("../x", "i")).toThrow(
       "invalid project id",
     );
+  });
+});
+
+describe("what a holder started", () => {
+  const { spawn } = require("node:child_process");
+
+  it("keeps the fence while a process of the holder's group started since runs", async () => {
+    const holder = currentFenceHolder();
+    expect(holder.pgid).toEqual(expect.any(Number));
+    // a holder that is gone, in this process's group
+    const gone = { pid: 2 ** 22 + 17, start: "", pgid: holder.pgid };
+    // (processes that started just before a fence count, to be safe)
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const since = Date.now();
+    expect(isFenceHolderAlive(gone, since)).toBe(false);
+    // what it started to change the files, which outlives it
+    const child = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(isFenceHolderAlive(gone, since)).toBe(true);
+      // processes from before the fence don't count
+      expect(isFenceHolderAlive(gone, Date.now() + 10_000)).toBe(false);
+    } finally {
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.once("exit", resolve));
+    }
+    expect(isFenceHolderAlive(gone, since)).toBe(false);
+  });
+});
+
+describe("when /proc can't be read", () => {
+  it("only what is known to be gone is gone", () => {
+    const fs = require("node:fs");
+    const readFileSync = fs.readFileSync;
+    const spy = jest
+      .spyOn(fs, "readFileSync")
+      .mockImplementation((path: any, ...rest: any[]) => {
+        if (`${path}`.startsWith("/proc/")) {
+          throw Object.assign(new Error("EIO"), { code: "EIO" });
+        }
+        return readFileSync(path, ...rest);
+      });
+    try {
+      // normally not the holder (another start time), but it can't be told
+      expect(isFenceHolderAlive({ pid: process.pid, start: "1" })).toBe(true);
+      // no process has that pid at all
+      expect(isFenceHolderAlive({ pid: 2 ** 22 + 17, start: "1" })).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(isFenceHolderAlive({ pid: process.pid, start: "1" })).toBe(false);
   });
 });

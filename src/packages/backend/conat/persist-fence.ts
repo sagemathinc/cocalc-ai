@@ -38,36 +38,106 @@ const INSTANCES_FILE = "instances.json";
 // away and then resumes the project's streams.
 const INSTANCE_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 
-// The start time of process pid (field 22 of /proc/<pid>/stat), if readable.
-function processStartTime(pid: number): string | undefined {
+// Linux reports process start times in these clock ticks (USER_HZ), 100 on
+// every architecture it runs on.
+const CLOCK_TICKS_PER_SECOND = 100;
+
+// The fields of /proc/<pid>/stat after the command name (field 2, which may
+// contain spaces): [2] is the process group, [19] the start time.  "gone" if
+// there is no such process; "unknown" if it can't be told.
+type Stat = string[] | "gone" | "unknown";
+
+function processStat(pid: number | "self"): Stat {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    // the command name (field 2) may contain spaces; fields after it don't
-    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] || undefined;
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return fields.length > 19 ? fields : "unknown";
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ESRCH") return "unknown";
+    // without /proc, nothing is known from it
+    return Array.isArray(processStat("self")) ? "gone" : "unknown";
+  }
+}
+
+export function currentFenceHolder(): PersistFenceHolder {
+  const stat = processStat("self");
+  const pgid = Array.isArray(stat) ? Number(stat[2]) : NaN;
+  return {
+    pid: process.pid,
+    start: Array.isArray(stat) ? stat[19] : "",
+    ...(Number.isSafeInteger(pgid) && pgid > 0 ? { pgid } : {}),
+  };
+}
+
+// When this host booted (ms), from how long it has been up.
+function bootTimeMs(): number | undefined {
+  try {
+    const uptime = parseFloat(readFileSync("/proc/uptime", "utf8"));
+    return Number.isFinite(uptime) ? Date.now() - uptime * 1000 : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function currentFenceHolder(): PersistFenceHolder {
-  return { pid: process.pid, start: processStartTime(process.pid) ?? "" };
+// Whether some process of group pgid that started at since (ms) or later
+// runs.  It errs toward yes: a second before since counts, and so does
+// anything it can't tell.
+export function processGroupRunsSince(pgid: number, since: number): boolean {
+  const boot = bootTimeMs();
+  if (boot == null) return true;
+  let names: string[];
+  try {
+    names = readdirSync("/proc");
+  } catch {
+    return true;
+  }
+  for (const name of names) {
+    if (!/^[0-9]+$/.test(name)) continue;
+    const stat = processStat(Number(name));
+    if (stat === "gone") continue;
+    if (stat === "unknown") return true;
+    if (Number(stat[2]) !== pgid) continue;
+    const started = boot + (Number(stat[19]) / CLOCK_TICKS_PER_SECOND) * 1000;
+    if (!(started < since - 1000)) return true;
+  }
+  return false;
 }
 
-// Whether holder still runs: the same process, not another one that got its
-// pid.
-export function isFenceHolderAlive({
-  pid,
-  start,
-}: PersistFenceHolder): boolean {
+// Whether holder, or anything it started to change the files since the
+// fence was taken (at since), may still run: the holder process itself (not
+// another one that got its pid), or a process of its group that started
+// since then (e.g., rustic, or sudo waiting for a helper, which can outlive
+// the holder).  Older processes of the group (e.g., servers it started
+// before) don't count.  Only what is known to be gone is gone: anything that
+// can't be told counts as running.
+export function isFenceHolderAlive(
+  holder: PersistFenceHolder,
+  since: number = Date.now(),
+): boolean {
+  if (isProcessAlive(holder)) return true;
+  const { pgid } = holder;
+  return (
+    pgid != null &&
+    Number.isSafeInteger(pgid) &&
+    pgid > 1 &&
+    processGroupRunsSince(pgid, since)
+  );
+}
+
+// Whether the holder process itself may still run: the same process, not
+// another one that got its pid.
+function isProcessAlive({ pid, start }: PersistFenceHolder): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  const current = processStartTime(pid);
-  if (current != null) return current === start;
-  // no /proc: only whether some process has that pid
+  const stat = processStat(pid);
+  if (Array.isArray(stat)) return start === "" || stat[19] === start;
+  if (stat === "gone") return false;
+  // /proc can't tell: only whether some process has that pid
   try {
     process.kill(pid, 0);
-    return start === "";
+    return true;
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM" && start === "";
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
@@ -77,11 +147,21 @@ function writeJson(path: string, value: unknown): void {
   renameSync(tmp, path);
 }
 
+// undefined if there is no such file; anything else that keeps it from being
+// read is an error: these files hold fences, and losing one silently would
+// let clients in while files may be changing.
 function readJson(path: string): any {
+  let text: string;
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return undefined;
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(`persist fence store: ${path} is not valid JSON: ${err}`);
   }
 }
 
@@ -97,16 +177,23 @@ export function fileFenceStore(
     [project_id: string]: { instance: string; time: number };
   } => {
     const data = readJson(instancesPath);
+    if (data != null && (typeof data != "object" || Array.isArray(data))) {
+      throw new Error(`persist fence store: ${instancesPath} is malformed`);
+    }
     const instances = {};
     for (const [project_id, value] of Object.entries(data ?? {})) {
       const { instance, time } = (value ?? {}) as any;
       if (
-        isValidUUID(project_id) &&
-        typeof instance == "string" &&
-        instance &&
-        Number.isFinite(time) &&
-        now() - time < INSTANCE_RETENTION_MS
+        !isValidUUID(project_id) ||
+        typeof instance != "string" ||
+        !instance ||
+        !Number.isFinite(time)
       ) {
+        throw new Error(
+          `persist fence store: ${instancesPath} has a malformed entry for ${project_id}`,
+        );
+      }
+      if (now() - time < INSTANCE_RETENTION_MS) {
         instances[project_id] = { instance, time };
       }
     }
@@ -126,21 +213,30 @@ export function fileFenceStore(
         const project_id = name.match(/^(.+)\.json$/)?.[1];
         if (project_id == null || !isValidUUID(project_id)) continue;
         const record = readJson(join(dir, name));
+        if (record == null) continue;
         if (
-          record?.project_id === project_id &&
-          typeof record.token == "string" &&
-          Number.isSafeInteger(record.holder?.pid) &&
-          typeof record.holder?.start == "string"
+          record.project_id !== project_id ||
+          typeof record.token != "string" ||
+          !Number.isSafeInteger(record.holder?.pid) ||
+          typeof record.holder?.start != "string" ||
+          !Number.isFinite(record.since)
         ) {
-          records.push({
-            project_id,
-            token: record.token,
-            holder: { pid: record.holder.pid, start: record.holder.start },
-            since: Number(record.since) || Date.now(),
-          });
-        } else {
-          rmSync(join(dir, name), { force: true });
+          // kept for an operator: it is a fence that can't be honored
+          throw new Error(
+            `persist fence store: ${join(dir, name)} is malformed`,
+          );
         }
+        const pgid = record.holder.pgid;
+        records.push({
+          project_id,
+          token: record.token,
+          holder: {
+            pid: record.holder.pid,
+            start: record.holder.start,
+            ...(Number.isSafeInteger(pgid) ? { pgid } : {}),
+          },
+          since: record.since,
+        });
       }
       return records;
     },
@@ -185,20 +281,29 @@ export function writeFenceCapability(dir: string): void {
 
 export function removeFenceCapability(dir: string): void {
   const path = join(dir, CAPABILITY_FILE);
-  const holder = readJson(path)?.holder;
-  if (holder?.pid === process.pid) {
-    rmSync(path, { force: true });
+  try {
+    if (readJson(path)?.holder?.pid === process.pid) {
+      rmSync(path, { force: true });
+    }
+  } catch {
+    // stopping anyway; a stale file names a process that is gone
   }
 }
 
 // Whether a persist server with a fence service runs on this host: its
-// capability file names a process that still runs.
+// capability file names a process that still runs.  A file that can't be
+// read counts as yes (then a restore waits rather than go ahead unfenced).
 export function fenceCapableServerRunning(dir: string): boolean {
-  const holder = readJson(join(dir, CAPABILITY_FILE))?.holder;
+  let holder;
+  try {
+    holder = readJson(join(dir, CAPABILITY_FILE))?.holder;
+  } catch {
+    return true;
+  }
   return (
     holder != null &&
     Number.isSafeInteger(holder.pid) &&
     typeof holder.start == "string" &&
-    isFenceHolderAlive(holder)
+    isProcessAlive(holder)
   );
 }

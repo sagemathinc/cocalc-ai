@@ -16,7 +16,7 @@ import {
   waitForProjectOpens,
 } from "./project-fence";
 import { PersistStreamReleaseQueue } from "./release-queue";
-import { assertCurrentInstance } from "./server";
+import { assertCurrentInstance, isWriteCommand } from "./server";
 
 const P = "11111111-1111-4111-8111-111111111111";
 const Q = "22222222-2222-4222-8222-222222222222";
@@ -144,9 +144,54 @@ describe("assertCurrentInstance", () => {
     }
   });
 
-  it("allows the current instance, a client that has not read, and a client from before instances", () => {
+  it("allows the current instance, and a client that never had an answer", () => {
     expect(check("R", "R")).not.toThrow();
     expect(check("*", "R")).not.toThrow();
-    expect(check(undefined, "R")).not.toThrow();
+  });
+
+  it("refuses a client from before instances once the stream was replaced", () => {
+    expect(check(undefined, "R")).toThrow("history was replaced");
+    expect(check(undefined, undefined)).not.toThrow();
+  });
+});
+
+describe("isWriteCommand", () => {
+  it("is every command that changes a stream", () => {
+    for (const cmd of [
+      "set",
+      "setMany",
+      "delete",
+      "setMetadata",
+      "patchMetadata",
+      "setCheckpoint",
+      "deleteCheckpoint",
+      "resetHistory",
+      "purgeArchivedHistory",
+      "sqlite",
+    ]) {
+      expect(isWriteCommand({ cmd })).toBe(true);
+    }
+    expect(isWriteCommand({ cmd: "config", config: { max_msgs: 5 } })).toBe(
+      true,
+    );
+  });
+
+  it("is not a command that only reads", () => {
+    for (const cmd of [
+      "get",
+      "getAll",
+      "keys",
+      "metadata",
+      "checkpoints",
+      "inventory",
+      "historyInclusion",
+      "historyArchives",
+      "serverId",
+      "changefeed",
+    ]) {
+      expect(isWriteCommand({ cmd })).toBe(false);
+    }
+    expect(isWriteCommand({ cmd: "config" })).toBe(false);
+    expect(isWriteCommand({ cmd: "config", config: {} })).toBe(false);
   });
 });

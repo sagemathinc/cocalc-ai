@@ -381,3 +381,178 @@ describe("a dead holder's fence stays held if its new instance can't be saved", 
     }
   });
 });
+
+describe("nothing based on the replaced history reaches the restored one", () => {
+  const project_id = uuid();
+  let service: { close: () => void };
+  const holder = currentFenceHolder();
+  const dir = () => join(syncFiles.local, "projects", project_id);
+  const databases = (d: string): string[] =>
+    readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory()
+        ? databases(join(d, e.name))
+        : e.name.endsWith(".db")
+          ? [join(d, e.name)]
+          : [],
+    );
+  const save = async () => {
+    const saved: string[] = [];
+    await withPersistFence(
+      { client: connect(), project_id, holder, replaces: false },
+      async () => {
+        for (const path of databases(dir())) {
+          copyFileSync(path, `${path}.saved`);
+          saved.push(path);
+        }
+      },
+    );
+    return saved;
+  };
+  const putBack = (saved: string[]) => {
+    for (const path of saved) {
+      rmSync(`${path}-wal`, { force: true });
+      rmSync(`${path}-shm`, { force: true });
+      copyFileSync(`${path}.saved`, path);
+    }
+  };
+
+  beforeAll(async () => {
+    service = await initPersistFenceService({
+      client: connect(),
+      holderAlive: isFenceHolderAlive,
+    });
+  });
+  afterAll(() => service?.close());
+
+  it("a key-value store drops what it had not saved", async () => {
+    const kv = await connect().sync.dkv({ project_id, name: "fence-kv" });
+    kv.set("x", "baseline");
+    await kv.save();
+    const saved = await save();
+    let replaced: any = undefined;
+    kv.on("replaced", (x) => (replaced = x));
+    await withPersistFence(
+      { client: connect(), project_id, holder },
+      async () => {
+        kv.set("x", "stale during restore");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        putBack(saved);
+      },
+    );
+    await wait({ until: () => replaced != null });
+    expect(replaced.dropped).toEqual({ x: "stale during restore" });
+    // give a stale write every chance to land
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const fresh = await connect().sync.dkv({ project_id, name: "fence-kv" });
+    expect(fresh.get("x")).toBe("baseline");
+    // a change made after the restore is saved
+    kv.set("x", "after");
+    await kv.save();
+    const later = await connect().sync.dkv({ project_id, name: "fence-kv" });
+    expect(later.get("x")).toBe("after");
+    kv.close();
+    fresh.close();
+    later.close();
+  });
+
+  it("a client that only read single messages learns the instance, and is refused", async () => {
+    const persist = stream({
+      client: connect(),
+      user: { hub_id: "x" },
+      storage: { path: `projects/${project_id}/point` },
+    });
+    const { seq } = await persist.set({ messageData: messageData("before") });
+    expect((await persist.get({ seq }))?.data).toBe("before");
+    // the answers told it the instance
+    expect(persist.getInstance()).not.toBe(undefined);
+    await withPersistFence(
+      { client: connect(), project_id, holder },
+      async () => {},
+    );
+    await wait({ until: () => persist.socket?.state == "ready" });
+    await expect(
+      persist.set({ messageData: messageData("stale") }),
+    ).rejects.toThrow("history was replaced");
+    // and a missing message is still "not found"
+    expect(await persist.get({ seq: 1000 })).toBe(undefined);
+    persist.close();
+  });
+
+  it("an AKV that read a key is refused after a replacement", async () => {
+    const kv = connect().sync.akv({ project_id, name: "fence-akv" });
+    await kv.set("x", "before");
+    expect(await kv.get("x")).toBe("before");
+    await withPersistFence(
+      { client: connect(), project_id, holder },
+      async () => {},
+    );
+    await expect(
+      (async () => {
+        for (let i = 0; i < 50; i++) {
+          try {
+            await kv.set("x", "stale");
+            return;
+          } catch (err) {
+            if (`${err}`.includes("history was replaced")) throw err;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        }
+      })(),
+    ).rejects.toThrow("history was replaced");
+  });
+
+  it("a client from before instances is refused once the stream was replaced", async () => {
+    // a project never replaced before: such a client works until then
+    const other = uuid();
+    const persist = stream({
+      client: connect(),
+      user: { hub_id: "x" },
+      storage: { path: `projects/${other}/old` },
+    });
+    // sends no persist_instance, as clients from before this did
+    (persist as any).instanceHeader = () => undefined;
+    await persist.set({ messageData: messageData("before") });
+    await withPersistFence(
+      { client: connect(), project_id: other, holder },
+      async () => {},
+    );
+    await wait({ until: () => persist.socket?.state == "ready" });
+    await expect(
+      persist.set({ messageData: messageData("stale") }),
+    ).rejects.toThrow("history was replaced");
+    persist.close();
+  });
+
+  it("a reset of the history from before the replacement is refused", async () => {
+    const persist = stream({
+      client: connect(),
+      user: { hub_id: "x" },
+      storage: { path: `projects/${project_id}/reset` },
+    });
+    await persist.set({ messageData: messageData("a") });
+    await persist.getAll({});
+    const replace = async () => {
+      await withPersistFence(
+        { client: connect(), project_id, holder },
+        async () => {},
+      );
+      await wait({ until: () => persist.socket?.state == "ready" });
+    };
+    await replace();
+    await expect(
+      persist.resetHistory({ epoch: 1, seed: [] } as any),
+    ).rejects.toThrow("history was replaced");
+    // (the refusal told it the new instance)
+    await replace();
+    await expect(persist.purgeArchivedHistory()).rejects.toThrow(
+      "history was replaced",
+    );
+    await replace();
+    await expect(persist.config({ config: { max_msgs: 5 } })).rejects.toThrow(
+      "history was replaced",
+    );
+    // reading the configuration is not a change
+    await persist.config();
+    persist.close();
+  });
+});

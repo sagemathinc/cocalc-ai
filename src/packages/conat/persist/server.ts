@@ -146,7 +146,7 @@ export async function releaseQueuedStreams(
 
 // Commands that change a stream.  Once the stream's files were replaced (a
 // fence, fence.ts), they are refused from a client that has not seen the
-// replacement's instance: whatever it would write was based on the replaced
+// replacement's instance: whatever it would do was based on the replaced
 // history.
 const WRITE_COMMANDS = new Set([
   "set",
@@ -156,7 +156,24 @@ const WRITE_COMMANDS = new Set([
   "patchMetadata",
   "setCheckpoint",
   "deleteCheckpoint",
+  "resetHistory",
+  "purgeArchivedHistory",
+  "sqlite",
 ]);
+
+export function isWriteCommand(request: {
+  cmd?: unknown;
+  config?: unknown;
+}): boolean {
+  if (WRITE_COMMANDS.has(`${request?.cmd}`)) return true;
+  // config reads the configuration, and changes it when given one
+  return (
+    request?.cmd == "config" &&
+    request.config != null &&
+    typeof request.config == "object" &&
+    Object.keys(request.config).length > 0
+  );
+}
 
 class StaleInstanceError extends ConatError {
   constructor(readonly instance: string) {
@@ -168,11 +185,11 @@ class StaleInstanceError extends ConatError {
 }
 
 // A client says which instance it last saw (persist_instance: "" for none,
-// "*" if it has not read the stream, so it has nothing from the replaced
-// history).  A client from before persist_instance says nothing and is not
-// refused: it would write whatever it had once it saw the new instance anyway
-// (only newer clients keep that from the new history, see DStream), and
-// refusing would shut out the ones that only write.
+// "*" if it never had an answer about the stream, so it has nothing from the
+// replaced history; every answer tells it the instance).  A client from
+// before persist_instance says nothing: it can't be told that the history was
+// replaced, and would write what it had into the new history, so it is
+// refused (until it is reloaded).
 export function assertCurrentInstance({
   replacedInstance,
   claimed,
@@ -180,10 +197,22 @@ export function assertCurrentInstance({
   replacedInstance?: string;
   claimed?: unknown;
 }): void {
-  if (replacedInstance == null || typeof claimed != "string") return;
-  if (claimed != "*" && claimed !== replacedInstance) {
+  if (replacedInstance == null) return;
+  if (claimed !== "*" && claimed !== replacedInstance) {
     throw new StaleInstanceError(replacedInstance);
   }
+}
+
+// What persist_instance to answer with: the instance of a disk-backed stream
+// ("" for none), to a client that says which one it saw.
+function instanceToReport(
+  stream: PersistentStream,
+  request: { persist_instance?: unknown },
+): string | undefined {
+  if (request?.persist_instance === undefined || stream.instance != null) {
+    return undefined;
+  }
+  return stream.replacedInstance ?? "";
 }
 
 export function classifyPersistStorageErrorCode(
@@ -462,6 +491,9 @@ export function server({
 
     socket.on("request", async (mesg) => {
       const request = mesg.headers;
+      let respondSync = (data: any, opts?: any): void => {
+        mesg.respondSync(data, opts);
+      };
       // log("got request", request);
 
       let resetSlot: { key: string; holder: object } | undefined;
@@ -516,15 +548,30 @@ export function server({
         if (stream == null) {
           throw Error("bug");
         }
+        const answering = stream;
+        // A client that says which instance it saw is told which one the
+        // stream is, with every answer (disk-backed streams only).
+        respondSync = (data: any, opts: any = {}): void => {
+          const instance = instanceToReport(answering, request);
+          mesg.respondSync(
+            data,
+            instance == null
+              ? opts
+              : {
+                  ...opts,
+                  headers: { ...opts.headers, persist_instance: instance },
+                },
+          );
+        };
         assertBoardCommandAllowed(boardAccess, request);
-        if (WRITE_COMMANDS.has(request.cmd)) {
+        if (isWriteCommand(request)) {
           assertCurrentInstance({
             replacedInstance: stream.replacedInstance,
             claimed: request.persist_instance,
           });
         }
         if (request.cmd == "set") {
-          mesg.respondSync(
+          respondSync(
             stream.set({
               key: request.key,
               previousSeq: request.previousSeq,
@@ -537,7 +584,7 @@ export function server({
             }),
           );
         } else if (request.cmd == "setMany") {
-          mesg.respondSync(
+          respondSync(
             stream.setMany(
               (mesg.data as SetOptions[]).map(
                 ({
@@ -561,40 +608,40 @@ export function server({
             ),
           );
         } else if (request.cmd == "delete") {
-          mesg.respondSync(stream.delete(request));
+          respondSync(stream.delete(request));
         } else if (request.cmd == "config") {
-          mesg.respondSync(stream.config(request.config));
+          respondSync(stream.config(request.config));
         } else if (request.cmd == "metadata") {
-          mesg.respondSync(stream.getMetadata());
+          respondSync(stream.getMetadata());
         } else if (request.cmd == "setMetadata") {
-          mesg.respondSync(stream.setMetadata(mesg.data));
+          respondSync(stream.setMetadata(mesg.data));
         } else if (request.cmd == "patchMetadata") {
-          mesg.respondSync(stream.patchMetadata(mesg.data));
+          respondSync(stream.patchMetadata(mesg.data));
         } else if (request.cmd == "resetHistory") {
-          mesg.respondSync(stream.resetHistory(mesg.data ?? {}));
+          respondSync(stream.resetHistory(mesg.data ?? {}));
         } else if (request.cmd == "historyInclusion") {
-          mesg.respondSync(stream.historyInclusion(mesg.data ?? {}));
+          respondSync(stream.historyInclusion(mesg.data ?? {}));
         } else if (request.cmd == "historyArchives") {
-          mesg.respondSync(stream.historyArchives());
+          respondSync(stream.historyArchives());
         } else if (request.cmd == "purgeArchivedHistory") {
-          mesg.respondSync(stream.purgeArchivedHistory());
+          respondSync(stream.purgeArchivedHistory());
         } else if (request.cmd == "checkpoints") {
-          mesg.respondSync(stream.getCheckpoints());
+          respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {
-          mesg.respondSync(stream.setCheckpoint(mesg.data));
+          respondSync(stream.setCheckpoint(mesg.data));
         } else if (request.cmd == "deleteCheckpoint") {
           stream.deleteCheckpoint(request.name);
-          mesg.respondSync(null);
+          respondSync(null);
         } else if (request.cmd == "inventory") {
-          mesg.respondSync(stream.inventory());
+          respondSync(stream.inventory());
         } else if (request.cmd == "get") {
           const resp = stream.get({ key: request.key, seq: request.seq });
           //console.log("got resp = ", resp);
           if (resp == null) {
-            mesg.respondSync(null);
+            respondSync(null);
           } else {
             const { raw, encoding, headers, seq, time, key } = resp;
-            mesg.respondSync(null, {
+            respondSync(null, {
               raw,
               encoding,
               headers: { ...headers, seq, time, key },
@@ -602,15 +649,15 @@ export function server({
           }
         } else if (request.cmd == "keys") {
           const resp = stream.keys();
-          mesg.respondSync(resp);
+          respondSync(resp);
         } else if (request.cmd == "sqlite") {
           if (!ENABLE_SQLITE_GENERAL_QUERIES) {
             throw Error("sqlite command not currently supported");
           }
           const resp = stream.sqlite(request.statement, request.params);
-          mesg.respondSync(resp);
+          respondSync(resp);
         } else if (request.cmd == "serverId") {
-          mesg.respondSync(server.id);
+          respondSync(server.id);
         } else if (request.cmd == "getAll") {
           log("getAll", { subject: socket.subject, request });
           if (request.changefeed && !changefeed) {
@@ -655,9 +702,9 @@ export function server({
               messagesThresh,
             });
           }
-          mesg.respondSync("created");
+          respondSync("created");
         } else {
-          mesg.respondSync(null, {
+          respondSync(null, {
             headers: { error: `unknown command ${request.cmd}`, code: 404 },
           });
         }
@@ -675,7 +722,9 @@ export function server({
                   persist_instance: err.instance,
                   error_attrs: { persist_instance: err.instance },
                 }
-              : {}),
+              : stream != null && instanceToReport(stream, request) != null
+                ? { persist_instance: instanceToReport(stream, request) }
+                : {}),
           },
         });
       } finally {

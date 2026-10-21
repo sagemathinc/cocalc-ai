@@ -27,7 +27,8 @@ old files is written to the new ones:
 - a write from a client that saw another instance is refused, with the
   current one (server.ts assertCurrentInstance), so the client starts over;
 - a DStream keeps what it had not saved for its owner instead of writing it
-  (dstream.ts handleInstanceReset), and SyncDoc saves it to a recovery copy.
+  (dstream.ts handleInstanceReset), and SyncDoc saves it to a recovery copy;
+  a DKV drops it (dkv.ts handleInstanceReset).
 
 Ephemeral streams are not affected: they have no files.
 
@@ -35,9 +36,9 @@ Other processes fence a project through the persist fence service below,
 e.g., project-host's main process while the persist server runs as its own
 daemon.  Only the host's system account may use its subject (project-host
 conat-auth.ts).  A fence there fails closed: it is held until its holder, a
-process on this host, releases it or is gone (by pid and start time), never
-for a fixed time, so it cannot lapse while the holder may still be changing
-files.  The service keeps in a store the fences it holds, which a restarted
+process on this host, releases it, or until it and whatever it started since
+the fence was taken (its process group) are gone, never for a fixed time, so
+it cannot lapse while the files may still be changing.  The service keeps in a store the fences it holds, which a restarted
 service holds again before its persist server serves, and each replaced
 project's instance, saved before the fence is released: a client that last
 saw the project before a restart must still learn that it was replaced.
@@ -146,6 +147,9 @@ export interface PersistFenceHolder {
   pid: number;
   // the process's start time, so a reused pid is a different holder
   start: string;
+  // its process group: what it runs to change the files (e.g., rustic, or
+  // sudo waiting for a helper) is in it, and may outlive it
+  pgid?: number;
 }
 
 export interface PersistFenceRecord {
@@ -198,7 +202,8 @@ function isHolder(holder: unknown): holder is PersistFenceHolder {
     Number.isSafeInteger(h.pid) &&
     h.pid > 0 &&
     typeof h.start == "string" &&
-    h.start.length <= 64
+    h.start.length <= 64 &&
+    (h.pgid == null || (Number.isSafeInteger(h.pgid) && h.pgid > 0))
   );
 }
 
@@ -212,7 +217,9 @@ export async function initPersistFenceService({
   holderCheckMs = DEFAULT_HOLDER_CHECK_MS,
 }: {
   client: Client;
-  holderAlive: (holder: PersistFenceHolder) => boolean;
+  // whether holder, or anything it started (since the fence was taken, at
+  // since) to change the files, still runs
+  holderAlive: (holder: PersistFenceHolder, since: number) => boolean;
   store?: PersistFenceStore;
   holderCheckMs?: number;
 }): Promise<{ close: () => void }> {
@@ -279,7 +286,7 @@ export async function initPersistFenceService({
   const checkHolders = () => {
     const now = Date.now();
     for (const record of [...held.values()]) {
-      if (holderAlive(record.holder)) {
+      if (holderAlive(record.holder, record.since)) {
         if (now - record.since > LONG_FENCE_MS) {
           logger.warn("a persist fence has been held for a long time", {
             project_id: record.project_id,
@@ -326,7 +333,7 @@ export async function initPersistFenceService({
     }
     if (request.cmd == "acquire") {
       const { holder } = request;
-      if (!isHolder(holder) || !holderAlive(holder)) {
+      if (!isHolder(holder) || !holderAlive(holder, Date.now())) {
         throw new ConatError("the fence holder is not a running process", {
           code: 400,
         });
