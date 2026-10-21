@@ -44,6 +44,7 @@ patch it is a snapshot of, and no parents.
 */
 
 import { ConatError } from "@cocalc/conat/core/client";
+import { isJsonObjectLines } from "./json-scan";
 
 export const BOARD_HISTORY_LIMITS = {
   // The whole stream, as stored.
@@ -117,18 +118,14 @@ function validId(x: unknown, limits: BoardHistoryLimits): x is string {
 }
 
 // One JSON object (not null, not an array) per non-empty line.
-function validDocumentString(text: string): boolean {
-  for (const line of text.split("\n")) {
-    if (line.length === 0) continue;
-    let x: unknown;
-    try {
-      x = JSON.parse(line);
-    } catch {
-      return false;
-    }
-    if (x == null || typeof x !== "object" || Array.isArray(x)) return false;
-  }
-  return true;
+// A snapshot record's body (the board's document as a string), if value is
+// a snapshot record with one.
+export function snapshotBody(value: unknown): string | undefined {
+  if (value == null || typeof value !== "object") return;
+  const r = value as { is_snapshot?: unknown; snapshot?: unknown };
+  return r.is_snapshot === true && typeof r.snapshot === "string"
+    ? r.snapshot
+    : undefined;
 }
 
 function parsesAsJson(text: string): boolean {
@@ -166,9 +163,13 @@ function validSeqInfo(x: unknown): boolean {
 
 // One stored record's graph fields, or why it isn't a board patch record.
 // (Its stored size is checked before it is decoded: checkSize.)
+// document: the snapshot body's verdict, if the caller already scanned it
+// (asynchronously: board-append.ts, project-host board/history.ts);
+// otherwise it is scanned here.
 export function parseBoardRecord(
   value: unknown,
   limits: BoardHistoryLimits = BOARD_HISTORY_LIMITS,
+  document?: boolean,
 ): BoardRecord | { invalid: string } {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
     return { invalid: "a record that is not an object" };
@@ -201,7 +202,9 @@ export function parseBoardRecord(
     // object per line). patchflow's fromString skips a line it can't read,
     // so a corrupt snapshot would open as a board with records silently
     // missing: refused instead (codex 4332517570).
-    if (!validDocumentString(r.snapshot)) {
+    // Scanned, never parsed (json-scan.ts: no object graph, and in slices
+    // when scanned asynchronously; daybreak2).
+    if (!(document ?? isJsonObjectLines(r.snapshot))) {
       return {
         invalid: "a snapshot record whose snapshot isn't a board document",
       };
@@ -323,16 +326,18 @@ export class BoardHistoryCheck {
 
   // identity: the record's identity as the append check sees it (the
   // digest of its encoding and stored bytes); by default its decoded value.
+  // document: the snapshot body's verdict, if already scanned.
   add(
     value: unknown,
     rawBytes: number,
     identity: string = valueIdentity(value),
+    document?: boolean,
   ): HistoryVerdict | undefined {
     const sized = this.checkSize(rawBytes);
     if (sized) return sized;
     this.bytes += rawBytes;
     this.count += 1;
-    const r = parseBoardRecord(value, this.limits);
+    const r = parseBoardRecord(value, this.limits, document);
     if ("invalid" in r) return this.fail(historyError("invalid", r.invalid));
     if (r.snapshot) {
       // The same snapshot stored again must be the same record.
@@ -590,6 +595,9 @@ export interface AppendRecord {
   // Storage won't write it: its msgID is stored, with exactly this record
   // (a strict-msgID retry, a no-op; storage.msgIDOutcome).
   duplicate?: boolean;
+  // A snapshot record's body, already scanned: its verdict (board-append.ts
+  // scans asynchronously, before the synchronous step).
+  document?: boolean;
 }
 
 export class BoardAppendCheck {
@@ -657,11 +665,11 @@ export class BoardAppendCheck {
     // is decoded and hashed), and a broken history needs no graph. So a
     // stream past the open check's bounds costs at most those bounds, and
     // its "broken" is cached like any other graph.
-    for (const { value, digest, bytes, key } of records) {
+    for (const { value, digest, bytes, key, document } of records) {
       if (key != null) {
         broken = "a stored record with a storage key";
       } else {
-        const r = parseBoardRecord(value, limits);
+        const r = parseBoardRecord(value, limits, document);
         if ("invalid" in r) {
           broken = `a stored record that isn't a board patch: ${r.invalid}`;
         } else {
@@ -680,7 +688,7 @@ export class BoardAppendCheck {
         }
       }
       if (broken == null) {
-        const stop = open.add(value, bytes, digest);
+        const stop = open.add(value, bytes, digest, document);
         if (stop != null && !stop.ok) {
           broken = `its stored history isn't openable (${stop.reason}): ${stop.message}`;
         }
@@ -805,7 +813,7 @@ export class BoardAppendCheck {
         );
       }
     };
-    for (const { value, digest, bytes, key, duplicate } of records) {
+    for (const { value, digest, bytes, key, duplicate, document } of records) {
       if (duplicate) {
         // Not written: nothing changes (CORR-956-1: projecting it as stored
         // moved a cut that storage never moved).
@@ -831,7 +839,7 @@ export class BoardAppendCheck {
           { code: "branch" },
         );
       }
-      const r = parseBoardRecord(value, limits);
+      const r = parseBoardRecord(value, limits, document);
       if ("invalid" in r) {
         throw new ConatError(`not a board patch record: ${r.invalid}`, {
           code: "branch",

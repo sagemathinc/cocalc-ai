@@ -88,7 +88,10 @@ import {
   appendCheck,
   commitAppend,
   forgetAppendHead,
+  prepareAppend,
+  prepareRequest,
   requestRecords,
+  type PreparedRequest,
 } from "./board-append";
 import { boardRecordCap } from "./board-record-cap";
 import { throttle } from "lodash";
@@ -424,6 +427,23 @@ export function server({
           throw Error("bug");
         }
         assertBoardCommandAllowed(boardAccess, request);
+        // Before the synchronous step, and yielding to the event loop: the
+        // request's records decoded and their snapshot bodies scanned, and
+        // the stored graph read if it must be (board-append.ts; daybreak2:
+        // a snapshot's scan never holds the loop).
+        let prepared: PreparedRequest | undefined;
+        if (boardWrite) {
+          // (A request the fence refuses costs no scan: checked first here,
+          // and again in the synchronous step.)
+          assertBoardWriteFence({
+            fence: boardWriteFence?.(),
+            request,
+            receivedAt,
+            now: performance.now(),
+          });
+          prepared = await prepareRequest(request, mesg);
+          if (prepared != null) await prepareAppend(stream);
+        }
         // The board write service's append rule: what this request stores
         // must extend the board's one chain (board-append.ts).
         let append: ReturnType<typeof appendCheck> | undefined;
@@ -436,7 +456,7 @@ export function server({
             receivedAt,
             now: performance.now(),
           });
-          const records = requestRecords(request, mesg, stream);
+          const records = requestRecords(request, mesg, stream, prepared);
           if (records != null) {
             append = appendCheck(stream, records);
           } else if (isFencedRequest(request)) {
