@@ -432,6 +432,135 @@ describe("agent delivery reports across bays", () => {
   });
 });
 
+describe("a held sign-in turn asks the account's home bay (I4c)", () => {
+  // The project (and its host) on the seed; the turn's account (bob) homed
+  // on the attached bay, where its credentials live. The seed answers the
+  // host from bob's home bay, with times only.
+  const host_id = randomUUID();
+  let project_id;
+  let credential_id;
+  const selector = () => ({
+    provider: "anthropic",
+    kind: "claude-subscription",
+    scope: "account",
+    owner_account_id: bob.account_id,
+  });
+  const ask = async () =>
+    await runInBay(
+      cluster,
+      SEED,
+      `return await server("agents/api.js").credentialUpdatedAt(${JSON.stringify(
+        {
+          host_id,
+          account_id: bob.account_id,
+          project_id: "PROJECT",
+          credential_id: "CREDENTIAL",
+          provider: "anthropic",
+        },
+      )
+        .replace('"PROJECT"', JSON.stringify(project_id))
+        .replace('"CREDENTIAL"', JSON.stringify(credential_id))});`,
+    );
+  const onHome = async (body) => await runInBay(cluster, ATTACHED, body);
+
+  before(async () => {
+    // Its own owner: alice's project limit is needed by later scenarios.
+    const owner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "olive",
+    });
+    project_id = await createProject(await client(owner), "signin-hold");
+    assert.equal(await owningBay(project_id), SEED);
+    await runInBay(
+      cluster,
+      SEED,
+      `const pool = require("@cocalc/database/pool").default();
+       await pool.query(
+         "INSERT INTO project_hosts (id, name, status, bay_id, metadata, created, updated) VALUES ($1, 'signin host', 'off', $2, '{}', NOW(), NOW())",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(SEED)}],
+       );
+       await pool.query(
+         "UPDATE projects SET host_id=$1, users = users || jsonb_build_object($3::text, jsonb_build_object('group','collaborator')) WHERE project_id=$2",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(project_id)}, ${JSON.stringify(bob.account_id)}],
+       );`,
+    );
+    credential_id = (
+      await onHome(
+        `return await server("external-credentials/store.js").createExternalCredential({
+           selector: ${JSON.stringify(selector())},
+           payload: "not-a-real-token",
+           metadata: { label: "Max A" },
+         });`,
+      )
+    ).id;
+  });
+
+  it("sees a new sign-in and a revoke on the other bay, never the secret", async () => {
+    const first = await ask();
+    assert.equal(first.revoked, false);
+    assert.equal(typeof first.updated_at, "number");
+    assert.equal(first.newest_updated_at, first.updated_at);
+    assert.doesNotMatch(JSON.stringify(first), /not-a-real-token|Max A/);
+    await sleep(50);
+    // A label edit stands in for signing in again: it updates the row.
+    await onHome(
+      `return await server("external-credentials/store.js").updateExternalCredentialLabelById({
+         id: ${JSON.stringify(credential_id)},
+         selector: ${JSON.stringify(selector())},
+         label: "Max B",
+       });`,
+    );
+    const updated = await ask();
+    assert.ok(updated.updated_at > first.updated_at, JSON.stringify(updated));
+    await onHome(
+      `return await server("external-credentials/store.js").revokeExternalCredential({
+         id: ${JSON.stringify(credential_id)},
+         owner_account_id: ${JSON.stringify(bob.account_id)},
+       });`,
+    );
+    const revoked = await ask();
+    assert.equal(revoked.revoked, true);
+    // No unrevoked credential of that kind is left to resume with.
+    assert.equal(revoked.newest_updated_at, undefined);
+    assert.equal(revoked.newest_credential_id, undefined);
+    // Signing in again as a new credential: the held turn learns its id
+    // (only the id), to run with it instead of the revoked one.
+    const replacement = (
+      await onHome(
+        `return await server("external-credentials/store.js").createExternalCredential({
+           selector: ${JSON.stringify(selector())},
+           payload: "another-fake-token",
+           metadata: { label: "Max C" },
+         });`,
+      )
+    ).id;
+    const replaced = await ask();
+    assert.equal(replaced.revoked, true);
+    assert.equal(replaced.newest_credential_id, replacement);
+    assert.equal(typeof replaced.newest_updated_at, "number");
+    assert.doesNotMatch(
+      JSON.stringify(replaced),
+      /another-fake-token|not-a-real-token|Max [ABC]/,
+    );
+  });
+
+  it("refuses a host that does not run the project", async () => {
+    const other = randomUUID();
+    await assert.rejects(
+      runInBay(
+        cluster,
+        SEED,
+        `return await server("agents/api.js").credentialUpdatedAt({
+           host_id: ${JSON.stringify(other)},
+           account_id: ${JSON.stringify(bob.account_id)},
+           project_id: ${JSON.stringify(project_id)},
+           credential_id: ${JSON.stringify(credential_id)},
+         });`,
+      ),
+    );
+  });
+});
+
 describe("inspecting a sent message's turn across bays", () => {
   // The sender's agent runs in a seed-owned project; the recipient's project
   // (and its host) live on the attached bay, which is also the account's

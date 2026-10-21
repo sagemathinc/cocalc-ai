@@ -326,6 +326,54 @@ function parseStoredHeaders(headers?: string | null) {
   return JSON.parse(headers);
 }
 
+// The tables that bound sync document history: the msgID of each accepted
+// message, the records a load can start from, each history epoch and the
+// loadable segments of the archived ones, and the results of resets by
+// operation id.  The schema check accepts them before this server creates
+// them, so a server can roll back to this version after a newer one has
+// created them.
+export const HISTORY_SCHEMA = {
+  message_ids: `CREATE TABLE IF NOT EXISTS message_ids (
+          seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL
+        )`,
+  idx_message_ids_msg_id:
+    "CREATE INDEX IF NOT EXISTS idx_message_ids_msg_id ON message_ids(msg_id)",
+  history_cuts: `CREATE TABLE IF NOT EXISTS history_cuts (
+          seq INTEGER PRIMARY KEY, snapshot_seq INTEGER
+        )`,
+  history_epochs: `CREATE TABLE IF NOT EXISTS history_epochs (
+          id INTEGER PRIMARY KEY,
+          epoch INTEGER NOT NULL,
+          first_seq INTEGER NOT NULL,
+          last_seq INTEGER,
+          covered_seq INTEGER,
+          seed_seq INTEGER,
+          starts_empty INTEGER NOT NULL,
+          ids_complete INTEGER NOT NULL,
+          archive TEXT,
+          kept_records INTEGER NOT NULL DEFAULT 0,
+          kept_bytes INTEGER NOT NULL DEFAULT 0,
+          dropped_records INTEGER NOT NULL DEFAULT 0,
+          dropped_bytes INTEGER NOT NULL DEFAULT 0,
+          info_json TEXT,
+          time INTEGER NOT NULL
+        )`,
+  history_segments: `CREATE TABLE IF NOT EXISTS history_segments (
+          epoch_id INTEGER NOT NULL,
+          first_seq INTEGER NOT NULL,
+          last_seq INTEGER NOT NULL,
+          cut_seq INTEGER,
+          snapshot_seq INTEGER,
+          cut_bytes INTEGER NOT NULL,
+          suffix_bytes INTEGER NOT NULL,
+          records INTEGER NOT NULL,
+          PRIMARY KEY (epoch_id, first_seq)
+        )`,
+  history_ops: `CREATE TABLE IF NOT EXISTS history_ops (
+          op_id TEXT PRIMARY KEY, result_json TEXT NOT NULL, time INTEGER NOT NULL
+        )`,
+} as const;
+
 // The schema objects this server creates, keyed by name.  Opening a file with
 // anything else (triggers, views, other indexes or tables, or a changed
 // definition) is refused: such objects run code on every write or change
@@ -355,6 +403,7 @@ const SCHEMA = {
         )`,
   idx_stream_checkpoints_seq:
     "CREATE INDEX IF NOT EXISTS idx_stream_checkpoints_seq ON stream_checkpoints(seq)",
+  ...HISTORY_SCHEMA,
 } as const;
 
 function normalizeSchemaSql(sql: string): string {
@@ -391,7 +440,13 @@ export function unexpectedPersistSchema(
     ]),
   );
   const archivedTable = normalizeSchemaSql(SCHEMA.messages);
-  const ourTables = new Set(["messages", "config", "stream_checkpoints"]);
+  const ourTables = new Set([
+    "messages",
+    "config",
+    "stream_checkpoints",
+    "history_segments",
+    "history_ops",
+  ]);
   for (const { type, name, tbl_name, sql } of objects) {
     const label = `${type} ${JSON.stringify(String(name).slice(0, 80))}`;
     if (type === "table" && name === "sqlite_sequence") continue;
