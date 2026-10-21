@@ -980,6 +980,53 @@ describe("in the project-host", () => {
   const cloneLimit = (ops: ReturnType<typeof fakeOps>) =>
     [...ops.quotas].find(([path]) => path.includes("/clone-"))?.[1];
 
+  it("a copy and a restore of the same project wait for each other", async () => {
+    await readyVolume();
+    const { subvolume, snapshotPath } = await backupSnapshot();
+    await copyPersistVolumeIntoSnapshot({ subvolume, snapshotPath });
+    // the snapshot's files and history, then newer ones
+    await writeFile(join(snapshotPath, "work.txt"), "restored");
+    await writeFile(join(home, "work.txt"), "newer");
+    await writeFile(join(root, "a.db"), "newer");
+    let swapping!: () => void;
+    const swapped = new Promise<void>((resolve) => (swapping = resolve));
+    let releaseSwap!: () => void;
+    const gate = new Promise<void>((resolve) => (releaseSwap = resolve));
+    const restoring = replaceProjectHome({
+      project_id: PROJECT,
+      replacement: snapshotPath,
+      reason: "test",
+      env,
+      ops: fakeOps(),
+      swap: async () => {
+        swapping();
+        // the new history is in place, the home not yet
+        await gate;
+        await rm(home, { recursive: true });
+        await cp(snapshotPath, home, { recursive: true });
+      },
+    });
+    await swapped;
+    const otherHome = join(mount, `project-${OTHER}`);
+    let copied = false;
+    const copying = cloneProjectWithPersistVolume({
+      src_project_id: PROJECT,
+      project_id: OTHER,
+      ops: fakeOps(),
+      cloneHome: async () => {
+        await cp(home, otherHome, { recursive: true });
+      },
+    }).then(() => (copied = true));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(copied).toBe(false);
+    releaseSwap();
+    await restoring;
+    await copying;
+    // the copy has the restored files with the restored history
+    expect(read(join(otherHome, "work.txt"))).toBe("restored");
+    expect(read(join(persistVolumePath(OTHER)!, "a.db"))).toBe("live");
+  });
+
   it("copies and deletes the volume with its project", async () => {
     await readyVolume();
     const ops = fakeOps();

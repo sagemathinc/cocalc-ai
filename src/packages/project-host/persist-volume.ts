@@ -1190,6 +1190,29 @@ export async function cloneProjectWithPersistVolume({
   cloneHome: () => Promise<void>;
   ops?: PersistVolumeOps;
 }): Promise<void> {
+  // Holding the source's persist lock, so a restore never swaps its history
+  // or home between the two copies (cloneHome takes no lock of its own).
+  await withPersistLock(src_project_id, async () =>
+    cloneProjectWithPersistVolumeLocked({
+      src_project_id,
+      project_id,
+      cloneHome,
+      ops,
+    }),
+  );
+}
+
+async function cloneProjectWithPersistVolumeLocked({
+  src_project_id,
+  project_id,
+  cloneHome,
+  ops,
+}: {
+  src_project_id: string;
+  project_id: string;
+  cloneHome: () => Promise<void>;
+  ops: PersistVolumeOps;
+}): Promise<void> {
   // The history first, before anything can open the copy's databases.
   const copied = await clonePersistVolume({ src_project_id, project_id }, ops);
   await cloneHome();
