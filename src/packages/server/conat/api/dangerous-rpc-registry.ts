@@ -4,9 +4,7 @@
  */
 
 export type DangerousRpcFreshAuthDecision =
-  | "fresh-auth-required"
-  | "fresh-auth-not-required"
-  | "internal-auth-only";
+  "fresh-auth-required" | "fresh-auth-not-required" | "internal-auth-only";
 
 export type DangerousRpcDecision = {
   decision: DangerousRpcFreshAuthDecision;
@@ -136,6 +134,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "agent.credentialUpdatedAt": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.reportStatus": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
@@ -546,6 +548,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "ends a provisioned institutional commercial service",
   },
+  "commercialOrders.recordMembershipFulfillment": {
+    decision: "fresh-auth-required",
+    reason:
+      "records institutional membership-seat fulfillment on commercial state",
+  },
   "commercialOrders.provision": {
     decision: "fresh-auth-required",
     reason: "creates or links an institutional site-license entitlement",
@@ -710,6 +717,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "hosts.issueProjectHostAgentAuthToken": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
+  },
+  "hosts.revokeProjectContentLinks": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "hosts.issueProjectContentUrl": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
   },
   "hosts.issueProjectHostAuthToken": {
     decision: "internal-auth-only",

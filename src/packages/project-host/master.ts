@@ -1,5 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import { AGENT_RPC_REPORT_VERSION } from "@cocalc/conat/agents/rpc-reports";
+import { getProjectContentDomain } from "./content-origin";
 import { randomUUID } from "crypto";
 import { readFileSync } from "node:fs";
 import { promises as fsPromises } from "node:fs";
@@ -1681,12 +1682,14 @@ export async function startMasterRegistration({
       users,
       runtime_lifecycle_revision,
       users_revision,
+      content_epoch,
     }) {
       await updateProjectUsers({
         project_id,
         users,
         runtime_lifecycle_revision,
         users_revision,
+        content_epoch,
       });
     },
     async dropComputer({ computer_id }) {
@@ -2224,6 +2227,9 @@ export async function startMasterRegistration({
           version: AGENT_RPC_REPORT_VERSION,
           project_host: versions.project_host ?? null,
         },
+        // The content domain this host actually serves (null when off), so
+        // the hub only issues content links the host will accept.
+        content_origin_domain: getProjectContentDomain() ?? null,
       },
     };
   };
@@ -2329,6 +2335,7 @@ export async function startMasterRegistration({
       users: any;
       runtime_lifecycle_revision: number;
       users_revision?: number;
+      content_epoch?: number;
       updated_ms: number;
     }>,
   ): Promise<number> => {
@@ -2347,6 +2354,10 @@ export async function startMasterRegistration({
             row?.users_revision == null
               ? undefined
               : Number(row.users_revision),
+          // Re-delivers a revocation whose immediate push failed.
+          ...(row?.content_epoch == null
+            ? {}
+            : { content_epoch: Number(row.content_epoch) }),
         });
         applied += 1;
       } catch (err) {

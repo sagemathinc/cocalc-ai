@@ -1023,6 +1023,33 @@ describe("purchases membership packages", () => {
     expect(result).toHaveLength(1);
   });
 
+  it("routes the caller's own package list to their home bay when it is elsewhere", async () => {
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "account-1",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    interBayGetMembershipPackagesMock.mockResolvedValue([
+      { id: "package-remote-own", owner_account_id: "account-1" },
+    ]);
+
+    const { getMembershipPackages } = await import("./purchases");
+    const result = await getMembershipPackages({
+      account_id: "account-1",
+      user_account_id: "account-1",
+    });
+
+    expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      user_account_id: "account-1",
+    });
+    expect(interBayGetMembershipPackagesMock).toHaveBeenCalledWith({
+      owner_account_id: "account-1",
+    });
+    expect(listMembershipPackageDetailsForOwnerMock).not.toHaveBeenCalled();
+    expect(result[0]?.id).toBe("package-remote-own");
+  });
+
   it("routes another account's package list to that account's home bay", async () => {
     isAdminMock.mockResolvedValue(true);
     resolveAccountHomeBayMock.mockResolvedValue({

@@ -22,6 +22,7 @@ import {
 } from "./agent-rpc-report";
 import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-reports";
 import { toolUseTracker } from "./tool-use";
+import { sweepAgentStatus } from "./agent-status-report";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
@@ -4179,12 +4180,9 @@ export class ChatStreamWriter {
       try {
         await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
-        if (
-          !(
-            this.syncdbError != null &&
-            isProjectAcpStorageError(this.syncdbError)
-          )
-        ) {
+        if (!(
+          this.syncdbError != null && isProjectAcpStorageError(this.syncdbError)
+        )) {
           await this.syncdb!.save();
         }
       } catch (err) {
@@ -7365,8 +7363,7 @@ function initializeAcpRuntime(client: ConatClient): void {
 
 let acpSessionPublisherConfigured = false;
 let acpSessionPublisherOverride:
-  | ((row: AcpSessionRow) => void | Promise<void>)
-  | undefined;
+  ((row: AcpSessionRow) => void | Promise<void>) | undefined;
 
 export function setAcpSessionPublisherOverride(
   publisher: ((row: AcpSessionRow) => void | Promise<void>) | undefined,
@@ -7433,8 +7430,7 @@ export async function runDetachedAcpQueueWorker(
   let workerStopReason: string | undefined;
   let workerHeartbeatTimer: NodeJS.Timeout | undefined;
   let workerControlService:
-    | Awaited<ReturnType<typeof initAcpDaemonControlService>>
-    | undefined;
+    Awaited<ReturnType<typeof initAcpDaemonControlService>> | undefined;
   let workerFatalError: unknown;
   let workerHeartbeatFailureCount = 0;
   const markWorkerFatalError = ({
@@ -9547,8 +9543,7 @@ function signInRenewable(
   const failure = outcome.state === "failed" ? outcome.failure : undefined;
   if (failure?.kind !== "sign-in") return false;
   const harness = request.harness_credential as
-    | { mode?: string; credentialId?: string }
-    | undefined;
+    { mode?: string; credentialId?: string } | undefined;
   if (request.runtime !== undefined)
     return harness?.mode === "account-subscription" && !!harness.credentialId;
   const source = `${(request.config as { paymentSource?: string } | undefined)?.paymentSource ?? ""}`;
@@ -9561,8 +9556,7 @@ function heldSignInCredential(
 ): { credential_id: string; provider: string } | undefined {
   const request = decodeAcpJobRequest(job);
   const harness = request.harness_credential as
-    | { provider?: string; credentialId?: string }
-    | undefined;
+    { provider?: string; credentialId?: string } | undefined;
   if (harness?.credentialId && harness.provider)
     return { credential_id: harness.credentialId, provider: harness.provider };
   // A Codex turn: the failed attempt names its subscription.
@@ -11208,8 +11202,7 @@ async function trySteerCandidateIds({
   // Harness agents (Claude) take pasted images as content blocks, exactly as
   // for a new turn; prepared once, only if a harness agent is asked.
   let harnessRequest:
-    | Promise<Awaited<ReturnType<typeof materializeBlobs>>>
-    | undefined;
+    Promise<Awaited<ReturnType<typeof materializeBlobs>>> | undefined;
   try {
     for (const id of ids) {
       // Cached writer/lease aliases can outlive an ACP reset. Only the current
@@ -12626,6 +12619,10 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
       void releaseRenewedSignInHolds().catch((err) =>
         logger.debug("sign-in hold release failed", { err: `${err}` }),
       );
+    // What each agent here is doing, for its peers and lists.
+    void sweepAgentStatus().catch((err) =>
+      logger.debug("agent status sweep failed", { err: `${err}` }),
+    );
     // Delivery reports the hub could not take yet (about once a minute).
     if (++ticks % 6 === 0)
       void drainAgentRpcReports(hubApi.agent).catch((err) =>
@@ -13191,8 +13188,7 @@ async function handleAcpControlRequestNow(
     }
     const currentRequest = decodeAcpJobRequest(current);
     let fundingRecovery:
-      | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
-      | undefined;
+      Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"] | undefined;
     if (request.action === "resend_with_payment") {
       const payment = request.payment_recovery!;
       if (

@@ -72,6 +72,8 @@ import {
   statSync,
   copyFileSync,
   ensureContainingDirectoryExists,
+  assertSafeDatabasePath,
+  isProjectOwnedDatabasePath,
 } from "./context";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
@@ -241,6 +243,186 @@ export function maxPersistMessageBytes(
     : DEFAULT_MAX_PERSIST_MESSAGE_BYTES;
 }
 
+// A project's persist files live in the project, so the project can change
+// them: nothing read from them is trusted.  The limits below bound what any
+// stored message can cost the (shared) persist server to read.
+
+// Largest stored headers (serialized JSON) that will be parsed.  Conat message
+// headers are at most MAX_MESSAGE_HEADER_BYTES (100 KB), so larger ones were
+// not written by this server.
+export const MAX_PERSIST_HEADERS_CHARS = 1_000_000;
+
+// Decompressing a stored message produces at most its recorded size (which is
+// at least its uncompressed length, see set), and never less than this.
+const MIN_DECOMPRESS_LIMIT_BYTES = 64 * 1024;
+
+// The "size" of a stored message whose data is not a BLOB (only a changed
+// file has that): over every limit, so it is never read, and a client can
+// remove it like any oversized message (resetHistory).
+const NOT_A_BLOB_SIZE = Number.MAX_SAFE_INTEGER;
+
+// The size of a stored message, for checking limits before reading it: the
+// recorded size, but never less than what is physically stored.  (typeof()
+// and length() of a BLOB do not read it.)
+const EFFECTIVE_SIZE_SQL = `CASE WHEN typeof(raw) <> 'blob' THEN ${NOT_A_BLOB_SIZE} ELSE MAX(IFNULL(CAST(size AS INTEGER), 0), length(raw) + IFNULL(length(headers), 0) + IFNULL(length(key), 0)) END`;
+
+// SQLite locking mode for the persist database at path.  A project owns the
+// -shm file of its databases, which SQLite memory-maps, so it could truncate
+// it and crash the whole persist server with SIGBUS.  "exclusive" keeps the
+// WAL index in this process's memory instead, but then no other connection
+// can open the file while this one has it open.  That is fine for project
+// files, which a project-host's single persist server opens, but persist
+// servers elsewhere (and tests) share files, so by default only project files
+// are exclusive.  COCALC_PERSIST_SQLITE_LOCKING_MODE=normal or =exclusive
+// applies one mode to every file.
+export function persistSqliteLockingMode(
+  path: string,
+  env: NodeJS.ProcessEnv = process.env,
+): "exclusive" | "normal" {
+  const mode = env.COCALC_PERSIST_SQLITE_LOCKING_MODE;
+  if (mode === "normal" || mode === "exclusive") {
+    return mode;
+  }
+  return path !== ":memory:" && isProjectOwnedDatabasePath(path)
+    ? "exclusive"
+    : "normal";
+}
+
+// sqlite3_set_authorizer return codes
+const SQLITE_OK = 0;
+const SQLITE_DENY = 1;
+
+// How long an operation waits for a lock held by another connection to the
+// same file.  The API is synchronous, so the whole server waits: keep it short.
+export const DEFAULT_PERSIST_SQLITE_BUSY_TIMEOUT_MS = 500;
+
+export function persistSqliteBusyTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const value = Number(env.COCALC_PERSIST_SQLITE_BUSY_TIMEOUT_MS);
+  return env.COCALC_PERSIST_SQLITE_BUSY_TIMEOUT_MS != null &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+    ? value
+    : DEFAULT_PERSIST_SQLITE_BUSY_TIMEOUT_MS;
+}
+
+function decompressLimit(size: number): number {
+  const recorded = Number.isFinite(size) ? size : 0;
+  return Math.min(
+    maxPersistMessageBytes(),
+    Math.max(recorded, MIN_DECOMPRESS_LIMIT_BYTES),
+  );
+}
+
+function parseStoredHeaders(headers?: string | null) {
+  if (!headers) return undefined;
+  if (headers.length > MAX_PERSIST_HEADERS_CHARS) {
+    throw new ConatError(
+      `stored message headers are ${headers.length} characters, over the ${MAX_PERSIST_HEADERS_CHARS} limit`,
+      { code: 413 },
+    );
+  }
+  return JSON.parse(headers);
+}
+
+// The schema objects this server creates, keyed by name.  Opening a file with
+// anything else (triggers, views, other indexes or tables, or a changed
+// definition) is refused: such objects run code on every write or change
+// query plans, and this server never creates them.
+const SCHEMA = {
+  messages: `CREATE TABLE IF NOT EXISTS messages (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, time INTEGER NOT NULL, headers TEXT, compress NUMBER NOT NULL, encoding NUMBER NOT NULL, raw BLOB NOT NULL, size NUMBER NOT NULL, ttl NUMBER
+          )`,
+  idx_messages_key:
+    "CREATE INDEX IF NOT EXISTS idx_messages_key ON messages(key)",
+  idx_messages_time:
+    "CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)",
+  config: `CREATE TABLE IF NOT EXISTS config (
+          field TEXT PRIMARY KEY, value TEXT NOT NULL
+        )`,
+  stream_metadata: `CREATE TABLE IF NOT EXISTS stream_metadata (
+          id INTEGER PRIMARY KEY CHECK(id = 1),
+          metadata_json TEXT,
+          revision INTEGER NOT NULL DEFAULT 0
+        )`,
+  stream_checkpoints: `CREATE TABLE IF NOT EXISTS stream_checkpoints (
+          name TEXT PRIMARY KEY,
+          seq INTEGER NOT NULL,
+          time INTEGER NOT NULL,
+          data_json TEXT,
+          revision INTEGER NOT NULL DEFAULT 0
+        )`,
+  idx_stream_checkpoints_seq:
+    "CREATE INDEX IF NOT EXISTS idx_stream_checkpoints_seq ON stream_checkpoints(seq)",
+} as const;
+
+function normalizeSchemaSql(sql: string): string {
+  return sql
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),=])\s*/g, "$1")
+    .replace(/^CREATE (TABLE|INDEX) IF NOT EXISTS /i, "CREATE $1 ")
+    .trim()
+    .toLowerCase();
+}
+
+const ARCHIVED_MESSAGES_TABLE = /^messages_archived_\d+(?:_\d+)?$/;
+
+export function persistSchemaCheckEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.COCALC_PERSIST_SCHEMA_CHECK !== "off";
+}
+
+// Why a database's schema is not one this server creates, or undefined if it
+// is.  Exported for tests.
+export function unexpectedPersistSchema(
+  objects: {
+    type: string;
+    name: string;
+    tbl_name: string;
+    sql: string | null;
+  }[],
+): string | undefined {
+  const expected = new Map(
+    Object.entries(SCHEMA).map(([name, sql]) => [
+      name,
+      normalizeSchemaSql(sql),
+    ]),
+  );
+  const archivedTable = normalizeSchemaSql(SCHEMA.messages);
+  const ourTables = new Set(["messages", "config", "stream_checkpoints"]);
+  for (const { type, name, tbl_name, sql } of objects) {
+    const label = `${type} ${JSON.stringify(String(name).slice(0, 80))}`;
+    if (type === "table" && name === "sqlite_sequence") continue;
+    if (type === "index" && name.startsWith("sqlite_autoindex_")) {
+      if (ourTables.has(tbl_name) || ARCHIVED_MESSAGES_TABLE.test(tbl_name)) {
+        continue;
+      }
+      return `unexpected ${label}`;
+    }
+    if (type === "table" && ARCHIVED_MESSAGES_TABLE.test(name)) {
+      // created by ALTER TABLE messages RENAME TO "<name>" (resetHistory)
+      const renamed = normalizeSchemaSql(sql ?? "").replace(
+        /^create table "?messages_archived_\d+(?:_\d+)?"?\(/,
+        "create table messages(",
+      );
+      if (renamed === archivedTable) continue;
+      return `changed ${label}`;
+    }
+    if (
+      (type === "table" || type === "index") &&
+      expected.has(name) &&
+      (type === "index") === name.startsWith("idx_")
+    ) {
+      if (normalizeSchemaSql(sql ?? "") === expected.get(name)) continue;
+      return `changed ${label}`;
+    }
+    return `unexpected ${label}`;
+  }
+  return undefined;
+}
+
 export function persistMessageTooLargeError({
   size,
   limit,
@@ -251,7 +433,9 @@ export function persistMessageTooLargeError({
   seq: number;
 }): ConatError {
   const err = new ConatError(
-    `stored message ${seq} is ${size} bytes, over the ${limit} byte limit, so it cannot be read; an operator must remove it from the stream`,
+    size >= NOT_A_BLOB_SIZE
+      ? `stored message ${seq} is corrupt (its data is not stored as bytes), so it cannot be read; an operator must remove it from the stream`
+      : `stored message ${seq} is ${size} bytes, over the ${limit} byte limit, so it cannot be read; an operator must remove it from the stream`,
     { code: 413 },
   );
   // which message, so a client can ask for exactly this one to be dealt with
@@ -313,14 +497,24 @@ export const ASYNC_DECOMPRESS_MIN_BYTES = 1_000_000;
 export async function storedRowToMessage(
   row: StoredRow,
 ): Promise<StoredMessage> {
+  if (!(row.raw instanceof Uint8Array)) {
+    // the size of such a row is NOT_A_BLOB_SIZE, but don't rely on callers
+    // checking it
+    throw persistMessageTooLargeError({
+      size: NOT_A_BLOB_SIZE,
+      limit: maxPersistMessageBytes(),
+      seq: row.seq,
+    });
+  }
   let raw: Buffer;
   if (row.compress == CompressionAlgorithm.None) {
     raw = row.raw;
   } else if (row.compress == CompressionAlgorithm.Zstd) {
+    const limit = decompressLimit(row.size);
     raw =
       row.size >= ASYNC_DECOMPRESS_MIN_BYTES
-        ? await decompressAsync(row.raw)
-        : decompress(row.raw);
+        ? await decompressAsync(row.raw, limit)
+        : decompress(row.raw, limit);
   } else {
     throw Error(`unknown compression ${row.compress}`);
   }
@@ -330,7 +524,7 @@ export async function storedRowToMessage(
     key: row.key != null ? row.key : undefined,
     encoding: row.encoding,
     raw,
-    headers: row.headers ? JSON.parse(row.headers) : undefined,
+    headers: parseStoredHeaders(row.headers),
   };
 }
 
@@ -611,9 +805,24 @@ export class PersistentStream extends EventEmitter {
         : this.options.path + ".db";
       if (location !== ":memory:") {
         this.dbPath = location;
+        assertSafeDatabasePath(location);
       }
       this.initArchive();
-      this.db = createDatabase(location);
+      if (location !== ":memory:") {
+        // again: initArchive may have written the file
+        assertSafeDatabasePath(location);
+      }
+      // defensive: no writable_schema or other ways to corrupt the file
+      this.db = createDatabase(location, { defensive: true });
+      try {
+        this.hardenConnection(location);
+        if (location !== ":memory:") {
+          this.assertExpectedSchema();
+        }
+      } catch (err) {
+        this.db.close();
+        throw err;
+      }
       const configuredCacheKiB = this.options.ephemeral
         ? effectiveEphemeralSqliteCacheKiB()
         : undefined;
@@ -677,11 +886,73 @@ export class PersistentStream extends EventEmitter {
     }
   };
 
-  private initSchema = () => {
+  // Limit what this connection can do, whatever the (untrusted) file holds.
+  // Runs before anything reads the database.
+  private hardenConnection = (location: string) => {
     // Avoid immediate "database is locked" errors under concurrent access
-    // (e.g., jest workers) by enabling WAL and a small busy timeout.
+    // (e.g., jest workers), also for the first read (the schema check).
+    this.db.exec(`PRAGMA busy_timeout=${persistSqliteBusyTimeoutMs()}`);
+    if (persistSqliteLockingMode(location) === "exclusive") {
+      // Before the first read: then SQLite never creates or maps a -shm file
+      // (see persistSqliteLockingMode).
+      this.db.exec("PRAGMA locking_mode=EXCLUSIVE");
+    }
+    const limits = (this.db as any).limits;
+    if (limits != null) {
+      // Never attach another database file, e.g., through a crafted table
+      // name.  (This server never attaches or vacuums on these connections.)
+      limits.attach = 0;
+      // No string, blob or row larger than the largest message we read.
+      limits.length = maxPersistMessageBytes() + 16 * 1024 * 1024;
+    }
+    // Functions with side effects can't run from the file's schema.
+    this.db.exec("PRAGMA trusted_schema=OFF");
+    // The project can change the file while it is open, e.g., add a trigger
+    // after assertExpectedSchema checked it.  This server never uses triggers
+    // or views, so refuse anything done from inside one.  SQLite checks this
+    // whenever a statement is prepared, and re-prepares statements after any
+    // schema change.
+    const db = this.db as any;
+    if (typeof db.setAuthorizer === "function") {
+      db.setAuthorizer(
+        (
+          _action: number,
+          _arg1: string | null,
+          _arg2: string | null,
+          _dbName: string | null,
+          triggerOrView: string | null,
+        ) => (triggerOrView == null ? SQLITE_OK : SQLITE_DENY),
+      );
+    }
+  };
+
+  private assertExpectedSchema = () => {
+    if (!persistSchemaCheckEnabled()) return;
+    const objects = this.db
+      .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master")
+      .all() as {
+      type: string;
+      name: string;
+      tbl_name: string;
+      sql: string | null;
+    }[];
+    const problem = unexpectedPersistSchema(objects);
+    if (problem != null) {
+      logger.warn("refusing to open persist database with unexpected schema", {
+        path: this.dbPath,
+        problem,
+      });
+      throw new ConatError(
+        `this persistent storage was changed outside CoCalc (${problem}), so it cannot be opened`,
+        { code: 500 },
+      );
+    }
+  };
+
+  private initSchema = () => {
+    // WAL, so readers and a writer can use the file at once (see also
+    // busy_timeout in hardenConnection).
     this.db.prepare("PRAGMA journal_mode=WAL").run();
-    this.db.prepare("PRAGMA busy_timeout=5000").run();
     if (!this.options.sync && !this.options.ephemeral) {
       // Unless sync is set, we do not require that the filesystem has commited changes
       // to disk after every insert. This can easily make things 10x faster.  sets are
@@ -691,41 +962,10 @@ export class PersistentStream extends EventEmitter {
       this.db.prepare("PRAGMA synchronous=OFF").run();
     }
     this.createMessagesTable();
-    this.db
-      .prepare(
-        `
-         CREATE TABLE IF NOT EXISTS config (
-          field TEXT PRIMARY KEY, value TEXT NOT NULL
-        )`,
-      )
-      .run();
-    this.db
-      .prepare(
-        `
-         CREATE TABLE IF NOT EXISTS stream_metadata (
-          id INTEGER PRIMARY KEY CHECK(id = 1),
-          metadata_json TEXT,
-          revision INTEGER NOT NULL DEFAULT 0
-        )`,
-      )
-      .run();
-    this.db
-      .prepare(
-        `
-         CREATE TABLE IF NOT EXISTS stream_checkpoints (
-          name TEXT PRIMARY KEY,
-          seq INTEGER NOT NULL,
-          time INTEGER NOT NULL,
-          data_json TEXT,
-          revision INTEGER NOT NULL DEFAULT 0
-        )`,
-      )
-      .run();
-    this.db
-      .prepare(
-        "CREATE INDEX IF NOT EXISTS idx_stream_checkpoints_seq ON stream_checkpoints(seq)",
-      )
-      .run();
+    this.db.prepare(SCHEMA.config).run();
+    this.db.prepare(SCHEMA.stream_metadata).run();
+    this.db.prepare(SCHEMA.stream_checkpoints).run();
+    this.db.prepare(SCHEMA.idx_stream_checkpoints_seq).run();
 
     this.conf = this.config();
   };
@@ -733,20 +973,9 @@ export class PersistentStream extends EventEmitter {
   private createMessagesTable = () => {
     // time is in *seconds* since the epoch, since that is standard for sqlite.
     // ttl is in milliseconds.
-    this.db
-      .prepare(
-        `CREATE TABLE IF NOT EXISTS messages (
-          seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, time INTEGER NOT NULL, headers TEXT, compress NUMBER NOT NULL, encoding NUMBER NOT NULL, raw BLOB NOT NULL, size NUMBER NOT NULL, ttl NUMBER
-          )
-        `,
-      )
-      .run();
-    this.db
-      .prepare("CREATE INDEX IF NOT EXISTS idx_messages_key ON messages(key)")
-      .run();
-    this.db
-      .prepare("CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)")
-      .run();
+    this.db.prepare(SCHEMA.messages).run();
+    this.db.prepare(SCHEMA.idx_messages_key).run();
+    this.db.prepare(SCHEMA.idx_messages_time).run();
   };
 
   private readSqliteCacheKiB = (): number => {
@@ -877,6 +1106,7 @@ export class PersistentStream extends EventEmitter {
       try {
         // getStream creates these directories before opening the database.
         // Synchronous copies keep close atomic with respect to refCacheSync.
+        assertSafeDatabasePath(this.dbPath);
         copyFileSync(this.dbPath, dest);
       } catch (err) {
         logger.warn("error creating backup while closing database", {
@@ -906,6 +1136,7 @@ export class PersistentStream extends EventEmitter {
     try {
       await ensureContainingDirectoryExists(dest);
       if (this.closing) return;
+      assertSafeDatabasePath(this.dbPath);
       copyFileSync(this.dbPath, dest);
     } catch (err) {
       if (!process.env.COCALC_TEST_MODE) {
@@ -1177,13 +1408,17 @@ export class PersistentStream extends EventEmitter {
     let meta: { seq: number; size: number } | undefined;
     if (seq) {
       meta = this.db
-        .prepare("SELECT seq, size FROM messages WHERE seq=?")
+        .prepare(
+          `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE seq=?`,
+        )
         .get(seq) as any;
     } else if (key != null) {
       // NOTE: we guarantee when doing set above that there is at most one
       // row with a given key.  Also there's a unique constraint.
       meta = this.db
-        .prepare("SELECT seq, size FROM messages WHERE key=?")
+        .prepare(
+          `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE key=?`,
+        )
         .get(key) as any;
     }
     if (meta == null) {
@@ -1202,7 +1437,7 @@ export class PersistentStream extends EventEmitter {
         `SELECT seq, key, time, compress, encoding, raw, headers${ttl} FROM messages WHERE seq=?`,
       )
       .get(meta.seq);
-    return dbToMessage(x as any);
+    return dbToMessage(x as any, Number(meta.size));
   };
 
   seqBounds = (): StreamSeqBounds => {
@@ -1246,7 +1481,7 @@ export class PersistentStream extends EventEmitter {
     const params = end_seq != null ? [after_seq, end_seq] : [after_seq];
     const sizes = this.db
       .prepare(
-        `SELECT seq, size FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
+        `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
       )
       .all(...params, maxRows) as { seq: number; size: number }[];
     const page: { seq: number; size: number }[] = [];
@@ -1267,7 +1502,7 @@ export class PersistentStream extends EventEmitter {
   readPage = (after_seq: number, last_seq: number): StoredRow[] => {
     return this.db
       .prepare(
-        `SELECT seq, key, time, compress, encoding, raw, headers, size FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
+        `SELECT seq, key, time, compress, encoding, raw, headers, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
       )
       .all(after_seq, last_seq) as unknown as StoredRow[];
   };
@@ -1291,10 +1526,26 @@ export class PersistentStream extends EventEmitter {
       where.push("seq<=?");
       v.push(end_seq);
     }
-    query = `SELECT seq, key, time, compress, encoding, raw, headers FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`;
+    // Check sizes before reading any (possibly huge) data.
+    const sizeLimit = maxPersistMessageBytes();
+    const whereSql = where.length == 0 ? "" : " where " + where.join(" AND ");
+    const tooLarge = [...where, `${EFFECTIVE_SIZE_SQL} > ?`].join(" AND ");
+    const oversized = this.db
+      .prepare(
+        `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE ${tooLarge} ORDER BY seq LIMIT 1`,
+      )
+      .get(...v, sizeLimit) as { seq: number; size: number } | undefined;
+    if (oversized != null) {
+      throw persistMessageTooLargeError({
+        size: Number(oversized.size),
+        limit: sizeLimit,
+        seq: Number(oversized.seq),
+      });
+    }
+    query = `SELECT seq, key, time, compress, encoding, raw, headers, ${EFFECTIVE_SIZE_SQL} AS size FROM messages ${whereSql} ORDER BY seq`;
     stmt = this.db.prepare(query);
     for (const row of stmt.iterate(...v)) {
-      yield dbToMessage(row)!;
+      yield dbToMessage(row, Number(row.size))!;
     }
   }
 
@@ -1385,7 +1636,9 @@ export class PersistentStream extends EventEmitter {
       const currentEpoch = Math.max(epochOf(currentSettings), epochOf(fence));
       if (ifOversizedSeq != null) {
         const row = this.db
-          .prepare("SELECT size FROM messages WHERE seq=?")
+          .prepare(
+            `SELECT ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE seq=?`,
+          )
           .get(ifOversizedSeq) as { size: number } | undefined;
         if (row == null || !(row.size > maxPersistMessageBytes())) {
           result = { reset: false, history_epoch: currentEpoch, count: 0 };
@@ -1471,12 +1724,16 @@ export class PersistentStream extends EventEmitter {
 
   private archivedMessageTables = (): string[] => {
     return (
-      this.db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
-        .all() as { name: string }[]
-    )
-      .map(({ name }) => name)
-      .filter((name) => name.startsWith(ARCHIVED_MESSAGES_PREFIX));
+      (
+        this.db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+          .all() as { name: string }[]
+      )
+        .map(({ name }) => name)
+        // the name is pasted into SQL (ALTER/DROP TABLE), so only exactly the
+        // names this server creates
+        .filter((name) => ARCHIVED_MESSAGES_TABLE.test(name))
+    );
   };
 
   private unusedArchiveTableName = (): string => {
@@ -1924,6 +2181,8 @@ function dbToMessage(
         ttl?: number;
       }
     | undefined,
+  // effective size of the stored message (see EFFECTIVE_SIZE_SQL)
+  size: number,
 ): StoredMessage | undefined {
   if (x === undefined) {
     return x;
@@ -1942,22 +2201,25 @@ function dbToMessage(
     time: x.time * 1000,
     key: x.key != null ? x.key : undefined,
     encoding: x.encoding,
-    raw: handleDecompress(x),
-    headers: x.headers ? JSON.parse(x.headers) : undefined,
+    raw: handleDecompress(x, size),
+    headers: parseStoredHeaders(x.headers),
   };
 }
 
-function handleDecompress({
-  raw,
-  compress,
-}: {
-  raw: Buffer;
-  compress: CompressionAlgorithm;
-}) {
+function handleDecompress(
+  {
+    raw,
+    compress,
+  }: {
+    raw: Buffer;
+    compress: CompressionAlgorithm;
+  },
+  size: number,
+) {
   if (compress == CompressionAlgorithm.None) {
     return raw;
   } else if (compress == CompressionAlgorithm.Zstd) {
-    return decompress(raw);
+    return decompress(raw, decompressLimit(size));
   } else {
     throw Error(`unknown compression ${compress}`);
   }

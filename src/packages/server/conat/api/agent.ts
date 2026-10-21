@@ -6,6 +6,7 @@ import {
   type AgentCapabilityManifestEntry,
 } from "@cocalc/ai/agent-sdk";
 import * as identities from "@cocalc/server/agents/api";
+import { withOwnTurnStatus } from "@cocalc/conat/agents/agent-status";
 import * as rpc from "@cocalc/server/agents/rpc";
 import * as payments from "@cocalc/server/agents/payment-selections";
 import * as sensors from "@cocalc/server/agents/sensor-routing";
@@ -67,11 +68,19 @@ export const listSensors = sensors.listSensors;
 export const manageSensor = sensors.manageSensor;
 export const createScheduledPrompt = sensors.createScheduledPrompt;
 export const authorizeSensorExecution = sensors.authorizeSensorExecution;
-export const registerIdentity = identities.registerIdentity;
-export const startFreshConversation = identities.startFreshConversation;
-export const listIdentities = identities.listIdentities;
-export const getIdentity = identities.getIdentity;
-export const resolveIdentity = identities.resolveIdentity;
+/** Identities come back with only the caller's own limits and sign-ins. */
+function forCaller<A extends { account_id?: string }, R>(
+  f: (opts: A) => Promise<R>,
+): (opts: A) => Promise<R> {
+  return async (opts) => withOwnTurnStatus(await f(opts), opts?.account_id);
+}
+export const registerIdentity = forCaller(identities.registerIdentity);
+export const startFreshConversation = forCaller(
+  identities.startFreshConversation,
+);
+export const listIdentities = forCaller(identities.listIdentities);
+export const getIdentity = forCaller(identities.getIdentity);
+export const resolveIdentity = forCaller(identities.resolveIdentity);
 export const getPaymentSelections = payments.getPaymentSelections;
 export const listPaymentSelections = payments.listPaymentSelections;
 export const setPaymentSelections = payments.setPaymentSelections;
@@ -79,11 +88,12 @@ export const copyPaymentSelection = payments.copyPaymentSelection;
 export const resolvePaymentSelection = payments.resolvePaymentSelection;
 export const reportRuntime = identities.reportRuntime;
 export const credentialUpdatedAt = identities.credentialUpdatedAt;
+export const reportStatus = identities.reportStatus;
 export const describeNetworkSelf = identities.describeNetworkSelf;
 export const disableIdentity = identities.disableIdentity;
-export const recoverIdentity = identities.recoverIdentity;
+export const recoverIdentity = forCaller(identities.recoverIdentity);
 export const issueIdentity = identities.issueIdentity;
-export const getMentionIdentity = identities.getMentionIdentity;
+export const getMentionIdentity = forCaller(identities.getMentionIdentity);
 export const endIdentityRun = identities.endIdentityRun;
 import { CodexAppServerAgent, type AcpAgent } from "@cocalc/ai/acp";
 import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";

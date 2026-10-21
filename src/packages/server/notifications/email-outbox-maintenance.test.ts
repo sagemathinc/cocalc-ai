@@ -45,6 +45,8 @@ jest.mock("@cocalc/database/postgres/notification-email-outbox", () => ({
     requeueNotificationEmail(...args),
   revalidateNotificationEmail: (...args: unknown[]) =>
     revalidateNotificationEmail(...args),
+  emailWaitsUntilAway: (row: any) =>
+    row.delivery_mode === "immediate" && row.lane === "notification",
 }));
 
 jest.mock("@cocalc/database/settings", () => ({
@@ -132,6 +134,34 @@ describe("notification email outbox maintenance", () => {
       expect.objectContaining({ status: "skipped_unverified" }),
     );
     expect(sender).not.toHaveBeenCalled();
+  });
+
+  it("asks the directory where the account lives before waiting until it is away", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([ROW]);
+    (getClusterAccountById as jest.Mock).mockResolvedValue({
+      home_bay_id: "moved",
+    });
+    await sendQueuedNotificationEmailBatch({
+      sender: jest.fn(),
+      emailConfigured: jest.fn(async () => true),
+    });
+    expect(revalidateNotificationEmail).toHaveBeenCalledWith({
+      row: ROW,
+      home: { current: "moved", local: "local" },
+    });
+    // A lookup that fails never blocks the email: it is sent as before.
+    jest.clearAllMocks();
+    revalidateNotificationEmail.mockResolvedValue({ action: "send" });
+    claimQueuedNotificationEmails.mockResolvedValue([ROW]);
+    (getClusterAccountById as jest.Mock).mockRejectedValue(new Error("down"));
+    await sendQueuedNotificationEmailBatch({
+      sender: jest.fn(),
+      emailConfigured: jest.fn(async () => true),
+    });
+    expect(revalidateNotificationEmail).toHaveBeenCalledWith({
+      row: ROW,
+      home: { current: "", local: "local" },
+    });
   });
 
   it("never falls back to a stale local financial destination when directory lookup fails", async () => {
