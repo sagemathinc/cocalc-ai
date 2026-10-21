@@ -2367,7 +2367,7 @@ async function applyManagedProjectVolumeQuotaRaw({
   operation_id?: string;
   operation_class: string;
   priority?: "lifecycle" | "interactive" | "scheduled" | "scavenger";
-}): Promise<{ volume_identity: string }> {
+}): Promise<{ volume_identity: string; incomplete?: string }> {
   const target = Math.floor(size);
   if (!Number.isFinite(target) || target <= 0) {
     throw new Error("raw managed project quota must be finite and positive");
@@ -2388,10 +2388,11 @@ async function applyManagedProjectVolumeQuotaRaw({
       priority,
     });
   }
+  let incomplete: string | undefined;
   if (!scratch) {
     // The project's files and edit history together (project-quota-group.ts).
-    // If this fails, each has a limit of its own, and the next audit tries
-    // again (repairProjectVolumeQuota).
+    // If this fails (e.g., deferred under I/O pressure), each has a limit of
+    // its own meanwhile, and the quota is checked again soon (incomplete).
     await syncProjectQuotaGroup({
       project_id,
       mount: vol.filesystem.opts.mount,
@@ -2407,6 +2408,7 @@ async function applyManagedProjectVolumeQuotaRaw({
         project_id,
         err: `${err}`,
       });
+      incomplete = `project quota group not updated: ${err}`;
     });
     // its own limit, a safety net
     await syncPersistVolumeQuota(project_id, target).catch((err) => {
@@ -2417,7 +2419,7 @@ async function applyManagedProjectVolumeQuotaRaw({
     });
   }
   invalidateQuotaCache(project_id, scratch);
-  return { volume_identity };
+  return { volume_identity, ...(incomplete ? { incomplete } : {}) };
 }
 
 export async function reconcileManagedProjectVolumeQuota({
