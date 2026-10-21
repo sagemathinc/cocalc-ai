@@ -13,6 +13,7 @@ the decisions, kept apart from SyncDoc so they can be tested on their own:
 */
 
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
+import { legacyPatchId } from "patchflow";
 import { Sha256 } from "@cocalc/util/sha256-utf8";
 import { type FileProof, readFileProof } from "./file-proof";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
@@ -25,6 +26,8 @@ export interface HistoryResetState {
   count: number;
   epoch: number;
   proof?: { seq?: number; data?: any };
+  // what the last reset recorded (settings.history_reset), if any
+  reset?: { reason?: string; time?: number };
 }
 
 // a bounded read of the saved file
@@ -95,6 +98,17 @@ export function savesThroughWriteFile(syncPath: string): boolean {
   return !isJupyterPath(syncPath) && !isBoardSyncdbPath(syncPath);
 }
 
+// How the user can restart an unloadable history: from the saved file (with
+// its proof, H1b-1b), from a notebook's saved .ipynb (H1b-3b, through the
+// project), or not at all (a board, until the board work).
+export type HistoryRestartKind = "file" | "ipynb" | "none";
+
+export function historyRestartKind(syncPath: string): HistoryRestartKind {
+  if (savesThroughWriteFile(syncPath)) return "file";
+  if (isJupyterPath(syncPath)) return "ipynb";
+  return "none";
+}
+
 // While a document's open keeps retrying, read the saved file again only
 // for a proof not already found not to match it.  Only the last rejected
 // proof is remembered: enough not to reread an unchanged one, and bounded
@@ -120,6 +134,14 @@ export const LATEST_SNAPSHOT_CHECKPOINT = "latest_snapshot";
 
 // The first message of the new history: a snapshot of value, as SyncDoc's
 // patches are stored (see SyncDoc.snapshot), with its checkpoint.
+// The first message of a restarted history: a snapshot of value (a string
+// document's text, or a db document's JSON lines), by the filesystem user (the
+// first user of a document), now.
+export function seedOfValue(value: string) {
+  const now = Date.now();
+  return seedFor({ value, time: legacyPatchId(now), wall: now, userId: 0 });
+}
+
 export function seedFor({
   value,
   time,

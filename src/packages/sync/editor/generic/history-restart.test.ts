@@ -5,8 +5,10 @@ import {
   proofCoversHistory,
   resetOptions,
   savedFileOf,
+  historyRestartKind,
   savesThroughWriteFile,
   seedFor,
+  seedOfValue,
   validProof,
 } from "./history-restart";
 
@@ -212,5 +214,27 @@ describe("ProofReads", () => {
     }
     expect(reads.retained()).toBe(1);
     expect(reads.shouldRead(stateWith(9_999))).toBe(false);
+  });
+});
+
+describe("historyRestartKind: the restart the user is offered", () => {
+  it("a file, a notebook's syncdb, a board's syncdb", () => {
+    expect(historyRestartKind("a.md")).toBe("file");
+    expect(historyRestartKind(".a.ipynb.sage-jupyter2")).toBe("ipynb");
+    expect(historyRestartKind(".a.board.json.sage-board")).toBe("none");
+  });
+});
+
+describe("seedOfValue", () => {
+  it("a snapshot of the value, by the filesystem user, starting a history", () => {
+    const seed = seedOfValue('{"type":"cell","id":"a"}');
+    const patch: any = decode({ encoding: seed.encoding, data: seed.raw });
+    expect(patch).toMatchObject({
+      is_snapshot: true,
+      snapshot: '{"type":"cell","id":"a"}',
+      user_id: 0,
+      seq_info: { seq: 0 },
+    });
+    expect(seed.checkpoint.data.patchId).toBe(patch.time);
   });
 });

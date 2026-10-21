@@ -1123,10 +1123,20 @@ export class BaseEditorActions<
         })();
       }
     });
-    this._syncstring.on("history-unloadable", () => {
+    this._syncstring.on("history-unloadable", ({ restart } = {} as any) => {
       // The edit history holds an entry too large to load, and the saved
       // file does not provably include every edit, so nothing was reset
       // automatically.  Let the user choose (bounded history plan r3, §2.3).
+      if (restart != null && restart != "file") {
+        // no restart from a saved file is possible (e.g., a board)
+        alert_message({
+          type: "error",
+          title: "The edit history cannot be loaded",
+          message: `The edit history of ${this.path} contains an entry too large to load.`,
+          block: true,
+        });
+        return;
+      }
       (async () => {
         const page = this.redux.getActions("page");
         const restart = await page.popconfirm({
