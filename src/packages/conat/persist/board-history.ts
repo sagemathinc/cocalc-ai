@@ -116,6 +116,21 @@ function validId(x: unknown, limits: BoardHistoryLimits): x is string {
   );
 }
 
+// One JSON object (not null, not an array) per non-empty line.
+function validDocumentString(text: string): boolean {
+  for (const line of text.split("\n")) {
+    if (line.length === 0) continue;
+    let x: unknown;
+    try {
+      x = JSON.parse(line);
+    } catch {
+      return false;
+    }
+    if (x == null || typeof x !== "object" || Array.isArray(x)) return false;
+  }
+  return true;
+}
+
 function parsesAsJson(text: string): boolean {
   try {
     JSON.parse(text);
@@ -181,6 +196,15 @@ export function parseBoardRecord(
     // patch, and of the snapshot before it, if any).
     if (!validSeqInfo(r.seq_info)) {
       return { invalid: "a snapshot record without a valid seq_info" };
+    }
+    // The board's document as a string (the immer db document's: one JSON
+    // object per line). patchflow's fromString skips a line it can't read,
+    // so a corrupt snapshot would open as a board with records silently
+    // missing: refused instead (codex 4332517570).
+    if (!validDocumentString(r.snapshot)) {
+      return {
+        invalid: "a snapshot record whose snapshot isn't a board document",
+      };
     }
     // A snapshot record names its patch by time; its own parents are
     // never read (patchflow keeps the patch's).

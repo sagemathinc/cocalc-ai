@@ -296,7 +296,8 @@ describe("the write service's transport bounds", () => {
       messageData: messageData({
         time: "t1",
         is_snapshot: true,
-        snapshot: "x".repeat(7 * MiB),
+        // (A board document: one JSON object per line.)
+        snapshot: `{"t":"${"x".repeat(7 * MiB - 8)}"}`,
         seq_info: { seq: 1 },
       }),
       timeout: 20_000,

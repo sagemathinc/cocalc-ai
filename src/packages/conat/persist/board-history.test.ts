@@ -770,7 +770,7 @@ describe("the open check and the append check agree (codex round 6)", () => {
     expect(c.add(a, 10, "d2")).toMatchObject({ ok: false, reason: "invalid" });
     // And two different snapshots at one time.
     expect(
-      check([patch("A"), snapshot("A"), { ...snapshot("A"), snapshot: "[1]" }]),
+      check([patch("A"), snapshot("A"), { ...snapshot("A"), snapshot: "{\"x\":1}" }]),
     ).toMatchObject({ ok: false, message: "two different snapshots at A" });
   });
 
@@ -788,4 +788,31 @@ describe("the open check and the append check agree (codex round 6)", () => {
       ok: true,
     });
   });
+});
+
+test("codex 4332517570: a snapshot's body must be a board document (one JSON object per line)", () => {
+  const snap = (body: string) => ({ ...snapshot("t0"), snapshot: body });
+  for (const good of ["", "{}", '{"type":"doc"}\n{"type":"item","id":"a"}\n']) {
+    expect(check([patch("t0"), snap(good)])).toMatchObject({ ok: true });
+  }
+  for (const bad of [
+    "{",
+    '{"a":1}\nnot json',
+    "null",
+    "[1]",
+    '"text"',
+    "{}\n[]",
+  ]) {
+    expect(check([patch("t0"), snap(bad)])).toMatchObject({
+      ok: false,
+      reason: "invalid",
+    });
+    const c = BoardAppendCheck.fromRecords(
+      [{ value: patch("t0"), digest: "p", bytes: 10 }],
+      0,
+    );
+    expect(() =>
+      c.check([{ value: snap(bad), digest: "s", bytes: 10 }]),
+    ).toThrow(/isn't a board document/);
+  }
 });

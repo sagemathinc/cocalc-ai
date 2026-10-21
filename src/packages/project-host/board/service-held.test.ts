@@ -4,7 +4,12 @@ charged in real bytes, never dropped on time or for the refusal messages'
 count, and dropped only past its byte bound, logged and counted.
 */
 
-import { heldUnsavedStats, lastRefusal, rememberRefusal } from "./service";
+import {
+  heldUnsavedStats,
+  lastRefusal,
+  rememberRefusal,
+  saveHeldUnsaved,
+} from "./service";
 
 const memory = (message = "refused") => ({
   state: "refused" as const,
@@ -67,4 +72,70 @@ test("past the byte bound: the oldest is dropped, logged and counted", () => {
   expect(stats.dropped - dropped).toBeGreaterThanOrEqual(2);
   expect(lastRefusal(keys[0])?.text).toBeUndefined();
   expect(lastRefusal(keys[4])?.text).toHaveLength(20 * 1024 * 1024);
+});
+
+describe("astra: each refusal's text is its own generation", () => {
+  test("a second refusal of a board keeps the first's text too", () => {
+    const k = key();
+    const before = heldUnsavedStats().entries;
+    rememberRefusal(k, memory("first"), "OLD text");
+    rememberRefusal(k, memory("second"), "NEW text");
+    expect(heldUnsavedStats().entries - before).toBe(2);
+    expect(lastRefusal(k)).toMatchObject({
+      unsaved: { in: "memory" },
+      text: "NEW text",
+      held: 2,
+    });
+  });
+
+  // A filesystem whose first writeFile waits until released.
+  function slowFs() {
+    const files = new Map<string, string>();
+    let release!: () => void;
+    let first = true;
+    const fs: any = {
+      writeFile: async (p: string, text: string) => {
+        if (first) {
+          first = false;
+          await new Promise<void>((r) => (release = r));
+        }
+        files.set(p, text);
+      },
+      move: async (from: string, to: string) => {
+        files.set(to, files.get(from)!);
+        files.delete(from);
+      },
+      unlink: async (p: string) => {
+        files.delete(p);
+      },
+    };
+    return { fs, files, release: () => release() };
+  }
+
+  test("a newer text held while an older one is being saved stays held, unsaved", async () => {
+    const k = key();
+    const { fs, files, release } = slowFs();
+    rememberRefusal(k, memory("old"), "OLD text");
+    const saving = saveHeldUnsaved(k, fs, "/b.board.json");
+    // Meanwhile, a second refusal holds NEW.
+    await new Promise((r) => setImmediate(r));
+    rememberRefusal(k, memory("new"), "NEW text");
+    release();
+    await saving;
+    const after = lastRefusal(k)!;
+    expect(after).toMatchObject({
+      unsaved: { in: "memory" },
+      text: "NEW text",
+      held: 1,
+    });
+    expect(after.copies).toHaveLength(1);
+    expect(files.get(after.copies![0])).toBe("OLD text");
+    // The next open saves NEW too.
+    await saveHeldUnsaved(k, fs, "/b.board.json");
+    const done = lastRefusal(k)!;
+    expect(done.text).toBeUndefined();
+    expect(done.copies).toHaveLength(2);
+    expect(done.unsaved).toEqual({ in: "copy", path: done.copies![1] });
+    expect(files.get(done.copies![1])).toBe("NEW text");
+  });
 });
