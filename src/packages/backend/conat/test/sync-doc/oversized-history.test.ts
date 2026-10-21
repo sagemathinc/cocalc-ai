@@ -280,7 +280,11 @@ describe("an acknowledged edit newer than the saved file: nothing is reset autom
     const after = await archivedHistories();
     expect(after.length).toBe(before.length + 1);
     // the newer edit ("hello world", the newest seq) is in the archive
-    const { file, table } = after[after.length - 1];
+    const added = after.filter(
+      (x) => !before.some((y) => y.file == x.file && y.table == x.table),
+    );
+    expect(added).toHaveLength(1);
+    const { file, table } = added[0];
     const db = new DatabaseSync(file, { readOnly: true });
     try {
       expect(
@@ -295,6 +299,25 @@ describe("an acknowledged edit newer than the saved file: nothing is reset autom
     await once(opened, "ready", 30000);
     expect(opened.to_str()).toBe("hello again");
     opened.close();
+  });
+});
+
+describe("a host copy (noSaveToDisk, e.g., the sync-fs service) of a text file with an acknowledged edit newer than the save", () => {
+  it("never resets silently", async () => {
+    const project_id = uuid();
+    const path = "host.txt";
+    await serveFileReads(project_id);
+    const editor = await documentWithLargeHistoryEntry(project_id, path);
+    editor.from_str("hello world");
+    editor.commit();
+    await editor.save();
+    await editor.close();
+    const host = open(connect(), project_id, path, { noSaveToDisk: true });
+    await once(host, "history-unloadable", 30000);
+    await delay(500);
+    expect(host.get_state()).toBe("init");
+    expect(resets).toEqual([]);
+    host.close();
   });
 });
 
@@ -313,6 +336,25 @@ describe("no saved file: nothing to restart from", () => {
       "does not exist",
     );
     expect(resets).toEqual([]);
+    opened.close();
+  });
+});
+
+describe("a client that never writes the file (noSaveToDisk, e.g., an agent) opening a text file", () => {
+  it("still restarts the history only from a proof covering every edit", async () => {
+    const project_id = uuid();
+    const path = "agent.txt";
+    await serveFileReads(project_id);
+    const editor = await documentWithLargeHistoryEntry(project_id, path);
+    await editor.close();
+    const opened = open(connect(), project_id, path, { noSaveToDisk: true });
+    await once(opened, "ready", 30000);
+    expect(opened.to_str()).toBe("hello again");
+    expect(resets).toHaveLength(1);
+    expect(resets[0]).toMatchObject({
+      name: "resetHistory",
+      opts: { options: { allowRollback: false, reason: "oversized" } },
+    });
     opened.close();
   });
 });
@@ -358,9 +400,10 @@ describe("two browsers opening the document at once", () => {
   });
 });
 
-describe("a document saved some other way (noSaveToDisk) keeps the unseeded reset", () => {
+describe("a document whose file is written elsewhere (a notebook's syncdb) keeps the unseeded reset", () => {
   const project_id = uuid();
-  const path = "other.txt";
+  // as a notebook's syncdb: its .ipynb is written by the Jupyter code
+  const path = ".other.ipynb.sage-jupyter2";
   let opened, firstReset;
 
   it("resets the history and opens, empty for its own import to refill (e.g., Jupyter's)", async () => {

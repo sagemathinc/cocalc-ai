@@ -15,6 +15,8 @@ the decisions, kept apart from SyncDoc so they can be tested on their own:
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 import { Sha256 } from "@cocalc/util/sha256-utf8";
 import { type FileProof, readFileProof } from "./file-proof";
+import { isJupyterPath } from "@cocalc/util/jupyter/names";
+import { isBoardSyncdbPath } from "@cocalc/util/board/names";
 
 // What the reset judges: the history's newest seq and message count, its
 // epoch, and the saved file proof checkpoint, if any.
@@ -41,7 +43,12 @@ export interface SavedFile {
 export function savedFileOf(data: Uint8Array): SavedFile | undefined {
   let value: string;
   try {
-    value = new TextDecoder("utf-8", { fatal: true }).decode(data);
+    // ignoreBOM: keep a leading byte order mark in the value, as it is in
+    // the bytes the proof hashes; otherwise the seed would silently differ
+    // from the file
+    value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      data,
+    );
   } catch {
     return undefined;
   }
@@ -76,6 +83,37 @@ export function proofCoversHistory(state: HistoryResetState): boolean {
   return (
     proof != null && proof.epoch === state.epoch && proof.seq === state.seq
   );
+}
+
+// Whether this document's file is written by SyncDoc.writeFile, so its
+// saved file can carry a proof (file-proof.ts).  This is a property of the
+// document, not of the client that opened it: clients that never write the
+// file (noSaveToDisk, e.g., agents and the sync-fs service) open the same
+// documents.  The exceptions are documents whose file is written elsewhere,
+// in another format: a notebook's syncdb (its .ipynb) and a board's.
+export function savesThroughWriteFile(syncPath: string): boolean {
+  return !isJupyterPath(syncPath) && !isBoardSyncdbPath(syncPath);
+}
+
+// While a document's open keeps retrying, read the saved file again only
+// for a proof not already found not to match it.  Only the last rejected
+// proof is remembered: enough not to reread an unchanged one, and bounded
+// however often the file or proof changes.
+export class ProofReads {
+  private rejected?: string;
+
+  static key = (state: HistoryResetState): string =>
+    `${state.epoch}:${state.seq}:${state.proof?.data?.sha256}`;
+
+  shouldRead = (state: HistoryResetState): boolean =>
+    this.rejected !== ProofReads.key(state);
+
+  reject = (state: HistoryResetState): void => {
+    this.rejected = ProofReads.key(state);
+  };
+
+  // for tests
+  retained = (): number => (this.rejected == null ? 0 : 1);
 }
 
 export const LATEST_SNAPSHOT_CHECKPOINT = "latest_snapshot";

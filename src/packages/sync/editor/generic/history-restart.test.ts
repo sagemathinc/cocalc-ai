@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { DataEncoding, decode } from "@cocalc/conat/core/codec";
 import {
+  ProofReads,
   proofCoversHistory,
   resetOptions,
   savedFileOf,
+  savesThroughWriteFile,
   seedFor,
   validProof,
 } from "./history-restart";
@@ -26,6 +28,25 @@ describe("savedFileOf", () => {
       bytes: 8,
     });
   });
+  it("keeps a leading byte order mark, which the hash covers", () => {
+    const withBom = new Uint8Array([0xef, 0xbb, 0xbf, ...bytes("Hello")]);
+    const f = savedFileOf(withBom)!;
+    expect(f.value).toBe("\ufeffHello");
+    expect(f.bytes).toBe(8);
+    expect(f.sha256).toBe(
+      createHash("sha256").update(Buffer.from(withBom)).digest("hex"),
+    );
+    // proof -> file -> seed: the seed is exactly the file's value
+    const seed = seedFor({ value: f.value, time: "t", wall: 0, userId: 0 });
+    expect(decode({ encoding: seed.encoding, data: seed.raw }).snapshot).toBe(
+      "\ufeffHello",
+    );
+    // and it encodes back to exactly the hashed bytes
+    expect(Buffer.from(new TextEncoder().encode(f.value))).toEqual(
+      Buffer.from(withBom),
+    );
+  });
+
   it("refuses bytes that are not UTF-8", () => {
     expect(savedFileOf(new Uint8Array([0xff, 0xfe, 0x00]))).toBeUndefined();
   });
@@ -154,5 +175,42 @@ describe("resetOptions", () => {
     expect(opId({ ...state, count: 10 })).not.toBe(opId(state));
     expect(opId({ ...state, epoch: 2 })).not.toBe(opId(state));
     expect(opId(state, savedFileOf(bytes("changed"))!)).not.toBe(opId(state));
+  });
+});
+
+describe("savesThroughWriteFile", () => {
+  it("is a property of the document, by its path", () => {
+    expect(savesThroughWriteFile("a/notes.md")).toBe(true);
+    expect(savesThroughWriteFile("x.tasks")).toBe(true);
+    expect(savesThroughWriteFile(".a.ipynb.sage-jupyter2")).toBe(false);
+    expect(savesThroughWriteFile(".a.board.json.sage-board")).toBe(false);
+  });
+});
+
+describe("ProofReads", () => {
+  const stateWith = (i: number) => ({
+    seq: 10 + i,
+    count: 10,
+    epoch: 1,
+    proof: { seq: 10 + i, data: { sha256: `${i}`.padStart(64, "0") } },
+  });
+
+  it("does not reread a proof already found not to match", () => {
+    const reads = new ProofReads();
+    expect(reads.shouldRead(stateWith(0))).toBe(true);
+    reads.reject(stateWith(0));
+    expect(reads.shouldRead(stateWith(0))).toBe(false);
+    // a new proof (or a changed file's proof) is read again
+    expect(reads.shouldRead(stateWith(1))).toBe(true);
+  });
+
+  it("stays bounded however many different proofs are rejected", () => {
+    const reads = new ProofReads();
+    for (let i = 0; i < 10_000; i++) {
+      expect(reads.shouldRead(stateWith(i))).toBe(true);
+      reads.reject(stateWith(i));
+    }
+    expect(reads.retained()).toBe(1);
+    expect(reads.shouldRead(stateWith(9_999))).toBe(false);
   });
 });

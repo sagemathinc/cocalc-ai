@@ -86,10 +86,12 @@ import {
   fileProof,
 } from "./file-proof";
 import {
+  ProofReads,
   type SavedFile,
   proofCoversHistory,
   resetOptions,
   savedFileOf,
+  savesThroughWriteFile,
   seedFor,
   validProof,
 } from "./history-restart";
@@ -763,12 +765,13 @@ export class SyncDoc extends EventEmitter {
     if (typeof oversized_seq != "number" || this.oversizedHistoryReset) {
       return false;
     }
-    if (!this.opts.noSaveToDisk) {
+    if (savesThroughWriteFile(this.syncPath)) {
       // saved with writeFile, so with a proof of what the file covers
       return await this.resetOversizedHistoryFromFile();
     }
-    // Documents saved elsewhere (e.g., a notebook's .ipynb) have no proof
-    // yet; they keep this unseeded reset for now (bounded history H1b-3).
+    // Documents whose file is written elsewhere (a notebook's .ipynb, a
+    // board's file) have no proof yet; they keep this unseeded reset for now
+    // (bounded history H1b-3).
     if (typeof this.client.resetOversizedHistory != "function") {
       return false;
     }
@@ -813,7 +816,7 @@ export class SyncDoc extends EventEmitter {
   // r3, §2.3 case 1).  Otherwise nothing is reset automatically: the editor
   // is told ("history-unloadable") and the user can choose to restart the
   // history from the saved file (restartHistoryFromSavedFile).
-  private unverifiedProofs = new Set<string>();
+  private proofReads = new ProofReads();
   private resetOversizedHistoryFromFile = async (): Promise<boolean> => {
     const client = this.client;
     if (
@@ -834,12 +837,11 @@ export class SyncDoc extends EventEmitter {
         if (!proofCoversHistory(state)) break;
         // Read the file only once per proof: if its bytes do not match,
         // reading it again on every retry of the open would not help.
-        const key = `${state.epoch}:${state.seq}:${state.proof?.data?.sha256}`;
-        if (this.unverifiedProofs.has(key)) break;
+        if (!this.proofReads.shouldRead(state)) break;
         const file = (await this.readSavedFile()).file;
         const proof = file != null ? validProof(state, file) : undefined;
         if (file == null || proof == null) {
-          this.unverifiedProofs.add(key);
+          this.proofReads.reject(state);
           break;
         }
         const result = await client.resetHistory({
