@@ -18,7 +18,7 @@ files out of projects.
 */
 
 import { lstatSync, type Stats } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { syncFiles } from "@cocalc/backend/data";
 
@@ -31,7 +31,10 @@ export function projectRootForPersistPath(
   template: string = syncFiles.localProjects,
 ): string | undefined {
   if (!template?.includes(PLACEHOLDER)) return;
-  const [prefix, suffix] = template.split(PLACEHOLDER);
+  // Compare normalized paths: a doubled "/" or a ".." in either one must not
+  // hide that path is in a project.
+  path = resolve(path);
+  const [prefix, suffix] = resolve(template).split(PLACEHOLDER);
   if (!prefix || !path.startsWith(prefix)) return;
   // e.g., "-persist" in /mnt/cocalc/project-[project_id]-persist/...
   const suffixRoot = suffix.split(sep)[0] ?? "";
@@ -58,6 +61,7 @@ export function assertSafePersistDatabasePath(
   path: string,
   template: string = syncFiles.localProjects,
 ): void {
+  path = resolve(path);
   const root = projectRootForPersistPath(path, template);
   if (root == null) {
     // not in a project: a directory only the host writes

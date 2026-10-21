@@ -6,7 +6,15 @@ them or bounds the cost of reading them.
 */
 
 import { DatabaseSync } from "node:sqlite";
-import { copyFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -20,6 +28,7 @@ import { initContext, syncFiles } from "./context";
 import {
   PersistentStream,
   persistSqliteBusyTimeoutMs,
+  persistSqliteLockingMode,
   storedRowToMessage,
   unexpectedPersistSchema,
 } from "./storage";
@@ -165,9 +174,57 @@ describe("the connection to a stored database", () => {
     stream.close();
   });
 
+  it("keeps the WAL index in memory, so a project cannot crash the server through -shm", () => {
+    const path = serverFile();
+    // e.g., left by an older server; a mapped -shm that the project
+    // truncates raises SIGBUS in the server
+    writeFileSync(path + ".db-shm", Buffer.alloc(32 * 1024));
+    const stream = open(path);
+    stream.set({ encoding: 1 as any, raw: Buffer.from('{"b":2}') });
+    const db = (stream as any).db as DatabaseSync;
+    expect(db.prepare("PRAGMA locking_mode").get()).toEqual({
+      locking_mode: "exclusive",
+    });
+    if (existsSync("/proc/self/maps")) {
+      expect(readFileSync("/proc/self/maps", "utf8")).not.toContain(
+        path + ".db-shm",
+      );
+    }
+    // nothing else can use the file while the server has it open
+    expect(() => tamper(path, "CREATE TABLE other(x)")).toThrow(
+      /database is locked/,
+    );
+    stream.close();
+    const reopened = open(path);
+    expect(reopened.get({ seq: 2, key: undefined })).toBeDefined();
+    reopened.close();
+  });
+
+  it("can share the file in an emergency", () => {
+    expect(persistSqliteLockingMode({})).toBe("exclusive");
+    expect(
+      persistSqliteLockingMode({
+        COCALC_PERSIST_SQLITE_LOCKING_MODE: "normal",
+      }),
+    ).toBe("normal");
+    process.env.COCALC_PERSIST_SQLITE_LOCKING_MODE = "normal";
+    try {
+      const path = serverFile();
+      const stream = open(path);
+      tamper(path, "SELECT 1");
+      stream.close();
+    } finally {
+      delete process.env.COCALC_PERSIST_SQLITE_LOCKING_MODE;
+    }
+  });
+
   it("runs nothing from a trigger the project adds while it is open", () => {
+    // The project can change the bytes of the file whatever the locking mode;
+    // normal locking lets this test do that through SQLite.
+    process.env.COCALC_PERSIST_SQLITE_LOCKING_MODE = "normal";
     const path = serverFile();
     const stream = open(path);
+    delete process.env.COCALC_PERSIST_SQLITE_LOCKING_MODE;
     // the project changes the file after the schema was checked
     tamper(
       path,
@@ -210,7 +267,7 @@ describe("stored messages", () => {
     size,
     headers = null,
   }: {
-    raw: Buffer;
+    raw: Buffer | string;
     compress: number;
     size: number;
     headers?: string | null;
@@ -274,6 +331,21 @@ describe("stored messages", () => {
     } finally {
       delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
     }
+  });
+
+  it("that are not stored as bytes are corrupt, and never read", async () => {
+    // a TEXT value, whose length() SQLite would have to scan
+    const stream = open(
+      hostileRow({ raw: "x".repeat(100_000), compress: 0, size: 2 }),
+    );
+    expect(
+      stream.planPage({ after_seq: 9, maxRows: 10, maxBytes: 1e9 }),
+    ).toEqual([{ seq: 10, size: Number.MAX_SAFE_INTEGER }]);
+    expect(() => stream.get({ seq: 10, key: undefined })).toThrow(/is corrupt/);
+    expect(() => [...stream.getAll()]).toThrow(/is corrupt/);
+    const [row] = stream.readPage(9, 10);
+    await expect(storedRowToMessage(row)).rejects.toThrow(/is corrupt/);
+    stream.close();
   });
 
   it("with huge headers are not parsed", () => {

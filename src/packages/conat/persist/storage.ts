@@ -255,11 +255,28 @@ export const MAX_PERSIST_HEADERS_CHARS = 1_000_000;
 // at least its uncompressed length, see set), and never less than this.
 const MIN_DECOMPRESS_LIMIT_BYTES = 64 * 1024;
 
+// The "size" of a stored message whose data is not a BLOB (only a changed
+// file has that): over every limit, so it is never read, and a client can
+// remove it like any oversized message (resetHistory).
+const NOT_A_BLOB_SIZE = Number.MAX_SAFE_INTEGER;
+
 // The size of a stored message, for checking limits before reading it: the
-// recorded size, but never less than what is physically stored.  (length() of
-// a BLOB does not read it.)
-const EFFECTIVE_SIZE_SQL =
-  "MAX(IFNULL(CAST(size AS INTEGER), 0), length(raw) + IFNULL(length(headers), 0) + IFNULL(length(key), 0))";
+// recorded size, but never less than what is physically stored.  (typeof()
+// and length() of a BLOB do not read it.)
+const EFFECTIVE_SIZE_SQL = `CASE WHEN typeof(raw) <> 'blob' THEN ${NOT_A_BLOB_SIZE} ELSE MAX(IFNULL(CAST(size AS INTEGER), 0), length(raw) + IFNULL(length(headers), 0) + IFNULL(length(key), 0)) END`;
+
+// SQLite locking mode for persist databases.  "exclusive" (the default) keeps
+// the WAL index in this process's memory instead of a shared -shm file that
+// SQLite memory-maps: a project that owns that file could truncate it and
+// crash the whole persist server with SIGBUS.  The cost: no other connection
+// can open the file while this one has it open.
+export function persistSqliteLockingMode(
+  env: NodeJS.ProcessEnv = process.env,
+): "exclusive" | "normal" {
+  return env.COCALC_PERSIST_SQLITE_LOCKING_MODE === "normal"
+    ? "normal"
+    : "exclusive";
+}
 
 // sqlite3_set_authorizer return codes
 const SQLITE_OK = 0;
@@ -406,7 +423,9 @@ export function persistMessageTooLargeError({
   seq: number;
 }): ConatError {
   const err = new ConatError(
-    `stored message ${seq} is ${size} bytes, over the ${limit} byte limit, so it cannot be read; an operator must remove it from the stream`,
+    size >= NOT_A_BLOB_SIZE
+      ? `stored message ${seq} is corrupt (its data is not stored as bytes), so it cannot be read; an operator must remove it from the stream`
+      : `stored message ${seq} is ${size} bytes, over the ${limit} byte limit, so it cannot be read; an operator must remove it from the stream`,
     { code: 413 },
   );
   // which message, so a client can ask for exactly this one to be dealt with
@@ -468,6 +487,15 @@ export const ASYNC_DECOMPRESS_MIN_BYTES = 1_000_000;
 export async function storedRowToMessage(
   row: StoredRow,
 ): Promise<StoredMessage> {
+  if (!(row.raw instanceof Uint8Array)) {
+    // the size of such a row is NOT_A_BLOB_SIZE, but don't rely on callers
+    // checking it
+    throw persistMessageTooLargeError({
+      size: NOT_A_BLOB_SIZE,
+      limit: maxPersistMessageBytes(),
+      seq: row.seq,
+    });
+  }
   let raw: Buffer;
   if (row.compress == CompressionAlgorithm.None) {
     raw = row.raw;
@@ -849,7 +877,13 @@ export class PersistentStream extends EventEmitter {
   };
 
   // Limit what this connection can do, whatever the (untrusted) file holds.
+  // Runs before anything reads the database.
   private hardenConnection = () => {
+    if (persistSqliteLockingMode() === "exclusive") {
+      // Before the first read: then SQLite never creates or maps a -shm file
+      // (see persistSqliteLockingMode).
+      this.db.exec("PRAGMA locking_mode=EXCLUSIVE");
+    }
     const limits = (this.db as any).limits;
     if (limits != null) {
       // Never attach another database file, e.g., through a crafted table

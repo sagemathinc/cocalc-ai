@@ -58,6 +58,19 @@ describe("projectRootForPersistPath", () => {
       projectRootForPersistPath(join(persist, "a.db"), ""),
     ).toBeUndefined();
   });
+
+  it("normalizes the path and the template first", () => {
+    const db = join(persist, "a.db");
+    expect(
+      projectRootForPersistPath(db.replace(base, base + "/"), template),
+    ).toBe(project);
+    expect(
+      projectRootForPersistPath(db, template.replace(base, base + "//")),
+    ).toBe(project);
+    expect(
+      projectRootForPersistPath(`${base}/x/../project-def/a.db`, template),
+    ).toBe(join(base, "project-def"));
+  });
 });
 
 describe("assertSafePersistDatabasePath", () => {
@@ -89,6 +102,22 @@ describe("assertSafePersistDatabasePath", () => {
     symlinkSync(elsewhere, join(project, ".local"));
     expect(() => check(join(persist, "a.db"))).toThrow(
       /\.local is not a directory/,
+    );
+  });
+
+  it("refuses a symlink whatever the spelling of the path", () => {
+    const target = join(base, "elsewhere.db");
+    writeFileSync(target, "");
+    const db = join(persist, "patchflow/a.db");
+    symlinkSync(target, db);
+    expect(() => check(db.replace(base, base + "//"))).toThrow(
+      /is not a regular file/,
+    );
+    expect(() =>
+      assertSafePersistDatabasePath(db, template.replace(base, base + "//")),
+    ).toThrow(/is not a regular file/);
+    expect(() => check(`${persist}/x/../patchflow/a.db`)).toThrow(
+      /is not a regular file/,
     );
   });
 
