@@ -113,6 +113,7 @@ export const TABLE_OWNERSHIP = {
       "billing_authority_commands",
       "billing_authority_lease",
       "billing_authority_migrations",
+      "business_tax_id_notices",
       "credit_payment_roots",
       "credit_transfer_deliveries",
       "credit_transfer_entries",
@@ -829,7 +830,6 @@ export const TABLE_OWNERSHIP = {
     [
       "account_admin_audit_log",
       "ai_usage_log",
-      "business_tax_id_notices",
       "business_tax_id_refusals",
       "central_log",
       "client_error_log",
