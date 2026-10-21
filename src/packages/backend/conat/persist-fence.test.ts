@@ -93,9 +93,18 @@ describe("the fence capability file", () => {
     expect(fenceCapableServerRunning(dir)).toBe(false);
   });
 
-  it("a file that can't be read counts as running", () => {
-    writeFileSync(join(dir, "capability.json"), "{oops");
-    expect(fenceCapableServerRunning(dir)).toBe(true);
+  it("a file that can't be read, or says nothing clear, counts as running", () => {
+    for (const content of [
+      "{oops",
+      JSON.stringify({}),
+      JSON.stringify({ holder: {} }),
+      JSON.stringify({ holder: { pid: "1", start: "" } }),
+      JSON.stringify(null),
+      JSON.stringify([]),
+    ]) {
+      writeFileSync(join(dir, "capability.json"), content);
+      expect(fenceCapableServerRunning(dir)).toBe(true);
+    }
   });
 
   it("a file left by a process that is gone does not count", () => {

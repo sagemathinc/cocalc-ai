@@ -15,22 +15,15 @@ The parts of persist fences (conat/persist/fence.ts) that need this host:
   before fences (then it may).
 */
 
-import {
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import type {
   PersistFenceHolder,
   PersistFenceRecord,
   PersistFenceStore,
 } from "@cocalc/conat/persist/fence";
 import { isValidUUID } from "@cocalc/util/misc";
+import { fsyncDir, writeDurableJson } from "../computers/durable";
 
 const CAPABILITY_FILE = "capability.json";
 const INSTANCES_FILE = "instances.json";
@@ -141,10 +134,10 @@ function isProcessAlive({ pid, start }: PersistFenceHolder): boolean {
   }
 }
 
+// written durably (fsynced, renamed, directory fsynced): the fences and
+// instances must survive a crash of the host
 function writeJson(path: string, value: unknown): void {
-  const tmp = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 });
-  renameSync(tmp, path);
+  writeDurableJson(path, value);
 }
 
 // undefined if there is no such file; anything else that keeps it from being
@@ -248,6 +241,7 @@ export function fileFenceStore(
       const path = file(project_id);
       if (readJson(path)?.token === token) {
         rmSync(path, { force: true });
+        fsyncDir(dir);
       }
     },
     loadInstances: () => {
@@ -291,19 +285,28 @@ export function removeFenceCapability(dir: string): void {
 }
 
 // Whether a persist server with a fence service runs on this host: its
-// capability file names a process that still runs.  A file that can't be
-// read counts as yes (then a restore waits rather than go ahead unfenced).
+// capability file names a process that still runs.  Only no file, or one
+// naming a process that is gone, is no: a file that can't be read or says
+// nothing clear counts as yes (then a restore waits rather than go ahead
+// unfenced).
 export function fenceCapableServerRunning(dir: string): boolean {
-  let holder;
+  let data;
   try {
-    holder = readJson(join(dir, CAPABILITY_FILE))?.holder;
+    data = readJson(join(dir, CAPABILITY_FILE));
   } catch {
     return true;
   }
-  return (
-    holder != null &&
-    Number.isSafeInteger(holder.pid) &&
-    typeof holder.start == "string" &&
-    isProcessAlive(holder)
-  );
+  // no such file: no server with fences has run here (or it stopped)
+  if (data === undefined) return false;
+  const holder = data?.holder;
+  if (
+    holder == null ||
+    !Number.isSafeInteger(holder.pid) ||
+    holder.pid <= 0 ||
+    typeof holder.start != "string"
+  ) {
+    // a file that says nothing clear counts as yes
+    return true;
+  }
+  return isProcessAlive(holder);
 }
