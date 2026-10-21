@@ -189,6 +189,7 @@ describe("delete account", () => {
       `${sql}`.startsWith("UPDATE accounts"),
     );
     expect(update[0]).toContain("deleted=true");
+    expect(update[0]).toContain("deleted_at=NOW()");
     for (const field of [
       "display_name",
       "first_name",
@@ -196,6 +197,7 @@ describe("delete account", () => {
       "password_hash",
       "ssh_keys",
       "lti_id",
+      "email_address_verified",
     ]) {
       expect(update[0]).toContain(`${field}=NULL`);
     }

@@ -99,6 +99,7 @@ export async function markAccountDeleted(
     query: "UPDATE accounts",
     set: {
       "deleted::BOOLEAN": true,
+      "deleted_at::TIMESTAMP": new Date(),
       "email_address_before_delete::TEXT": email_address,
       email_address: null,
       passports: null,
@@ -114,6 +115,9 @@ export async function markAccountDeleted(
       lti_data: null,
       created_by: null,
       sign_up_usage_intent: null,
+      email_address_verified: null,
+      email_address_challenge: null,
+      email_address_problem: null,
     },
     where: { "account_id = $::UUID": account_id },
   });

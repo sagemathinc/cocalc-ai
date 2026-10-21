@@ -37,6 +37,9 @@ export const DELETED_ACCOUNT_PERSONAL_FIELDS = [
   "lti_data",
   "created_by",
   "sign_up_usage_intent",
+  "email_address_verified",
+  "email_address_challenge",
+  "email_address_problem",
 ] as const;
 
 export const CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL =
@@ -65,9 +68,9 @@ export async function purgeDeletedAccountPersonalData({
          LIMIT $1)`,
     [batchSize],
   );
-  // The deletion time is the account's revocation time, which deletion
-  // records. Accounts deleted before revocations existed have no row; they are
-  // older than any retention period.
+  // The deletion time is deleted_at, or for accounts deleted before that
+  // existed, the revocation time that deletion records. Accounts with neither
+  // were deleted before both existed, so are older than any retention period.
   await ensureAccountRevocationsTable();
   const { rowCount: emailsPurged } = await pool.query(
     `UPDATE accounts SET email_address_before_delete=NULL
@@ -76,8 +79,9 @@ export async function purgeDeletedAccountPersonalData({
           LEFT JOIN account_revocations r ON r.account_id = a.account_id
          WHERE a.deleted IS TRUE
            AND a.email_address_before_delete IS NOT NULL
-           AND (r.revoked_before IS NULL
-                OR r.revoked_before < NOW() - make_interval(days => $1::INTEGER))
+           AND (COALESCE(a.deleted_at, r.revoked_before) IS NULL
+                OR COALESCE(a.deleted_at, r.revoked_before)
+                   < NOW() - make_interval(days => $1::INTEGER))
          LIMIT $2)`,
     [retentionDays, batchSize],
   );

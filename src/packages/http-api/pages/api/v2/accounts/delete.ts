@@ -32,7 +32,10 @@ async function handle(req, res) {
         account_id,
         action: "delete the account",
       });
-      await deleteAccount(account_id);
+      await deleteAccount(account_id, {
+        initiator: "self",
+        actor_account_id: account_id,
+      });
       await clearAuthCookies({ req, res });
       res.json(SuccessStatus);
     } else {

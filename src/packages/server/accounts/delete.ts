@@ -114,7 +114,7 @@ export async function markAccountDeleted(
       // account is revoked (its host drops it; its connector stops).
       revoked = await revokeComputersForAccount(db, account_id);
       await db.query(
-        `UPDATE accounts SET deleted=true, email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL, ${CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL} WHERE account_id=$2::UUID`,
+        `UPDATE accounts SET deleted=true, deleted_at=NOW(), email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL, ${CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL} WHERE account_id=$2::UUID`,
         [email_address_before_delete, account_id],
       );
       await recordAccountAdminAuditEventInTransaction({

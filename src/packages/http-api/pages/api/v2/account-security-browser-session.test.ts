@@ -216,7 +216,10 @@ describe("browser-session-only account security routes", () => {
       account_id: "acct-1",
       action: "delete the account",
     });
-    expect(mockDeleteAccount).toHaveBeenCalledWith("acct-1");
+    expect(mockDeleteAccount).toHaveBeenCalledWith("acct-1", {
+      initiator: "self",
+      actor_account_id: "acct-1",
+    });
     expect(mockClearAuthCookies).toHaveBeenCalledWith({ req, res });
   });
 

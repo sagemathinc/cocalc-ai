@@ -12,6 +12,8 @@ const RECENT = "11111111-1111-4111-8111-111111111111";
 const OLD = "22222222-2222-4222-8222-222222222222";
 const NO_REVOCATION = "33333333-3333-4333-8333-333333333333";
 const ACTIVE = "44444444-4444-4444-8444-444444444444";
+// deleted 5 days ago through a path that records deleted_at but no revocation
+const RECENT_NO_REVOCATION = "55555555-5555-4555-8555-555555555555";
 
 describePglite("deleted account retention", () => {
   const originalEnv = {
@@ -27,6 +29,7 @@ describePglite("deleted account retention", () => {
       CREATE TABLE accounts (
         account_id UUID PRIMARY KEY,
         deleted BOOLEAN,
+        deleted_at TIMESTAMP,
         email_address VARCHAR(254),
         email_address_before_delete VARCHAR(254),
         display_name VARCHAR(254),
@@ -38,21 +41,33 @@ describePglite("deleted account retention", () => {
         lti_id TEXT[],
         lti_data JSONB,
         created_by VARCHAR(254),
-        sign_up_usage_intent TEXT
+        sign_up_usage_intent TEXT,
+        email_address_verified JSONB,
+        email_address_challenge JSONB,
+        email_address_problem JSONB
       )
     `);
-    const deleted = [RECENT, OLD, NO_REVOCATION];
+    const deleted = [RECENT, OLD, NO_REVOCATION, RECENT_NO_REVOCATION];
     for (const account_id of deleted) {
       await getPool().query(
         `INSERT INTO accounts (account_id, deleted, email_address_before_delete,
            display_name, first_name, last_name, password_hash, profile, ssh_keys,
-           lti_id, created_by)
+           lti_id, created_by, email_address_verified)
          VALUES ($1, TRUE, $2, 'Ada L', 'Ada', 'Lovelace', 'hash',
            '{"color":"red"}', '{"fp":{"value":"ssh-ed25519 AAAA ada@example.com"}}',
-           ARRAY['iss','sub'], '203.0.113.7')`,
-        [account_id, `${account_id}@example.com`],
+           ARRAY['iss','sub'], '203.0.113.7', $3::JSONB)`,
+        [
+          account_id,
+          `${account_id}@example.com`,
+          JSON.stringify({ [`${account_id}@example.com`]: "2026-01-01" }),
+        ],
       );
     }
+    await getPool().query(
+      `UPDATE accounts SET deleted_at = NOW() - interval '5 days'
+        WHERE account_id = $1`,
+      [RECENT_NO_REVOCATION],
+    );
     await getPool().query(
       `INSERT INTO accounts (account_id, deleted, email_address, first_name)
        VALUES ($1, FALSE, 'active@example.com', 'Active')`,
@@ -82,7 +97,7 @@ describePglite("deleted account retention", () => {
       await import("./deleted-account-retention");
 
     expect(await purgeDeletedAccountPersonalData()).toEqual({
-      cleared: 3,
+      cleared: 4,
       emailsPurged: 2,
     });
 
@@ -90,7 +105,12 @@ describePglite("deleted account retention", () => {
       `SELECT * FROM accounts ORDER BY account_id`,
     );
     const byId = Object.fromEntries(rows.map((row) => [row.account_id, row]));
-    for (const account_id of [RECENT, OLD, NO_REVOCATION]) {
+    for (const account_id of [
+      RECENT,
+      OLD,
+      NO_REVOCATION,
+      RECENT_NO_REVOCATION,
+    ]) {
       const row = byId[account_id];
       for (const field of [
         "display_name",
@@ -101,6 +121,7 @@ describePglite("deleted account retention", () => {
         "ssh_keys",
         "lti_id",
         "created_by",
+        "email_address_verified",
       ]) {
         expect(row[field]).toBeNull();
       }
@@ -110,8 +131,12 @@ describePglite("deleted account retention", () => {
       `${RECENT}@example.com`,
     );
     expect(byId[OLD].email_address_before_delete).toBeNull();
-    // deleted before deletions recorded a revocation time
+    // deleted before deletions recorded a deletion or revocation time
     expect(byId[NO_REVOCATION].email_address_before_delete).toBeNull();
+    // deleted_at is the deletion time when there is no revocation
+    expect(byId[RECENT_NO_REVOCATION].email_address_before_delete).toBe(
+      `${RECENT_NO_REVOCATION}@example.com`,
+    );
     // accounts that are not deleted are untouched
     expect(byId[ACTIVE].email_address).toBe("active@example.com");
     expect(byId[ACTIVE].first_name).toBe("Active");
