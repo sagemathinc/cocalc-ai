@@ -41,8 +41,19 @@ export class AccountClient {
     newPassword: string = "",
   ): Promise<void> => {
     await api("/accounts/set-password", { currentPassword, newPassword });
-    // The server revoked this account's content links; reload open previews.
+    this.afterOtherSessionsEnded();
+  };
+
+  // The server ended this account's other sessions (password change, passkey
+  // or 2FA setup): project hosts now refuse host credentials and content
+  // links issued before, this browser's included. Get fresh ones.
+  afterOtherSessionsEnded = (): void => {
     notifyAllContentLinksRevoked();
+    void this.client.conat_client
+      ?.renewProjectHostCredentials?.()
+      .catch((err) =>
+        console.warn("could not renew project-host credentials", err),
+      );
   };
 
   change_email = async (

@@ -581,7 +581,7 @@ async function reportPendingProvisioning() {
   await reportProvisionedInventory();
 }
 
-async function syncAccountRevocationsFromMaster() {
+export async function syncAccountRevocationsFromMaster() {
   if (!statusClient || !hostInfo) return;
   let cursor = getRevocationSyncCursor() ?? { updated_ms: 0, account_id: "" };
   // Bound loop so one invocation cannot run forever.
@@ -592,6 +592,7 @@ async function syncAccountRevocationsFromMaster() {
             account_id: string;
             revoked_before_ms: number;
             content_revoked_before_ms?: number;
+            browser_revoked_before_ms?: number;
             updated_ms: number;
           }>;
           next_cursor_updated_ms?: number;
@@ -637,6 +638,7 @@ async function syncAccountRevocationsFromMaster() {
         account_id: row.account_id,
         revoked_before_ms: row.revoked_before_ms,
         content_revoked_before_ms: row.content_revoked_before_ms,
+        browser_revoked_before_ms: row.browser_revoked_before_ms,
         updated_ms: row.updated_ms,
       });
     }
