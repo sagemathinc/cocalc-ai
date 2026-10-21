@@ -3,6 +3,7 @@ import {
   agentTurnStatusText,
   parseAgentTurnStatus,
   sameAgentTurnStatus,
+  withOwnTurnStatus,
 } from "./agent-status";
 
 const NOW = Date.parse("2026-10-20T06:00:00Z");
@@ -109,5 +110,55 @@ describe("an agent's turn status", () => {
       expect(parseAgentTurnStatus(bad)).toBeUndefined();
     expect(sameAgentTurnStatus(status, { ...status, at: NOW + 10 })).toBe(true);
     expect(sameAgentTurnStatus(status, { ...status, queued: 2 })).toBe(false);
+  });
+});
+
+describe("an identity as one account sees it", () => {
+  const mine = "00000000-1000-4000-8000-000000000001";
+  const theirs = "00000000-1000-4000-8000-000000000002";
+  const identity = {
+    agent_id: "a",
+    name: "claude-1",
+    turn_status: {
+      version: 1,
+      running: 0,
+      queued: 0,
+      by_account: {
+        [mine]: { reason: "limit", until: NOW + 60_000 },
+        [theirs]: { reason: "sign-in" },
+      },
+      at: NOW,
+    },
+  };
+
+  it("carries only its own limit or sign-in, never another account's", () => {
+    expect(withOwnTurnStatus(identity, mine)).toEqual({
+      agent_id: "a",
+      name: "claude-1",
+      turn_status: {
+        version: 1,
+        running: 0,
+        queued: 0,
+        unavailable: { reason: "limit", until: NOW + 60_000 },
+        at: NOW,
+      },
+    });
+    const other = "00000000-1000-4000-8000-000000000003";
+    expect(withOwnTurnStatus([identity], other)[0].turn_status).toEqual({
+      version: 1,
+      running: 0,
+      queued: 0,
+      at: NOW,
+    });
+    expect(
+      JSON.stringify(withOwnTurnStatus([identity], undefined)),
+    ).not.toMatch(theirs);
+  });
+
+  it("leaves everything else alone", () => {
+    expect(withOwnTurnStatus(undefined, mine)).toBeUndefined();
+    expect(withOwnTurnStatus({ token: "t" }, mine)).toEqual({ token: "t" });
+    const none = { agent_id: "a", turn_status: null };
+    expect(withOwnTurnStatus(none, mine)).toBe(none);
   });
 });

@@ -178,7 +178,6 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
       lastSweep == null
         ? now - FIRST_SWEEP_LOOKBACK_MS
         : lastSweep - SWEEP_OVERLAP_MS;
-    lastSweep = now;
     const keyOf = (thread: Thread) =>
       JSON.stringify([thread.project_id, thread.path, thread.thread_id]);
     const candidates = new Map<string, Thread & { account_id: string }>();
@@ -273,6 +272,9 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
         });
       }
     }
+    // Only after a whole pass: if reading the jobs threw (the database was
+    // busy, say), the next pass starts from the same point again.
+    lastSweep = now;
   } finally {
     sweeping = false;
   }

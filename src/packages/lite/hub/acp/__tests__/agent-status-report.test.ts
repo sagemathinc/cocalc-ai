@@ -550,3 +550,26 @@ describe("one account's turn running", () => {
     expect(reports[0].status.by_account).toBeUndefined();
   });
 });
+
+describe("a sweep that could not read the jobs", () => {
+  it("starts from the same point next time, so no change is skipped", async () => {
+    const now = Date.now();
+    await sweepAgentStatus(now);
+    const jobs = require("../../sqlite/acp-jobs");
+    const spy = jest
+      .spyOn(jobs, "listAcpThreadsChangedSince")
+      .mockImplementationOnce(() => {
+        throw new Error("database is locked");
+      });
+    try {
+      // A change, then a failed pass, then (well after) a working one.
+      const mine = job();
+      set(mine.op_id, { updated_at: now + 1_000 });
+      await expect(sweepAgentStatus(now + 10_000)).rejects.toThrow("locked");
+    } finally {
+      spy.mockRestore();
+    }
+    await sweepAgentStatus(now + 60_000);
+    expect(reports).toHaveLength(1);
+  });
+});

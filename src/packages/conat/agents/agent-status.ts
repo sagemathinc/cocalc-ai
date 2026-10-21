@@ -200,6 +200,28 @@ export function agentTurnStatusFor(
   return { ...rest, ...(own ? { unavailable: own } : {}) };
 }
 
+/**
+ * An identity (or list of them) as one account may see it: only its own
+ * limits and sign-ins (the stored status keeps every account's, for the
+ * hub alone).
+ */
+export function withOwnTurnStatus<T>(
+  value: T,
+  account_id: string | undefined,
+): T {
+  if (Array.isArray(value))
+    return value.map((item) => withOwnTurnStatus(item, account_id)) as T;
+  if (!value || typeof value !== "object" || !("turn_status" in value))
+    return value;
+  const turn_status = (value as { turn_status?: unknown }).turn_status;
+  if (turn_status == null) return value;
+  return {
+    ...value,
+    turn_status:
+      agentTurnStatusFor(parseAgentTurnStatus(turn_status), account_id) ?? null,
+  };
+}
+
 /** Whether two statuses say the same (the time computed aside). */
 export function sameAgentTurnStatus(
   a: AgentTurnStatus | undefined,
