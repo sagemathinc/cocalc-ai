@@ -42,8 +42,10 @@ import type { CapturedSnapshotData } from "@cocalc/file-server/btrfs/snapshot-pr
 // whether a persist fence is held (persist-fence.ts), as the code under test
 // sees it
 let fenced = false;
+const fenceRequires: (string | undefined)[] = [];
 jest.mock("./persist-fence", () => ({
-  withProjectPersistFenced: jest.fn(async (_opts, fn) => {
+  withProjectPersistFenced: jest.fn(async (opts, fn) => {
+    fenceRequires.push(opts?.requires);
     fenced = true;
     try {
       return await fn();
@@ -543,6 +545,18 @@ describe("in the project-host", () => {
     expect(read(join(backup.snapshotPath, HISTORY_IN_SNAPSHOTS))).toBe("mine");
   });
 
+  it("replaces CoCalc's own copy left in the home by an unfinished restore", async () => {
+    await readyVolume();
+    // a restore's cleanup never ran: the copy it put in the home is there
+    await mkdir(join(home, HISTORY_IN_SNAPSHOTS));
+    await writeFile(join(home, HISTORY_IN_SNAPSHOTS, "a.db"), "stale copy");
+    await writeFile(join(home, HISTORY_IN_SNAPSHOTS, READY_MARKER), "{}");
+    const backup = await backupSnapshot();
+    await copyPersistVolumeIntoSnapshot(backup);
+    const copy = join(backup.snapshotPath, HISTORY_IN_SNAPSHOTS);
+    expect(read(join(copy, "a.db"))).toBe("live");
+  });
+
   it("leaves a backup alone until the history was imported", async () => {
     const backup = await backupSnapshot();
     await copyPersistVolumeIntoSnapshot(backup);
@@ -589,6 +603,8 @@ describe("in the project-host", () => {
       },
     });
     expect(result).toBe("swapped");
+    // only with a persist daemon that has volumes
+    expect(fenceRequires[fenceRequires.length - 1]).toBe("persist-volume");
     // the history was in place, and nothing had it open, as the home was
     expect(swappedWhileFenced).toBe(true);
     expect(fenced).toBe(false);
@@ -1023,6 +1039,53 @@ describe("in the project-host", () => {
     const capture = await capturing!;
     expect(captured).toBe(true);
     await capture?.release();
+  });
+
+  it("restores no files when the history can't be merged", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    const ops = fakeOps();
+    ops.setQuota = async (path) => {
+      if (path.includes("restore-")) throw new Error("quota failed");
+    };
+    await expect(
+      restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        ...backup,
+        env,
+        ops,
+      }),
+    ).rejects.toThrow("quota failed");
+    // the files and the history stay as they were, together
+    expect(backup.files).toEqual([]);
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("swaps in no history when the files can't be restored", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    backup.restoreFiles = async () => {
+      throw new Error("rustic failed");
+    };
+    await expect(
+      restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        ...backup,
+        env,
+        ops: fakeOps(),
+      }),
+    ).rejects.toThrow("rustic failed");
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(leftovers()).toEqual([]);
   });
 
   it("a backup without history where it is restored just restores the files", async () => {

@@ -230,7 +230,10 @@ export async function startStandaloneProjectHostConatPersist({
     holderAlive: isFenceHolderAlive,
     store: fileFenceStore(fenceDir),
   });
-  writeFenceCapability(fenceDir);
+  // the history in volumes of their own (persist-volume.ts), which restores
+  // rely on (persist-fence.ts), before anything is served
+  const persistVolumes = installProjectPersistVolumes();
+  writeFenceCapability(fenceDir, persistVolumes ? ["persist-volume"] : []);
   const closeFenceService = () => {
     fenceService.close();
     removeFenceCapability(fenceDir);
@@ -238,7 +241,6 @@ export async function startStandaloneProjectHostConatPersist({
   // Both services share this process's stream cache, and so its maintenance
   // hooks.
   const maintenanceHooks = maintenance?.createLocalHooks(id);
-  installProjectPersistVolumes();
   const persistServer = createPersistServer({
     client,
     id,

@@ -170,15 +170,17 @@ function errorCode(err: unknown): string | undefined {
 // its databases.
 
 // Call in a process that runs a persist server, before it serves.
-export function installProjectPersistVolumes(): void {
+// Whether projects keep their history in volumes of their own.
+export function installProjectPersistVolumes(): boolean {
   const { legacy } = projectPersistTemplates();
-  if (legacy == null) return;
+  if (legacy == null) return false;
   setPrepareProjectStore(
     async (opts) => await prepareProjectPersistVolume(opts),
   );
   void deleteStaleStagingSnapshots(
     join(dirname(legacy.home), IMPORT_STAGING_DIR),
   );
+  return true;
 }
 
 // Snapshots in IMPORT_STAGING_DIR are named for what made them and when, so
@@ -651,11 +653,20 @@ export async function capturePersistVolume({
   return {
     addTo: async (snapshotPath) => {
       const target = join(snapshotPath, HISTORY_IN_SNAPSHOTS);
-      // never replace anything of the project's: fail instead
-      if ((await lstat(target).catch(() => undefined)) != null) {
-        throw new Error(
-          `cannot save the edit history with the files: ~/${HISTORY_IN_SNAPSHOTS} already exists (it is reserved for CoCalc)`,
-        );
+      const existing = await lstat(target).catch(() => undefined);
+      if (existing != null) {
+        // CoCalc's own copy, left in the home by a restore whose cleanup
+        // didn't finish: replaced (in this host-only snapshot).  Never
+        // anything of the project's: fail instead.
+        const marker = existing.isDirectory()
+          ? await lstat(join(target, READY_MARKER)).catch(() => undefined)
+          : undefined;
+        if (!marker?.isFile()) {
+          throw new Error(
+            `cannot save the edit history with the files: ~/${HISTORY_IN_SNAPSHOTS} already exists (it is reserved for CoCalc)`,
+          );
+        }
+        await sudo({ command: "rm", args: ["-rf", target] });
       }
       // the root helper anchored at the mount, which never follows symlinks;
       // the copy keeps READY_MARKER, which marks it as CoCalc's
@@ -766,10 +777,25 @@ export async function restoreBackupWithHistory({
     await restoreInto(from, source);
     await withPersistLock(project_id, async () => {
       await withProjectPersistFenced(
-        { project_id, reason: "restore-backup" },
+        { project_id, reason: "restore-backup", requires: "persist-volume" },
         async () => {
-          await restoreFiles();
-          previous = await mergeIntoVolume({ project_id, source, env, ops });
+          // all of the merge that can fail first, so it never fails after
+          // the files changed
+          const merged = await prepareMergedVolume({
+            project_id,
+            source,
+            env,
+            ops,
+          });
+          try {
+            await restoreFiles();
+          } catch (err) {
+            if (merged != null) await ops.removeTree(merged).catch(() => {});
+            throw err;
+          }
+          if (merged != null) {
+            previous = await swapInVolume(project_id, merged, env);
+          }
         },
       );
       // still holding the lock (see replaceProjectHome)
@@ -1087,7 +1113,12 @@ export async function replaceProjectHome<T>({
     result = await withPersistLock(project_id, async () => {
       // (with the history in the home, the fence covers just the home swap)
       const swapped = await withProjectPersistFenced(
-        { project_id, reason },
+        {
+          project_id,
+          reason,
+          // (only when the history is in a volume of its own)
+          requires: staged == null ? undefined : "persist-volume",
+        },
         async () => {
           if (staged != null) {
             previous = await swapInVolume(project_id, staged.path, env);
@@ -1155,7 +1186,7 @@ export async function mergeRestoredHistory({
   let previous: string | undefined;
   await withPersistLock(project_id, async () => {
     await withProjectPersistFenced(
-      { project_id, reason: "restore-backup" },
+      { project_id, reason: "restore-backup", requires: "persist-volume" },
       async () => {
         previous = await mergeIntoVolume({ project_id, source, env, ops });
       },
@@ -1168,10 +1199,22 @@ export async function mergeRestoredHistory({
   }
 }
 
-// mergeRestoredHistory's merge, with the lock and a fence held: done on a
-// snapshot of the volume that is then swapped in.  The replaced volume's
-// path (to delete), if there was one.
-async function mergeIntoVolume({
+// mergeRestoredHistory's merge, with the lock and a fence held: the
+// replaced volume's path (to delete), if there was one.
+async function mergeIntoVolume(opts: {
+  project_id: string;
+  source: string;
+  env: NodeJS.ProcessEnv;
+  ops: PersistVolumeOps;
+}): Promise<string | undefined> {
+  const merged = await prepareMergedVolume(opts);
+  if (merged == null) return;
+  return await swapInVolume(opts.project_id, merged, opts.env);
+}
+
+// A ready copy of the project's volume, with the databases in `source`
+// merged in (on disk), for swapInVolume; with the lock and a fence held.
+async function prepareMergedVolume({
   project_id,
   source,
   env,
@@ -1219,7 +1262,7 @@ async function mergeIntoVolume({
     );
     // on disk before it is the project's history
     await syncTree(staged);
-    return await swapInVolume(project_id, staged, env);
+    return staged;
   } catch (err) {
     await ops.removeTree(staged).catch(() => {});
     throw err;
