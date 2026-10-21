@@ -26,7 +26,10 @@ import {
 import { looksLikeContentHostname } from "./content-origin";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-const PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+const PRIVATE_KEY = privateKey.export({
+  type: "pkcs8",
+  format: "pem",
+}) as string;
 const PUBLIC_KEY = publicKey.export({ type: "spki", format: "pem" }) as string;
 
 const PROJECT = "22222222-2222-4222-8222-222222222222";
@@ -42,13 +45,18 @@ const SECRET = "host-secret";
 
 describe("hostnames", () => {
   it("parses only app hostnames of this host", () => {
-    expect(parseAppHostname(APP_HOST, { domain: DOMAIN, host_id: HOST })).toEqual({
+    expect(
+      parseAppHostname(APP_HOST, { domain: DOMAIN, host_id: HOST }),
+    ).toEqual({
       project_id: PROJECT,
       key: "p8000",
       hostname: APP_HOST,
     });
     expect(
-      parseAppHostname(`${APP_HOST.toUpperCase()}:443`, { domain: DOMAIN, host_id: HOST }),
+      parseAppHostname(`${APP_HOST.toUpperCase()}:443`, {
+        domain: DOMAIN,
+        host_id: HOST,
+      }),
     ).toMatchObject({ key: "p8000" });
     for (const host of [
       `${P32}.h-${H32}.${DOMAIN}`,
@@ -58,14 +66,18 @@ describe("hostnames", () => {
       `ap70000-${P32}.h-${H32}.${DOMAIN}`,
       `x.ap8000-${P32}.h-${H32}.${DOMAIN}`,
     ]) {
-      expect(parseAppHostname(host, { domain: DOMAIN, host_id: HOST })).toBeUndefined();
+      expect(
+        parseAppHostname(host, { domain: DOMAIN, host_id: HOST }),
+      ).toBeUndefined();
     }
   });
 
   it("app hostnames have the content shape under any domain (fail closed)", () => {
     expect(looksLikeAppHostname(APP_HOST)).toBe(true);
     expect(looksLikeContentHostname(APP_HOST)).toBe(true);
-    expect(looksLikeContentHostname(`as0123456789-${P32}.h-${H32}.any.where`)).toBe(true);
+    expect(
+      looksLikeContentHostname(`as0123456789-${P32}.h-${H32}.any.where`),
+    ).toBe(true);
     expect(looksLikeContentHostname(`${P32}.h-${H32}.any.where`)).toBe(true);
     expect(looksLikeAppHostname(`${P32}.h-${H32}.any.where`)).toBe(false);
     expect(looksLikeContentHostname("lite4b.cocalc.ai")).toBe(false);
@@ -82,19 +94,40 @@ describe("sessions", () => {
     auth_iat_s: 1000,
     exp_s: 2_000_000_000,
   };
-  const target = { secret: SECRET, project_id: PROJECT, key: "p8000", host_id: HOST };
+  const target = {
+    secret: SECRET,
+    project_id: PROJECT,
+    key: "p8000",
+    host_id: HOST,
+  };
 
   it("round-trips for exactly its app", () => {
     const token = createAppSessionToken(session, { secret: SECRET });
-    expect(verifyAppSessionToken(token, target)).toEqual({ kind: "app", ...session });
+    expect(verifyAppSessionToken(token, target)).toEqual({
+      kind: "app",
+      ...session,
+    });
     // Never accepted as the other kind.
-    expect(verifyAppSessionToken(token, { ...target, kind: "app-frame" })).toBeUndefined();
-    const frame = createAppSessionToken({ ...session, kind: "app-frame" }, { secret: SECRET });
+    expect(
+      verifyAppSessionToken(token, { ...target, kind: "app-frame" }),
+    ).toBeUndefined();
+    const frame = createAppSessionToken(
+      { ...session, kind: "app-frame" },
+      { secret: SECRET },
+    );
     expect(verifyAppSessionToken(frame, target)).toBeUndefined();
-    expect(verifyAppSessionToken(frame, { ...target, kind: "app-frame" })).toMatchObject({ kind: "app-frame" });
-    expect(verifyAppSessionToken(token, { ...target, key: "p8001" })).toBeUndefined();
-    expect(verifyAppSessionToken(token, { ...target, project_id: OTHER_PROJECT })).toBeUndefined();
-    expect(verifyAppSessionToken(token, { ...target, secret: "other" })).toBeUndefined();
+    expect(
+      verifyAppSessionToken(frame, { ...target, kind: "app-frame" }),
+    ).toMatchObject({ kind: "app-frame" });
+    expect(
+      verifyAppSessionToken(token, { ...target, key: "p8001" }),
+    ).toBeUndefined();
+    expect(
+      verifyAppSessionToken(token, { ...target, project_id: OTHER_PROJECT }),
+    ).toBeUndefined();
+    expect(
+      verifyAppSessionToken(token, { ...target, secret: "other" }),
+    ).toBeUndefined();
     expect(
       verifyAppSessionToken(token, { ...target, now_ms: 2_000_000_000 * 1000 }),
     ).toBeUndefined();
@@ -116,19 +149,32 @@ describe("sessions", () => {
 
 describe("request policy", () => {
   const origin = `https://${APP_HOST}`;
-  const req = (headers: Record<string, string>, method = "GET") => ({ headers, method });
+  const req = (headers: Record<string, string>, method = "GET") => ({
+    headers,
+    method,
+  });
 
   it("allows same-origin requests and top-level navigations", () => {
-    expect(appRequestRejection(req({ "sec-fetch-site": "same-origin" }, "POST"))).toBeUndefined();
+    expect(
+      appRequestRejection(req({ "sec-fetch-site": "same-origin" }, "POST")),
+    ).toBeUndefined();
     expect(
       appRequestRejection(
-        req({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }),
+        req({
+          "sec-fetch-site": "cross-site",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-dest": "document",
+        }),
         { origin },
       ),
     ).toBeUndefined();
     expect(
       appRequestRejection(
-        req({ "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }),
+        req({
+          "sec-fetch-site": "none",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-dest": "document",
+        }),
         { origin },
       ),
     ).toBeUndefined();
@@ -136,15 +182,34 @@ describe("request policy", () => {
 
   it("refuses other apps' subresources, frames and posts", () => {
     for (const headers of [
-      { "sec-fetch-site": "same-site", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" },
-      { "sec-fetch-site": "same-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "iframe" },
-      { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" },
+      {
+        "sec-fetch-site": "same-site",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+      },
+      {
+        "sec-fetch-site": "same-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "iframe",
+      },
+      {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "no-cors",
+        "sec-fetch-dest": "image",
+      },
     ]) {
       expect(appRequestRejection(req(headers))).toBeDefined();
     }
     expect(
       appRequestRejection(
-        req({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }, "POST"),
+        req(
+          {
+            "sec-fetch-site": "cross-site",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-dest": "document",
+          },
+          "POST",
+        ),
         { origin },
       ),
     ).toBeDefined();
@@ -156,18 +221,26 @@ describe("request policy", () => {
 
 describe("cookies", () => {
   it("hides the app session from the user's server", () => {
-    expect(withoutAppSessionCookie(`a=1; ${APP_SESSION_COOKIE}=x; b=2`)).toBe("a=1; b=2");
+    expect(withoutAppSessionCookie(`a=1; ${APP_SESSION_COOKIE}=x; b=2`)).toBe(
+      "a=1; b=2",
+    );
     expect(withoutAppSessionCookie(`${APP_SESSION_COOKIE}=x`)).toBeUndefined();
   });
 
   it("makes the server's cookies host-only and never lets it set the session", () => {
-    expect(rewriteUpstreamSetCookie("a=1; Domain=.usercontent.example; Path=/")).toBe("a=1; Path=/");
+    expect(
+      rewriteUpstreamSetCookie("a=1; Domain=.usercontent.example; Path=/"),
+    ).toBe("a=1; Path=/");
     expect(rewriteUpstreamSetCookie("a=1;domain=x")).toBe("a=1");
-    expect(rewriteUpstreamSetCookie(`${APP_SESSION_COOKIE}=forged; Path=/`)).toBeUndefined();
+    expect(
+      rewriteUpstreamSetCookie(`${APP_SESSION_COOKIE}=forged; Path=/`),
+    ).toBeUndefined();
   });
 
   it("rewrites upstream response headers in place (HTTP and websocket 101s)", () => {
-    const headers: any = { "set-cookie": ["a=1; Domain=x.example", `${APP_SESSION_COOKIE}=f`] };
+    const headers: any = {
+      "set-cookie": ["a=1; Domain=x.example", `${APP_SESSION_COOKIE}=f`],
+    };
     rewriteUpstreamResponseCookies(headers);
     expect(headers["set-cookie"]).toEqual(["a=1"]);
     const only: any = { "set-cookie": `${APP_SESSION_COOKIE}=f` };
@@ -194,9 +267,19 @@ describe("app origin handler", () => {
     used.clear();
     proxy.mockReset();
     proxy.mockImplementation(async (req, res, auth) => {
-      res.setHeader("Set-Cookie", ["s=1; Domain=usercontent.example", `${APP_SESSION_COOKIE}=x`]);
+      res.setHeader("Set-Cookie", [
+        "s=1; Domain=usercontent.example",
+        `${APP_SESSION_COOKIE}=x`,
+      ]);
       res.setHeader("Content-Security-Policy", "default-src 'self'");
-      res.end(JSON.stringify({ url: req.url, cookie: req.headers.cookie ?? null, auth: req.headers.authorization ?? null, ...auth }));
+      res.end(
+        JSON.stringify({
+          url: req.url,
+          cookie: req.headers.cookie ?? null,
+          auth: req.headers.authorization ?? null,
+          ...auth,
+        }),
+      );
     });
     matchApp.mockReset();
     matchApp.mockResolvedValue(undefined);
@@ -222,7 +305,9 @@ describe("app origin handler", () => {
     server = createServer((req, res) => {
       void origin.handleRequest(req, res);
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     port = (server.address() as AddressInfo).port;
   });
   afterEach(async () => {
@@ -236,11 +321,23 @@ describe("app origin handler", () => {
   ): Promise<{ status: number; headers: Record<string, any>; body: string }> =>
     new Promise((resolve, reject) => {
       const req = request(
-        { host: "127.0.0.1", port, path, method, headers: { host: APP_HOST, ...headers } },
+        {
+          host: "127.0.0.1",
+          port,
+          path,
+          method,
+          headers: { host: APP_HOST, ...headers },
+        },
         (res) => {
           let body = "";
           res.on("data", (d) => (body += d));
-          res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
+          res.on("end", () =>
+            resolve({
+              status: res.statusCode ?? 0,
+              headers: res.headers,
+              body,
+            }),
+          );
         },
       );
       req.on("error", reject);
@@ -254,7 +351,9 @@ describe("app origin handler", () => {
     referer: `${SITE}/`,
   };
 
-  const capability = (opts: Partial<Parameters<typeof issueProjectAppCapability>[0]> = {}) =>
+  const capability = (
+    opts: Partial<Parameters<typeof issueProjectAppCapability>[0]> = {},
+  ) =>
     issueProjectAppCapability({
       project_id: PROJECT,
       host_id: HOST,
@@ -279,11 +378,17 @@ describe("app origin handler", () => {
     const token = capability();
     const res = await send(`/_a/${token}?next=${next}`, navigation);
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe(`https://${APP_HOST}/${PROJECT}/port/8000/a/?x=1`);
+    expect(res.headers.location).toBe(
+      `https://${APP_HOST}/${PROJECT}/port/8000/a/?x=1`,
+    );
     expect(res.headers["referrer-policy"]).toBe("no-referrer");
     expect(res.headers["cache-control"]).toBe("no-store");
     const cookie = `${res.headers["set-cookie"]?.[0]}`;
-    expect(cookie).toMatch(new RegExp(`^${APP_SESSION_COOKIE}=[^;]+; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=43200$`));
+    expect(cookie).toMatch(
+      new RegExp(
+        `^${APP_SESSION_COOKIE}=[^;]+; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=43200$`,
+      ),
+    );
     // Single use.
     const again = await send(`/_a/${token}?next=${next}`, navigation);
     expect(again.status).toBe(403);
@@ -305,7 +410,10 @@ describe("app origin handler", () => {
   });
 
   it("refuses capabilities of another app, older epochs, revoked accounts and ex-members", async () => {
-    let res = await send(`/_a/${capability({ key: "p8001" })}?next=${next}`, navigation);
+    let res = await send(
+      `/_a/${capability({ key: "p8001" })}?next=${next}`,
+      navigation,
+    );
     expect(res.status).toBe(403);
     epoch = 1;
     res = await send(`/_a/${capability()}?next=${next}`, navigation);
@@ -329,7 +437,10 @@ describe("app origin handler", () => {
       `/${PROJECT}/port/8000/../../x`,
       `https://evil.example/`,
     ]) {
-      const res = await send(`/_a/${capability()}?next=${encodeURIComponent(path)}`, navigation);
+      const res = await send(
+        `/_a/${capability()}?next=${encodeURIComponent(path)}`,
+        navigation,
+      );
       expect([400, 404]).toContain(res.status);
       expect(res.headers.location).toBeUndefined();
     }
@@ -360,10 +471,21 @@ describe("app origin handler", () => {
       epoch: 0,
     });
     expect(res.headers["set-cookie"]).toEqual(["s=1"]);
-    expect(res.headers["content-security-policy"]).toBe("frame-ancestors 'self', default-src 'self'");
-    expect(res.headers["cross-origin-opener-policy"]).toBe("same-origin-allow-popups");
+    expect(res.headers["content-security-policy"]).toBe(
+      "frame-ancestors 'self', default-src 'self'",
+    );
+    expect(res.headers["cross-origin-opener-policy"]).toBe(
+      "same-origin-allow-popups",
+    );
     // /proxy/8000 is the same app.
-    expect((await send(`/${PROJECT}/proxy/8000/`, { cookie, "sec-fetch-site": "same-origin" })).status).toBe(200);
+    expect(
+      (
+        await send(`/${PROJECT}/proxy/8000/`, {
+          cookie,
+          "sec-fetch-site": "same-origin",
+        })
+      ).status,
+    ).toBe(200);
   });
 
   it("serves only this app's paths", async () => {
@@ -408,9 +530,17 @@ describe("app origin handler", () => {
     );
     expect(res.status).toBe(302);
     const cookie = `${res.headers["set-cookie"]?.[0]}`.split(";")[0];
-    res = await send(`/${PROJECT}/myapp/x`, { host, cookie, "sec-fetch-site": "same-origin" });
+    res = await send(`/${PROJECT}/myapp/x`, {
+      host,
+      cookie,
+      "sec-fetch-site": "same-origin",
+    });
     expect(res.status).toBe(200);
-    res = await send(`/${PROJECT}/other/x`, { host, cookie, "sec-fetch-site": "same-origin" });
+    res = await send(`/${PROJECT}/other/x`, {
+      host,
+      cookie,
+      "sec-fetch-site": "same-origin",
+    });
     expect(res.status).toBe(404);
   });
 
@@ -426,12 +556,16 @@ describe("app origin handler", () => {
 
   it("refuses requests from other sites and apps", async () => {
     const cookie = await signIn();
-    let res = await send(`/${PROJECT}/port/8000/`, {
-      cookie,
-      "sec-fetch-site": "same-site",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-dest": "empty",
-    }, "POST");
+    let res = await send(
+      `/${PROJECT}/port/8000/`,
+      {
+        cookie,
+        "sec-fetch-site": "same-site",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+      },
+      "POST",
+    );
     expect(res.status).toBe(403);
     res = await send(`/${PROJECT}/port/8000/`, {
       cookie,
@@ -446,8 +580,12 @@ describe("app origin handler", () => {
   it("re-opens through the site when there is no session; other requests get 401", async () => {
     let res = await send(`/${PROJECT}/port/8000/a?b=1`, navigation);
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe(`${SITE}/app-open/${PROJECT}/port/8000/a?b=1`);
-    res = await send(`/${PROJECT}/port/8000/a`, { "sec-fetch-site": "same-origin" });
+    expect(res.headers.location).toBe(
+      `${SITE}/app-open/${PROJECT}/port/8000/a?b=1`,
+    );
+    res = await send(`/${PROJECT}/port/8000/a`, {
+      "sec-fetch-site": "same-origin",
+    });
     expect(res.status).toBe(401);
   });
 
@@ -464,7 +602,10 @@ describe("app origin handler", () => {
     epoch = 1;
     expect((await send(`/${PROJECT}/port/8000/`, ok)).status).toBe(401);
     // A new bootstrap clears what the revoked session left.
-    const res = await send(`/_a/${capability({ epoch: 1 })}?next=${next}`, { ...navigation, cookie });
+    const res = await send(`/_a/${capability({ epoch: 1 })}?next=${next}`, {
+      ...navigation,
+      cookie,
+    });
     expect(res.status).toBe(302);
     expect(res.headers["clear-site-data"]).toBe('"storage", "cache"');
   });
@@ -486,6 +627,8 @@ describe("app origin handler", () => {
     const res = await send(`/_af/${frameCapability()}?next=${next}`, frameNav);
     expect(res.status).toBe(302);
     const cookie = `${res.headers["set-cookie"]?.[0]}`;
+    // The redirected frame navigation keeps the site's origin as Referer.
+    expect(res.headers["referrer-policy"]).toBe("strict-origin");
     expect(cookie).toMatch(
       /^__Host-cocalc-app-frame=[^;]+; Path=\/; Secure; HttpOnly; SameSite=None; Partitioned; Max-Age=3600$/,
     );
@@ -498,8 +641,12 @@ describe("app origin handler", () => {
       expect(r.status).toBe(403);
     }
     // A top-level capability is no frame capability, and vice versa.
-    expect((await send(`/_af/${capability()}?next=${next}`, frameNav)).status).toBe(403);
-    expect((await send(`/_a/${frameCapability()}?next=${next}`, navigation)).status).toBe(403);
+    expect(
+      (await send(`/_af/${capability()}?next=${next}`, frameNav)).status,
+    ).toBe(403);
+    expect(
+      (await send(`/_a/${frameCapability()}?next=${next}`, navigation)).status,
+    ).toBe(403);
   });
 
   it("a frame session serves the site's frame and the app's own requests, never a top-level page", async () => {
@@ -543,7 +690,9 @@ describe("app origin handler", () => {
     expect(res.headers["content-type"]).toContain("text/html");
     expect(res.body).toContain('"cocalc-app-frame"');
     expect(res.body).toContain(JSON.stringify(SITE));
-    expect(res.headers["content-security-policy"]).toContain(`frame-ancestors ${SITE}`);
+    expect(res.headers["content-security-policy"]).toContain(
+      `frame-ancestors ${SITE}`,
+    );
   });
 
   it("without a frame session the frame tells the site's card", async () => {
@@ -594,8 +743,19 @@ describe("app origin websockets", () => {
     },
     { secret: SECRET },
   )}`;
-  const upgrade = (headers: Record<string, string>, url = `/${PROJECT}/port/8000/ws`) =>
-    ({ url, headers: { host: APP_HOST, origin: `https://${APP_HOST}`, cookie: `x=1; ${cookie}`, ...headers } }) as any;
+  const upgrade = (
+    headers: Record<string, string>,
+    url = `/${PROJECT}/port/8000/ws`,
+  ) =>
+    ({
+      url,
+      headers: {
+        host: APP_HOST,
+        origin: `https://${APP_HOST}`,
+        cookie: `x=1; ${cookie}`,
+        ...headers,
+      },
+    }) as any;
 
   it("authorizes the app's own websockets, without the session cookie", async () => {
     const req = upgrade({});
@@ -624,18 +784,32 @@ describe("app origin websockets", () => {
       { secret: SECRET },
     )}`;
     const req = upgrade({ cookie: `x=1; ${frame}` });
-    expect(await origin.authorizeUpgrade(req)).toMatchObject({ account_id: ACCOUNT });
+    expect(await origin.authorizeUpgrade(req)).toMatchObject({
+      account_id: ACCOUNT,
+    });
     expect(req.headers.cookie).toBe("x=1");
   });
 
   it("refuses other origins, other apps' paths and missing sessions", async () => {
-    expect(await origin.authorizeUpgrade(upgrade({ origin: "https://evil.example" }))).toBeUndefined();
     expect(
-      await origin.authorizeUpgrade(upgrade({ origin: `https://ap8001-${P32}.h-${H32}.${DOMAIN}` })),
+      await origin.authorizeUpgrade(
+        upgrade({ origin: "https://evil.example" }),
+      ),
     ).toBeUndefined();
-    expect(await origin.authorizeUpgrade(upgrade({}, `/${PROJECT}/port/8001/ws`))).toBeUndefined();
-    expect(await origin.authorizeUpgrade(upgrade({}, `/conat/`))).toBeUndefined();
-    expect(await origin.authorizeUpgrade(upgrade({ cookie: "x=1" }))).toBeUndefined();
+    expect(
+      await origin.authorizeUpgrade(
+        upgrade({ origin: `https://ap8001-${P32}.h-${H32}.${DOMAIN}` }),
+      ),
+    ).toBeUndefined();
+    expect(
+      await origin.authorizeUpgrade(upgrade({}, `/${PROJECT}/port/8001/ws`)),
+    ).toBeUndefined();
+    expect(
+      await origin.authorizeUpgrade(upgrade({}, `/conat/`)),
+    ).toBeUndefined();
+    expect(
+      await origin.authorizeUpgrade(upgrade({ cookie: "x=1" })),
+    ).toBeUndefined();
     collaborator = false;
     expect(await origin.authorizeUpgrade(upgrade({}))).toBeUndefined();
     collaborator = true;

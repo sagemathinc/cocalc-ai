@@ -100,7 +100,9 @@ export interface AppSession {
 function sessionKey(secret: string): Buffer {
   // Its own key, derived from the host secret: no other token's MAC is ever
   // a valid app session MAC.
-  return createHmac("sha256", secret).update("cocalc project app session v1").digest();
+  return createHmac("sha256", secret)
+    .update("cocalc project app session v1")
+    .digest();
 }
 
 function sessionMac(secret: string, payload: string): string {
@@ -271,13 +273,17 @@ export async function appKeyOfPath({
 }: {
   project_id: string;
   pathname: string;
-  matchApp: (opts: { project_id: string; url: string }) => Promise<
+  matchApp: (opts: {
+    project_id: string;
+    url: string;
+  }) => Promise<
     { spec: { id: string; proxy?: { base_path?: string } } } | undefined
   >;
 }): Promise<string | undefined> {
   if (!pathname.startsWith(`/${project_id}/`)) return;
   const rest = pathname.slice(project_id.length + 2);
-  if (rest.startsWith("files/") || rest === "files" || rest === "upload") return;
+  if (rest.startsWith("files/") || rest === "files" || rest === "upload")
+    return;
   const route = projectAppRouteFromPath(project_id, pathname);
   if (route != null) {
     try {
@@ -484,7 +490,10 @@ function isFrameNavigation(req: Pick<IncomingMessage, "headers" | "method">) {
 // the parent (the site's card) so, which then bootstraps again or offers to
 // open the app in a new tab (third-party cookies blocked).  The message is a
 // fixed object; the parent checks event.origin.
-export function appFrameStatusPage(nonce: string, parentOrigin: string): string {
+export function appFrameStatusPage(
+  nonce: string,
+  parentOrigin: string,
+): string {
   return `<!doctype html><meta charset="utf-8"><title>App</title><script nonce="${nonce}">parent.postMessage({type:"cocalc-app-frame",status:"no-session"},${JSON.stringify(parentOrigin)});</script>`;
 }
 
@@ -543,7 +552,13 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     url: URL,
     kind: AppSessionKind,
   ): Promise<void> => {
-    res.setHeader("Referrer-Policy", "no-referrer");
+    // For /_af/, the redirected frame navigation must still carry the
+    // site's origin as Referer (checked below); the referrer is the site's
+    // page, never this capability URL, so nothing leaks either way.
+    res.setHeader(
+      "Referrer-Policy",
+      kind === "app" ? "no-referrer" : "strict-origin",
+    );
     res.setHeader("Cache-Control", "no-store");
     // D4: sent here by the site itself: a top-level navigation for /_a/;
     // for /_af/ the site's own frame (cross-site only: a same-site parent
@@ -562,7 +577,8 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     ) {
       return refuse(res, 403, "open this app from CoCalc");
     }
-    const prefix = kind === "app" ? APP_BOOTSTRAP_PREFIX : APP_FRAME_BOOTSTRAP_PREFIX;
+    const prefix =
+      kind === "app" ? APP_BOOTSTRAP_PREFIX : APP_FRAME_BOOTSTRAP_PREFIX;
     const token = url.pathname.slice(prefix.length);
     let claims: ProjectAppCapabilityClaims;
     try {
@@ -584,7 +600,10 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     if (
       claims.epoch < currentEpoch ||
       (cutoff != null && claims.iat * 1000 <= cutoff) ||
-      !opts.isCollaborator({ account_id: claims.sub, project_id: target.project_id })
+      !opts.isCollaborator({
+        account_id: claims.sub,
+        project_id: target.project_id,
+      })
     ) {
       return refuse(res, 403, "invalid or expired link");
     }
@@ -607,14 +626,23 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     if (nextKey !== target.key) {
       return refuse(res, 404, "not found");
     }
-    if (!opts.consumeCapability({ jti: claims.jti, exp_ms: claims.exp * 1000 + REPLAY_MARGIN_MS })) {
+    if (
+      !opts.consumeCapability({
+        jti: claims.jti,
+        exp_ms: claims.exp * 1000 + REPLAY_MARGIN_MS,
+      })
+    ) {
       return refuse(res, 403, "this link was already used");
     }
     if (claims.epoch > currentEpoch) {
-      opts.observeEpoch?.({ project_id: target.project_id, epoch: claims.epoch });
+      opts.observeEpoch?.({
+        project_id: target.project_id,
+        epoch: claims.epoch,
+      });
     }
     const now_s = Math.floor(now() / 1000);
-    const max = kind === "app" ? APP_SESSION_MAX_SECONDS : APP_FRAME_SESSION_MAX_SECONDS;
+    const max =
+      kind === "app" ? APP_SESSION_MAX_SECONDS : APP_FRAME_SESSION_MAX_SECONDS;
     const exp_s = Math.min(now_s + max, claims.bse ?? Infinity);
     if (!(exp_s > now_s)) {
       return refuse(res, 403, "invalid or expired link");
@@ -707,7 +735,11 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
       // Framed by someone else: only the site's own card, with a frame
       // session (D3, F1).
       const referer = originOf(req.headers.referer);
-      if (site !== "cross-site" || !referer || !opts.approvedOrigins().has(referer)) {
+      if (
+        site !== "cross-site" ||
+        !referer ||
+        !opts.approvedOrigins().has(referer)
+      ) {
         return refuse(res, 403, "framed by another site");
       }
       session = sessionOf(req, target, "app-frame").session;
@@ -718,7 +750,10 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
       if (session) {
         const why = appRequestRejection(req);
         if (why) return refuse(res, 403, why);
-      } else if (site === "same-origin" && header(req, "sec-fetch-dest") !== "document") {
+      } else if (
+        site === "same-origin" &&
+        header(req, "sec-fetch-dest") !== "document"
+      ) {
         // Inside the site's frame: the app's own requests (F5: never a
         // top-level page).
         session = sessionOf(req, target, "app-frame").session;
@@ -735,7 +770,11 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
           res.end();
           return;
         }
-        return refuse(res, 401, top.stale ? "session expired" : "sign in required");
+        return refuse(
+          res,
+          401,
+          top.stale ? "session expired" : "sign in required",
+        );
       }
     }
     let csp = APP_ORIGIN_CSP;

@@ -11,6 +11,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SHARED_BROWSER_APP_ID } from "@cocalc/util/shared-browser";
 import { withProjectHostBase } from "./host-url";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 
 // A same-origin link that opens a project app: the hub's /app-open sends
 // it to the app's own origin, or (on sites without app origins) to its old
@@ -215,6 +216,49 @@ export async function openProjectAppStatus(opts: {
   const url = await getProjectAppOpenUrl(opts);
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+// The app's path in the project (/<project_id>/...) of a host-origin app URL
+// (without the host token), or undefined.
+export function projectAppPathOfUrl(
+  project_id: string,
+  url: string,
+): string | undefined {
+  try {
+    const parsed = new URL(url, "https://site.invalid");
+    parsed.searchParams.delete(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM);
+    const path = `${parsed.pathname}${parsed.search}`;
+    return path.startsWith(`/${project_id}/`) ? path : undefined;
+  } catch {
+    return;
+  }
+}
+
+// A single-use link for the app framed by the site (a chat card), on the
+// app's own origin (/_af/, a partitioned frame session), or undefined when
+// the site has no app origins.  Always requested fresh by the frame's own
+// page, never taken from shared data (F3).
+export async function getProjectAppFrameUrl({
+  project_id,
+  path,
+  app_id,
+}: {
+  project_id: string;
+  path: string;
+  app_id?: string;
+}): Promise<string | undefined> {
+  try {
+    const result =
+      await webapp_client.conat_client.hub.hosts.issueProjectAppFrameUrl({
+        project_id,
+        path,
+        app_id,
+      });
+    return "url" in result ? result.url : undefined;
+  } catch (err) {
+    console.warn("framing the app on its own origin failed", err);
+    return;
+  }
 }
 
 // A single-use link that opens the app on its own origin, when the site has

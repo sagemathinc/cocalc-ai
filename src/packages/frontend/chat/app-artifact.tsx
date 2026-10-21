@@ -20,6 +20,7 @@ import {
 import type { ArtifactApp } from "@cocalc/chat";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { getProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
+import { useAppFrameSrc } from "./app-frame-src";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   ensureSharedBrowserKey,
@@ -400,10 +401,35 @@ function ProjectAppFrame({
     isSharedBrowser: false,
     wantUrl: true,
   });
+  const frame = useAppFrameSrc({
+    projectId,
+    appId: app.id,
+    hostUrl: run.running?.url,
+  });
   if (run.stopped) return <Stopped title={title} onStart={run.start} />;
   if (run.error)
     return <Failed title={title} error={run.error} onRetry={run.retry} />;
-  if (!run.running?.url)
+  if (frame.blocked)
+    return (
+      <Flex align="center" justify="center" style={{ height: "100%" }}>
+        <Alert
+          type="info"
+          showIcon
+          message={`${title} can't be shown here`}
+          description={
+            <>
+              This browser blocks the cookie the app needs inside a card.{" "}
+              {frame.openUrl && (
+                <a href={frame.openUrl} target="_blank" rel="noopener">
+                  Open it in a new tab
+                </a>
+              )}
+            </>
+          }
+        />
+      </Flex>
+    );
+  if (!run.running?.url || !frame.src)
     return (
       <Flex align="center" justify="center" style={{ height: "100%" }}>
         <Spin tip={`Starting ${title}...`}>
@@ -423,7 +449,9 @@ function ProjectAppFrame({
       {notice}
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
         <iframe
-          src={run.running.url}
+          key={frame.src}
+          src={frame.src}
+          referrerPolicy="strict-origin"
           title={title}
           style={{ border: 0, width: "100%", height: "100%", display: "block" }}
         />
