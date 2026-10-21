@@ -15,6 +15,7 @@ import {
   appendCheck,
   appendHead,
   commitAppend,
+  appendCheckPrepared,
   prepareAppend,
   prepareRequest,
   requestRecords,
@@ -623,7 +624,8 @@ describe("daybreak2 (round 12): snapshot bodies are scanned before the synchrono
         stream,
         prepared,
       )!;
-      const append = appendCheck(stream as any, records);
+      // As server.ts: the prepared check (it refuses if anything isn't ready).
+      const append = appendCheckPrepared(stream as any, records);
       const results = stream.setMany(
         mesg.data.map(({ msgID, messageData }) => ({ msgID, ...messageData })),
         { allOrNothing: true, strictMsgID: true },
@@ -686,5 +688,165 @@ describe("daybreak2 (round 12): snapshot bodies are scanned before the synchrono
     const [r] = requestRecords({ cmd: "setMany" }, other, undefined, prepared)!;
     expect(r.document).toBeUndefined();
     expect((r.value as any).snapshot).toBe("{");
+  });
+});
+
+describe("round 14: the prepared graph cache", () => {
+  const raw = (mesg: object) =>
+    Buffer.from(encode({ encoding: DataEncoding.MsgPack, mesg }));
+  const request = (mesg: object, msgID: string) => ({
+    data: [
+      {
+        msgID,
+        messageData: { encoding: DataEncoding.MsgPack, raw: raw(mesg) },
+      },
+    ],
+  });
+  const { forgetAppendHead } = require("./board-append");
+  // A, snapshot(A), B, C: seqs 1-4.
+  function history() {
+    const stream = newStream();
+    write(stream, [{ mesg: patch("A"), msgID: "a" }]);
+    write(stream, [{ mesg: snapshot("A"), msgID: "sa" }]);
+    write(stream, [{ mesg: patch("B", ["A"]), msgID: "b" }]);
+    write(stream, [{ mesg: patch("C", ["B"]), msgID: "c" }]);
+    // A fresh process: no cached graph.
+    forgetAppendHead(stream);
+    return stream;
+  }
+
+  test.each([true, false])(
+    "astra CORR-7B0-1: a delete while it prepares is never cached over (forgetAppendHead too: %s)",
+    async (forget) => {
+      const stream = history();
+      try {
+        const preparing = prepareAppend(stream as any);
+        // While it yields: B (seq 3) is deleted; the newest seq stays 4.
+        if (forget) forgetAppendHead(stream);
+        stream.delete({ seq: 3 } as any);
+        expect(stream.seqBounds().newest_retained_seq).toBe(4);
+        expect(await preparing).toBe(true);
+        // What it cached is the stream as it is now: C's parent is gone, so
+        // nothing may be appended (as the open check says).
+        expect(opens(stream)).toMatchObject({ ok: false });
+        const mesg = request(patch("D", ["C"]), "d");
+        const prepared = await prepareRequest({ cmd: "setMany" }, mesg);
+        const records = requestRecords(
+          { cmd: "setMany" },
+          mesg,
+          stream,
+          prepared,
+        )!;
+        expect(() => appendCheckPrepared(stream as any, records)).toThrow(
+          expect.objectContaining({ code: "branch" }),
+        );
+        expect([...stream.getAll()]).toHaveLength(3);
+      } finally {
+        stream.close();
+      }
+    },
+  );
+
+  test('daybreak2: a stream that keeps changing is refused "board-retry"; nothing is read or scanned synchronously', async () => {
+    const stream = history();
+    try {
+      const preparing = prepareAppend(stream as any, 1);
+      // A write by another path while it yields.
+      stream.set({
+        encoding: DataEncoding.MsgPack,
+        raw: raw(patch("X", ["C"])),
+      });
+      expect(await preparing).toBe(false);
+      const mesg = request(patch("D", ["C"]), "d");
+      const prepared = await prepareRequest({ cmd: "setMany" }, mesg);
+      const records = requestRecords(
+        { cmd: "setMany" },
+        mesg,
+        stream,
+        prepared,
+      )!;
+      const scans = jest.spyOn(jsonScan, "isJsonObjectLines");
+      const reads = jest.spyOn(stream, "getAll");
+      try {
+        // A retryable refusal before anything is stored: not a fence
+        // refusal, so the writer keeps its edits and its save retries.
+        expect(() => appendCheckPrepared(stream as any, records)).toThrow(
+          expect.objectContaining({ code: "board-retry" }),
+        );
+        expect(scans).not.toHaveBeenCalled();
+        expect(reads).not.toHaveBeenCalled();
+      } finally {
+        scans.mockRestore();
+        reads.mockRestore();
+      }
+      expect([...stream.getAll()]).toHaveLength(5);
+      // Once the stream is quiet, it prepares, and the append is checked
+      // (X is the head now, so D after C is a branch).
+      expect(await prepareAppend(stream as any)).toBe(true);
+      expect(() => appendCheckPrepared(stream as any, records)).toThrow(
+        expect.objectContaining({ code: "branch" }),
+      );
+    } finally {
+      stream.close();
+    }
+  });
+
+  test("reads never change the revision: a quiet stream prepares at once", async () => {
+    const stream = history();
+    try {
+      expect(await prepareAppend(stream as any, 1)).toBe(true);
+      [...stream.getAll()];
+      stream.seqBounds();
+      stream.config();
+      expect(await prepareAppend(stream as any, 1)).toBe(true);
+    } finally {
+      stream.close();
+    }
+  });
+
+  // A stream of n records that counts how many were read.
+  function counting(n: number, at: (i: number) => object, size = 0) {
+    let read = 0;
+    const pad = "x".repeat(size);
+    const stream = {
+      seqBounds: () => ({ newest_retained_seq: n }),
+      mutationCount: () => 0,
+      msgIDOutcome: () => "new" as const,
+      *getAll() {
+        for (let i = 0; i < n; i++) {
+          read += 1;
+          yield {
+            encoding: DataEncoding.MsgPack,
+            raw: raw({ ...at(i), ...(size ? { pad } : {}) }),
+          };
+        }
+      },
+    };
+    return { stream, read: () => read };
+  }
+
+  test("astra LIMIT-7B0-1: an invalid first record stops the read there", async () => {
+    const { stream, read } = counting(20_000, (i) =>
+      i === 0 ? { not: "a board record" } : patch(`t${i}`),
+    );
+    expect(await prepareAppend(stream as any)).toBe(true);
+    expect(read()).toBe(1);
+  });
+
+  test("astra LIMIT-7B0-1: the read stops past the history's total bytes", async () => {
+    // 1 MiB records, a valid chain: at most 64 MiB (plus the one past it).
+    const { stream, read } = counting(
+      200,
+      (i) =>
+        patch(
+          `t${String(i).padStart(4, "0")}`,
+          i ? [`t${String(i - 1).padStart(4, "0")}`] : [],
+        ),
+      1024 * 1024,
+    );
+    expect(await prepareAppend(stream as any)).toBe(true);
+    expect(read()).toBeLessThanOrEqual(
+      Math.ceil(BOARD_HISTORY_LIMITS.totalBytes / (1024 * 1024)) + 1,
+    );
   });
 });

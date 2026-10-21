@@ -548,6 +548,60 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     w.close();
   });
 
+  test("astra LIMIT-7B0-2: a snapshot in a setMany (a real MessageData, decoded afresh on every read) is scanned before the synchronous step, never in it", async () => {
+    const jsonScan = require("@cocalc/conat/persist/json-scan");
+    const project_id = uuid();
+    const path = "/home/user/snap-many.board.json";
+    const w = hub(project_id, path);
+    await set(w, rec(1));
+    const snapshot = {
+      time: "t1",
+      is_snapshot: true,
+      snapshot: '{"type":"doc"}\n{"type":"item","id":"a"}',
+      seq_info: { seq: 1 },
+    };
+    const sync = jest.spyOn(jsonScan, "isJsonObjectLines");
+    const async_ = jest.spyOn(jsonScan, "isJsonObjectLinesAsync");
+    try {
+      const results = await w.setMany(
+        [
+          { messageData: messageData(snapshot) },
+          { messageData: messageData(rec(2, 1)) },
+        ],
+        { timeout: 10_000 },
+      );
+      expect(results.every((r) => "seq" in r)).toBe(true);
+      expect(async_).toHaveBeenCalled();
+      expect(sync).not.toHaveBeenCalled();
+    } finally {
+      sync.mockRestore();
+      async_.mockRestore();
+    }
+    expect(await stored(project_id, path)).toEqual([
+      rec(1),
+      snapshot,
+      rec(2, 1),
+    ]);
+    // A snapshot that isn't a board document is refused the same way.
+    await expect(
+      w.setMany(
+        [
+          {
+            messageData: messageData({
+              ...snapshot,
+              time: "t2",
+              snapshot: "{",
+            }),
+          },
+        ],
+        {
+          timeout: 10_000,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "branch" });
+    w.close();
+  });
+
   test("astra's schedules through the service: a re-appended id and a snapshot of an unknown patch are refused, before and after a restart", async () => {
     const project_id = uuid();
     const path = "/home/user/astra.board.json";

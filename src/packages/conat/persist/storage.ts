@@ -1479,6 +1479,15 @@ export class PersistentStream extends EventEmitter {
     return dbToMessage(x as any, this.recordCap);
   };
 
+  // How many rows this stream's database has changed since it was opened
+  // (SQLite total_changes(): every insert, update and delete, by any path,
+  // committed or not). It only grows, so an unchanged count means nothing
+  // was written in between (board-append.ts's graph cache uses it).
+  mutationCount = (): number =>
+    Number(
+      (this.db.prepare("SELECT total_changes() AS n").get() as { n: number }).n,
+    );
+
   seqBounds = (): StreamSeqBounds => {
     const row = this.db
       .prepare(

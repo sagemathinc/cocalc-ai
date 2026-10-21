@@ -86,6 +86,7 @@ import {
 } from "./board-write-fence";
 import {
   appendCheck,
+  appendCheckPrepared,
   commitAppend,
   forgetAppendHead,
   prepareAppend,
@@ -427,6 +428,16 @@ export function server({
           throw Error("bug");
         }
         assertBoardCommandAllowed(boardAccess, request);
+        // A setMany's messages, decoded once: mesg.data decodes afresh on
+        // every read (MessageData), and what is prepared, checked and
+        // stored must be the very same records (astra LIMIT-7B0-2).
+        const setManyData =
+          request.cmd == "setMany" ? (mesg.data as SetOptions[]) : undefined;
+        const body = {
+          raw: mesg.raw,
+          encoding: mesg.encoding,
+          data: setManyData,
+        };
         // Before the synchronous step, and yielding to the event loop: the
         // request's records decoded and their snapshot bodies scanned, and
         // the stored graph read if it must be (board-append.ts; daybreak2:
@@ -441,8 +452,12 @@ export function server({
             receivedAt,
             now: performance.now(),
           });
-          prepared = await prepareRequest(request, mesg);
-          if (prepared != null) await prepareAppend(stream);
+          prepared = await prepareRequest(request, body);
+          if (request.cmd === "set" || request.cmd === "setMany") {
+            // (If it can't be readied, the step below refuses the request
+            // as "board-retry": the writer keeps its edits and retries.)
+            await prepareAppend(stream);
+          }
         }
         // The board write service's append rule: what this request stores
         // must extend the board's one chain (board-append.ts).
@@ -456,9 +471,10 @@ export function server({
             receivedAt,
             now: performance.now(),
           });
-          const records = requestRecords(request, mesg, stream, prepared);
+          const records = requestRecords(request, body, stream, prepared);
           if (records != null) {
-            append = appendCheck(stream, records);
+            // Reads and scans nothing: prepared above (daybreak2).
+            append = appendCheckPrepared(stream, records);
           } else if (isFencedRequest(request)) {
             // A delete, a reset, a config change: the head is read again.
             forgetAppendHead(stream);
@@ -481,7 +497,7 @@ export function server({
           mesg.respondSync(stored);
         } else if (request.cmd == "setMany") {
           const results = stream.setMany(
-            (mesg.data as SetOptions[]).map(
+            setManyData!.map(
               ({ key, previousSeq, ttl, msgID, checkpoint, messageData }) => ({
                 key,
                 previousSeq,
