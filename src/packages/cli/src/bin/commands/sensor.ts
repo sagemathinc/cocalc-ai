@@ -34,6 +34,7 @@ const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. 
      cocalc sensor watch file --path out.log [--match 'BUILD DONE']
      cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123"
      cocalc sensor watch exit -- make test   # runs it in a project terminal
+     cocalc agent send reviewer --watch-turn "..."   # its turn on your message
 2. Scripts: a small program you write and a person approves. It runs like a
    command in your turn: in this project's software, as the approving person,
    with the connectors the spec lists in "uses" (if they gave them to you).
@@ -302,6 +303,35 @@ export function registerSensorCommand(
           watch: { type: "at", at: opts.at, note: opts.note },
         },
         "sensor watch at",
+      ),
+    );
+  watch
+    .command("agent-turn")
+    .description(
+      "when the turn your message started on another agent ends, or the message was not delivered (agent send --watch-turn sets this for you)",
+    )
+    .requiredOption("--attempt <uuid>", "the message's attempt_id")
+    .requiredOption("--agent-network <uuid>", "its agent_network_id")
+    .requiredOption("--to-agent <uuid>", "the recipient's agent_id")
+    .requiredOption("--target-project <uuid>", "the recipient's project_id")
+    .option("--name <name>", "the recipient's @name, for the title")
+    .option("--hours <n>", "give up after this many hours (default 24)")
+    .action(async (opts, cmd) =>
+      send(
+        cmd,
+        {
+          action: "sensor",
+          op: "watch",
+          watch: {
+            type: "agent-turn",
+            attempt_id: opts.attempt,
+            agent_network_id: opts.agentNetwork,
+            target: { project_id: opts.targetProject, agent_id: opts.toAgent },
+            ...(opts.name ? { name: opts.name } : {}),
+          },
+          ...hours(opts.hours),
+        },
+        "sensor watch agent-turn",
       ),
     );
   watch

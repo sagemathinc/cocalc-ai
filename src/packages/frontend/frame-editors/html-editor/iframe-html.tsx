@@ -14,6 +14,7 @@ Component that shows rendered HTML in an iFrame, so safe and no mangling needed.
 // tag in a functional component (it would be fine with chrome).
 // Some day in the future this might no longer be necessary ... (react 16.13.1)
 
+import { CONTENT_FRAME_SANDBOX } from "@cocalc/util/project-content-origin";
 import $ from "jquery";
 import { Spin, Switch } from "antd";
 import { delay } from "awaiting";
@@ -35,6 +36,7 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
+import { useProjectContentUrl } from "@cocalc/frontend/project/use-project-content-url";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { use_font_size_scaling } from "../frame-tree/hooks";
@@ -81,6 +83,12 @@ function should_memoize(prev, next) {
   ]);
 }
 
+// A re-issued link is shown at the next save, or this long before the shown
+// link expires, so reading a page doesn't reload it unprompted.
+export const CONTENT_LINK_SWAP_BEFORE_EXPIRY_MS = 5 * 60 * 1000;
+
+export { CONTENT_FRAME_SANDBOX };
+
 const STYLE: CSS = {
   overflowY: "auto",
   width: "100%",
@@ -108,7 +116,54 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   // is only needed for rmd mode where an aux file loaded from server.
   const [init, setInit] = useState<boolean>(mode == "rmd");
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
-  const [trust, setTrust0] = useState<boolean>(isTrusted(props));
+  // On sites with a content origin the saved file is shown there, with its
+  // scripts and relative images, and the Trusted switch goes away.
+  // Only HTML files: the rst, wiki and qmd views also use this frame.
+  const content = useProjectContentUrl({
+    project_id,
+    path,
+    enabled: mode != "rmd" && /\.html?$/i.test(path),
+  });
+  const isolated = content.status == "ready";
+  const [shown, setShown] = useState<
+    { url: string; expires_at: number; reload?: number } | undefined
+  >(undefined);
+  useEffect(() => {
+    if (content.status != "ready") {
+      setShown(undefined);
+      return;
+    }
+    const latest = {
+      url: content.url,
+      expires_at: content.expires_at,
+      reload,
+    };
+    setShown((prev) =>
+      prev == null ||
+      prev.reload !== reload ||
+      prev.expires_at - Date.now() < CONTENT_LINK_SWAP_BEFORE_EXPIRY_MS
+        ? latest
+        : prev,
+    );
+    if (shown == null || shown.url == content.url) return;
+    const timer = setTimeout(
+      () => setShown(latest),
+      Math.max(
+        0,
+        shown.expires_at - CONTENT_LINK_SWAP_BEFORE_EXPIRY_MS - Date.now(),
+      ),
+    );
+    return () => clearTimeout(timer);
+  }, [content, reload, shown?.url]);
+  const shownContent =
+    shown ??
+    (content.status == "ready"
+      ? { url: content.url, expires_at: content.expires_at, reload }
+      : undefined);
+  // Trusted mode (the host origin) only where there is no content origin.
+  const showTrustSwitch = content.status == "unavailable";
+  const [trust0, setTrust0] = useState<boolean>(isTrusted(props));
+  const trust = trust0 && content.status == "unavailable";
   const trustedSrc = useProjectHostAuthedUrl({
     project_id,
     url: trust ? `${raw_url(project_id, path)}?param=${reload}` : undefined,
@@ -202,6 +257,21 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
     [tab_is_visible],
   );
 
+  // A click inside a cross-origin frame is invisible here, but focus moves
+  // into the frame, so the window blurs.
+  useEffect(() => {
+    if (!isolated) return;
+    const onBlur = () => {
+      setTimeout(() => {
+        if (iframe.current != null && document.activeElement === iframe.current) {
+          click_iframe();
+        }
+      }, 0);
+    };
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, [isolated]);
+
   useEffect(
     function () {
       set_iframe_style(scaling);
@@ -261,6 +331,27 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   }
 
   function render_iframe() {
+    if (content.status == "loading") {
+      return (
+        <div style={{ margin: "15px auto" }}>
+          <Spin />
+        </div>
+      );
+    }
+    if (content.status == "ready") {
+      return (
+        <iframe
+          ref={iframe}
+          src={`${shownContent!.url}?param=${reload}`}
+          title={`Rendered preview of ${path}`}
+          width={"100%"}
+          height={"100%"}
+          style={{ border: 0, ...style }}
+          onLoad={iframe_loaded}
+          sandbox={CONTENT_FRAME_SANDBOX}
+        />
+      );
+    }
     if (trust) {
       if (!trustedSrc) {
         return (
@@ -351,7 +442,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   // the cocalc-editor-div is needed for a safari hack only
   return (
     <div style={STYLE} className={"cocalc-editor-div smc-vfill"} ref={rootEl}>
-      {
+      {showTrustSwitch && (
         <div>
           <Tooltip
             title={
@@ -367,7 +458,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
             />
           </Tooltip>
         </div>
-      }
+      )}
       {render_iframe()}
     </div>
   );

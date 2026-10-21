@@ -117,7 +117,19 @@ export type SensorWatch =
    * A command `cocalc sensor watch exit` started in a project terminal; it
    * records its exit code and output under sensorExitPaths(id).
    */
-  | { type: "exit"; id: string; command: string };
+  | { type: "exit"; id: string; command: string }
+  /**
+   * The turn this agent's message started on another agent: wakes when it
+   * ends (or the message was not delivered), from `agent rpc inspect`.
+   */
+  | {
+      type: "agent-turn";
+      attempt_id: string;
+      agent_network_id: string;
+      target: { project_id: string; agent_id: string };
+      /** The recipient's @name, for the title. */
+      name?: string;
+    };
 
 /** Where an exit watcher's command records its output and exit code. */
 export function sensorExitPaths(id: string): {
@@ -545,8 +557,40 @@ export function validateSensorWatch(
     const command = oneLine(w.command, "command", 200);
     watch = { type: "exit", id: w.id, command };
     title = `Exit of ${command}`.slice(0, 90);
+  } else if (w.type === "agent-turn") {
+    onlyFields(w, ["type", "attempt_id", "agent_network_id", "target", "name"]);
+    const target = w.target as Record<string, unknown> | undefined;
+    if (
+      !isValidUUID(w.attempt_id) ||
+      !isValidUUID(w.agent_network_id) ||
+      !target ||
+      typeof target !== "object" ||
+      Object.keys(target).some((k) => k !== "project_id" && k !== "agent_id") ||
+      !isValidUUID(target.project_id) ||
+      !isValidUUID(target.agent_id)
+    )
+      throw new Error(
+        "an agent-turn watcher needs the message's attempt, Agent Network and target (UUIDs, as agent send printed them)",
+      );
+    const name =
+      w.name != null
+        ? oneLine(w.name, "name", 64).replace(/^@/, "")
+        : undefined;
+    watch = {
+      type: "agent-turn",
+      attempt_id: w.attempt_id as string,
+      agent_network_id: w.agent_network_id as string,
+      target: {
+        project_id: target.project_id as string,
+        agent_id: target.agent_id as string,
+      },
+      ...(name ? { name } : {}),
+    };
+    title = `Turn of my message to ${name ? `@${name}` : "an agent"}`;
   } else {
-    throw new Error('watch type must be "ci", "file", "at" or "exit"');
+    throw new Error(
+      'watch type must be "ci", "file", "at", "exit" or "agent-turn"',
+    );
   }
   return {
     kind: "watch",
@@ -625,6 +669,25 @@ if P.get("match"):
     print(json.dumps({"wake": True, "summary": "%s now contains %s" % (P["path"], json.dumps(P["match"])), "data": {"path": P["path"], "line": line}}))
 else:
     print(json.dumps({"wake": True, "summary": "%s now exists" % P["path"], "data": {"path": P["path"]}}))
+`
+    );
+  if (watch.type === "agent-turn")
+    return (
+      params +
+      `t = P["target"]
+r = subprocess.run(["cocalc", "--json", "agent", "rpc", "inspect", P["attempt_id"], "--agent-network", P["agent_network_id"], "--to-agent", t["agent_id"], "--target-project", t["project_id"]], capture_output=True, text=True, timeout=55)
+if r.returncode != 0:
+    print((r.stderr or r.stdout or "").strip()[-1000:], file=sys.stderr)
+    sys.exit(1)
+out = json.loads(r.stdout)
+o = out.get("data", out) if isinstance(out, dict) else {}
+turn = o.get("turn") or {}
+# Not delivered: there will be no turn. Ended: it is over. Otherwise wait.
+if o.get("outcome") != "rejected" and turn.get("state") != "ended":
+    sys.exit(0)
+who = ("@" + P["name"]) if P.get("name") else "the agent"
+summary = "Your message to %s: %s" % (who, o.get("summary") or o.get("reason") or o.get("outcome"))
+print(json.dumps({"wake": True, "summary": summary[:500], "data": {"attempt_id": P["attempt_id"], "outcome": o.get("outcome"), "turn": turn}}))
 `
     );
   if (watch.type === "exit") {

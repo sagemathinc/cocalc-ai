@@ -115,4 +115,35 @@ describe("NotebookFrameActions lifecycle", () => {
       expect(focusFirstChangedCell).not.toHaveBeenCalled();
     },
   );
+
+  it("Run in an empty notebook starts its first cell instead of running nothing", () => {
+    const target = {
+      save_input_editor: jest.fn(),
+      run_cell: jest.fn(),
+      activate_cell: jest.fn(),
+      store: { get: jest.fn(() => undefined) },
+      jupyter_actions: {
+        createFirstCell: jest.fn(() => "alpha"),
+        store: {
+          get_cell_list: () => ({ size: 0 }),
+          get: (key: string) => key === "initial_source_settled",
+        },
+      },
+    } as any;
+
+    NotebookFrameActions.prototype.shift_enter_run_current_cell.call(target);
+
+    expect(target.run_cell).not.toHaveBeenCalled();
+    expect(target.jupyter_actions.createFirstCell).toHaveBeenCalled();
+    expect(target.activate_cell).toHaveBeenCalledWith("alpha", {
+      mode: "edit",
+    });
+
+    // Not while the notebook is still loading.
+    target.jupyter_actions.store.get = () => false;
+    target.jupyter_actions.createFirstCell.mockClear();
+    NotebookFrameActions.prototype.shift_enter_run_current_cell.call(target);
+    expect(target.jupyter_actions.createFirstCell).not.toHaveBeenCalled();
+    expect(target.run_cell).not.toHaveBeenCalled();
+  });
 });

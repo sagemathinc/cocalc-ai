@@ -1848,7 +1848,9 @@ export async function getMembershipPackages({
       throw Error("must be an admin");
     }
   }
-  if (account_id && targetId !== account_id) {
+  // Packages are account-home state: route even for the caller's own account,
+  // since this may run on a bay other than the owner's home (e.g., the seed).
+  if (account_id) {
     const home_bay_id = await resolveTargetAccountHomeBay({
       account_id,
       user_account_id: targetId,

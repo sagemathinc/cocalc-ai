@@ -24,6 +24,7 @@ import type {
   CommercialOrderRevisionRequest,
   CommercialOrderUpdateRequest,
   CommercialProvisionRequest,
+  CommercialMembershipFulfillmentRequest,
   CommercialQuoteIssueRequest,
   CommercialStripeQuoteAcceptRequest,
   CommercialStripeQuoteCreateRequest,
@@ -1872,7 +1873,9 @@ function registerFulfillmentCommands(
   const fulfillment = receivables
     .command("fulfillment")
     .alias("fulfill")
-    .description("commercial site-license fulfillment operations");
+    .description(
+      "commercial fulfillment operations (site licenses; recording membership-seat fulfillment)",
+    );
 
   fulfillment
     .command("preview <order>")
@@ -1958,6 +1961,53 @@ function registerFulfillmentCommands(
           );
         }
         return await ctx.hub.commercialOrders.provision(request);
+      },
+    );
+  });
+
+  mutationOptions(
+    fulfillment
+      .command("record <order>")
+      .description(
+        "preview or record that membership packages fulfil a membership-seat order",
+      )
+      .requiredOption(
+        "--membership-package <uuid...>",
+        "membership package(s) that fulfil the order (owned by the order's customer, not expired)",
+      ),
+    "record membership-seat fulfillment",
+  ).action(async (orderRef: string, opts: any, command: Command) => {
+    await deps.withContext(
+      command,
+      "admin receivables fulfillment record",
+      async (ctx) => {
+        const order = await ctx.hub.commercialOrders.get({
+          id: normalizeOrderReference(orderRef),
+          reason: requireReason(opts.reason),
+        });
+        const membership_package_ids = (
+          Array.isArray(opts.membershipPackage)
+            ? opts.membershipPackage
+            : [opts.membershipPackage]
+        )
+          .map((id: unknown) => `${id ?? ""}`.trim())
+          .filter(Boolean);
+        const request = {
+          id: order.id,
+          ...commonMutationRequest("fulfillment-record", order, opts, {
+            membership_package_ids,
+          }),
+        } as CommercialMembershipFulfillmentRequest;
+        if (!opts.commit) {
+          return preview(
+            "fulfillment-record",
+            order,
+            request as unknown as JsonObject,
+          );
+        }
+        return await ctx.hub.commercialOrders.recordMembershipFulfillment(
+          request,
+        );
       },
     );
   });

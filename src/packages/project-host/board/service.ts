@@ -26,6 +26,7 @@ import type {
   FilesystemBoardHandlers,
 } from "@cocalc/conat/files/fs";
 import { immerdb, type ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
+import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getLogger } from "@cocalc/backend/logger";
 import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
 import {
@@ -500,6 +501,7 @@ export async function startBoard({
     path,
     service,
     timeoutMs: START_STEP_TIMEOUT_MS,
+    writer: true,
   });
   const manager = new BoardManager({
     lib,
@@ -527,12 +529,16 @@ export async function openBoardSyncdb({
   path,
   service,
   timeoutMs,
+  writer,
 }: {
   client: ConatClient;
   project_id: string;
   path: string;
   service?: string;
   timeoutMs?: number;
+  // The board's manager: it writes the board's stream through the host's
+  // board write service, as the hub. Every other replica can only read it.
+  writer?: boolean;
 }): Promise<ImmerDB> {
   const syncdb = immerdb({
     client,
@@ -547,6 +553,9 @@ export async function openBoardSyncdb({
     persistent: true,
     // The board's only file is its .board.json, which the manager writes.
     noSaveToDisk: true,
+    ...(writer
+      ? { patchesPersist: { service: BOARD_WRITE_SERVICE, persistUser: {} } }
+      : {}),
   });
   if (!syncdb.isReady()) {
     try {
