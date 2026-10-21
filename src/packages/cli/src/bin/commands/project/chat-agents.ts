@@ -335,7 +335,7 @@ export function registerAgentCommands(
     .requiredOption("--to-agent <uuid>", "target from the original outcome")
     .requiredOption("--target-project <uuid>", "target project")
     .description(
-      "take back a message whose turn has not started yet (queued, or held until a usage limit resets); its agent never runs it",
+      "take back a message whose turn is queued (then its agent never runs it) or held until a usage limit resets (then it never resumes; what its first attempt already did, including tools, stays done)",
     )
     .action(async (attempt_id, opts, cmd) => {
       const globals = globalsFrom(cmd);

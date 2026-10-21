@@ -4661,6 +4661,50 @@ describe("queued ACP user message projection", () => {
     ).toBeNull();
   });
 
+  it("corrects a queued write that a withdrawal overtook while it was written", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        state: "running",
+      },
+    ]);
+    syncdb.set({
+      event: "chat",
+      date: "2026-03-19T20:20:00.000Z",
+      sender_id: "user",
+      message_id: "user-withdrawn-2",
+      thread_id: "thread-1",
+      history: [{ content: "withdrawn while written" }],
+    });
+    // Still queued when this write starts; withdrawn (in another process)
+    // before it is saved.
+    const jobs = require("../../sqlite/acp-jobs");
+    const spy = jest
+      .spyOn(jobs, "getAcpJob")
+      .mockReturnValueOnce({ state: "queued" } as any)
+      .mockReturnValue({ state: "canceled" } as any);
+    try {
+      await acpTestInternals.persistQueuedUserMessageProjection({
+        client: makeFakeClient() as any,
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        user_message_id: "user-withdrawn-2",
+        queued: true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      syncdb.get_one({ event: "chat", message_id: "user-withdrawn-2" })
+        ?.acp_state ?? null,
+    ).toBeNull();
+  });
+
   it("does not mark an idle submitted message as queued", async () => {
     const { syncdb } = makeFakeSyncDB();
     (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);

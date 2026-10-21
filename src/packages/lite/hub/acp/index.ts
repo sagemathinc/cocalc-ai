@@ -8685,7 +8685,7 @@ async function persistQueuedUserMessageProjection({
   queued: boolean;
   readyTimeoutMs?: number;
 }): Promise<"queued" | "running" | null> {
-  return await withChatSyncDB({
+  const projected = await withChatSyncDB({
     client,
     project_id,
     path,
@@ -8783,6 +8783,25 @@ async function persistQueuedUserMessageProjection({
       return projectedMessageState;
     },
   });
+  // Checked again once saved: a withdrawal (in another process) may have
+  // canceled it and written its own projection while this one was being
+  // written, so that this one landed last. Its cancel is recorded before
+  // its projection, so it is seen here, and corrected.
+  if (
+    requestedQueued &&
+    projected !== null &&
+    getAcpJob({ project_id, path, user_message_id })?.state === "canceled"
+  )
+    return await persistQueuedUserMessageProjection({
+      client,
+      project_id,
+      path,
+      thread_id,
+      user_message_id,
+      queued: false,
+      readyTimeoutMs,
+    });
+  return projected;
 }
 
 async function persistAcpGuidanceDeliveryProjection({
