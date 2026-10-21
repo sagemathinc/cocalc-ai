@@ -91,6 +91,26 @@ access. For an invitation that has not been accepted, open **Pending
 Invitations** and use **Revoke**. These controls depend on your permission to
 manage collaborators; the project owner can help when they are unavailable.
 
+## After removing a collaborator
+
+A collaborator has full access to the project, much like a user sharing a
+Linux account on a server: they can run code, add SSH keys, and set up
+programs that start with the project. Removing them, or deleting their
+account, ends their CoCalc access, but it does not undo anything they set up
+inside the project. The remaining collaborators are responsible for checking
+the project, just as on any shared server. If you remove someone you no longer
+trust:
+
+1. Open a terminal in the project and review \`~/.ssh/authorized_keys\`.
+   Delete any key you do not recognize.
+2. Review shell startup files such as \`~/.bashrc\` and \`~/.profile\`, and
+   any scripts the project runs when it starts. Remove anything you did not
+   expect.
+3. Check running processes with \`ps aux\`, then restart the project to stop
+   anything left running.
+4. Rotate any passwords, API keys, or [project secrets](/docs/projects/project-secrets)
+   the collaborator could read.
+
 Keep the paths to the report, saved results, and next steps in the
 [research handoff](/docs/projects/research-handoff). For coauthors editing
 together, use [chat](/docs/collaboration/chat) beside the relevant files to
