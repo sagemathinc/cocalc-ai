@@ -14,6 +14,7 @@ import {
   handoffMessages,
   notifyDesktop,
   startHandoff,
+  type HandoffApi,
   type HandoffState,
 } from "./connect-handoff";
 
@@ -189,4 +190,44 @@ test("one request at a time: a stalled service never piles up polls", async () =
   } finally {
     handoff.stop();
   }
+});
+
+test("ending the session hands back to the agent, once and in bounded time", async () => {
+  const set: string[] = [];
+  const said: string[] = [];
+  const make = (
+    driver: HandoffState["driver"],
+    setDriver?: HandoffApi["setDriver"],
+  ) =>
+    startHandoff({
+      api: {
+        state: async () => ({ ...agent, driver }),
+        setDriver:
+          setDriver ??
+          (async (d) => {
+            set.push(d);
+            return { ...agent, driver: d };
+          }),
+      },
+      say: (line) => said.push(line),
+      intervalMs: 60_000,
+    });
+  // The human took over here and then closed Chrome.
+  const human = make("human");
+  await human.poll();
+  await human.end();
+  assert.deepEqual(set, ["agent"]);
+  assert.equal(said.at(-1), "Handed back to the agent.");
+  // The agent already drives: nothing to do.
+  const driving = make("agent");
+  await driving.poll();
+  await driving.end();
+  assert.deepEqual(set, ["agent"]);
+  // A stalled service never holds up the exit.
+  const stalled = make("human", () => new Promise<HandoffState>(() => {}));
+  await stalled.poll();
+  const started = Date.now();
+  await stalled.end(50);
+  assert.ok(Date.now() - started < 1_000);
+  assert.match(said.at(-1) ?? "", /in time/);
 });

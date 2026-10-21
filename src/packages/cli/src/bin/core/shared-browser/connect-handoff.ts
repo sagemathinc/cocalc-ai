@@ -125,6 +125,12 @@ export interface Handoff {
   /** Read the state once and report what changed. */
   poll(): Promise<void>;
   stop(): void;
+  /**
+   * Stop, and hand back to the agent if the human drives (or might): this
+   * Chrome is going away, and the service would otherwise keep the agent
+   * waiting into the next connection. Best effort, within `timeoutMs`.
+   */
+  end(timeoutMs?: number): Promise<void>;
 }
 
 /**
@@ -180,6 +186,10 @@ export function startHandoff({
   const poll = () => pending ?? serial(pollOnce);
   const timer = setInterval(() => void poll(), intervalMs);
   timer.unref?.();
+  const stop = () => {
+    stopped = true;
+    clearInterval(timer);
+  };
   return {
     poll,
     key: (key) => {
@@ -195,9 +205,34 @@ export function startHandoff({
         }
       });
     },
-    stop: () => {
-      stopped = true;
-      clearInterval(timer);
+    stop,
+    end: async (timeoutMs = 3_000) => {
+      stop();
+      const handBack = (pending ?? Promise.resolve()).then(async () => {
+        if (last?.driver === "agent") return;
+        try {
+          last = await api.setDriver("agent");
+          say("Handed back to the agent.");
+        } catch (err) {
+          say(
+            `Could not hand back to the agent (${(err as Error)?.message ?? err}); hand back from the browser's card in CoCalc.`,
+          );
+        }
+      });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        handBack,
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(() => {
+            say(
+              "Could not hand back to the agent in time; hand back from the browser's card in CoCalc.",
+            );
+            resolve();
+          }, timeoutMs);
+          timeout.unref?.();
+        }),
+      ]);
+      clearTimeout(timeout);
     },
   };
 }

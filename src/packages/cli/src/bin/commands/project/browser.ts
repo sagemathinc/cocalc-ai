@@ -467,7 +467,8 @@ async function runBrowserConnect(
     for (const signal of signals) process.off(signal, onSignal);
     verification.abort();
     stopKeys();
-    handoff?.stop();
+    // Hand back before the forward closes: this Chrome is going away.
+    await handoff?.end().catch(() => {});
     await handoffTunnel?.stop().catch(() => {});
     cleanedUp = await cleanupThenDisarm(
       [
