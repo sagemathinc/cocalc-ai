@@ -112,7 +112,7 @@ function BalanceAdjustmentFields({
       </Space>
       {onAdminNoteChange != null ? (
         <Space orientation="vertical" size={4} style={{ width: "100%" }}>
-          <Text>Internal admin note</Text>
+          <Text>Internal reason (required, not shown to the user)</Text>
           <Input.TextArea
             placeholder={INTERNAL_BALANCE_NOTE_PLACEHOLDER}
             rows={3}
@@ -298,7 +298,9 @@ export function AdminPurchaseAdmin() {
   const canSubmit =
     !!targetUser &&
     (product === "balance"
-      ? Number.isFinite(balanceAdjustment) && balanceAdjustment !== 0
+      ? Number.isFinite(balanceAdjustment) &&
+        balanceAdjustment !== 0 &&
+        !!comment.trim()
       : finalPrice.gte(0)) &&
     (product !== "membership" || membershipClass);
 
@@ -664,7 +666,9 @@ export function AdminBalanceAdjustment({
         {error ? <Alert title={error} type="error" /> : null}
         {success ? <Alert title={success} type="success" /> : null}
         <Button
-          disabled={!Number.isFinite(amount) || amount === 0}
+          disabled={
+            !Number.isFinite(amount) || amount === 0 || !adminNote.trim()
+          }
           loading={loading}
           type="primary"
           onClick={submit}
