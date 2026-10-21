@@ -86,6 +86,14 @@ import {
   fileProof,
 } from "./file-proof";
 import {
+  TRANSITION_MAX_PENDING,
+  TRANSITION_MAX_PENDING_BYTES,
+  TRANSITION_MAX_VALUE_BYTES,
+  canDropAll,
+  recoveryCopyName,
+  valueBytesCapped,
+} from "./history-transition";
+import {
   ProofReads,
   type SavedFile,
   proofCoversHistory,
@@ -578,6 +586,10 @@ export class SyncDoc extends EventEmitter {
   };
 
   private markLocalUnsavedChange = (): void => {
+    // every local change, including during a history transition (see
+    // runHistoryTransition): a later generation is never released by a copy
+    // of an earlier one
+    this.localGeneration += 1;
     if (this.state !== "ready") {
       return;
     }
@@ -978,6 +990,272 @@ export class SyncDoc extends EventEmitter {
     throw Error("the history kept changing; please try again");
   };
 
+  // When the history is reset under this open copy (a new epoch), keep this
+  // tab's edits (bounded history plan H1b-2): ask which pending patches the
+  // new history already includes; if everything this tab has is included,
+  // reload; otherwise first save the current value to a recovery copy beside
+  // the file.  Nothing is reconstructed from the old history and nothing is
+  // merged into the new one (H2).  Edits keep going into the live document
+  // meanwhile; nothing more is written in the old epoch.
+  private localGeneration = 0;
+  private historyTransition?: {
+    // the epoch this tab's pending patches were written in
+    fromEpoch: number;
+    toEpoch: number;
+    // generation when the transition began: anything later is unsaved
+    startGeneration: number;
+    // copies written so far (kept and reported, never overwritten)
+    copies: string[];
+    // a newer reset arrived while this one ran: run again
+    restart: boolean;
+    // the value is resident but not saved anywhere (too large to copy, or
+    // the copy failed): the editor shows NOT SAVED
+    unsaved?: string;
+  };
+
+  private beginHistoryTransition = (
+    toEpoch?: number,
+    fromEpoch?: number,
+  ): void => {
+    const epoch = toEpoch ?? this.history_epoch ?? 0;
+    const t = this.historyTransition;
+    if (t != null) {
+      // a duplicate is ignored; a newer reset restarts, keeping everything
+      if (epoch <= t.toEpoch) return;
+      t.toEpoch = epoch;
+      t.restart = true;
+      t.unsaved = undefined;
+    } else {
+      this.patchflowSession?.off?.("change", this.handlePatchflowChange);
+      this.historyTransition = {
+        // a document never reset has epoch 0; a wrong guess only means
+        // nothing can be proven absent, so the value is copied
+        fromEpoch: fromEpoch ?? 0,
+        toEpoch: epoch,
+        startGeneration: this.localGeneration,
+        copies: [],
+        restart: false,
+      };
+    }
+    void this.runHistoryTransition();
+  };
+
+  // The editor's "Retry" while NOT SAVED.
+  retryHistoryTransition = (): void => {
+    const t = this.historyTransition;
+    if (t == null || t.unsaved == null) return;
+    t.unsaved = undefined;
+    void this.runHistoryTransition();
+  };
+
+  // For the editor's "Download a copy" while NOT SAVED: the value and the
+  // generation it represents.  reloadAfterDownload(generation) reloads only
+  // if nothing changed since that download.
+  valueForDownload = (): { value: string; generation: number } => ({
+    value: this.to_str(),
+    generation: this.localGeneration,
+  });
+
+  reloadAfterDownload = (generation: number): boolean => {
+    const t = this.historyTransition;
+    if (t == null || this.localGeneration !== generation) return false;
+    this.finishHistoryTransition();
+    return true;
+  };
+
+  // One run at a time; a newer reset during a run makes it run again.  The
+  // flag is cleared in the same synchronous step as the last restart check,
+  // so a restart is never lost between them.
+  private historyTransitionRunning = false;
+  private runHistoryTransition = async (): Promise<void> => {
+    if (this.historyTransitionRunning) {
+      if (this.historyTransition != null) this.historyTransition.restart = true;
+      return;
+    }
+    this.historyTransitionRunning = true;
+    try {
+      for (;;) {
+        const t = this.historyTransition;
+        if (t == null || this.isClosed()) return;
+        t.restart = false;
+        await this.historyTransitionStep();
+        if (!this.historyTransition?.restart) return;
+      }
+    } catch (err) {
+      // never silently: the value stays in this tab, NOT SAVED
+      this.dbg("runHistoryTransition")(`${err}`);
+      this.reportUnsavedTransition("copy-failed");
+    } finally {
+      this.historyTransitionRunning = false;
+    }
+  };
+
+  private historyTransitionStep = async (): Promise<void> => {
+    const t = this.historyTransition!;
+    const stillCurrent = () =>
+      this.historyTransition === t && !t.restart && !this.isClosed();
+    let dstream: any;
+    try {
+      dstream = this.dstream();
+    } catch {
+      dstream = undefined;
+    }
+    // admission, before anything is serialized (LIMIT-H1B-2, LIMIT-H1B2P-2)
+    const stats = dstream?.pendingStats?.() ?? { count: 0, bytes: 0 };
+    const admitted =
+      stats.count <= TRANSITION_MAX_PENDING &&
+      stats.bytes <= TRANSITION_MAX_PENDING_BYTES;
+    // the value, measured capped before anything else touches the whole
+    // document (pendingMessages, the query, is_equal): over the cap, or not
+    // measurable, is NOT SAVED at once (plan r3 step 2, LIMIT-H1B2I-1)
+    if (!this.admitValue()) return;
+    const pending: { id: string }[] =
+      admitted && dstream?.pendingMessages != null
+        ? dstream.pendingMessages()
+        : [];
+    const ids = pending.map(({ id }) => id);
+    let statuses: { [id: string]: { status: any } } | undefined;
+    if (admitted && ids.length > 0) {
+      statuses = await this.queryHistoryInclusion(t, ids);
+      if (!stillCurrent()) return;
+    }
+    const hasDraft =
+      this.doc != null && this.last != null && !this.doc.is_equal(this.last);
+    if (
+      admitted &&
+      canDropAll({
+        ids,
+        statuses,
+        hasDraft,
+        hasLaterEdits: this.localGeneration !== t.startGeneration,
+      })
+    ) {
+      // everything this tab has is in the new history
+      this.finishHistoryTransition();
+      return;
+    }
+    await this.copyThenFinishHistoryTransition(stillCurrent);
+  };
+
+  // One inclusion request, retried a few times; undefined if it keeps
+  // failing (then the value is copied, never dropped).
+  private queryHistoryInclusion = async (
+    t: { fromEpoch: number },
+    ids: string[],
+  ): Promise<{ [id: string]: { status: any } } | undefined> => {
+    if (typeof this.client.historyInclusion != "function") return undefined;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await this.client.historyInclusion({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+          // the epoch they were written in, so a missing id can be proven
+          // absent (a newer reset keeps the first transition's epoch)
+          epoch: t.fromEpoch,
+          ids,
+        });
+        return result.ids;
+      } catch (err) {
+        this.dbg("queryHistoryInclusion")(`${err}`);
+        if (attempt < 2) await delay(1000 * (attempt + 1));
+      }
+    }
+    return undefined;
+  };
+
+  // Save the current value to a recovery copy, then reload.  Each copy is
+  // an immutable value with the generation it represents; a successful copy
+  // releases only that generation (astra's condition 2): if the document
+  // changed while it was written, the later generation is copied again, up
+  // to 3 times, then NOT SAVED.
+  private copyThenFinishHistoryTransition = async (
+    stillCurrent: () => boolean,
+  ): Promise<void> => {
+    const t = this.historyTransition!;
+    for (let round = 0; round < 3; round++) {
+      if (!this.admitValue()) return;
+      const generation = this.localGeneration;
+      const value = this.to_str();
+      const path = await this.writeRecoveryCopy(value);
+      if (path != null) t.copies.push(path);
+      if (!stillCurrent()) return;
+      if (path == null) {
+        this.reportUnsavedTransition("copy-failed");
+        return;
+      }
+      if (this.localGeneration === generation) {
+        // in the same synchronous step as the check: no edit can fall
+        // between them
+        this.finishHistoryTransition();
+        return;
+      }
+    }
+    this.reportUnsavedTransition("still-changing");
+  };
+
+  // Write value to a new recovery copy beside the file; its path, or
+  // undefined after 3 failed attempts.  Names are unique per client and
+  // random; the existence check makes overwriting an earlier copy unlikely
+  // but cannot rule it out (best effort: the fs API has no exclusive create).
+  private writeRecoveryCopy = async (
+    value: string,
+  ): Promise<string | undefined> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const path = recoveryCopyName(this.path, {
+        clientId: this.client.client_id?.() ?? "",
+      });
+      try {
+        if (await this.fs.exists(path)) continue;
+        await this.fs.writeFile(path, value);
+        return path;
+      } catch (err) {
+        this.dbg("writeRecoveryCopy")(`${err}`);
+        if (attempt < 2) await delay(1000 * (attempt + 1));
+      }
+    }
+    return undefined;
+  };
+
+  // Whether the current value is within the 32 MiB cap, measured capped and
+  // cached per document (documents are immutable, so the same object has the
+  // same size); otherwise reports NOT SAVED.
+  private admittedValueDoc?: Document;
+  private admitValue = (): boolean => {
+    if (this.doc != null && this.doc === this.admittedValueDoc) return true;
+    if (valueBytesCapped(this.doc, TRANSITION_MAX_VALUE_BYTES) == null) {
+      this.reportUnsavedTransition("too-large");
+      return false;
+    }
+    this.admittedValueDoc = this.doc;
+    return true;
+  };
+
+  // NOT SAVED: the tab keeps its value, which is saved nowhere; the editor
+  // offers "Download a copy" and "Retry".
+  private reportUnsavedTransition = (reason: string): void => {
+    const t = this.historyTransition;
+    if (t == null) return;
+    t.unsaved = reason;
+    this.emit("history-reset-unsaved", {
+      history_epoch: t.toEpoch,
+      reason,
+      copies: [...t.copies],
+    });
+  };
+
+  // Everything this tab had is in the new history or in a copy: hand off.
+  // The editor reopens the file, which opens the new history.
+  private finishHistoryTransition = (): void => {
+    const t = this.historyTransition;
+    if (t == null) return;
+    this.emit("history-reset", {
+      history_epoch: t.toEpoch,
+      copies: [...t.copies],
+    });
+    this.close();
+  };
+
   // A 413 while loading the patches means the edit history itself holds a
   // patch too large to load (see resetOversizedHistory), as opposed to some
   // other stream this document uses.
@@ -1315,6 +1593,8 @@ export class SyncDoc extends EventEmitter {
   */
   undo = (): Document => {
     this.assert_is_ready("undo");
+    // the old graph may hold the new epoch's seed (see handlePatchflowChange)
+    if (this.historyTransition != null) return this.doc!;
     const session = this.requirePatchflowSession();
     this.ensurePatchflowLiveDocCommitted();
     this.undo_mode = true;
@@ -1331,6 +1611,7 @@ export class SyncDoc extends EventEmitter {
 
   redo = (): Document => {
     this.assert_is_ready("redo");
+    if (this.historyTransition != null) return this.doc!;
     const session = this.requirePatchflowSession();
     this.undo_mode = true;
     const prev = session.getDocument() as Document;
@@ -1642,8 +1923,7 @@ export class SyncDoc extends EventEmitter {
       historyEpochIncreased ||
       (this.isReady() && historyPurgeMarkerChanged)
     ) {
-      this.emit("history-reset", { history_epoch: nextHistoryEpoch });
-      this.close();
+      this.beginHistoryTransition(nextHistoryEpoch, previousHistoryEpoch);
       return;
     }
 
@@ -2337,6 +2617,12 @@ export class SyncDoc extends EventEmitter {
     if (this.useConat) {
       await this.loadPatchBootstrap();
       const dstream = this.dstream();
+      // pending patches are sized by what they hold (bounded history plan
+      // H1b-2: the transition's admission bound)
+      dstream.setPendingSizeOf?.(
+        (mesg: any) =>
+          (mesg?.patch?.length ?? 0) + (mesg?.snapshot?.length ?? 0) + 256,
+      );
       dstream.on("metadata-change", this.patchMetadataChanged);
       dstream.on("checkpoints-change", this.patchMetadataChanged);
     }
@@ -2646,6 +2932,9 @@ export class SyncDoc extends EventEmitter {
   save = reuseInFlight(async () => {
     const dbg = this.dbg("save");
     dbg();
+    if (this.historyTransition != null) {
+      return;
+    }
     // We just keep trying while syncdoc is ready and there
     // are changes that have not been saved (due to this.doc
     // changing during the while loop!).
@@ -3647,8 +3936,10 @@ export class SyncDoc extends EventEmitter {
       history_epoch_increased ||
       (this.isReady() && history_purge_marker_changed)
     ) {
-      this.emit("history-reset", { history_epoch: current_history_epoch });
-      this.close();
+      this.beginHistoryTransition(
+        current_history_epoch,
+        previous_history_epoch,
+      );
       return;
     }
 
@@ -4003,6 +4294,12 @@ export class SyncDoc extends EventEmitter {
   };
 
   private handlePatchflowChange = (doc: Document): void => {
+    if (this.historyTransition != null) {
+      // The history was reset: whatever reaches the old graph now (the new
+      // epoch's seed, its patches) must not replace this tab's value or its
+      // committed base, which is what the recovery copy saves (CORR-H1B2-2).
+      return;
+    }
     const committed = doc as Document;
     const previous = this.doc;
     const next =
@@ -4111,6 +4408,7 @@ export class SyncDoc extends EventEmitter {
         );
         return;
       }
+      if (this.historyTransition != null || this.isClosed()) return;
       this.valueOnDisk = diskValue;
       this.isDeleted = false;
       if (!diskValue) {
@@ -4273,6 +4571,10 @@ export class SyncDoc extends EventEmitter {
     if (!this.patchflowReady() || this.patchflowSession == null) {
       return false;
     }
+    if (this.historyTransition != null) {
+      // the draft is kept (see runHistoryTransition)
+      return false;
+    }
     return this.commitWithPatchflow({
       emitChangeImmediately,
       file,
@@ -4305,6 +4607,11 @@ export class SyncDoc extends EventEmitter {
       );
     }
     this.assert_is_ready("commitExactPatch");
+    if (this.historyTransition != null) {
+      throw new Error(
+        "the edit history was reset; nothing more is committed to this session",
+      );
+    }
     const session = this.requirePatchflowSession();
     const codec = this.patchflowCodec;
     if (codec == null || this.patches_table == null) {
@@ -4425,6 +4732,9 @@ export class SyncDoc extends EventEmitter {
     if (this.opts.noSaveToDisk) {
       return;
     }
+    // once the history was reset, this tab's value goes to a recovery copy,
+    // never over the file (CORR-H1B2-1): checked here and after every await
+    if (this.historyTransition != null) return;
     const dbg = this.dbg("writeFile");
     if (this.client.is_deleted(this.path, this.project_id)) {
       dbg("not saving to disk because deleted");
@@ -4438,6 +4748,7 @@ export class SyncDoc extends EventEmitter {
         return;
       }
     }
+    if (this.historyTransition != null) return;
 
     const value = this.to_str();
     // in the same synchronous step as value (see captureFileProof)
@@ -4445,7 +4756,7 @@ export class SyncDoc extends EventEmitter {
     // include {ignore:true} with events for this long,
     // so no clients waste resources loading in response to us saving
     // to disk.
-    if (this.isClosed()) return;
+    if (this.isClosed() || this.historyTransition != null) return;
     this.last_save_to_disk_time = new Date();
     this.emit("before-save-to-disk");
     try {
@@ -4473,6 +4784,8 @@ export class SyncDoc extends EventEmitter {
     this.diskMissingOnLoad = false;
     this.localEditsSinceDiskBaseline = false;
     this.valueOnDisk = value;
+    // a proof in the old epoch would be refused anyway
+    if (this.historyTransition != null) return;
     // only after these exact bytes were written
     await this.publishFileProof(proof);
     if (this.isClosed()) return;
@@ -4492,10 +4805,17 @@ export class SyncDoc extends EventEmitter {
       // properly.
       return;
     }
+    if (this.historyTransition != null) {
+      // the history was reset: this tab's value goes to a recovery copy,
+      // never over the file (see runHistoryTransition)
+      return;
+    }
     // Persist the live draft to Patchflow before writing its serialized form
     // to disk. Otherwise a failed history commit followed by a disk write is
     // observed by sync-fs as a destructive edit made by "The Filesystem".
     await this.save();
+    // the transition may have begun while save() waited (CORR-H1B2-1)
+    if (this.historyTransition != null || this.isClosed()) return;
     if (
       this.doc == null ||
       this.last == null ||

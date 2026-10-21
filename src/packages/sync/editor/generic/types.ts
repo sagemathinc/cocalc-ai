@@ -10,6 +10,7 @@
 // A Patch is an entry in the patches table, as represented in memory locally here.
 
 import type {
+  HistoryInclusion,
   ResetHistoryOptions,
   ResetHistoryResult,
 } from "@cocalc/conat/persist/storage";
@@ -233,6 +234,17 @@ export interface Client extends ProjectClient {
     path: string;
     maxBytes: number;
   }) => Promise<SavedFileRead>;
+
+  // Which of these msg ids the server accepted in history epoch `epoch`, and
+  // whether the current history includes them (PersistentStream.
+  // historyInclusion).
+  historyInclusion?: (opts: {
+    project_id: string;
+    path: string;
+    persist?: { service: string; persistUser: Record<string, never> };
+    epoch: number;
+    ids: string[];
+  }) => Promise<HistoryInclusion>;
 
   // The seeded, conditional reset of a document's history (see
   // PersistentStream.resetHistory).
