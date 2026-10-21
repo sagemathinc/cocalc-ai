@@ -3,29 +3,35 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assertBundleKeepsPersistVolumes,
-  hostHasPersistVolumes,
+  assertPersistVolumesStayOn,
+  commitToPersistVolumes,
+  hostCommittedToPersistVolumes,
   PersistLayoutDowngradeError,
 } from "./persist-layout-guard";
 
-const PROJECT = "11111111-2222-4333-8444-555555555555";
-
 describe("never back past persist volumes", () => {
   let base: string;
-  let mount: string;
-  let env: NodeJS.ProcessEnv;
+  let dataDir: string;
+  let current: string;
+  let env: Record<string, string>;
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), "persist-layout-guard-"));
-    mount = join(base, "mnt");
-    mkdirSync(join(mount, `project-${PROJECT}`), { recursive: true });
-    env = {
-      COCALC_SYNC_PROJECTS: `${mount}/project-[project_id]/.local/share/cocalc/persist`,
-    };
+    dataDir = join(base, "data");
+    current = join(base, "current");
+    env = { COCALC_PROJECT_HOST_CURRENT: current };
   });
 
   afterEach(() => {
@@ -42,49 +48,64 @@ describe("never back past persist volumes", () => {
     return root;
   };
 
-  const volume = (ready: boolean) => {
-    const root = join(mount, `project-${PROJECT}-persist`);
-    mkdirSync(root, { recursive: true });
-    if (ready) writeFileSync(join(root, ".cocalc-persist-ready"), "{}");
-  };
+  const where = () => ({ dataDir, env });
 
-  it("lets a host where no history moved yet run any version", () => {
-    expect(hostHasPersistVolumes(env)).toBe(false);
-    // an import that never finished moved nothing
-    volume(false);
-    expect(hostHasPersistVolumes(env)).toBe(false);
+  it("lets a host that never kept histories in volumes run any version", () => {
+    expect(hostCommittedToPersistVolumes(dataDir)).toBe(false);
     expect(() =>
-      assertBundleKeepsPersistVolumes(bundle(false), env),
+      assertBundleKeepsPersistVolumes(bundle(false), where()),
     ).not.toThrow();
+    expect(() => assertPersistVolumesStayOn(where())).not.toThrow();
   });
 
-  it("refuses a version from before persist volumes once a history moved", () => {
-    volume(true);
-    expect(hostHasPersistVolumes(env)).toBe(true);
-    expect(() => assertBundleKeepsPersistVolumes(bundle(false), env)).toThrow(
+  it("once a persist server committed to volumes, refuses older versions and turning volumes off", () => {
+    symlinkSync(bundle(true), current);
+    commitToPersistVolumes(where());
+    expect(hostCommittedToPersistVolumes(dataDir)).toBe(true);
+    expect(() =>
+      assertBundleKeepsPersistVolumes(bundle(false), where()),
+    ).toThrow(PersistLayoutDowngradeError);
+    expect(() =>
+      assertBundleKeepsPersistVolumes(bundle(true), where()),
+    ).not.toThrow();
+    // e.g., COCALC_PERSIST_PROJECT_VOLUME=0
+    expect(() => assertPersistVolumesStayOn(where())).toThrow(
       PersistLayoutDowngradeError,
     );
-    expect(() =>
-      assertBundleKeepsPersistVolumes(bundle(true), env),
-    ).not.toThrow();
+  });
+
+  it("a persist server doesn't move histories when an older version was activated meanwhile", () => {
+    // an activation that raced it: the record is kept, the server refuses
+    symlinkSync(bundle(false), current);
+    expect(() => commitToPersistVolumes(where())).toThrow(
+      PersistLayoutDowngradeError,
+    );
+    expect(hostCommittedToPersistVolumes(dataDir)).toBe(true);
+  });
+
+  it("commits without a current bundle (e.g., in development)", () => {
+    commitToPersistVolumes(where());
+    expect(existsSync(join(dataDir, "persist-volume-layout"))).toBe(true);
+  });
+
+  it("fails closed when the record can't be checked", () => {
+    // a directory it can't look into: anything but missing counts
+    symlinkSync("loop", join(base, "loop"));
+    expect(() => hostCommittedToPersistVolumes(join(base, "loop"))).toThrow(
+      /ELOOP/,
+    );
   });
 
   it("allows it by hand", () => {
-    volume(true);
+    symlinkSync(bundle(true), current);
+    commitToPersistVolumes(where());
+    const byHand = {
+      dataDir,
+      env: { ...env, COCALC_ALLOW_PERSIST_LAYOUT_DOWNGRADE: "1" },
+    };
     expect(() =>
-      assertBundleKeepsPersistVolumes(bundle(false), {
-        ...env,
-        COCALC_ALLOW_PERSIST_LAYOUT_DOWNGRADE: "1",
-      }),
+      assertBundleKeepsPersistVolumes(bundle(false), byHand),
     ).not.toThrow();
-  });
-
-  it("is off where the history stays in the homes", () => {
-    volume(true);
-    const off = { ...env, COCALC_PERSIST_PROJECT_VOLUME: "0" };
-    expect(hostHasPersistVolumes(off)).toBe(false);
-    expect(() =>
-      assertBundleKeepsPersistVolumes(bundle(false), off),
-    ).not.toThrow();
+    expect(() => assertPersistVolumesStayOn(byHand)).not.toThrow();
   });
 });

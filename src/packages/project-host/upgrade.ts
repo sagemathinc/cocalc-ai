@@ -1509,9 +1509,6 @@ async function downloadAndInstallUnlocked(
       status: "staged",
     };
   }
-  if (resolved.canonicalArtifact === "project-host") {
-    assertBundleKeepsPersistVolumes(resolved.versionDir);
-  }
   const previousTarget = await fs.promises
     .realpath(resolved.currentLink)
     .catch(() => undefined);
@@ -1530,7 +1527,14 @@ async function downloadAndInstallUnlocked(
         previousTarget,
       );
     }
-    await replaceSymlink(resolved.currentLink, resolved.versionDir);
+    if (resolved.canonicalArtifact === "project-host") {
+      await activateProjectHostBundle(
+        resolved.currentLink,
+        resolved.versionDir,
+      );
+    } else {
+      await replaceSymlink(resolved.currentLink, resolved.versionDir);
+    }
     if (resolved.canonicalArtifact === "container-runtime") {
       try {
         await verifyActivatedContainerRuntime(
@@ -1737,6 +1741,31 @@ function scheduledProjectHostReconcileCommand(bin: string): string {
   return `sleep 3; COCALC_PROJECT_HOST_RELOAD_ENV_FILES=1 ${bin} daemon restart-project-host || true`;
 }
 
+// Links the current project-host bundle to versionDir, never back past
+// persist volumes (persist-layout-guard.ts): checked before, and again after
+// switching, which is undone if a persist server committed to them
+// meanwhile.
+async function activateProjectHostBundle(
+  currentLink: string,
+  versionDir: string,
+): Promise<void> {
+  assertBundleKeepsPersistVolumes(versionDir);
+  const previous = await fs.promises
+    .realpath(currentLink)
+    .catch(() => undefined);
+  await replaceSymlink(currentLink, versionDir);
+  try {
+    assertBundleKeepsPersistVolumes(versionDir);
+  } catch (err) {
+    if (previous) {
+      await replaceSymlink(currentLink, previous);
+    } else {
+      await fs.promises.rm(currentLink, { force: true });
+    }
+    throw err;
+  }
+}
+
 export async function activateInstalledProjectHostVersion(
   version: string,
 ): Promise<void> {
@@ -1752,9 +1781,8 @@ export async function activateInstalledProjectHostVersion(
     normalizeBaseUrl(),
   );
   await assertInstalledVersionDir(resolved.versionDir);
-  assertBundleKeepsPersistVolumes(resolved.versionDir);
   await ensureWritableDir(path.dirname(resolved.currentLink));
-  await replaceSymlink(resolved.currentLink, resolved.versionDir);
+  await activateProjectHostBundle(resolved.currentLink, resolved.versionDir);
   logger.info("upgrade: activated installed project-host version", {
     version: normalizedVersion,
     current: resolved.currentLink,

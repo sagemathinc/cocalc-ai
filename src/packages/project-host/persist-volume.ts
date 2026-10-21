@@ -65,6 +65,10 @@ import { setPrepareProjectStore } from "@cocalc/conat/persist/context";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { CapturedSnapshotData } from "@cocalc/file-server/btrfs/snapshot-preparer";
 import { withProjectPersistFenced } from "./persist-fence";
+import {
+  assertPersistVolumesStayOn,
+  commitToPersistVolumes,
+} from "./persist-layout-guard";
 
 const logger = getLogger("project-host:persist-volume");
 
@@ -176,7 +180,13 @@ function errorCode(err: unknown): string | undefined {
 // Whether projects keep their history in volumes of their own.
 export function installProjectPersistVolumes(): boolean {
   const { legacy } = projectPersistTemplates();
-  if (legacy == null) return false;
+  if (legacy == null) {
+    // never back to the homes on a host whose histories left them
+    assertPersistVolumesStayOn();
+    return false;
+  }
+  // before any history moves (persist-layout-guard.ts)
+  commitToPersistVolumes();
   setPrepareProjectStore(
     async (opts) => await prepareProjectPersistVolume(opts),
   );
@@ -430,8 +440,8 @@ async function prepare({
   await writeReadyMarker(root, { quota, ...imported });
   logger.info("persist volume ready", { project_id, quota, ...imported });
   // The volume holds the history now; the old copy in the home only takes
-  // space (software from before volumes, which this host no longer runs
-  // once one is ready, persist-layout-guard.ts, would show no history).
+  // space (software from before volumes, which this host no longer runs,
+  // persist-layout-guard.ts, would show no history).
   try {
     await ops.removeFromHome(home, legacy.relative);
   } catch (err) {

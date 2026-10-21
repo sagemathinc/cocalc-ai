@@ -233,21 +233,18 @@ describe("project host upgrade installer", () => {
     }
   });
 
-  it("never activates a project-host from before persist volumes once a history moved into one", async () => {
+  it("never activates a project-host from before persist volumes once the host committed to them", async () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
     const archivePath = createArchive(base);
     const served = await serveFile(archivePath);
-    const mount = path.join(base, "mnt");
-    const volume = path.join(
-      mount,
-      "project-11111111-2222-4333-8444-555555555555-persist",
-    );
-    fs.mkdirSync(volume, { recursive: true });
-    fs.writeFileSync(path.join(volume, ".cocalc-persist-ready"), "{}");
-    const previous = process.env.COCALC_SYNC_PROJECTS;
-    process.env.COCALC_SYNC_PROJECTS = `${mount}/project-[project_id]/.local/share/cocalc/persist`;
     try {
       process.env.COCALC_DATA = path.join(base, "data");
+      // what a persist server keeping histories in volumes records
+      fs.mkdirSync(process.env.COCALC_DATA, { recursive: true });
+      fs.writeFileSync(
+        path.join(process.env.COCALC_DATA, "persist-volume-layout"),
+        "{}\n",
+      );
       const bundlesRoot = path.join(base, "project-host-bundles");
       const currentLink = path.join(base, "project-host-current", "current");
       // the test bundle has no dist/persist-volume.js
@@ -270,11 +267,6 @@ describe("project host upgrade installer", () => {
         __test__.downloadAndInstall({ ...resolved, activate: false }),
       ).resolves.toMatchObject({ status: "staged" });
     } finally {
-      if (previous == null) {
-        delete process.env.COCALC_SYNC_PROJECTS;
-      } else {
-        process.env.COCALC_SYNC_PROJECTS = previous;
-      }
       await served.close();
       fs.rmSync(base, { recursive: true, force: true });
     }
