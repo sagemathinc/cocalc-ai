@@ -21,6 +21,7 @@ import {
   noteAgentMessageTurnFailed,
 } from "./agent-rpc-report";
 import { toolUseTracker } from "./tool-use";
+import { sweepAgentStatus } from "./agent-status-report";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
@@ -12101,6 +12102,10 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
   let ticks = 0;
   codexActionReconcileTimer = setInterval(() => {
     void reconcilePendingCodexActions(client);
+    // What each agent here is doing, for its peers and lists.
+    void sweepAgentStatus().catch((err) =>
+      logger.debug("agent status sweep failed", { err: `${err}` }),
+    );
     // Delivery reports the hub could not take yet (about once a minute).
     if (++ticks % 6 === 0)
       void drainAgentRpcReports(hubApi.agent).catch((err) =>

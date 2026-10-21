@@ -590,6 +590,121 @@ describe("inspecting a sent message's turn across bays", () => {
   });
 });
 
+describe("an agent's status across bays", () => {
+  // The agent's project (and the host reporting its status) on the seed;
+  // the account that named it homed on the attached bay. The host's report
+  // reaches that account's name book over the fabric, as that account's
+  // own view: its own sign-in block, and never another account's.
+  let tess;
+  let project;
+  const agent = randomUUID();
+  const host_id = randomUUID();
+  const other = randomUUID();
+
+  before(async () => {
+    const owner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "uma",
+    });
+    owner.client = await client(owner);
+    tess = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "tess",
+    });
+    tess.client = await client(tess);
+    project = await createProject(owner.client, "agent-status");
+    await invite(owner, tess, project);
+    await eventually(() => listed(tess.client, project), {
+      what: "the project in tess's list",
+    });
+    assert.equal(await owningBay(project), SEED);
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const pool = getPool();
+       await pool.query(
+         "INSERT INTO project_hosts (id, name, status, bay_id, metadata, created, updated) VALUES ($1, 'status host', 'running', $2, '{}', NOW(), NOW())",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(SEED)}]);
+       await pool.query("UPDATE projects SET host_id=$1 WHERE project_id=$2",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(project)}]);
+       await pool.query(
+         "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES($1,$2,'/home/user/s.chat','status','claude-1',$3)",
+         [${JSON.stringify(agent)}, ${JSON.stringify(project)}, ${JSON.stringify(tess.account_id)}]);
+       await pool.query(
+         "INSERT INTO agent_identity_watchers(agent_id,account_id,project_id) VALUES($1,$2,$3)",
+         [${JSON.stringify(agent)}, ${JSON.stringify(tess.account_id)}, ${JSON.stringify(project)}]);`,
+    );
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `await require("@cocalc/database/pool").default().query(
+         "INSERT INTO agent_personal_names(account_id,name,project_id,agent_id,metadata) VALUES($1,'statusbot',$2,$3,$4)",
+         [${JSON.stringify(tess.account_id)}, ${JSON.stringify(project)}, ${JSON.stringify(agent)},
+          { path: "/home/user/s.chat", thread_id: "status" }]);`,
+    );
+  });
+
+  it("reaches the watcher's home bay as its own view only", async () => {
+    const at = Date.now();
+    assert.deepEqual(
+      await runInBay(
+        cluster,
+        SEED,
+        // reportStatus notifies watchers without waiting; this snippet's
+        // process exits when it returns, so it waits for that same push.
+        `const result = await server("agents/api.js").reportStatus({
+           host_id: ${JSON.stringify(host_id)},
+           account_id: ${JSON.stringify(tess.account_id)},
+           project_id: ${JSON.stringify(project)},
+           path: "/home/user/s.chat",
+           thread_id: "status",
+           status: {
+             version: 1,
+             running: 0,
+             queued: 0,
+             by_account: {
+               ${JSON.stringify(tess.account_id)}: { reason: "sign-in" },
+               ${JSON.stringify(other)}: { reason: "limit" },
+             },
+             at: ${at},
+           },
+         });
+         await server("agents/identity-watchers.js").notifyIdentityWatchers(${JSON.stringify(agent)});
+         return result;`,
+      ),
+      { registered: true },
+    );
+    const db = await connectBayDatabase(cluster, ATTACHED);
+    try {
+      const status = await eventually(
+        async () =>
+          (
+            await db.query(
+              "SELECT metadata->'status' AS status FROM agent_personal_names WHERE account_id=$1 AND agent_id=$2",
+              [tess.account_id, agent],
+            )
+          ).rows[0]?.status ?? undefined,
+        {
+          timeoutMs: 60_000,
+          intervalMs: 1_000,
+          what: "the status at tess's home",
+        },
+      );
+      assert.deepEqual(status, {
+        version: 1,
+        running: 0,
+        queued: 0,
+        unavailable: { reason: "sign-in" },
+        at,
+      });
+      assert.doesNotMatch(JSON.stringify(status), new RegExp(other));
+    } finally {
+      await db.end();
+    }
+  });
+});
+
 describe("agent memory on the account's home bay", () => {
   // The seed handles a memory request for bob, whose home is the attached
   // bay: it must run there, over the real fabric, with real encryption.

@@ -16,6 +16,7 @@ import {
   removeNamedAgent,
 } from "../../core/agent-create";
 import { akv } from "@cocalc/conat/sync/akv";
+import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
 import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
 import { CHAT_DRAFT_STORE } from "@cocalc/chat";
 import {
@@ -795,6 +796,22 @@ export function friendlyAgentSelf(directory: AgentNetworkDiscovery) {
   };
 }
 
+// What the peer is doing, in the reader's own time zone.
+function statusOf(member: AgentNetworkDiscovery["peers"][number]["member"]) {
+  if (member.kind !== "registered") return {};
+  const status = agentTurnStatusText(member.status, Date.now(), (ms) =>
+    new Date(ms).toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }),
+  );
+  return status ? { status } : {};
+}
+
 export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
   const you = friendlyAgentSelf(directory);
   return {
@@ -805,6 +822,7 @@ export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
       ...(member.kind === "registered" && member.project_title
         ? { project: member.project_title }
         : {}),
+      ...statusOf(member),
       ...(typeof same_project === "boolean" ? { same_project } : {}),
       available: member.available,
       networks: networks.map(({ title, delivery_mode }) => ({

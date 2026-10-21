@@ -237,6 +237,7 @@ describe("hub API argument transforms", () => {
       "agent.renewCocalcConnectorTurn",
       "agent.reportRpcTurnFailure",
       "agent.reportRuntime",
+      "agent.reportStatus",
       "agent.resolvePaymentSelection",
       "aiSessions.upsertProjectHostSession",
       "apiKeys.getViewerReadPolicy",
@@ -269,6 +270,7 @@ describe("hub API argument transforms", () => {
     "agent.beginCliConnectorTurn",
     "agent.resolvePaymentSelection",
     "agent.reportRuntime",
+    "agent.reportStatus",
     "agent.describeNetworkSelf",
     "apiKeys.getViewerReadPolicy",
   ])(
