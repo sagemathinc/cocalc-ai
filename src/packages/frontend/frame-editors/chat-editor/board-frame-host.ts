@@ -83,6 +83,16 @@ interface Entry extends BoardFrame {
   hiddenSince?: number;
   // When it was created, until a placeholder first shows it.
   pendingSince?: number;
+  // The placeholder the frame covers: the newest one the user can see, or
+  // the newest if none can be seen (activeOf).
+  active?: Placeholder;
+}
+
+function activeOf(entry: Entry): Placeholder | undefined {
+  const { active, placeholders } = entry;
+  return active != null && placeholders.includes(active)
+    ? active
+    : placeholders[placeholders.length - 1];
 }
 
 interface Placeholder {
@@ -150,7 +160,7 @@ function listen(): void {
 }
 
 function notify(entry: Entry): void {
-  const active = entry.placeholders[entry.placeholders.length - 1];
+  const active = activeOf(entry);
   for (const placeholder of entry.placeholders) {
     // In the accessibility tree the frame is where the card is: the
     // placeholder it covers owns it (the frame itself lives at the end of the
@@ -267,7 +277,7 @@ function adjacentControl(
 // Tab continues from the board's place.
 function focusMark(entry: Entry, which: "enter" | "exit"): void {
   setSentinels(entry, false);
-  const placeholder = entry.placeholders[entry.placeholders.length - 1];
+  const placeholder = activeOf(entry);
   const sibling =
     which === "enter"
       ? placeholder?.element.previousElementSibling
@@ -321,40 +331,69 @@ function clippingAncestors(element: HTMLElement): HTMLElement[] {
   return result;
 }
 
+// Where a placeholder is on screen, clipped to what of it is visible, or
+// undefined if the user can't see it (no size, scrolled out of view, or
+// hidden, as an inactive tab is).
+function visibleRect(
+  placeholder: Placeholder,
+):
+  | { rect: DOMRect; left: number; top: number; right: number; bottom: number }
+  | undefined {
+  const rect = placeholder.element.getBoundingClientRect();
+  let left = 0;
+  let top = 0;
+  let right = window.innerWidth;
+  let bottom = window.innerHeight;
+  for (const ancestor of placeholder.clipAncestors) {
+    const clip = ancestor.getBoundingClientRect();
+    left = Math.max(left, clip.left);
+    top = Math.max(top, clip.top);
+    right = Math.min(right, clip.right);
+    bottom = Math.min(bottom, clip.bottom);
+  }
+  left = Math.max(left, rect.left);
+  top = Math.max(top, rect.top);
+  right = Math.min(right, rect.right);
+  bottom = Math.min(bottom, rect.bottom);
+  if (
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    right <= left ||
+    bottom <= top ||
+    !shownToUser(placeholder.element)
+  ) {
+    return undefined;
+  }
+  return { rect, left, top, right, bottom };
+}
+
 // Lay each shown frame over its placeholder, clipped to what of the
-// placeholder is visible. A placeholder with no size (an inactive tab) or
-// scrolled out of view hides its frame without unloading it.
+// placeholder is visible. With the view in several places, that is the
+// newest place the user can see (so a visible card never says the board is
+// elsewhere while no board shows); if none can be seen, the frame is hidden
+// without unloading it.
 export function layoutBoardFrames(): void {
   for (const entry of entries.values()) {
-    const placeholder = entry.placeholders[entry.placeholders.length - 1];
-    if (placeholder == null) continue;
-    const rect = placeholder.element.getBoundingClientRect();
-    let left = 0;
-    let top = 0;
-    let right = window.innerWidth;
-    let bottom = window.innerHeight;
-    for (const ancestor of placeholder.clipAncestors) {
-      const clip = ancestor.getBoundingClientRect();
-      left = Math.max(left, clip.left);
-      top = Math.max(top, clip.top);
-      right = Math.min(right, clip.right);
-      bottom = Math.min(bottom, clip.bottom);
+    const { placeholders } = entry;
+    if (placeholders.length === 0) continue;
+    let chosen = placeholders[placeholders.length - 1];
+    let shown: ReturnType<typeof visibleRect>;
+    for (let i = placeholders.length - 1; i >= 0; i--) {
+      shown = visibleRect(placeholders[i]);
+      if (shown != null) {
+        chosen = placeholders[i];
+        break;
+      }
     }
-    left = Math.max(left, rect.left);
-    top = Math.max(top, rect.top);
-    right = Math.min(right, rect.right);
-    bottom = Math.min(bottom, rect.bottom);
-    if (
-      rect.width <= 0 ||
-      rect.height <= 0 ||
-      right <= left ||
-      bottom <= top ||
-      !shownToUser(placeholder.element)
-    ) {
-      hide(entry, placeholder.element);
+    if (chosen !== activeOf(entry)) {
+      entry.active = chosen;
+      notify(entry);
+    }
+    if (shown == null) {
+      hide(entry, chosen.element);
       continue;
     }
-
+    const { rect, left, top, right, bottom } = shown;
     Object.assign(entry.iframe.style, {
       visibility: "visible",
       pointerEvents: "auto",
@@ -557,6 +596,7 @@ export function attachBoardFrame(
     onState,
   };
   attached.placeholders.push(placeholder);
+  attached.active = placeholder;
   attached.hiddenSince = undefined;
   attached.pendingSince = undefined;
   notify(attached);

@@ -574,6 +574,58 @@ test("Refresh in one of two places: the other place shows, focuses and hides the
   expect(replaced.style.pointerEvents).toBe("none");
 });
 
+test("shown in two places, the frame falls back to an older place the user can see when the newest is hidden", async () => {
+  const first = await renderBoard();
+  const second = render(<Board />);
+  await waitFor(() =>
+    expect(
+      first.view.getByText("This board is shown in another view."),
+    ).toBeInTheDocument(),
+  );
+  const older = placeholder(first.view.container);
+  const newer = placeholder(second.container);
+  jest
+    .spyOn(older, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 50, 400, 300));
+  const newerSize = jest
+    .spyOn(newer, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 500, 400, 300));
+  act(() => layoutBoardFrames());
+  expect(first.frame.style.top).toBe("500px");
+  expect(newer.getAttribute("aria-owns")).toBe(first.frame.id);
+  // The newest place is hidden (its tab deactivated, say): the older,
+  // visible one shows the board, is its focus proxy and owns it.
+  newerSize.mockReturnValue(rect(0, 0, 0, 0));
+  act(() => layoutBoardFrames());
+  expect(first.frame.style.visibility).toBe("visible");
+  expect(first.frame.style.top).toBe("50px");
+  expect(older.getAttribute("aria-owns")).toBe(first.frame.id);
+  expect(newer.hasAttribute("aria-owns")).toBe(false);
+  await waitFor(() =>
+    expect(
+      within(first.view.container).queryByText(
+        "This board is shown in another view.",
+      ),
+    ).toBeNull(),
+  );
+  expect(older.tabIndex).toBe(0);
+  expect(
+    within(second.container).getByText("This board is shown in another view."),
+  ).toBeInTheDocument();
+  // Shown again: the newest place has it back.
+  newerSize.mockReturnValue(rect(10, 500, 400, 300));
+  act(() => layoutBoardFrames());
+  expect(first.frame.style.top).toBe("500px");
+  expect(newer.getAttribute("aria-owns")).toBe(first.frame.id);
+  await waitFor(() =>
+    expect(
+      within(first.view.container).getByText(
+        "This board is shown in another view.",
+      ),
+    ).toBeInTheDocument(),
+  );
+});
+
 test("a cached frame retrieved by a remount is claimed until it attaches, not dropped at its time", () => {
   jest.useFakeTimers({ now: Date.now() });
   try {
