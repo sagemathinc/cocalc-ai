@@ -99,6 +99,11 @@ export function resetHistoryRestartState() {
   gates.clear();
 }
 
+// whether a run for this notebook is still doing (or waiting on) work
+export function runInProgress(syncPath: string): boolean {
+  return runs.has(syncPath);
+}
+
 export function unresolvedReset(syncPath: string): Gate | undefined {
   return gates.get(syncPath);
 }
@@ -306,6 +311,13 @@ export async function restartHistoryFromIpynb({
   fs,
   syncClient = new SyncClient(client),
   now = Date.now,
+  blobStoreOf = (name) =>
+    akv({
+      name,
+      project_id,
+      client,
+      config: { max_bytes: 100 * 1e6 },
+    } as any),
 }: {
   project_id: string;
   // the notebook: its .ipynb or its syncdb path
@@ -321,6 +333,11 @@ export async function restartHistoryFromIpynb({
     "historyResetState" | "readFileBounded" | "resetHistory"
   >;
   now?: () => number;
+  // for tests: the notebook's output blob store
+  blobStoreOf?: (name: string) => {
+    set: (key: string, value: Buffer) => Promise<unknown>;
+    close?: () => void;
+  };
 }): Promise<RestartResult> {
   const invalid = validRestartRequest({ path, epoch, revision });
   if (invalid) return { restarted: false, reason: "invalid", message: invalid };
@@ -331,6 +348,16 @@ export async function restartHistoryFromIpynb({
   if (runs.has(syncPath)) return { restarted: false, reason: "busy" };
   runs.add(syncPath);
   const deadlineAt = now() + RESTART_LIMITS.deadlineMs;
+  // Every operation this run starts.  The deadline only ends the caller's
+  // wait: the run's slot is released when all of them have settled, so a
+  // retry after a deadline can never start work beside abandoned work
+  // (LIMIT-H1B3B-1).  Each has its own finite RPC timeout.
+  const started: Promise<unknown>[] = [];
+  const track = <T>(p: Promise<T>): Promise<T> => {
+    started.push(p);
+    return p;
+  };
+  let blobStore: { close?: () => void } | undefined;
   try {
     if (
       !(await gateAllowsReset({
@@ -339,6 +366,7 @@ export async function restartHistoryFromIpynb({
         syncClient,
         deadlineAt,
         now,
+        track,
       }))
     ) {
       return {
@@ -351,11 +379,13 @@ export async function restartHistoryFromIpynb({
     // §3 step 1: the saved notebook, read with a bound
     const read = await withDeadline(
       deadlineAt,
-      syncClient.readFileBounded({
-        project_id,
-        path: ipynb_path,
-        maxBytes: RESTART_LIMITS.fileBytes,
-      }),
+      track(
+        syncClient.readFileBounded({
+          project_id,
+          path: ipynb_path,
+          maxBytes: RESTART_LIMITS.fileBytes,
+        }),
+      ),
     );
     if (read.status == "too-large") {
       return {
@@ -392,25 +422,19 @@ export async function restartHistoryFromIpynb({
       checkIpynbCounts(parsed);
       const prepared = await withDeadline(
         deadlineAt,
-        prepareIpynbAttachments({ ipynb: parsed, fs, client, project_id }),
+        track(
+          prepareIpynbAttachments({ ipynb: parsed, fs, client, project_id }),
+        ),
       );
-      const blobStore = akv({
-        name: join("jupyter", ipynb_path),
-        project_id,
-        client,
-        config: { max_bytes: 100 * 1e6 },
-      } as any);
-      try {
-        value = await ipynbSeedValue({
-          ipynb: prepared,
-          deadlineAt,
-          saveBlob: async (sha1, bytes) => {
-            await blobStore.set(sha1, bytes);
-          },
-        });
-      } finally {
-        blobStore.close?.();
-      }
+      const store = blobStoreOf(join("jupyter", ipynb_path));
+      blobStore = store;
+      value = await ipynbSeedValue({
+        ipynb: prepared,
+        deadlineAt,
+        saveBlob: async (sha1, bytes) => {
+          await track(store.set(sha1, bytes));
+        },
+      });
     } catch (err) {
       if (err instanceof TooLarge) {
         return { restarted: false, reason: "too-large", message: err.message };
@@ -469,6 +493,7 @@ export async function restartHistoryFromIpynb({
         },
       } as any,
     });
+    track(reset);
     // only this reset's own answer clears the gate, whenever it comes
     reset.then(
       () => resolveGate(syncPath, opId),
@@ -502,7 +527,11 @@ export async function restartHistoryFromIpynb({
     logger.debug("restartHistoryFromIpynb failed", { path, err: `${err}` });
     return { restarted: false, reason: "failed", message: `${err}` };
   } finally {
-    runs.delete(syncPath);
+    // the slot (and the blob store) only when nothing of this run is left
+    void Promise.allSettled(started).then(() => {
+      blobStore?.close?.();
+      runs.delete(syncPath);
+    });
   }
 }
 
@@ -517,12 +546,14 @@ async function gateAllowsReset({
   syncClient,
   deadlineAt,
   now,
+  track = (p) => p,
 }: {
   syncPath: string;
   project_id: string;
   syncClient: Pick<SyncClient, "historyResetState">;
   deadlineAt: number;
   now: () => number;
+  track?: <T>(p: Promise<T>) => Promise<T>;
 }): Promise<boolean> {
   const gate = gates.get(syncPath);
   if (gate == null) return true;
@@ -530,7 +561,7 @@ async function gateAllowsReset({
   gate.observedAt = now();
   const state = await withDeadline(
     deadlineAt,
-    syncClient.historyResetState({ project_id, path: syncPath }),
+    track(syncClient.historyResetState({ project_id, path: syncPath })),
   );
   if (gates.get(syncPath) !== gate) {
     // its answer came meanwhile

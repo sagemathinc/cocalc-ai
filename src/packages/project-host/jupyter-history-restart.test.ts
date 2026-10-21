@@ -23,6 +23,7 @@ import {
   RESTART_LIMITS,
   resetHistoryRestartState,
   restartHistoryFromIpynb,
+  runInProgress,
   unresolvedReset,
 } from "@cocalc/jupyter/history-restart";
 
@@ -225,6 +226,7 @@ describe("two restarts of the same notebook (CORR-H1B3P-1)", () => {
     expect(
       (await restart(project_id, path, confirmed, h.syncClient)).restarted,
     ).toBe(true);
+    await wait({ until: () => !runInProgress(syncdbPath(path)) });
     live.close();
 
     // live edits, an output and a settings change in the new epoch
@@ -243,6 +245,7 @@ describe("two restarts of the same notebook (CORR-H1B3P-1)", () => {
 
     // the same file: the same opId, so the first result, applied once
     const same = await restart(project_id, path, confirmed, h.syncClient);
+    await wait({ until: () => !runInProgress(syncdbPath(path)) });
     expect(same).toEqual(
       expect.objectContaining({ restarted: true, repeated: true }),
     );
@@ -360,37 +363,36 @@ describe("caps, applied as the import goes (LIMIT-H1B3P-3)", () => {
 });
 
 describe("the deadline and the run slot", () => {
-  it("a read held past the deadline: deadline, the slot is cleared, nothing is sent", async () => {
+  it("a read held past repeated deadlines: one read in all; retries are busy until it settles (LIMIT-H1B3B-1)", async () => {
     const project_id = uuid();
     const path = ipynbPath("deadline.ipynb");
     Object.assign(RESTART_LIMITS, { deadlineMs: 200 });
     const h = harness(() => bytesOf(ipynbOf(["a"])));
     const release = h.holdReads();
-    const result = await restart(
-      project_id,
-      path,
-      { epoch: 0, seq: 0, count: 0 },
-      h.syncClient,
-    );
-    expect(result).toEqual(
+    const confirmed = { epoch: 0, seq: 0, count: 0 };
+    expect(await restart(project_id, path, confirmed, h.syncClient)).toEqual(
       expect.objectContaining({ restarted: false, reason: "deadline" }),
     );
-    expect(h.counts.resets).toBe(0);
+    // after the deadline the abandoned read keeps the slot: retries never
+    // start a second one
+    for (let i = 0; i < 3; i++) {
+      expect(await restart(project_id, path, confirmed, h.syncClient)).toEqual(
+        expect.objectContaining({ restarted: false, reason: "busy" }),
+      );
+    }
+    expect(h.counts).toEqual({ reads: 1, resets: 0 });
+    // once it settles, the slot is free again
     release();
-    // the next request runs (the slot was cleared)
     Object.assign(RESTART_LIMITS, { deadlineMs: LIMITS.deadlineMs });
-    const next = await restart(
-      project_id,
-      path,
-      { epoch: 0, seq: 0, count: 0 },
-      h.syncClient,
-    );
-    expect(next.restarted === true || (next as any).reason !== "busy").toBe(
-      true,
-    );
+    await wait({
+      until: async () =>
+        (await restart(project_id, path, confirmed, h.syncClient)).reason !=
+        "busy",
+    });
+    expect(h.counts.reads).toBe(2);
   });
 
-  it("a preparation held past the deadline: deadline, the slot is cleared, nothing is sent", async () => {
+  it("a preparation held past repeated deadlines: one preparation in all; retries are busy until it settles", async () => {
     const project_id = uuid();
     const path = ipynbPath("deadline-prepare.ipynb");
     Object.assign(RESTART_LIMITS, { deadlineMs: 200 });
@@ -405,21 +407,81 @@ describe("the deadline and the run slot", () => {
         return { ipynb };
       },
     };
-    const result = await restartHistoryFromIpynb({
-      project_id,
-      path,
-      epoch: 0,
-      revision: { seq: 0, count: 0 },
-      client: connect(),
-      fs,
-      syncClient: h.syncClient,
-    });
-    expect(result).toEqual(
+    const go = () =>
+      restartHistoryFromIpynb({
+        project_id,
+        path,
+        epoch: 0,
+        revision: { seq: 0, count: 0 },
+        client: connect(),
+        fs,
+        syncClient: h.syncClient,
+      });
+    expect(await go()).toEqual(
       expect.objectContaining({ restarted: false, reason: "deadline" }),
     );
+    for (let i = 0; i < 3; i++) {
+      expect(await go()).toEqual(
+        expect.objectContaining({ restarted: false, reason: "busy" }),
+      );
+    }
     expect(prepared).toBe(1);
-    expect(h.counts.resets).toBe(0);
+    expect(h.counts).toEqual({ reads: 1, resets: 0 });
     release();
+    await wait({ until: async () => (await go()).reason != "busy" });
+    expect(prepared).toBe(2);
+  });
+
+  it("an output write still pending at the deadline holds the slot until it settles", async () => {
+    const project_id = uuid();
+    const path = ipynbPath("deadline-write.ipynb");
+    Object.assign(RESTART_LIMITS, { deadlineMs: 300 });
+    const nb: any = ipynbOf(["plot()"]);
+    nb.cells[0].outputs = [
+      {
+        output_type: "display_data",
+        data: { "image/png": Buffer.from("png bytes").toString("base64") },
+        metadata: {},
+      },
+    ];
+    const h = harness(() => bytesOf(nb));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let writes = 0;
+    let closed = 0;
+    const blobStoreOf = () => ({
+      set: async () => {
+        writes += 1;
+        await held;
+      },
+      close: () => {
+        closed += 1;
+      },
+    });
+    const go = () =>
+      restartHistoryFromIpynb({
+        project_id,
+        path,
+        epoch: 0,
+        revision: { seq: 0, count: 0 },
+        client: connect(),
+        fs: {},
+        syncClient: h.syncClient,
+        blobStoreOf,
+      });
+    expect(await go()).toEqual(
+      expect.objectContaining({ restarted: false, reason: "deadline" }),
+    );
+    expect(await go()).toEqual(
+      expect.objectContaining({ restarted: false, reason: "busy" }),
+    );
+    expect(writes).toBe(1);
+    expect(h.counts.resets).toBe(0);
+    // the store is closed only after its writes settled
+    expect(closed).toBe(0);
+    release();
+    await wait({ until: () => closed == 1 });
+    await wait({ until: async () => (await go()).reason != "busy" });
   });
 
   it("invalid requests are refused before anything else", async () => {
@@ -482,7 +544,7 @@ describe("at most one unresolved reset per notebook (LIMIT-H1B3P-2)", () => {
     live.close();
   });
 
-  it("an observation that the revision moved clears the gate; a late answer to the old reset does not clear a newer one", async () => {
+  it("while a reset is unresolved, a new confirmation sends nothing; that reset's own answer clears the gate", async () => {
     const project_id = uuid();
     const path = ipynbPath("gate2.ipynb");
     const live = await liveNotebook(project_id, path);
@@ -493,26 +555,33 @@ describe("at most one unresolved reset per notebook (LIMIT-H1B3P-2)", () => {
     await restart(project_id, path, confirmed, h.syncClient);
     const oldOpId = unresolvedReset(syncdbPath(path))!.opId;
 
-    // the history moves: the old reset's ifRevision can no longer hold
+    // the history moves, and the user confirms again
     live.set({ type: "cell", id: "more", pos: 1, input: "more" });
     live.commit();
     await live.save();
     const moved = await state(project_id, path);
-    // a new confirmation, its reset held as well
-    await restart(project_id, path, moved, h.syncClient);
-    const newerOpId = unresolvedReset(syncdbPath(path))?.opId;
-    expect(newerOpId).not.toBe(oldOpId);
-    expect(h.counts.resets).toBe(2);
-    expect(held).toHaveLength(2);
+    for (let i = 0; i < 2; i++) {
+      expect(await restart(project_id, path, moved, h.syncClient)).toEqual(
+        expect.objectContaining({ restarted: false, reason: "busy" }),
+      );
+    }
+    // one reset mutation in all
+    expect(h.counts.resets).toBe(1);
+    expect(held).toHaveLength(1);
+    expect(unresolvedReset(syncdbPath(path))?.opId).toBe(oldOpId);
 
-    // the old reset's answer arrives (refused: its revision moved) and does
-    // not clear the newer gate
+    // its answer (refused: its revision moved) clears its own gate and the slot
     held[0]();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(unresolvedReset(syncdbPath(path))?.opId).toBe(newerOpId);
-    // the newer one's answer clears it
+    await wait({
+      until: () =>
+        unresolvedReset(syncdbPath(path)) == null &&
+        !runInProgress(syncdbPath(path)),
+    });
+    // the new confirmation now runs
+    const next = restart(project_id, path, moved, h.syncClient);
+    await wait({ until: () => held.length == 2 });
     held[1]();
-    await wait({ until: () => unresolvedReset(syncdbPath(path)) == null });
+    expect(await next).toEqual(expect.objectContaining({ restarted: true }));
     expect((await contents(project_id, path)).cells).toEqual(["a"]);
     live.close();
   });
