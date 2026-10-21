@@ -1205,9 +1205,9 @@ async function swapProjectHome({
   return { oldHomePath };
 }
 
-// A home put in place of the project's (by a restore) counts against its
+// A home put in place (by a restore or a copy) counts against the project's
 // quota with its history (project-quota-group.ts); if this fails, the
-// project's next quota audit adds it.
+// project's next quota apply or audit adds it.
 async function joinHomeToQuotaGroup(project_id: string): Promise<void> {
   try {
     await joinProjectQuotaGroup({
@@ -1216,7 +1216,7 @@ async function joinHomeToQuotaGroup(project_id: string): Promise<void> {
       path: projectMountpoint(project_id),
     });
   } catch (err) {
-    logger.warn("unable to add a restored home to its project's quota", {
+    logger.warn("unable to add a home to its project's quota", {
       project_id,
       err: `${err}`,
     });
@@ -2252,6 +2252,8 @@ async function clone({
     project_id,
     cloneHome: async () => {
       await fs!.subvolumes.clone(volName(src_project_id), volName(project_id));
+      // made outside any group, like its history (which joins by itself)
+      await joinHomeToQuotaGroup(project_id);
     },
   });
   await recordManagedProjectVolume({
