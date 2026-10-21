@@ -2766,6 +2766,34 @@ export async function issueProjectAppUrl({
   });
 }
 
+export async function issueProjectAppFrameUrl({
+  account_id,
+  session_hash,
+  project_id,
+  path,
+  app_id,
+}: {
+  account_id?: string;
+  session_hash?: string;
+  project_id: string;
+  path: string;
+  app_id?: string;
+}): Promise<ProjectContentUrl> {
+  const owner = requireAccount(account_id);
+  const browser_session_exp_s = await restrictedBrowserSessionExpiration({
+    account_id: owner,
+    session_hash,
+  });
+  return await issueProjectAppUrlLocal({
+    account_id: owner,
+    project_id,
+    path,
+    app_id,
+    browser_session_exp_s,
+    frame: true,
+  });
+}
+
 export async function revokeProjectContentLinks({
   account_id,
   project_id,

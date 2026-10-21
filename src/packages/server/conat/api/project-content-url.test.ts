@@ -434,6 +434,26 @@ describe("issueProjectAppUrlLocal", () => {
     )).toBe(true);
   });
 
+  it("issues frame links: /_af/, a frame-scoped capability", async () => {
+    const result = await issueApp({ frame: true });
+    if (!("url" in result)) throw new Error("unavailable");
+    const url = new URL(result.url);
+    const match = url.pathname.match(/^\/_af\/([^/]+)$/);
+    expect(match).not.toBeNull();
+    const verifyAs = (scope: "app" | "app-frame") =>
+      verifyProjectAppCapability({
+        token: match![1],
+        project_id: PROJECT,
+        key: "p8000",
+        host_id: HOST,
+        public_key: PUBLIC_KEY,
+        scope,
+        now_ms: NOW,
+      });
+    expect(verifyAs("app-frame")).toMatchObject({ scope: "app-frame" });
+    expect(() => verifyAs("app")).toThrow();
+  });
+
   it("refuses a path that is no app route", async () => {
     await expect(issueApp({ path: `/${PROJECT}/myapp/` })).rejects.toThrow(
       "not an app route",

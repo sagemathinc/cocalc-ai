@@ -163,7 +163,17 @@ export function parseProjectAppHostLabel(
   return isValidUUID(project_id) ? { project_id, key: m[1] } : undefined;
 }
 
-export function projectAppAudience(project_id: string, key: string): string {
+// "app": a top-level session on the app's origin (/_a/); "app-frame": a
+// session for the app framed by the site (/_af/).  Each scope has its own
+// audience, so neither capability is ever accepted as the other.
+export type ProjectAppScope = "app" | "app-frame";
+
+export function projectAppAudience(
+  project_id: string,
+  key: string,
+  scope: ProjectAppScope = "app",
+): string {
+  if (scope === "app-frame") return `project-app-frame:${project_id}:${key}`;
   return `project-app:${project_id}:${key}`;
 }
 
@@ -174,7 +184,7 @@ export interface ProjectAppCapabilityClaims {
   hid: string; // host_id
   key: string;
   epoch: number;
-  scope: "app";
+  scope: ProjectAppScope;
   // A restricted (testing) browser session's expiry: the app session must
   // not outlive it.
   bse?: number;
@@ -215,6 +225,7 @@ export function issueProjectAppCapability({
   epoch,
   private_key,
   browser_session_exp_s,
+  scope = "app",
   issuer = "cocalc-hub",
   now_ms = Date.now(),
 }: {
@@ -225,6 +236,7 @@ export function issueProjectAppCapability({
   epoch: number;
   private_key: string;
   browser_session_exp_s?: number;
+  scope?: ProjectAppScope;
   issuer?: string;
   now_ms?: number;
 }): { token: string; expires_at: number; claims: ProjectAppCapabilityClaims } {
@@ -237,6 +249,9 @@ export function issueProjectAppCapability({
     throw new Error("invalid app capability identity");
   }
   if (!isEpoch(epoch)) throw new Error("invalid content epoch");
+  if (scope !== "app" && scope !== "app-frame") {
+    throw new Error("invalid app capability scope");
+  }
   const iat = Math.floor(now_ms / 1000);
   if (
     browser_session_exp_s != null &&
@@ -247,11 +262,11 @@ export function issueProjectAppCapability({
   const claims: ProjectAppCapabilityClaims = {
     iss: issuer,
     sub: account_id,
-    aud: projectAppAudience(project_id, key),
+    aud: projectAppAudience(project_id, key, scope),
     hid: host_id,
     key,
     epoch,
-    scope: "app",
+    scope,
     ...(browser_session_exp_s == null ? {} : { bse: browser_session_exp_s }),
     iat,
     exp: iat + PROJECT_APP_CAPABILITY_TTL_SECONDS,
@@ -282,6 +297,7 @@ export function verifyProjectAppCapability({
   key,
   host_id,
   public_key,
+  scope = "app",
   issuer = "cocalc-hub",
   now_ms = Date.now(),
 }: {
@@ -290,6 +306,7 @@ export function verifyProjectAppCapability({
   key: string;
   host_id: string;
   public_key: string;
+  scope?: ProjectAppScope;
   issuer?: string;
   now_ms?: number;
 }): ProjectAppCapabilityClaims {
@@ -325,7 +342,7 @@ export function verifyProjectAppCapability({
     (keys !== CLAIM_KEYS_REQUIRED && keys !== CLAIM_KEYS_RESTRICTED) ||
     claims.v !== APP_TOKEN_VERSION ||
     claims.iss !== issuer ||
-    claims.scope !== "app" ||
+    claims.scope !== scope ||
     !isValidUUID(claims.sub) ||
     !isValidUUID(claims.jti) ||
     !isEpoch(claims.epoch) ||
@@ -335,7 +352,7 @@ export function verifyProjectAppCapability({
     throw new Error("invalid capability claims");
   }
   if (
-    claims.aud !== projectAppAudience(project_id, key) ||
+    claims.aud !== projectAppAudience(project_id, key, scope) ||
     claims.key !== key ||
     claims.hid !== host_id
   ) {

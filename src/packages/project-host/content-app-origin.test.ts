@@ -11,6 +11,7 @@ import {
   projectAppKey,
 } from "@cocalc/conat/auth/project-app-capability";
 import {
+  APP_FRAME_SESSION_COOKIE,
   APP_SESSION_COOKIE,
   appRequestRejection,
   createAppOriginHandler,
@@ -85,7 +86,12 @@ describe("sessions", () => {
 
   it("round-trips for exactly its app", () => {
     const token = createAppSessionToken(session, { secret: SECRET });
-    expect(verifyAppSessionToken(token, target)).toEqual(session);
+    expect(verifyAppSessionToken(token, target)).toEqual({ kind: "app", ...session });
+    // Never accepted as the other kind.
+    expect(verifyAppSessionToken(token, { ...target, kind: "app-frame" })).toBeUndefined();
+    const frame = createAppSessionToken({ ...session, kind: "app-frame" }, { secret: SECRET });
+    expect(verifyAppSessionToken(frame, target)).toBeUndefined();
+    expect(verifyAppSessionToken(frame, { ...target, kind: "app-frame" })).toMatchObject({ kind: "app-frame" });
     expect(verifyAppSessionToken(token, { ...target, key: "p8001" })).toBeUndefined();
     expect(verifyAppSessionToken(token, { ...target, project_id: OTHER_PROJECT })).toBeUndefined();
     expect(verifyAppSessionToken(token, { ...target, secret: "other" })).toBeUndefined();
@@ -463,6 +469,90 @@ describe("app origin handler", () => {
     expect(res.headers["clear-site-data"]).toBe('"storage", "cache"');
   });
 
+  const frameNav = {
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    referer: `${SITE}/`,
+  };
+  const frameCapability = () => capability({ scope: "app-frame" } as any);
+  async function frameSignIn(): Promise<string> {
+    const res = await send(`/_af/${frameCapability()}?next=${next}`, frameNav);
+    expect(res.status).toBe(302);
+    return `${res.headers["set-cookie"]?.[0] ?? ""}`.split(";")[0];
+  }
+
+  it("frame bootstrap: only the site's own frame, cross-site, sets a partitioned frame session", async () => {
+    const res = await send(`/_af/${frameCapability()}?next=${next}`, frameNav);
+    expect(res.status).toBe(302);
+    const cookie = `${res.headers["set-cookie"]?.[0]}`;
+    expect(cookie).toMatch(
+      /^__Host-cocalc-app-frame=[^;]+; Path=\/; Secure; HttpOnly; SameSite=None; Partitioned; Max-Age=3600$/,
+    );
+    for (const headers of [
+      { ...frameNav, "sec-fetch-site": "same-site" }, // F1: a content page as parent
+      { ...frameNav, referer: "https://evil.example/" },
+      { ...frameNav, "sec-fetch-dest": "document" }, // top-level: use /_a/
+    ]) {
+      const r = await send(`/_af/${frameCapability()}?next=${next}`, headers);
+      expect(r.status).toBe(403);
+    }
+    // A top-level capability is no frame capability, and vice versa.
+    expect((await send(`/_af/${capability()}?next=${next}`, frameNav)).status).toBe(403);
+    expect((await send(`/_a/${frameCapability()}?next=${next}`, navigation)).status).toBe(403);
+  });
+
+  it("a frame session serves the site's frame and the app's own requests, never a top-level page", async () => {
+    const cookie = await frameSignIn();
+    // The frame's navigation from the site.
+    let res = await send(`/${PROJECT}/port/8000/`, { ...frameNav, cookie });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-security-policy"]).toBe(
+      `frame-ancestors 'self' ${SITE}, default-src 'self'`,
+    );
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-origin");
+    // The framed app's own requests.
+    res = await send(`/${PROJECT}/port/8000/x.js`, {
+      cookie,
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-dest": "script",
+    });
+    expect(res.status).toBe(200);
+    // F5: not as a top-level page, nor framed by anyone else.
+    res = await send(`/${PROJECT}/port/8000/`, { ...navigation, cookie });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain("/app-open/");
+    res = await send(`/${PROJECT}/port/8000/`, {
+      ...navigation,
+      "sec-fetch-site": "same-origin",
+      cookie,
+    });
+    expect(res.status).toBe(302);
+    res = await send(`/${PROJECT}/port/8000/`, {
+      ...frameNav,
+      referer: "https://evil.example/",
+      cookie,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("a top-level session isn't used for the site's frame (it has no partition there)", async () => {
+    const cookie = await signIn();
+    const res = await send(`/${PROJECT}/port/8000/`, { ...frameNav, cookie });
+    expect(res.status).toBe(401);
+    expect(res.headers["content-type"]).toContain("text/html");
+    expect(res.body).toContain('"cocalc-app-frame"');
+    expect(res.body).toContain(JSON.stringify(SITE));
+    expect(res.headers["content-security-policy"]).toContain(`frame-ancestors ${SITE}`);
+  });
+
+  it("without a frame session the frame tells the site's card", async () => {
+    const res = await send(`/${PROJECT}/port/8000/`, frameNav);
+    expect(res.status).toBe(401);
+    expect(res.body).toContain('status:"no-session"');
+    expect(proxy).not.toHaveBeenCalled();
+  });
+
   it("a session of one app is no session for another", async () => {
     const cookie = await signIn();
     const res = await send(`/${PROJECT}/port/8001/`, {
@@ -516,6 +606,25 @@ describe("app origin websockets", () => {
       project_id: PROJECT,
       epoch: 0,
     });
+    expect(req.headers.cookie).toBe("x=1");
+  });
+
+  it("the site's framed app may open its websockets with its frame session", async () => {
+    const frame = `${APP_FRAME_SESSION_COOKIE}=${createAppSessionToken(
+      {
+        kind: "app-frame",
+        account_id: ACCOUNT,
+        project_id: PROJECT,
+        key: "p8000",
+        host_id: HOST,
+        epoch: 0,
+        auth_iat_s: NOW / 1000,
+        exp_s: NOW / 1000 + 60,
+      },
+      { secret: SECRET },
+    )}`;
+    const req = upgrade({ cookie: `x=1; ${frame}` });
+    expect(await origin.authorizeUpgrade(req)).toMatchObject({ account_id: ACCOUNT });
     expect(req.headers.cookie).toBe("x=1");
   });
 
