@@ -1109,21 +1109,27 @@ export class CoreStream<T = any> extends EventEmitter {
   };
 
   private processPersistentDelete = (
-    { seqs }: DeleteOperation,
+    { seqs, through }: DeleteOperation,
     { noEmit }: { noEmit?: boolean },
   ) => {
     if (this.raw == null) return;
-    const X = new Set<number>(seqs);
-    // seqs is a list of integers.  We remove
-    // every entry from this.raw, this.messages, and this.kv
-    // where this.raw.seq is in X by mutating raw/messages/kv,
+    const X = new Set<number>(seqs ?? []);
+    // A history reset deletes every message with seq <= through, and lists
+    // seqs only for a small history (bounded history plan H1c §2).
+    const deleted = (seq: number) =>
+      X.has(seq) ||
+      (typeof through === "number" &&
+        typeof seq === "number" &&
+        seq <= through);
+    // We remove every entry from this.raw, this.messages, and this.kv
+    // whose seq is deleted by mutating raw/messages/kv,
     // not by making new objects (since external references).
     // This is a rare operation so we're not worried too much
     // about performance.
     const keys: { [seq: number]: string } = {};
     for (const key in this.kv) {
       const seq = this.kv[key]?.raw?.seq;
-      if (X.has(seq)) {
+      if (deleted(seq)) {
         delete this.kv[key];
         this.lastValueByKey.delete(key);
         keys[seq] = key;
@@ -1132,7 +1138,7 @@ export class CoreStream<T = any> extends EventEmitter {
     const indexes: number[] = [];
     for (let i = 0; i < this.raw.length; i++) {
       const seq = this.raw[i].seq;
-      if (X.has(seq)) {
+      if (deleted(seq)) {
         indexes.push(i);
         if (!noEmit) {
           this.emitChange({

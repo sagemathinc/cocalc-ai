@@ -399,17 +399,19 @@ describe("the schema of a stored database", () => {
       ],
       [
         "a changed counts table",
-        RESET_TRASH_SCHEMA.stream_counts.replace(
-          "trash_unknown_items INTEGER NOT NULL DEFAULT 0",
-          "trash_unknown_items INTEGER NOT NULL DEFAULT 0, x BLOB",
-        ),
+        "DROP TABLE stream_counts; " +
+          RESET_TRASH_SCHEMA.stream_counts.replace(
+            "trash_unknown_items INTEGER NOT NULL DEFAULT 0",
+            "trash_unknown_items INTEGER NOT NULL DEFAULT 0, x BLOB",
+          ),
       ],
       [
         "a changed trash ledger",
-        RESET_TRASH_SCHEMA.history_trash.replace(
-          "kind TEXT NOT NULL",
-          "kind BLOB",
-        ),
+        "DROP TABLE history_trash; " +
+          RESET_TRASH_SCHEMA.history_trash.replace(
+            "kind TEXT NOT NULL",
+            "kind BLOB",
+          ),
       ],
       [
         "a changed renamed id table",
@@ -425,15 +427,19 @@ describe("the schema of a stored database", () => {
       expect(() => open(path)).toThrow(/changed outside CoCalc/);
     });
 
-    it("this server does not create the reset-trash tables", () => {
+    it("creates the reset-trash tables exactly as RESET_TRASH_SCHEMA (H1c)", () => {
       const path = serverFile();
       const db = new DatabaseSync(path + ".db");
-      const names = (
-        db.prepare("SELECT name FROM sqlite_master").all() as { name: string }[]
-      ).map(({ name }) => name);
+      const objects = db
+        .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master")
+        .all() as any[];
       db.close();
-      for (const name of Object.keys(RESET_TRASH_SCHEMA)) {
-        expect(names).not.toContain(name);
+      expect(unexpectedPersistSchema(objects)).toBeUndefined();
+      for (const [name, sql] of Object.entries(RESET_TRASH_SCHEMA)) {
+        const stored = objects.find((o) => o.name === name)!.sql;
+        expect(stored.replace(/\s+/g, " ")).toBe(
+          sql.replace(/\s+/g, " ").replace(" IF NOT EXISTS", ""),
+        );
       }
     });
   });

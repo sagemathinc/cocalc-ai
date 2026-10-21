@@ -94,3 +94,37 @@ describe("resetHistory with a seed, through the persist server", () => {
     }
   });
 });
+
+// H1c §2: over RESET_DELETE_LIST_MAX messages (lowered here), a reset tells
+// its subscribers only `through`; an open dstream drops every older message
+describe("the delete notification of a reset, to an open dstream", () => {
+  afterEach(() => {
+    delete process.env.COCALC_PERSIST_RESET_DELETE_LIST_MAX;
+  });
+
+  for (const listed of [false, true]) {
+    it(`drops the old messages ${listed ? "listed by seq (small history)" : "by through alone"}`, async () => {
+      process.env.COCALC_PERSIST_RESET_DELETE_LIST_MAX = listed ? "1000" : "10";
+      const client = connect();
+      const name = `through-${Math.random()}`;
+      const ds = await client.sync.dstream<string>({ name, noCache: true });
+      const as = client.sync.astream<string>({ name, noCache: true } as any);
+      try {
+        for (let i = 0; i < 50; i++) ds.publish(`m${i}`);
+        await ds.save();
+        expect(ds.length).toBe(50);
+        const result = await as.resetHistory({});
+        expect(result.reset).toBe(true);
+        const start = Date.now();
+        while (ds.length > 0 && Date.now() - start < 5000) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        expect(ds.length).toBe(0);
+      } finally {
+        ds.close();
+        as.close();
+        client.close();
+      }
+    });
+  }
+});

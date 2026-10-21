@@ -197,9 +197,11 @@ export async function confirmRestartFromIpynb(tab: NotebookTab): Promise<void> {
         message:
           result.reason == "busy"
             ? "A restart of this notebook's history is already in progress; try again in a moment."
-            : result.reason == "too-large"
-              ? `The saved notebook is too large to restart from${result.message ? ` (${result.message})` : ""}.`
-              : `${result.reason}${result.message ? `: ${result.message}` : ""}`,
+            : result.reason == "trash-pending"
+              ? "An earlier restart of this notebook's history is still being cleaned up; try again in a minute. Meanwhile you can download the .ipynb from the file explorer (see /docs/files/history-unloadable)."
+              : result.reason == "too-large"
+                ? `The saved notebook is too large to restart from${result.message ? ` (${result.message})` : ""}.`
+                : `${result.reason}${result.message ? `: ${result.message}` : ""}`,
       });
       return;
     }

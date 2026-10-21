@@ -278,6 +278,7 @@ export type LiveSeedRefusal =
   | "moved"
   | "deadline"
   | "invalid"
+  | "trash-pending"
   | "failed";
 
 export type LiveSeedResult =

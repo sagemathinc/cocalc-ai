@@ -184,6 +184,12 @@ export async function purgeHistory({
           : {}),
       }),
     );
+    if (!result.reset && result.refused === "trash-pending") {
+      // H1c §3.3: an earlier reset's trash is still being removed
+      throw new Error(
+        "an earlier reset of this file's history is still being cleaned up; try again in a minute",
+      );
+    }
     if (result.reset) {
       syncstrings.set({
         ...current,
