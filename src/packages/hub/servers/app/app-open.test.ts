@@ -115,8 +115,12 @@ describe("app open", () => {
 
   it("falls back to the project when there is no app origin or no sign-in", async () => {
     issue.mockResolvedValue({ unavailable: "off" });
-    let res = await get(`/app-open/${PROJECT}/port/8000/`, sameOrigin);
+    let res = await get(`/app-open/${PROJECT}/port/8000/a?b=1`, sameOrigin);
     expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`/${PROJECT}/port/8000/a?b=1`);
+
+    issue.mockResolvedValue({ unavailable: "no-access" });
+    res = await get(`/app-open/${PROJECT}/port/8000/`, sameOrigin);
     expect(res.headers.get("location")).toBe(`/projects/${PROJECT}`);
 
     issue.mockRejectedValue(new Error("not an app route"));

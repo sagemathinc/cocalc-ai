@@ -96,7 +96,14 @@ export function initAppOpen(
         path,
         app_id,
       });
-      if (!("url" in issued)) return fallback();
+      if (!("url" in issued)) {
+        // No app origins here (or not for this project yet): the app's path
+        // on this site, as before.  The path was validated before signing.
+        if (issued.unavailable === "off") {
+          return res.redirect(302, `${basePath.replace(/\/+$/, "")}${path}`);
+        }
+        return fallback();
+      }
       res.redirect(302, issued.url);
     } catch (err) {
       logger.debug("app-open fell back to the project", {

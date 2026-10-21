@@ -1,8 +1,12 @@
+const mockIssueProjectAppUrl = jest.fn();
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       addProjectHostAuthToUrl: jest.fn(async ({ url }) => url),
       hub: {
+        hosts: {
+          issueProjectAppUrl: (...args: any[]) => mockIssueProjectAppUrl(...args),
+        },
         system: {
           inspectProjectAppPrivateHostname: jest.fn(
             async ({ app_id }: { app_id: string }) =>
@@ -26,6 +30,7 @@ import {
   buildPrivateHostnameOpenUrl,
   getPrivateProjectAppOpenUrl,
   getProjectAppOpenUrl,
+  openProjectAppStatus,
 } from "./app-server-open";
 
 describe("getProjectAppOpenUrl", () => {
@@ -253,5 +258,58 @@ describe("getPrivateProjectAppOpenUrl", () => {
         app_id: "missing",
       }),
     ).rejects.toThrow("is not reserved");
+  });
+});
+
+describe("openProjectAppStatus", () => {
+  const PROJECT = "11111111-1111-4111-8111-111111111111";
+  const status: ManagedAppStatus = {
+    id: "my-server",
+    kind: "service",
+    state: "running",
+    url: `/${PROJECT}/proxy/8000/`,
+  };
+  let open: jest.SpyInstance;
+  beforeEach(() => {
+    mockIssueProjectAppUrl.mockReset();
+    open = jest.spyOn(window, "open").mockImplementation(() => null);
+  });
+  afterEach(() => open.mockRestore());
+
+  it("opens the app on its own origin, keeping the referrer", async () => {
+    mockIssueProjectAppUrl.mockResolvedValue({
+      url: "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
+      expires_at: 0,
+    });
+    await openProjectAppStatus({ project_id: PROJECT, status });
+    expect(mockIssueProjectAppUrl).toHaveBeenCalledWith({
+      project_id: PROJECT,
+      path: `/${PROJECT}/proxy/8000/`,
+      app_id: "my-server",
+    });
+    expect(open).toHaveBeenCalledWith(
+      "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
+      "_blank",
+      "noopener",
+    );
+  });
+
+  it("opens it as before when the site has no app origins", async () => {
+    mockIssueProjectAppUrl.mockResolvedValue({ unavailable: "off" });
+    await openProjectAppStatus({ project_id: PROJECT, status });
+    expect(open).toHaveBeenCalledWith(
+      `https://host.example/${PROJECT}/proxy/8000/`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+    mockIssueProjectAppUrl.mockRejectedValue(new Error("not an app route"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    await openProjectAppStatus({ project_id: PROJECT, status });
+    expect(open).toHaveBeenLastCalledWith(
+      `https://host.example/${PROJECT}/proxy/8000/`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+    warn.mockRestore();
   });
 });

@@ -52,19 +52,24 @@ export function buildPrivateHostnameOpenUrl({
   return privateUrl.toString();
 }
 
+interface ProjectAppOpenOptions {
+  getSpec?: (id: string) => Promise<AppSpec>;
+  privateHostname?: ProjectAppPrivateHostnameRecord;
+  project_id: string;
+  spec?: AppSpec;
+  status: ManagedAppStatus;
+  // Only the path within the project (/<project_id>/...), not a URL.
+  localPathOnly?: boolean;
+}
+
 export async function getProjectAppOpenUrl({
   getSpec,
   privateHostname,
   project_id,
   spec,
   status,
-}: {
-  getSpec?: (id: string) => Promise<AppSpec>;
-  privateHostname?: ProjectAppPrivateHostnameRecord;
-  project_id: string;
-  spec?: AppSpec;
-  status: ManagedAppStatus;
-}): Promise<string | undefined> {
+  localPathOnly,
+}: ProjectAppOpenOptions): Promise<string | undefined> {
   let resolvedSpec = spec;
   const resolveSpec = async (): Promise<void> => {
     if (resolvedSpec || !getSpec) return;
@@ -115,6 +120,7 @@ export async function getProjectAppOpenUrl({
       ? (serviceLocal ?? basePathLocal)
       : (serviceLocal ?? basePathLocal);
   if (!preferredLocal) return;
+  if (localPathOnly) return preferredLocal;
   const local =
     withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
   return await webapp_client.conat_client.addProjectHostAuthToUrl({
@@ -168,7 +174,37 @@ export async function openProjectAppStatus(opts: {
       );
     return;
   }
+  if (!opts.privateHostname?.url) {
+    const appOriginUrl = await getProjectAppOriginUrl(opts);
+    if (appOriginUrl) {
+      // Not noreferrer: the app origin accepts the link only from this site
+      // (the Referer is just the site's origin).
+      window.open(appOriginUrl, "_blank", "noopener");
+      return;
+    }
+  }
   const url = await getProjectAppOpenUrl(opts);
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+// A single-use link that opens the app on its own origin, when the site has
+// a content domain (trust-free step 6); undefined to open it as before.
+async function getProjectAppOriginUrl(
+  opts: ProjectAppOpenOptions,
+): Promise<string | undefined> {
+  const path = await getProjectAppOpenUrl({ ...opts, localPathOnly: true });
+  if (!path?.startsWith(`/${opts.project_id}/`)) return;
+  try {
+    const result =
+      await webapp_client.conat_client.hub.hosts.issueProjectAppUrl({
+        project_id: opts.project_id,
+        path,
+        app_id: opts.status.id,
+      });
+    return "url" in result ? result.url : undefined;
+  } catch (err) {
+    console.warn("opening the app on its own origin failed", err);
+    return;
+  }
 }
