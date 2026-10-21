@@ -2229,11 +2229,13 @@ def project_site_codex_proxy_port(env_lines: list[str]) -> int:
     may connect to: COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT, else PORT + 300
     (siteFundedCodexProxyPorts in project-host/codex/site-funded-proxy.ts)."""
     return project_host_derived_port(
-        env_lines, "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT", 300
+        env_lines, "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT", 300, minimum=1024
     )
 
 
-def project_host_derived_port(env_lines: list[str], key: str, offset: int) -> int:
+def project_host_derived_port(
+    env_lines: list[str], key: str, offset: int, minimum: int = 1
+) -> int:
     env: dict[str, str] = {}
     for line in env_lines:
         try:
@@ -2249,7 +2251,7 @@ def project_host_derived_port(env_lines: list[str], key: str, offset: int) -> in
     # The explicit key is read with Number(); PORT is read by parsePort, i.e.
     # Number() of the text after the last ":".
     explicit = valid(js_positive_integer(env.get(key)))
-    if explicit is not None:
+    if explicit is not None and explicit >= minimum:
         return explicit
     raw_port = env.get("PORT")
     base = (
@@ -8574,12 +8576,13 @@ project_host_port_number() {
 }
 
 # A project-host port derived as project-host derives it from the daemon's env
-# files: the explicit key ($1), else PORT + offset ($2), where an empty or
-# unparsable PORT means the default 9002. Presence matters: an empty value in
-# the local file still overrides the managed one. Only when neither file sets
-# either key does the bootstrap-derived value ($3) apply.
+# files: the explicit key ($1) when it is at least the minimum ($4, default 1),
+# else PORT + offset ($2), where an empty or unparsable PORT means the default
+# 9002. Presence matters: an empty value in the local file still overrides the
+# managed one. Only when neither file sets either key does the
+# bootstrap-derived value ($3) apply.
 project_host_derived_port() {
-  local key="$1" offset="$2" bootstrap_default="$3" explicit="" base="" has_explicit=0 has_base=0
+  local key="$1" offset="$2" bootstrap_default="$3" min="${4:-1}" explicit="" base="" has_explicit=0 has_base=0
   if explicit="$(project_host_env_value "$key")"; then
     has_explicit=1
   fi
@@ -8593,7 +8596,7 @@ project_host_derived_port() {
   # The explicit key is read with Number(); PORT goes through parsePort,
   # i.e. Number() of the text after the last ":".
   explicit="$(project_host_port_number "$explicit")"
-  if [ "$has_explicit" -eq 1 ] && [ -n "$explicit" ]; then
+  if [ "$has_explicit" -eq 1 ] && [ -n "$explicit" ] && [ "$explicit" -ge "$min" ]; then
     echo "$explicit"
     return
   fi
@@ -8617,12 +8620,13 @@ project_conat_router_port() {
 # reaches as host.containers.internal: the first is
 # COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT, else PORT + 300, and each ACP
 # worker binds the first free one of PROJECT_SITE_CODEX_PROXY_PORT_COUNT (see
-# siteFundedCodexProxyPorts in project-host/codex/site-funded-proxy.ts).
-# Prints "first last".
+# siteFundedCodexProxyPorts in project-host/codex/site-funded-proxy-port.ts).
+# The runtime user cannot bind privileged ports, so an explicit start below
+# 1024 falls back like an invalid one. Prints "first last".
 project_site_codex_proxy_ports() {
   local first last
   first="$(project_host_derived_port COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT 300 \\
-    "$PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT")"
+    "$PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT" 1024)"
   last="$((first + PROJECT_SITE_CODEX_PROXY_PORT_COUNT - 1))"
   [ "$last" -le 65535 ] || last=65535
   echo "$first $last"

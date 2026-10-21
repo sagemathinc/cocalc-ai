@@ -20,11 +20,12 @@ export const SITE_FUNDED_CODEX_PROXY_PORT_COUNT = 16;
 const SITE_FUNDED_CODEX_PROXY_PORT_OFFSET = 300;
 const DEFAULT_PROJECT_HOST_PORT = 9002;
 
-// Number(value) when it is a valid TCP port, as the bootstrap helper reads it.
-function tcpPort(value: string | undefined): number | undefined {
+// Number(value) when it is a valid TCP port of at least min, as the bootstrap
+// helper reads it.
+function tcpPort(value: string | undefined, min = 1): number | undefined {
   if (!value?.trim()) return undefined;
   const port = Number(value);
-  return Number.isInteger(port) && port >= 1 && port <= 65535
+  return Number.isInteger(port) && port >= min && port <= 65535
     ? port
     : undefined;
 }
@@ -32,7 +33,9 @@ function tcpPort(value: string | undefined): number | undefined {
 export function siteFundedCodexProxyPorts(
   env: Record<string, string | undefined> = process.env,
 ): number[] {
-  let first = tcpPort(env.COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT);
+  // The runtime user cannot bind privileged ports, so an explicit start below
+  // 1024 falls back like an invalid one.
+  let first = tcpPort(env.COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT, 1024);
   if (first == null) {
     // PORT as daemon.ts parsePort reads it: the text after the last ":".
     first =

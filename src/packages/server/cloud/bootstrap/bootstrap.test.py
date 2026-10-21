@@ -4340,8 +4340,17 @@ normalize_project_io_class_state
                 ["53", "9100-9115"],
             ),
             (
-                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=50\n"},
-                ["9102", "50-65"],
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=9090\n"},
+                ["53", "9090-9105"],
+            ),
+            # The runtime user cannot bind privileged ports: fall back.
+            (
+                {"env": "PORT=9010\nCOCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=1023\n"},
+                ["53", "9110", "9310-9325"],
+            ),
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=1024\n"},
+                ["53", "9102", "1024-1039"],
             ),
             (
                 {"env": "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=53\n"},
@@ -4364,6 +4373,12 @@ normalize_project_io_class_state
             9555,
         )
         self.assertEqual(port(["COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=0"]), 9302)
+        self.assertEqual(
+            port(["COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=1023"]), 9302
+        )
+        self.assertEqual(
+            port(["COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=1024"]), 1024
+        )
         self.assertEqual(port(["PORT=65300"]), 9302)
 
     def test_project_egress_conat_port_follows_the_daemon_env_files(self) -> None:

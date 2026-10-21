@@ -875,13 +875,18 @@ describe("site-funded Codex provider proxy port", () => {
         COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "0x2553",
       }),
     ).toEqual(range(9555));
-    for (const invalid of ["0", "", "nope", "70000", "h:9500"]) {
+    for (const invalid of ["0", "", "nope", "70000", "h:9500", "80", "1023"]) {
       expect(
         siteFundedCodexProxyPorts({
           COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: invalid,
         }),
       ).toEqual(range(9302));
     }
+    expect(
+      siteFundedCodexProxyPorts({
+        COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "1024",
+      }),
+    ).toEqual(range(1024));
     expect(
       siteFundedCodexProxyPorts({
         COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "65530",
