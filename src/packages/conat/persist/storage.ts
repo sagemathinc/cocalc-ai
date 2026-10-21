@@ -2242,47 +2242,71 @@ export class PersistentStream extends EventEmitter {
     const absent =
       asked.length > 0 &&
       asked.every((row) => row.last_seq != null && row.ids_complete === 1);
-    const classify = (seq: number): InclusionStatus => {
-      const i = rows.findIndex(
-        (row) =>
-          row.first_seq <= seq && (row.last_seq == null || seq <= row.last_seq),
-      );
-      if (i == -1) return "unknown";
-      if (rows[i].last_seq == null) return "live";
-      if (rows[i].covered_seq == null || seq > rows[i].covered_seq!) {
-        return "excluded";
+    // What a msg id accepted at a seq in each range means, as at most two
+    // ranges per epoch.  An id can be accepted more than once (a retry after
+    // its dedup expired), so it is looked up per range, best evidence first,
+    // and each lookup reads at most one index entry: it never collects the
+    // id's occurrences.
+    const ranges: { lo: number; hi: number; status: InclusionStatus }[] = [];
+    rows.forEach((row, i) => {
+      if (row.last_seq == null) {
+        ranges.push({
+          lo: row.first_seq,
+          hi: Number.MAX_SAFE_INTEGER,
+          status: "live",
+        });
+        return;
       }
-      // each later reset's seed must carry the earlier seed forward
-      for (const row of rows.slice(i + 1)) {
-        if (row.last_seq == null) break;
-        if (
-          row.seed_seq == null ||
-          row.covered_seq == null ||
-          row.covered_seq < row.seed_seq
-        ) {
-          return "excluded";
-        }
+      // each later reset's seed must carry this epoch's seed forward
+      const carried = rows
+        .slice(i + 1)
+        .every(
+          (later) =>
+            later.last_seq == null ||
+            (later.seed_seq != null &&
+              later.covered_seq != null &&
+              later.covered_seq >= later.seed_seq),
+        );
+      const covered =
+        row.covered_seq != null && carried
+          ? Math.min(row.covered_seq, row.last_seq)
+          : row.first_seq - 1;
+      if (covered >= row.first_seq) {
+        ranges.push({ lo: row.first_seq, hi: covered, status: "included" });
       }
-      return "included";
-    };
-    const rank: InclusionStatus[] = ["included", "live", "excluded", "unknown"];
-    const lookup = this.db.prepare(
-      "SELECT seq FROM message_ids WHERE msg_id=? ORDER BY seq",
+      if (row.last_seq > covered) {
+        ranges.push({
+          lo: Math.max(row.first_seq, covered + 1),
+          hi: row.last_seq,
+          status: "excluded",
+        });
+      }
+    });
+    const rank: InclusionStatus[] = ["included", "live", "excluded"];
+    ranges.sort((a, b) => rank.indexOf(a.status) - rank.indexOf(b.status));
+    // (msg_id, seq) is the index's key, so this is one seek
+    const inRange = this.db.prepare(
+      "SELECT seq FROM message_ids WHERE msg_id=? AND seq BETWEEN ? AND ? ORDER BY seq LIMIT 1",
+    );
+    const anywhere = this.db.prepare(
+      "SELECT seq FROM message_ids WHERE msg_id=? LIMIT 1",
     );
     const result: HistoryInclusion["ids"] = {};
     for (const id of ids) {
       if (result[id] != null) continue;
-      const found = (lookup.all(id) as { seq: number }[]).map(({ seq }) => ({
-        seq: Number(seq),
-        status: classify(Number(seq)),
-      }));
-      if (found.length == 0) {
-        result[id] = { status: absent ? "absent" : "unknown" };
+      for (const { lo, hi, status } of ranges) {
+        const row = inRange.get(id, lo, hi) as { seq: number } | undefined;
+        if (row != null) {
+          result[id] = { status, seq: Number(row.seq) };
+          break;
+        }
+      }
+      if (result[id] != null) continue;
+      if (anywhere.get(id) != null) {
+        // accepted at a seq no epoch row describes any more
+        result[id] = { status: "unknown" };
       } else {
-        // accepted more than once (a retry after its dedup expired): the
-        // best evidence wins
-        found.sort((a, b) => rank.indexOf(a.status) - rank.indexOf(b.status));
-        result[id] = found[0];
+        result[id] = { status: absent ? "absent" : "unknown" };
       }
     }
     return { history_epoch: this.currentEpoch(), ids: result };

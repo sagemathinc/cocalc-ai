@@ -387,6 +387,64 @@ describe("historyInclusion: which pending patches did the reset include?", () =>
     });
   });
 
+  it("reads a bounded number of rows however often an id was accepted", () => {
+    write(10, { msgID: "dup" });
+    stream.resetHistory({ ...judge(), archive: true, seed: snapshot("v") });
+    write(10, { epoch: 1, msgID: "dup" });
+    // the same id accepted 20,000 more times in the current history
+    const db = (stream as any).db;
+    const insert = db.prepare(
+      "INSERT INTO message_ids(seq, msg_id) VALUES (?, 'dup')",
+    );
+    db.exec("BEGIN");
+    for (let i = 1; i <= 20000; i++) insert.run(1000 + i);
+    db.exec("COMMIT");
+    const prepare = db.prepare.bind(db);
+    let maxRows = 0;
+    let statements = 0;
+    db.prepare = (statement: string) => {
+      const stmt = prepare(statement);
+      statements += 1;
+      return {
+        get: (...args) => {
+          const row = stmt.get(...args);
+          maxRows = Math.max(maxRows, row == null ? 0 : 1);
+          return row;
+        },
+        all: (...args) => {
+          const rows = stmt.all(...args);
+          if (/message_ids/.test(statement)) {
+            maxRows = Math.max(maxRows, rows.length);
+          }
+          return rows;
+        },
+        iterate: () => {
+          throw Error("not expected");
+        },
+      };
+    };
+    try {
+      expect(stream.historyInclusion({ epoch: 0, ids: ["dup"] }).ids).toEqual({
+        dup: { status: "included", seq: 1 },
+      });
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(maxRows).toBe(1);
+    expect(statements).toBeLessThan(10);
+    // the lookup is one seek in the (msg_id, seq) index
+    const plan = sql(
+      "EXPLAIN QUERY PLAN SELECT seq FROM message_ids WHERE msg_id=? AND seq BETWEEN ? AND ? ORDER BY seq LIMIT 1",
+      "dup",
+      0,
+      10,
+    )
+      .map(({ detail }) => detail)
+      .join("; ");
+    expect(plan).toMatch(/USING COVERING INDEX idx_message_ids_msg_id/);
+    expect(plan).not.toMatch(/TEMP B-TREE/);
+  });
+
   it("bounds the request", () => {
     expect(() =>
       stream.historyInclusion({
