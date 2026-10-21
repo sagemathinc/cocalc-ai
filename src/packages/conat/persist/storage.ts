@@ -615,6 +615,12 @@ function messageSize({
   );
 }
 
+// info_json of the open epoch: the newest seq written by a server that
+// records msg ids (see verifyIdLedger)
+function ledgerInfo(seq: number): string {
+  return JSON.stringify({ ledger_seq: seq });
+}
+
 // The seed of a reset must be a snapshot patch: the document's whole value.
 function isSnapshotPatch(obj: unknown): boolean {
   return (
@@ -1159,6 +1165,7 @@ export class PersistentStream extends EventEmitter {
         .prepare("SELECT id FROM history_epochs WHERE last_seq IS NULL")
         .get() != null
     ) {
+      this.verifyIdLedger({ epoch: true });
       return;
     }
     const { first } = this.db
@@ -1167,7 +1174,7 @@ export class PersistentStream extends EventEmitter {
     const empty = first == null;
     this.db
       .prepare(
-        "INSERT INTO history_epochs(epoch, first_seq, starts_empty, ids_complete, time) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO history_epochs(epoch, first_seq, starts_empty, ids_complete, info_json, time) VALUES (?, ?, ?, ?, ?, ?)",
       )
       .run(
         this.currentEpoch(),
@@ -1176,8 +1183,47 @@ export class PersistentStream extends EventEmitter {
         // empty document
         empty || first === 1 ? 1 : 0,
         empty ? 1 : 0,
+        ledgerInfo(this.nextSeq() - 1),
         Date.now(),
       );
+  };
+
+  // The current epoch's ids are complete only if every message in it was
+  // written by a server that records ids.  An older server can open this
+  // database (H1a0 accepts the tables) and write messages without their ids,
+  // so the open epoch records the newest seq written by this code
+  // (ledger_seq).  If the stream has moved past it -- or its epoch was
+  // changed elsewhere -- the ids are incomplete, and absence is never
+  // claimed for that epoch.  Checked on open, before each write, and when
+  // the epoch is closed.
+  private verifyIdLedger = ({ epoch }: { epoch?: boolean } = {}): void => {
+    const row = this.db
+      .prepare(
+        "SELECT id, epoch, first_seq, ids_complete, info_json FROM history_epochs WHERE last_seq IS NULL",
+      )
+      .get() as
+      | {
+          id: number;
+          epoch: number;
+          first_seq: number;
+          ids_complete: number;
+          info_json: string | null;
+        }
+      | undefined;
+    if (row == null || row.ids_complete !== 1) return;
+    let ledger = row.first_seq - 1;
+    try {
+      const info = JSON.parse(row.info_json ?? "null");
+      if (Number.isSafeInteger(info?.ledger_seq)) ledger = info.ledger_seq;
+    } catch {}
+    if (
+      this.nextSeq() - 1 > ledger ||
+      (epoch && row.epoch !== this.currentEpoch())
+    ) {
+      this.db
+        .prepare("UPDATE history_epochs SET ids_complete=0 WHERE id=?")
+        .run(row.id);
+    }
   };
 
   private createMessagesTable = () => {
@@ -1496,6 +1542,7 @@ export class PersistentStream extends EventEmitter {
     msgID?: string;
     checkpoint?: CheckpointUpdate;
   }): { time: number; seq: number } => {
+    this.verifyIdLedger();
     const time = Date.now();
     const compressedRaw = this.compress(raw);
     const row = this.db
@@ -1513,6 +1560,9 @@ export class PersistentStream extends EventEmitter {
         ttl ?? null,
       );
     const seq = Number((row as any).seq);
+    this.db
+      .prepare("UPDATE history_epochs SET info_json=? WHERE last_seq IS NULL")
+      .run(ledgerInfo(seq));
     if (msgID != null) {
       // persisted, so after a reset a client can learn which of its patches
       // the server accepted (historyInclusion)
@@ -1990,6 +2040,9 @@ export class PersistentStream extends EventEmitter {
         }
       }
 
+      // before the new epoch is published: are the closing epoch's ids
+      // complete?
+      this.verifyIdLedger({ epoch: true });
       const history_epoch = Math.max(minEpoch, currentEpoch) + 1;
       this.db
         .prepare(
@@ -2083,9 +2136,15 @@ export class PersistentStream extends EventEmitter {
       // the new epoch, starting with its seed
       const { lastInsertRowid: epochId } = this.db
         .prepare(
-          "INSERT INTO history_epochs(epoch, first_seq, starts_empty, ids_complete, time) VALUES (?, ?, ?, 1, ?)",
+          "INSERT INTO history_epochs(epoch, first_seq, starts_empty, ids_complete, info_json, time) VALUES (?, ?, ?, 1, ?, ?)",
         )
-        .run(history_epoch, lastSeq + 1, seed != null ? 0 : 1, Date.now());
+        .run(
+          history_epoch,
+          lastSeq + 1,
+          seed != null ? 0 : 1,
+          ledgerInfo(lastSeq),
+          Date.now(),
+        );
       let seedSeq: number | undefined;
       if (seed != null) {
         const headers = { ...seed.headers, history_epoch };
