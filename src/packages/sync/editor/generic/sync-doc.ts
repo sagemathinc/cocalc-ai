@@ -2960,6 +2960,8 @@ export class SyncDoc extends EventEmitter {
       dstream.on("metadata-change", this.patchMetadataChanged);
       dstream.on("checkpoints-change", this.patchMetadataChanged);
       dstream.on("instance-reset", this.patchesInstanceReset);
+      // which handles a replacement of the history (patchesInstanceReset)
+      dstream.keepOpenWhenReplaced?.();
     }
     this.applyPatchWriteHeaders();
 

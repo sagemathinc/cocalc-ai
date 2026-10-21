@@ -133,6 +133,8 @@ export class DStream<T = any> extends EventEmitter {
   // The files of this (disk-backed) stream were replaced under it: nothing
   // more is written (see handleInstanceReset).
   private replaced = false;
+  // its owner handles a replacement itself (keepOpenWhenReplaced)
+  private keepWhenReplaced = false;
   private closing = false;
   private closePromise?: Promise<void>;
 
@@ -223,10 +225,14 @@ export class DStream<T = any> extends EventEmitter {
   //
   // A disk-backed stream resets when its files were replaced, e.g., by a
   // restore (conat/persist/fence.ts).  What this copy has not saved was based
-  // on the replaced history, so it is never written to the new one: it is
-  // kept for the owner like messages the history fence refused
-  // (pendingMessages), and so is everything published from now on.  The
-  // owner (SyncDoc) saves it elsewhere and opens the stream again.
+  // on the replaced history, so it is never written to the new one.  Then
+  // the stream closes, so an owner that checks isClosed() opens it again and
+  // one that publishes to it gets an error, never a message silently lost;
+  // what it had not saved is dropped.  An owner that handles the replacement
+  // itself (SyncDoc, see keepOpenWhenReplaced) keeps it open instead: what it
+  // had not saved is kept for the owner like messages the history fence
+  // refused (pendingMessages), and so is everything published from now on;
+  // the owner saves it elsewhere and opens the stream again.
   private handleInstanceReset = (instance?: string | null) => {
     this.saved = {};
     if (!this.opts.ephemeral) {
@@ -239,6 +245,20 @@ export class DStream<T = any> extends EventEmitter {
       this.updateHasUnsavedChanges();
     }
     this.emit("instance-reset", instance);
+    if (this.replaced && !this.keepWhenReplaced && !this.isClosed()) {
+      const dropped = Object.keys(this.rejected).length;
+      logger.warn("closing a stream whose history was replaced", {
+        name: this.name,
+        ...(dropped ? { dropped } : {}),
+      });
+      this.closeNow();
+    }
+  };
+
+  // For an owner that handles a replacement of the stream's history itself
+  // (see handleInstanceReset): the stream then stays open.
+  keepOpenWhenReplaced = (): void => {
+    this.keepWhenReplaced = true;
   };
 
   private handleRecoveryState = (state: RecoveryState) => {
