@@ -75,13 +75,20 @@ async function whenUnavailable(
 // would keep using the history where it was, and its writes would be lost.
 //
 // waitMs bounds the wait for an unreachable fence service, and timeoutMs how
-// long the persist server may take to close the project's streams.
+// long the persist server may take to close the project's streams.  With
+// replaces false, fn changes none of the files (withPersistFence).
 export async function withProjectPersistFenced<T>(
   {
     project_id,
     reason,
     requires,
-  }: { project_id: string; reason: string; requires?: string },
+    replaces,
+  }: {
+    project_id: string;
+    reason: string;
+    requires?: string;
+    replaces?: boolean;
+  },
   fn: () => Promise<T>,
   {
     waitMs = UNAVAILABLE_WAIT_MS,
@@ -112,6 +119,7 @@ export async function withProjectPersistFenced<T>(
           // checked by the server that grants the fence
           ...(requires != null ? { requires: [requires] } : {}),
           ...(timeoutMs != null ? { timeoutMs } : {}),
+          ...(replaces === false ? { replaces } : {}),
         },
         fn,
       );

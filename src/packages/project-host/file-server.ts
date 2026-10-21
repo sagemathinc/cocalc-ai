@@ -4191,9 +4191,16 @@ async function createBackup({
           let backupResult: Awaited<ReturnType<(typeof vol.rustic)["backup"]>>;
           try {
             archiveFreezeMayExist = freeze_source === true;
-            archiveFreeze = freeze_source
-              ? await freezeVolumeForArchiveBackup(vol)
-              : undefined;
+            archiveFreeze = !freeze_source
+              ? undefined
+              : snapshotNeedsPersistVolume(vol.name)
+                ? // the home and its persist volume are frozen one after
+                  // the other: no write to the history between them
+                  await withProjectPersistFenced(
+                    { project_id, reason: "archive-freeze", replaces: false },
+                    async () => await freezeVolumeForArchiveBackup(vol),
+                  )
+                : await freezeVolumeForArchiveBackup(vol);
             try {
               const maxFileBytes = skip_oversized_files
                 ? await projectBackupMaxFileBytes(vol)

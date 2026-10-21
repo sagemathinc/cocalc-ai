@@ -201,6 +201,18 @@ describe("withProjectPersistFenced", () => {
     persistServerHasFeature.mockReturnValue(true);
   });
 
+  it("leaves clients alone when fn changes no files", async () => {
+    withPersistFence.mockImplementation(async (_opts, fn) => await fn());
+    await withProjectPersistFenced(
+      { project_id, reason: "archive-freeze", replaces: false },
+      async () => {},
+    );
+    expect(withPersistFence).toHaveBeenCalledWith(
+      expect.objectContaining({ replaces: false }),
+      expect.any(Function),
+    );
+  });
+
   it("lets the persist server take at most timeoutMs to fence", async () => {
     withPersistFence.mockImplementation(async (_opts, fn) => await fn());
     await withProjectPersistFenced(
