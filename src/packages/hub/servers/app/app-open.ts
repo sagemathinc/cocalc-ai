@@ -67,6 +67,9 @@ export function initAppOpen(
     const params = new URLSearchParams(q === -1 ? "" : req.originalUrl.slice(q + 1));
     const app_id = params.get("app") ?? undefined;
     params.delete("app");
+    // Sent here by the project host (D7): never send it back there.
+    const fromHost = params.has("cocalc_app_redirect");
+    params.delete("cocalc_app_redirect");
     const search = params.toString();
     const path = `/${project_id}/${rest}${search ? `?${search}` : ""}`;
     const fallback = () => res.redirect(302, projectUrl(project_id));
@@ -100,7 +103,7 @@ export function initAppOpen(
         // No app origin for it (the site has none, or the project's host
         // doesn't serve one yet): the app's path on this site, which the hub
         // forwards to the host as before.  The path was validated first.
-        if (issued.unavailable === "no-access") return fallback();
+        if (issued.unavailable === "no-access" || fromHost) return fallback();
         return res.redirect(302, `${basePath.replace(/\/+$/, "")}${path}`);
       }
       res.redirect(302, issued.url);

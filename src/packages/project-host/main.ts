@@ -123,6 +123,7 @@ import {
   getAccountRevokedBeforeMs,
 } from "./sqlite/account-revocations";
 import { consumeAppCapability } from "./sqlite/app-capability-replay";
+import { hostAppRouteRedirect } from "./host-app-route-redirect";
 import {
   createAppOriginHandler,
   looksLikeAppHostname,
@@ -1204,6 +1205,37 @@ export async function main(
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
       const isProjectUploadRoute = isProjectUploadRequest(req, project_id);
+      if (
+        res &&
+        !isAppOriginRequest(req) &&
+        !req.headers[PRIVATE_APP_HOST_HEADER]
+      ) {
+        // D7: apps are never pages on this origin (host-app-route-redirect.ts).
+        const decision = hostAppRouteRedirect({
+          req,
+          project_id,
+          contentDomain,
+          siteOrigin: contentViewSiteOrigin({
+            req,
+            approvedOrigins: approvedBrowserOrigins(),
+            siteUrl: process.env.COCALC_SITE_URL,
+          }),
+        });
+        if (decision && "redirect" in decision) {
+          res.statusCode = 302;
+          res.setHeader("Location", decision.redirect);
+          res.setHeader("Cache-Control", "no-store");
+          res.end();
+          return { handled: true };
+        }
+        if (decision) {
+          res.statusCode = decision.refuse;
+          res.setHeader("Content-Type", "text/plain; charset=utf-8");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(`${decision.message}\n`);
+          return { handled: true };
+        }
+      }
       if (res) {
         if (isProjectFileRequest(req, project_id)) {
           setProjectFileCorsHeaders(req, res);
