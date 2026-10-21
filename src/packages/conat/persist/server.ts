@@ -452,6 +452,8 @@ export function server({
           mesg.respondSync(stream.patchMetadata(mesg.data));
         } else if (request.cmd == "resetHistory") {
           mesg.respondSync(stream.resetHistory(mesg.data ?? {}));
+        } else if (request.cmd == "historyInclusion") {
+          mesg.respondSync(stream.historyInclusion(mesg.data ?? {}));
         } else if (request.cmd == "checkpoints") {
           mesg.respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {

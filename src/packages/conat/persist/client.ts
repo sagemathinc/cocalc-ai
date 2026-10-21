@@ -17,6 +17,7 @@ import type {
   StreamCheckpoint,
   ResetHistoryOptions,
   ResetHistoryResult,
+  HistoryInclusion,
 } from "./storage";
 export { StoredMessage, StorageOptions };
 import { persistSubject, SERVICE, type User } from "./util";
@@ -1020,6 +1021,23 @@ class PersistStreamClient extends EventEmitter {
       await this.socket.request(opts, {
         headers: {
           cmd: "resetHistory",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  // which of these msg ids the server accepted, and whether the current
+  // history includes them; see PersistentStream.historyInclusion
+  historyInclusion = async (
+    opts: { epoch: number; ids: string[] },
+    { timeout }: { timeout?: number } = {},
+  ): Promise<HistoryInclusion> => {
+    return this.checkForError(
+      await this.socket.request(opts, {
+        headers: {
+          cmd: "historyInclusion",
           timeout,
         } as any,
         timeout,

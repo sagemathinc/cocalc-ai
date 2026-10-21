@@ -161,7 +161,7 @@ describe("the schema of a stored database", () => {
     const path = serverFile();
     tamper(
       path,
-      "CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL, x BLOB)",
+      "DROP TABLE message_ids; CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL, x BLOB)",
     );
     expect(() => open(path)).toThrow(/changed outside CoCalc/);
   });
