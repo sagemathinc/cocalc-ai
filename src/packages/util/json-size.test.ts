@@ -15,7 +15,7 @@ describe("jsonLengthCapped equals JSON.stringify's UTF-8 length", () => {
     ["escapes", 'a"b\\c\n\r\t\b\f'],
     ["control characters", "\u0000\u0001\u001f\u007f"],
     ["multibyte", "é中😀"],
-    ["U+2028 and U+2029 (not escaped)", "  "],
+    ["U+2028 and U+2029 (not escaped)", "\u2028\u2029"],
     ["a lone high surrogate", "a\ud800b"],
     ["a lone low surrogate", "a\udc00b"],
     ["surrogates out of order", "\udc00\ud800"],
