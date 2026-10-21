@@ -15,9 +15,12 @@ import {
   appendCheck,
   appendHead,
   commitAppend,
+  prepareAppend,
+  prepareRequest,
   requestRecords,
   storedBytes,
 } from "./board-append";
+import * as jsonScan from "./json-scan";
 import {
   BOARD_HISTORY_LIMITS,
   BoardAppendCheck,
@@ -592,4 +595,96 @@ test("codex 4332730147: a record's stored headers count toward the history's byt
   } finally {
     stream.close();
   }
+});
+
+describe("daybreak2 (round 12): snapshot bodies are scanned before the synchronous step", () => {
+  const setMany = (messages: { mesg: object; msgID: string }[]) => ({
+    data: messages.map(({ mesg, msgID }) => ({
+      msgID,
+      messageData: {
+        encoding: DataEncoding.MsgPack,
+        raw: Buffer.from(encode({ encoding: DataEncoding.MsgPack, mesg })),
+      },
+    })),
+  });
+  // As server.ts runs it: prepared asynchronously, then the synchronous step.
+  async function writePrepared(
+    stream: PersistentStream,
+    messages: { mesg: object; msgID: string }[],
+  ) {
+    const mesg = setMany(messages);
+    const prepared = await prepareRequest({ cmd: "setMany" }, mesg);
+    await prepareAppend(stream as any);
+    const scans = jest.spyOn(jsonScan, "isJsonObjectLines");
+    try {
+      const records = requestRecords(
+        { cmd: "setMany" },
+        mesg,
+        stream,
+        prepared,
+      )!;
+      const append = appendCheck(stream as any, records);
+      const results = stream.setMany(
+        mesg.data.map(({ msgID, messageData }) => ({ msgID, ...messageData })),
+        { allOrNothing: true, strictMsgID: true },
+      );
+      commitAppend(stream as any, append, results as { seq: number }[]);
+      // Nothing was scanned synchronously.
+      expect(scans).not.toHaveBeenCalled();
+    } finally {
+      scans.mockRestore();
+    }
+  }
+
+  test("a prepared request and graph: no synchronous scan, same verdicts", async () => {
+    const stream = newStream();
+    try {
+      await writePrepared(stream, [{ mesg: patch("t0"), msgID: "p0" }]);
+      await writePrepared(stream, [{ mesg: snapshot("t0"), msgID: "s0" }]);
+      // A fresh process: the graph (with a stored snapshot) is read again,
+      // its bodies scanned in prepareAppend.
+      const { forgetAppendHead } = require("./board-append");
+      forgetAppendHead(stream);
+      await writePrepared(stream, [{ mesg: patch("t1", ["t0"]), msgID: "p1" }]);
+      expect(opens(stream)).toMatchObject({ ok: true, head: "t1" });
+    } finally {
+      stream.close();
+    }
+  });
+
+  test("a prepared snapshot that isn't a board document is refused, nothing stored", async () => {
+    const stream = newStream();
+    try {
+      write(stream, [{ mesg: patch("t0"), msgID: "p0" }]);
+      const mesg = setMany([
+        { mesg: { ...snapshot("t0"), snapshot: "{" }, msgID: "s0" },
+      ]);
+      const prepared = await prepareRequest({ cmd: "setMany" }, mesg);
+      expect(prepared![0]).toMatchObject({ document: false });
+      const records = requestRecords(
+        { cmd: "setMany" },
+        mesg,
+        stream,
+        prepared,
+      )!;
+      expect(() => appendCheck(stream as any, records)).toThrow(
+        expect.objectContaining({ code: "branch" }),
+      );
+      expect([...stream.getAll()]).toHaveLength(1);
+    } finally {
+      stream.close();
+    }
+  });
+
+  test("prepared values are used only for exactly the bytes they were prepared from", async () => {
+    const mesg = setMany([{ mesg: snapshot("t0"), msgID: "s0" }]);
+    const prepared = await prepareRequest({ cmd: "setMany" }, mesg);
+    // Other bytes in the same position: decoded and scanned again.
+    const other = setMany([
+      { mesg: { ...snapshot("t0"), snapshot: "{" }, msgID: "s0" },
+    ]);
+    const [r] = requestRecords({ cmd: "setMany" }, other, undefined, prepared)!;
+    expect(r.document).toBeUndefined();
+    expect((r.value as any).snapshot).toBe("{");
+  });
 });

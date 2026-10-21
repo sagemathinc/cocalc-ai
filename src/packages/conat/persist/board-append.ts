@@ -24,8 +24,10 @@ import { decode } from "@cocalc/conat/core/codec";
 import {
   BOARD_HISTORY_LIMITS,
   BoardAppendCheck,
+  snapshotBody,
   type AppendRecord,
 } from "./board-history";
+import { isJsonObjectLinesAsync } from "./json-scan";
 
 // What this needs of a stored stream (storage.ts).
 export interface AppendStream {
@@ -101,9 +103,12 @@ function* records(stream: AppendStream): Generator<AppendRecord> {
 }
 
 function readGraph(stream: AppendStream): BoardAppendCheck {
-  const seq = newestSeq(stream);
+  return graphOf(records(stream), newestSeq(stream));
+}
+
+function graphOf(list: Iterable<AppendRecord>, seq: number): BoardAppendCheck {
   try {
-    return BoardAppendCheck.fromRecords(records(stream), seq);
+    return BoardAppendCheck.fromRecords(list, seq);
   } catch (err) {
     // E.g. a stored record over the record cap: nothing may be appended.
     return new BoardAppendCheck({
@@ -130,10 +135,13 @@ function checkFor(stream: AppendStream): BoardAppendCheck {
 // it. Resolved against the stream in the same synchronous step as the check
 // and the store (server.ts), so the append check projects exactly what
 // storage writes (CORR-956-1).
+// prepared (prepareRequest): the request's records already decoded and
+// their snapshot bodies scanned, before the synchronous step.
 export function requestRecords(
   request: { cmd?: unknown; key?: unknown; msgID?: unknown; headers?: unknown },
   mesg: { raw?: Buffer; encoding?: any; data?: any },
   stream?: Pick<AppendStream, "msgIDOutcome">,
+  prepared?: PreparedRequest,
 ): AppendRecord[] | undefined {
   // msgIDs earlier in this request that storage will write: a later record
   // with one is a duplicate of it, or a conflict (storage's setMany does
@@ -145,6 +153,7 @@ export function requestRecords(
     key: unknown,
     msgID: unknown,
     headers: unknown,
+    index: number,
   ): AppendRecord => {
     // A board record's msgID is a string, or none (astra CORR9561: storage
     // deduplicates any msgID it is given, so a number would slip past the
@@ -178,13 +187,23 @@ export function requestRecords(
         { code: "msgid-conflict" },
       );
     }
+    // (Prepared from exactly these bytes, or decoded now.)
+    const entry = prepared?.[index];
+    const ready =
+      entry != null && entry.data === data && entry.encoding === encoding
+        ? entry
+        : undefined;
     let value: unknown;
-    try {
-      value = decode({ encoding, data });
-    } catch (err) {
-      throw new ConatError(`not a board patch record: ${err}`.slice(0, 300), {
-        code: "branch",
-      });
+    if (ready != null) {
+      value = ready.value;
+    } else {
+      try {
+        value = decode({ encoding, data });
+      } catch (err) {
+        throw new ConatError(`not a board patch record: ${err}`.slice(0, 300), {
+          code: "branch",
+        });
+      }
     }
     return {
       value,
@@ -192,6 +211,7 @@ export function requestRecords(
       bytes: storedBytes(data, headers, key),
       key: key == null ? undefined : `${key}`,
       ...(outcome === "duplicate" ? { duplicate: true } : {}),
+      ...(ready?.document != null ? { document: ready.document } : {}),
     };
   };
   if (request.cmd === "set") {
@@ -202,6 +222,7 @@ export function requestRecords(
         request.key,
         request.msgID,
         request.headers,
+        0,
       ),
     ];
   }
@@ -212,17 +233,87 @@ export function requestRecords(
         msgID?: unknown;
         messageData: { raw: Buffer; encoding: any; headers?: unknown };
       }[]
-    ).map(({ key, msgID, messageData }) =>
+    ).map(({ key, msgID, messageData }, i) =>
       record(
         messageData.encoding,
         messageData.raw,
         key,
         msgID,
         messageData.headers,
+        i,
       ),
     );
   }
   return undefined;
+}
+
+// A request's records decoded, and their snapshot bodies scanned, by
+// position: done before the synchronous step (server.ts), in slices that
+// yield to the event loop, so a snapshot's scan never holds it (daybreak2).
+// A record that won't decode is left to requestRecords, which refuses it.
+export type PreparedRequest = (
+  | {
+      encoding: any;
+      data: Buffer | undefined;
+      value: unknown;
+      document?: boolean;
+    }
+  | undefined
+)[];
+
+export async function prepareRequest(
+  request: { cmd?: unknown },
+  mesg: { raw?: Buffer; encoding?: any; data?: any },
+): Promise<PreparedRequest | undefined> {
+  const messages: { encoding: any; data: Buffer | undefined }[] =
+    request.cmd === "set"
+      ? [{ encoding: mesg.encoding, data: mesg.raw }]
+      : request.cmd === "setMany" && Array.isArray(mesg.data)
+        ? mesg.data.map((m: any) => ({
+            encoding: m?.messageData?.encoding,
+            data: m?.messageData?.raw,
+          }))
+        : [];
+  if (messages.length === 0) return;
+  const prepared: PreparedRequest = [];
+  for (const { encoding, data } of messages) {
+    let value: unknown;
+    try {
+      value = decode({ encoding, data });
+    } catch {
+      prepared.push(undefined);
+      continue;
+    }
+    const body = snapshotBody(value);
+    prepared.push({
+      encoding,
+      data,
+      value,
+      ...(body == null ? {} : { document: await isJsonObjectLinesAsync(body) }),
+    });
+  }
+  return prepared;
+}
+
+// The stored graph read, if it must be (the cache is missing or stale),
+// with every stored snapshot body scanned in yielding slices first; so the
+// synchronous step finds it ready. If the stream moved meanwhile, nothing is
+// cached (the synchronous step reads it again, scanning there).
+export async function prepareAppend(stream: AppendStream): Promise<void> {
+  const seq = newestSeq(stream);
+  if (checks.get(stream)?.atSeq === seq) return;
+  let list: AppendRecord[];
+  try {
+    list = [...records(stream)];
+  } catch {
+    return; // (readGraph refuses it.)
+  }
+  for (const record of list) {
+    const body = snapshotBody(record.value);
+    if (body != null) record.document = await isJsonObjectLinesAsync(body);
+  }
+  if (newestSeq(stream) !== seq || checks.get(stream)?.atSeq === seq) return;
+  checks.set(stream, graphOf(list, seq));
 }
 
 // Throws "branch" unless storing these records keeps the history one chain.

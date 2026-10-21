@@ -304,3 +304,33 @@ test("astra CORR-C07-2: a copy saved hours after the refusal is still reported",
     spy.mockRestore();
   }
 });
+
+test("astra (round 12): a save completing after its board's record was replaced touches nothing", async () => {
+  const m = memory();
+  const victim = key();
+  let done!: (path: string) => void;
+  const fs: any = {
+    writeFile: () => new Promise<void>((r) => (done = () => r())),
+    move: async () => {},
+    unlink: async () => {},
+  };
+  rememberRefusal(victim, m, "OLD");
+  const pending = saveHeldUnsaved(victim, fs, "/b.board.json");
+  await new Promise((r) => setImmediate(r));
+  // OLD is dropped while its copy is pending; global eviction takes the
+  // rest; 1,001 refusals without text push the record out.
+  for (let i = 0; i < 8; i++) rememberRefusal(victim, m, `H${i}`);
+  for (let i = 0; i < 1024; i++) rememberRefusal(key(), m, "H");
+  for (let i = 0; i < 1001; i++) rememberRefusal(key(), inFile);
+  expect(lastRefusal(victim)).toBeUndefined();
+  // A new refusal makes a new record for the key; then OLD's copy lands.
+  rememberRefusal(victim, m, "NEW");
+  done("");
+  await pending;
+  expect(lastRefusal(victim)).toMatchObject({ text: "NEW", held: 1 });
+  expect(lastRefusal(victim)?.lost).toBeUndefined();
+  expect(lastRefusal(victim)?.copies).toBeUndefined();
+  // NEW is then dropped: reported lost.
+  for (let i = 0; i < 8; i++) rememberRefusal(victim, m, `new-gen-${i}`);
+  expect(lastRefusal(victim)).toMatchObject({ lost: 1, text: "new-gen-7" });
+});

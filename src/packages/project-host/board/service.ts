@@ -823,6 +823,10 @@ const MAX_COPIES_LISTED = 8;
 interface Held {
   id: number;
   key: string;
+  // The board record it belongs to: a save completing after that record
+  // is gone (and maybe replaced by a new one for the same key) touches
+  // nothing (astra).
+  board: BoardRefusals;
   buf: Buffer;
   saving?: boolean;
   dropped?: boolean;
@@ -864,7 +868,12 @@ let heldIds = 0;
 const heldCost = (h: Held) => h.buf.byteLength + HELD_ENTRY_OVERHEAD;
 
 function holdText(board: BoardRefusals, key: string, text: string): number {
-  const entry: Held = { id: ++heldIds, key, buf: Buffer.from(text, "utf8") };
+  const entry: Held = {
+    id: ++heldIds,
+    key,
+    board,
+    buf: Buffer.from(text, "utf8"),
+  };
   if (board.held.length === 0) heldBoards += 1;
   board.held.push(entry);
   heldOrder.set(entry.id, entry);
@@ -889,8 +898,9 @@ function dropHeld(entry: Held, why: string): void {
   });
   releaseHeld(entry);
   entry.dropped = true;
-  const board = boards.get(entry.key);
-  if (board == null) return;
+  // (A held generation's record is always the board's current one: a
+  // board with held text is never removed.)
+  const { board } = entry;
   board.lost += 1;
   if (board.latest.gen === entry.id) board.latestLost = true;
 }
@@ -899,21 +909,32 @@ function dropHeld(entry: Held, why: string): void {
 function releaseHeld(entry: Held): void {
   if (!heldOrder.delete(entry.id)) return;
   heldBytes -= heldCost(entry);
-  const list = boards.get(entry.key)?.held;
-  const i = list?.indexOf(entry) ?? -1;
+  const list = entry.board.held;
+  const i = list.indexOf(entry);
   if (i < 0) return;
-  list!.splice(i, 1);
-  if (list!.length === 0) heldBoards -= 1;
+  list.splice(i, 1);
+  if (list.length === 0) heldBoards -= 1;
 }
 
 // A generation was saved as a copy (even one dropped while it was being
 // saved: then it is not lost after all).
 function savedCopy(entry: Held, path: string): void {
-  const board = boards.get(entry.key);
-  if (board == null) return;
+  const { board } = entry;
+  if (boards.get(entry.key) !== board) {
+    // Its record is gone (the copy is on disk, and logged by keepCopy).
+    logger.warn("board: saved held edits of a refusal no longer listed", {
+      key: entry.key,
+      path,
+    });
+    return;
+  }
   if (entry.dropped) {
     entry.dropped = false;
-    board.lost -= 1;
+    if (board.lost > 0) board.lost -= 1;
+    else
+      logger.warn("board: BUG: lost count would go negative", {
+        key: entry.key,
+      });
   }
   if (board.latest.gen === entry.id) {
     board.latestCopy = path;

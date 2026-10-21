@@ -26,7 +26,9 @@ import {
   type BoardHistoryLimits,
   BoardHistoryCheck,
   type HistoryVerdict,
+  snapshotBody,
 } from "@cocalc/conat/persist/board-history";
+import { isJsonObjectLinesAsync } from "@cocalc/conat/persist/json-scan";
 import { digestOf, storedBytes } from "@cocalc/conat/persist/board-append";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { stream as persistStream } from "@cocalc/conat/persist/client";
@@ -104,10 +106,16 @@ export async function checkBoardHistory({
         }
         // Identified as the append check identifies it, so that the two
         // agree on what is a copy of a stored record.
+        // A snapshot's body is scanned in slices that yield to the event
+        // loop (json-scan.ts; daybreak2), never parsed.
+        const body = snapshotBody(value);
+        const document =
+          body == null ? undefined : await isJsonObjectLinesAsync(body);
         const stop = check.add(
           value,
           bytes,
           digestOf(message.encoding, message.raw),
+          document,
         );
         if (stop) return stop;
       }
