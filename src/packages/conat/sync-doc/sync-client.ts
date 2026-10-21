@@ -219,11 +219,23 @@ export class SyncClient extends EventEmitter implements Client0 {
         stream.getMetadata(),
       ]);
       const epoch = (metadata as any)?.settings?.history_epoch;
+      const reset = (metadata as any)?.settings?.history_reset;
       return {
         seq: inventory.seq,
         count: inventory.count,
         epoch: typeof epoch === "number" && Number.isFinite(epoch) ? epoch : 0,
         proof: checkpoints?.[SAVED_FILE_CHECKPOINT],
+        // what the last reset recorded (its reason), from the persist
+        // server's metadata
+        ...(reset != null && typeof reset === "object"
+          ? {
+              reset: {
+                reason:
+                  typeof reset.reason === "string" ? reset.reason : undefined,
+                time: typeof reset.time === "number" ? reset.time : undefined,
+              },
+            }
+          : {}),
       };
     } finally {
       stream.close();

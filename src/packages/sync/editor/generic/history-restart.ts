@@ -26,6 +26,8 @@ export interface HistoryResetState {
   count: number;
   epoch: number;
   proof?: { seq?: number; data?: any };
+  // what the last reset recorded (settings.history_reset), if any
+  reset?: { reason?: string; time?: number };
 }
 
 // a bounded read of the saved file

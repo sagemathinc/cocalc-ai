@@ -785,7 +785,7 @@ export class SyncDoc extends EventEmitter {
     // history plan H1b-3).  The user is told, and for a notebook can confirm
     // restarting from the saved .ipynb (restartHistoryFromIpynb, through the
     // project); the open keeps retrying meanwhile.
-    this.reportUnloadableHistory();
+    this.reportUnloadableHistory((err as any)?.oversizedHistoryEpoch);
     return false;
   };
 
@@ -901,12 +901,15 @@ export class SyncDoc extends EventEmitter {
     });
 
   private unloadableHistoryReported = false;
-  private reportUnloadableHistory = (): void => {
+  // history_epoch: the epoch the persist server failed to load the history
+  // in, when it said (so a later reset is recognized as a recovery, H1b-4).
+  private reportUnloadableHistory = (history_epoch?: number): void => {
     if (this.unloadableHistoryReported) return;
     this.unloadableHistoryReported = true;
     this.emit("history-unloadable", {
       path: this.path,
       restart: historyRestartKind(this.syncPath),
+      ...(typeof history_epoch == "number" ? { history_epoch } : {}),
     });
   };
 
@@ -1233,6 +1236,9 @@ export class SyncDoc extends EventEmitter {
     const seq = (err as any)?.oversizedSeq;
     if ((err as any)?.code == 413 && typeof seq == "number") {
       (err as any).oversizedHistorySeq = seq;
+      // the history epoch the persist server read it in
+      const epoch = (err as any)?.oversizedEpoch;
+      if (typeof epoch == "number") (err as any).oversizedHistoryEpoch = epoch;
     }
     return err;
   };

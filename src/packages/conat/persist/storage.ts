@@ -484,10 +484,13 @@ export function persistMessageTooLargeError({
   size,
   limit,
   seq,
+  epoch,
 }: {
   size: number;
   limit: number;
   seq: number;
+  // the history epoch it was read in, when known
+  epoch?: number;
 }): ConatError {
   const err = new ConatError(
     size >= NOT_A_BLOB_SIZE
@@ -498,6 +501,8 @@ export function persistMessageTooLargeError({
   // which message, so a client can ask for exactly this one to be dealt with
   // (see resetHistory)
   (err as any).oversizedSeq = seq;
+  // and in which history: a recovery is only a later one (H1b-4)
+  if (typeof epoch == "number") (err as any).oversizedEpoch = epoch;
   return err;
 }
 
@@ -1784,6 +1789,7 @@ export class PersistentStream extends EventEmitter {
         size: Number(meta.size),
         limit: sizeLimit,
         seq: Number(meta.seq),
+        epoch: this.currentEpoch(),
       });
     }
     const x = this.db
@@ -1894,6 +1900,7 @@ export class PersistentStream extends EventEmitter {
         size: Number(oversized.size),
         limit: sizeLimit,
         seq: Number(oversized.seq),
+        epoch: this.currentEpoch(),
       });
     }
     query = `SELECT seq, key, time, compress, encoding, raw, headers, ${EFFECTIVE_SIZE_SQL} AS size FROM messages ${whereSql} ORDER BY seq`;

@@ -29,6 +29,7 @@ import { immerdb, type ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getLogger } from "@cocalc/backend/logger";
 import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
+import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
 import {
   BOARD_EDITABLE_LIMIT,
   BOARD_HOST_BYTE_LIMIT,
@@ -38,6 +39,12 @@ import {
   boardSyncdbPath,
   isBoardJsonPath,
 } from "@cocalc/util/board/names";
+import {
+  BOARD_FILE_RESET_REASON,
+  boardHistoryActions,
+  HISTORY_UNLOADABLE_DOCS,
+  type BoardHistoryCause,
+} from "@cocalc/util/board/history-unloadable";
 import {
   BoardManager,
   type BoardFile,
@@ -49,6 +56,7 @@ import {
   type BoardManagerLike,
   type StartedBoard,
 } from "./registry";
+import { REBUILD_LIMITS, rebuildBoardHistory } from "./history-rebuild";
 
 const logger = getLogger("project-host:board");
 
@@ -62,6 +70,10 @@ const MAX_OPEN_BOARDS_PER_PROJECT = 20;
 const MAX_OPEN_BOARD_BYTES = 512 * 1024 * 1024;
 // A syncdb or a first load slower than this fails the start.
 const START_STEP_TIMEOUT_MS = 45_000;
+// Every step of a start is bounded: the syncdb, a rebuild of an unloadable
+// history (H1b-4) and the syncdb again, then the first load.  This is only
+// the registry's backstop over all of them.
+const START_TIMEOUT_MS = 3 * START_STEP_TIMEOUT_MS + REBUILD_LIMITS.deadlineMs;
 
 let libPromise: Promise<BoardLib> | undefined;
 // @sagemathinc/sagebrush-board is ESM; since 0.3.0 its exports offer
@@ -486,6 +498,7 @@ export async function startBoard({
   fs,
   service,
   manager: managerOptions,
+  syncClient,
 }: {
   client: ConatClient;
   project_id: string;
@@ -493,16 +506,84 @@ export async function startBoard({
   fs: BoardFilesystem;
   service?: string;
   manager?: Partial<ConstructorParameters<typeof BoardManager>[0]>;
+  // for tests: the rebuild's history operations
+  syncClient?: Parameters<typeof rebuildBoardHistory>[0]["syncClient"];
 }): Promise<StartedBoard & { syncdb: ImmerDB }> {
   const lib = await loadBoardLib();
-  const syncdb = await openBoardSyncdb({
-    client,
-    project_id,
-    path,
-    service,
-    timeoutMs: START_STEP_TIMEOUT_MS,
-    writer: true,
-  });
+  const open = () =>
+    openBoardSyncdb({
+      client,
+      project_id,
+      path,
+      service,
+      timeoutMs: START_STEP_TIMEOUT_MS,
+      writer: true,
+    });
+  const syncPath = boardSyncdbPath(path);
+  const key = `${project_id}:${syncPath}`;
+  let syncdb: ImmerDB;
+  let recovered: BoardRecovered | undefined;
+  try {
+    syncdb = await open();
+    // A rebuild an earlier start left unknown applied meanwhile.
+    recovered = lateRecovery(key, syncdb);
+  } catch (err) {
+    if (!(err instanceof HistoryUnloadable)) throw err;
+    // The history cannot be loaded: rebuild it from the file, once per
+    // start (bounded history plan H1b-4).
+    const ownClient = syncClient == null ? new SyncClient(client) : undefined;
+    let rebuild: Awaited<ReturnType<typeof rebuildBoardHistory>>;
+    try {
+      rebuild = await rebuildBoardHistory({
+        project_id,
+        syncPath,
+        file: fileOf(fs, path),
+        lib,
+        recordsToString,
+        failedEpoch: err.history_epoch,
+        syncClient: syncClient ?? ownClient!,
+      });
+    } finally {
+      ownClient?.release();
+    }
+    // An unknown reset stays remembered until the board opens rebuilt (a
+    // later refusal, e.g. busy while it settles, says nothing about it).
+    if (rebuild.outcome == "rebuilt" || rebuild.outcome == "recovered") {
+      unknownRebuilds.delete(key);
+    } else if (rebuild.outcome == "unknown" && err.history_epoch != null) {
+      rememberUnknown(key, err.history_epoch);
+    }
+    logger.info("board: history could not be loaded", {
+      path,
+      failedEpoch: err.history_epoch,
+      outcome: rebuild.outcome,
+      ...("cause" in rebuild ? { cause: rebuild.cause } : {}),
+    });
+    if (rebuild.outcome == "refused" || rebuild.outcome == "unknown") {
+      throw new BoardHistoryRefused(rebuild.cause, rebuild.message);
+    }
+    if (
+      rebuild.outcome == "rebuilt" ||
+      rebuild.reset?.reason == BOARD_FILE_RESET_REASON
+    ) {
+      recovered = {
+        reason: BOARD_FILE_RESET_REASON,
+        ...(rebuild.reset?.time != null ? { time: rebuild.reset.time } : {}),
+        history_epoch: rebuild.history_epoch,
+      };
+    }
+    try {
+      syncdb = await open();
+    } catch (err) {
+      throw new BoardHistoryRefused(
+        "failed",
+        `the board's history was reset, but it did not open: ${err}`.slice(
+          0,
+          300,
+        ),
+      );
+    }
+  }
   const manager = new BoardManager({
     lib,
     syncdb: syncdb as any,
@@ -519,7 +600,86 @@ export async function startBoard({
     await manager.settled();
     throw err;
   }
+  if (recovered != null) recoveredOf.set(manager, recovered);
   return { manager, syncdb, close: () => syncdb.close() };
+}
+
+type BoardRecovered = NonNullable<BoardOpenResult["recovered"]>;
+
+// What each manager's start rebuilt or found rebuilt: every open of it
+// says so; the browser shows it once per epoch.
+const recoveredOf = new WeakMap<object, BoardRecovered>();
+
+// Boards whose last rebuild here was sent with no answer in time
+// (reset-unknown), with the epoch their history failed in: the next start
+// that opens reports a rebuild from the file after that epoch.  Bounded.
+const MAX_UNKNOWN_REBUILDS = 1000;
+const unknownRebuilds = new Map<string, number>();
+
+function rememberUnknown(key: string, failedEpoch: number) {
+  unknownRebuilds.delete(key);
+  unknownRebuilds.set(key, failedEpoch);
+  while (unknownRebuilds.size > MAX_UNKNOWN_REBUILDS) {
+    unknownRebuilds.delete(unknownRebuilds.keys().next().value!);
+  }
+}
+
+function lateRecovery(
+  key: string,
+  syncdb: ImmerDB,
+): BoardRecovered | undefined {
+  const failedEpoch = unknownRebuilds.get(key);
+  if (failedEpoch == null) return;
+  unknownRebuilds.delete(key);
+  try {
+    const settings = syncdb.get_settings();
+    const epoch = settings.get("history_epoch");
+    const reset = settings.get("history_reset");
+    const reason = reset?.get?.("reason");
+    const time = reset?.get?.("time");
+    if (
+      typeof epoch == "number" &&
+      epoch > failedEpoch &&
+      reason == BOARD_FILE_RESET_REASON
+    ) {
+      return {
+        reason,
+        ...(typeof time == "number" ? { time } : {}),
+        history_epoch: epoch,
+      };
+    }
+  } catch (err) {
+    logger.debug("board: could not read the history's reset", {
+      key,
+      err: `${err}`,
+    });
+  }
+}
+
+// for tests
+export function forgetUnknownRebuilds(): void {
+  unknownRebuilds.clear();
+}
+
+// The board's syncdb reported that its history cannot be loaded.
+export class HistoryUnloadable extends Error {
+  constructor(
+    path: string,
+    // the epoch the persist server failed in, if it said
+    public history_epoch?: number,
+  ) {
+    super(`the edit history of ${path} cannot be loaded`);
+  }
+}
+
+// The history could not be loaded and was not rebuilt.
+export class BoardHistoryRefused extends Error {
+  constructor(
+    public cause: BoardHistoryCause,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 // A board's live document. Browsers open it with the same options.
@@ -562,6 +722,17 @@ export async function openBoardSyncdb({
       const ready = new Promise<void>((resolve, reject) => {
         syncdb.once("ready", () => resolve());
         syncdb.once("error", reject);
+        // the history cannot be loaded: waiting would not help (H1b-4)
+        syncdb.once("history-unloadable", (info: any) =>
+          reject(
+            new HistoryUnloadable(
+              path,
+              typeof info?.history_epoch == "number"
+                ? info.history_epoch
+                : undefined,
+            ),
+          ),
+        );
       });
       await (timeoutMs == null
         ? ready
@@ -578,11 +749,30 @@ function result(
   path: string,
   manager: { getStatus: BoardManager["getStatus"] },
 ): BoardOpenResult {
+  const recovered = recoveredOf.get(manager);
   return {
     path,
     syncdbPath: boardSyncdbPath(path),
     ...manager.getStatus(),
+    ...(recovered != null ? { recovered } : {}),
   } as BoardOpenResult;
+}
+
+// A board whose history could not be loaded nor rebuilt: why, and the ways
+// to its content that do not depend on the rebuild.  Paths only.
+export function historyUnloadableResult(
+  path: string,
+  cause: BoardHistoryCause,
+  message: string,
+): BoardOpenResult {
+  return {
+    ...boardPaths(path),
+    state: "history-unloadable",
+    cause,
+    message,
+    actions: boardHistoryActions(cause),
+    docs: HISTORY_UNLOADABLE_DOCS,
+  };
 }
 
 interface BoardRequest {
@@ -592,6 +782,8 @@ interface BoardRequest {
   fs: Filesystem;
   // The syncdb's file service (tests; the host's default otherwise).
   service?: string;
+  // for tests: the history operations of a rebuild
+  syncClient?: Parameters<typeof rebuildBoardHistory>[0]["syncClient"];
 }
 
 const registry = new BoardRegistry({
@@ -599,6 +791,7 @@ const registry = new BoardRegistry({
   maxOpen: MAX_OPEN_BOARDS,
   maxPerGroup: MAX_OPEN_BOARDS_PER_PROJECT,
   maxTotalBytes: MAX_OPEN_BOARD_BYTES,
+  startTimeoutMs: START_TIMEOUT_MS,
   log: (message, extra) => logger.debug(message, extra),
 });
 
@@ -641,12 +834,23 @@ async function managerFor(opts: BoardRequest): Promise<ManagerFor> {
     // it: that much is charged from now, through start and close.
     reserve = Math.max(info.size, BOARD_HOST_HARD_BYTE_LIMIT);
   }
-  const manager = await registry.open(
-    key,
-    path,
-    () => startBoard({ ...opts, path }),
-    reserve,
-  );
+  let manager: BoardManagerLike;
+  try {
+    manager = await registry.open(
+      key,
+      path,
+      () => startBoard({ ...opts, path }),
+      reserve,
+    );
+  } catch (err) {
+    if (err instanceof BoardHistoryRefused) {
+      return {
+        path,
+        status: historyUnloadableResult(path, err.cause, err.message),
+      };
+    }
+    throw err;
+  }
   return { path, manager };
 }
 

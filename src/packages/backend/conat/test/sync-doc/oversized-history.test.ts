@@ -417,7 +417,8 @@ describe("a document whose file is written elsewhere (a notebook's syncdb) is ne
     opened.on("history-unloadable", (x) => unloadable.push(x));
     await wait({ until: () => unloadable.length > 0, timeout: 30000 });
     expect(unloadable).toEqual([
-      expect.objectContaining({ path, restart: "ipynb" }),
+      // with the epoch the persist server failed in
+      expect.objectContaining({ path, restart: "ipynb", history_epoch: 0 }),
     ]);
     // nothing was reset, archived or announced
     expect(resets).toEqual([]);

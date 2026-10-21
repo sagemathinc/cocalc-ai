@@ -500,3 +500,59 @@ CoCalc lets Python move naturally from notebook to script to paper in one
 durable workspace. The same project can contain experiments, production scripts,
 package installs, plots, papers, terminals, and Codex-driven automation.
 `;
+
+export const HISTORY_UNLOADABLE_BODY = String.raw`
+## What this means
+
+CoCalc keeps the edit history of a document (what TimeTravel shows) beside
+its file. Rarely, that history holds an entry too large to load, most often a
+huge notebook output. The document then cannot be opened from its history.
+The file on disk is never changed by this, and you can always get to it.
+
+## Files
+
+When the saved file provably includes every edit, CoCalc archives the history
+and restarts it from the file automatically, and tells you.
+
+Otherwise you choose: **Restart history from the saved file…** removes edits
+made after the file was last saved from the live document, or **Close the
+file**, and download it from the file explorer first.
+
+## Notebooks
+
+Nothing is restarted automatically. You can choose **Restart history from the
+saved notebook…**, which rebuilds the notebook from its saved \`.ipynb\`, or
+close the notebook and download the \`.ipynb\` from the file explorer first.
+If the history changed while you decided, you are asked again.
+
+## Boards
+
+A board's host is the only program that writes its \`.board.json\`, so the
+host rebuilds the board from that file automatically. You then see: "The edit
+history of the board could not be loaded. It was archived, and the board was
+rebuilt from its saved file; edits not yet saved to the file may be missing."
+
+If the board cannot be rebuilt, it says why, and offers what does not depend
+on the rebuild:
+
+| Why | What you can do |
+| --- | --- |
+| The file is too large, or has too many records, for a board to edit | **Open the saved file as text**, or **Download the file**. Repair or split it, then **Retry**. |
+| The file is not valid JSON, or not a board | The same: open it as text, or download it, fix it, then **Retry**. |
+| The file is missing | **Restore the file** from the project's snapshots (the \`.snapshots\` folder), or from TimeTravel of the \`.board.json\` if it was ever opened as text, then **Retry**. |
+| The rebuild took too long or failed | **Open the saved file as text** or **Download the file**, both of which work however often the rebuild fails, or **Retry**. |
+| No answer came in time after the rebuild was sent | The board may already be rebuilt: **Retry** opens it. You can also open the file as text or download it. |
+| A rebuild is already running | **Retry** in a moment. |
+
+**Download the file** is the project's ordinary file download: it works for a
+file of any size, including one too large for the text editor. When a file is
+too large to open as text, downloading it is the way in.
+
+## The archived history
+
+The old history is archived in the document's own storage, within the
+archive's size limits; entries too large to keep are left out. Only CoCalc
+support can retrieve an archive, and an archive is kept only as long as the
+history's retention allows: there is no promise beyond that. Use
+[TimeTravel](/docs/files/timetravel) for the history after the restart.
+`;
