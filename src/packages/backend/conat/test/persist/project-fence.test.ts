@@ -15,7 +15,10 @@ import {
   PersistFenceUnavailableError,
   withPersistFence,
 } from "@cocalc/conat/persist/fence";
-import { isProjectFenced } from "@cocalc/conat/persist/project-fence";
+import {
+  isProjectFenced,
+  projectReplacedInstance,
+} from "@cocalc/conat/persist/project-fence";
 import {
   currentFenceHolder,
   fileFenceStore,
@@ -313,7 +316,12 @@ describe("a fence is held until its holder releases it or is gone", () => {
       }),
     );
     expect(isProjectFenced(project_id)).toBe(true);
+    // the fence of a holder that died meanwhile is released, as replaced:
+    // its project's streams report a new instance, which is saved
     expect(isProjectFenced(other)).toBe(false);
+    const instance = projectReplacedInstance(other);
+    expect(instance).toEqual(expect.any(String));
+    expect(store.loadInstances()[other]).toBe(instance);
     const c = connect();
     await wait({
       until: async () => {
@@ -331,5 +339,45 @@ describe("a fence is held until its holder releases it or is gone", () => {
     });
     expect(isProjectFenced(project_id)).toBe(false);
     expect(store.load()).toEqual([]);
+  });
+});
+
+describe("a dead holder's fence stays held if its new instance can't be saved", () => {
+  it("fails closed, then releases once the store works", async () => {
+    const project_id = uuid();
+    const dir = join(syncFiles.local, `fences-failing-${project_id}`);
+    const store = fileFenceStore(dir);
+    store.save({
+      project_id,
+      token: "dead",
+      holder: { pid: 2001, start: "" },
+      since: Date.now(),
+    });
+    let failing = true;
+    const failingStore = {
+      ...store,
+      saveInstance: (id: string, instance: string) => {
+        if (failing) throw new Error("disk full");
+        store.saveInstance(id, instance);
+      },
+    };
+    const service = await initPersistFenceService({
+      client: connect(),
+      holderAlive: () => false,
+      store: failingStore,
+      holderCheckMs: 100,
+    });
+    try {
+      expect(isProjectFenced(project_id)).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(isProjectFenced(project_id)).toBe(true);
+      failing = false;
+      await wait({ until: () => !isProjectFenced(project_id) });
+      expect(store.loadInstances()[project_id]).toBe(
+        projectReplacedInstance(project_id),
+      );
+    } finally {
+      service.close();
+    }
   });
 });

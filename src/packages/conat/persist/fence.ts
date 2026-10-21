@@ -264,12 +264,10 @@ export async function initPersistFenceService({
   )) {
     setProjectReplacedInstance(project_id, instance);
   }
+  // Held again, whether or not the holder still runs: one that is gone may
+  // have replaced files before it went away, so its fence is released by
+  // checkHolders below (before this resolves), as replaced, like any other.
   for (const record of store?.load() ?? []) {
-    if (!holderAlive(record.holder)) {
-      // its holder is gone, and with it whatever it was changing
-      forget(record);
-      continue;
-    }
     beginProjectFence(record.project_id, record.token);
     held.set(record.project_id, record);
     logger.warn("holding a persist fence again after a restart", {
@@ -314,6 +312,7 @@ export async function initPersistFenceService({
       }
     }
   };
+  checkHolders();
   const checker = setInterval(checkHolders, holderCheckMs);
   checker.unref?.();
 
