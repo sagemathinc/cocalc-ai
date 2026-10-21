@@ -343,8 +343,8 @@ import {
   agentRowLabel,
   useAgentStatusNow,
 } from "./agent-status-mark";
+import { RecentAgentsCountMenu } from "./recent-agents-count-menu";
 import {
-  SIDEBAR_RECENT_AGENTS_CHOICES,
   SIDEBAR_RECENT_AGENTS_SETTING,
   sidebarRecentAgents,
   sidebarRecentAgentsCount,
@@ -5293,38 +5293,18 @@ export function MyAgentsWorkspacePage({
                                   {section.title}
                                 </Text>
                               ) : (
-                                <Dropdown
-                                  trigger={["click"]}
-                                  menu={{
-                                    selectable: true,
-                                    selectedKeys: [`${recentAgentsCount}`],
-                                    items: SIDEBAR_RECENT_AGENTS_CHOICES.map(
-                                      (n) => ({
-                                        key: `${n}`,
-                                        label: `Show ${n} recent agents`,
-                                      }),
-                                    ),
-                                    onClick: ({ key }) =>
-                                      void redux
-                                        .getActions("account")
-                                        .set_other_settings(
-                                          SIDEBAR_RECENT_AGENTS_SETTING,
-                                          Number(key),
-                                        ),
-                                  }}
-                                >
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    aria-label={`Recent agents: showing ${recentAgentsCount}. Change how many`}
-                                    style={{
-                                      color: UI_COLORS.secondary,
-                                      padding: "0 6px",
-                                    }}
-                                  >
-                                    {section.title} <Icon name="caret-down" />
-                                  </Button>
-                                </Dropdown>
+                                <RecentAgentsCountMenu
+                                  title={section.title}
+                                  count={recentAgentsCount}
+                                  onChange={(count) =>
+                                    void redux
+                                      .getActions("account")
+                                      .set_other_settings(
+                                        SIDEBAR_RECENT_AGENTS_SETTING,
+                                        count,
+                                      )
+                                  }
+                                />
                               )}
                               {renderSortableAgentGroup(
                                 section.agents,
