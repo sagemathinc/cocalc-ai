@@ -38,7 +38,7 @@ describe("account-stripe-cleanup (sent only by account deletion)", () => {
     ).resolves.toEqual({ canceled: true });
     expect(calls).toEqual([
       "cancel",
-      "UPDATE billing_accounts SET auto_balance=NULL, stripe_checkout_session=NULL WHERE account_id=$1",
+      "UPDATE billing_accounts SET auto_balance=NULL, stripe_checkout_session=NULL, stripe_customer=NULL WHERE account_id=$1",
     ]);
     expect(poolQueryMock.mock.calls[0][1]).toEqual([ACCOUNT_ID]);
   });

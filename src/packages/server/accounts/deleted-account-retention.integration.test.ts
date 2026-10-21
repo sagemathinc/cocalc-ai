@@ -39,6 +39,7 @@ describePglite("deleted account retention", () => {
       customize: "JSONB",
       stripe_checkout_session: "JSONB",
       auto_balance: "JSONB",
+      stripe_customer: "JSONB",
       lti_id: "TEXT[]",
       tags: "TEXT[]",
       groups: "TEXT[]",
@@ -74,11 +75,12 @@ describePglite("deleted account retention", () => {
         `INSERT INTO accounts (account_id, deleted, email_address_before_delete,
            display_name, first_name, last_name, password_hash, profile, ssh_keys,
            lti_id, created_by, email_address_verified, api_key, notes,
-           other_settings, groups, stripe_customer_id)
+           other_settings, groups, stripe_customer_id, stripe_customer)
          VALUES ($1, TRUE, $2, 'Ada L', 'Ada', 'Lovelace', 'hash',
            '{"color":"red"}', '{"fp":{"value":"ssh-ed25519 AAAA ada@example.com"}}',
            ARRAY['iss','sub'], '203.0.113.7', $3::JSONB, 'sk_legacy', 'crm note',
-           '{"newsletter":true}', ARRAY['admin'], 'cus_123')`,
+           '{"newsletter":true}', ARRAY['admin'], 'cus_123',
+           '{"name":"Ada Lovelace","email":"ada@example.com"}')`,
         [
           account_id,
           `${account_id}@example.com`,
@@ -149,6 +151,7 @@ describePglite("deleted account retention", () => {
         "notes",
         "other_settings",
         "groups",
+        "stripe_customer",
       ]) {
         expect(row[field]).toBeNull();
       }

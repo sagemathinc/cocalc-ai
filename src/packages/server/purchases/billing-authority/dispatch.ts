@@ -274,10 +274,11 @@ export async function dispatchBillingAuthorityCommand(
         account_id: command.account_id,
       }).cancelEverything();
       // Clear the authoritative copy of the account's transient billing
-      // controls; deletion clears the account row's own copy. Financial
-      // records are kept.
+      // controls and cached Stripe customer (name, email, address); deletion
+      // clears the account row's own copy. stripe_customer_id and the
+      // financial records are kept.
       await getPool().query(
-        "UPDATE billing_accounts SET auto_balance=NULL, stripe_checkout_session=NULL WHERE account_id=$1",
+        "UPDATE billing_accounts SET auto_balance=NULL, stripe_checkout_session=NULL, stripe_customer=NULL WHERE account_id=$1",
         [command.account_id],
       );
       return result;

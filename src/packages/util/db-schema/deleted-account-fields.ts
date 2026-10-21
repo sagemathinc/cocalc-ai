@@ -16,9 +16,10 @@ Kept deliberately:
   last_active (an account that was active recently is not deleted by mistake),
   and the security state banned, banned_at, api_search_next_ms,
   api_key_issuance_sequence (so ids and limits are never reused);
-- financial records, which the law requires keeping: stripe_customer_id,
-  stripe_customer, stripe_usage_subscription, coupon_history,
-  purchase_closing_day, min_balance, balance, monthly_collection;
+- financial records, which the law requires keeping: stripe_customer_id
+  (Stripe keeps the invoices and payments it identifies),
+  stripe_usage_subscription, coupon_history, purchase_closing_day, min_balance,
+  balance, monthly_collection;
 - email_address_before_delete, for DELETED_ACCOUNT_EMAIL_RETENTION_DAYS
   (server/accounts/deleted-account-retention.ts), then cleared;
 - salesloft_id, until the Salesloft person is deleted
@@ -65,7 +66,9 @@ export const DELETED_ACCOUNT_CLEARED_FIELDS = [
   "last_message_summary",
   "email_daily_statements",
   "balance_alert",
-  // transient billing controls (the financial records themselves are kept)
+  // transient billing controls and the cached copy of the Stripe customer
+  // (name, email, address); the financial records themselves are kept
   "stripe_checkout_session",
   "auto_balance",
+  "stripe_customer",
 ] as const;
