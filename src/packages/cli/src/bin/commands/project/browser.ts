@@ -28,6 +28,7 @@ import {
   startUrl,
 } from "../../core/local-browser";
 import {
+  localForwardSshArgs,
   reverseTunnelSshArgs,
   startReverseTunnel,
   type ReverseTunnel,
@@ -43,6 +44,12 @@ import {
   sharedBrowserTunnelPort,
 } from "@cocalc/util/shared-browser";
 import { registerSharedBrowserCommands } from "./shared-browser";
+import {
+  handoffApi,
+  startHandoff,
+  type Handoff,
+} from "../../core/shared-browser/connect-handoff";
+import { createServer } from "node:net";
 import { runBrowserContainerEntry } from "../../core/shared-browser/container-entry";
 import type { ProjectCommandDeps } from "../project";
 import {
@@ -314,6 +321,9 @@ async function runBrowserConnect(
   let profile: ProfileDir | null = null;
   let browser: LaunchedBrowser | null = null;
   let tunnel: ReverseTunnel | null = null;
+  let handoffTunnel: ReverseTunnel | null = null;
+  let handoff: Handoff | null = null;
+  let stopKeys: () => void = () => {};
   let watchdog: CleanupWatchdog | null = null;
   const verification = new AbortController();
   let endedBy = "browser closed";
@@ -406,7 +416,30 @@ async function runBrowserConnect(
         await api.apps.upsertAppSpec(
           sharedBrowserAppSpec({ exec: "cocalc", args: [], appId, file }),
         );
-        await api.apps.ensureRunning(appId, { timeout: 60_000, interval: 500 });
+        const status = await api.apps.ensureRunning(appId, {
+          timeout: 60_000,
+          interval: 500,
+        });
+        // The hand-off in this terminal (who drives; t / h), through a local
+        // forward of the service's port.
+        if (status.port) {
+          const localPort = await freeLocalPort();
+          handoffTunnel = startReverseTunnel({
+            args: localForwardSshArgs({
+              alias,
+              projectPort: status.port,
+              localPort,
+              compress: opts.compress,
+            }),
+            onStatus: () => {},
+          });
+          handoffTunnel.failed.then(
+            (err) => say(`Hand-off controls unavailable: ${err.message}`),
+            () => {},
+          );
+          handoff = startHandoff({ api: handoffApi(localPort), say });
+          stopKeys = readHandoffKeys(handoff, () => stopRequested("SIGINT"));
+        }
       }
       say(
         [
@@ -418,7 +451,9 @@ async function runBrowserConnect(
             : storage === "memory"
               ? `Profile is in RAM (${profile.backing}) and is discarded on exit.`
               : `Profile is a temporary directory (${profile.path}), deleted on exit.`,
-          "Close the browser or press Ctrl-C to end the session.",
+          file && process.stdin.isTTY
+            ? "Here, t takes over from the agent and h hands back. Close the browser or press Ctrl-C to end the session."
+            : "Close the browser or press Ctrl-C to end the session.",
         ].join("\n"),
       );
       const signal = await Promise.race([
@@ -431,6 +466,9 @@ async function runBrowserConnect(
   } finally {
     for (const signal of signals) process.off(signal, onSignal);
     verification.abort();
+    stopKeys();
+    handoff?.stop();
+    await handoffTunnel?.stop().catch(() => {});
     cleanedUp = await cleanupThenDisarm(
       [
         () => tunnel?.stop() ?? Promise.resolve(),
@@ -585,4 +623,42 @@ export function registerProjectBrowserCommands(
         });
       },
     );
+}
+
+/** A free loopback port on this computer (for the hand-off forward). */
+function freeLocalPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() =>
+        typeof address === "object" && address
+          ? resolve(address.port)
+          : reject(new Error("no local port")),
+      );
+    });
+  });
+}
+
+/** Single keys in an interactive terminal: t, h, and Ctrl-C (raw mode
+ * swallows the signal). Returns how to stop reading them. */
+function readHandoffKeys(handoff: Handoff, interrupt: () => void): () => void {
+  const stdin = process.stdin;
+  if (!stdin.isTTY) return () => {};
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding("utf8");
+  const onData = (chunk: string) => {
+    for (const key of chunk) {
+      if (key === "\u0003") interrupt();
+      else void handoff.key(key);
+    }
+  };
+  stdin.on("data", onData);
+  return () => {
+    stdin.off("data", onData);
+    stdin.setRawMode(false);
+    stdin.pause();
+  };
 }

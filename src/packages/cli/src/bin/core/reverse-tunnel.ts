@@ -52,6 +52,39 @@ export function reverseTunnelSshArgs({
   ];
 }
 
+/**
+ * The other direction, for the same lifetime-tied ssh: 127.0.0.1:<localPort>
+ * on this computer reaches 127.0.0.1:<projectPort> inside the project (e.g.
+ * a .browser file's service, for the hand-off keys in `browser connect`).
+ */
+export function localForwardSshArgs({
+  alias,
+  projectPort,
+  localPort,
+  compress,
+}: {
+  alias: string;
+  projectPort: number;
+  localPort: number;
+  compress?: boolean;
+}): string[] {
+  return [
+    "-T",
+    "-o",
+    "ExitOnForwardFailure=yes",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=2",
+    ...(compress ? ["-C"] : []),
+    // Loopback only on this computer too.
+    "-L",
+    `127.0.0.1:${localPort}:127.0.0.1:${projectPort}`,
+    alias,
+    "cat >/dev/null",
+  ];
+}
+
 export interface ReverseTunnel {
   // Settles only if the tunnel gives up: the project refused the port, or
   // reconnecting keeps failing.
