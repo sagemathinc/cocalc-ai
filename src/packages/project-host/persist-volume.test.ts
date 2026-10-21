@@ -865,6 +865,45 @@ describe("in the project-host", () => {
     expect(read(join(root, "a.db"))).toBe("backup");
   });
 
+  it("never takes the old directory from a backup that has CoCalc's history", async () => {
+    await readyVolume();
+    // a backup taken after the import: CoCalc's history, and the project's
+    // own files at the old path
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+      [`${LEGACY}/a.db`]: "forged",
+    });
+    // restoring only .local covers just the old path
+    expect(
+      await restoreHistoryFromBackup({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({
+          path: ".local",
+          dest: ".local",
+          env,
+        }),
+        ...backup,
+        env,
+        ops: fakeOps(),
+      }),
+    ).toBe(false);
+    expect(backup.restored).toEqual([]);
+    expect(read(join(root, "a.db"))).toBe("live");
+    // the whole backup: CoCalc's history, never the old path
+    expect(
+      await restoreHistoryFromBackup({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        ...backup,
+        env,
+        ops: fakeOps(),
+      }),
+    ).toBe(true);
+    expect(backup.restored).toEqual([HISTORY_IN_SNAPSHOTS]);
+    expect(read(join(root, "a.db"))).toBe("backup");
+  });
+
   it("restores no partial history from a backup", async () => {
     await readyVolume();
     const backup = backupWith({

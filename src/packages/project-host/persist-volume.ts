@@ -724,14 +724,22 @@ export async function restoreHistoryFromBackup({
     }
     return true;
   };
+  // CoCalc's history in the backup: HISTORY_IN_SNAPSHOTS with READY_MARKER
+  const hasMarkedHistory = async () =>
+    (await hasDirectory(HISTORY_IN_SNAPSHOTS)) &&
+    (await listDirectory(HISTORY_IN_SNAPSHOTS)).some(
+      (entry) => entry.name === READY_MARKER && !entry.isDir,
+    );
+  let marked: boolean | undefined;
   for (const candidate of candidates) {
     if (!(await hasDirectory(candidate))) continue;
-    if (
-      candidate === HISTORY_IN_SNAPSHOTS &&
-      !(await listDirectory(candidate)).some(
-        (entry) => entry.name === READY_MARKER && !entry.isDir,
-      )
-    ) {
+    marked ??= await hasMarkedHistory();
+    if (candidate === HISTORY_IN_SNAPSHOTS && !marked) {
+      continue;
+    }
+    // A backup with CoCalc's history (taken after the import) has the
+    // project's own files at the old directory, whatever the restore covers.
+    if (candidate !== HISTORY_IN_SNAPSHOTS && marked) {
       continue;
     }
     const source = await newRestoreDirectory(project_id, env, ops);
