@@ -24,6 +24,7 @@ import { decode } from "@cocalc/conat/core/codec";
 import {
   BOARD_HISTORY_LIMITS,
   BoardAppendCheck,
+  parseBoardRecord,
   snapshotBody,
   type AppendRecord,
 } from "./board-history";
@@ -44,9 +45,10 @@ export interface AppendStream {
     encoding: any,
     raw: Buffer,
   ): "new" | "duplicate" | "conflict";
+  // Grows with every row the stream's database changes (storage.ts).
+  mutationCount?(): number;
 }
 
-// A record's identity: its encoding and exact bytes, as stored.
 // A record's footprint as stored: its bytes, its headers' JSON and its key
 // (codex 4332730147: headers count toward a history's bounds, as the
 // stored size does). The append and open checks both count this.
@@ -62,6 +64,7 @@ export function storedBytes(
   );
 }
 
+// A record's identity: its encoding and exact bytes, as stored.
 export function digestOf(encoding: unknown, raw: Buffer | undefined): string {
   return createHash("sha256")
     .update(`${encoding}\0`)
@@ -110,19 +113,25 @@ function graphOf(list: Iterable<AppendRecord>, seq: number): BoardAppendCheck {
   try {
     return BoardAppendCheck.fromRecords(list, seq);
   } catch (err) {
-    // E.g. a stored record over the record cap: nothing may be appended.
-    return new BoardAppendCheck({
-      seq,
-      broken: `its stored history can't be read: ${err}`.slice(0, 300),
-    });
+    return brokenGraph(seq, err);
   }
+}
+
+// E.g. a stored record over the record cap: nothing may be appended.
+function brokenGraph(seq: number, err: unknown): BoardAppendCheck {
+  return new BoardAppendCheck({
+    seq,
+    broken: `its stored history can't be read: ${err}`.slice(0, 300),
+  });
 }
 
 function checkFor(stream: AppendStream): BoardAppendCheck {
   let check = checks.get(stream);
-  if (check == null || check.atSeq !== newestSeq(stream)) {
+  if (check == null || !cacheFresh(stream)) {
+    const revision = revisionOf(stream);
     check = readGraph(stream);
     checks.set(stream, check);
+    revisions.set(stream, revision);
   }
   return check;
 }
@@ -296,25 +305,112 @@ export async function prepareRequest(
 }
 
 // The stored graph read, if it must be (the cache is missing or stale),
-// with every stored snapshot body scanned in yielding slices first; so the
-// synchronous step finds it ready. If the stream moved meanwhile, nothing is
-// cached (the synchronous step reads it again, scanning there).
-export async function prepareAppend(stream: AppendStream): Promise<void> {
-  const seq = newestSeq(stream);
-  if (checks.get(stream)?.atSeq === seq) return;
-  let list: AppendRecord[];
-  try {
-    list = [...records(stream)];
-  } catch {
-    return; // (readGraph refuses it.)
+// with every stored record read and every snapshot body scanned in slices
+// that yield to the event loop; so the synchronous step finds it ready and
+// never reads or scans (daybreak2). If the stream moves meanwhile (its
+// newest seq, or a delete or reset: epochs), it is read again, at most
+// attempts times. Resolves with whether the graph is ready; if not, the
+// synchronous step refuses the request as "board-retry" (appendCheckPrepared).
+export async function prepareAppend(
+  stream: AppendStream,
+  attempts: number = PREPARE_ATTEMPTS,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const seq = newestSeq(stream);
+    const revision = revisionOf(stream);
+    if (cacheFresh(stream)) return true;
+    const list: AppendRecord[] = [];
+    let error: unknown;
+    try {
+      // Streamed, as readGraph is: read up to the first record the open
+      // check refuses (one that isn't a board record or has a key, or the
+      // one past the history's total bytes or record count), and no
+      // further; so at most the history's bounds, plus that one record,
+      // are ever held (astra LIMIT-7B0-1).
+      let sinceYield = 0;
+      let bytes = 0;
+      for (const record of records(stream)) {
+        list.push(record);
+        bytes += record.bytes;
+        const body = snapshotBody(record.value);
+        if (body != null) record.document = await isJsonObjectLinesAsync(body);
+        if (
+          record.key != null ||
+          bytes > BOARD_HISTORY_LIMITS.totalBytes ||
+          "invalid" in
+            parseBoardRecord(record.value, undefined, record.document)
+        ) {
+          break;
+        }
+        sinceYield += record.bytes;
+        if (sinceYield >= PREPARE_READ_SLICE_BYTES) {
+          sinceYield = 0;
+          await yieldToEventLoop();
+        }
+      }
+    } catch (err) {
+      error = err; // E.g. a record over the cap: nothing may be appended.
+    }
+    // Meanwhile another append may have committed the graph forward.
+    if (cacheFresh(stream)) return true;
+    // Anything else written meanwhile: read again.
+    if (revisionOf(stream) !== revision) continue;
+    checks.set(
+      stream,
+      error == null ? graphOf(list, seq) : brokenGraph(seq, error),
+    );
+    revisions.set(stream, revision);
+    return true;
   }
-  for (const record of list) {
-    const body = snapshotBody(record.value);
-    if (body != null) record.document = await isJsonObjectLinesAsync(body);
-  }
-  if (newestSeq(stream) !== seq || checks.get(stream)?.atSeq === seq) return;
-  checks.set(stream, graphOf(list, seq));
+  return false;
 }
+
+const PREPARE_ATTEMPTS = 4;
+const PREPARE_READ_SLICE_BYTES = 1024 * 1024;
+const yieldToEventLoop = () =>
+  new Promise<void>((resolve) => setImmediate(resolve));
+
+// Each forgetAppendHead (a delete, a reset, a config change, a store that
+// wasn't as projected) starts a new epoch: a graph read across one is
+// read again.
+const epochs = new WeakMap<object, number>();
+
+// The stream's revision: its mutation count (every write, delete or reset,
+// by any path) and its epoch. The cached graph is valid only at the
+// revision it was read or committed at (astra CORR-7B0-1: a delete can
+// leave the newest seq as it was).
+const revisions = new WeakMap<object, string>();
+const revisionOf = (stream: AppendStream) =>
+  `${stream.mutationCount?.() ?? "-"}:${epochs.get(stream) ?? 0}`;
+const cacheFresh = (stream: AppendStream) =>
+  checks.get(stream)?.atSeq === newestSeq(stream) &&
+  revisions.get(stream) === revisionOf(stream);
+
+/*
+The server's synchronous step (server.ts): after prepareRequest and
+prepareAppend, it reads nothing and scans nothing. A graph that isn't
+ready, or a snapshot record without its scanned verdict, is refused as
+"board-retry" before anything is stored: not a fence refusal, so the
+writer keeps its edits and its save retries (dstream.save, with backoff).
+*/
+export function appendCheckPrepared(
+  stream: AppendStream,
+  records: AppendRecord[],
+): ReturnType<typeof appendCheck> {
+  const check = checks.get(stream);
+  if (check == null || !cacheFresh(stream)) {
+    throw retry("the board's stored history changed while it was read");
+  }
+  for (const record of records) {
+    if (record.document == null && snapshotBody(record.value) != null) {
+      throw retry("a snapshot record that wasn't scanned before the store");
+    }
+  }
+  return { check, next: check.check(records) };
+}
+
+const retry = (message: string) =>
+  new ConatError(`${message}; retry`, { code: "board-retry" });
 
 // Throws "branch" unless storing these records keeps the history one chain.
 // Returns what to commit after the store.
@@ -362,8 +458,10 @@ export function commitAppend(
     });
   if (asProjected) {
     check.commit(next, newestSeq(stream));
+    // Exactly the store just projected: the graph is that revision's.
+    revisions.set(stream, revisionOf(stream));
   } else {
-    checks.delete(stream);
+    forgetAppendHead(stream);
   }
 }
 
@@ -371,4 +469,5 @@ export function commitAppend(
 // is read again before the next append.
 export function forgetAppendHead(stream: AppendStream): void {
   checks.delete(stream);
+  epochs.set(stream, (epochs.get(stream) ?? 0) + 1);
 }
