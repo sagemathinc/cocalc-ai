@@ -1927,6 +1927,7 @@ export const hosts = {
   listManagedRootfsReleaseLifecycle: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccountWithBoundSession,
   issueProjectContentUrl: authFirstRequireAccountWithBoundSession,
+  issueProjectAppUrl: authFirstRequireAccountWithBoundSession,
   revokeProjectContentLinks: authFirstRequireAccount,
 };
 
@@ -2515,6 +2516,26 @@ export interface Hosts {
     account_id?: string;
     project_id: string;
     path: string;
+  }) => Promise<
+    | { url: string; expires_at: number }
+    | {
+        unavailable:
+          | "off"
+          | "no-host"
+          | "host-not-ready"
+          | "other-bay"
+          | "no-access";
+      }
+  >;
+  // A short-lived, single-use link that opens a project's web server or app
+  // on its own app origin, or why there is none (then the caller falls back).
+  issueProjectAppUrl: (opts: {
+    account_id?: string;
+    project_id: string;
+    // /<project_id>/port/<n>/..., /proxy/..., /server/<name>/..., /apps/<id>/...
+    // or an app's own base path (then app_id is required).
+    path: string;
+    app_id?: string;
   }) => Promise<
     | { url: string; expires_at: number }
     | {

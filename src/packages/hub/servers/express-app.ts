@@ -39,6 +39,7 @@ import initStripeWebhook from "./app/stripe-webhook";
 import initCrmOutreach from "./app/crm-outreach";
 import initCommercialQuotes from "./app/commercial-quotes";
 import initContentView from "./app/content-view";
+import initAppOpen from "./app/app-open";
 import { renderEssentialShell } from "./app/essential-shell";
 import initRootfsManifest from "./app/rootfs-manifest";
 import { getDatabase } from "./database";
@@ -340,6 +341,7 @@ export default async function init(opts: Options): Promise<{
   initCrmOutreach(router);
   initCommercialQuotes(router);
   initContentView(router);
+  initAppOpen(router);
   router.use("/api/conat", createConatRouter());
   logger.info("enabling api/v2 express router");
   router.use("/api/v2", createApiV2Router());
