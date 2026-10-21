@@ -291,7 +291,9 @@ export function registerSensorCommand(
     );
   watch
     .command("at")
-    .description("a reminder: wake at a time with a note to yourself")
+    .description(
+      "a reminder: wake at a time (up to 400 days ahead) with a note to yourself; pending reminders show in `sensor list` and are cancelled with `sensor delete`",
+    )
     .requiredOption("--at <time>", "ISO time, e.g. 2026-10-16T15:00:00Z")
     .requiredOption("--note <text>", "what to do then")
     .action(async (opts, cmd) =>

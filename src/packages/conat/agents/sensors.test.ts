@@ -291,12 +291,23 @@ describe("watchers", () => {
     });
   });
 
+  it("a reminder may be months ahead: deadlines are", () => {
+    const spec = validateSensorWatch(
+      { type: "at", at: "2027-07-31T15:00:00Z", note: "WA annual report" },
+      { now },
+    );
+    expect(spec.watch).toMatchObject({ at: "2027-07-31T15:00:00.000Z" });
+    // It gives up only after its own time, not a day after it was set.
+    expect(spec.expires_at).toBe("2027-07-31T16:00:00.000Z");
+  });
+
   it("refuses bad watchers", () => {
     for (const watch of [
       { type: "ci", repo: "no-slash", pr: 1 },
       { type: "ci", repo: "a/b", pr: 0 },
       { type: "at", at: "2026-10-09T00:00:00Z", note: "past" },
-      { type: "at", at: "2026-12-01T00:00:00Z", note: "too far" },
+      // More than 400 days ahead.
+      { type: "at", at: "2027-11-20T00:00:00Z", note: "too far" },
       { type: "cron", expr: "* * * * *" },
       { type: "file", path: "x", extra: 1 },
     ])

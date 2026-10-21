@@ -196,6 +196,9 @@ export async function reserveSensorWatcherAtHome(
   // maxActive.
   if (limits.maxWakesPerDay === 0 || limits.maxWatchers === 0)
     throw new Error(NO_SENSORS);
+  // A reminder (`watch at`) checks nothing until it fires, perhaps months
+  // away: it is counted apart, so it never takes another watcher's place.
+  const kind = opts.reminder === true ? "reminder" : "watch";
   await agentStore().transaction(async (client) => {
     await lockAccountSensors(client, opts.account_id);
     const { rows: counts } = await client.query<{
@@ -205,30 +208,48 @@ export async function reserveSensorWatcherAtHome(
       wakes: string;
     }>(
       `SELECT
-         count(*) FILTER (WHERE kind='watch' AND released_at IS NULL
+         count(*) FILTER (WHERE kind=$3 AND released_at IS NULL
                           AND expires_at > now()) AS active,
-         count(*) FILTER (WHERE kind='watch' AND released_at IS NULL
+         count(*) FILTER (WHERE kind=$3 AND released_at IS NULL
                           AND expires_at > now() AND agent_id=$2) AS agent_active,
-         count(*) FILTER (WHERE kind='watch'
+         count(*) FILTER (WHERE kind IN ('watch', 'reminder')
                           AND created > now() - interval '1 day') AS recent,
          count(*) FILTER (WHERE kind='wake'
                           AND created > now() - interval '1 day') AS wakes
        FROM agent_sensor_events WHERE account_id=$1`,
-      [opts.account_id, opts.agent_id],
+      [opts.account_id, opts.agent_id, kind],
     );
-    if (Number(counts[0]?.active) >= limits.maxWatchers)
+    const [maxActive, maxPerAgent, what] =
+      kind === "reminder"
+        ? [
+            SENSOR_LIMITS.maxRemindersPerAccount,
+            SENSOR_LIMITS.maxRemindersPerAgent,
+            "reminders may be pending",
+          ]
+        : [
+            limits.maxWatchers,
+            limits.maxWatchersPerAgent,
+            "watchers may be active",
+          ];
+    if (Number(counts[0]?.active) >= maxActive)
       throw new Error(
-        `at most ${limits.maxWatchers} watchers may be active at once for this account (all its agents together). ` +
-          (await activeWatchersText(client, opts.account_id)),
+        `at most ${maxActive} ${what} at once for this account (all its agents together). ` +
+          (await activeWatchersText(client, opts.account_id, undefined, kind)),
       );
-    if (Number(counts[0]?.agent_active) >= limits.maxWatchersPerAgent)
+    if (Number(counts[0]?.agent_active) >= maxPerAgent)
       throw new Error(
-        `at most ${limits.maxWatchersPerAgent} watchers may be active at once for this agent. ` +
-          (await activeWatchersText(client, opts.account_id, opts.agent_id)),
+        `at most ${maxPerAgent} ${what} at once for this agent. ` +
+          (await activeWatchersText(
+            client,
+            opts.account_id,
+            opts.agent_id,
+            kind,
+          )),
       );
     // Refused now rather than set: with no wake left it could fire but never
-    // wake the agent, which ended its turn to wait for it.
-    if (Number(counts[0]?.wakes) >= limits.maxWakesPerDay)
+    // wake the agent, which ended its turn to wait for it. (A reminder fires
+    // on another day, with that day's wakes.)
+    if (kind === "watch" && Number(counts[0]?.wakes) >= limits.maxWakesPerDay)
       throw new Error(
         `this account's agents have used all ${limits.maxWakesPerDay} wakes of the last 24 hours, so a watcher could not wake you; wait in the foreground instead`,
       );
@@ -240,13 +261,14 @@ export async function reserveSensorWatcherAtHome(
     await client.query(
       `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id,
          agent_id, sensor_id, expires_at)
-       VALUES ($1, 'watch', $2, $3, $4, $1, $5)`,
+       VALUES ($1, $6, $2, $3, $4, $1, $5)`,
       [
         opts.sensor_id,
         opts.account_id,
         opts.project_id,
         opts.agent_id,
         new Date(expires + WATCHER_SLACK_MS),
+        kind,
       ],
     );
   });
@@ -260,6 +282,7 @@ async function activeWatchersText(
   client: Querier,
   account_id: string,
   agent_id?: string,
+  kind: "watch" | "reminder" = "watch",
 ): Promise<string> {
   const { rows } = await client.query<{
     sensor_id: string;
@@ -268,10 +291,10 @@ async function activeWatchersText(
     expires_at: Date;
   }>(
     `SELECT sensor_id, agent_id, project_id, expires_at FROM agent_sensor_events
-      WHERE account_id=$1 AND kind='watch' AND released_at IS NULL
+      WHERE account_id=$1 AND kind=$3 AND released_at IS NULL
         AND expires_at > now() AND ($2::uuid IS NULL OR agent_id=$2)
       ORDER BY created LIMIT 10`,
-    [account_id, agent_id ?? null],
+    [account_id, agent_id ?? null, kind],
   );
   if (rows.length === 0) return "";
   const list = rows
@@ -295,7 +318,8 @@ export async function releaseSensorWatcherAtHome({
   requireUuid(sensor_id, "sensor_id");
   await agentStore().query(
     `UPDATE agent_sensor_events SET released_at=now()
-     WHERE event_id=$1 AND account_id=$2 AND kind='watch' AND released_at IS NULL`,
+     WHERE event_id=$1 AND account_id=$2 AND kind IN ('watch', 'reminder')
+       AND released_at IS NULL`,
     [sensor_id, account_id],
   );
 }
