@@ -31,6 +31,7 @@ import { toDecimal } from "@cocalc/util/money";
 import send, { name, support, url } from "@cocalc/server/messages/send";
 import { delay } from "awaiting";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
+import { assertBusinessTaxIdForPurchase } from "./business-tax-id-gate";
 
 const logger = getLogger("purchases:stripe:create-payment-intent");
 const INVOICE_PAYMENT_EXPAND = ["payments.data.payment.payment_intent"];
@@ -106,6 +107,16 @@ export default async function createPaymentIntent({
   if (!customer) {
     throw Error("bug");
   }
+
+  // An EU or UK customer without a valid VAT ID is refused before anything is
+  // created in Stripe (util/stripe/business-tax-id.ts).
+  const taxIdStatus = await assertBusinessTaxIdForPurchase({
+    stripe,
+    customer,
+    account_id,
+    path: purpose,
+    amount: total_excluding_tax_usd,
+  });
 
   logger.debug("createPaymentIntent -- create invoice:", { customer });
 
@@ -185,6 +196,13 @@ export default async function createPaymentIntent({
         })
       : await stripe.invoices.finalizeInvoice(invoice.id, finalizeParams);
   } catch (err) {
+    if (taxIdStatus.required) {
+      // Never an untaxed sale in the EU or the UK: the fallback below is only
+      // for customers whose country is unknown.
+      throw Error(
+        `CoCalc could not calculate tax for this purchase. Please check your name and address and try again. ${err}`,
+      );
+    }
     if (requireAddress) {
       throw Error(
         `Name and address are required before checkout so CoCalc can calculate tax. Please add your name and address and try again. ${err}`,

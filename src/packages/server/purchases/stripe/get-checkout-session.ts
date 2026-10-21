@@ -17,6 +17,7 @@ import { decimalToStripe } from "@cocalc/util/stripe/calc";
 import { url } from "@cocalc/server/messages/send";
 import { toDecimal } from "@cocalc/util/money";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
+import { assertBusinessTaxIdForPurchase } from "./business-tax-id-gate";
 
 const logger = getLogger("purchases:stripe:get-checkout-session");
 
@@ -90,6 +91,15 @@ export default async function getCheckoutSession({
   if (!customer) {
     throw Error("bug");
   }
+  // An EU or UK customer without a valid VAT ID is refused before a session
+  // exists (util/stripe/business-tax-id.ts).
+  await assertBusinessTaxIdForPurchase({
+    stripe,
+    customer,
+    account_id,
+    path: `checkout:${purpose}`,
+    amount: total.toString(),
+  });
 
   const baseMetadata = {
     ...metadata,

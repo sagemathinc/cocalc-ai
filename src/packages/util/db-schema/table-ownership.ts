@@ -829,6 +829,7 @@ export const TABLE_OWNERSHIP = {
     [
       "account_admin_audit_log",
       "ai_usage_log",
+      "business_tax_id_refusals",
       "central_log",
       "client_error_log",
       "cloud_vm_log",

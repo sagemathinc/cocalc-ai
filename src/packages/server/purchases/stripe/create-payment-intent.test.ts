@@ -17,6 +17,7 @@ const mockAlertUncreditedSucceededPayment = jest.fn();
 const mockBindSubscriptionRenewalPaymentIntent = jest.fn();
 const mockBindAdminMembershipPayment = jest.fn();
 const mockDelay = jest.fn();
+const mockPoolQuery = jest.fn();
 
 jest.mock("@cocalc/server/launch/kill-switches", () => ({
   assertPaymentCheckoutAllowed: (...args: any[]) =>
@@ -52,6 +53,11 @@ jest.mock("@cocalc/server/messages/send", () => ({
   name: jest.fn(),
   support: jest.fn(),
   url: jest.fn(),
+}));
+
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: () => ({ query: (...args: any[]) => mockPoolQuery(...args) }),
 }));
 
 jest.mock("awaiting", () => ({
@@ -116,6 +122,7 @@ describe("createPaymentIntent", () => {
     });
     mockIsReadyToProcess.mockReturnValue(false);
     mockDelay.mockResolvedValue(undefined);
+    mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
     stripe.customers.retrieve.mockResolvedValue({
       invoice_settings: {},
     });
@@ -509,6 +516,112 @@ describe("createPaymentIntent", () => {
     ).rejects.toThrow("Name and address are required");
 
     expect(stripe.invoices.update).not.toHaveBeenCalled();
+  });
+
+  describe("EU and UK customers need a VAT ID", () => {
+    const eu = (tax_ids: any[] = []) => ({
+      invoice_settings: {},
+      address: { country: "DE" },
+      tax_ids: { data: tax_ids },
+    });
+
+    it("refuses an EU customer without a VAT ID before creating anything in Stripe, and records it", async () => {
+      stripe.customers.retrieve.mockResolvedValue(eu());
+      await expect(
+        createPaymentIntent({
+          account_id: "acct-1",
+          purpose: "auto-balance",
+          lineItems,
+        }),
+      ).rejects.toMatchObject({ code: "business_tax_id_required" });
+      expect(stripe.customers.retrieve).toHaveBeenCalledWith("cus_123", {
+        expand: ["tax_ids"],
+      });
+      expect(stripe.invoices.create).not.toHaveBeenCalled();
+      expect(stripe.invoices.pay).not.toHaveBeenCalled();
+      const [sql, params] = mockPoolQuery.mock.calls[0];
+      expect(sql).toContain("INSERT INTO business_tax_id_refusals");
+      expect(params.slice(1, 5)).toEqual([
+        "acct-1",
+        "DE",
+        "auto-balance",
+        "missing",
+      ]);
+    });
+
+    it("refuses a GB customer whose VAT ID Stripe could not verify", async () => {
+      stripe.customers.retrieve.mockResolvedValue({
+        address: { country: "GB" },
+        tax_ids: {
+          data: [
+            {
+              type: "gb_vat",
+              value: "GB123456789",
+              verification: { status: "unverified" },
+            },
+          ],
+        },
+      });
+      await expect(
+        createPaymentIntent({
+          account_id: "acct-1",
+          purpose: "membership-change",
+          lineItems,
+        }),
+      ).rejects.toThrow("CoCalc sells only to organizations with a VAT number");
+      expect(stripe.invoices.create).not.toHaveBeenCalled();
+    });
+
+    it("accepts an EU customer with a verified VAT ID, but never falls back to an untaxed invoice", async () => {
+      stripe.customers.retrieve.mockResolvedValue(
+        eu([
+          {
+            type: "eu_vat",
+            value: "DE123456789",
+            verification: { status: "verified" },
+          },
+        ]),
+      );
+      stripe.invoices.finalizeInvoice.mockRejectedValueOnce(
+        new Error("tax calculation failed"),
+      );
+      await expect(
+        createPaymentIntent({
+          account_id: "acct-1",
+          purpose: "auto-balance",
+          lineItems,
+        }),
+      ).rejects.toThrow("could not calculate tax");
+      expect(stripe.invoices.create).toHaveBeenCalled();
+      expect(stripe.invoices.update).not.toHaveBeenCalledWith(
+        "in_123",
+        { automatic_tax: { enabled: false } },
+      );
+      expect(stripe.invoices.pay).not.toHaveBeenCalled();
+    });
+
+    it("leaves a US customer unaffected, including the existing fallback", async () => {
+      stripe.customers.retrieve.mockResolvedValue({
+        address: { country: "US" },
+        tax_ids: { data: [] },
+      });
+      stripe.invoices.finalizeInvoice
+        .mockRejectedValueOnce(new Error("tax calculation failed"))
+        .mockResolvedValueOnce({
+          id: "in_123",
+          payment_intent: "pi_123",
+          hosted_invoice_url: "https://stripe.example/invoice",
+        });
+      await createPaymentIntent({
+        account_id: "acct-1",
+        purpose: "auto-balance",
+        lineItems,
+      });
+      expect(stripe.invoices.update).toHaveBeenCalledWith("in_123", {
+        automatic_tax: { enabled: false },
+      });
+      expect(mockPoolQuery).not.toHaveBeenCalled();
+    });
   });
 
   it.each([false, true])(
