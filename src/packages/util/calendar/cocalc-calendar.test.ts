@@ -690,6 +690,44 @@ describe("iCalendar export", () => {
     expect(iso(o.end!)).toBe("2027-03-15T07:00:00.000Z");
   });
 
+  it("a one-off with an offset is its exact instant, in a repeated DST hour too", () => {
+    // 01:30 happens twice in Seattle on Nov 1, 2026; -08:00 is the second.
+    const [o] = calendarOccurrences(
+      single([{ id: "o", title: "O", start: "2026-11-01T01:30-08:00" }]),
+      Date.parse("2026-11-01T00:00:00Z"),
+      Date.parse("2026-11-02T00:00:00Z"),
+    );
+    expect(iso(o.start)).toBe("2026-11-01T09:30:00.000Z");
+  });
+
+  it("a recurring event's deadline is due_offset_days, not a fixed due", () => {
+    const parsed = parseCalendar(
+      text({
+        format: "cocalc-calendar",
+        version: 1,
+        title: "S",
+        timezone: "America/Los_Angeles",
+        default_view: "agenda",
+        events: [
+          {
+            id: "r",
+            title: "R",
+            start: "2027-01-06",
+            all_day: true,
+            due: "2027-01-31",
+            recurrence: { freq: "monthly" },
+          },
+        ],
+      }),
+    );
+    expect(parsed.problems).toEqual([
+      {
+        path: "events[0].due",
+        message: "a recurring event uses due_offset_days instead",
+      },
+    ]);
+  });
+
   it("finds a long recurring occurrence that began before the range", () => {
     const week = single([
       {

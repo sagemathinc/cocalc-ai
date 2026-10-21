@@ -329,6 +329,9 @@ function parseEvent(
   let due: string | undefined;
   if (e.due != null) {
     if (!calendarTimeKind(e.due)) bad("due", "must be a date or a time");
+    else if (e.recurrence != null)
+      // One date cannot be each occurrence's deadline.
+      bad("due", "a recurring event uses due_offset_days instead");
     else due = e.due;
   }
   if (
@@ -871,9 +874,13 @@ export function calendarOccurrences(
           : calendarInstant(event.due, tz);
     occurrenceDates(event, tz, fromDate, lastDate).forEach((date, index) => {
       const [y, m, d] = date.split("-").map(Number);
+      // A one-off keeps its exact instant (in a repeated DST hour its wall
+      // clock time names two); a recurrence repeats the local time of day.
       const start = allDay
         ? zonedMs(y, m, d, 0, 0, 0, tz)
-        : zonedMs(y, m, d, p.hour, p.minute, p.second, tz);
+        : event.recurrence
+          ? zonedMs(y, m, d, p.hour, p.minute, p.second, tz)
+          : startMs;
       const end = allDay
         ? zonedMs(y, m, d + 1 + allDaySpan, 0, 0, 0, tz)
         : duration != null

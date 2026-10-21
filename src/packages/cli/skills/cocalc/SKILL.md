@@ -481,7 +481,8 @@ again with `--update` to keep the same card. Times are local to `timezone`:
 }
 ```
 
-`status` is `scheduled`, `pending`, `done` or `cancelled`. An item with a
+`status` is `scheduled`, `pending`, `done` or `cancelled`. A recurring
+event's deadline is `due_offset_days` (days after each occurrence), not `due`. An item with a
 `due` (or `due_offset_days`) is overdue once that day has ended, until it is
 marked `done` or `cancelled`; a `pending` item without one, once its time has
 passed. `recurrence` takes `freq`
