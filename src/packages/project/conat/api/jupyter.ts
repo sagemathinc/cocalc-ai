@@ -128,15 +128,22 @@ export { apiExecute };
 
 // The live-writer seed (option A): only from a notebook this backend has open
 // and ready; never starts one.
+// One SyncClient per request, released however the request ends: each
+// listens to the long-lived conat client until released (LIMIT-H1B3C-1).
 export async function seedOversizedHistory(opts: {
   path: string;
   epoch: number;
   oversizedSeq: number;
 }) {
-  return await seedHistory({
-    ...opts,
-    project_id,
-    syncdbOf: (path) => control.liveSyncdb(path),
-    syncClient: new SyncClient(getClient().conat()),
-  });
+  const syncClient = new SyncClient(getClient().conat());
+  try {
+    return await seedHistory({
+      ...opts,
+      project_id,
+      syncdbOf: (path) => control.liveSyncdb(path),
+      syncClient,
+    });
+  } finally {
+    syncClient.release();
+  }
 }

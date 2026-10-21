@@ -842,6 +842,10 @@ export class SyncDoc extends EventEmitter {
   // epoch seeded with the live value (from this request, or one before it).
   // No answer, a refusal, or an error is never a rollback: false.
   private liveSeedAsked = false;
+  // One deadline for the whole request: every await below, the writer's
+  // answer and each poll included (the tests shorten them).
+  private liveSeedWaitMs = LIVE_SEED_WAIT_MS;
+  private liveSeedPollMs = LIVE_SEED_POLL_MS;
   private askLiveWriterToSeed = async (
     oversizedSeq: number,
   ): Promise<boolean> => {
@@ -854,19 +858,24 @@ export class SyncDoc extends EventEmitter {
       return false;
     }
     this.liveSeedAsked = true;
-    const started = Date.now();
+    const end = Date.now() + this.liveSeedWaitMs;
+    const bounded = <T>(p: Promise<T>) => withDeadlineAt(end, p, Date.now);
     try {
-      const state = await client.historyResetState({
-        project_id: this.project_id,
-        path: this.syncPath,
-        ...this.patchesPersistOpts(),
-      });
-      const result = await client.askLiveWriterToSeed({
-        project_id: this.project_id,
-        path: this.syncPath,
-        epoch: state.epoch,
-        oversizedSeq,
-      });
+      const state = await bounded(
+        client.historyResetState({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+        }),
+      );
+      const result = await bounded(
+        client.askLiveWriterToSeed({
+          project_id: this.project_id,
+          path: this.syncPath,
+          epoch: state.epoch,
+          oversizedSeq,
+        }),
+      );
       if (!result?.seeded) {
         this.dbg("askLiveWriterToSeed")(
           `not seeded -- ${result?.reason} ${result?.message ?? ""}`,
@@ -874,14 +883,15 @@ export class SyncDoc extends EventEmitter {
         // busy: another opener's request is seeding it right now; if its
         // epoch moves within this request's time, open with it
         if (result?.reason == "busy") {
-          const end = started + LIVE_SEED_WAIT_MS;
           while (Date.now() < end && !this.isClosed()) {
-            await delay(LIVE_SEED_POLL_MS);
-            const now = await client.historyResetState({
-              project_id: this.project_id,
-              path: this.syncPath,
-              ...this.patchesPersistOpts(),
-            });
+            await delay(Math.min(this.liveSeedPollMs, end - Date.now()));
+            const now = await bounded(
+              client.historyResetState({
+                project_id: this.project_id,
+                path: this.syncPath,
+                ...this.patchesPersistOpts(),
+              }),
+            );
             if (now.epoch > state.epoch) {
               this.oversizedHistoryReset = true;
               this.history_epoch = now.epoch;

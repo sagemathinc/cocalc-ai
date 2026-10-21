@@ -433,3 +433,76 @@ describe("(A) two openers at once", () => {
     for (const opener of openers) opener.close();
   });
 });
+
+// The opener's whole request is under one deadline (astra, #1266): the
+// first state read, the writer's answer and every poll of a busy writer.
+// Then the user is told, with the restart from the .ipynb, and nothing is
+// reset.
+describe("(A) the opener's wait is bounded, even by an RPC that never answers", () => {
+  const never = () => new Promise<never>(() => {});
+  const WAIT_MS = 1500;
+
+  async function bounded(hook: (client: any) => void) {
+    const project_id = uuid();
+    const path = ipynbPath(`never-${uuid().slice(0, 6)}.ipynb`);
+    const writer = await liveWriter(project_id, path);
+    const before = await stateOf(project_id, path);
+    const opener = openNotebook(project_id, path);
+    (opener as any).liveSeedWaitMs = WAIT_MS;
+    (opener as any).liveSeedPollMs = 100;
+    hook((opener as any).client);
+    const unloadable: any[] = [];
+    let asked = 0;
+    opener.on("history-unloadable", (x) => unloadable.push(x));
+    const t0 = Date.now();
+    await wait({ until: () => unloadable.length > 0, timeout: 30000 });
+    const elapsed = Date.now() - t0;
+    expect(unloadable[0]).toMatchObject({ restart: "ipynb" });
+    expect((await stateOf(project_id, path)).epoch).toBe(before.epoch);
+    opener.close();
+    writer.close();
+    return { elapsed, asked };
+  }
+
+  it("the first historyResetState never resolves", async () => {
+    let asked = 0;
+    const { elapsed } = await bounded((client) => {
+      client.historyResetState = never;
+      client.askLiveWriterToSeed = async () => {
+        asked += 1;
+        return { seeded: false, reason: "failed" };
+      };
+    });
+    expect(asked).toBe(0);
+    expect(elapsed).toBeGreaterThanOrEqual(WAIT_MS - 100);
+  });
+
+  it("the live writer never answers", async () => {
+    const { elapsed } = await bounded((client) => {
+      client.askLiveWriterToSeed = never;
+    });
+    expect(elapsed).toBeGreaterThanOrEqual(WAIT_MS - 100);
+  });
+
+  it("the writer is busy, and a poll's historyResetState never resolves", async () => {
+    let polls = 0;
+    const { elapsed } = await bounded((client) => {
+      const real = client.historyResetState.bind(client);
+      let first = true;
+      client.historyResetState = (opts) => {
+        if (first) {
+          first = false;
+          return real(opts);
+        }
+        polls += 1;
+        return never();
+      };
+      client.askLiveWriterToSeed = async () => ({
+        seeded: false,
+        reason: "busy",
+      });
+    });
+    expect(polls).toBe(1);
+    expect(elapsed).toBeGreaterThanOrEqual(WAIT_MS - 100);
+  });
+});
