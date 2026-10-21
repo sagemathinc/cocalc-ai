@@ -14,6 +14,7 @@ import type { Application } from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { installProjectPersistVolumes } from "./persist-volume";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
 import { initPersistFenceService } from "@cocalc/conat/persist/fence";
@@ -237,6 +238,7 @@ export async function startStandaloneProjectHostConatPersist({
   // Both services share this process's stream cache, and so its maintenance
   // hooks.
   const maintenanceHooks = maintenance?.createLocalHooks(id);
+  installProjectPersistVolumes();
   const persistServer = createPersistServer({
     client,
     id,

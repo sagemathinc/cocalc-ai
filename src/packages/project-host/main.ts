@@ -28,6 +28,7 @@ import {
 import { setConatClient } from "@cocalc/conat/client";
 import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { installProjectPersistVolumes } from "./persist-volume";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { initPersistFenceService } from "@cocalc/conat/persist/fence";
 import {
@@ -594,6 +595,9 @@ export async function main(
         holderAlive: isFenceHolderAlive,
         store: fileFenceStore(persistFenceDir()),
       });
+  if (!externalPersist) {
+    installProjectPersistVolumes();
+  }
   const persistServer = externalPersist
     ? undefined
     : createPersistServer({ client: conatClient });

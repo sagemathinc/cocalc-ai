@@ -4,6 +4,7 @@
  */
 
 import { exists } from "@cocalc/backend/misc/async-utils-node";
+import { persistVolumePath } from "./persist-volume";
 import {
   getSubvolumeField,
   type Subvolume,
@@ -89,6 +90,20 @@ async function setSubvolumeReadonlyUnlocked(
     err_on_exit: true,
     verbose: false,
   });
+}
+
+// A project's persist volume (its edit history, see persist-volume.ts) is
+// frozen and released with its home, so an archive's final backup holds all
+// of it.
+async function setPersistVolumeReadonlyUnlocked(
+  volume: Subvolume,
+  readOnly: boolean,
+): Promise<void> {
+  const project_id = volume.name.match(/^project-([0-9a-f-]{36})$/i)?.[1];
+  const path = project_id ? persistVolumePath(project_id) : undefined;
+  if (path == null || !(await exists(path))) return;
+  if ((await isSubvolumeReadonly(path)) === readOnly) return;
+  await setSubvolumeReadonlyUnlocked(path, readOnly);
 }
 
 export async function setSubvolumeReadonly(
@@ -293,10 +308,14 @@ export async function freezeVolumeForArchiveBackup(
       run: async () => {
         if (await isSubvolumeReadonly(volume.path)) {
           alreadyReadonly = true;
-          return;
+        } else {
+          await stageLocalSnapshotsUnlocked(volume);
+          await setSubvolumeReadonlyUnlocked(volume.path, true);
         }
-        await stageLocalSnapshotsUnlocked(volume);
-        await setSubvolumeReadonlyUnlocked(volume.path, true);
+        // After the home: the persist server makes no volume ready while
+        // the home is frozen, so one it is creating now is frozen here or
+        // never becomes ready.
+        await setPersistVolumeReadonlyUnlocked(volume, true);
       },
     });
   });
@@ -318,6 +337,7 @@ export async function releaseArchiveVolumeFreeze(
             await deleteStagedArchiveSnapshotsUnlocked(volume);
             return "absent" as const;
           }
+          await setPersistVolumeReadonlyUnlocked(volume, false);
           if (await isSubvolumeReadonly(volume.path)) {
             await setSubvolumeReadonlyUnlocked(volume.path, false);
             await restoreLocalSnapshotsUnlocked(volume);
@@ -350,6 +370,7 @@ export async function releaseArchiveVolumeFreezeIfGenerationMatches({
             return "absent";
           }
           if (!(await isSubvolumeReadonly(volume.path))) {
+            await setPersistVolumeReadonlyUnlocked(volume, false);
             await restoreLocalSnapshotsUnlocked(volume);
             return "already-writable";
           }
@@ -361,6 +382,7 @@ export async function releaseArchiveVolumeFreezeIfGenerationMatches({
               `refusing to release archive freeze at generation ${generation}; expected ${expectedGeneration}`,
             );
           }
+          await setPersistVolumeReadonlyUnlocked(volume, false);
           await setSubvolumeReadonlyUnlocked(volume.path, false);
           await restoreLocalSnapshotsUnlocked(volume);
           return "released";
