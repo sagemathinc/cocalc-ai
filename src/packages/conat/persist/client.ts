@@ -18,6 +18,7 @@ import type {
   ResetHistoryOptions,
   ResetHistoryResult,
   HistoryInclusion,
+  ArchivedHistoryEpoch,
 } from "./storage";
 export { StoredMessage, StorageOptions };
 import { persistSubject, SERVICE, type User } from "./util";
@@ -1038,6 +1039,38 @@ class PersistStreamClient extends EventEmitter {
       await this.socket.request(opts, {
         headers: {
           cmd: "historyInclusion",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  historyArchives = async ({ timeout }: { timeout?: number } = {}): Promise<
+    ArchivedHistoryEpoch[]
+  > => {
+    return this.checkForError(
+      await this.socket.request(null, {
+        headers: {
+          cmd: "historyArchives",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  // irreversibly delete archived history; the current history is kept
+  purgeArchivedHistory = async ({
+    timeout,
+  }: { timeout?: number } = {}): Promise<{
+    records: number;
+    bytes: number;
+  }> => {
+    return this.checkForError(
+      await this.socket.request(null, {
+        headers: {
+          cmd: "purgeArchivedHistory",
           timeout,
         } as any,
         timeout,
