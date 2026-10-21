@@ -468,6 +468,60 @@ it("checks @agents in an answer as in a person's own message", async () => {
     } as any);
     const sent = await respond("response-2", `Ask ${mention} first`);
     expect(sent.ok).toBe(true);
+    // Its reply lost, the same response is retried after the agent was
+    // disabled (or the lookup fails): it was accepted, so it still is.
+    getMentionIdentity.mockRejectedValue(new Error("lookup failed"));
+    getMentionIdentity.mockClear();
+    const retried = await respond("response-2", `Ask ${mention} first`);
+    expect(retried.ok).toBe(true);
+    expect(getMentionIdentity).not.toHaveBeenCalled();
+    // An option the agent wrote is not the person's own reference: choosing
+    // it is never refused over its @agent.
+    const choice = upsertAcpAttention({
+      project_id: projectId,
+      account_id: accountId,
+      path: "agent.chat",
+      thread_id: "thread-1",
+      turn_id: "turn-1",
+      source_kind: "codex_sync_question",
+      source_id: "thread-1:turn-1:request-choice",
+      attention_kind: "question",
+      is_blocking: true,
+      title: "Who reviews?",
+      questions: [
+        {
+          id: "who",
+          header: "Who",
+          question: "Who reviews?",
+          isOther: true,
+          options: [{ label: `Ask ${mention}`, description: "" }],
+        },
+      ],
+      chat: {
+        project_id: projectId,
+        path: "agent.chat",
+        thread_id: "thread-1",
+        message_id: "assistant-1",
+        message_date: ownerDate,
+        sender_id: "gpt-6-astra",
+      },
+    });
+    const answer = (response_id: string, text: string) =>
+      acpTestInternals.handleAcpAttentionRequest({
+        action: "respond",
+        project_id: projectId,
+        account_id: accountId,
+        attention_id: choice.attention_id,
+        response_id,
+        answers: { who: [text] },
+      });
+    // ...but the same reference typed as a custom answer is checked.
+    expect(await answer("choice-1", `Ask ${mention} now`)).toMatchObject({
+      ok: false,
+    });
+    expect(getMentionIdentity).toHaveBeenCalledTimes(1);
+    expect((await answer("choice-2", `Ask ${mention}`)).ok).toBe(true);
+    expect(getMentionIdentity).toHaveBeenCalledTimes(1);
   } finally {
     hubApi.agent.getMentionIdentity = original;
   }

@@ -11994,12 +11994,22 @@ async function handleAcpAttentionRequest(
       const answers = Object.fromEntries(
         Object.entries(normalized).map(([id, value]) => [id, value.answers]),
       );
-      // @agents in an answer are checked as in a person's own message: each
-      // must name an available agent, checked under this account.
-      if (!request.decline) {
+      // @agents in what the person wrote (not the agent's own option labels)
+      // are checked as in their own message: each must name an available
+      // agent, checked under this account. A retry of a stored response is
+      // not checked again: it was accepted, and nothing new is stored.
+      const custom = current.questions.flatMap((question) => {
+        const labels = new Set(
+          (question.options ?? []).map(({ label }) => label),
+        );
+        return (answers[question.id] ?? []).filter(
+          (answer) => !labels.has(answer),
+        );
+      });
+      if (!request.decline && !current.response_id && custom.length > 0) {
         try {
           await resolveHumanAgentMentions(
-            Object.values(answers).flat().join("\n"),
+            custom.join("\n"),
             { account_id: request.account_id, project_id: request.project_id },
             hubApi.agent,
           );
