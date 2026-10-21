@@ -677,6 +677,95 @@ describe("iCalendar export", () => {
     ).toEqual(["2026-10-05"]);
   });
 
+  it("month-end days export as iCalendar's last-of-range, as the agenda shows", () => {
+    const rrule = (start: string, recurrence: object) =>
+      /RRULE:(.*)/.exec(
+        calendarToIcs(
+          single([{ id: "m", title: "M", start, all_day: true, recurrence }]),
+          { nowMs: 0 },
+        ),
+      )![1];
+    const jan31 = single([
+      {
+        id: "m",
+        title: "M",
+        start: "2027-01-31",
+        all_day: true,
+        recurrence: { freq: "monthly" },
+      },
+    ]);
+    // The agenda: the 31st, or the month's last day.
+    expect(
+      calendarOccurrences(
+        jan31,
+        Date.parse("2027-01-01T08:00:00Z"),
+        Date.parse("2027-05-01T08:00:00Z"),
+      ).map((o) => o.date),
+    ).toEqual(["2027-01-31", "2027-02-28", "2027-03-31", "2027-04-30"]);
+    // The export: the last of the 28th..31st that each month has.
+    expect(rrule("2027-01-31", { freq: "monthly" })).toBe(
+      "FREQ=MONTHLY;BYMONTHDAY=28,29,30,31;BYSETPOS=-1",
+    );
+    // The 30th: Feb 28 (29 in leap years), else the 30th.
+    expect(rrule("2027-01-30", { freq: "monthly", interval: 2 })).toBe(
+      "FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=28,29,30;BYSETPOS=-1",
+    );
+    // Other days keep their positions.
+    expect(
+      rrule("2027-01-15", { freq: "monthly", bymonthday: [15, 1, 31] }),
+    ).toBe("FREQ=MONTHLY;BYMONTHDAY=1,15,28,29,30,31;BYSETPOS=1,2,-1");
+    // Feb 29 each year: Feb 28 in other years.
+    expect(rrule("2028-02-29", { freq: "yearly" })).toBe(
+      "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=28,29;BYSETPOS=-1",
+    );
+    // Several months, every year: per month.
+    expect(
+      rrule("2027-01-31", {
+        freq: "yearly",
+        bymonth: [1, 2],
+        bymonthday: [31],
+      }),
+    ).toBe("FREQ=MONTHLY;BYMONTH=1,2;BYMONTHDAY=28,29,30,31;BYSETPOS=-1");
+    // Up to the 28th: written as is.
+    expect(rrule("2027-01-28", { freq: "monthly" })).toBe("FREQ=MONTHLY");
+  });
+
+  it("refuses month-end rules iCalendar cannot write exactly", () => {
+    const problems = (recurrence: object, start = "2027-01-31") =>
+      parseCalendar(
+        text({
+          format: "cocalc-calendar",
+          version: 1,
+          title: "S",
+          timezone: "America/Los_Angeles",
+          default_view: "agenda",
+          events: [{ id: "m", title: "M", start, all_day: true, recurrence }],
+        }),
+      ).problems.map((p) => p.path);
+    expect(problems({ freq: "monthly", bymonthday: [30, 31] })).toEqual([
+      "events[0].recurrence.bymonthday",
+    ]);
+    expect(
+      problems({ freq: "monthly", bymonthday: [31], byweekday: ["FR"] }),
+    ).toEqual(["events[0].recurrence.bymonthday"]);
+    expect(problems({ freq: "yearly", interval: 2, bymonth: [1, 3] })).toEqual([
+      "events[0].recurrence.bymonthday",
+    ]);
+    expect(problems({ freq: "yearly", interval: 2 })).toEqual([]);
+  });
+
+  it("escapes every line break in text, a lone carriage return too", () => {
+    const ics = calendarToIcs(
+      single([
+        { id: "e", title: "a\rb\nc\r\nd", start: "2027-01-01", all_day: true },
+      ]),
+      { nowMs: 0 },
+    );
+    expect(ics).toContain("SUMMARY:a\\nb\\nc\\nd");
+    // Only CRLF line ends: no CR or LF anywhere else.
+    expect(ics.replace(/\r\n/g, "")).not.toMatch(/[\r\n]/);
+  });
+
   it("exports one event alone", () => {
     const one = calendarToIcs(cal, { eventId: "delaware" });
     expect(one.match(/BEGIN:VEVENT/g)).toHaveLength(1);

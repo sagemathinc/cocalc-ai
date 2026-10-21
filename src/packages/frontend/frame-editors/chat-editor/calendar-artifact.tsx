@@ -182,12 +182,16 @@ function Agenda({
   calendar: CocalcCalendar;
   now?: number;
 }) {
-  const now = nowOverride ?? Date.now();
-  const agenda = useMemo(
-    () => calendarAgenda(calendar, now),
-    // A new agenda once a minute is plenty.
-    [calendar, Math.floor(now / 60_000)],
-  );
+  // The clock moves on while the card is open: items become overdue and past
+  // ones leave, once a minute.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (nowOverride != null) return;
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, [nowOverride]);
+  const now = nowOverride ?? clock;
+  const agenda = useMemo(() => calendarAgenda(calendar, now), [calendar, now]);
   const dayLabel = (date: string) =>
     new Intl.DateTimeFormat(undefined, {
       weekday: "short",

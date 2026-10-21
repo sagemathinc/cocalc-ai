@@ -486,7 +486,9 @@ again with `--update` to keep the same card. Times are local to `timezone`:
 marked `done` or `cancelled`; a `pending` item without one, once its time has
 passed. `recurrence` takes `freq`
 (`daily`, `weekly`, `monthly`, `yearly`), `interval`, `bymonthday`,
-`bymonth`, `byweekday` (`"MO"`...), `until` and `count`. Links must be
+`bymonth`, `byweekday` (`"MO"`...), `until` and `count`. A day after the
+28th falls on the last day of shorter months (the 31st is Feb 28); a rule
+may name at most one such day, and not together with `byweekday`. Links must be
 http(s). Keep the calendar's `id` and each event's `id` unchanged: they name
 the events in calendar apps that imported the .ics. The card names anything it cannot read and still shows the rest. A
 calendar is for people to see; to be woken at a time, also set a watcher

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import CalendarArtifact from "./calendar-artifact";
 import { isCalendarPath } from "./file-artifact";
 
@@ -147,6 +147,46 @@ test("a due time is shown with its time; a due date without", async () => {
     (await screen.findByText(title)).parentElement!;
   expect(await row("Timed deadline")).toHaveTextContent(/due Jan 31.*3:00/);
   expect(await row("Dated deadline")).toHaveTextContent(/due Jan 31$/);
+});
+
+test("while open, an item becomes overdue when its time comes", async () => {
+  jest.useFakeTimers({ now: Date.parse("2027-01-31T22:58:30Z") });
+  try {
+    readFile.mockResolvedValue(
+      JSON.stringify({
+        ...calendar,
+        events: [
+          {
+            id: "soon",
+            title: "Due at 3 pm",
+            start: "2027-01-31",
+            all_day: true,
+            due: "2027-01-31T15:00",
+            status: "pending",
+          },
+        ],
+      }),
+    );
+    render(
+      <CalendarArtifact path="/home/user/a.cal.json" historical={false} />,
+    );
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText("Due at 3 pm")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Overdue" })).toBeNull();
+    // 3 pm in Seattle passes; the card moves on by itself.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2 * 60_000);
+    });
+    expect(
+      within(screen.getByRole("region", { name: "Overdue" })).getByText(
+        "Due at 3 pm",
+      ),
+    ).toBeInTheDocument();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("problems are named, and what can be read is still shown", async () => {

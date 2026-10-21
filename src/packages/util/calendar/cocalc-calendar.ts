@@ -382,6 +382,17 @@ function parseEvent(
       bad(`recurrence${field ? `.${field}` : ""}`, message),
     );
     if (!recurrence) usable = false;
+    else if (startKind) {
+      const startDate =
+        startKind === "date"
+          ? e.start
+          : calendarLocalDate(calendarInstant(e.start, timezone), timezone);
+      const rule = monthEndRule(recurrence, startDate);
+      if (rule.kind === "unsupported") {
+        bad("recurrence.bymonthday", rule.message);
+        usable = false;
+      }
+    }
   }
   if (!usable) return;
   return {
@@ -408,6 +419,69 @@ function parseEvent(
       : {}),
     ...(links?.length ? { links } : {}),
     ...(typeof e.sensor_id === "string" ? { sensor_id: e.sensor_id } : {}),
+  };
+}
+
+/**
+ * How a monthly or yearly rule's month-end days are written in iCalendar.
+ * Here a day past a month's end falls on its last day (the 31st is Feb 28);
+ * an RRULE skips such months, so one day after the 28th is written as
+ * "the last of 28..that day" (BYMONTHDAY=28,29,30,31;BYSETPOS=-1), with the
+ * other days kept by their positions. Rules that cannot be written exactly
+ * are refused when the calendar is read.
+ */
+type MonthEndRule =
+  | { kind: "none" }
+  | {
+      kind: "setpos";
+      freq: "MONTHLY" | "YEARLY";
+      bymonth?: number[];
+      bymonthday: number[];
+      bysetpos: number[];
+    }
+  | { kind: "unsupported"; message: string };
+
+function monthEndRule(r: CalendarRecurrence, startDate: string): MonthEndRule {
+  if (r.freq !== "monthly" && r.freq !== "yearly") return { kind: "none" };
+  const [, sm, sd] = startDate.split("-").map(Number);
+  const days = r.bymonthday ?? (r.byweekday ? undefined : [sd]);
+  const late = (days ?? []).filter((d) => d > 28);
+  if (late.length === 0) return { kind: "none" };
+  if (late.length > 1)
+    return {
+      kind: "unsupported",
+      message:
+        "at most one day after the 28th (it falls on the last day of shorter months)",
+    };
+  if (r.byweekday)
+    return {
+      kind: "unsupported",
+      message: "a day after the 28th cannot be combined with byweekday",
+    };
+  const months = r.bymonth ?? [sm];
+  let freq: "MONTHLY" | "YEARLY" = "MONTHLY";
+  if (r.freq === "yearly") {
+    // BYSETPOS picks within each period: a year of one month is that month;
+    // several months need a monthly rule, which only every year can be.
+    if (months.length === 1) freq = "YEARLY";
+    else if ((r.interval ?? 1) > 1)
+      return {
+        kind: "unsupported",
+        message:
+          "a day after the 28th in several months needs interval 1 for a yearly rule",
+      };
+  }
+  const low = [...new Set((days ?? []).filter((d) => d <= 28))].sort(
+    (a, b) => a - b,
+  );
+  const range: number[] = [];
+  for (let d = 28; d <= late[0]; d++) range.push(d);
+  return {
+    kind: "setpos",
+    freq,
+    ...(r.freq === "yearly" || r.bymonth ? { bymonth: months } : {}),
+    bymonthday: [...new Set([...low, ...range])].sort((a, b) => a - b),
+    bysetpos: [...low.map((_, i) => i + 1), -1],
   };
 }
 
@@ -838,7 +912,7 @@ export function isOverdue(o: CalendarOccurrence, nowMs: number): boolean {
 function icsText(value: string): string {
   return value
     .replace(/\\/g, "\\\\")
-    .replace(/\r?\n/g, "\\n")
+    .replace(/\r\n|\r|\n/g, "\\n")
     .replace(/,/g, "\\,")
     .replace(/;/g, "\\;");
 }
@@ -961,11 +1035,27 @@ export function calendarToIcs(
     }
     const r = e.recurrence;
     if (r) {
-      const parts = [`FREQ=${r.freq.toUpperCase()}`];
-      if (r.interval) parts.push(`INTERVAL=${r.interval}`);
-      if (r.bymonth) parts.push(`BYMONTH=${r.bymonth.join(",")}`);
-      if (r.bymonthday) parts.push(`BYMONTHDAY=${r.bymonthday.join(",")}`);
-      if (r.byweekday) parts.push(`BYDAY=${r.byweekday.join(",")}`);
+      const startDate = DATE.test(e.start)
+        ? e.start
+        : calendarLocalDate(calendarInstant(e.start, tz), tz);
+      const monthEnd = monthEndRule(r, startDate);
+      const parts: string[] = [];
+      if (monthEnd.kind === "setpos") {
+        parts.push(`FREQ=${monthEnd.freq}`);
+        // A yearly rule written monthly runs every year: interval is 1.
+        if (r.interval && monthEnd.freq === r.freq.toUpperCase())
+          parts.push(`INTERVAL=${r.interval}`);
+        if (monthEnd.bymonth)
+          parts.push(`BYMONTH=${monthEnd.bymonth.join(",")}`);
+        parts.push(`BYMONTHDAY=${monthEnd.bymonthday.join(",")}`);
+        parts.push(`BYSETPOS=${monthEnd.bysetpos.join(",")}`);
+      } else {
+        parts.push(`FREQ=${r.freq.toUpperCase()}`);
+        if (r.interval) parts.push(`INTERVAL=${r.interval}`);
+        if (r.bymonth) parts.push(`BYMONTH=${r.bymonth.join(",")}`);
+        if (r.bymonthday) parts.push(`BYMONTHDAY=${r.bymonthday.join(",")}`);
+        if (r.byweekday) parts.push(`BYDAY=${r.byweekday.join(",")}`);
+      }
       if (r.count) parts.push(`COUNT=${r.count}`);
       if (r.until)
         parts.push(
