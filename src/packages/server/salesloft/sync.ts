@@ -248,7 +248,9 @@ export async function removeOptedOutUsers(delayMs: number = 1000) {
 }
 
 // Deleted accounts never sync again (they have no email address), so their
-// Salesloft people are deleted here.
+// Salesloft people are deleted here. Called by the deleted-account retention
+// loop (server/accounts/deleted-account-retention.ts), which runs in every
+// deployment, unlike the Salesloft sync loop.
 export async function removeDeletedUsers(
   delayMs: number = 1000,
 ): Promise<{ deleted: number; failed: number }> {

@@ -18,6 +18,8 @@ for accounts deleted before deletion did that itself.
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import { DELETED_ACCOUNT_CLEARED_FIELDS } from "@cocalc/util/db-schema/deleted-account-fields";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { removeDeletedUsers } from "@cocalc/server/salesloft/sync";
 import { ensureAccountRevocationsTable } from "./revocation";
 
 const log = getLogger("server:accounts:deleted-account-retention");
@@ -70,6 +72,20 @@ export async function purgeDeletedAccountPersonalData({
   return { cleared: cleared ?? 0, emailsPurged: emailsPurged ?? 0 };
 }
 
+// Delete the Salesloft people of deleted accounts, if Salesloft is configured.
+// Without an api key nothing is synced to Salesloft, and existing links are
+// kept until it is configured again.
+export async function purgeDeletedAccountSalesloftPeople(): Promise<{
+  deleted: number;
+  failed: number;
+} | null> {
+  const { salesloft_api_key } = await getServerSettings();
+  if (!salesloft_api_key) {
+    return null;
+  }
+  return await removeDeletedUsers();
+}
+
 let started = false;
 
 // Started by the primary conat-api bay worker (server/conat/index.ts) and by
@@ -82,7 +98,18 @@ export default function initDeletedAccountRetention(): void {
     CHECK_INTERVAL_MS,
     DELETED_ACCOUNT_EMAIL_RETENTION_DAYS,
   });
+  let running = false;
   const run = async () => {
+    // a long Salesloft pass must not overlap the next run
+    if (running) return;
+    running = true;
+    try {
+      await runOnce();
+    } finally {
+      running = false;
+    }
+  };
+  const runOnce = async () => {
     try {
       // repeat full batches, so a large backlog is cleared in one pass
       for (let i = 0; i < 100; i++) {
@@ -98,6 +125,17 @@ export default function initDeletedAccountRetention(): void {
       }
     } catch (err) {
       log.error("deleted-account retention failed", err);
+    }
+    try {
+      const salesloft = await purgeDeletedAccountSalesloftPeople();
+      if (
+        salesloft != null &&
+        (salesloft.deleted > 0 || salesloft.failed > 0)
+      ) {
+        log.info("deleted salesloft people of deleted accounts", salesloft);
+      }
+    } catch (err) {
+      log.error("deleted-account salesloft purge failed", err);
     }
   };
   void run();

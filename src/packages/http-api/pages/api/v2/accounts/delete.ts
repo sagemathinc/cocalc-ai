@@ -3,7 +3,7 @@ Delete the account that the user is currently signed in using.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import deleteAccount from "@cocalc/server/accounts/delete";
+import { deleteClusterAccount } from "@cocalc/server/inter-bay/accounts";
 import isPost from "@cocalc/http-api/lib/api/is-post";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
@@ -32,7 +32,10 @@ async function handle(req, res) {
         account_id,
         action: "delete the account",
       });
-      await deleteAccount(account_id, {
+      // through the cluster directory, so the account's home bay deletes it and
+      // the seed-owned directory entry (with the email address) is removed too
+      await deleteClusterAccount({
+        account_id,
         initiator: "self",
         actor_account_id: account_id,
       });
