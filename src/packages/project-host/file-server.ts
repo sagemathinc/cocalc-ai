@@ -2404,6 +2404,9 @@ async function applyManagedProjectVolumeQuotaRaw({
       operation_class,
       priority,
     }).catch((err) => {
+      // background work held off: the audit tries again soon, as for the
+      // limit (repairProjectQuotaLimits)
+      if (err instanceof BtrfsMutationDeferredError) throw err;
       logger.warn("unable to update project quota group", {
         project_id,
         err: `${err}`,

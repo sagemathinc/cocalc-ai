@@ -232,6 +232,61 @@ describe("btrfs simple-quota queue", () => {
     ).rejects.toThrow(/failed after 1 attempts: .*SECURITY_DENY/);
   });
 
+  it("hands deferred background work back to its caller at once", async () => {
+    process.env.COCALC_BTRFS_QUOTA_MODE = "simple";
+    const btrfsMock = jest.fn(async ({ args }: { args: string[] }) => {
+      if (args.join(" ") === "filesystem show /mnt/test") {
+        return {
+          exit_code: 0,
+          stdout: "Label: none  uuid: 11111111-2222-4333-8444-555555555555\n",
+          stderr: "",
+        };
+      }
+      throw new Error(`unexpected btrfs args: ${args.join(" ")}`);
+    });
+    jest.doMock("./util", () => ({
+      refusedByStorageWrapper: () => false,
+      btrfs: (opts: { args: string[] }) => btrfsMock(opts),
+    }));
+    jest.doMock("node:fs/promises", () => ({
+      readFile: async (path: string) =>
+        path.endsWith("/enabled") ? "1\n" : "simple\n",
+    }));
+    jest.doMock("@cocalc/backend/misc/async-utils-node", () => ({
+      exists: async () => true,
+    }));
+    const {
+      BtrfsMutationDeferredError,
+      configureBtrfsBackgroundMutationGuard,
+    } = await import("./operation-cache");
+    const { queueSyncQuotaGroup, getBtrfsQuotaQueueStatus } =
+      await import("./quota-queue");
+    configureBtrfsBackgroundMutationGuard(() => "io_pressure_recovery");
+    try {
+      const started = Date.now();
+      const result = queueSyncQuotaGroup({
+        mount: "/mnt/test",
+        group: "1/42",
+        members: ["/mnt/test/project-1"],
+        size: "110M",
+        priority: "scheduled",
+        wait: true,
+      });
+      await expect(result).rejects.toBeInstanceOf(BtrfsMutationDeferredError);
+      // not retried (that took ~30 s), and not a failure
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(getBtrfsQuotaQueueStatus("/mnt/test")).toMatchObject({
+        queued_count: 0,
+        failed_count: 0,
+      });
+      expect(
+        btrfsMock.mock.calls.filter(([{ args }]) => args[0] === "qgroup"),
+      ).toEqual([]);
+    } finally {
+      configureBtrfsBackgroundMutationGuard(undefined);
+    }
+  });
+
   it("treats the old qgroup mode env as simple quotas", async () => {
     process.env.COCALC_BTRFS_QUOTA_MODE = "qgroup";
     const { btrfsQuotaMode } = await import("./config");

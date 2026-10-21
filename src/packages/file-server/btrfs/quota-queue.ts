@@ -8,6 +8,7 @@ import { btrfs, refusedByStorageWrapper } from "./util";
 import { btrfsQuotasDisabled } from "./config";
 import { ensureBtrfsQuotaMode } from "./quota-mode";
 import {
+  BtrfsMutationDeferredError,
   type BtrfsMutationContext,
   type BtrfsMutationPriority,
   effectiveBtrfsMutationContext,
@@ -505,6 +506,20 @@ async function runWorker(): Promise<void> {
           typeof (err as any)?.stderr === "string" && (err as any).stderr.trim()
             ? `${(err as any).stderr}`.trim()
             : `${(err as any)?.message ?? err}`;
+        if (err instanceof BtrfsMutationDeferredError) {
+          // Background work held off (e.g., under I/O pressure): its caller
+          // tries again later (as the quota audit does), so it is not retried
+          // here, nor a failure.
+          db().prepare(`DELETE FROM ${TABLE} WHERE id=?`).run(claimed.id);
+          logger.info("deferred btrfs quota work", {
+            id: claimed.id,
+            kind: claimed.kind,
+            mount: claimed.mount,
+            reason: err.reason,
+          });
+          settleWaiter(claimed.id, err);
+          continue;
+        }
         if (shouldRetry(claimed) && !refusedByStorageWrapper(err)) {
           const delayMs = retryDelayMs(claimed.attempts);
           db()
