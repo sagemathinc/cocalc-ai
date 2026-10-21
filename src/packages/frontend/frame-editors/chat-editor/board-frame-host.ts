@@ -371,12 +371,15 @@ function visibleRect(
 // placeholder is visible. With the view in several places, that is the
 // newest place the user can see (so a visible card never says the board is
 // elsewhere while no board shows); if none can be seen, the frame is hidden
-// without unloading it.
+// without unloading it, still belonging to the place it was last shown.
 export function layoutBoardFrames(): void {
   for (const entry of entries.values()) {
     const { placeholders } = entry;
     if (placeholders.length === 0) continue;
-    let chosen = placeholders[placeholders.length - 1];
+    // With none visible, the frame stays with the placeholder it covered
+    // (so focus leaving it continues from where the board was last shown).
+    const previous = activeOf(entry)!;
+    let chosen = previous;
     let shown: ReturnType<typeof visibleRect>;
     for (let i = placeholders.length - 1; i >= 0; i--) {
       shown = visibleRect(placeholders[i]);

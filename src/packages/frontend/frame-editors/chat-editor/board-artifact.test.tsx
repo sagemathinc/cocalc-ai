@@ -708,6 +708,48 @@ test("hiding a frame that has focus moves focus to a visible control first", asy
   expect(document.activeElement).not.toBe(frame);
 });
 
+test("hidden everywhere, focus leaves the frame next to where it was last shown", async () => {
+  const first = render(
+    <div>
+      <Board />
+      <button>after older</button>
+    </div>,
+  );
+  const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+  await within(first.container).findByText("Current saved board");
+  const second = render(
+    <div>
+      <Board />
+      <button>after newer</button>
+    </div>,
+  );
+  await waitFor(() =>
+    expect(
+      within(first.container).getByText("This board is shown in another view."),
+    ).toBeInTheDocument(),
+  );
+  const older = placeholder(first.container);
+  const newer = placeholder(second.container);
+  const olderSize = jest
+    .spyOn(older, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 50, 400, 300));
+  // The newer place is hidden: the frame covers the older one.
+  jest.spyOn(newer, "getBoundingClientRect").mockReturnValue(rect(0, 0, 0, 0));
+  act(() => layoutBoardFrames());
+  expect(frame.style.top).toBe("50px");
+  act(() => older.focus());
+  expect(document.activeElement).toBe(frame);
+  // Then the older place is hidden too: focus continues after the older
+  // card, where the board was, not after the newer one.
+  olderSize.mockReturnValue(rect(0, 0, 0, 0));
+  act(() => layoutBoardFrames());
+  expect(frame.style.visibility).toBe("hidden");
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "after older" }),
+  );
+  expect(older.getAttribute("aria-owns")).toBe(frame.id);
+});
+
 function deferred() {
   let resolve!: (value: string) => void;
   const promise = new Promise<string>((r) => (resolve = r));
