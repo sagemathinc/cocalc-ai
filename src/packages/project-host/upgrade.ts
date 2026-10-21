@@ -28,6 +28,7 @@ import {
   endProjectRuntimeMaintenance,
 } from "./runtime-maintenance";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
+import { assertBundleKeepsPersistVolumes } from "./persist-layout-guard";
 
 const logger = getLogger("project-host:upgrade");
 
@@ -1508,6 +1509,9 @@ async function downloadAndInstallUnlocked(
       status: "staged",
     };
   }
+  if (resolved.canonicalArtifact === "project-host") {
+    assertBundleKeepsPersistVolumes(resolved.versionDir);
+  }
   const previousTarget = await fs.promises
     .realpath(resolved.currentLink)
     .catch(() => undefined);
@@ -1748,6 +1752,7 @@ export async function activateInstalledProjectHostVersion(
     normalizeBaseUrl(),
   );
   await assertInstalledVersionDir(resolved.versionDir);
+  assertBundleKeepsPersistVolumes(resolved.versionDir);
   await ensureWritableDir(path.dirname(resolved.currentLink));
   await replaceSymlink(resolved.currentLink, resolved.versionDir);
   logger.info("upgrade: activated installed project-host version", {

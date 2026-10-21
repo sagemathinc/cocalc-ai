@@ -48,7 +48,10 @@ import {
 import { dirname, join, posix } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
-import { projectPersistTemplates } from "@cocalc/backend/conat/persist-volume-template";
+import {
+  PERSIST_VOLUME_READY_MARKER,
+  projectPersistTemplates,
+} from "@cocalc/backend/conat/persist-volume-template";
 import { rmBeneathHome } from "@cocalc/backend/files/beneath-home";
 import {
   getSubvolumeField,
@@ -67,7 +70,7 @@ const logger = getLogger("project-host:persist-volume");
 
 // Written once a volume holds the project's history; nothing opens a project
 // database before.
-export const READY_MARKER = ".cocalc-persist-ready";
+export const READY_MARKER = PERSIST_VOLUME_READY_MARKER;
 // Where snapshots and backups of a project's home hold its history: a name
 // in the home's root only CoCalc uses, so adding it never changes the
 // project's own files (older backups have it at the old directory instead).
@@ -427,7 +430,8 @@ async function prepare({
   await writeReadyMarker(root, { quota, ...imported });
   logger.info("persist volume ready", { project_id, quota, ...imported });
   // The volume holds the history now; the old copy in the home only takes
-  // space (a software rollback shows no history until rolled forward).
+  // space (software from before volumes, which this host no longer runs
+  // once one is ready, persist-layout-guard.ts, would show no history).
   try {
     await ops.removeFromHome(home, legacy.relative);
   } catch (err) {

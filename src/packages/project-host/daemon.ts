@@ -11,6 +11,7 @@ import { readProjectHostActivitySnapshot } from "./health-progress";
 import { getProjectHostProcessTitle } from "./process-role";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 import { siteFundedCodexProxyPorts } from "./codex/site-funded-proxy-port";
+import { assertBundleKeepsPersistVolumes } from "./persist-layout-guard";
 
 type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
 
@@ -2131,6 +2132,10 @@ function startManagedConatPersist(opts: {
     throw new Error(
       "managed conat persist requires COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT",
     );
+  }
+  if (opts.runtimeRoot != null) {
+    // e.g., a rollout of the persist server alone to an older version
+    assertBundleKeepsPersistVolumes(opts.runtimeRoot, env);
   }
   if (fs.existsSync(persistPidPath)) {
     const pid = Number(fs.readFileSync(persistPidPath, "utf8"));

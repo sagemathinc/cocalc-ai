@@ -19,6 +19,9 @@ COCALC_PERSIST_PROJECT_VOLUME=0 keeps the databases in the home.
 */
 
 export const PERSIST_VOLUME_SUFFIX = "-persist";
+// In a volume once it holds the project's history (project-host
+// persist-volume.ts).
+export const PERSIST_VOLUME_READY_MARKER = ".cocalc-persist-ready";
 
 const IN_HOME = /^(.*\/project-)\[project_id\]\/+([^/].*?)\/*$/;
 
