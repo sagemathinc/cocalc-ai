@@ -640,6 +640,11 @@ const MAX_HISTORY_OPS = 100;
 const MAX_HISTORY_EPOCH_ROWS = 100;
 // archived epochs kept per stream (also bounded by maxArchiveBytes)
 const MAX_ARCHIVED_EPOCHS = 100;
+// charged against maxArchiveBytes for what an archived record and an archive
+// table store beyond the message itself (row header, seq/time/size columns,
+// index entries; schema and root pages), conservatively
+export const ARCHIVE_RECORD_OVERHEAD_BYTES = 128;
+export const ARCHIVE_TABLE_OVERHEAD_BYTES = 64 * 1024;
 
 // the size recorded for a message: uncompressed data plus headers and key
 function messageSize({
@@ -2368,7 +2373,28 @@ export class PersistentStream extends EventEmitter {
       records: run.records,
     });
 
-    const segments: ArchivedHistorySegment[] = [];
+    // Segments are written as they are found, so memory stays bounded however
+    // many there are (enforceArchiveQuota then bounds how many are kept).
+    const insert = this.db.prepare(
+      "INSERT INTO history_segments(epoch_id, first_seq, last_seq, cut_seq, snapshot_seq, cut_bytes, suffix_bytes, records) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    let segments = 0;
+    const kept = { records: 0, bytes: 0 };
+    const emit = (s: ArchivedHistorySegment) => {
+      insert.run(
+        epochId,
+        s.first_seq,
+        s.last_seq,
+        s.cut_seq ?? null,
+        s.snapshot_seq ?? null,
+        s.cut_bytes,
+        s.suffix_bytes,
+        s.records,
+      );
+      segments += 1;
+      kept.records += s.records;
+      kept.bytes += s.cut_bytes + s.suffix_bytes;
+    };
     // the segment being extended
     let cur: Run | null = epoch.starts_empty
       ? {
@@ -2416,12 +2442,12 @@ export class PersistentStream extends EventEmitter {
       while (cur != null && !fits(cur)) {
         if (atCut != null) {
           // end at the latest cut, and continue from it
-          segments.push(atCut);
+          emit(atCut);
           cur = tail;
         } else {
           // the loadable start of cur, if any; the rest up to the next cut
           // cannot be loaded
-          if (lastGood != null) segments.push(lastGood);
+          if (lastGood != null) emit(lastGood);
           cur =
             tail != null && (lastGood == null || tail.first > lastGood.last_seq)
               ? tail
@@ -2434,59 +2460,35 @@ export class PersistentStream extends EventEmitter {
       }
     }
     if (cur != null && good(cur)) {
-      segments.push(freeze(cur));
+      emit(freeze(cur));
     } else if (tail != null && good(tail)) {
-      segments.push(freeze(tail));
+      emit(freeze(tail));
     }
 
-    const insert = this.db.prepare(
-      "INSERT INTO history_segments(epoch_id, first_seq, last_seq, cut_seq, snapshot_seq, cut_bytes, suffix_bytes, records) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    // remove the messages in no segment: the gaps between the segments
+    const all = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n, SUM(${EFFECTIVE_SIZE_SQL}) AS bytes FROM "${table}"`,
+      )
+      .get() as { n: number; bytes: number | null };
+    const dropped = {
+      records: Number(all.n) - kept.records,
+      bytes: Number(all.bytes ?? 0) - kept.bytes,
+    };
+    const deleteRange = this.db.prepare(
+      `DELETE FROM "${table}" WHERE seq BETWEEN ? AND ?`,
     );
-    for (const s of segments) {
-      insert.run(
-        epochId,
-        s.first_seq,
-        s.last_seq,
-        s.cut_seq ?? null,
-        s.snapshot_seq ?? null,
-        s.cut_bytes,
-        s.suffix_bytes,
-        s.records,
-      );
-    }
-    // remove the messages in no segment
-    const gaps: [number, number][] = [];
-    let from = -Infinity;
-    for (const s of segments) {
-      if (s.first_seq > from) gaps.push([from, s.first_seq - 1]);
+    let from = Number.MIN_SAFE_INTEGER;
+    for (const s of this.db
+      .prepare(
+        "SELECT first_seq, last_seq FROM history_segments WHERE epoch_id=? ORDER BY first_seq",
+      )
+      .iterate(epochId) as Iterable<{ first_seq: number; last_seq: number }>) {
+      if (s.first_seq > from) deleteRange.run(from, s.first_seq - 1);
       from = s.last_seq + 1;
     }
-    gaps.push([from, Infinity]);
-    const dropped = { records: 0, bytes: 0 };
-    for (const [a, b] of gaps) {
-      const lo = Number.isFinite(a) ? a : Number.MIN_SAFE_INTEGER;
-      const hi = Number.isFinite(b) ? b : Number.MAX_SAFE_INTEGER;
-      const { n, bytes } = this.db
-        .prepare(
-          `SELECT COUNT(*) AS n, SUM(${EFFECTIVE_SIZE_SQL}) AS bytes FROM "${table}" WHERE seq BETWEEN ? AND ?`,
-        )
-        .get(lo, hi) as { n: number; bytes: number | null };
-      if (n > 0) {
-        this.db
-          .prepare(`DELETE FROM "${table}" WHERE seq BETWEEN ? AND ?`)
-          .run(lo, hi);
-        dropped.records += Number(n);
-        dropped.bytes += Number(bytes ?? 0);
-      }
-    }
-    const kept = segments.reduce(
-      (sum, s) => ({
-        records: sum.records + s.records,
-        bytes: sum.bytes + s.cut_bytes + s.suffix_bytes,
-      }),
-      { records: 0, bytes: 0 },
-    );
-    if (segments.length == 0) {
+    deleteRange.run(from, Number.MAX_SAFE_INTEGER);
+    if (segments == 0) {
       this.db.exec(`DROP TABLE "${table}"`);
     }
     this.db
@@ -2494,52 +2496,93 @@ export class PersistentStream extends EventEmitter {
         "UPDATE history_epochs SET archive=?, kept_records=?, kept_bytes=?, dropped_records=?, dropped_bytes=? WHERE id=?",
       )
       .run(
-        segments.length > 0 ? table : null,
+        segments > 0 ? table : null,
         kept.records,
         kept.bytes,
         dropped.records,
         dropped.bytes,
         epochId,
       );
-    return { segments: segments.length, dropped };
+    return { segments, dropped };
   };
 
-  // Archived history is at most maxArchiveBytes per stream: drop the oldest
-  // first -- archives from before segments, then segment by segment.
+  // Archived history per stream is bounded in bytes (with a conservative
+  // charge for each record's and table's own overhead), records, segments
+  // and archives.  Over a bound, the oldest goes first: archives from before
+  // segments, then segment by segment, then whole archives.
   private enforceArchiveQuota = (
     limits: HistoryLimits,
   ): { records: number; bytes: number } => {
     const dropped = { records: 0, bytes: 0 };
+    const charge = (records: number, bytes: number) =>
+      bytes + ARCHIVE_RECORD_OVERHEAD_BYTES * records;
     const epochs = this.db
       .prepare(
-        "SELECT id, archive, kept_bytes FROM history_epochs WHERE archive IS NOT NULL ORDER BY id",
+        "SELECT archive, kept_records, kept_bytes FROM history_epochs WHERE archive IS NOT NULL",
       )
-      .all() as { id: number; archive: string; kept_bytes: number }[];
+      .all() as { archive: string; kept_records: number; kept_bytes: number }[];
     const known = new Set(epochs.map(({ archive }) => archive));
-    let total = epochs.reduce((sum, e) => sum + Number(e.kept_bytes), 0);
     const legacy = this.archivedMessageTables()
       .filter((name) => !known.has(name))
       .sort()
-      .map((name) => ({
-        name,
-        ...(this.db
+      .map((name) => {
+        const row = this.db
           .prepare(
             `SELECT COUNT(*) AS records, SUM(${EFFECTIVE_SIZE_SQL}) AS bytes FROM "${name}"`,
           )
-          .get() as { records: number; bytes: number | null }),
-      }));
-    total += legacy.reduce((sum, t) => sum + Number(t.bytes ?? 0), 0);
-    for (const { name, records, bytes } of legacy) {
-      if (total <= limits.maxArchiveBytes) break;
-      this.db.exec(`DROP TABLE "${name}"`);
-      total -= Number(bytes ?? 0);
-      dropped.records += Number(records);
-      dropped.bytes += Number(bytes ?? 0);
+          .get() as { records: number; bytes: number | null };
+        return {
+          name,
+          records: Number(row.records),
+          bytes: Number(row.bytes ?? 0),
+        };
+      });
+    const usage = {
+      tables: epochs.length + legacy.length,
+      records: 0,
+      bytes: 0,
+      segments: Number(
+        (
+          this.db
+            .prepare("SELECT COUNT(*) AS n FROM history_segments")
+            .get() as { n: number }
+        ).n,
+      ),
+    };
+    for (const e of [
+      ...epochs.map((e) => ({
+        records: Number(e.kept_records),
+        bytes: Number(e.kept_bytes),
+      })),
+      ...legacy,
+    ]) {
+      usage.records += e.records;
+      usage.bytes += charge(e.records, e.bytes);
     }
+    usage.bytes += ARCHIVE_TABLE_OVERHEAD_BYTES * usage.tables;
+    const overSize = () =>
+      usage.bytes > limits.maxArchiveBytes ||
+      usage.records > limits.maxArchiveRecords;
+    const dropTable = (table: string | undefined) => {
+      if (table != null) this.db.exec(`DROP TABLE IF EXISTS "${table}"`);
+      usage.tables -= 1;
+      usage.bytes -= ARCHIVE_TABLE_OVERHEAD_BYTES;
+    };
+
+    // archives from before segments: oldest, and not loadable by segment
+    for (const t of legacy) {
+      if (!overSize() && usage.tables <= MAX_ARCHIVED_EPOCHS) break;
+      dropTable(t.name);
+      usage.records -= t.records;
+      usage.bytes -= charge(t.records, t.bytes);
+      dropped.records += t.records;
+      dropped.bytes += t.bytes;
+    }
+
     const oldest = this.db.prepare(
       "SELECT s.epoch_id AS epoch_id, s.first_seq AS first_seq, s.last_seq AS last_seq, s.records AS records, s.cut_bytes + s.suffix_bytes AS bytes, e.archive AS archive FROM history_segments AS s JOIN history_epochs AS e ON e.id = s.epoch_id ORDER BY s.epoch_id, s.first_seq LIMIT 1",
     );
-    while (total > limits.maxArchiveBytes) {
+    while (overSize() || usage.segments > limits.maxArchiveSegments) {
       const s = oldest.get() as
         | {
             epoch_id: number;
@@ -2572,32 +2615,30 @@ export class PersistentStream extends EventEmitter {
           .prepare("SELECT 1 FROM history_segments WHERE epoch_id=? LIMIT 1")
           .get(s.epoch_id) == null
       ) {
-        if (table != null) {
-          this.db.exec(`DROP TABLE IF EXISTS "${table}"`);
-        }
+        dropTable(table);
         this.db
           .prepare("UPDATE history_epochs SET archive=NULL WHERE id=?")
           .run(s.epoch_id);
       }
-      total -= Number(s.bytes);
+      usage.segments -= 1;
+      usage.records -= Number(s.records);
+      usage.bytes -= charge(Number(s.records), Number(s.bytes));
       dropped.records += Number(s.records);
       dropped.bytes += Number(s.bytes);
     }
+
     // and at most MAX_ARCHIVED_EPOCHS archives, however small
     for (const e of this.db
       .prepare(
-        "SELECT id, archive, kept_records, kept_bytes FROM history_epochs WHERE archive IS NOT NULL ORDER BY id DESC LIMIT -1 OFFSET ?",
+        "SELECT id, archive, kept_records, kept_bytes FROM history_epochs WHERE archive IS NOT NULL ORDER BY id LIMIT ?",
       )
-      .all(MAX_ARCHIVED_EPOCHS) as {
+      .all(Math.max(0, usage.tables - MAX_ARCHIVED_EPOCHS)) as {
       id: number;
       archive: string;
       kept_records: number;
       kept_bytes: number;
     }[]) {
-      const table = archiveTableName(e.archive);
-      if (table != null) {
-        this.db.exec(`DROP TABLE IF EXISTS "${table}"`);
-      }
+      dropTable(archiveTableName(e.archive));
       this.db
         .prepare("DELETE FROM history_segments WHERE epoch_id=?")
         .run(e.id);
@@ -2787,9 +2828,26 @@ export class PersistentStream extends EventEmitter {
 
   // The archived epochs and their loadable segments, oldest first.
   historyArchives = (): ArchivedHistoryEpoch[] => {
-    const segments = this.db.prepare(
-      "SELECT first_seq, last_seq, cut_seq, snapshot_seq, cut_bytes, suffix_bytes, records FROM history_segments WHERE epoch_id=? ORDER BY first_seq",
-    );
+    // at most maxArchiveSegments are kept (enforceArchiveQuota); the limit
+    // also bounds this response if a database holds more
+    const segments = new Map<number, ArchivedHistorySegment[]>();
+    for (const s of this.db
+      .prepare(
+        "SELECT epoch_id, first_seq, last_seq, cut_seq, snapshot_seq, cut_bytes, suffix_bytes, records FROM history_segments ORDER BY epoch_id, first_seq LIMIT ?",
+      )
+      .iterate(historyLimits().maxArchiveSegments) as Iterable<any>) {
+      const list = segments.get(s.epoch_id) ?? [];
+      list.push({
+        first_seq: s.first_seq,
+        last_seq: s.last_seq,
+        ...(s.cut_seq != null ? { cut_seq: s.cut_seq } : {}),
+        ...(s.snapshot_seq != null ? { snapshot_seq: s.snapshot_seq } : {}),
+        cut_bytes: s.cut_bytes,
+        suffix_bytes: s.suffix_bytes,
+        records: s.records,
+      });
+      segments.set(s.epoch_id, list);
+    }
     return (
       this.db
         .prepare(
@@ -2806,15 +2864,7 @@ export class PersistentStream extends EventEmitter {
       dropped: { records: row.dropped_records, bytes: row.dropped_bytes },
       ...(row.info_json != null ? { info: JSON.parse(row.info_json) } : {}),
       time: row.time,
-      segments: (segments.all(row.id) as any[]).map((s) => ({
-        first_seq: s.first_seq,
-        last_seq: s.last_seq,
-        ...(s.cut_seq != null ? { cut_seq: s.cut_seq } : {}),
-        ...(s.snapshot_seq != null ? { snapshot_seq: s.snapshot_seq } : {}),
-        cut_bytes: s.cut_bytes,
-        suffix_bytes: s.suffix_bytes,
-        records: s.records,
-      })),
+      segments: segments.get(row.id) ?? [],
     }));
   };
 

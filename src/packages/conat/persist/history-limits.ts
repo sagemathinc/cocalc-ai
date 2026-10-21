@@ -17,8 +17,10 @@ export interface HistoryLimits {
   maxSuffixBytes: number;
   // the number of those records
   maxOpenRecords: number;
-  // archived history kept per stream; the oldest is dropped beyond this
+  // archived history kept per stream; the oldest is dropped beyond these
   maxArchiveBytes: number;
+  maxArchiveRecords: number;
+  maxArchiveSegments: number;
   // archived epochs whose msg ids are kept, so a client can learn which of its
   // pending patches a reset included; older epochs answer "unknown"
   maxArchivedIdEpochs: number;
@@ -31,6 +33,8 @@ export const DEFAULT_HISTORY_LIMITS: Readonly<HistoryLimits> = Object.freeze({
   maxSuffixBytes: 16 * MiB,
   maxOpenRecords: 1000,
   maxArchiveBytes: 1024 * MiB,
+  maxArchiveRecords: 100_000,
+  maxArchiveSegments: 1000,
   maxArchivedIdEpochs: 2,
   maxInclusionIds: 1000,
 });
@@ -40,6 +44,8 @@ const ENV: { [key in keyof HistoryLimits]: string } = {
   maxSuffixBytes: "COCALC_HISTORY_MAX_SUFFIX_BYTES",
   maxOpenRecords: "COCALC_HISTORY_MAX_OPEN_RECORDS",
   maxArchiveBytes: "COCALC_HISTORY_MAX_ARCHIVE_BYTES",
+  maxArchiveRecords: "COCALC_HISTORY_MAX_ARCHIVE_RECORDS",
+  maxArchiveSegments: "COCALC_HISTORY_MAX_ARCHIVE_SEGMENTS",
   maxArchivedIdEpochs: "COCALC_HISTORY_MAX_ARCHIVED_ID_EPOCHS",
   maxInclusionIds: "COCALC_HISTORY_MAX_INCLUSION_IDS",
 };

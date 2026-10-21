@@ -4,7 +4,11 @@ loadable segments, the messages no load can reach, and the bounds on archived
 history.
 */
 
-import { PersistentStream } from "./storage";
+import {
+  ARCHIVE_RECORD_OVERHEAD_BYTES as R,
+  ARCHIVE_TABLE_OVERHEAD_BYTES as T,
+  PersistentStream,
+} from "./storage";
 import { initContext, syncFiles } from "./context";
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 import { DatabaseSync } from "node:sqlite";
@@ -18,6 +22,8 @@ const LIMIT_ENV = [
   "COCALC_HISTORY_MAX_SUFFIX_BYTES",
   "COCALC_HISTORY_MAX_OPEN_RECORDS",
   "COCALC_HISTORY_MAX_ARCHIVE_BYTES",
+  "COCALC_HISTORY_MAX_ARCHIVE_RECORDS",
+  "COCALC_HISTORY_MAX_ARCHIVE_SEGMENTS",
   "COCALC_HISTORY_MAX_ARCHIVED_ID_EPOCHS",
 ];
 
@@ -185,7 +191,9 @@ describe("archive segments", () => {
   });
 
   it("keeps archived history within maxArchiveBytes, dropping the oldest first", () => {
-    process.env.COCALC_HISTORY_MAX_ARCHIVE_BYTES = "60";
+    // each archive is charged its records' and table's overhead too: room for
+    // one archive of two 25-byte records
+    process.env.COCALC_HISTORY_MAX_ARCHIVE_BYTES = `${T + 50 + 2 * R}`;
     // an archive from before segments
     write(20);
     const legacy = stream.resetHistory({ archive: true }).archive!;
@@ -193,7 +201,7 @@ describe("archive segments", () => {
     sql("UPDATE history_epochs SET archive=NULL, kept_records=0, kept_bytes=0");
     write(25, { epoch: 1 });
     write(25, { epoch: 1 });
-    // 20 (legacy) + 50 > 60: the legacy archive goes
+    // the legacy archive (20 bytes) and these two do not fit: the legacy one goes
     expect(stream.resetHistory({ archive: true })).toMatchObject({
       droppedArchived: { records: 1, bytes: 20 },
     });
@@ -201,12 +209,60 @@ describe("archive segments", () => {
       [],
     );
     write(30, { epoch: 2 });
-    // 50 + 30 > 60: the oldest segment goes
+    // the oldest segment goes
     const result = stream.resetHistory({ archive: true });
     expect(result.droppedArchived).toEqual({ records: 2, bytes: 50 });
     const archives = stream.historyArchives();
     expect(archives.map(({ kept }) => kept.bytes)).toEqual([0, 0, 30]);
     expect(archives[1].archive).toBeUndefined();
+  });
+
+  it("bounds archived records, dropping the oldest, archives from before segments first", () => {
+    process.env.COCALC_HISTORY_MAX_ARCHIVE_RECORDS = "5";
+    for (let i = 0; i < 3; i++) write(10);
+    const legacy = stream.resetHistory({ archive: true }).archive!;
+    sql("DELETE FROM history_segments");
+    sql("UPDATE history_epochs SET archive=NULL, kept_records=0, kept_bytes=0");
+    for (let i = 0; i < 4; i++) write(30, { epoch: 1 });
+    // 3 + 4 > 5: the legacy archive goes
+    expect(stream.resetHistory({ archive: true }).droppedArchived).toEqual({
+      records: 3,
+      bytes: 30,
+    });
+    expect(sql("SELECT name FROM sqlite_master WHERE name=?", legacy)).toEqual(
+      [],
+    );
+    for (let i = 0; i < 3; i++) write(30, { epoch: 2 });
+    // 4 + 3 > 5: the older archive's segment goes
+    expect(stream.resetHistory({ archive: true }).droppedArchived).toEqual({
+      records: 4,
+      bytes: 120,
+    });
+    expect(
+      stream.historyArchives().reduce((n, { kept }) => n + kept.records, 0),
+    ).toBe(3);
+  });
+
+  it("bounds the number of segments, and so the archive listing", () => {
+    process.env.COCALC_HISTORY_MAX_ARCHIVE_SEGMENTS = "10";
+    process.env.COCALC_HISTORY_MAX_OPEN_RECORDS = "1";
+    // 200 patch+snapshot pairs: 200 cuts, and about a segment for each
+    for (let i = 0; i < 200; i++) {
+      const { seq } = write(10);
+      snapshotAt(seq, 10);
+    }
+    const result = stream.resetHistory({ archive: true });
+    expect(result.segments).toBe(200);
+    // the first patch is a segment from the empty document, its snapshot
+    // fits none; the 189 oldest of the others go
+    expect(result.dropped).toEqual({ records: 1, bytes: 10 });
+    expect(result.droppedArchived).toEqual({ records: 379, bytes: 3790 });
+    const [epoch] = stream.historyArchives();
+    expect(epoch.segments).toHaveLength(10);
+    // the newest are kept
+    expect(epoch.segments[9].last_seq).toBe(400);
+    expect(sql("SELECT COUNT(*) AS n FROM history_segments")[0].n).toBe(10);
+    expect(sql(`SELECT COUNT(*) AS n FROM "${result.archive}"`)[0].n).toBe(20);
   });
 
   it("keeps at most 100 archives, however small", () => {
