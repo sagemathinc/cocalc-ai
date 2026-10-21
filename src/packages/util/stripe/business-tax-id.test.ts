@@ -4,6 +4,7 @@
  */
 
 import {
+  billingAddressRequiredBeforeCheckout,
   businessTaxIdStatus,
   businessTaxIdType,
   requiresBusinessTaxId,
@@ -116,5 +117,21 @@ describe("businessTaxIdStatus", () => {
         tax_ids: [vat("eu_vat", "verified")],
       }),
     ).toMatchObject({ ok: true });
+  });
+});
+
+describe("billingAddressRequiredBeforeCheckout", () => {
+  it.each([
+    ["FR", true],
+    ["GB", true],
+    ["XX", true],
+    ["T1", true],
+    ["", true],
+    [undefined, true],
+    ["US", false],
+    ["CA", false],
+    ["CH", false],
+  ])("%s -> %s", (country, expected) => {
+    expect(billingAddressRequiredBeforeCheckout(country)).toBe(expected);
   });
 });

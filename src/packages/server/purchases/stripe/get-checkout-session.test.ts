@@ -79,7 +79,10 @@ describe("getCheckoutSession", () => {
     }));
     stripe.checkout.sessions.expire.mockResolvedValue({});
     stripe.checkout.sessions.list.mockResolvedValue({ data: [] });
-    stripe.customers.retrieve.mockResolvedValue({});
+    // A customer with a saved billing address outside the EU and UK.
+    stripe.customers.retrieve.mockResolvedValue({
+      address: { country: "US" },
+    });
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
   });
 
@@ -125,6 +128,35 @@ describe("getCheckoutSession", () => {
       await expect(start()).resolves.toMatchObject({ sessionId: "cs_new" });
       expect(mockPoolQuery).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ["DE", true],
+      ["GB", true],
+      ["XX", true],
+      [undefined, true],
+      ["US", false],
+      ["JP", false],
+    ])(
+      "asks a customer with no saved address to enter one first when the request country is %s: %s",
+      async (request_country, required) => {
+        stripe.customers.retrieve.mockResolvedValue({ tax_ids: { data: [] } });
+        const run = getCheckoutSession({
+          account_id: "acct-1",
+          description: "Buy course membership",
+          lineItems,
+          purpose: "membership-package-purchase",
+          request_country,
+        });
+        if (required) {
+          await expect(run).rejects.toMatchObject({
+            code: "billing_address_required",
+          });
+          expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+        } else {
+          await expect(run).resolves.toMatchObject({ sessionId: "cs_new" });
+        }
+      },
+    );
 
     it("leaves a US customer unaffected", async () => {
       stripe.customers.retrieve.mockResolvedValue({

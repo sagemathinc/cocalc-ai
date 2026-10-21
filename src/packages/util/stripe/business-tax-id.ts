@@ -131,3 +131,17 @@ export function businessTaxIdStatus(
   }
   return { required: true, ok: false, country, reason: "unverified" };
 }
+
+export const BILLING_ADDRESS_REQUIRED_MESSAGE =
+  "Please enter your billing name and address before checkout.";
+
+// Whether a customer without a saved billing address must enter one before
+// checkout, given the country Cloudflare reports for the request: yes in the
+// EU and UK, and when the location is unknown (XX), Tor (T1) or missing.
+export function billingAddressRequiredBeforeCheckout(
+  requestCountry: unknown,
+): boolean {
+  const c = normalizeCountry(requestCountry);
+  if (!/^[A-Z]{2}$/.test(c) || c === "XX" || c === "T1") return true;
+  return requiresBusinessTaxId(c);
+}
