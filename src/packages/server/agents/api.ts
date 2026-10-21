@@ -584,8 +584,12 @@ export const reportStatus: AgentApi["reportStatus"] = async (opts) => {
     account_id: opts.account_id!,
     project_id: opts.project_id,
   });
-  const status = parseAgentTurnStatus(opts.status);
-  if (!status) throw new Error("invalid agent status");
+  const parsed = parseAgentTurnStatus(opts.status);
+  if (!parsed) throw new Error("invalid agent status");
+  // Never later than the hub's own clock: a host whose clock ran ahead
+  // would otherwise outrank every later (correct) report, and outlive its
+  // TTL.
+  const status = { ...parsed, at: Math.min(parsed.at, Date.now()) };
   const db = agentStore();
   const agent = await db.find(opts.project_id, opts.path, opts.thread_id);
   if (!agent) return { registered: false };
@@ -597,11 +601,15 @@ export const reportStatus: AgentApi["reportStatus"] = async (opts) => {
     status.at - (stored?.at ?? 0) < STATUS_REFRESH_MIN_MS
   )
     return { registered: true };
-  await db.query(
-    "UPDATE agent_identities SET turn_status=$2::jsonb WHERE agent_id=$1",
-    [agent.agent_id, JSON.stringify(status)],
+  // Atomically never older than what is stored: of two overlapping
+  // reports (a retried one, say), the older cannot land last and win.
+  const { rowCount } = await db.query(
+    `UPDATE agent_identities SET turn_status=$2::jsonb
+     WHERE agent_id=$1
+       AND (turn_status IS NULL OR (turn_status->>'at')::bigint <= $3)`,
+    [agent.agent_id, JSON.stringify(status), status.at],
   );
-  void notifyIdentityWatchers(agent.agent_id);
+  if (rowCount) void notifyIdentityWatchers(agent.agent_id);
   return { registered: true };
 };
 
