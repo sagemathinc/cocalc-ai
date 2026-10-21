@@ -48,7 +48,28 @@ export const jupyter = {
 
   // jupyter stateless API
   apiExecute: true,
+
+  // the user-confirmed restart of an unloadable edit history from the saved
+  // notebook (bounded history plan H1b-3, option B)
+  restartHistoryFromIpynb: true,
 };
+
+export type RestartHistoryFromIpynbResult =
+  | { restarted: true; history_epoch: number; repeated?: boolean }
+  | {
+      restarted: false;
+      reason:
+        | "invalid"
+        | "busy"
+        | "deadline"
+        | "too-large"
+        | "missing"
+        | "unreadable"
+        | "moved"
+        | "epoch"
+        | "failed";
+      message?: string;
+    };
 
 // In the functions below path can be either the .ipynb or the .sage-jupyter2 path, and
 // the correct backend kernel will get found/created automatically.
@@ -97,6 +118,15 @@ export interface Jupyter {
   }) => Promise<KernelSignalResult | undefined>;
 
   apiExecute: (opts: ProjectJupyterApiOptions) => Promise<object[]>;
+
+  // Restart the notebook's edit history from its saved .ipynb, as one seeded
+  // reset conditional on the history state the user confirmed (epoch and
+  // revision): see jupyter/history-restart.ts.  Never starts the kernel.
+  restartHistoryFromIpynb: (opts: {
+    path: string;
+    epoch: number;
+    revision: { seq: number; count: number };
+  }) => Promise<RestartHistoryFromIpynbResult>;
 
   sendCommMessageToKernel: (opts: {
     path: string;

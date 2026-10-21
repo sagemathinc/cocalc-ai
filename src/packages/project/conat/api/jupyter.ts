@@ -10,12 +10,10 @@ import * as control from "@cocalc/jupyter/control";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { type ServerSocket } from "@cocalc/conat/socket";
 import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
+import { restartHistoryFromIpynb as restartHistory } from "@cocalc/jupyter/history-restart";
 
 let fs: SandboxedFilesystem | null = null;
-export async function start(path: string) {
-  if (control.isRunning(path)) {
-    return;
-  }
+function projectFs(): SandboxedFilesystem {
   fs ??= new SandboxedFilesystem(process.env.HOME ?? "/tmp", {
     unsafeMode: true,
     // Workspace processes use a real directory as HOME while notebook paths
@@ -24,7 +22,33 @@ export async function start(path: string) {
       ? [process.env.COCALC_RUNTIME_HOME]
       : undefined,
   });
-  await control.start({ project_id, path, client: getClient(), fs });
+  return fs;
+}
+
+export async function start(path: string) {
+  if (control.isRunning(path)) {
+    return;
+  }
+  await control.start({
+    project_id,
+    path,
+    client: getClient(),
+    fs: projectFs(),
+  });
+}
+
+// Not start(): the notebook's history cannot load, and this never needs it.
+export async function restartHistoryFromIpynb(opts: {
+  path: string;
+  epoch: number;
+  revision: { seq: number; count: number };
+}) {
+  return await restartHistory({
+    ...opts,
+    project_id,
+    client: getClient().conat(),
+    fs: control.createJupyterSyncFilesystem(projectFs()),
+  });
 }
 
 // IMPORTANT: run is NOT used directly by the API, but instead by packages/project/conat/jupyter.ts
