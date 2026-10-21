@@ -175,6 +175,7 @@ import {
   AcpAdmissionDeniedError,
 } from "./admission";
 import {
+  buildAgentLimitNoticeOptions,
   buildCodexTurnNoticeOptions,
   publishCodexTurnNotice,
 } from "./codex-turn-notice";
@@ -2279,6 +2280,56 @@ function compactLivePreviewBatch(
   return compacted;
 }
 
+type StashedLimitNotice = {
+  client: ConatClient;
+  project_id: string;
+  paused: Parameters<typeof publishCodexTurnNotice>[0]["notice"];
+  ended: Parameters<typeof publishCodexTurnNotice>[0]["notice"];
+  timer?: ReturnType<typeof setTimeout>;
+};
+/** A limit notice waits here until the hold is decided. */
+const stashedLimitNotices = new Map<string, StashedLimitNotice>();
+/** Never decided by then (its worker died): dropped, never guessed. */
+const LIMIT_NOTICE_FORGET_MS = 6 * 60 * 60_000;
+
+function stashLimitNotice(message_id: string, notice: StashedLimitNotice) {
+  const previous = stashedLimitNotices.get(message_id);
+  if (previous?.timer) clearTimeout(previous.timer);
+  // Decided only by the hold itself (paused, or not held); a hold may take
+  // a while, so this timer only forgets a stash nothing will claim.
+  notice.timer = setTimeout(
+    () => stashedLimitNotices.delete(message_id),
+    LIMIT_NOTICE_FORGET_MS,
+  );
+  notice.timer.unref?.();
+  stashedLimitNotices.set(message_id, notice);
+}
+
+/**
+ * Publish the limit notice for this turn once its hold is decided: the
+ * shared "paused" notice only if a continuation was queued, else the turn's
+ * ordinary error notice (it will not resume on its own).
+ */
+async function publishLimitNoticeAfterHold(
+  message_id: string | undefined,
+  held: boolean,
+): Promise<void> {
+  if (!message_id) return;
+  const stashed = stashedLimitNotices.get(message_id);
+  if (!stashed) return;
+  stashedLimitNotices.delete(message_id);
+  if (stashed.timer) clearTimeout(stashed.timer);
+  try {
+    await publishCodexTurnNotice({
+      client: stashed.client,
+      project_id: stashed.project_id,
+      notice: held ? stashed.paused : stashed.ended,
+    });
+  } catch (err) {
+    logger.warn("failed to publish an agent limit notice", { err });
+  }
+}
+
 export class ChatStreamWriter {
   assertSteerPrincipal(accountId: string): void {
     assertSameTurnPrincipal(this.approverAccountId, accountId);
@@ -2312,6 +2363,8 @@ export class ChatStreamWriter {
   private lastCommittedInterrupted = false;
   private lastCommittedGenerating: boolean | undefined;
   private lastErrorText: string | null = null;
+  // The typed failure the error carried, if any (turn-outcome.ts).
+  private lastFailure: TurnFailure | undefined;
   private threadId: string | null = null;
   private seq = 0;
   private finished = false;
@@ -2923,22 +2976,49 @@ export class ChatStreamWriter {
       const threadLabel =
         this.recordField<string>(threadConfig, "name") ?? undefined;
       const messageDateMs = Date.parse(`${this.metadata.message_date ?? ""}`);
-      const notice = buildCodexTurnNoticeOptions({
-        account_id: this.approverAccountId,
-        source_project_id: this.metadata.project_id,
-        source_path: this.metadata.path,
-        source_fragment_id: Number.isFinite(messageDateMs)
-          ? `chat=${Math.floor(messageDateMs)}`
-          : undefined,
-        thread_id: threadId,
-        thread_label: threadLabel,
-        stable_source_id:
-          `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
-          undefined,
-        terminal_state: "error",
-        error_text: this.lastErrorText,
-        agent_label: this.agentLabel,
-      });
+      const failure = this.lastFailure;
+      const errorNotice = () =>
+        buildCodexTurnNoticeOptions({
+          account_id: this.approverAccountId,
+          source_project_id: this.metadata.project_id,
+          source_path: this.metadata.path,
+          source_fragment_id: Number.isFinite(messageDateMs)
+            ? `chat=${Math.floor(messageDateMs)}`
+            : undefined,
+          thread_id: threadId,
+          thread_label: threadLabel,
+          stable_source_id:
+            `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
+            undefined,
+          terminal_state: "error",
+          error_text: this.lastErrorText,
+          agent_label: this.agentLabel,
+        });
+      // A usage limit pauses the turn, if it can be held: one shared notice
+      // for every agent it paused, published once the hold is queued (see
+      // publishLimitNoticeAfterHold); otherwise this turn's error notice.
+      if (failure?.kind === "limit" && this.metadata.message_id) {
+        stashLimitNotice(`${this.metadata.message_id}`, {
+          client: this.client,
+          project_id: this.metadata.project_id,
+          paused: buildAgentLimitNoticeOptions({
+            account_id: this.approverAccountId,
+            source_project_id: this.metadata.project_id,
+            source_path: this.metadata.path,
+            source_fragment_id: Number.isFinite(messageDateMs)
+              ? `chat=${Math.floor(messageDateMs)}`
+              : undefined,
+            thread_id: threadId,
+            thread_label: threadLabel,
+            failure,
+            agent_label: this.agentLabel,
+          }),
+          ended: errorNotice(),
+        });
+        this.completionNoticePublished = true;
+        return;
+      }
+      const notice = errorNotice();
       await publishCodexTurnNotice({
         client: this.client,
         project_id: this.metadata.project_id,
@@ -3547,6 +3627,7 @@ export class ChatStreamWriter {
         errorContent,
       );
       this.lastErrorText = stripKnownAcpErrorNoise(payload.error);
+      this.lastFailure = payload.failure;
       this.finished = true;
       this.finishedBy = "error";
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
@@ -10103,9 +10184,13 @@ async function recoverPendingFailureRecoveryIntents({
           (outcome && hold
             ? await hold({ client, job, outcome })
             : undefined) ?? continuationOf(job);
-        // Withdrawn meanwhile (the sender cleared the intent): no report.
-        if (!holdIntentStillSet(job)) continue;
         const request = decodeAcpJobRequest(job);
+        // Withdrawn meanwhile (the sender cleared the intent): no report,
+        // and its limit notice, if this process still has it, says it ended.
+        if (!holdIntentStillSet(job)) {
+          void publishLimitNoticeAfterHold(request.chat?.message_id, false);
+          continue;
+        }
         if (held?.available_at != null && held.available_at > Date.now())
           reportFailedAgentMessageTurn(
             job,
@@ -10118,6 +10203,12 @@ async function recoverPendingFailureRecoveryIntents({
         // continuation reports how it ends.
         else if (!held)
           reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
+        // Its limit notice, if this process still has it (a live hold that
+        // failed, recovered here).
+        void publishLimitNoticeAfterHold(
+          request.chat?.message_id,
+          held?.available_at != null,
+        );
         // Last, once its report is durable (a failed write throws, and the
         // next poll tries again; the outbox keeps it to one report). A
         // withdrawal that won meanwhile takes the report back.
@@ -11015,6 +11106,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
           job: getAcpJobByOpId(job.op_id) ?? job,
           outcome: result.outcome,
         });
+        // The recovery poll may have queued this hold first (then
+        // enqueueLimitHold finds that continuation and declines): it is
+        // still held.
+        resumed = resumed ?? continuationOf(getAcpJobByOpId(job.op_id) ?? job);
         // Already cleared means the sender withdrew the message meanwhile:
         // then nothing is reported (the withdrawal cancels any continuation).
         if (!holdIntentStillSet(job)) withdrawn = true;
@@ -11034,6 +11129,12 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
           // recovered).
           if (!claimHoldIntentAfterReport(job)) withdrawn = true;
         }
+        // The limit notice, held back until the hold was decided: held only
+        // if it was not withdrawn meanwhile.
+        void publishLimitNoticeAfterHold(
+          refreshedRequest.chat?.message_id,
+          !withdrawn && resumed?.available_at != null,
+        );
       } catch (err) {
         // The persisted intent stays: the recovery poll holds it later.
         recoveryPending = true;
@@ -11079,6 +11180,14 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         refreshedRequest,
         result.error,
         result.outcome,
+      );
+    // A limit notice still waiting (the turn was not held, e.g. a recovery
+    // code took over): it ended. One still being held is decided by the
+    // recovery poll instead.
+    if (!recoveryPending)
+      void publishLimitNoticeAfterHold(
+        refreshedRequest.chat?.message_id,
+        !withdrawn && resumed?.available_at != null,
       );
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
@@ -14280,6 +14389,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  publishLimitNoticeAfterHold,
   signInRenewable,
   releaseRenewedSignInHolds,
   signInHoldStart,
