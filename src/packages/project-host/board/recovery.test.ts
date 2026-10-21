@@ -35,6 +35,7 @@ import {
 } from "@cocalc/util/board/names";
 import {
   RecoveryRunner,
+  verifyHello,
   type RecoveryLauncher,
   type RecoveryLimits,
   type StopReport,
@@ -59,6 +60,13 @@ const deny = (reason) => {
   process.exit(3);
 };
 if (behavior === "deny") deny("recovery-busy");
+if (behavior === "garbage-then-deny") {
+  // An over-cap hello header, then a denial.
+  process.stdout.write(Buffer.from([0xff, 0xff, 0xff, 0xff]), () =>
+    deny("recovery-busy"),
+  );
+  return;
+}
 if (fs.existsSync(path.join(root, "tomb-" + jobId))) deny("recovery-cancelled");
 if (behavior === "hang") {
   // Stuck before its leaf, until its own setup alarm (the real helper's
@@ -103,6 +111,18 @@ const output = new Writable({
       if (behavior === "wrong-job") result.job_id = "e".repeat(32);
       chunk = Buffer.from(frame.encodeFrame(result));
     }
+    if (writes === 2 && behavior === "hold-stdout") {
+      // A descendant keeps the output open after the launcher exits.
+      const holder = require("child_process").spawn("sleep", ["30"], {
+        stdio: ["ignore", "inherit", "ignore"],
+        detached: true,
+      });
+      fs.writeFileSync(path.join(root, "holder-" + jobId), String(holder.pid));
+      holder.unref();
+    }
+    if (writes === 2 && behavior === "trailing-same-chunk") {
+      chunk = Buffer.concat([chunk, Buffer.from([0])]);
+    }
     process.stdout.write(chunk, () => {
       if (writes === 1) {
         // The hello is out.
@@ -124,6 +144,9 @@ const output = new Writable({
   },
   final(cb) {
     if (behavior === "trailing") process.stdout.write(Buffer.from([0]));
+    // (Not ending its output: the descendant holding it keeps it open.
+    // stdio is a socketpair, so ending it would shut it for every holder.)
+    if (behavior === "hold-stdout") return cb();
     process.stdout.end(cb);
   },
 });
@@ -143,8 +166,9 @@ require(process.env.FAKE_CHILD)
     },
   })
   .then(
-    (code) =>
-      setTimeout(() => process.exit(behavior === "exit-after-result" ? 4 : code), 10),
+    (code) => {
+      return setTimeout(() => process.exit(behavior === "exit-after-result" ? 4 : code), 10);
+    },
     (err) => {
       process.stderr.write(String(err) + "\n");
       process.exit(1);
@@ -246,6 +270,7 @@ function runner(launcher: FakeLauncher, limits: Partial<RecoveryLimits> = {}) {
       uid: process.getuid!(),
       gid: process.getgid!(),
       memoryMax: MEMORY_MAX,
+      pool: "/cocalc-board-recovery",
     },
     limits: { ...FAST, ...limits },
   });
@@ -315,7 +340,7 @@ test("complete: the board's value, its leaf removed, its slot released", async (
   const launcher = new FakeLauncher();
   const r = runner(launcher);
   const { records, value } = board(20);
-  const out = await r.run(records);
+  const out = await r.run(() => records);
   expect(out).toMatchObject({
     state: "complete",
     verdict: "clean",
@@ -340,7 +365,7 @@ test("the host's event loop stays responsive (no task of 50 ms or more)", async 
   // (Building the board above is outside the measurement.)
   last = performance.now();
   worst = 0;
-  const out = await runner(launcher).run(records);
+  const out = await runner(launcher).run(() => records);
   clearInterval(ticker);
   expect(out.state).toBe("complete");
   expect(worst).toBeLessThan(50);
@@ -349,7 +374,7 @@ test("the host's event loop stays responsive (no task of 50 ms or more)", async 
 test("refused: the launcher denies, and nothing runs", async () => {
   const launcher = new FakeLauncher();
   launcher.behavior = "deny";
-  const out = await runner(launcher).run(board(2).records);
+  const out = await runner(launcher).run(() => board(2).records);
   expect(out).toMatchObject({ state: "refused", reason: "recovery-busy" });
 }, 30_000);
 
@@ -361,7 +386,7 @@ test.each([
   async (behavior, reason) => {
     const launcher = new FakeLauncher();
     launcher.behavior = behavior;
-    const out = await runner(launcher).run(board(2).records);
+    const out = await runner(launcher).run(() => board(2).records);
     expect(out.state).toBe("refused");
     expect(out.state !== "complete" && out.reason).toMatch(
       /isolation-unverified/,
@@ -376,7 +401,9 @@ test.each([
 test("timeout: setup (no hello), cancelled through stop", async () => {
   const launcher = new FakeLauncher();
   launcher.behavior = "hang";
-  const out = await runner(launcher, { setupMs: 500 }).run(board(2).records);
+  const out = await runner(launcher, { setupMs: 500 }).run(
+    () => board(2).records,
+  );
   expect(out).toMatchObject({
     state: "timeout",
     reason: "setup",
@@ -391,7 +418,7 @@ test("timeout: setup (no hello), cancelled through stop", async () => {
 test("timeout: the CPU budget", async () => {
   const launcher = new FakeLauncher();
   launcher.behavior = "cpu";
-  const out = await runner(launcher).run(board(2).records);
+  const out = await runner(launcher).run(() => board(2).records);
   expect(out).toMatchObject({ state: "timeout", reason: "cpu" });
   expect(leaves()).toEqual([]);
 }, 30_000);
@@ -400,7 +427,9 @@ test("timeout: the wall clock, for a stalled child", async () => {
   const launcher = new FakeLauncher();
   launcher.behavior = "stall";
   const start = performance.now();
-  const out = await runner(launcher, { wallMs: 1_500 }).run(board(2).records);
+  const out = await runner(launcher, { wallMs: 1_500 }).run(
+    () => board(2).records,
+  );
   expect(out).toMatchObject({ state: "timeout", reason: "wall" });
   expect(performance.now() - start).toBeLessThan(1_500 + 500 + 1_000);
 }, 30_000);
@@ -408,11 +437,11 @@ test("timeout: the wall clock, for a stalled child", async () => {
 test("oom only when oom_kill advanced; a plain non-zero exit is a crash", async () => {
   const launcher = new FakeLauncher();
   launcher.behavior = "oom";
-  expect(await runner(launcher).run(board(2).records)).toMatchObject({
+  expect(await runner(launcher).run(() => board(2).records)).toMatchObject({
     state: "oom",
   });
   launcher.behavior = "crash";
-  expect(await runner(launcher).run(board(2).records)).toMatchObject({
+  expect(await runner(launcher).run(() => board(2).records)).toMatchObject({
     state: "crash",
   });
 }, 30_000);
@@ -420,7 +449,7 @@ test("oom only when oom_kill advanced; a plain non-zero exit is a crash", async 
 test("a result followed by a non-zero exit is a crash, never complete", async () => {
   const launcher = new FakeLauncher();
   launcher.behavior = "exit-after-result";
-  const out = await runner(launcher).run(board(2).records);
+  const out = await runner(launcher).run(() => board(2).records);
   expect(out.state).toBe("crash");
 }, 30_000);
 
@@ -434,7 +463,7 @@ test.each([
   async (behavior, reason) => {
     const launcher = new FakeLauncher();
     launcher.behavior = behavior;
-    const out = await runner(launcher).run(board(2).records);
+    const out = await runner(launcher).run(() => board(2).records);
     expect(out.state).toBe("protocol-error");
     expect(out.state !== "complete" && out.reason).toMatch(reason);
   },
@@ -445,9 +474,9 @@ test("busy: beyond the active slots and the queue, refused at once", async () =>
   const launcher = new FakeLauncher();
   launcher.behavior = "stall";
   const r = runner(launcher, { maxActive: 1, maxQueue: 0, wallMs: 1_500 });
-  const first = r.run(board(2).records);
+  const first = r.run(() => board(2).records);
   await new Promise((resolve) => setTimeout(resolve, 100));
-  expect(await r.run(board(2).records)).toEqual({
+  expect(await r.run(() => board(2).records)).toEqual({
     state: "refused",
     reason: "busy",
   });
@@ -464,10 +493,10 @@ test("a slot whose cleanup is never confirmed stays held", async () => {
     wallMs: 1_000,
     firstStopMinMs: 300,
   });
-  const out = await r.run(board(2).records);
+  const out = await r.run(() => board(2).records);
   expect(out).toMatchObject({ state: "timeout", held: true });
   expect(r.counts.held).toBe(1);
-  expect(await r.run(board(2).records)).toMatchObject({
+  expect(await r.run(() => board(2).records)).toMatchObject({
     state: "refused",
     reason: "busy",
   });
@@ -505,7 +534,7 @@ describe("daybreak2's benchmark: the parent's work on maximal frames", () => {
       last = now;
     }, 5);
     const out = await runner(new FakeLauncher(), { wallMs: 60_000 }).run(
-      records,
+      () => records,
     );
     clearInterval(ticker);
     expect(out).toMatchObject({ state: "complete", verdict: "invalid" });
@@ -535,4 +564,159 @@ describe("daybreak2's benchmark: the parent's work on maximal frames", () => {
     );
     expect(Math.min(...times)).toBeLessThan(50);
   });
+});
+
+describe("astra's #1240 review (CORR-DFC-2..5) and the lazy queue", () => {
+  test("CORR-DFC-5: the hello must name exactly <pool>/job-<id>", () => {
+    const jobId = "a".repeat(32);
+    const identity = {
+      uid: 1,
+      gid: 1,
+      memoryMax: MEMORY_MAX,
+      pool: "/cocalc-board-recovery",
+    };
+    const hello = (cgroup: string) => ({
+      v: 1 as const,
+      type: "hello" as const,
+      job_id: jobId,
+      uid: 1,
+      gid: 1,
+      groups: [],
+      no_new_privs: 1,
+      cap_eff: "0",
+      cap_prm: "0",
+      fds: [],
+      cgroup,
+      limits: { memory_max: MEMORY_MAX, swap_max: "0" },
+    });
+    expect(
+      verifyHello(
+        hello(`/cocalc-board-recovery/job-${jobId}`),
+        jobId,
+        identity,
+      ),
+    ).toBeUndefined();
+    for (const wrong of [
+      `/wrong-pool/job-${jobId}`,
+      `/x/cocalc-board-recovery/job-${jobId}`,
+      `/cocalc-board-recovery/../cocalc-board-recovery/job-${jobId}`,
+      `/cocalc-board-recovery/job-${jobId}/`,
+      `/cocalc-board-recovery/sub/job-${jobId}`,
+      `cocalc-board-recovery/job-${jobId}`,
+    ]) {
+      expect(verifyHello(hello(wrong), jobId, identity)).toMatch(
+        /not its job's leaf/,
+      );
+    }
+  });
+
+  test("CORR-DFC-2: a trailing byte in the result's own chunk is a protocol error", async () => {
+    const launcher = new FakeLauncher();
+    launcher.behavior = "trailing-same-chunk";
+    const out = await runner(launcher).run(() => board(2).records);
+    expect(out).toMatchObject({ state: "protocol-error" });
+    expect(out.state !== "complete" && out.reason).toMatch(
+      /after the last frame/,
+    );
+  }, 30_000);
+
+  test("CORR-DFC-2: an exit whose output a descendant keeps open is never complete", async () => {
+    const launcher = new FakeLauncher();
+    launcher.behavior = "hold-stdout";
+    const start = performance.now();
+    const out = await runner(launcher, { wallMs: 1_500 }).run(
+      () => board(2).records,
+    );
+    try {
+      // Never complete: the wait for the output's end runs into the wall
+      // deadline (timeout outranks protocol-error).
+      expect(out).toMatchObject({ state: "timeout", reason: "wall" });
+      // Within the envelope.
+      expect(performance.now() - start).toBeLessThan(1_500 + 500 + 1_000);
+    } finally {
+      const holder = join(root, `holder-${out.jobId}`);
+      if (existsSync(holder)) {
+        try {
+          process.kill(Number(readFileSync(holder, "utf8")), "SIGKILL");
+        } catch {}
+      }
+    }
+  }, 30_000);
+
+  test("CORR-DFC-3: a stop that never answers: the job still reports in time, its slot held", async () => {
+    const launcher = new FakeLauncher();
+    launcher.behavior = "deny";
+    launcher.stop = () => new Promise<StopReport>(() => {});
+    const r = runner(launcher, {
+      wallMs: 300,
+      firstStopMinMs: 500,
+      maxActive: 1,
+      maxQueue: 0,
+    });
+    const start = performance.now();
+    const out = await r.run(() => board(2).records);
+    expect(performance.now() - start).toBeLessThan(300 + 500 + 500);
+    expect(out).toMatchObject({ held: true, report: { state: "failed" } });
+    expect(r.counts.held).toBe(1);
+  }, 30_000);
+
+  test("CORR-DFC-3: a stop that answers after its deadline changes nothing", async () => {
+    const launcher = new FakeLauncher();
+    launcher.behavior = "deny";
+    let answer: (r: StopReport) => void = () => {};
+    launcher.stop = () =>
+      new Promise<StopReport>((resolve) => (answer = resolve));
+    const r = runner(launcher, {
+      wallMs: 200,
+      firstStopMinMs: 300,
+      maxActive: 1,
+      maxQueue: 0,
+    });
+    const out = await r.run(() => board(2).records);
+    expect(out).toMatchObject({ held: true });
+    answer({ state: "removed", oom_kill: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Still held: a late confirmation releases nothing.
+    expect(r.counts.held).toBe(1);
+    expect(out).toMatchObject({ held: true, report: { state: "failed" } });
+  }, 30_000);
+
+  test("CORR-DFC-4: a denial that arrives after the setup deadline is timeout(setup)", async () => {
+    const launcher = new FakeLauncher();
+    launcher.behavior = "deny";
+    const r = runner(launcher, { setupMs: 50 });
+    const running = r.run(() => board(2).records);
+    // (The launch starts on a later tick, after the history is loaded.)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    // The host's loop is busy past the setup deadline while the denial
+    // arrives: it is late, whichever event runs first.
+    const until = performance.now() + 400;
+    while (performance.now() < until) {}
+    expect(await running).toMatchObject({ state: "timeout", reason: "setup" });
+  }, 30_000);
+
+  test("CORR-DFC-4: an over-cap hello header followed by a denial is a protocol error", async () => {
+    const launcher = new FakeLauncher();
+    launcher.behavior = "garbage-then-deny";
+    const out = await runner(launcher).run(() => board(2).records);
+    expect(out.state).toBe("protocol-error");
+    expect(out.state !== "complete" && out.reason).toMatch(/over its cap/);
+  }, 30_000);
+
+  test("the queue holds no history: a queued job's history is read only once it has a slot", async () => {
+    const launcher = new FakeLauncher();
+    launcher.behavior = "stall";
+    const r = runner(launcher, { maxActive: 1, maxQueue: 1, wallMs: 1_000 });
+    const first = r.run(() => board(2).records);
+    const load = jest.fn(() => board(2).records);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    launcher.behavior = "ok";
+    const second = r.run(load);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(r.counts.waiting).toBe(1);
+    expect(load).not.toHaveBeenCalled();
+    expect((await first).state).toBe("timeout");
+    expect((await second).state).toBe("complete");
+    expect(load).toHaveBeenCalledTimes(1);
+  }, 30_000);
 });

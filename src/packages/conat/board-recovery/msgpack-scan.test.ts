@@ -96,3 +96,20 @@ test("O(depth) memory: a deep but valid value at the bound scans without recursi
     scanMsgpack(bytes, { ...L, maxDepth: 10_000, maxElements: 10_000 }),
   ).not.toThrow();
 });
+
+test("astra CORR-DFC-1: the item budget is checked on every item, nested tails included", () => {
+  const at = (bytes: number[], maxElements: number) =>
+    scanMsgpack(Uint8Array.from(bytes), { ...L, maxElements, maxDepth: 3 });
+  // [[0], 0]: 3 items (the inner array, its 0, the last 0).
+  const nested = [0x92, 0x91, 0, 0];
+  expect(() => at(nested, 2)).toThrow(/over 2 items/);
+  expect(() => at(nested, 3)).not.toThrow();
+  // {a: [0], b: 0}: keys and values (4) plus the inner 0 = 5.
+  const mapTail = [...encode({ a: [0], b: 0 })];
+  expect(() => at(mapTail, 4)).toThrow(/over 4 items/);
+  expect(() => at(mapTail, 5)).not.toThrow();
+  // [[0, 0], [0, 0]]: 6 items.
+  const two = [0x92, 0x92, 0, 0, 0x92, 0, 0];
+  expect(() => at(two, 5)).toThrow(/over 5 items/);
+  expect(() => at(two, 6)).not.toThrow();
+});

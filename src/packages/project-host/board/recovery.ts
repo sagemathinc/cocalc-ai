@@ -93,6 +93,8 @@ export interface RecoveryLauncher {
 export const DENIED_EXIT = 3;
 
 const HASH_SLICE = 1024 * 1024;
+// Of a stop's parent-side wait, what is left for its answer to arrive.
+const STOP_TRANSPORT_MS = 250;
 const YIELD_BYTES = 2 * 1024 * 1024;
 const YIELD_CHUNKS = 1000;
 
@@ -102,6 +104,9 @@ export interface RecoveryIdentity {
   // cocalc-board-recovery's, resolved once when the capability is probed.
   uid: number;
   gid: number;
+  // The recovery pool's cgroup path (from the trusted launcher's
+  // configuration): a job's leaf must be exactly <pool>/job-<job id>.
+  pool: string;
   // The leaf's memory.max, as it must read back.
   memoryMax: string;
 }
@@ -184,7 +189,9 @@ export function verifyHello(
       return `the child has fd ${fd} open on ${target}`;
     }
   }
-  if (!hello.cgroup.endsWith(`/job-${jobId}`)) {
+  // The whole path, exactly (astra CORR-DFC-5): the right leaf name under
+  // another pool, a prefix, ".." or a trailing slash is not the job's leaf.
+  if (hello.cgroup !== `${identity.pool}/job-${jobId}`) {
     return `the child is in ${hello.cgroup}, not its job's leaf`;
   }
   if (hello.limits.memory_max !== identity.memoryMax) {
@@ -230,7 +237,12 @@ export class RecoveryRunner {
     };
   }
 
-  async run(records: JobRecord[]): Promise<RecoveryOutcome> {
+  // load reads the job's history: called only once a slot is reserved, so a
+  // queued job holds no history (astra, for daybreak2: the queue holds
+  // references, not up to 8 maximal histories).
+  async run(
+    load: () => JobRecord[] | Promise<JobRecord[]>,
+  ): Promise<RecoveryOutcome> {
     if (this.active + this.held >= this.limits.maxActive) {
       if (this.waiting.length >= this.limits.maxQueue) {
         return { state: "refused", reason: "busy" };
@@ -240,6 +252,15 @@ export class RecoveryRunner {
     this.active += 1;
     let held = false;
     try {
+      let records: JobRecord[];
+      try {
+        records = await load();
+      } catch (err) {
+        return {
+          state: "refused",
+          reason: `the history couldn't be read: ${err}`.slice(0, 300),
+        };
+      }
       const outcome = await new Job(
         this.launcher,
         this.identity,
@@ -270,11 +291,16 @@ class Job {
   private hello?: HelloFrame;
   private result?: ResultFrame;
   private inputSha256?: string;
-  // Why the runner ended the job (timeout), or what went wrong.
-  private ended?: {
-    state: "timeout" | "protocol-error" | "refused";
-    reason: string;
-  };
+  // Every cause the runner saw for ending the job, the first reason of each
+  // kind: classify() applies the declared precedence to all of them, never
+  // just the first to arrive (astra CORR-DFC-4).
+  private causes: Partial<
+    Record<"timeout" | "protocol-error" | "refused", string>
+  > = {};
+  private exitAt?: number;
+  private stdoutEnded = false;
+  private stdoutWaiters: (() => void)[] = [];
+  private reader?: FrameReader;
   private settle?: () => void;
   private timers: NodeJS.Timeout[] = [];
 
@@ -296,8 +322,12 @@ class Job {
   }
 
   private end(state: "timeout" | "protocol-error" | "refused", reason: string) {
-    this.ended ??= { state, reason };
+    this.causes[state] ??= reason;
     this.settle?.();
+  }
+
+  private get ending(): boolean {
+    return Object.keys(this.causes).length > 0;
   }
 
   async run(): Promise<RecoveryOutcome> {
@@ -309,6 +339,7 @@ class Job {
     const proc = this.proc;
     const finished = new Promise<void>((resolve) => (this.settle = resolve));
     proc.on("exit", (code, signal) => {
+      this.exitAt = this.now();
       this.exited = { code, signal };
       for (const f of this.exitWaiters.splice(0)) f();
       this.settle?.();
@@ -325,12 +356,21 @@ class Job {
     const reader = new FrameReader(["hello", "result"], (kind, body) =>
       this.onFrame(kind, body),
     );
+    this.reader = reader;
+    // Read until the output ends, even after the result and the exit: a
+    // byte after the result is a protocol error until then.
     proc.stdout?.on("data", (chunk: Buffer) => {
       reader.push(chunk);
       if (reader.error) {
         this.end("protocol-error", reader.error.message);
       }
     });
+    const ended = () => {
+      this.stdoutEnded = true;
+      for (const f of this.stdoutWaiters.splice(0)) f();
+    };
+    proc.stdout?.on("end", ended);
+    proc.stdout?.on("close", ended);
     this.timers.push(
       setTimeout(() => {
         if (this.hello == null) this.end("timeout", "setup");
@@ -338,8 +378,7 @@ class Job {
       setTimeout(() => this.end("timeout", "wall"), this.limits.wallMs),
     );
     const poll = setInterval(async () => {
-      if (this.hello == null || this.ended != null || this.exited != null)
-        return;
+      if (this.hello == null || this.ending || this.exited != null) return;
       try {
         const usage = await this.launcher.cpuUsageUsec(this.jobId);
         if (usage != null && usage > this.limits.cpuUsec)
@@ -349,6 +388,9 @@ class Job {
     this.timers.push(poll as unknown as NodeJS.Timeout);
 
     await finished;
+    // An exit is not the end of the output (a descendant may hold the pipe):
+    // wait for it, within the envelope, before anything is classified.
+    if (!this.ending) await this.waitStdoutEnd(this.remainingMs());
     for (const t of this.timers) clearTimeout(t);
     clearInterval(poll);
     proc.stdin?.destroy();
@@ -360,7 +402,7 @@ class Job {
   }
 
   private onFrame(kind: FrameKind, body: Uint8Array): void {
-    if (this.ended != null) return;
+    if (this.ending) return;
     if (kind === "hello") {
       const hello = decodeFrameBody("hello", body);
       const wrong = verifyHello(hello, this.jobId, this.identity);
@@ -411,7 +453,7 @@ class Job {
     let first = true;
     let current = chunks.next();
     while (!current.done) {
-      if (this.ended != null || this.exited != null) return;
+      if (this.ending || this.exited != null) return;
       const chunk = current.value;
       // (The first chunk is the length header, not part of the body.)
       if (!first) {
@@ -421,7 +463,7 @@ class Job {
           if (sinceYield >= YIELD_BYTES) {
             sinceYield = 0;
             await yieldToLoop();
-            if (this.ended != null || this.exited != null) return;
+            if (this.ending || this.exited != null) return;
           }
         }
       }
@@ -462,11 +504,40 @@ class Job {
     });
   }
 
+  private waitStdoutEnd(ms: number): Promise<boolean> {
+    if (this.stdoutEnded) return Promise.resolve(true);
+    if (ms <= 0) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms);
+      this.stdoutWaiters.push(() => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
+
+  // One stop, bounded HERE as well as by the budget it is given (astra
+  // CORR-DFC-3): a helper that never answers, or answers late, is "failed",
+  // and its late answer changes nothing (the slot stays held).
   private async stopOnce(budgetMs: number): Promise<StopReport> {
+    const budget = Math.round(budgetMs);
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<StopReport>((resolve) => {
+      timer = setTimeout(
+        () =>
+          resolve({ state: "failed", message: "stop didn't answer in time" }),
+        budget,
+      );
+    });
     try {
-      return await this.launcher.stop(this.jobId, Math.round(budgetMs));
-    } catch (err) {
-      return { state: "failed", message: `${err}` };
+      return await Promise.race([
+        this.launcher
+          .stop(this.jobId, Math.max(500, budget - STOP_TRANSPORT_MS))
+          .catch((err): StopReport => ({ state: "failed", message: `${err}` })),
+        late,
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -503,25 +574,48 @@ class Job {
     return { report, confirmed };
   }
 
+  /*
+  The declared precedence, over every cause seen and when it arrived:
+  oom; then timeout (the runner's setup, CPU or wall deadline, or a denial
+  that arrived after the setup deadline); then protocol-error; then refused
+  (a timely denial, or a hello that didn't verify); then crash; complete
+  only with a valid result, a clean output end, exit 0 and confirmed
+  cleanup.
+  */
   private classify(report: StopReport, confirmed: boolean): RecoveryOutcome {
     const base = { jobId: this.jobId, report, held: !confirmed };
     if ((report.oom_kill ?? 0) > 0) {
       return { state: "oom", reason: "oom_kill", ...base };
     }
-    // A denial before any hello (and before the setup deadline).
+    // A denial: the launcher's exit before any hello.
     const denied =
       this.hello == null &&
       this.exited?.code === DENIED_EXIT &&
       /^denied: /.test(this.stderr);
-    if (denied && this.ended?.state !== "timeout") {
+    const deniedLate =
+      denied &&
+      this.exitAt != null &&
+      this.exitAt - this.start > this.limits.setupMs;
+    const timeout = this.causes.timeout ?? (deniedLate ? "setup" : undefined);
+    if (timeout != null) {
+      return { state: "timeout", reason: timeout, ...base };
+    }
+    if (this.causes["protocol-error"] != null) {
+      return {
+        state: "protocol-error",
+        reason: this.causes["protocol-error"],
+        ...base,
+      };
+    }
+    if (denied) {
       return {
         state: "refused",
         reason: this.stderr.split("\n")[0].slice(8, 300),
         ...base,
       };
     }
-    if (this.ended != null) {
-      return { state: this.ended.state, reason: this.ended.reason, ...base };
+    if (this.causes.refused != null) {
+      return { state: "refused", reason: this.causes.refused, ...base };
     }
     const exit = this.exited;
     if (exit == null || exit.code !== 0 || exit.signal != null) {
@@ -531,6 +625,22 @@ class Job {
           exit == null
             ? "the launcher didn't exit"
             : `exit ${exit.code ?? exit.signal}: ${this.stderr.slice(0, 300)}`,
+        ...base,
+      };
+    }
+    // Protocol completion: the output ended, cleanly, after exactly the
+    // frames expected (astra CORR-DFC-2).
+    if (!this.stdoutEnded) {
+      return {
+        state: "protocol-error",
+        reason: "the child's output didn't end",
+        ...base,
+      };
+    }
+    if (!this.reader?.done || !this.reader.atBoundary) {
+      return {
+        state: "protocol-error",
+        reason: "the output ended inside a frame, or before the result",
         ...base,
       };
     }

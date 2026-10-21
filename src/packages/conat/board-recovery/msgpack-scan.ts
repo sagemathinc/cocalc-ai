@@ -115,8 +115,15 @@ export function scanMsgpack(bytes: Uint8Array, limits: MsgpackLimits): void {
       continue;
     }
     remaining[top] -= 1;
-    // The top-level value isn't counted against maxElements; its items are.
-    if (top > 0) elements += 1;
+    // The top-level value isn't counted against maxElements; its items
+    // are, each one checked as it is reached (a container's claim is also
+    // checked when it opens, so a huge claim fails at once).
+    if (top > 0) {
+      elements += 1;
+      if (elements > limits.maxElements) {
+        throw new MsgpackScanError(`over ${limits.maxElements} items`);
+      }
+    }
     const b = u8();
     if (b <= 0x7f || b >= 0xe0) continue; // fixint
     if (b <= 0x8f) {

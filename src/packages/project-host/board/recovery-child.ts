@@ -275,18 +275,25 @@ export async function runChild({
 }): Promise<number> {
   const hello = readHello(paths);
   await write(output, encodeFrame(hello));
+  // The one job frame, accepted only at a clean end of input (astra
+  // CORR-DFC-2): a byte after it, in the same chunk or later, a partial
+  // frame, or no frame at all is a protocol error, and nothing is done.
   const body = await new Promise<Uint8Array>((resolve, reject) => {
-    const reader = new FrameReader(["job"], (_kind, b) => resolve(b));
+    let job: Uint8Array | undefined;
+    const reader = new FrameReader(["job"], (_kind, b) => (job = b));
     input.on("data", (chunk: Buffer) => {
       reader.push(chunk);
       if (reader.error) reject(reader.error);
     });
     input.on("end", () => {
-      if (!reader.done) reject(new ProtocolError("no job before EOF"));
+      if (reader.error) return reject(reader.error);
+      if (job == null || !reader.done || !reader.atBoundary) {
+        return reject(new ProtocolError("no complete job before EOF"));
+      }
+      resolve(job);
     });
     input.on("error", reject);
   });
-  input.pause();
   const job = decodeFrameBody("job", body);
   if (job.job_id !== hello.job_id) {
     throw new ProtocolError("a job for another job id");
