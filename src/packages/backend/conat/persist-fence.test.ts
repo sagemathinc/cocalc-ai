@@ -73,6 +73,30 @@ describe("fileFenceStore", () => {
     expect(() => fileFenceStore(dir).load()).toThrow("not valid JSON");
     writeFileSync(join(dir, `${P}.json`), JSON.stringify({ project_id: P }));
     expect(() => fileFenceStore(dir).load()).toThrow("malformed");
+    // holders a fence service would never have accepted
+    const valid = {
+      project_id: P,
+      token: "t",
+      holder: { pid: 10, start: "5" },
+      since: 1000,
+    };
+    for (const holder of [
+      { pid: 0, start: "5" },
+      { pid: -3, start: "5" },
+      { pid: 10, start: 5 },
+      { pid: 10, start: "5", pgid: 0 },
+      { pid: 10, start: "5", pgid: "7" },
+    ]) {
+      writeFileSync(
+        join(dir, `${P}.json`),
+        JSON.stringify({ ...valid, holder }),
+      );
+      expect(() => fileFenceStore(dir).load()).toThrow("malformed");
+    }
+    writeFileSync(join(dir, `${P}.json`), "null");
+    expect(() => fileFenceStore(dir).load()).toThrow("malformed");
+    writeFileSync(join(dir, `${P}.json`), JSON.stringify(valid));
+    expect(fileFenceStore(dir).load()).toEqual([valid]);
     expect(readdirSync(dir).sort()).toEqual([`${P}.json`, "notes.txt"]);
   });
 
