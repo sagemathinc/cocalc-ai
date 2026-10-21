@@ -4079,6 +4079,96 @@ describe("the agent that sent a message is told how its turn ended", () => {
     }
   });
 
+  it.each([true, false])(
+    "a completed turn only when the sender asked to hear of no reply (%s)",
+    async (asked) => {
+      const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+      process.env.COCALC_ACP_HARNESSES = "1";
+      setHarnessLauncher(async () => {
+        throw Error("unexpected launch");
+      });
+      const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+      hubApi.agent.authorizeRpcExecution = jest.fn(async () => ({})) as any;
+      const { request: raw, execution } = agentRequest();
+      if (asked) (raw.chat.agent_rpc_execution as any).report_no_reply = true;
+      const request = prepareHarnessRequest({
+        ...raw,
+        session_id: undefined,
+        config: undefined,
+        runtime: {
+          version: 1,
+          kind: "acp",
+          profile: {
+            version: 2,
+            kind: "acp",
+            id: "claude-code",
+            revision: "0.93.0",
+            cwd: "/home/user",
+            credentialMode: "project-managed",
+            executionPolicy: "full-access",
+          },
+        },
+        harness_credential: {
+          version: 1,
+          provider: "anthropic",
+          mode: "account-subscription",
+          credentialId: "33333333-3333-4333-8333-333333333333",
+        },
+      });
+      const job = enqueueAcpJob(request);
+      jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+        makeSyncdb([
+          {
+            event: "chat-thread-config",
+            thread_id: request.chat!.thread_id,
+            agent_kind: "acp",
+            agent_runtime: request.runtime,
+          },
+        ]) as any,
+      );
+      acpTestInternals.initializeAcpRuntime({
+        sync: { akv: () => ({}) },
+      } as unknown as ConatClient);
+      jest
+        .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+        .mockResolvedValue(undefined);
+      // The turn ends normally, without replying to the sender.
+      const evaluate = jest.fn(async () => {});
+      const unregister = acpTestInternals.registerInterruptAgentForTests(
+        harnessRuntimeKey(request),
+        request.project_id,
+        { evaluate } as any,
+        true,
+      );
+      try {
+        const claimed = claimNextQueuedAcpJobForThread({
+          project_id: job.project_id,
+          path: job.path,
+          thread_id: job.thread_id,
+        })!;
+        await acpTestInternals.runQueuedAcpJob(claimed);
+        expect(evaluate).toHaveBeenCalledTimes(1);
+        expect(getAcpJobByOpId(job.op_id)?.state).toBe("completed");
+        const due = reports();
+        if (!asked) expect(due).toHaveLength(0);
+        else {
+          expect(due).toHaveLength(1);
+          expect(due[0].report).toMatchObject({
+            attempt_id: execution.attempt_id,
+            kind: "completed",
+          });
+        }
+      } finally {
+        unregister();
+        hubApi.agent.authorizeRpcExecution = originalAuthorize;
+        setHarnessLauncher();
+        if (previousEnabled === undefined)
+          delete process.env.COCALC_ACP_HARNESSES;
+        else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+      }
+    },
+  );
+
   it("not by the worker when a project stop fenced the turn as it ended", async () => {
     const previousEnabled = process.env.COCALC_ACP_HARNESSES;
     process.env.COCALC_ACP_HARNESSES = "1";

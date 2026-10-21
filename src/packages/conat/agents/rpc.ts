@@ -61,6 +61,9 @@ export interface AgentRpcAttempt {
 
 export interface AgentRpcSend extends AgentRpcAttempt {
   body: string;
+  /** Tell the sender if the recipient's turn ends without a reply to it
+   * (a delivery report of kind "completed"). Errors are reported anyway. */
+  report_no_reply?: true;
   file_references?: AgentFileReference[];
   snapshot_manifest?: AgentSnapshotMetadata[];
   attachment_reservation?: string;
@@ -224,7 +227,14 @@ export function validateAgentRpcRequest(
         "snapshot_manifest",
         "attachment_reservation",
       );
-      if (value.action === "send") keys.push("snapshot_payload");
+      if (value.action === "send") {
+        keys.push("snapshot_payload", "report_no_reply");
+        if (
+          (value as AgentRpcSend).report_no_reply !== undefined &&
+          (value as AgentRpcSend).report_no_reply !== true
+        )
+          throw new Error("invalid report_no_reply");
+      }
       if (value.snapshot_manifest !== undefined) {
         if (value.file_references !== undefined)
           throw new Error("cannot mix snapshot and reference attachments");

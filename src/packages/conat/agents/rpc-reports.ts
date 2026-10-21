@@ -40,7 +40,10 @@ export type AgentRpcTurnFailureKind =
   | "stopped"
   /** A newer message in the recipient's conversation came first, so the
    * interrupted turn is not resumed. */
-  | "superseded";
+  | "superseded"
+  /** The turn ended normally without replying, and the sender asked to be
+   * told (agent send --report-no-reply). */
+  | "completed";
 
 export interface AgentRpcTurnFailureReport {
   version: 1;
@@ -85,7 +88,7 @@ export const AGENT_RPC_REPORT_DETAIL_MAX = 300;
  * kinds, no resets_at or tool_ran, and a text that always says the recipient
  * "did not act" and invites a resend.
  */
-export const AGENT_RPC_REPORT_VERSION = 2;
+export const AGENT_RPC_REPORT_VERSION = 3;
 const V1_KINDS: AgentRpcTurnFailureKind[] = [
   "refused",
   "limit",
@@ -104,6 +107,9 @@ export function agentRpcReportForVersion(
   version: number,
 ): AgentRpcTurnFailureReport | undefined {
   if (version >= AGENT_RPC_REPORT_VERSION) return report;
+  // Before version 3 every report says the turn did not succeed.
+  if (report.kind === "completed") return undefined;
+  if (version >= 2) return report;
   const { resets_at: _r, tool_ran, ...v1 } = report;
   // Only when nothing ran is the old text ("did not act ... you can send
   // it again") true; otherwise it would invite a duplicate.
@@ -130,6 +136,7 @@ const KIND_TEXT: Record<AgentRpcTurnFailureKind, string> = {
   stopped: "someone in its project stopped the turn",
   superseded:
     "it was cut off, and a newer message in its conversation came first, so it is not resumed",
+  completed: "it finished its turn without replying to you",
 };
 
 /** The report's kind for a turn's typed failure (turn-outcome.ts). */
@@ -193,6 +200,12 @@ export function agentRpcReportText(
   now = Date.now(),
 ): string {
   const B = targetLabel;
+  if (report.kind === "completed")
+    return [
+      `[Delivery report] ${B} finished its turn on your message without replying to you (you asked to be told).`,
+      `It may have done what you asked without writing back, so check before you send it again.`,
+      `This report is from CoCalc, not from ${B}.`,
+    ].join("\n");
   const failure = !["canceled", "stopped", "superseded"].includes(report.kind);
   const lines = [
     failure
@@ -287,6 +300,8 @@ export function validateAgentRpcExecution(value: AgentRpcExecution): void {
   )
     throw new Error("invalid configured_delivery");
   if (typeof value.guidance !== "boolean") throw new Error("invalid guidance");
+  if (value.report_no_reply !== undefined && value.report_no_reply !== true)
+    throw new Error("invalid report_no_reply");
 }
 
 export function validateAgentRpcTurnFailureReport(

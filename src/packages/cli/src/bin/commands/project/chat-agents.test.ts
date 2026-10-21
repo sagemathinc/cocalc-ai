@@ -198,7 +198,7 @@ function topLevel(calls: unknown[]) {
   return command;
 }
 
-function peers() {
+function peers(delivery_mode = "live") {
   const network = randomUUID();
   const peer = (name: string) => ({
     member: {
@@ -214,7 +214,7 @@ function peers() {
       {
         agent_network_id: network,
         title: "cocalc",
-        delivery_mode: "live",
+        delivery_mode,
         generation: randomUUID(),
       },
     ],
@@ -382,6 +382,56 @@ test("stdin stops at the message limit instead of buffering everything", async (
   } finally {
     clearInterval(pump);
     Object.defineProperty(process, "stdin", stdin);
+    transport.mock.restore();
+  }
+});
+
+test("agent send --report-no-reply asks to hear of a turn without a reply", async () => {
+  const { directory } = peers("queued");
+  for (const flag of [true, false]) {
+    const requests: any[] = [];
+    const transport = fakeHub(directory, requests);
+    const stderr = mock.method(process.stderr, "write", () => true);
+    try {
+      await topLevel([]).parseAsync(
+        [
+          "agent",
+          "send",
+          "reviewer",
+          ...(flag ? ["--report-no-reply"] : []),
+          "Please",
+          "review",
+        ],
+        { from: "user" },
+      );
+      const send = requests.find((request) => request.action === "send");
+      assert.equal(send.report_no_reply, flag ? true : undefined);
+    } finally {
+      stderr.mock.restore();
+      transport.mock.restore();
+    }
+  }
+});
+
+test("agent send --report-no-reply refuses a live network, sending nothing", async () => {
+  const { directory } = peers("live");
+  const requests: any[] = [];
+  const transport = fakeHub(directory, requests);
+  const stderr = mock.method(process.stderr, "write", () => true);
+  try {
+    await assert.rejects(
+      topLevel([]).parseAsync(
+        ["agent", "send", "reviewer", "--report-no-reply", "Please", "review"],
+        { from: "user" },
+      ),
+      /--report-no-reply is not possible here: .*delivers live.*no message was sent/,
+    );
+    assert.equal(
+      requests.some((request) => request.action === "send"),
+      false,
+    );
+  } finally {
+    stderr.mock.restore();
     transport.mock.restore();
   }
 });

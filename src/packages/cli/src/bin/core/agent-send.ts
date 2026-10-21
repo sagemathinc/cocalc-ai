@@ -45,6 +45,8 @@ export interface AgentSendOptions {
   attemptId?: string;
   externalAgent?: string;
   api?: string;
+  /** Be told if the recipient's turn ends without replying. */
+  reportNoReply?: boolean;
 }
 
 export interface AgentSendResult {
@@ -123,6 +125,20 @@ export async function sendAgentMessage(
     agent_network_id = networks[0].agent_network_id;
     agent_network_title = networks[0].title;
   }
+  if (opts.reportNoReply) {
+    // Only a turn the message starts on its own can be reported (the hub
+    // signs reports for queued delivery, between project agents).
+    const why =
+      opts.externalAgent || isExternalAgentSource(target)
+        ? "external network members never get turn reports"
+        : deliveryMode !== "queued"
+          ? `Agent Network "${agent_network_title}" delivers ${deliveryMode ?? "live"}, into the recipient's running turn, so no report can arrive`
+          : undefined;
+    if (why)
+      throw new Error(
+        `--report-no-reply is not possible here: ${why}; no message was sent`,
+      );
+  }
   process.stderr.write(
     `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
   );
@@ -184,6 +200,7 @@ export async function sendAgentMessage(
   }
   const outcome = (await send({
     ...request,
+    ...(opts.reportNoReply ? { report_no_reply: true as const } : {}),
     action: "send",
     ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
   })) as AgentRpcOutcome;

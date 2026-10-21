@@ -71,9 +71,15 @@ export function noteAgentMessageTurnFailed(opts: {
   const turn_started_at = Number(opts.turn_started_at ?? 0);
   if (!Number.isSafeInteger(turn_started_at) || turn_started_at <= 0) return;
   const outcome = opts.outcome;
-  const kind = outcome
-    ? agentRpcReportKindOf(outcome)
-    : classifyAgentTurnError(opts.error ?? "");
+  const kind =
+    outcome?.state === "completed"
+      ? // Only when the sender asked; a reply makes its host skip it.
+        authorization.report_no_reply === true
+        ? ("completed" as const)
+        : undefined
+      : outcome
+        ? agentRpcReportKindOf(outcome)
+        : classifyAgentTurnError(opts.error ?? "");
   // A turn that succeeded is not reported.
   if (!kind) return;
   const detail = agentRpcReportDetail(opts.error ?? "");

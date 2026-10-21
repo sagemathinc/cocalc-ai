@@ -100,6 +100,10 @@ export function registerAgentCommands(
     )
     .option("--external-agent <profile>", "use an enrolled external agent")
     .option(
+      "--report-no-reply",
+      "tell me if the recipient's turn ends without replying to me (errors are always reported)",
+    )
+    .option(
       "--watch-turn",
       "wake me once when the turn this message starts ends (a sensor watcher; end your turn after sending)",
     )
@@ -116,6 +120,7 @@ export function registerAgentCommands(
         attemptId: opts.attemptId,
         externalAgent: opts.externalAgent,
         api: globals.api,
+        reportNoReply: opts.reportNoReply === true,
       });
       // The message is sent either way: a watcher that could not be set
       // must not make it look failed (a retry would send it twice).

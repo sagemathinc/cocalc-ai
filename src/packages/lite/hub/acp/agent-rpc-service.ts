@@ -338,6 +338,9 @@ export function createAgentRpcService(
               ...(e.report_capability
                 ? { report_capability: e.report_capability }
                 : {}),
+              ...(e.report_no_reply === true
+                ? { report_no_reply: true as const }
+                : {}),
             };
             chatEffect = "unknown";
             db.set({

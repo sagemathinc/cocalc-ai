@@ -10235,7 +10235,13 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     // A turn that is (or may still be) retried is not over; the others are
     // reported to the agent whose message started them.
     // Stopped by a person counts too: the sender would otherwise wait.
-    if (result.terminalState !== "completed" && !resumed && !recoveryPending)
+    // A completed turn too, when the sender asked to hear of no reply.
+    if (
+      (result.terminalState !== "completed" ||
+        refreshedRequest.chat?.agent_rpc_execution?.report_no_reply === true) &&
+      !resumed &&
+      !recoveryPending
+    )
       reportFailedAgentMessageTurn(
         job,
         refreshedRequest,

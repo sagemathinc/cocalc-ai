@@ -3,6 +3,7 @@ import {
   AGENT_RPC_REPORT_DETAIL_MAX,
   agentRpcReportBinding,
   agentRpcReportDetail,
+  agentRpcReportForVersion,
   agentRpcReportKindOf,
   agentRpcReportText,
   classifyAgentTurnError,
@@ -242,4 +243,49 @@ test("the capability binds every field that says who, where and under what", () 
     expect(agentRpcReportBinding({ ...execution, ...changed })).not.toBe(
       binding,
     );
+});
+
+describe("a turn that ended without a reply, when the sender asked", () => {
+  const completed = () =>
+    report({
+      kind: "completed",
+      detail: undefined,
+      authorization: { ...report().authorization, report_no_reply: true },
+    });
+
+  it("is a valid report with its own text", () => {
+    expect(() => validateAgentRpcTurnFailureReport(completed())).not.toThrow();
+    const text = agentRpcReportText(completed(), "@reviewer");
+    expect(text).toMatch(
+      /^\[Delivery report\] @reviewer finished its turn on your message without replying to you \(you asked to be told\)\./,
+    );
+    expect(text).toMatch(/check before you send it again/);
+    expect(text).not.toMatch(/ended before it replied|safe to send it again/);
+  });
+
+  it("reaches only a sender's host that can say so; older ones hold it", () => {
+    expect(agentRpcReportForVersion(completed(), 3)).toEqual(completed());
+    expect(agentRpcReportForVersion(completed(), 2)).toBeUndefined();
+    expect(agentRpcReportForVersion(completed(), 1)).toBeUndefined();
+    // Version 2 still takes every earlier kind unchanged.
+    const stopped = report({ kind: "stopped", tool_ran: true });
+    expect(agentRpcReportForVersion(stopped, 2)).toEqual(stopped);
+  });
+
+  it("is asked for with exactly true, and is not part of the signed binding", () => {
+    expect(() =>
+      validateAgentRpcTurnFailureReport(
+        report({
+          authorization: {
+            ...report().authorization,
+            report_no_reply: "yes" as any,
+          },
+        }),
+      ),
+    ).toThrow("invalid report_no_reply");
+    // Hosts that predate the flag still match the hub's signature.
+    expect(agentRpcReportBinding(completed().authorization)).toBe(
+      agentRpcReportBinding(report().authorization),
+    );
+  });
 });
