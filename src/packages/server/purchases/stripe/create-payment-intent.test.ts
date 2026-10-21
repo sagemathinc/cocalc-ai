@@ -18,6 +18,8 @@ const mockBindSubscriptionRenewalPaymentIntent = jest.fn();
 const mockBindAdminMembershipPayment = jest.fn();
 const mockDelay = jest.fn();
 const mockPoolQuery = jest.fn();
+const mockClientQuery = jest.fn();
+const mockCreateNotice = jest.fn();
 
 jest.mock("@cocalc/server/launch/kill-switches", () => ({
   assertPaymentCheckoutAllowed: (...args: any[]) =>
@@ -57,7 +59,26 @@ jest.mock("@cocalc/server/messages/send", () => ({
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: () => ({ query: (...args: any[]) => mockPoolQuery(...args) }),
+  default: () => ({
+    query: (...args: any[]) => mockPoolQuery(...args),
+    connect: async () => ({
+      query: (...args: any[]) => mockClientQuery(...args),
+      release: () => {},
+    }),
+  }),
+}));
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  getClusterAccountById: async (account_id: string) => ({
+    account_id,
+    home_bay_id: "bay-1",
+  }),
+}));
+jest.mock("@cocalc/database/postgres/notifications-core", () => ({
+  createNotificationEventGraphInTransaction: (...args: any[]) =>
+    mockCreateNotice(...args),
+}));
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: () => "bay-0",
 }));
 
 jest.mock("awaiting", () => ({
@@ -84,6 +105,8 @@ describe("createPaymentIntent", () => {
     customers: {
       retrieve: jest.fn(),
       listPaymentMethods: jest.fn(),
+      listSources: jest.fn(),
+      retrieveSource: jest.fn(),
     },
     invoiceItems: {
       create: jest.fn(),
@@ -123,6 +146,15 @@ describe("createPaymentIntent", () => {
     mockIsReadyToProcess.mockReturnValue(false);
     mockDelay.mockResolvedValue(undefined);
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
+    // The weekly notice claim succeeds unless a test says otherwise.
+    mockClientQuery
+      .mockReset()
+      .mockImplementation(async (sql: string) =>
+        `${sql}`.includes("business_tax_id_notices")
+          ? { rows: [{ account_id: "acct-1" }] }
+          : { rows: [] },
+      );
+    mockCreateNotice.mockReset().mockResolvedValue({});
     stripe.customers.retrieve.mockResolvedValue({
       invoice_settings: {},
     });
@@ -617,15 +649,11 @@ describe("createPaymentIntent", () => {
       expect(mockPoolQuery).not.toHaveBeenCalled();
     });
 
-    it("refuses an automatic payment from a customer with no address but an EU card, and tells them", async () => {
-      const sendMock = jest.requireMock("@cocalc/server/messages/send").default;
+    it("refuses an automatic payment from a customer with no address but an EU card, and tells them at their home bay", async () => {
       stripe.customers.retrieve.mockResolvedValue({ tax_ids: { data: [] } });
       stripe.customers.listPaymentMethods.mockResolvedValue({
-        data: [{ card: { country: "NL" } }],
+        data: [{ id: "pm_1", card: { country: "NL" } }],
       });
-      mockPoolQuery.mockImplementation(async (sql: string) =>
-        sql.includes("count(*)") ? { rows: [{ n: 1 }] } : { rows: [] },
-      );
       await expect(
         createPaymentIntent({
           account_id: "acct-1",
@@ -643,17 +671,18 @@ describe("createPaymentIntent", () => {
         "auto-credit",
         "card-country",
       ]);
-      expect(sendMock).toHaveBeenCalledWith(
-        expect.objectContaining({ to_ids: ["acct-1"] }),
-      );
+      expect(mockCreateNotice).toHaveBeenCalledTimes(1);
+      const notice = mockCreateNotice.mock.calls[0][0].input;
+      expect(notice.kind).toBe("account_notice");
+      expect(notice.targets[0]).toMatchObject({
+        target_account_id: "acct-1",
+        target_home_bay_id: "bay-1",
+      });
     });
 
-    it("does not resend the notice while the customer was already told this week", async () => {
-      const sendMock = jest.requireMock("@cocalc/server/messages/send").default;
+    it("sends no notice when this week's notice was already claimed", async () => {
       stripe.customers.retrieve.mockResolvedValue(eu());
-      mockPoolQuery.mockImplementation(async (sql: string) =>
-        sql.includes("count(*)") ? { rows: [{ n: 3 }] } : { rows: [] },
-      );
+      mockClientQuery.mockImplementation(async () => ({ rows: [] }));
       await expect(
         createPaymentIntent({
           account_id: "acct-1",
@@ -661,7 +690,64 @@ describe("createPaymentIntent", () => {
           lineItems,
         }),
       ).rejects.toMatchObject({ code: "business_tax_id_required" });
-      expect(sendMock).not.toHaveBeenCalled();
+      expect(mockCreateNotice).not.toHaveBeenCalled();
+    });
+
+    it("finds an EU default card beyond the first page of payment methods", async () => {
+      stripe.customers.retrieve.mockResolvedValue({ tax_ids: { data: [] } });
+      stripe.customers.listPaymentMethods
+        .mockResolvedValueOnce({
+          data: [{ id: "pm_1", card: { country: "US" } }],
+          has_more: true,
+        })
+        .mockResolvedValueOnce({
+          data: [{ id: "pm_2", card: { country: "DE" } }],
+          has_more: false,
+        });
+      await expect(
+        createPaymentIntent({
+          account_id: "acct-1",
+          purpose: "auto-credit",
+          lineItems,
+        }),
+      ).rejects.toMatchObject({ code: "business_tax_id_required" });
+      expect(stripe.customers.listPaymentMethods).toHaveBeenLastCalledWith(
+        "cus_123",
+        expect.objectContaining({ starting_after: "pm_1" }),
+      );
+      expect(stripe.invoices.create).not.toHaveBeenCalled();
+    });
+
+    it("finds an EU legacy default source", async () => {
+      stripe.customers.retrieve.mockResolvedValue({
+        tax_ids: { data: [] },
+        default_source: { id: "card_1", object: "card", country: "GB" },
+      });
+      await expect(
+        createPaymentIntent({
+          account_id: "acct-1",
+          purpose: "statement-42",
+          lineItems,
+        }),
+      ).rejects.toMatchObject({ code: "business_tax_id_required" });
+      expect(stripe.invoices.create).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the cards cannot be checked", async () => {
+      stripe.customers.retrieve.mockResolvedValue({ tax_ids: { data: [] } });
+      stripe.customers.listPaymentMethods.mockRejectedValue(
+        new Error("Stripe is down"),
+      );
+      await expect(
+        createPaymentIntent({
+          account_id: "acct-1",
+          purpose: "auto-credit",
+          lineItems,
+        }),
+      ).rejects.toThrow("could not check this payment method");
+      expect(stripe.invoices.create).not.toHaveBeenCalled();
+      expect(stripe.invoices.pay).not.toHaveBeenCalled();
+      expect(mockCreateNotice).not.toHaveBeenCalled();
     });
 
     it("does not judge an interactive purchase by card country", async () => {

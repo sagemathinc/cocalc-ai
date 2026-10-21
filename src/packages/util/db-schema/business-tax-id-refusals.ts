@@ -13,6 +13,8 @@ Table({
   rules: {
     primary_key: "id",
     pg_indexes: ["account_id", "created"],
+    // A retried automatic payment is one lost sale per day, not one per try.
+    pg_unique_indexes: ["(account_id,path,refusal_day)"],
     user_query: {
       get: {
         admin: true,
@@ -61,6 +63,37 @@ Table({
     created: {
       type: "timestamp",
       desc: "When the purchase was refused.",
+    },
+    refusal_day: {
+      type: "string",
+      pg_type: "DATE",
+      desc: "UTC day of the refusal; one row per account, path and day.",
+    },
+  },
+});
+
+// When a customer was last told that an automatic payment was refused for a
+// missing VAT ID, so the notice goes out at most once a week.
+Table({
+  name: "business_tax_id_notices",
+  rules: {
+    primary_key: "account_id",
+    user_query: {
+      get: {
+        admin: true,
+        fields: { account_id: null, notified_at: null },
+      },
+    },
+  },
+  fields: {
+    account_id: {
+      type: "uuid",
+      desc: "Account that was notified.",
+      render: { type: "account" },
+    },
+    notified_at: {
+      type: "timestamp",
+      desc: "When the last notice was sent.",
     },
   },
 });

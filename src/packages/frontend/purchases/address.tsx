@@ -212,7 +212,9 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
       {ready && vatRequired && (
         <div style={{ marginTop: "15px" }}>
           <div style={{ marginBottom: "5px" }}>
-            <b>VAT number</b>{" "}
+            <label htmlFor="billing-vat-number">
+              <b>VAT number</b>
+            </label>{" "}
             {customer?.vat_id?.value &&
               customer.vat_id.value ===
                 vatId.replace(/\s+/g, "").toUpperCase() &&
@@ -231,12 +233,15 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
               )}
           </div>
           <Input
+            id="billing-vat-number"
+            aria-describedby="billing-vat-number-help"
             placeholder="e.g. DE123456789"
             value={vatId}
             onChange={(e) => setVatId(e.target.value)}
             maxLength={40}
           />
           <Typography.Text
+            id="billing-vat-number-help"
             type="secondary"
             style={{ display: "block", marginTop: "5px" }}
           >

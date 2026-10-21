@@ -14,7 +14,9 @@ import { v4 as uuid } from "uuid";
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import send, { name, support } from "@cocalc/server/messages/send";
+import { createNotificationEventGraphInTransaction } from "@cocalc/database/postgres/notifications-core";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import {
   ADMIN_MEMBERSHIP_PACKAGE_PURCHASE,
   AUTO_CREDIT,
@@ -96,15 +98,13 @@ export async function recordBusinessTaxIdRefusal({
     amount,
   });
   try {
-    // A retried automatic payment is one lost sale, not one per attempt.
+    // A retried automatic payment is one lost sale a day, not one per attempt
+    // (unique index on account_id, path, refusal_day).
     await getPool().query(
       `INSERT INTO business_tax_id_refusals
-         (id, account_id, country, path, reason, amount, created)
-       SELECT $1, $2, $3, $4, $5, $6, NOW()
-        WHERE NOT EXISTS (
-          SELECT 1 FROM business_tax_id_refusals
-           WHERE account_id = $2 AND path = $4
-             AND created > NOW() - INTERVAL '1 day')`,
+         (id, account_id, country, path, reason, amount, created, refusal_day)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), (NOW() AT TIME ZONE 'UTC')::date)
+       ON CONFLICT (account_id, path, refusal_day) DO NOTHING`,
       [
         uuid(),
         account_id,
@@ -120,54 +120,146 @@ export async function recordBusinessTaxIdRefusal({
   }
 }
 
-// The message for a customer whose automatic payment was refused, at most
-// once a week.
-async function sendOffSessionRefusalNotice(account_id: string): Promise<void> {
+const OFF_SESSION_NOTICE = {
+  title: "Automatic payment not made: EU and UK customers",
+  body_markdown: `CoCalc no longer sells to individuals in the EU and the UK, so your automatic payment was not made. Anything you have already paid for keeps working until it runs out.
+
+To keep a paid membership, please ask your university or organization to purchase it (we work with institutions by invoice or purchase order). An organization can also add its VAT number under Settings, then Payment Methods, then Name and Address. Alternatively, you can host CoCalc yourself.`,
+  severity: "warning",
+  origin_label: "Billing",
+  notice_type: "business_tax_id_required",
+};
+
+// Tells a customer that an automatic payment was refused, at most once every
+// OFF_SESSION_NOTICE_DAYS: the claim in business_tax_id_notices and the
+// account notice (delivered to the account's home bay) commit together, so
+// concurrent refusals send exactly one notice.
+export async function sendOffSessionRefusalNotice(
+  account_id: string,
+): Promise<boolean> {
   try {
-    const { rows } = await getPool().query(
-      `SELECT count(*)::int AS n FROM business_tax_id_refusals
-        WHERE account_id = $1 AND created > NOW() - $2::interval`,
-      [account_id, `${OFF_SESSION_NOTICE_DAYS} days`],
-    );
-    // The refusal just recorded is the first one in the period.
-    if ((rows[0]?.n ?? 0) > 1) return;
-    await send({
-      to_ids: [account_id],
-      subject: "CoCalc: automatic payment not made (EU and UK customers)",
-      body: `
-Dear ${await name(account_id)},
-
-CoCalc no longer sells to individuals in the EU and the UK, so we did not make
-your automatic payment. Anything you have already paid for keeps working until
-it runs out.
-
-To keep using a paid membership, please ask your university or organization to
-purchase it (we work with institutions by invoice or purchase order). An
-organization can also add its VAT number under Settings, then Payment Methods,
-then Name and Address. Alternatively, you can host CoCalc yourself.
-
-${await support()}
-`,
-    });
+    const home = await getClusterAccountById(account_id);
+    if (home == null) {
+      logger.warn("no account for the off-session refusal notice", {
+        account_id,
+      });
+      return false;
+    }
+    const home_bay_id =
+      `${home.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+    const client = await getPool().connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query(
+        `INSERT INTO business_tax_id_notices (account_id, notified_at)
+         VALUES ($1, NOW())
+         ON CONFLICT (account_id) DO UPDATE SET notified_at = NOW()
+          WHERE business_tax_id_notices.notified_at
+                < NOW() - make_interval(days => $2)
+         RETURNING account_id`,
+        [account_id, OFF_SESSION_NOTICE_DAYS],
+      );
+      if (rows.length === 0) {
+        await client.query("COMMIT");
+        return false;
+      }
+      await createNotificationEventGraphInTransaction({
+        db: client,
+        input: {
+          kind: "account_notice",
+          source_bay_id: getConfiguredBayId(),
+          origin_kind: "system",
+          payload_json: OFF_SESSION_NOTICE,
+          targets: [
+            {
+              target_account_id: account_id,
+              target_home_bay_id: home_bay_id,
+              dedupe_key: `business-tax-id-required:${account_id}`,
+              summary_json: OFF_SESSION_NOTICE,
+            },
+          ],
+        },
+      });
+      await client.query("COMMIT");
+      return true;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    logger.warn("could not send the off-session refusal notice", { err });
+    logger.warn("could not send the off-session refusal notice", {
+      account_id,
+      err,
+    });
+    return false;
   }
 }
 
-// The card countries of a customer's saved cards.
-async function cardCountries(stripe, customer: string): Promise<string[]> {
-  try {
-    const { data } = await stripe.customers.listPaymentMethods(customer, {
+function cardCountry(card): string {
+  return `${card?.country ?? ""}`.trim().toUpperCase();
+}
+
+// The countries of every card Stripe could charge for this customer: the
+// default payment method, all saved card payment methods (every page) and
+// legacy card sources, including the default source. Throws if any of it
+// cannot be read, so the caller fails closed.
+export async function chargeableCardCountries(
+  stripe,
+  customer: string,
+): Promise<string[]> {
+  const countries = new Set<string>();
+  const add = (country: string) => country && countries.add(country);
+  const c = await stripe.customers.retrieve(customer, {
+    expand: ["sources", "invoice_settings.default_payment_method"],
+  });
+  if (c?.deleted) return [];
+  add(cardCountry(c?.invoice_settings?.default_payment_method?.card));
+
+  // Saved payment methods, every page.
+  let starting_after: string | undefined;
+  for (let page = 0; ; page++) {
+    if (page >= 100) throw Error("too many payment methods to check");
+    const list = await stripe.customers.listPaymentMethods(customer, {
       type: "card",
-      limit: 10,
+      limit: 100,
+      ...(starting_after ? { starting_after } : {}),
     });
-    return (data ?? [])
-      .map((pm) => `${pm?.card?.country ?? ""}`.toUpperCase())
-      .filter(Boolean);
-  } catch (err) {
-    logger.warn("could not list payment methods for the VAT check", { err });
-    return [];
+    const data = list?.data ?? [];
+    for (const pm of data) add(cardCountry(pm?.card));
+    if (!list?.has_more || data.length === 0) break;
+    starting_after = data[data.length - 1].id;
   }
+
+  // Legacy sources: cards have country on the card object (object "card") or
+  // under .card (object "source").
+  const legacy = (source) =>
+    add(cardCountry(source?.object === "card" ? source : source?.card));
+  const sources = c?.sources?.data ?? [];
+  for (const source of sources) legacy(source);
+  let sourcesAfter = c?.sources?.has_more
+    ? sources[sources.length - 1]?.id
+    : undefined;
+  for (let page = 0; sourcesAfter; page++) {
+    if (page >= 100) throw Error("too many payment sources to check");
+    const list = await stripe.customers.listSources(customer, {
+      limit: 100,
+      starting_after: sourcesAfter,
+    });
+    const data = list?.data ?? [];
+    for (const source of data) legacy(source);
+    sourcesAfter = list?.has_more ? data[data.length - 1]?.id : undefined;
+  }
+  const defaultSource = c?.default_source;
+  if (typeof defaultSource === "string" && defaultSource) {
+    if (!sources.some((source) => source?.id === defaultSource)) {
+      legacy(await stripe.customers.retrieveSource(customer, defaultSource));
+    }
+  } else if (defaultSource && typeof defaultSource === "object") {
+    legacy(defaultSource);
+  }
+  return Array.from(countries);
 }
 
 // Throws BusinessTaxIdRequiredError, after recording it, when the customer is
@@ -207,9 +299,20 @@ export async function assertBusinessTaxIdForPurchase({
     throw new BusinessTaxIdRequiredError(status);
   }
   if (!status.required && !status.country && offSession) {
-    const card = (await cardCountries(stripe, customer)).find((c) =>
-      requiresBusinessTaxId(c),
-    );
+    let countries: string[];
+    try {
+      countries = await chargeableCardCountries(stripe, customer);
+    } catch (err) {
+      // Fail closed: without knowing where the card is from, do not charge.
+      logger.warn("could not check card countries for the VAT check", {
+        account_id,
+        err,
+      });
+      throw Error(
+        "CoCalc could not check this payment method, so the automatic payment was not made. It will be retried later.",
+      );
+    }
+    const card = countries.find((c) => requiresBusinessTaxId(c));
     if (card) {
       const refused: BusinessTaxIdStatus = {
         required: true,
