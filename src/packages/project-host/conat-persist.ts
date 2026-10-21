@@ -23,6 +23,7 @@ import {
 } from "@cocalc/conat/persist/fence";
 import {
   fileFenceStore,
+  describeFenceHolder,
   isFenceHolderAlive,
   removeFenceCapability,
   writeFenceCapability,
@@ -221,6 +222,7 @@ export async function startStandaloneProjectHostConatPersist({
   const fenceService = await initPersistFenceService({
     client,
     holderAlive: isFenceHolderAlive,
+    describeHolder: describeFenceHolder,
     store: fileFenceStore(fenceDir),
     features,
   });
@@ -317,6 +319,7 @@ export async function startStandaloneProjectHostConatPersist({
           ready: persistReady,
           serverId: id,
           streamReleases: getPersistStreamReleaseQueueDiagnostics(),
+          fences: fenceService.fences(),
         }),
       );
     } catch (err) {

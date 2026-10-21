@@ -321,6 +321,50 @@ describe("fence a project, replace its history, and clients reload it", () => {
   });
 });
 
+describe("a person can see what holds a fence", () => {
+  const project_id = uuid();
+  let service: Awaited<ReturnType<typeof initPersistFenceService>>;
+
+  afterAll(() => service?.close());
+
+  it("lists each fence with its reason, age and holder, also when held long", async () => {
+    service = await initPersistFenceService({
+      client: connect(),
+      holderAlive: () => true,
+      describeHolder: () => ({ holder_running: true }),
+      holderCheckMs: 20,
+      // (logged on both sides while it's held)
+      longFenceMs: 50,
+    });
+    await withPersistFence(
+      {
+        client: connect(),
+        project_id,
+        holder,
+        reason: "restore-snapshot",
+        replaces: false,
+        longFenceMs: 50,
+      },
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(
+          service.fences().filter((f) => f.project_id === project_id),
+        ).toEqual([
+          {
+            project_id,
+            reason: "restore-snapshot",
+            since: expect.any(String),
+            age_seconds: expect.any(Number),
+            holder,
+            holder_running: true,
+          },
+        ]);
+      },
+    );
+    expect(service.fences()).toEqual([]);
+  });
+});
+
 describe("a fence is held until its holder releases it or is gone", () => {
   const project_id = uuid();
   const alive = new Set([1001, 1002]);

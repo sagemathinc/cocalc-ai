@@ -116,6 +116,7 @@ export async function withProjectPersistFenced<T>(
           client,
           project_id,
           holder: currentFenceHolder(),
+          reason,
           // checked by the server that grants the fence
           ...(requires != null ? { requires: [requires] } : {}),
           ...(timeoutMs != null ? { timeoutMs } : {}),
