@@ -151,17 +151,156 @@ describe("the schema of a stored database", () => {
     const stream = open(path);
     expect(
       Buffer.from(stream.get({ seq: 1, key: undefined })!.raw).toString(),
-    ).toBe(
-      '{"a":1}',
-    );
+    ).toBe('{"a":1}');
     stream.close();
+  });
+
+  it("creates the history tables from HISTORY_SCHEMA, so a fresh database passes the check", () => {
+    const path = serverFile();
+    const db = new DatabaseSync(path + ".db");
+    const objects = db
+      .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master")
+      .all() as any[];
+    db.close();
+    expect(unexpectedPersistSchema(objects)).toBeUndefined();
+    const names = objects.map(({ name }) => name);
+    for (const name of Object.keys(HISTORY_SCHEMA)) {
+      expect(names).toContain(name);
+    }
+    // the stored definitions are exactly HISTORY_SCHEMA's
+    for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
+      const stored = objects.find((o) => o.name === name)!.sql;
+      expect(stored.replace(/\s+/g, " ")).toBe(
+        sql.replace(/\s+/g, " ").replace(" IF NOT EXISTS", ""),
+      );
+    }
+  });
+
+  it("still passes the check after a seeded reset and archive", () => {
+    const path = serverFile();
+    let stream = open(path);
+    stream.set({ encoding: 1 as any, raw: Buffer.from('"b"'), msgID: "b" });
+    const { seq, count } = stream.inventory();
+    expect(
+      stream.resetHistory({
+        ifRevision: { seq, count },
+        coveredSeq: seq,
+        archive: true,
+        opId: "op",
+        seed: {
+          encoding: 1 as any,
+          raw: Buffer.from('{"is_snapshot":true,"snapshot":"v"}'),
+          msgID: "seed",
+          checkpoint: { name: "latest_snapshot" },
+        },
+      }).reset,
+    ).toBe(true);
+    stream.close();
+    stream = open(path);
+    expect(stream.length).toBe(1);
+    stream.close();
+  });
+
+  describe("msg ids written by an older server (rolled back after H1a)", () => {
+    const seedOptions = (stream: PersistentStream) => {
+      const { seq, count } = stream.inventory();
+      return {
+        ifRevision: { seq, count },
+        coveredSeq: seq,
+        archive: true,
+        seed: {
+          encoding: 1 as any,
+          raw: Buffer.from('{"is_snapshot":true,"snapshot":"v"}'),
+        },
+      };
+    };
+    // What #1247's server (ec031aacf3) writes for an acknowledged message:
+    // the messages row only, with no msg id and no history_epochs update.
+    const olderServerWrite = (path: string) =>
+      tamper(
+        path,
+        `INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (${Date.now() / 1000}, 0, 1, X'2262220a', NULL, NULL, 4, NULL)`,
+      );
+
+    it("never reports as absent an id the older server accepted", () => {
+      const path = serverFile();
+      let stream = open(path);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"a"'), msgID: "a" });
+      stream.close();
+      // its acknowledgment for "b" is seq 3; it records no id
+      olderServerWrite(path);
+      stream = open(path);
+      expect(stream.resetHistory(seedOptions(stream)).reset).toBe(true);
+      expect(
+        stream.historyInclusion({ epoch: 0, ids: ["a", "b"] }).ids,
+      ).toEqual({
+        a: { status: "included", seq: 2 },
+        b: { status: "unknown" },
+      });
+      stream.close();
+    });
+
+    it("notices a write by another server while this one has the file open", () => {
+      const path = serverFile();
+      const stream = open(path);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"a"'), msgID: "a" });
+      olderServerWrite(path);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"c"'), msgID: "c" });
+      expect(stream.resetHistory(seedOptions(stream)).reset).toBe(true);
+      expect(
+        stream.historyInclusion({ epoch: 0, ids: ["a", "b", "c"] }).ids,
+      ).toMatchObject({
+        a: { status: "included" },
+        b: { status: "unknown" },
+        c: { status: "included" },
+      });
+      stream.close();
+    });
+
+    it("notices an epoch changed by another server", () => {
+      const path = serverFile();
+      let stream = open(path);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"a"'), msgID: "a" });
+      stream.close();
+      tamper(
+        path,
+        `INSERT INTO config(field, value) VALUES('required_headers', '{"history_epoch":3}')`,
+      );
+      stream = open(path);
+      expect(stream.resetHistory(seedOptions(stream)).reset).toBe(true);
+      expect(stream.historyInclusion({ epoch: 0, ids: ["x"] }).ids).toEqual({
+        x: { status: "unknown" },
+      });
+      stream.close();
+    });
+
+    it("still proves absence after a clean close and reopen", () => {
+      const path = serverFile();
+      let stream = open(path);
+      // the file serverFile made is from before msg ids: start a complete
+      // epoch with a reset
+      stream.resetHistory(seedOptions(stream));
+      stream.set({
+        encoding: 1 as any,
+        raw: Buffer.from('"a"'),
+        msgID: "a",
+        headers: { history_epoch: 1 },
+      });
+      stream.close();
+      stream = open(path);
+      expect(stream.resetHistory(seedOptions(stream)).reset).toBe(true);
+      expect(
+        stream.historyInclusion({ epoch: 1, ids: ["a", "x"] }).ids,
+      ).toEqual({ a: { status: "included", seq: 3 }, x: { status: "absent" } });
+      stream.close();
+    });
   });
 
   it("refuses a changed history table", () => {
     const path = serverFile();
     tamper(
       path,
-      "CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL, x BLOB)",
+      "DROP TABLE message_ids; CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL, x BLOB)",
     );
     expect(() => open(path)).toThrow(/changed outside CoCalc/);
   });

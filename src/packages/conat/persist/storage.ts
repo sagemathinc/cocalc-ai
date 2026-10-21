@@ -87,6 +87,8 @@ import { getLogger } from "@cocalc/conat/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { throttle } from "lodash";
 import type { PersistMaintenanceHandle } from "./maintenance/types";
+import { decode } from "@cocalc/conat/core/codec";
+import { historyLimits, type HistoryLimits } from "./history-limits";
 
 const logger = getLogger("persist:storage");
 
@@ -510,10 +512,51 @@ export interface ResetHistoryOptions {
   ifOversizedSeq?: number;
   // keep the old messages, in a table of their own, instead of deleting them
   archive?: boolean;
+  // Only reset if the stream is still as judged: its newest seq and number of
+  // messages (see inventory), and its history epoch.
+  ifRevision?: { seq: number; count: number };
+  ifInitEpoch?: number;
+  // The first message of the new history: a snapshot of the document's value
+  // including every message with seq <= coveredSeq.  It is inserted in the
+  // same transaction, so there is never an empty history to open.
+  seed?: ResetHistorySeed;
+  // required with a seed: the stream's newest seq, so the seed covers every
+  // message the server accepted ...
+  coveredSeq?: number;
+  // ... or older than that, if the newer messages cannot be used (a damaged
+  // history, reset from the saved file).  Their ids are then reported as
+  // excluded by historyInclusion, never as included.
+  allowRollback?: boolean;
+  // Identifies this reset: a repeated request (e.g., after a lost reply)
+  // returns the first result instead of resetting again.
+  opId?: string;
+  // recorded with the archived epoch, e.g., "oversized" or "damaged"
+  reason?: string;
 }
 
+export interface ResetHistorySeed {
+  encoding: DataEncoding;
+  // the encoded patch object, not compressed; it must be a snapshot
+  // ({is_snapshot: true, snapshot: string, ...})
+  raw: Buffer | Uint8Array;
+  // the server adds the new history_epoch
+  headers?: { [key: string]: JSONValue };
+  msgID?: string;
+  // a checkpoint to set at the seed's seq, e.g., latest_snapshot
+  checkpoint?: { name: string; data?: JSONValue };
+}
+
+export type ResetHistoryRefusal =
+  // ifOversizedSeq is gone or not too large
+  | "not-oversized"
+  // ifRevision, or coveredSeq without allowRollback, is not the stream's
+  | "moved"
+  | "epoch"
+  | "seed-too-large"
+  | "seed-invalid";
+
 export interface ResetHistoryResult {
-  // false if ifOversizedSeq was given and that message is gone or not too large
+  // false if a condition did not hold; see refused
   reset: boolean;
   // the history epoch now in effect
   history_epoch: number;
@@ -521,10 +564,73 @@ export interface ResetHistoryResult {
   count: number;
   // name of the table the old messages were archived in
   archive?: string;
+  refused?: ResetHistoryRefusal;
+  // the seed's seq and what it covers
+  seedSeq?: number;
+  coveredSeq?: number;
+  // this opId was already done; this is its result
+  repeated?: boolean;
+}
+
+// What historyInclusion knows about a msg id:
+//  - live: accepted in the current history;
+//  - included: accepted in an older epoch, and in the current history's seed;
+//  - excluded: accepted in an older epoch, and not in the current seed (a
+//    rollback, or a reset without a seed);
+//  - absent: never accepted in the epoch asked about;
+//  - unknown: the evidence is gone or was never complete (older servers, an
+//    expired archive, deleted messages).  Never treat this as absent.
+export type InclusionStatus =
+  | "live"
+  | "included"
+  | "excluded"
+  | "absent"
+  | "unknown";
+
+export interface HistoryInclusion {
+  history_epoch: number;
+  ids: { [msgID: string]: { status: InclusionStatus; seq?: number } };
 }
 
 // tables holding history kept by resetHistory({archive:true})
 const ARCHIVED_MESSAGES_PREFIX = "messages_archived_";
+
+// results of resets kept by opId, so a repeated request gets the first result
+const MAX_HISTORY_OPS = 100;
+// closed epochs kept in history_epochs
+const MAX_HISTORY_EPOCH_ROWS = 100;
+
+// the size recorded for a message: uncompressed data plus headers and key
+function messageSize({
+  serializedHeaders,
+  raw,
+  key,
+}: {
+  serializedHeaders?: string;
+  raw?: Buffer | Uint8Array;
+  key?: string;
+}): number {
+  return (
+    (serializedHeaders?.length ?? 0) + (raw?.length ?? 0) + (key?.length ?? 0)
+  );
+}
+
+// info_json of the open epoch: the newest seq written by a server that
+// records msg ids (see verifyIdLedger)
+function ledgerInfo(seq: number): string {
+  return JSON.stringify({ ledger_seq: seq });
+}
+
+// The seed of a reset must be a snapshot patch: the document's whole value.
+function isSnapshotPatch(obj: unknown): boolean {
+  return (
+    obj != null &&
+    typeof obj === "object" &&
+    !Array.isArray(obj) &&
+    (obj as any).is_snapshot === true &&
+    typeof (obj as any).snapshot === "string"
+  );
+}
 
 function epochOf(x: { [key: string]: JSONValue }): number {
   const epoch = x.history_epoch;
@@ -1021,8 +1127,103 @@ export class PersistentStream extends EventEmitter {
     this.db.prepare(SCHEMA.stream_metadata).run();
     this.db.prepare(SCHEMA.stream_checkpoints).run();
     this.db.prepare(SCHEMA.idx_stream_checkpoints_seq).run();
+    for (const sql of Object.values(HISTORY_SCHEMA)) {
+      this.db.prepare(sql).run();
+    }
 
     this.conf = this.config();
+    this.ensureCurrentEpoch();
+  };
+
+  // The history epoch in effect: the fence's, or the metadata's if higher.
+  private currentEpoch = (): number => {
+    const fence = isPlainRecord(this.conf?.required_headers)
+      ? this.conf.required_headers
+      : {};
+    const metadata = this.getMetadata();
+    const settings =
+      isPlainRecord(metadata) && isPlainRecord(metadata.settings)
+        ? metadata.settings
+        : {};
+    return Math.max(epochOf(settings), epochOf(fence));
+  };
+
+  // the seq the next message will get
+  private nextSeq = (): number => {
+    const row = this.db
+      .prepare("SELECT seq FROM sqlite_sequence WHERE name='messages'")
+      .get() as { seq?: number } | undefined;
+    return Number(row?.seq ?? 0) + 1;
+  };
+
+  // The row of history_epochs describing the current history.  A stream from
+  // before this server either is empty (so its ids are complete from now on),
+  // or has messages whose ids were never recorded.
+  private ensureCurrentEpoch = (): void => {
+    if (
+      this.db
+        .prepare("SELECT id FROM history_epochs WHERE last_seq IS NULL")
+        .get() != null
+    ) {
+      this.verifyIdLedger({ epoch: true });
+      return;
+    }
+    const { first } = this.db
+      .prepare("SELECT MIN(seq) AS first FROM messages")
+      .get() as { first: number | null };
+    const empty = first == null;
+    this.db
+      .prepare(
+        "INSERT INTO history_epochs(epoch, first_seq, starts_empty, ids_complete, info_json, time) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        this.currentEpoch(),
+        empty ? this.nextSeq() : first,
+        // nothing was deleted from its start, so it can be loaded from the
+        // empty document
+        empty || first === 1 ? 1 : 0,
+        empty ? 1 : 0,
+        ledgerInfo(this.nextSeq() - 1),
+        Date.now(),
+      );
+  };
+
+  // The current epoch's ids are complete only if every message in it was
+  // written by a server that records ids.  An older server can open this
+  // database (H1a0 accepts the tables) and write messages without their ids,
+  // so the open epoch records the newest seq written by this code
+  // (ledger_seq).  If the stream has moved past it -- or its epoch was
+  // changed elsewhere -- the ids are incomplete, and absence is never
+  // claimed for that epoch.  Checked on open, before each write, and when
+  // the epoch is closed.
+  private verifyIdLedger = ({ epoch }: { epoch?: boolean } = {}): void => {
+    const row = this.db
+      .prepare(
+        "SELECT id, epoch, first_seq, ids_complete, info_json FROM history_epochs WHERE last_seq IS NULL",
+      )
+      .get() as
+      | {
+          id: number;
+          epoch: number;
+          first_seq: number;
+          ids_complete: number;
+          info_json: string | null;
+        }
+      | undefined;
+    if (row == null || row.ids_complete !== 1) return;
+    let ledger = row.first_seq - 1;
+    try {
+      const info = JSON.parse(row.info_json ?? "null");
+      if (Number.isSafeInteger(info?.ledger_seq)) ledger = info.ledger_seq;
+    } catch {}
+    if (
+      this.nextSeq() - 1 > ledger ||
+      (epoch && row.epoch !== this.currentEpoch())
+    ) {
+      this.db
+        .prepare("UPDATE history_epochs SET ids_complete=0 WHERE id=?")
+        .run(row.id);
+    }
   };
 
   private createMessagesTable = () => {
@@ -1290,41 +1491,24 @@ export class PersistentStream extends EventEmitter {
         });
       }
     }
-    const time = Date.now();
-    const compressedRaw = this.compress(raw);
     const serializedHeaders = JSON.stringify(headers);
-    const size =
-      (serializedHeaders?.length ?? 0) +
-      (raw?.length ?? 0) +
-      (key?.length ?? 0);
-    this.enforceLimits(size, changes);
+    this.enforceLimits(messageSize({ serializedHeaders, raw, key }), changes);
 
     if (key !== undefined) {
-      this.db.prepare("DELETE FROM messages WHERE key = ?").run(key);
+      const replaced = this.db
+        .prepare("DELETE FROM messages WHERE key = ? RETURNING seq")
+        .all(key) as { seq: number }[];
+      this.forgetSeqs(replaced.map(({ seq }) => seq));
     }
-    const row = this.db
-      .prepare(
-        "INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)  RETURNING seq",
-      )
-      .get(
-        time / 1000,
-        compressedRaw.compress,
-        encoding,
-        compressedRaw.raw,
-        serializedHeaders ?? null,
-        key ?? null,
-        size,
-        ttl ?? null,
-      );
-    const seq = Number((row as any).seq);
-    if (checkpoint != null) {
-      this.writeCheckpoint({
-        name: checkpoint.name,
-        seq: checkpoint.seq ?? seq,
-        time: checkpoint.time ?? time,
-        data: checkpoint.data,
-      });
-    }
+    const { time, seq } = this.insertMessage({
+      encoding,
+      raw,
+      serializedHeaders,
+      key,
+      ttl,
+      msgID,
+      checkpoint,
+    });
     changes.push({
       seq,
       time,
@@ -1338,6 +1522,63 @@ export class PersistentStream extends EventEmitter {
       time,
       seq,
     };
+  };
+
+  // Insert one message, with its msg id and checkpoint, after all checks.
+  private insertMessage = ({
+    encoding,
+    raw,
+    serializedHeaders,
+    key,
+    ttl,
+    msgID,
+    checkpoint,
+  }: {
+    encoding: DataEncoding;
+    raw: Buffer;
+    serializedHeaders?: string;
+    key?: string;
+    ttl?: number;
+    msgID?: string;
+    checkpoint?: CheckpointUpdate;
+  }): { time: number; seq: number } => {
+    this.verifyIdLedger();
+    const time = Date.now();
+    const compressedRaw = this.compress(raw);
+    const row = this.db
+      .prepare(
+        "INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)  RETURNING seq",
+      )
+      .get(
+        time / 1000,
+        compressedRaw.compress,
+        encoding,
+        compressedRaw.raw,
+        serializedHeaders ?? null,
+        key ?? null,
+        messageSize({ serializedHeaders, raw, key }),
+        ttl ?? null,
+      );
+    const seq = Number((row as any).seq);
+    this.db
+      .prepare("UPDATE history_epochs SET info_json=? WHERE last_seq IS NULL")
+      .run(ledgerInfo(seq));
+    if (msgID != null) {
+      // persisted, so after a reset a client can learn which of its patches
+      // the server accepted (historyInclusion)
+      this.db
+        .prepare("INSERT INTO message_ids(seq, msg_id) VALUES (?, ?)")
+        .run(seq, msgID);
+    }
+    if (checkpoint != null) {
+      this.writeCheckpoint({
+        name: checkpoint.name,
+        seq: checkpoint.seq ?? seq,
+        time: checkpoint.time ?? time,
+        data: checkpoint.data,
+      });
+    }
+    return { time, seq };
   };
 
   set = ({
@@ -1626,6 +1867,7 @@ export class PersistentStream extends EventEmitter {
           .map((row: any) => row.seq);
         this.db.prepare("DELETE FROM messages").run();
         this.db.prepare("DELETE FROM stream_checkpoints").run();
+        this.forgetSeqs(seqs);
       });
     } else if (last_seq) {
       this.runTransaction(() => {
@@ -1661,25 +1903,66 @@ export class PersistentStream extends EventEmitter {
   };
 
   // Reset the history of a sync document -- TimeTravel's "purge history", and
-  // the automatic reset of a history holding a message too large to load --
-  // in one transaction, so concurrent resets and writers cannot interleave:
+  // the automatic reset of a history that cannot be loaded -- in one
+  // transaction, so concurrent resets and writers cannot interleave:
+  //  - check the conditions: ifOversizedSeq, ifInitEpoch, ifRevision, and that
+  //    a seed covers every accepted message (coveredSeq); a repeated opId
+  //    returns the first result;
   //  - fence: only writes with the new history_epoch header are accepted from
   //    now on, so copies of the document opened before cannot add to the new
   //    history;
   //  - publish the new epoch in the metadata, so those copies close;
-  //  - delete the old messages, or keep them in a table of their own.
-  // A reset that does not archive also drops the history kept by earlier
-  // resets, so purging still means the history is gone.
+  //  - delete the old messages, or keep them in a table of their own;
+  //  - insert the seed, with its checkpoint, as the first message of the new
+  //    history.
+  // A crash leaves either the old history or the new seeded one.  A reset
+  // that does not archive also drops the history kept by earlier resets, so
+  // purging still means the history is gone.
   resetHistory = ({
     minEpoch = 0,
     settings,
     ifOversizedSeq,
     archive,
+    ifRevision,
+    ifInitEpoch,
+    seed,
+    coveredSeq,
+    allowRollback,
+    opId,
+    reason,
   }: ResetHistoryOptions = {}): ResetHistoryResult => {
+    if (
+      opId != null &&
+      (typeof opId !== "string" || opId.length == 0 || opId.length > 200)
+    ) {
+      throw new ConatError("resetHistory: invalid opId", { code: 400 });
+    }
+    if (
+      coveredSeq != null &&
+      !(Number.isSafeInteger(coveredSeq) && coveredSeq >= 0)
+    ) {
+      throw new ConatError("resetHistory: invalid coveredSeq", { code: 400 });
+    }
+    if (seed != null && coveredSeq == null) {
+      throw new ConatError("resetHistory: a seed requires coveredSeq", {
+        code: 400,
+      });
+    }
+    const limits = historyLimits();
     let result: ResetHistoryResult | undefined;
     let metadata: JSONValue | undefined;
     let seqs: number[] = [];
+    let seedChange = undefined as SetOperation | undefined;
     this.runTransaction(() => {
+      if (opId != null) {
+        const done = this.db
+          .prepare("SELECT result_json FROM history_ops WHERE op_id=?")
+          .get(opId) as { result_json: string } | undefined;
+        if (done != null) {
+          result = { ...JSON.parse(done.result_json), repeated: true };
+          return;
+        }
+      }
       const fence = isPlainRecord(this.conf.required_headers)
         ? this.conf.required_headers
         : {};
@@ -1689,6 +1972,14 @@ export class PersistentStream extends EventEmitter {
         ? currentRecord.settings
         : {};
       const currentEpoch = Math.max(epochOf(currentSettings), epochOf(fence));
+      const refuse = (refused: ResetHistoryRefusal) => {
+        result = {
+          reset: false,
+          history_epoch: currentEpoch,
+          count: 0,
+          refused,
+        };
+      };
       if (ifOversizedSeq != null) {
         const row = this.db
           .prepare(
@@ -1696,10 +1987,62 @@ export class PersistentStream extends EventEmitter {
           )
           .get(ifOversizedSeq) as { size: number } | undefined;
         if (row == null || !(row.size > maxPersistMessageBytes())) {
-          result = { reset: false, history_epoch: currentEpoch, count: 0 };
+          refuse("not-oversized");
           return;
         }
       }
+      if (ifInitEpoch != null && ifInitEpoch !== currentEpoch) {
+        refuse("epoch");
+        return;
+      }
+      const newest = this.seq();
+      if (
+        ifRevision != null &&
+        (ifRevision.seq !== newest || ifRevision.count !== this.length)
+      ) {
+        refuse("moved");
+        return;
+      }
+      if (
+        coveredSeq != null &&
+        (coveredSeq > newest || (coveredSeq < newest && !allowRollback))
+      ) {
+        refuse("moved");
+        return;
+      }
+      let seedRaw: Buffer | undefined;
+      let seedHeaders: string | undefined;
+      if (seed != null) {
+        seedRaw = Buffer.isBuffer(seed.raw)
+          ? seed.raw
+          : Buffer.from(seed.raw.buffer, seed.raw.byteOffset, seed.raw.length);
+        if (seed.headers != null && !isPlainRecord(seed.headers)) {
+          refuse("seed-invalid");
+          return;
+        }
+        seedHeaders = JSON.stringify({ ...seed.headers });
+        if (
+          messageSize({ serializedHeaders: seedHeaders, raw: seedRaw }) >
+          limits.maxSnapshotBytes
+        ) {
+          refuse("seed-too-large");
+          return;
+        }
+        let obj: unknown;
+        try {
+          obj = decode({ encoding: seed.encoding, data: seedRaw });
+        } catch {
+          obj = undefined;
+        }
+        if (!isSnapshotPatch(obj)) {
+          refuse("seed-invalid");
+          return;
+        }
+      }
+
+      // before the new epoch is published: are the closing epoch's ids
+      // complete?
+      this.verifyIdLedger({ epoch: true });
       const history_epoch = Math.max(minEpoch, currentEpoch) + 1;
       this.db
         .prepare(
@@ -1726,6 +2069,25 @@ export class PersistentStream extends EventEmitter {
         .prepare("SELECT seq FROM messages")
         .all()
         .map((row: any) => row.seq);
+
+      // close the current epoch: its messages, and what the seed covers
+      const lastSeq = this.nextSeq() - 1;
+      const closing = this.db
+        .prepare("SELECT id FROM history_epochs WHERE last_seq IS NULL")
+        .get() as { id: number };
+      this.db
+        .prepare(
+          "UPDATE history_epochs SET last_seq=?, covered_seq=?, info_json=? WHERE id=?",
+        )
+        .run(
+          lastSeq,
+          seed != null ? coveredSeq! : null,
+          JSON.stringify({
+            reason: typeof reason === "string" ? reason.slice(0, 200) : null,
+          }),
+          closing.id,
+        );
+
       let archiveTable: string | undefined;
       if (archive) {
         // Renaming keeps the old messages where they are: nothing is copied,
@@ -1748,33 +2110,265 @@ export class PersistentStream extends EventEmitter {
             )
             .run(last);
         }
+        this.db
+          .prepare("UPDATE history_epochs SET archive=? WHERE id=?")
+          .run(archiveTable, closing.id);
       } else {
+        const bytes = this.totalSize();
         this.db.prepare("DELETE FROM messages").run();
         for (const name of this.archivedMessageTables()) {
           this.db.exec(`DROP TABLE "${name}"`);
         }
+        this.db.prepare("UPDATE history_epochs SET archive=NULL").run();
+        this.db
+          .prepare(
+            "UPDATE history_epochs SET dropped_records=?, dropped_bytes=? WHERE id=?",
+          )
+          .run(seqs.length, bytes, closing.id);
+        // purged: nothing is evidence of what was accepted any more
+        this.db.prepare("DELETE FROM message_ids").run();
+        this.db.prepare("UPDATE history_epochs SET ids_complete=0").run();
       }
       this.db.prepare("DELETE FROM stream_checkpoints").run();
+      this.expireArchivedIds(limits);
+      this.pruneEpochRows();
+
+      // the new epoch, starting with its seed
+      const { lastInsertRowid: epochId } = this.db
+        .prepare(
+          "INSERT INTO history_epochs(epoch, first_seq, starts_empty, ids_complete, info_json, time) VALUES (?, ?, ?, 1, ?, ?)",
+        )
+        .run(
+          history_epoch,
+          lastSeq + 1,
+          seed != null ? 0 : 1,
+          ledgerInfo(lastSeq),
+          Date.now(),
+        );
+      let seedSeq: number | undefined;
+      if (seed != null) {
+        const headers = { ...seed.headers, history_epoch };
+        const serializedHeaders = JSON.stringify(headers);
+        const inserted = this.insertMessage({
+          encoding: seed.encoding,
+          raw: seedRaw!,
+          serializedHeaders,
+          msgID: seed.msgID,
+          checkpoint:
+            seed.checkpoint != null
+              ? { name: seed.checkpoint.name, data: seed.checkpoint.data }
+              : undefined,
+        });
+        seedSeq = inserted.seq;
+        this.db
+          .prepare("UPDATE history_epochs SET seed_seq=? WHERE id=?")
+          .run(seedSeq, epochId);
+        seedChange = {
+          seq: seedSeq,
+          time: inserted.time,
+          encoding: seed.encoding,
+          raw: seedRaw!,
+          headers: headers as Headers,
+          msgID: seed.msgID,
+        };
+      }
+
       result = {
         reset: true,
         history_epoch,
         count: seqs.length,
         ...(archiveTable != null ? { archive: archiveTable } : {}),
+        ...(seedSeq != null ? { seedSeq, coveredSeq } : {}),
       };
+      if (opId != null) {
+        this.db
+          .prepare(
+            "INSERT INTO history_ops(op_id, result_json, time) VALUES (?, ?, ?)",
+          )
+          .run(opId, JSON.stringify(result), Date.now());
+        this.db
+          .prepare(
+            `DELETE FROM history_ops WHERE op_id NOT IN (SELECT op_id FROM history_ops ORDER BY time DESC, op_id LIMIT ${MAX_HISTORY_OPS})`,
+          )
+          .run();
+      }
     });
-    if (!result!.reset) {
+    if (!result!.reset || result!.repeated) {
       return result!;
     }
     this.msgIDs.clear();
+    if (seedChange?.msgID != null) {
+      this.msgIDs.set(seedChange.msgID, {
+        time: seedChange.time,
+        seq: seedChange.seq,
+      });
+    }
     // reload the configuration, so the new fence is enforced
     this.config();
     // metadata first: open copies of the document close on the new epoch
     // rather than react to their history disappearing
     this.emit("change", { op: "metadata", metadata });
     this.emit("change", { op: "delete", seqs });
-    this.emit("change", { op: "checkpoints", checkpoints: {} });
+    this.emit("change", {
+      op: "checkpoints",
+      checkpoints: this.getCheckpoints(),
+    });
+    if (seedChange != null) {
+      this.emit("change", seedChange);
+    }
     this.throttledBackup();
     return result!;
+  };
+
+  // Keep the msg ids of only the newest maxArchivedIdEpochs archived epochs.
+  private expireArchivedIds = (limits: HistoryLimits): void => {
+    const old = this.db
+      .prepare(
+        "SELECT id, first_seq, last_seq FROM history_epochs WHERE last_seq IS NOT NULL ORDER BY id DESC LIMIT -1 OFFSET ?",
+      )
+      .all(limits.maxArchivedIdEpochs) as {
+      id: number;
+      first_seq: number;
+      last_seq: number;
+    }[];
+    for (const { id, first_seq, last_seq } of old) {
+      this.db
+        .prepare("DELETE FROM message_ids WHERE seq BETWEEN ? AND ?")
+        .run(first_seq, last_seq);
+      this.db
+        .prepare("UPDATE history_epochs SET ids_complete=0 WHERE id=?")
+        .run(id);
+    }
+  };
+
+  // at most MAX_HISTORY_EPOCH_ROWS closed epochs
+  private pruneEpochRows = (): void => {
+    const old = this.db
+      .prepare(
+        "SELECT id, first_seq, last_seq FROM history_epochs WHERE last_seq IS NOT NULL ORDER BY id DESC LIMIT -1 OFFSET ?",
+      )
+      .all(MAX_HISTORY_EPOCH_ROWS) as {
+      id: number;
+      first_seq: number;
+      last_seq: number;
+    }[];
+    for (const { id, first_seq, last_seq } of old) {
+      this.db
+        .prepare("DELETE FROM message_ids WHERE seq BETWEEN ? AND ?")
+        .run(first_seq, last_seq);
+      this.db.prepare("DELETE FROM history_epochs WHERE id=?").run(id);
+    }
+  };
+
+  // Which of these msg ids did the server accept, and are they in the current
+  // history (see InclusionStatus)?  epoch: the history epoch the ids were
+  // written in.  After a reset, an open copy of the document asks this about
+  // its pending patches, so it re-applies only those proven absent.
+  historyInclusion = ({
+    epoch,
+    ids,
+  }: {
+    epoch: number;
+    ids: string[];
+  }): HistoryInclusion => {
+    const limits = historyLimits();
+    if (
+      typeof epoch !== "number" ||
+      !Array.isArray(ids) ||
+      ids.length > limits.maxInclusionIds ||
+      ids.some((id) => typeof id !== "string" || id.length > 256)
+    ) {
+      throw new ConatError(
+        `historyInclusion: at most ${limits.maxInclusionIds} string ids`,
+        { code: 400 },
+      );
+    }
+    const rows = this.db
+      .prepare(
+        "SELECT epoch, first_seq, last_seq, covered_seq, seed_seq, ids_complete FROM history_epochs ORDER BY id",
+      )
+      .all() as {
+      epoch: number;
+      first_seq: number;
+      last_seq: number | null;
+      covered_seq: number | null;
+      seed_seq: number | null;
+      ids_complete: number;
+    }[];
+    // Absence is only proven for a closed epoch: the fence refuses its
+    // writes, so nothing more can be accepted in it.
+    const asked = rows.filter((row) => row.epoch === epoch);
+    const absent =
+      asked.length > 0 &&
+      asked.every((row) => row.last_seq != null && row.ids_complete === 1);
+    // What a msg id accepted at a seq in each range means, as at most two
+    // ranges per epoch.  An id can be accepted more than once (a retry after
+    // its dedup expired), so it is looked up per range, best evidence first,
+    // and each lookup reads at most one index entry: it never collects the
+    // id's occurrences.
+    const ranges: { lo: number; hi: number; status: InclusionStatus }[] = [];
+    rows.forEach((row, i) => {
+      if (row.last_seq == null) {
+        ranges.push({
+          lo: row.first_seq,
+          hi: Number.MAX_SAFE_INTEGER,
+          status: "live",
+        });
+        return;
+      }
+      // each later reset's seed must carry this epoch's seed forward
+      const carried = rows
+        .slice(i + 1)
+        .every(
+          (later) =>
+            later.last_seq == null ||
+            (later.seed_seq != null &&
+              later.covered_seq != null &&
+              later.covered_seq >= later.seed_seq),
+        );
+      const covered =
+        row.covered_seq != null && carried
+          ? Math.min(row.covered_seq, row.last_seq)
+          : row.first_seq - 1;
+      if (covered >= row.first_seq) {
+        ranges.push({ lo: row.first_seq, hi: covered, status: "included" });
+      }
+      if (row.last_seq > covered) {
+        ranges.push({
+          lo: Math.max(row.first_seq, covered + 1),
+          hi: row.last_seq,
+          status: "excluded",
+        });
+      }
+    });
+    const rank: InclusionStatus[] = ["included", "live", "excluded"];
+    ranges.sort((a, b) => rank.indexOf(a.status) - rank.indexOf(b.status));
+    // (msg_id, seq) is the index's key, so this is one seek
+    const inRange = this.db.prepare(
+      "SELECT seq FROM message_ids WHERE msg_id=? AND seq BETWEEN ? AND ? ORDER BY seq LIMIT 1",
+    );
+    const anywhere = this.db.prepare(
+      "SELECT seq FROM message_ids WHERE msg_id=? LIMIT 1",
+    );
+    const result: HistoryInclusion["ids"] = {};
+    for (const id of ids) {
+      if (result[id] != null) continue;
+      for (const { lo, hi, status } of ranges) {
+        const row = inRange.get(id, lo, hi) as { seq: number } | undefined;
+        if (row != null) {
+          result[id] = { status, seq: Number(row.seq) };
+          break;
+        }
+      }
+      if (result[id] != null) continue;
+      if (anywhere.get(id) != null) {
+        // accepted at a seq no epoch row describes any more
+        result[id] = { status: "unknown" };
+      } else {
+        result[id] = { status: absent ? "absent" : "unknown" };
+      }
+    }
+    return { history_epoch: this.currentEpoch(), ids: result };
   };
 
   private archivedMessageTables = (): string[] => {
@@ -2075,6 +2669,31 @@ export class PersistentStream extends EventEmitter {
     this.db
       .prepare(`DELETE FROM stream_checkpoints WHERE seq IN (${placeholders})`)
       .run(...seqs);
+    this.forgetSeqs(seqs);
+  };
+
+  // Deleted messages: forget their ids.  An id
+  // that is forgotten is no longer evidence that its message was accepted, so
+  // the current history's ids are incomplete from then on, and
+  // historyInclusion answers "unknown" rather than "absent".
+  private forgetSeqs = (seqs: number[]): void => {
+    let forgotten = 0;
+    for (let i = 0; i < seqs.length; i += 500) {
+      const chunk = seqs.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(", ");
+      forgotten += Number(
+        this.db
+          .prepare(`DELETE FROM message_ids WHERE seq IN (${placeholders})`)
+          .run(...chunk).changes,
+      );
+    }
+    if (forgotten > 0) {
+      this.db
+        .prepare(
+          "UPDATE history_epochs SET ids_complete=0 WHERE last_seq IS NULL AND ids_complete=1",
+        )
+        .run();
+    }
   };
 
   private emitDelete = (rows, deferredChanges?: ChangefeedOperation[]) => {
