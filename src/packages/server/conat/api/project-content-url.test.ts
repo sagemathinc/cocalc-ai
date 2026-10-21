@@ -363,6 +363,8 @@ describe("normalizeProjectAppPath", () => {
       `/${PROJECT}/port/8000/a%00`,
       `/${PROJECT}/port/8000/a\\b`,
       `/${PROJECT}/port/8000/#x`,
+      `/${PROJECT}/port/8000/a\nb`,
+      `/${PROJECT}/port/8000/?a=\u007f`,
       `/${PROJECT}/files/a.html`,
       `/${PROJECT}/upload`,
       `/${PROJECT}/port/8000/${"x".repeat(9000)}`,

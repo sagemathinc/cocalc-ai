@@ -126,6 +126,7 @@ import { consumeAppCapability } from "./sqlite/app-capability-replay";
 import {
   createAppOriginHandler,
   looksLikeAppHostname,
+  rewriteUpstreamResponseCookies,
 } from "./content-app-origin";
 import { conatPassword } from "@cocalc/backend/data";
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
@@ -160,6 +161,7 @@ import {
 import {
   createProjectHostHttpProxyAuth,
   getProjectHostHttpAuthContext,
+  isAppOriginRequest,
   setAppOriginRequestAuth,
 } from "./http-proxy-auth";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -1141,7 +1143,19 @@ export async function main(
     httpServers: [httpServer],
     app,
     rewriteRequest: maybeRewriteAppHostnameRequest,
-    rewriteResponse: rewritePrivateAppHostnameResponseLocation,
+    rewriteResponse: (proxyRes, req) => {
+      // App origins: the user's server's cookies stay host-only, and can't
+      // set the app session (also guarded on the response itself).
+      if (isAppOriginRequest(req)) {
+        rewriteUpstreamResponseCookies(proxyRes.headers);
+      }
+      rewritePrivateAppHostnameResponseLocation(proxyRes, req);
+    },
+    rewriteUpgradeResponse: (proxyRes, req) => {
+      if (isAppOriginRequest(req)) {
+        rewriteUpstreamResponseCookies(proxyRes.headers);
+      }
+    },
     assertForwardAllowed: (req) => {
       const expires = getProjectHostHttpAuthContext(req)?.scoped_api_key_exp_s;
       if (expires != null && Date.now() >= expires * 1000) {

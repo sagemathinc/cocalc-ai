@@ -17,6 +17,7 @@ import {
   createAppSessionToken,
   looksLikeAppHostname,
   parseAppHostname,
+  rewriteUpstreamResponseCookies,
   rewriteUpstreamSetCookie,
   verifyAppSessionToken,
   withoutAppSessionCookie,
@@ -112,7 +113,7 @@ describe("request policy", () => {
   const req = (headers: Record<string, string>, method = "GET") => ({ headers, method });
 
   it("allows same-origin requests and top-level navigations", () => {
-    expect(appRequestRejection(req({ "sec-fetch-site": "same-origin" }, "POST"), { origin })).toBeUndefined();
+    expect(appRequestRejection(req({ "sec-fetch-site": "same-origin" }, "POST"))).toBeUndefined();
     expect(
       appRequestRejection(
         req({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }),
@@ -133,7 +134,7 @@ describe("request policy", () => {
       { "sec-fetch-site": "same-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "iframe" },
       { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" },
     ]) {
-      expect(appRequestRejection(req(headers), { origin })).toBeDefined();
+      expect(appRequestRejection(req(headers))).toBeDefined();
     }
     expect(
       appRequestRejection(
@@ -141,9 +142,9 @@ describe("request policy", () => {
         { origin },
       ),
     ).toBeDefined();
-    expect(appRequestRejection(req({ origin: "https://evil.example" }, "POST"), { origin })).toBeDefined();
-    expect(appRequestRejection(req({ origin }, "POST"), { origin })).toBeUndefined();
-    expect(appRequestRejection(req({}, "POST"), { origin })).toBeDefined();
+    // Without fetch metadata (sessions only go to browsers that send it).
+    expect(appRequestRejection(req({ origin }, "POST"))).toBeDefined();
+    expect(appRequestRejection(req({}))).toBeDefined();
   });
 });
 
@@ -157,6 +158,15 @@ describe("cookies", () => {
     expect(rewriteUpstreamSetCookie("a=1; Domain=.usercontent.example; Path=/")).toBe("a=1; Path=/");
     expect(rewriteUpstreamSetCookie("a=1;domain=x")).toBe("a=1");
     expect(rewriteUpstreamSetCookie(`${APP_SESSION_COOKIE}=forged; Path=/`)).toBeUndefined();
+  });
+
+  it("rewrites upstream response headers in place (HTTP and websocket 101s)", () => {
+    const headers: any = { "set-cookie": ["a=1; Domain=x.example", `${APP_SESSION_COOKIE}=f`] };
+    rewriteUpstreamResponseCookies(headers);
+    expect(headers["set-cookie"]).toEqual(["a=1"]);
+    const only: any = { "set-cookie": `${APP_SESSION_COOKIE}=f` };
+    rewriteUpstreamResponseCookies(only);
+    expect("set-cookie" in only).toBe(false);
   });
 });
 

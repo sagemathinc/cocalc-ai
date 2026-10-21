@@ -228,10 +228,11 @@ function originOf(value: unknown): string | undefined {
 // Same-origin requests are fine; otherwise only top-level navigations (a
 // link to the app), and for Sec-Fetch-Site: none (typed, bookmarked) only
 // safe methods.  Same-site requests (other apps under the content domain)
-// are refused unless they are top-level navigations.
+// are refused unless they are top-level navigations.  Sessions are only
+// issued to browsers that send fetch metadata (/_a/ requires it), so a
+// request without it is refused.
 export function appRequestRejection(
   req: Pick<IncomingMessage, "headers" | "method">,
-  { origin }: { origin: string },
 ): string | undefined {
   const site = header(req, "sec-fetch-site");
   const dest = header(req, "sec-fetch-dest");
@@ -246,13 +247,7 @@ export function appRequestRejection(
     }
     return "cross-origin request refused";
   }
-  // No fetch metadata (old browsers, or non-browser clients with a stolen
-  // cookie): require a matching Origin for anything but a safe request.
-  const requestOrigin = req.headers.origin;
-  if (requestOrigin != null) {
-    return originOf(requestOrigin) === origin ? undefined : "cross-origin request refused";
-  }
-  return safe ? undefined : "cross-origin request refused";
+  return "missing fetch metadata";
 }
 
 // The app key a request path belongs to, or undefined (W4: an app at its
@@ -355,6 +350,20 @@ const APP_ORIGIN_HEADERS: Record<string, string> = {
     "usb=(), serial=(), hid=(), bluetooth=(), payment=(), publickey-credentials-get=()",
 };
 
+// The user's server's Set-Cookie headers on an upstream response (HTTP, or
+// a websocket's 101), rewritten in place by rewriteUpstreamSetCookie.
+export function rewriteUpstreamResponseCookies(headers: {
+  [name: string]: string | string[] | undefined;
+}): void {
+  const value = headers["set-cookie"];
+  if (value == null) return;
+  const kept = (Array.isArray(value) ? value : [value])
+    .map((v) => rewriteUpstreamSetCookie(`${v}`))
+    .filter((v): v is string => v != null);
+  if (kept.length) headers["set-cookie"] = kept;
+  else delete headers["set-cookie"];
+}
+
 // A Set-Cookie value from the user's server, made host-only (D8: no Domain,
 // so it never reaches another app or project), or undefined to drop it (it
 // names the app session cookie).
@@ -396,6 +405,18 @@ function guardUpstreamHeaders(res: ServerResponse): void {
   };
   res.setHeader = ((name: string, value: any) =>
     setHeader(name, fix(name, value))) as typeof res.setHeader;
+  const appendHeader = (res as any).appendHeader?.bind(res);
+  if (appendHeader) {
+    (res as any).appendHeader = (name: string, value: any) => {
+      const lower = `${name}`.toLowerCase();
+      if (lower in LOWER_FIXED) return res;
+      if (lower === "set-cookie") {
+        const kept = fix(name, value) as string[];
+        return kept.length ? appendHeader(name, kept) : res;
+      }
+      return appendHeader(name, value);
+    };
+  }
   const writeHead = res.writeHead.bind(res);
   res.writeHead = ((...args: any[]) => {
     args = args.map((arg) => {
@@ -550,12 +571,17 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     if (sessionOf(req, target).olderEpoch) {
       res.setHeader("Clear-Site-Data", '"storage", "cache"');
     }
+    // Built from parts: next is a path of this app on this origin.
+    const location = new URL(next, `https://${target.hostname}`);
+    if (location.origin !== `https://${target.hostname}`) {
+      return refuse(res, 400, "invalid app path");
+    }
     res.statusCode = 302;
     res.setHeader(
       "Set-Cookie",
       `${APP_SESSION_COOKIE}=${session}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${exp_s - now_s}`,
     );
-    res.setHeader("Location", `https://${target.hostname}${next}`);
+    res.setHeader("Location", location.href);
     res.end();
   };
 
@@ -592,7 +618,6 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
       matchApp: opts.matchApp,
     });
     if (key !== target.key) return refuse(res, 404, "not found");
-    const origin = `https://${target.hostname}`;
     const { session, stale } = sessionOf(req, target);
     if (!session) {
       const site = opts.siteOrigin(req);
@@ -608,7 +633,7 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
       }
       return refuse(res, 401, stale ? "session expired" : "sign in required");
     }
-    const why = appRequestRejection(req, { origin });
+    const why = appRequestRejection(req);
     if (why) return refuse(res, 403, why);
     const cookie = withoutAppSessionCookie(req.headers.cookie);
     if (cookie == null) delete req.headers.cookie;

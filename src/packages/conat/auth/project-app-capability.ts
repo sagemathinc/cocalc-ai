@@ -121,7 +121,7 @@ export function normalizeProjectAppPath(
     raw.length > MAX_APP_PATH_LENGTH ||
     !pathname.startsWith(`/${project_id}/`) ||
     pathname.includes("//") ||
-    /[\\\0#]/.test(raw) ||
+    /[\\#\u0000-\u001f\u007f]/.test(raw) ||
     /%2f|%5c|%00/i.test(pathname) ||
     pathname.split("/").some((segment) => segment === "." || segment === "..") ||
     pathname.startsWith(`/${project_id}/files/`) ||

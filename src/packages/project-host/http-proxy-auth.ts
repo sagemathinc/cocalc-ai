@@ -155,6 +155,11 @@ export function setAppOriginRequestAuth(
   (req as any)[APP_ORIGIN_AUTH] = auth;
 }
 
+// Whether the app origin handler authorized this request.
+export function isAppOriginRequest(req: IncomingMessage): boolean {
+  return (req as any)[APP_ORIGIN_AUTH] != null;
+}
+
 function appOriginContext(
   req: IncomingMessage,
   project_id: string,

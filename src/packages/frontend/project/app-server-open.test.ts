@@ -270,46 +270,56 @@ describe("openProjectAppStatus", () => {
     url: `/${PROJECT}/proxy/8000/`,
   };
   let open: jest.SpyInstance;
+  let tab: any;
   beforeEach(() => {
     mockIssueProjectAppUrl.mockReset();
-    open = jest.spyOn(window, "open").mockImplementation(() => null);
+    tab = { opener: window, location: { href: "" }, close: jest.fn() };
+    open = jest.spyOn(window, "open").mockImplementation(() => tab);
   });
   afterEach(() => open.mockRestore());
 
-  it("opens the app on its own origin, keeping the referrer", async () => {
-    mockIssueProjectAppUrl.mockResolvedValue({
+  it("reserves a tab at once and sends it to the app's own origin", async () => {
+    let resolve!: (v: any) => void;
+    mockIssueProjectAppUrl.mockReturnValue(new Promise((r) => (resolve = r)));
+    const pending = openProjectAppStatus({ project_id: PROJECT, status });
+    // Opened before any await (keeps the click's user activation).
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(tab.opener).toBeNull();
+    resolve({
       url: "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
       expires_at: 0,
     });
-    await openProjectAppStatus({ project_id: PROJECT, status });
+    await pending;
     expect(mockIssueProjectAppUrl).toHaveBeenCalledWith({
       project_id: PROJECT,
       path: `/${PROJECT}/proxy/8000/`,
       app_id: "my-server",
     });
-    expect(open).toHaveBeenCalledWith(
+    expect(tab.location.href).toBe(
       "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
-      "_blank",
-      "noopener",
     );
   });
 
-  it("opens it as before when the site has no app origins", async () => {
+  it("sends the tab to the old URL when the site has no app origins", async () => {
     mockIssueProjectAppUrl.mockResolvedValue({ unavailable: "off" });
     await openProjectAppStatus({ project_id: PROJECT, status });
-    expect(open).toHaveBeenCalledWith(
-      `https://host.example/${PROJECT}/proxy/8000/`,
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(tab.location.href).toBe(`https://host.example/${PROJECT}/proxy/8000/`);
     mockIssueProjectAppUrl.mockRejectedValue(new Error("not an app route"));
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    tab.location.href = "";
     await openProjectAppStatus({ project_id: PROJECT, status });
+    expect(tab.location.href).toBe(`https://host.example/${PROJECT}/proxy/8000/`);
+    warn.mockRestore();
+  });
+
+  it("opens as before if the tab couldn't be reserved", async () => {
+    open.mockReturnValueOnce(null).mockReturnValueOnce(null);
+    await openProjectAppStatus({ project_id: PROJECT, status });
+    expect(mockIssueProjectAppUrl).not.toHaveBeenCalled();
     expect(open).toHaveBeenLastCalledWith(
       `https://host.example/${PROJECT}/proxy/8000/`,
       "_blank",
       "noopener,noreferrer",
     );
-    warn.mockRestore();
   });
 });

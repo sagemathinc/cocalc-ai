@@ -175,11 +175,23 @@ export async function openProjectAppStatus(opts: {
     return;
   }
   if (!opts.privateHostname?.url) {
-    const appOriginUrl = await getProjectAppOriginUrl(opts);
-    if (appOriginUrl) {
-      // Not noreferrer: the app origin accepts the link only from this site
-      // (the Referer is just the site's origin).
-      window.open(appOriginUrl, "_blank", "noopener");
+    // Reserve the tab while the click still has user activation (browsers
+    // block popups opened after an await), then send it where it goes.
+    const tab = window.open("", "_blank");
+    if (tab != null) {
+      tab.opener = null;
+      try {
+        // Not noreferrer: the app origin accepts the link only from this
+        // site (the Referer is just the site's origin).
+        const url =
+          (await getProjectAppOriginUrl(opts)) ??
+          (await getProjectAppOpenUrl(opts));
+        if (url) tab.location.href = url;
+        else tab.close();
+      } catch (err) {
+        tab.close();
+        throw err;
+      }
       return;
     }
   }
