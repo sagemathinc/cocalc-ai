@@ -35,8 +35,12 @@ import {
   attachBoardFrame,
   createBoardFrame,
   focusBoardFrame,
+  beginBoardLoad,
+  boardLoadFailed,
   getBoardFrame,
   isBoardFrameLive,
+  isLatestBoardLoad,
+  nextBoardFrame,
   type BoardFrame,
 } from "./board-frame-host";
 
@@ -91,6 +95,7 @@ export default function BoardArtifact({
     setError("");
     setFrameError("");
     setLoading(true);
+    const generation = beginBoardLoad(key);
     void (async () => {
       try {
         const fs = actionsRef.current?.fs();
@@ -113,6 +118,19 @@ export default function BoardArtifact({
         const text =
           typeof raw === "string" ? raw : new TextDecoder().decode(bytes);
         if (cancelled) return;
+        if (!isLatestBoardLoad(key, generation)) {
+          // A newer read of this view (in another place, or a newer
+          // Refresh) makes the frame: this one adopts it, never replaces it.
+          const newest = await nextBoardFrame(key);
+          if (cancelled) return;
+          if (newest == null) {
+            // That read failed or was abandoned: read it here instead.
+            setRefresh((r) => r + 1);
+            return;
+          }
+          setFrame(newest);
+          return;
+        }
         setFrame(
           createBoardFrame({
             key,
@@ -122,9 +140,11 @@ export default function BoardArtifact({
             text,
             name,
             title: `Sagebrush board: ${name}`,
+            generation,
           }),
         );
       } catch (err) {
+        boardLoadFailed(key, generation);
         if (!cancelled) setError(String(err));
       } finally {
         if (!cancelled) setLoading(false);
@@ -132,6 +152,9 @@ export default function BoardArtifact({
     })();
     return () => {
       cancelled = true;
+      // An unfinished newest read is abandoned: whoever waits for it reads
+      // the board themselves.
+      boardLoadFailed(key, generation);
     };
   }, [key, refresh]);
 

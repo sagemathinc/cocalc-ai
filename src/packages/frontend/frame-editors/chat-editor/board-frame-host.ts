@@ -499,6 +499,63 @@ export function isBoardFrameLive(frame: BoardFrame): boolean {
 
 /** A new frame for this view, replacing any earlier one; it loads at once,
  * hidden until a placeholder shows it. */
+// Reads of a view's board: only the newest may make its frame, so a slower,
+// older read (another place showing the view, an earlier Refresh) never
+// replaces what a newer one made. A superseded read adopts the newest one's
+// frame instead (nextBoardFrame).
+interface LoadState {
+  latest: number;
+  // The newest read's outcome, once it has one.
+  done?: number;
+  failed?: number;
+  waiters: ((frame: BoardFrame | undefined) => void)[];
+}
+const loads = new Map<string, LoadState>();
+
+function loadState(key: string): LoadState {
+  let state = loads.get(key);
+  if (state == null) {
+    state = { latest: 0, waiters: [] };
+    loads.set(key, state);
+  }
+  return state;
+}
+
+/** A read of this view's board is starting: its generation. */
+export function beginBoardLoad(key: string): number {
+  return ++loadState(key).latest;
+}
+
+/** Whether this read is still the newest of its view's. */
+export function isLatestBoardLoad(key: string, generation: number): boolean {
+  return loadState(key).latest === generation;
+}
+
+/** The frame the newest read of this view makes (undefined if it fails). */
+export function nextBoardFrame(key: string): Promise<BoardFrame | undefined> {
+  const state = loadState(key);
+  if (state.done === state.latest) {
+    return Promise.resolve(entries.get(key));
+  }
+  if (state.failed === state.latest) return Promise.resolve(undefined);
+  return new Promise((resolve) => state.waiters.push(resolve));
+}
+
+function settleLoad(key: string, generation: number, frame?: BoardFrame) {
+  const state = loadState(key);
+  if (state.latest !== generation) return;
+  if (state.done === generation || state.failed === generation) return;
+  if (frame != null) state.done = generation;
+  else state.failed = generation;
+  const waiters = state.waiters.splice(0);
+  for (const resolve of waiters) resolve(frame);
+}
+
+/** The newest read of this view failed: those waiting for it get nothing. */
+export function boardLoadFailed(key: string, generation: number): void {
+  settleLoad(key, generation);
+}
+
 export function createBoardFrame({
   key,
   path,
@@ -507,6 +564,7 @@ export function createBoardFrame({
   text,
   name,
   title,
+  generation,
 }: {
   key: string;
   path: string;
@@ -515,6 +573,8 @@ export function createBoardFrame({
   text: string;
   name: string;
   title: string;
+  // The read this frame is made from (beginBoardLoad), if any.
+  generation?: number;
 }): BoardFrame {
   const placeholders = entries.get(key)?.placeholders ?? [];
   destroyBoardFrame(key);
@@ -579,6 +639,7 @@ export function createBoardFrame({
   schedule();
   // Created hidden (no placeholder yet): it expires like any hidden frame.
   if (entry.hiddenSince != null) evictHidden();
+  if (generation != null) settleLoad(key, generation, entry);
   return entry;
 }
 
@@ -631,6 +692,7 @@ export function destroyBoardFrame(key: string): void {
 /** For tests. */
 export function resetBoardFrames(): void {
   for (const key of [...entries.keys()]) destroyBoardFrame(key);
+  loads.clear();
   if (animationFrame != null && typeof cancelAnimationFrame === "function") {
     cancelAnimationFrame(animationFrame);
   }

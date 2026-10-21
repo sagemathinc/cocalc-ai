@@ -708,6 +708,77 @@ test("hiding a frame that has focus moves focus to a visible control first", asy
   expect(document.activeElement).not.toBe(frame);
 });
 
+function deferred() {
+  let resolve!: (value: string) => void;
+  const promise = new Promise<string>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+for (const order of ["newer first", "older first"]) {
+  test(`only the newest read of a view makes its frame (${order})`, async () => {
+    const older = deferred();
+    const newer = deferred();
+    readFile
+      .mockImplementationOnce(() => older.promise)
+      .mockImplementationOnce(() => newer.promise);
+    render(<Board />);
+    await waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+    render(<Board />);
+    await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
+    const OLD = '{"format":"sagebrush-board","version":1,"old":1}';
+    const NEW = '{"format":"sagebrush-board","version":1,"new":1}';
+    await act(async () => {
+      if (order === "newer first") {
+        newer.resolve(NEW);
+        await newer.promise;
+        older.resolve(OLD);
+      } else {
+        older.resolve(OLD);
+        await older.promise;
+        newer.resolve(NEW);
+      }
+    });
+    await waitFor(() =>
+      expect(screen.getAllByText("Current saved board")).toHaveLength(2),
+    );
+    const frames = document.querySelectorAll("iframe");
+    expect(frames).toHaveLength(1);
+    const frame = frames[0] as HTMLIFrameElement;
+    const posted = watch(frame);
+    fromFrame(frame, ready(frame));
+    expect(posted.mock.calls[0][0].text).toBe(NEW);
+  });
+}
+
+test("a card waiting for an abandoned newer read reads the board itself", async () => {
+  const older = deferred();
+  const newer = deferred();
+  readFile
+    .mockImplementationOnce(() => older.promise)
+    .mockImplementationOnce(() => newer.promise)
+    .mockImplementation(async () => TEXT);
+  render(<Board />);
+  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+  const second = render(<Board />);
+  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
+  await act(async () => {
+    older.resolve("stale");
+    await older.promise;
+  });
+  second.unmount();
+  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(3));
+  await waitFor(() =>
+    expect(screen.getByText("Current saved board")).toBeInTheDocument(),
+  );
+  const frames = document.querySelectorAll("iframe");
+  expect(frames).toHaveLength(1);
+  const frame = frames[0] as HTMLIFrameElement;
+  const posted = watch(frame);
+  fromFrame(frame, ready(frame));
+  expect(posted.mock.calls[0][0].text).toBe(TEXT);
+  newer.resolve("late");
+});
+
 test("refuses a board over the preview limit without reading it", async () => {
   stat.mockResolvedValue({ size: 17 * 1024 * 1024 });
   render(<Board />);
