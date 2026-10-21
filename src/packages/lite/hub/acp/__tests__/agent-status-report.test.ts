@@ -381,7 +381,7 @@ describe("after a restart", () => {
 });
 
 describe("a refresh that keeps failing", () => {
-  it("gives up for a while, then tries again at its own interval", async () => {
+  it("after its quick retries, is tried hourly", async () => {
     const now = Date.now();
     let fail = false;
     let attempts = 0;
@@ -407,18 +407,78 @@ describe("a refresh that keeps failing", () => {
     expect(attempts).toBe(1);
     fail = true;
     // The refresh is due and fails: eleven tries with backoff (the cap is
-    // ten minutes apart), then it stops.
-    let t = now + 6 * 60 * 60_000 + 1;
-    for (let i = 0; i < 15; i++) {
-      await sweepAgentStatus(t);
-      t += 10 * 60_000;
-    }
+    // ten minutes apart, so one per sweep here), the last at t + 100 min.
+    const start = now + 6 * 60 * 60_000 + 1;
+    for (let i = 0; i < 15; i++)
+      await sweepAgentStatus(start + i * 10 * 60_000);
     expect(attempts - 1).toBe(11);
-    // Then it waits a full refresh interval, not the next sweep.
-    await sweepAgentStatus(t + 60 * 60_000);
+    // Then hourly, not every sweep.
+    await sweepAgentStatus(start + 155 * 60_000);
     expect(attempts - 1).toBe(11);
-    await sweepAgentStatus(t + 7 * 60 * 60_000);
+    await sweepAgentStatus(start + 161 * 60_000);
     expect(attempts - 1).toBe(12);
+    await sweepAgentStatus(start + 171 * 60_000);
+    expect(attempts - 1).toBe(12);
+  });
+
+  it("a new status is never dropped, however long the hub is down", async () => {
+    const now = Date.now();
+    let fail = true;
+    setAgentStatusReporterForTests(async (opts) => {
+      if (fail) throw new Error("hub unreachable");
+      reports.push(opts);
+      return { registered: true };
+    });
+    // Its first report (nothing sent before), and its job never changes.
+    const mine = job();
+    set(mine.op_id, {
+      state: "error",
+      started_at: now - 61_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "sign-in" },
+      },
+    });
+    for (let i = 0; i < 15; i++) await sweepAgentStatus(now + i * 10 * 60_000);
+    fail = false;
+    await sweepAgentStatus(now + 4 * 60 * 60_000);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].status.by_account[ACCOUNT]).toMatchObject({
+      reason: "sign-in",
+    });
+  });
+});
+
+describe("the account a status is reported as", () => {
+  it("is another account of the conversation if its latest one was removed", async () => {
+    const now = Date.now();
+    const other = "00000000-1000-4000-8000-000000000002";
+    setAgentStatusReporterForTests(async (opts) => {
+      if (opts.account_id === ACCOUNT)
+        throw new Error("not authorized for project-host agent auth token");
+      reports.push(opts);
+      return { registered: true };
+    });
+    const theirs = job();
+    set(theirs.op_id, {
+      account_id: other,
+      state: "completed",
+      started_at: now - 121_000,
+      finished_at: now - 120_000,
+      updated_at: now - 120_000,
+      outcome_json: { version: 1, state: "completed" },
+    });
+    // The latest turn is by a collaborator who has since been removed.
+    job();
+    await sweepAgentStatus(now);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      account_id: other,
+      status: { queued: 1 },
+    });
   });
 });
 

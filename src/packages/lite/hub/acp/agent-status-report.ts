@@ -137,6 +137,38 @@ export function agentThreadStatus(
   });
 }
 
+/** At most this many of a conversation's accounts are tried per report. */
+const MAX_REPORTING_ACCOUNTS = 5;
+
+/** Reported as the account of its latest job, or, if that one is no longer
+ * a collaborator, as another account that ran a turn there (newest first):
+ * one removed collaborator must not stop its status from being reported. */
+async function reportAs(
+  thread: Thread & { account_id: string },
+  status: AgentTurnStatus,
+): Promise<{ registered: boolean }> {
+  try {
+    return await reporter({ ...thread, status });
+  } catch (err) {
+    if (!/not authorized/i.test(`${err}`)) throw err;
+    const others = Object.entries(acpThreadJobSummary(thread).lastByAccount)
+      .filter(([account_id]) => account_id !== thread.account_id)
+      .sort(
+        ([, a], [, b]) =>
+          (b.finished_at ?? b.updated_at) - (a.finished_at ?? a.updated_at),
+      )
+      .slice(0, MAX_REPORTING_ACCOUNTS - 1);
+    for (const [account_id] of others) {
+      try {
+        return await reporter({ ...thread, account_id, status });
+      } catch (err2) {
+        if (!/not authorized/i.test(`${err2}`)) throw err2;
+      }
+    }
+    throw err;
+  }
+}
+
 /** Report every conversation whose jobs changed since the last sweep. */
 export async function sweepAgentStatus(now = Date.now()): Promise<void> {
   if (sweeping) return;
@@ -198,10 +230,16 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
       if (!retry.has(key) && unregistered.has(key)) continue;
       const status = agentThreadStatus(thread, now);
       if (onlyIfTrue.has(key) && !saysSomething(status)) continue;
-      if (!retry.has(key) && sameAgentTurnStatus(sent.get(key)?.status, status))
+      if (
+        !retry.has(key) &&
+        sameAgentTurnStatus(sent.get(key)?.status, status)
+      ) {
+        // Back to what the hub already has: nothing left to retry.
+        failed.delete(key);
         continue;
+      }
       try {
-        const { registered } = await reporter({ ...thread, status });
+        const { registered } = await reportAs(thread, status);
         failed.delete(key);
         remember(sent, key, { status, thread });
         if (!registered) {
@@ -214,28 +252,25 @@ export async function sweepAgentStatus(now = Date.now()): Promise<void> {
         // Unreachable (or an older hub): tried again with backoff, and on
         // the next change.
         logger.debug("agent status not reported", { err: `${err}` });
-        const attempts = (failed.get(key)?.attempts ?? 0) + 1;
-        if (attempts > FAILED_RETRY_ATTEMPTS) {
-          failed.delete(key);
-          // Given up for now: what made it due waits its own interval
-          // again (else the next sweep would start the retries over).
-          const recheck = unregistered.get(key);
-          if (recheck) recheck.until = now + UNREGISTERED_RECHECK_MS;
-          const last = sent.get(key);
-          if (last)
-            sent.set(key, { ...last, status: { ...last.status, at: now } });
-        } else {
-          remember(failed, key, {
-            thread,
-            attempts,
-            until:
-              now +
-              Math.min(
-                FAILED_RETRY_MS * 2 ** (attempts - 1),
-                FAILED_RETRY_MAX_MS,
-              ),
-          });
-        }
+        // Never given up (the status may never change again, e.g. after a
+        // limit): once the quick retries run out, tried hourly. Whatever
+        // else would make it due waits for this.
+        const attempts = Math.min(
+          (failed.get(key)?.attempts ?? 0) + 1,
+          FAILED_RETRY_ATTEMPTS + 1,
+        );
+        remember(failed, key, {
+          thread,
+          attempts,
+          until:
+            now +
+            (attempts > FAILED_RETRY_ATTEMPTS
+              ? UNREGISTERED_RECHECK_MS
+              : Math.min(
+                  FAILED_RETRY_MS * 2 ** (attempts - 1),
+                  FAILED_RETRY_MAX_MS,
+                )),
+        });
       }
     }
   } finally {
