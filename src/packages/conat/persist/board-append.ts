@@ -30,7 +30,12 @@ import {
 // What this needs of a stored stream (storage.ts).
 export interface AppendStream {
   seqBounds(): { newest_retained_seq?: number };
-  getAll(): Iterable<{ encoding: any; raw: Buffer; key?: string }>;
+  getAll(): Iterable<{
+    encoding: any;
+    raw: Buffer;
+    key?: string;
+    headers?: unknown;
+  }>;
   // What a strict-msgID set of this message would do (storage.ts).
   msgIDOutcome(
     msgID: string | undefined,
@@ -40,6 +45,21 @@ export interface AppendStream {
 }
 
 // A record's identity: its encoding and exact bytes, as stored.
+// A record's footprint as stored: its bytes, its headers' JSON and its key
+// (codex 4332730147: headers count toward a history's bounds, as the
+// stored size does). The append and open checks both count this.
+export function storedBytes(
+  raw: Buffer | undefined,
+  headers?: unknown,
+  key?: unknown,
+): number {
+  return (
+    (raw?.length ?? 0) +
+    (headers == null ? 0 : Buffer.byteLength(JSON.stringify(headers))) +
+    (key == null ? 0 : Buffer.byteLength(`${key}`))
+  );
+}
+
 export function digestOf(encoding: unknown, raw: Buffer | undefined): string {
   return createHash("sha256")
     .update(`${encoding}\0`)
@@ -74,7 +94,7 @@ function* records(stream: AppendStream): Generator<AppendRecord> {
     yield {
       value,
       digest: digestOf(m.encoding, m.raw),
-      bytes: m.raw?.length ?? 0,
+      bytes: storedBytes(m.raw, m.headers, m.key),
       key: m.key ?? undefined,
     };
   }
@@ -111,7 +131,7 @@ function checkFor(stream: AppendStream): BoardAppendCheck {
 // and the store (server.ts), so the append check projects exactly what
 // storage writes (CORR-956-1).
 export function requestRecords(
-  request: { cmd?: unknown; key?: unknown; msgID?: unknown },
+  request: { cmd?: unknown; key?: unknown; msgID?: unknown; headers?: unknown },
   mesg: { raw?: Buffer; encoding?: any; data?: any },
   stream?: Pick<AppendStream, "msgIDOutcome">,
 ): AppendRecord[] | undefined {
@@ -124,6 +144,7 @@ export function requestRecords(
     data: Buffer | undefined,
     key: unknown,
     msgID: unknown,
+    headers: unknown,
   ): AppendRecord => {
     // A board record's msgID is a string, or none (astra CORR9561: storage
     // deduplicates any msgID it is given, so a number would slip past the
@@ -168,23 +189,37 @@ export function requestRecords(
     return {
       value,
       digest: digestOf(encoding, data),
-      bytes: data?.length ?? 0,
+      bytes: storedBytes(data, headers, key),
       key: key == null ? undefined : `${key}`,
       ...(outcome === "duplicate" ? { duplicate: true } : {}),
     };
   };
   if (request.cmd === "set") {
-    return [record(mesg.encoding, mesg.raw, request.key, request.msgID)];
+    return [
+      record(
+        mesg.encoding,
+        mesg.raw,
+        request.key,
+        request.msgID,
+        request.headers,
+      ),
+    ];
   }
   if (request.cmd === "setMany") {
     return (
       mesg.data as {
         key?: unknown;
         msgID?: unknown;
-        messageData: { raw: Buffer; encoding: any };
+        messageData: { raw: Buffer; encoding: any; headers?: unknown };
       }[]
     ).map(({ key, msgID, messageData }) =>
-      record(messageData.encoding, messageData.raw, key, msgID),
+      record(
+        messageData.encoding,
+        messageData.raw,
+        key,
+        msgID,
+        messageData.headers,
+      ),
     );
   }
   return undefined;

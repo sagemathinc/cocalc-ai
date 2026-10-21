@@ -794,119 +794,201 @@ export async function openBoard(opts: BoardRequest): Promise<BoardOpenResult> {
 // opens still say its writer was refused and where the unsaved edits are.
 const REFUSAL_MEMORY_MS = 60 * 60 * 1000;
 const MAX_REFUSALS = 1000;
-const refusals = new Map<string, NonNullable<BoardOpenResult["lastRefusal"]>>();
 
 /*
 Held unsaved text (unsaved "memory": no place on disk took a refused
 writer's edits). Kept apart from the refusal messages, as UTF-8 bytes,
-charged at their encoded size plus HELD_ENTRY_OVERHEAD each, at most
-MAX_HELD_BYTES in all, in this project-host process (a restart loses it:
-it is volatile, and must be shown as such).
+charged at their encoded size plus HELD_ENTRY_OVERHEAD each, in this
+project-host process (a restart loses it: it is volatile, and must be shown
+as such).
 
 Every refusal's text is its own generation (astra): a second refusal of a
 board never replaces the first's text, and saving one generation releases
 exactly that one, so a newer one held meanwhile stays held. Nothing is
-dropped on time or for the refusal messages' count; only the byte bound
-drops the oldest generation (of any board), and every drop is logged and
-counted (heldUnsavedStats).
+dropped on time or for the refusal messages' count. Bounds (daybreak2):
+at most MAX_HELD_PER_BOARD generations per board (so an open saves at most
+that many copies), MAX_HELD_ENTRIES and MAX_HELD_BYTES in all; past one,
+the oldest generation (of that board, or of any board, found in O(1) from
+heldOrder) is dropped. Every drop is logged and counted (heldUnsavedStats),
+and the board's refusal says so (codex): its edits are then "nowhere".
 */
 const MAX_HELD_BYTES = 64 * 1024 * 1024;
 const HELD_ENTRY_OVERHEAD = 4096;
+const MAX_HELD_ENTRIES = 1024;
+const MAX_HELD_PER_BOARD = 8;
+// The copies saved from a board's held generations that its refusal lists:
+// the newest by generation (the latest refusal's own copy is kept apart).
+const MAX_COPIES_LISTED = 8;
+
 interface Held {
   id: number;
+  key: string;
   buf: Buffer;
   saving?: boolean;
+  dropped?: boolean;
 }
-// By board key, oldest generation first.
-const held = new Map<string, Held[]>();
+
+interface BoardRefusals {
+  // The latest refusal; gen: the generation holding its text, if any.
+  latest: NonNullable<BoardOpenResult["lastRefusal"]> & { gen?: number };
+  // Where the latest refusal's own generation went, once it left memory.
+  latestCopy?: string;
+  latestLost?: boolean;
+  // Generations still held, oldest first (at most MAX_HELD_PER_BOARD).
+  held: Held[];
+  // Copies saved from held generations, by generation (at most
+  // MAX_COPIES_LISTED, the newest), and how many were saved in all.
+  copies: { gen: number; path: string }[];
+  copiesSaved: number;
+  // Generations dropped (over a bound) and never saved.
+  lost: number;
+  // When the board's notice last changed (refused, or a copy saved): it is
+  // kept REFUSAL_MEMORY_MS from then (astra), so a copy saved on an open
+  // long after the refusal is still reported.
+  noticeAt: number;
+}
+
+// By board key, least recently refused first. A board with a held
+// generation is never removed (by time or by count), and at most
+// MAX_REFUSALS others are kept, so the boards number at most MAX_REFUSALS +
+// MAX_HELD_ENTRIES, each with a bounded record.
+const boards = new Map<string, BoardRefusals>();
+// Every held generation, oldest first (ids only increase).
+const heldOrder = new Map<number, Held>();
+// How many boards hold a generation.
+let heldBoards = 0;
 let heldBytes = 0;
 let heldDropped = 0;
 let heldIds = 0;
 
 const heldCost = (h: Held) => h.buf.byteLength + HELD_ENTRY_OVERHEAD;
 
-function holdText(key: string, text: string): void {
-  const entry: Held = { id: ++heldIds, buf: Buffer.from(text, "utf8") };
-  held.set(key, [...(held.get(key) ?? []), entry]);
+function holdText(board: BoardRefusals, key: string, text: string): number {
+  const entry: Held = { id: ++heldIds, key, buf: Buffer.from(text, "utf8") };
+  if (board.held.length === 0) heldBoards += 1;
+  board.held.push(entry);
+  heldOrder.set(entry.id, entry);
   heldBytes += heldCost(entry);
-  while (heldBytes > MAX_HELD_BYTES) {
-    // The oldest generation of any board.
-    let oldest: [string, Held] | undefined;
-    for (const [k, list] of held) {
-      if (oldest == null || list[0].id < oldest[1].id) oldest = [k, list[0]];
-    }
-    if (oldest == null) break;
-    heldDropped += 1;
-    logger.warn("board: DROPPED held unsaved edits: over the held bound", {
-      key: oldest[0],
-      bytes: oldest[1].buf.byteLength,
-      dropped: heldDropped,
-    });
-    releaseHeld(oldest[0], oldest[1].id);
+  while (board.held.length > MAX_HELD_PER_BOARD) {
+    dropHeld(board.held[0], "over the board's bound");
   }
+  while (heldBytes > MAX_HELD_BYTES || heldOrder.size > MAX_HELD_ENTRIES) {
+    const oldest = heldOrder.values().next().value;
+    if (oldest == null) break;
+    dropHeld(oldest, "over the host's bound");
+  }
+  return entry.id;
+}
+
+function dropHeld(entry: Held, why: string): void {
+  heldDropped += 1;
+  logger.warn(`board: DROPPED held unsaved edits: ${why}`, {
+    key: entry.key,
+    bytes: entry.buf.byteLength,
+    dropped: heldDropped,
+  });
+  releaseHeld(entry);
+  entry.dropped = true;
+  const board = boards.get(entry.key);
+  if (board == null) return;
+  board.lost += 1;
+  if (board.latest.gen === entry.id) board.latestLost = true;
 }
 
 // Release exactly this generation (if it is still held).
-function releaseHeld(key: string, id: number): void {
-  const list = held.get(key);
-  const i = list?.findIndex((h) => h.id === id) ?? -1;
-  if (list == null || i < 0) return;
-  heldBytes -= heldCost(list[i]);
-  list.splice(i, 1);
-  if (list.length === 0) held.delete(key);
+function releaseHeld(entry: Held): void {
+  if (!heldOrder.delete(entry.id)) return;
+  heldBytes -= heldCost(entry);
+  const list = boards.get(entry.key)?.held;
+  const i = list?.indexOf(entry) ?? -1;
+  if (i < 0) return;
+  list!.splice(i, 1);
+  if (list!.length === 0) heldBoards -= 1;
+}
+
+// A generation was saved as a copy (even one dropped while it was being
+// saved: then it is not lost after all).
+function savedCopy(entry: Held, path: string): void {
+  const board = boards.get(entry.key);
+  if (board == null) return;
+  if (entry.dropped) {
+    entry.dropped = false;
+    board.lost -= 1;
+  }
+  if (board.latest.gen === entry.id) {
+    board.latestCopy = path;
+    board.latestLost = false;
+  }
+  board.copiesSaved += 1;
+  board.noticeAt = Date.now();
+  // In generation order, whatever order the copies complete in.
+  const { copies } = board;
+  let i = copies.length;
+  while (i > 0 && copies[i - 1].gen > entry.id) i -= 1;
+  copies.splice(i, 0, { gen: entry.id, path });
+  if (copies.length > MAX_COPIES_LISTED) copies.shift();
 }
 
 // For tests and telemetry.
 export function heldUnsavedStats() {
-  let entries = 0;
-  for (const list of held.values()) entries += list.length;
-  return { entries, bytes: heldBytes, dropped: heldDropped };
+  return { entries: heldOrder.size, bytes: heldBytes, dropped: heldDropped };
 }
-
-// Copies saved from a board's held generations, newest last.
-const savedCopies = new Map<string, string[]>();
 
 export function rememberRefusal(
   key: string,
   status: Extract<BoardStatus, { state: "refused" }>,
   text?: string,
 ): void {
-  refusals.delete(key);
-  refusals.set(key, {
+  const board: BoardRefusals = boards.get(key) ?? {
+    latest: { at: 0, message: "", unsaved: undefined },
+    held: [],
+    copies: [],
+    copiesSaved: 0,
+    lost: 0,
+    noticeAt: 0,
+  };
+  // Most recently refused last.
+  boards.delete(key);
+  boards.set(key, board);
+  board.latest = {
     at: Date.now(),
     message: status.message,
     unsaved: status.unsaved,
-  });
-  if (status.unsaved.in === "memory" && text != null) holdText(key, text);
-  // The messages' count bound never evicts a refusal whose text is held.
-  for (const k of refusals.keys()) {
-    if (refusals.size <= MAX_REFUSALS) break;
-    if (!held.has(k)) {
-      refusals.delete(k);
-      savedCopies.delete(k);
-    }
+  };
+  board.noticeAt = board.latest.at;
+  board.latestCopy = undefined;
+  board.latestLost = false;
+  if (status.unsaved.in === "memory" && text != null) {
+    board.latest.gen = holdText(board, key, text);
+  }
+  // The messages' count bound (of boards without held text, which it never
+  // removes; it passes at most MAX_HELD_ENTRIES of those).
+  for (const [k, b] of boards) {
+    if (boards.size - heldBoards <= MAX_REFUSALS) break;
+    if (b.held.length === 0) boards.delete(k);
   }
 }
 
 // A board's held generations (no place on disk took them when its writer
 // was refused): each saved as a copy beside the board now, if it can be,
 // and then released, exactly that generation; held until then, never
-// dropped for a failure.
+// dropped for a failure. At most MAX_HELD_PER_BOARD copy writes.
 export async function saveHeldUnsaved(
   key: string,
   fs: BoardFilesystem,
   path: string,
 ): Promise<void> {
-  for (const entry of [...(held.get(key) ?? [])]) {
-    if (entry.saving) continue;
+  for (const entry of [...(boards.get(key)?.held ?? [])]) {
+    // Saving (by another open) or saved or dropped meanwhile: not again.
+    if (entry.saving || !heldOrder.has(entry.id)) continue;
     entry.saving = true;
     try {
       const copy = await fileOf(fs, path).keepCopy!(
         entry.buf.toString("utf8"),
         "unsaved",
       );
-      releaseHeld(key, entry.id);
-      savedCopies.set(key, [...(savedCopies.get(key) ?? []), copy]);
+      releaseHeld(entry);
+      savedCopy(entry, copy);
     } catch (err) {
       logger.warn("board: still couldn't save held unsaved edits", {
         path,
@@ -919,44 +1001,56 @@ export async function saveHeldUnsaved(
   }
 }
 
-// The board's last refusal, as it stands now: while any generation is
-// held, its unsaved edits are in "memory" (text: the newest); once all
-// are saved, in the newest copy (copies: every one).
+// The board's last refusal, as it stands now. Where its unsaved edits are
+// is the LATEST refusal's (astra): its own generation while held ("memory",
+// text: that text), then its copy, or "nowhere" if it was dropped; older
+// generations are only counted (held, lost) and listed (copies).
 export function lastRefusal(key: string): BoardOpenResult["lastRefusal"] {
-  const refusal = refusals.get(key);
-  if (refusal == null) return;
-  const list = held.get(key);
+  const board = boards.get(key);
+  if (board == null) return;
   // A refusal whose text is still held never expires on time.
-  if (list == null && Date.now() - refusal.at > REFUSAL_MEMORY_MS) {
-    refusals.delete(key);
-    savedCopies.delete(key);
+  if (
+    board.held.length === 0 &&
+    Date.now() - board.noticeAt > REFUSAL_MEMORY_MS
+  ) {
+    boards.delete(key);
     return;
   }
-  const copies = savedCopies.get(key);
-  if (list != null) {
-    return {
-      ...refusal,
-      unsaved: {
-        in: "memory",
-        error:
-          refusal.unsaved?.in === "memory"
-            ? refusal.unsaved.error
-            : "held by the host",
-      },
-      text: list[list.length - 1].buf.toString("utf8"),
-      held: list.length,
-      ...(copies ? { copies } : {}),
-    };
+  const { gen, ...latest } = board.latest;
+  const history = {
+    ...(board.held.length > 0 ? { held: board.held.length } : {}),
+    ...(board.copies.length > 0
+      ? {
+          copies: board.copies.map((c) => c.path),
+          copiesSaved: board.copiesSaved,
+        }
+      : {}),
+    ...(board.lost > 0 ? { lost: board.lost } : {}),
+  };
+  if (gen != null) {
+    const own = board.held.find((h) => h.id === gen);
+    if (own != null) {
+      return { ...latest, ...history, text: own.buf.toString("utf8") };
+    }
+    if (board.latestCopy != null) {
+      return {
+        ...latest,
+        ...history,
+        unsaved: { in: "copy", path: board.latestCopy },
+        message: `${latest.message} (since saved as ${board.latestCopy})`,
+      };
+    }
+    if (board.latestLost) {
+      const error = "LOST: dropped over the host's bound on held unsaved edits";
+      return {
+        ...latest,
+        ...history,
+        unsaved: { in: "nowhere", error },
+        message: `${latest.message} (${error})`,
+      };
+    }
   }
-  if (copies != null) {
-    return {
-      ...refusal,
-      unsaved: { in: "copy", path: copies[copies.length - 1] },
-      message: `${refusal.message} (since saved as ${copies[copies.length - 1]})`,
-      copies,
-    };
-  }
-  return refusal;
+  return { ...latest, ...history };
 }
 
 export async function saveBoard(opts: BoardRequest): Promise<BoardOpenResult> {

@@ -213,13 +213,18 @@ export interface BoardOpenResult {
     at: number;
     message: string;
     unsaved: BoardOpenResult["unsaved"];
-    // unsaved "memory": the unsaved board text itself (the newest held,
-    // volatile: a host restart loses it), until it is saved; held: how many
-    // refusals' texts are held.
+    // unsaved is where THIS refusal's edits are. unsaved "memory": text is
+    // that unsaved board text itself (volatile: a host restart loses it),
+    // until it is saved; held: how many refusals' texts are held (older
+    // ones are saved as copies on later opens too).
     text?: string;
     held?: number;
-    // Copies saved from held texts, newest last.
+    // Copies saved from held texts, oldest refusal first: at most the
+    // newest 8, of copiesSaved in all.
     copies?: string[];
+    copiesSaved?: number;
+    // Held texts dropped over the host's bounds, never saved anywhere.
+    lost?: number;
   };
   // The file's size when last read or written (state "ok"), or its size
   // (state "too-large").
