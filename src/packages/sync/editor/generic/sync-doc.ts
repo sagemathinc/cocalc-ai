@@ -170,6 +170,10 @@ export interface SyncOpts0 {
   // if true, never saves to disk or loads from disk -- this is NOT
   // ephemeral -- the history is tracked in the conat database!
   noSaveToDisk?: boolean;
+  // Where the patches stream is written: a persist service, and the identity
+  // to ask it as. A board's manager writes its board stream through the host's
+  // board write service, as the hub (conat/persist/board-policy.ts).
+  patchesPersist?: { service: string; persistUser: Record<string, never> };
 
   // if true, do not register backend sync-fs watching for this document.
   // This still allows explicit save_to_disk writes.
@@ -755,6 +759,11 @@ export class SyncDoc extends EventEmitter {
         project_id: this.project_id,
         path: this.syncPath,
         oversized_seq,
+        // The same route as the patches: a board's reset goes through the
+        // board write service (the ordinary one refuses it).
+        ...(this.opts.patchesPersist
+          ? { persist: this.opts.patchesPersist }
+          : {}),
       });
     } catch (resetErr) {
       // e.g., no permission or no connection: keep retrying the open, and
@@ -1754,6 +1763,7 @@ export class SyncDoc extends EventEmitter {
         noAutosave: this.noAutosave,
         initPhaseReporter:
           this.makeConatInitPhaseReporter("patches_corestream"),
+        ...(this.opts.patchesPersist ?? {}),
       });
 
       // If the checkpoint is stale or otherwise wrong, fall back to a full load.
@@ -1774,6 +1784,9 @@ export class SyncDoc extends EventEmitter {
             noAutosave: this.noAutosave,
             initPhaseReporter:
               this.makeConatInitPhaseReporter("patches_corestream"),
+            // The same routing as the first open: a board's checkpoint repair
+            // writes through the board write service.
+            ...(this.opts.patchesPersist ?? {}),
           });
           let repaired = false;
           let n = synctable.dstream.length - 1;

@@ -151,15 +151,20 @@ export class SyncClient extends EventEmitter implements Client0 {
     project_id,
     path,
     oversized_seq,
+    persist,
   }: {
     project_id: string;
     path: string;
     oversized_seq: number;
+    // The route the document's patches are written by (a board's: the
+    // board write service, as the hub).
+    persist?: { service: string; persistUser: Record<string, never> };
   }): Promise<{ history_epoch: number; reset: boolean }> => {
     const stream = this.client.sync.astream({
       project_id,
       name: patchesStreamName({ path }),
       noInventory: true,
+      ...(persist ?? {}),
     });
     try {
       const { history_epoch, reset } = await stream.resetHistory({

@@ -71,6 +71,11 @@ import {
   storedRowToMessage,
 } from "./storage";
 import { getStream, SERVICE, MAX_PER_USER, MAX_GLOBAL, RESOURCE } from "./util";
+import {
+  assertBoardCommandAllowed,
+  boardStreamAccess,
+  type BoardStreamAccess,
+} from "./board-policy";
 import { throttle } from "lodash";
 import { type SetOptions } from "./client";
 import { once } from "@cocalc/util/async-utils";
@@ -210,6 +215,10 @@ export function server({
     let changefeed = false;
     let stopChangefeed: (() => void) | undefined;
     let storage: undefined | StorageOptions = undefined;
+    // What this socket may do with a board stream (board-policy.ts).
+    let boardAccess: BoardStreamAccess = { board: false, readOnly: false };
+    // The policy refused this socket's stream: never open it (no retry).
+    let policyRefused = false;
     let stream: undefined | PersistentStream = undefined;
     let user = "";
     let added = false;
@@ -224,6 +233,9 @@ export function server({
     // quota are usually transient, and a long-lived client may keep using this
     // socket for hours, so requests retry the open (see retryInit).
     const initStream = (): Promise<void> => {
+      if (policyRefused) {
+        return Promise.reject(new ConatError(error, { code: errorCode }));
+      }
       if (initializing != null) {
         return initializing;
       }
@@ -295,6 +307,7 @@ export function server({
     const retryInit = async (): Promise<void> => {
       if (
         storage == null ||
+        policyRefused ||
         errorCode == 403 ||
         Date.now() - lastInitAttemptAt < INIT_RETRY_INTERVAL_MS
       ) {
@@ -312,6 +325,27 @@ export function server({
       if (stream == null && initializing == null) {
         storage = data.storage;
         changefeed = data.changefeed;
+        try {
+          // Before the stream is opened or cached: a board stream is read-only
+          // here unless this is the host's board write service, and always
+          // durable.
+          boardAccess = boardStreamAccess({
+            service,
+            subject: socket.subject,
+            storage,
+          });
+          if (boardAccess.storage != null) {
+            // Never the client's options for a board stream.
+            storage = boardAccess.storage as StorageOptions;
+          }
+        } catch (err) {
+          policyRefused = true;
+          error = `${err}`;
+          errorCode = (err as any)?.code ?? 403;
+          socket.write(null, { headers: { error, code: errorCode } });
+          socket.emit("stream-initialized");
+          return;
+        }
         try {
           await initStream();
         } catch {
@@ -356,6 +390,7 @@ export function server({
         if (stream == null) {
           throw Error("bug");
         }
+        assertBoardCommandAllowed(boardAccess, request);
         if (request.cmd == "set") {
           mesg.respondSync(
             stream.set({
