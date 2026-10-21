@@ -113,9 +113,11 @@ trust:
    anything you did not expect.
 4. Restart the project once more, so nothing those files started keeps
    running, then check the running processes in a terminal with \`ps aux\`.
-5. Revoke, at their source, any passwords or API keys the collaborator could
-   read, including [project secrets](/docs/projects/project-secrets), for
-   example by regenerating the key with the service that issued it.
+5. Revoke or replace, at their source, every credential the collaborator could
+   read: passwords, API keys, tokens, certificates, SSH private keys (remove
+   the matching public key wherever it is authorized), and
+   [project secrets](/docs/projects/project-secrets). For example, regenerate a
+   key with the service that issued it.
 
 These steps catch the usual ways access is left behind, but they cannot prove a
 project is clean: the startup script, for example, has already run once by the
