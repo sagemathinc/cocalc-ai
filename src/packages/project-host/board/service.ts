@@ -548,13 +548,10 @@ export async function startBoard({
       timeoutMs: START_STEP_TIMEOUT_MS,
       writer: true,
     });
-    if ((await boardHistoryInventory(step)) === before) {
+    if (await keptIfUnchanged(opened, before, step)) {
       syncdb = opened;
-    } else {
-      await opened.close().catch(() => {});
-      if (attempt >= 2) {
-        throw Error(`${path}: its history kept changing while it was opened`);
-      }
+    } else if (attempt >= 2) {
+      throw Error(`${path}: its history kept changing while it was opened`);
     }
   }
   const manager = new BoardManager({
@@ -585,6 +582,24 @@ export async function startBoard({
 }
 
 // A board's live document. Browsers open it with the same options.
+// Whether a just-opened syncdb replayed the history whose inventory was
+// before. If not, or if reading the inventory fails, it is closed first (the
+// close awaited before this resolves or throws: astra CORR-A633-1, so a
+// failed start never leaves its syncdb open behind a freed registry slot).
+export async function keptIfUnchanged(
+  opened: { close: () => Promise<unknown> },
+  before: string,
+  step: Parameters<typeof boardHistoryInventory>[0],
+): Promise<boolean> {
+  let kept = false;
+  try {
+    kept = (await boardHistoryInventory(step)) === before;
+    return kept;
+  } finally {
+    if (!kept) await opened.close().catch(() => {});
+  }
+}
+
 export async function openBoardSyncdb({
   client,
   project_id,

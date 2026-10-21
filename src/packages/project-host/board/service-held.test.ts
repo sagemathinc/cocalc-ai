@@ -334,3 +334,51 @@ test("astra (round 12): a save completing after its board's record was replaced 
   for (let i = 0; i < 8; i++) rememberRefusal(victim, m, `new-gen-${i}`);
   expect(lastRefusal(victim)).toMatchObject({ lost: 1, text: "new-gen-7" });
 });
+
+describe("astra CORR-A633-1: a start's syncdb is closed if its post-replay check fails", () => {
+  const history = require("./history");
+  const { keptIfUnchanged } = require("./service");
+  const step = { client: {} as any, project_id: "p", path: "/b.board.json" };
+
+  test.each([
+    ["the inventory read rejects", () => Promise.reject(Error("timeout"))],
+    ["the inventory changed", () => Promise.resolve("2:20:2")],
+  ])(
+    "%s: closed, and the close is finished before it settles",
+    async (_, inventory) => {
+      const events: string[] = [];
+      const opened = {
+        close: async () => {
+          await new Promise((r) => setTimeout(r, 20));
+          events.push("closed");
+        },
+      };
+      const spy = jest
+        .spyOn(history, "boardHistoryInventory")
+        .mockImplementation(inventory as any);
+      try {
+        await keptIfUnchanged(opened, "1:10:1", step).then(
+          (kept: boolean) => events.push(`kept: ${kept}`),
+          (err: Error) => events.push(`threw: ${err.message}`),
+        );
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events[0]).toBe("closed");
+      expect(events).toHaveLength(2);
+    },
+  );
+
+  test("the same inventory: kept open", async () => {
+    const opened = { close: jest.fn(async () => {}) };
+    const spy = jest
+      .spyOn(history, "boardHistoryInventory")
+      .mockResolvedValue("1:10:1");
+    try {
+      expect(await keptIfUnchanged(opened, "1:10:1", step)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(opened.close).not.toHaveBeenCalled();
+  });
+});
