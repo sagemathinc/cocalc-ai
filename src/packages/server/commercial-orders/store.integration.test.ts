@@ -771,6 +771,42 @@ describePglite("commercial order store", () => {
     expect(revised.next_action).toBe("Review agreement");
   });
 
+  it("replays an exact provisioning retry but refuses a new one when the expected fulfillment state is given", async () => {
+    const created = await store.createCommercialOrder(request());
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve membership fulfillment fixture",
+    });
+    const attempt = {
+      account_id: actor,
+      id: approved.id,
+      expected_version: approved.version,
+      reason: "record membership packages",
+      idempotency_key: `membership-${randomUUID()}`,
+      fulfillment_state: "provisioned" as const,
+      expected_fulfillment_state: "not_provisioned" as const,
+    };
+    const provisioned = await store.setCommercialFulfillment(attempt);
+    expect(provisioned.fulfillment_state).toBe("provisioned");
+
+    // The exact same request (same key) replays, although the order is no
+    // longer not_provisioned and its version moved on.
+    const replay = await store.setCommercialFulfillment(attempt);
+    expect(replay.version).toBe(provisioned.version);
+    expect(replay.provisioned_at).toEqual(provisioned.provisioned_at);
+
+    // A new request cannot provision again.
+    await expect(
+      store.setCommercialFulfillment({
+        ...attempt,
+        expected_version: provisioned.version,
+        idempotency_key: `membership-${randomUUID()}`,
+      }),
+    ).rejects.toThrow("already provisioned");
+  });
+
   it("enforces terminal and fulfillment transition invariants", async () => {
     const unapproved = await store.createCommercialOrder(request());
     await expect(

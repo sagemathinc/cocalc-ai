@@ -2604,6 +2604,9 @@ export async function setCommercialFulfillment(
     fulfillment_state: CommercialFulfillmentState;
     site_license_id?: string | null;
     metadata?: Record<string, unknown>;
+    // Checked inside the transaction, after an exact replay is returned, so a
+    // retried request still replays while a new one cannot re-provision.
+    expected_fulfillment_state?: CommercialFulfillmentState;
   },
 ): Promise<CommercialOrder> {
   const eventType =
@@ -2619,6 +2622,14 @@ export async function setCommercialFulfillment(
     }
     if (!["provisioned", "ended"].includes(opts.fulfillment_state)) {
       throw Error("fulfillment_state must be provisioned or ended");
+    }
+    if (
+      opts.expected_fulfillment_state != null &&
+      before.fulfillment_state !== opts.expected_fulfillment_state
+    ) {
+      throw Error(
+        `commercial fulfillment is already ${before.fulfillment_state}`,
+      );
     }
     if (
       opts.fulfillment_state === "ended" &&

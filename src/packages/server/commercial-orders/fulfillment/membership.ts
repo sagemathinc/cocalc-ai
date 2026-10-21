@@ -13,10 +13,17 @@ membership-package`, sometimes as a bridge before payment). This records that
 fulfillment on the order, so a paid order does not stay at "Provision service"
 forever, and keeps references to the packages that fulfil it. It only records:
 it never creates, changes or ends a package.
+
+Membership packages are account-home state, so they are read through the
+customer's home bay (the commercial order lives on the seed), and each one
+must be evidence for this specific order: owned by the order's customer,
+created for this order (metadata.commercial_order_number or
+commercial_order_id), not a site-license pool, already active, and covering
+the order's service term.
 */
 
 import type { CommercialMembershipFulfillmentRequest } from "@cocalc/conat/hub/api/commercial-orders";
-import getPool from "@cocalc/database/pool";
+import type { MembershipPackageRecord } from "@cocalc/conat/hub/api/purchases";
 import type { CommercialOrder } from "@cocalc/util/commercial-orders";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -27,16 +34,6 @@ import {
 import { requireReason } from "../state";
 
 const MAX_PACKAGES = 20;
-
-interface PackageRow {
-  id: string;
-  owner_account_id: string | null;
-  kind: string;
-  membership_class: string;
-  seat_count: number | null;
-  starts_at: Date | null;
-  expires_at: Date | null;
-}
 
 function normalizePackageIds(ids: unknown): string[] {
   if (!Array.isArray(ids) || ids.length === 0) {
@@ -56,12 +53,12 @@ function normalizePackageIds(ids: unknown): string[] {
   return normalized;
 }
 
+// Properties of the order that do not change once it is provisioned; the
+// current fulfillment state is checked inside setCommercialFulfillment, after
+// an exact replay has been returned.
 function assertMembershipOrder(order: CommercialOrder): void {
   if (order.workflow_state === "cancelled") {
     throw Error("fulfillment is not allowed on a cancelled order");
-  }
-  if (order.fulfillment_state !== "not_provisioned") {
-    throw Error(`commercial fulfillment is already ${order.fulfillment_state}`);
   }
   if (order.site_license_id) {
     throw Error(
@@ -82,6 +79,67 @@ function assertMembershipOrder(order: CommercialOrder): void {
   }
 }
 
+function time(value: unknown): number | undefined {
+  if (value == null || value === "") return;
+  const t = new Date(value as any).valueOf();
+  return Number.isFinite(t) ? t : undefined;
+}
+
+function assertPackageFulfilsOrder(
+  pkg: MembershipPackageRecord,
+  order: CommercialOrder,
+  now: number,
+): void {
+  const id = pkg.id;
+  if (pkg.owner_account_id !== order.customer_account_id) {
+    throw Error(
+      `membership package ${id} is not owned by the order's customer account`,
+    );
+  }
+  if (pkg.kind === "site") {
+    throw Error(`membership package ${id} is a site-license pool`);
+  }
+  const metadata = (pkg.metadata ?? {}) as Record<string, unknown>;
+  if (
+    metadata.commercial_order_number !== order.order_number &&
+    metadata.commercial_order_id !== order.id
+  ) {
+    throw Error(
+      `membership package ${id} was not created for ${order.order_number}`,
+    );
+  }
+  const starts = time(pkg.starts_at);
+  if (starts != null && starts > now) {
+    throw Error(`membership package ${id} has not started yet`);
+  }
+  const expires = time(pkg.expires_at);
+  if (expires != null && expires <= now) {
+    throw Error(`membership package ${id} has already expired`);
+  }
+  const serviceEnds = time(order.service_ends_at);
+  if (expires != null && serviceEnds != null && expires < serviceEnds) {
+    throw Error(
+      `membership package ${id} ends before the order's service term`,
+    );
+  }
+}
+
+async function loadCustomerPackages({
+  actor_account_id,
+  customer_account_id,
+}: {
+  actor_account_id: string;
+  customer_account_id: string;
+}): Promise<MembershipPackageRecord[]> {
+  // Routes to the customer's home bay (admin-only for another account).
+  const { getMembershipPackages } =
+    await import("@cocalc/server/conat/api/purchases");
+  return await getMembershipPackages({
+    account_id: actor_account_id,
+    user_account_id: customer_account_id,
+  });
+}
+
 export async function recordCommercialMembershipFulfillment(
   opts: CommercialMembershipFulfillmentRequest,
 ): Promise<CommercialOrder> {
@@ -93,28 +151,20 @@ export async function recordCommercialMembershipFulfillment(
   const order = await getCommercialOrder(opts.id);
   assertMembershipOrder(order);
 
-  const { rows } = await getPool().query<PackageRow>(
-    `SELECT id::text AS id, owner_account_id::text AS owner_account_id, kind,
-            membership_class, seat_count, starts_at, expires_at
-       FROM membership_packages
-      WHERE id = ANY($1::uuid[])`,
-    [packageIds],
-  );
-  const byId = new Map(rows.map((row) => [row.id, row]));
+  const packages = await loadCustomerPackages({
+    actor_account_id: opts.account_id,
+    customer_account_id: order.customer_account_id!,
+  });
+  const byId = new Map(packages.map((pkg) => [`${pkg.id}`.toLowerCase(), pkg]));
   const now = Date.now();
   for (const id of packageIds) {
     const pkg = byId.get(id);
     if (pkg == null) {
-      throw Error(`membership package ${id} not found`);
-    }
-    if (pkg.owner_account_id !== order.customer_account_id) {
       throw Error(
-        `membership package ${id} is not owned by the order's customer account`,
+        `membership package ${id} not found for the order's customer account`,
       );
     }
-    if (pkg.expires_at != null && new Date(pkg.expires_at).valueOf() <= now) {
-      throw Error(`membership package ${id} has already expired`);
-    }
+    assertPackageFulfilsOrder(pkg, order, now);
   }
 
   return await setCommercialFulfillment({
@@ -123,10 +173,12 @@ export async function recordCommercialMembershipFulfillment(
     expected_version: opts.expected_version,
     reason,
     source: opts.source,
-    idempotency_key:
-      opts.idempotency_key ??
-      commercialIdempotencyKey("membership-fulfillment", opts as any),
+    idempotency_key: commercialIdempotencyKey(
+      "membership-fulfillment",
+      opts as any,
+    ),
     fulfillment_state: "provisioned",
+    expected_fulfillment_state: "not_provisioned",
     metadata: {
       membership_package_ids: packageIds,
       membership_packages: packageIds.map((id) => {
