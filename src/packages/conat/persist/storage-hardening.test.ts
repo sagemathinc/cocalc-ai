@@ -151,9 +151,53 @@ describe("the schema of a stored database", () => {
     const stream = open(path);
     expect(
       Buffer.from(stream.get({ seq: 1, key: undefined })!.raw).toString(),
-    ).toBe(
-      '{"a":1}',
-    );
+    ).toBe('{"a":1}');
+    stream.close();
+  });
+
+  it("creates the history tables from HISTORY_SCHEMA, so a fresh database passes the check", () => {
+    const path = serverFile();
+    const db = new DatabaseSync(path + ".db");
+    const objects = db
+      .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master")
+      .all() as any[];
+    db.close();
+    expect(unexpectedPersistSchema(objects)).toBeUndefined();
+    const names = objects.map(({ name }) => name);
+    for (const name of Object.keys(HISTORY_SCHEMA)) {
+      expect(names).toContain(name);
+    }
+    // the stored definitions are exactly HISTORY_SCHEMA's
+    for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
+      const stored = objects.find((o) => o.name === name)!.sql;
+      expect(stored.replace(/\s+/g, " ")).toBe(
+        sql.replace(/\s+/g, " ").replace(" IF NOT EXISTS", ""),
+      );
+    }
+  });
+
+  it("still passes the check after a seeded reset and archive", () => {
+    const path = serverFile();
+    let stream = open(path);
+    stream.set({ encoding: 1 as any, raw: Buffer.from('"b"'), msgID: "b" });
+    const { seq, count } = stream.inventory();
+    expect(
+      stream.resetHistory({
+        ifRevision: { seq, count },
+        coveredSeq: seq,
+        archive: true,
+        opId: "op",
+        seed: {
+          encoding: 1 as any,
+          raw: Buffer.from('{"is_snapshot":true,"snapshot":"v"}'),
+          msgID: "seed",
+          checkpoint: { name: "latest_snapshot" },
+        },
+      }).reset,
+    ).toBe(true);
+    stream.close();
+    stream = open(path);
+    expect(stream.length).toBe(1);
     stream.close();
   });
 
