@@ -72,6 +72,7 @@ export async function acceptAgentMessage(
       "send",
       "broadcast",
       "inspect",
+      "withdraw",
       "propose-network",
     ],
   };

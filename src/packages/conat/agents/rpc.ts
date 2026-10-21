@@ -169,6 +169,8 @@ export type AgentRpcRequest =
   | (AgentRpcSend & { action: "send"; snapshot_payload?: AgentSnapshot[] })
   | (AgentRpcSend & { action: "prepare-attachments" | "cancel-attachments" })
   | (AgentRpcAttempt & { action: "inspect" })
+  /** Take back a message whose turn has not started (queued or held). */
+  | (AgentRpcAttempt & { action: "withdraw" })
   | { version: 3; action: "destinations" }
   | { version: 3; action: "inbox"; limit?: number }
   | { version: 3; action: "ack-inbox"; message_id: string }
@@ -211,16 +213,20 @@ export function validateAgentRpcRequest(
   if (value?.version !== 3) throw new Error("agent RPC version 3 required");
   const keys = ["version", "action"];
   if (
-    ["send", "inspect", "prepare-attachments", "cancel-attachments"].includes(
-      value.action,
-    )
+    [
+      "send",
+      "inspect",
+      "withdraw",
+      "prepare-attachments",
+      "cancel-attachments",
+    ].includes(value.action)
   ) {
     if (!("attempt_id" in value)) throw new Error("attempt required");
     keys.push("attempt_id", "agent_network_id", "target");
     requireUuid(value.attempt_id, "attempt_id");
     requireUuid(value.agent_network_id, "agent_network_id");
     validateAgentRpcTarget(value.target);
-    if (value.action !== "inspect") {
+    if (value.action !== "inspect" && value.action !== "withdraw") {
       keys.push(
         "body",
         "file_references",
