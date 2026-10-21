@@ -171,6 +171,32 @@ describe("Account deletion methods", () => {
       expect(result.rows[0].deleted).toBe(true);
     });
 
+    it("keeps the former email and deletion time when marked deleted again", async () => {
+      const accountId = uuid();
+      const email = `retry-${Date.now()}@example.com`;
+      await pool.query(
+        "INSERT INTO accounts (account_id, email_address) VALUES ($1, $2)",
+        [accountId, email],
+      );
+
+      await mark_account_deleted_wrapper({ account_id: accountId });
+      const first = await pool.query(
+        "SELECT deleted_at FROM accounts WHERE account_id = $1",
+        [accountId],
+      );
+      // e.g. a retry after a later deletion step failed
+      await mark_account_deleted_wrapper({ account_id: accountId });
+
+      const result = await pool.query(
+        "SELECT deleted, email_address_before_delete, deleted_at FROM accounts WHERE account_id = $1",
+        [accountId],
+      );
+      expect(result.rows[0].deleted).toBe(true);
+      expect(result.rows[0].email_address_before_delete).toBe(email);
+      expect(first.rows[0].deleted_at).not.toBeNull();
+      expect(result.rows[0].deleted_at).toEqual(first.rows[0].deleted_at);
+    });
+
     it("clears passports field", async () => {
       const accountId = uuid();
       const email = `passports-${Date.now()}@example.com`;

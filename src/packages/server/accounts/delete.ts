@@ -113,8 +113,15 @@ export async function markAccountDeleted(
       // Before deleted=true, in the same transaction: every computer of the
       // account is revoked (its host drops it; its connector stops).
       revoked = await revokeComputersForAccount(db, account_id);
+      // A retry after a partly failed deletion must keep the former email and
+      // the original deletion time; the email is already cleared by then.
       await db.query(
-        `UPDATE accounts SET deleted=true, deleted_at=NOW(), email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL, ${CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL} WHERE account_id=$2::UUID`,
+        `UPDATE accounts SET
+           email_address_before_delete = CASE WHEN deleted IS TRUE THEN email_address_before_delete ELSE $1::TEXT END,
+           deleted_at = CASE WHEN deleted IS TRUE THEN deleted_at ELSE NOW() END,
+           deleted=true, email_address=NULL, passports=NULL,
+           ${CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL}
+         WHERE account_id=$2::UUID`,
         [email_address_before_delete, account_id],
       );
       await recordAccountAdminAuditEventInTransaction({

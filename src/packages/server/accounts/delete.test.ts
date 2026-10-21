@@ -189,7 +189,13 @@ describe("delete account", () => {
       `${sql}`.startsWith("UPDATE accounts"),
     );
     expect(update[0]).toContain("deleted=true");
-    expect(update[0]).toContain("deleted_at=NOW()");
+    // a retry keeps the former email and the original deletion time
+    expect(update[0]).toContain(
+      "email_address_before_delete = CASE WHEN deleted IS TRUE THEN email_address_before_delete ELSE $1::TEXT END",
+    );
+    expect(update[0]).toContain(
+      "deleted_at = CASE WHEN deleted IS TRUE THEN deleted_at ELSE NOW() END",
+    );
     for (const field of [
       "display_name",
       "first_name",
