@@ -152,6 +152,15 @@ function listen(): void {
 function notify(entry: Entry): void {
   const active = entry.placeholders[entry.placeholders.length - 1];
   for (const placeholder of entry.placeholders) {
+    // In the accessibility tree the frame is where the card is: the
+    // placeholder it covers owns it (the frame itself lives at the end of the
+    // body), so a screen reader's virtual cursor and frame list find it at
+    // the card, not after the whole application.
+    if (placeholder === active) {
+      placeholder.element.setAttribute("aria-owns", entry.iframe.id);
+    } else {
+      placeholder.element.removeAttribute("aria-owns");
+    }
     placeholder.onState({
       active: placeholder === active,
       frameError: entry.frameError,
@@ -449,6 +458,8 @@ export function createBoardFrame({
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", sandbox);
   iframe.title = title;
+  // For the placeholder showing it to own it (aria-owns).
+  iframe.id = `cocalc-board-frame-${crypto.randomUUID()}`;
   // Out of the page's ordinary tab order (it lives at the end of the body):
   // keyboard users enter it only through the card's placeholder, and leave
   // through its sentinels.
@@ -533,6 +544,7 @@ export function attachBoardFrame(
     const index = entry.placeholders.indexOf(placeholder);
     if (index < 0) return;
     entry.placeholders.splice(index, 1);
+    element.removeAttribute("aria-owns");
     if (entry.placeholders.length === 0) {
       entry.hiddenSince = Date.now();
       hide(entry);

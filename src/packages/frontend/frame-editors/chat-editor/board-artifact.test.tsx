@@ -506,12 +506,28 @@ test("shown in two places, the newest has the frame", async () => {
     ).toBeInTheDocument(),
   );
   expect(screen.getAllByTitle(TITLE)).toEqual([first.frame]);
+  // In the accessibility tree the frame is at the card showing it: that
+  // placeholder owns it, and only that one.
+  expect(first.frame.id).toMatch(/^cocalc-board-frame-/);
+  expect(placeholder(second.container).getAttribute("aria-owns")).toBe(
+    first.frame.id,
+  );
+  expect(placeholder(first.view.container).hasAttribute("aria-owns")).toBe(
+    false,
+  );
   second.unmount();
   await waitFor(() =>
     expect(
       first.view.queryByText("This board is shown in another view."),
     ).toBeNull(),
   );
+  expect(placeholder(first.view.container).getAttribute("aria-owns")).toBe(
+    first.frame.id,
+  );
+  // Gone from the page: no placeholder owns it.
+  const owner = placeholder(first.view.container);
+  first.view.unmount();
+  expect(owner.hasAttribute("aria-owns")).toBe(false);
 });
 
 test("Refresh in one of two places: the other place shows, focuses and hides the new frame", async () => {
