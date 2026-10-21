@@ -118,17 +118,19 @@ trust:
    anything you did not expect.
 5. Restart the project once more, so nothing those files started keeps
    running, then check the running processes in a terminal with \`ps aux\`.
-6. Revoke or replace, at their source, every credential the collaborator could
-   read: passwords, API keys, tokens, certificates, SSH private keys (remove
-   the matching public key wherever it is authorized), and
-   [project secrets](/docs/projects/project-secrets). For example, regenerate a
-   key with the service that issued it.
+6. Revoke, at their source, every credential the collaborator could read:
+   passwords, API keys, tokens, certificates, SSH private keys (remove the
+   matching public key wherever it is authorized), and
+   [project secrets](/docs/projects/project-secrets). For example, revoke a key
+   with the service that issued it. A running project sees a changed secret
+   right away, so add replacements only to a project you trust, as explained
+   below.
 
 These steps catch the usual ways access is left behind, but they cannot prove a
 project is clean: the startup script, for example, has already run once by the
 time you can open it. If you need that certainty, create a new project, copy in
-only the files you need after reviewing them, and add new secrets there
-instead of in the old project.
+only the files you need after reviewing them, and add the replacement
+credentials there instead of in the old project.
 
 Keep the paths to the report, saved results, and next steps in the
 [research handoff](/docs/projects/research-handoff). For coauthors editing
