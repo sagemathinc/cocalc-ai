@@ -58,6 +58,8 @@ describe("fence a project, replace its history, and clients reload it", () => {
   let service: { close: () => void };
   let client;
   let doc;
+  // a stream whose owner doesn't handle a replacement (e.g., a project log)
+  let plain;
   let dbPath: string;
   const saved = () => join(syncFiles.local, `saved-${project_id}.db`);
 
@@ -68,6 +70,8 @@ describe("fence a project, replace its history, and clients reload it", () => {
     });
     client = connect();
     doc = await client.sync.dstream({ project_id, name: "fence-doc" });
+    // as SyncDoc does: it handles a replacement of the history itself
+    doc.keepOpenWhenReplaced();
     doc.publish("a");
     doc.publish("b");
     await doc.save();
@@ -114,6 +118,9 @@ describe("fence a project, replace its history, and clients reload it", () => {
   });
 
   it("replaces the history under a fence; the client starts over with it", async () => {
+    plain = await client.sync.dstream({ project_id, name: "fence-log" });
+    plain.publish("x");
+    await plain.save();
     await withPersistFence(
       { client: connect(), project_id, holder },
       async () => {
@@ -146,6 +153,24 @@ describe("fence a project, replace its history, and clients reload it", () => {
     expect(other.getAll()).toEqual(["a", "b", "d"]);
     other.close();
     fresh.close();
+  });
+
+  it("a stream whose owner doesn't handle the replacement closes, so it is opened again", async () => {
+    await wait({ until: () => plain.isClosed() });
+    // never silently dropped
+    expect(() => plain.publish("y")).toThrow("closed");
+    const again = await client.sync.dstream({ project_id, name: "fence-log" });
+    expect(again).not.toBe(plain);
+    expect(again.getAll()).toEqual(["x"]);
+    again.publish("z");
+    await again.save();
+    const other = await connect().sync.dstream({
+      project_id,
+      name: "fence-log",
+    });
+    expect(other.getAll()).toEqual(["x", "z"]);
+    other.close();
+    again.close();
   });
 
   it("a write from a client that has not seen the replacement is refused", async () => {
@@ -732,6 +757,8 @@ describe("a stream's configuration is not applied to a replaced history", () => 
         name: "fence-config",
         config: { max_msgs: 2 },
       });
+      // (as SyncDoc's stream: open across the replacement)
+      limited.keepOpenWhenReplaced();
       await wait({ until: () => limited.getAll().length == 2 });
       // the history is restored under it
       await withPersistFence(

@@ -179,7 +179,20 @@ export function jsonLengthCapped(
   value: unknown,
   opts: { max: number; maxDepth?: number; maxWork?: number },
 ): number | undefined {
-  return measure(value, { maxWork: opts.max, ...opts })?.bytes;
+  return jsonMeasureCapped(value, opts)?.bytes;
+}
+
+// The same, with the work the walk used, so callers measuring many values can
+// share one work budget.
+export function jsonMeasureCapped(
+  value: unknown,
+  opts: { max: number; maxDepth?: number; maxWork?: number },
+): { bytes: number; work: number } | undefined {
+  return measure(value, {
+    max: opts.max,
+    maxDepth: opts.maxDepth,
+    maxWork: opts.maxWork ?? opts.max,
+  });
 }
 
 function measure(

@@ -101,7 +101,10 @@ function normalizeLastRuntimeMs(value: any): number | undefined {
   return Math.round(n);
 }
 
-function patchCellMetadataWithLastRuntime(metadata: any, last: any): any {
+export function patchCellMetadataWithLastRuntime(
+  metadata: any,
+  last: any,
+): any {
   let metadataPatch: any;
   if (metadata == null) {
     metadataPatch = {};

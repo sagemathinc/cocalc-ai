@@ -710,12 +710,19 @@ export function server({
         }
       } catch (err) {
         const oversizedSeq = (err as any)?.oversizedSeq;
+        const oversizedEpoch =
+          typeof oversizedSeq != "number"
+            ? undefined
+            : ((err as any)?.oversizedEpoch ?? stream?.historyEpochNow?.());
         mesg.respondSync(null, {
           headers: {
             error: `${err}`,
             code: (err as any)?.code ?? classifyPersistStorageErrorCode(err),
             ...(typeof oversizedSeq == "number"
               ? { oversized_seq: oversizedSeq }
+              : {}),
+            ...(typeof oversizedEpoch == "number"
+              ? { oversized_epoch: oversizedEpoch }
               : {}),
             ...(err instanceof StaleInstanceError
               ? {
@@ -1003,6 +1010,7 @@ export async function replay({
           size: oversized.size,
           limit: sizeLimit,
           seq: oversized.seq,
+          epoch: stream.historyEpochNow?.(),
         });
       }
       const last_seq = plan[plan.length - 1].seq;

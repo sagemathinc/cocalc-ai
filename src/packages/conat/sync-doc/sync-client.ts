@@ -219,11 +219,23 @@ export class SyncClient extends EventEmitter implements Client0 {
         stream.getMetadata(),
       ]);
       const epoch = (metadata as any)?.settings?.history_epoch;
+      const reset = (metadata as any)?.settings?.history_reset;
       return {
         seq: inventory.seq,
         count: inventory.count,
         epoch: typeof epoch === "number" && Number.isFinite(epoch) ? epoch : 0,
         proof: checkpoints?.[SAVED_FILE_CHECKPOINT],
+        // what the last reset recorded (its reason), from the persist
+        // server's metadata
+        ...(reset != null && typeof reset === "object"
+          ? {
+              reset: {
+                reason:
+                  typeof reset.reason === "string" ? reset.reason : undefined,
+                time: typeof reset.time === "number" ? reset.time : undefined,
+              },
+            }
+          : {}),
       };
     } finally {
       stream.close();
@@ -305,11 +317,16 @@ export class SyncClient extends EventEmitter implements Client0 {
     path,
     persist,
     options,
+    busyAttempts,
   }: {
     project_id: string;
     path: string;
     persist?: { service: string; persistUser: Record<string, never> };
     options: ResetHistoryOptions;
+    // how many times to ask while another reset of this history is in
+    // progress (default: about the server's old 30 s wait); a caller with its
+    // own deadline passes fewer
+    busyAttempts?: number;
   }): Promise<ResetHistoryResult> => {
     const stream = this.client.sync.astream({
       project_id,
@@ -319,10 +336,42 @@ export class SyncClient extends EventEmitter implements Client0 {
     });
     try {
       // while another reset of this history is in progress, wait for it
-      return await retryWhileResetBusy(() => stream.resetHistory(options));
+      return await retryWhileResetBusy(() => stream.resetHistory(options), {
+        attempts: busyAttempts,
+      });
     } finally {
       stream.close();
     }
+  };
+
+  // see Client.askLiveWriterToSeed: the project's Jupyter backend, waited
+  // for at most 60 s (its own deadline is shorter)
+  askLiveWriterToSeed = async ({
+    project_id,
+    path,
+    epoch,
+    oversizedSeq,
+  }: {
+    project_id: string;
+    path: string;
+    epoch: number;
+    oversizedSeq: number;
+  }) => {
+    const api = projectApiClient({
+      project_id,
+      client: this.client,
+      timeout: 60_000,
+    });
+    // a project that is not running has no live writer: say so at once,
+    // rather than waiting out the timeout before the user is offered (B)
+    if (!(await api.isReady())) {
+      return { seeded: false as const, reason: "not-running" as const };
+    }
+    return await api.jupyter.seedOversizedHistory({
+      path,
+      epoch,
+      oversizedSeq,
+    });
   };
 
   ipywidgetsGetBuffer = async ({
