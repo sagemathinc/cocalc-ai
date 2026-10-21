@@ -2691,3 +2691,110 @@ describe("managed egress notices", () => {
     assert.equal(emails, 1, `${emails} email outbox rows for one notice`);
   });
 });
+
+describe("membership-seat order fulfillment across bays", () => {
+  // Commercial orders live on the seed; membership packages are account-home
+  // state. Recording fulfillment on the seed for a customer homed on the
+  // attached bay must read the packages from that bay.
+  async function makeAdmin(account) {
+    for (const bay of [SEED, ATTACHED]) {
+      await runInBay(
+        cluster,
+        bay,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(
+           "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+           [${JSON.stringify(account.account_id)}]);`,
+      );
+    }
+  }
+
+  async function recordOnSeed({ admin, customer }) {
+    const serviceEnds = new Date(Date.now() + 100 * 86_400_000).toISOString();
+    const order = await runInBay(
+      cluster,
+      SEED,
+      `const store = server("commercial-orders/store.js");
+       const actor = ${JSON.stringify(admin.account_id)};
+       const created = await store.createCommercialOrder({
+         account_id: actor,
+         reason: "multibay membership order",
+         source: "cli",
+         idempotency_key: "multibay-membership-" + ${JSON.stringify(randomUUID())},
+         organization_name: "Multibay Membership University",
+         customer_account_id: ${JSON.stringify(customer.account_id)},
+         collection_mode: "manual_invoice",
+         agreed_subtotal: "100",
+         agreed_total: "100",
+         service_ends_at: ${JSON.stringify(serviceEnds)},
+         next_action: "Approve agreement",
+         next_action_due_at: new Date(Date.now() + 86400000).toISOString(),
+         items: [{ description: "Student seats", quantity: "1", unit_amount: "100",
+                   subtotal: "100", product_kind: "membership_package" }],
+         contacts: [{ role: "billing", name_snapshot: "AP", email_snapshot: "ap@multibay.edu" }],
+       });
+       const approved = await store.approveCommercialOrder({
+         account_id: actor, id: created.id, expected_version: created.version,
+         reason: "approve multibay membership order" });
+       return { id: approved.id, order_number: approved.order_number, version: approved.version };`,
+    );
+    const package_id = randomUUID();
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO membership_packages (id, owner_account_id, kind, membership_class, seat_count, starts_at, expires_at, metadata, created, updated) VALUES ($1::uuid, $2::uuid, 'team', 'student', 3, NOW() - interval '1 day', $3::timestamp + interval '3 days', $4::jsonb, NOW(), NOW())",
+         [${JSON.stringify(package_id)}, ${JSON.stringify(customer.account_id)}, ${JSON.stringify(serviceEnds)},
+          JSON.stringify({ commercial_order_number: ${JSON.stringify(order.order_number)} })]);`,
+    );
+    // The package exists only on the customer's home bay.
+    assert.equal(
+      await runInBay(
+        cluster,
+        SEED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT count(*)::int AS n FROM membership_packages WHERE id=$1::uuid",
+           [${JSON.stringify(package_id)}]);
+         return rows[0].n;`,
+      ),
+      0,
+    );
+
+    const recorded = await runInBay(
+      cluster,
+      SEED,
+      `const { recordCommercialMembershipFulfillment } = server("commercial-orders/fulfillment/membership.js");
+       const result = await recordCommercialMembershipFulfillment({
+         id: ${JSON.stringify(order.id)},
+         account_id: ${JSON.stringify(admin.account_id)},
+         expected_version: ${order.version},
+         reason: "record multibay membership fulfillment",
+         source: "cli",
+         idempotency_key: "multibay-record-" + ${JSON.stringify(randomUUID())},
+         membership_package_ids: [${JSON.stringify(package_id)}],
+       });
+       return { fulfillment_state: result.fulfillment_state };`,
+    );
+    assert.equal(recorded.fulfillment_state, "provisioned");
+  }
+
+  it("records fulfillment on the seed from packages on the customer's home bay", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "mira",
+    });
+    await makeAdmin(admin);
+    await recordOnSeed({ admin, customer: bob });
+  });
+
+  it("reads the home bay when the acting admin is the customer, homed on the attached bay", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "nadia",
+    });
+    await makeAdmin(admin);
+    await recordOnSeed({ admin, customer: admin });
+  });
+});

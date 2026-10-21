@@ -542,6 +542,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "ends a provisioned institutional commercial service",
   },
+  "commercialOrders.recordMembershipFulfillment": {
+    decision: "fresh-auth-required",
+    reason:
+      "records institutional membership-seat fulfillment on commercial state",
+  },
   "commercialOrders.provision": {
     decision: "fresh-auth-required",
     reason: "creates or links an institutional site-license entitlement",
