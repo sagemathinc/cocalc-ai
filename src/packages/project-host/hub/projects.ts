@@ -80,6 +80,7 @@ import {
   resolveProjectContainerPath,
   ensureProjectVolumeIdentity,
   reconcileManagedProjectVolumeQuota,
+  projectHomeQuota,
 } from "../file-server";
 import { currentProjectVolumeLifecycleGeneration } from "../project-volume-lifecycle";
 import {
@@ -1285,7 +1286,7 @@ async function assertStartDiskQuotaAllowed({
       logger,
       getQuota: async (id) => {
         const vol = await getOrEnsureProjectHomeVolume(id);
-        return await vol.quota.get();
+        return await projectHomeQuota(id, vol);
       },
     });
     return {
@@ -1372,7 +1373,11 @@ async function assertStartDiskQuotaAllowed({
       // A freshly recreated scratch subvolume is empty and has no limit. A
       // physical qgroup read here adds no safety, but can block for seconds
       // while Btrfs quota accounting catches up after I/O pressure.
-      const quota = resetVolume ? { used: 0, size: 0 } : await vol.quota.get();
+      const quota = resetVolume
+        ? { used: 0, size: 0 }
+        : volume_kind === "home"
+          ? await projectHomeQuota(project_id, vol)
+          : await vol.quota.get();
       if (
         isProjectDiskQuotaStartBlocked({
           used: quota.used,

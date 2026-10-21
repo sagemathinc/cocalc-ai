@@ -166,11 +166,11 @@ Qgroupid Referenced Exclusive Max referenced Max exclusive Path
     expect(btrfsMock).toHaveBeenCalledTimes(2);
     expect(btrfsMock).toHaveBeenNthCalledWith(1, {
       verbose: false,
-      args: ["qgroup", "show", "-prcf", "--raw", "/mnt/test/project-1"],
+      args: ["qgroup", "show", "-prcF", "--raw", "/mnt/test/project-1"],
     });
     expect(btrfsMock).toHaveBeenNthCalledWith(2, {
       verbose: false,
-      args: ["qgroup", "show", "-prcf", "--raw", "/mnt/test/project-2"],
+      args: ["qgroup", "show", "-prcF", "--raw", "/mnt/test/project-2"],
     });
   });
 

@@ -161,9 +161,10 @@ export async function cachedBtrfsQgroupShowRawForPath(
     run: async () =>
       await btrfs({
         verbose: false,
-        // -f restricts output to qgroups affecting this subvolume. Without it,
-        // qgroup show enumerates every qgroup on the filesystem.
-        args: ["qgroup", "show", "-prcf", "--raw", path],
+        // -F restricts output to qgroups affecting this subvolume, its own
+        // and the groups it is in (quota-group.ts). Without it, qgroup show
+        // enumerates every qgroup on the filesystem.
+        args: ["qgroup", "show", "-prcF", "--raw", path],
       }),
   });
 }

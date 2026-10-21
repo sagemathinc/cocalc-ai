@@ -731,12 +731,17 @@ export default function DiskUsage({
         : quota.used > 0
           ? human_readable_size(quota.used)
           : "Measuring…";
+  const quotaBreakdown =
+    quota?.history_used == null
+      ? ""
+      : `files ${human_readable_size(quota.files_used ?? 0)}, edit history ${human_readable_size(quota.history_used)}`;
   const quotaSummaryTitle =
     quota == null
       ? ""
-      : quotaSizeKnown
-        ? `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`
-        : `${human_readable_size(quota.used)} used; quota limit unavailable`;
+      : (quotaSizeKnown
+          ? `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`
+          : `${human_readable_size(quota.used)} used; quota limit unavailable`) +
+        (quotaBreakdown ? ` (${quotaBreakdown})` : "");
 
   const selectedBucket =
     visible.find((bucket) => bucket.key === selectedBucketKey) ?? visible[0];
@@ -1280,6 +1285,16 @@ export default function DiskUsage({
                       <> out of {human_readable_size(quota.size)}</>
                     ) : (
                       <Text type="secondary">; quota limit unavailable</Text>
+                    )}
+                    {quota.history_used != null && (
+                      <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
+                        Files take {human_readable_size(quota.files_used ?? 0)}{" "}
+                        and the edit history of your documents{" "}
+                        {human_readable_size(quota.history_used)}. The edit
+                        history may use{" "}
+                        {human_readable_size(quota.history_reserve ?? 0)} beyond
+                        the quota, so editing keeps working when files fill it.
+                      </div>
                     )}
                     {quota.warning ? (
                       <Alert

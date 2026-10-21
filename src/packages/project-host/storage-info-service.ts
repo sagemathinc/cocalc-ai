@@ -1045,6 +1045,13 @@ async function getStorageOverviewImpl({
           label: "Project quota",
           used: quota.used,
           size: quota.size,
+          ...(quota.history_used == null
+            ? {}
+            : {
+                files_used: quota.files_used,
+                history_used: quota.history_used,
+                history_reserve: quota.history_reserve,
+              }),
           qgroupid: quota.qgroupid,
           scope: quota.scope,
           warning: quota.warning,
@@ -1057,7 +1064,8 @@ async function getStorageOverviewImpl({
         bytes: liveBytes,
       },
       retained: buildRetainedSummary({
-        quotaUsed: quota.used,
+        // what the files take, without the edit history
+        quotaUsed: quota.files_used ?? quota.used,
         liveBytes,
         snapshotCount,
       }),

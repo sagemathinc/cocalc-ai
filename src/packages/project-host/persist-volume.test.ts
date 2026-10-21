@@ -135,12 +135,19 @@ const GiB = 1024 ** 3;
 function fakeOps(): PersistVolumeOps & {
   calls: string[];
   quotas: Map<string, number>;
+  // volumes put in their project's quota group
+  joined: string[];
 } {
   const calls: string[] = [];
   const quotas = new Map<string, number>();
+  const joined: string[] = [];
   return {
     calls,
     quotas,
+    joined,
+    joinQuotaGroup: async (project_id, path) => {
+      joined.push(`${project_id}:${path}`);
+    },
     getQuota: async (path) => quotas.get(path) ?? 0,
     setQuota: async (path, bytes) => {
       quotas.set(path, bytes);
@@ -201,12 +208,13 @@ describe("importPersistDatabases", () => {
       ops.quotas.set(path, bytes);
     };
     ops.quotas.set(home, 40 * 1024 ** 2);
-    env.COCALC_PERSIST_VOLUME_QUOTA_MIN_BYTES = `${1024 ** 2}`;
+    env.COCALC_PERSIST_HISTORY_RESERVE_MIN_BYTES = `${1024 ** 2}`;
     await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
     // imported, like every database: its size is not trusted
     expect(existsSync(join(root, "big.db"))).toBe(true);
-    // never more than the disk quota, during and after the import
-    expect(limits).toEqual([40 * 1024 ** 2, 40 * 1024 ** 2]);
+    // never more than the disk quota while importing, then the limit of the
+    // project's files and history together
+    expect(limits).toEqual([40 * 1024 ** 2, 44 * 1024 ** 2]);
   });
 
   it("stops reading a directory at its limit", async () => {
@@ -271,8 +279,10 @@ describe("prepareProjectPersistVolume", () => {
     ops.quotas.set(home, 10 * GiB);
     await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
     expect(ops.calls).toEqual(["create", "snapshot", "delete"]);
-    // a fifth of the disk quota (at most the disk quota while importing)
-    expect(ops.quotas.get(root)).toBe(2 * GiB);
+    // counted with the project's files, in its quota group, whose limit (the
+    // disk quota and a tenth more) is its own too
+    expect(ops.joined).toEqual([`${PROJECT}:${root}`]);
+    expect(ops.quotas.get(root)).toBe(11 * GiB);
     // the old directory is gone from the home
     expect(existsSync(join(home, LEGACY))).toBe(false);
     expect(existsSync(join(home, ".local/share/cocalc"))).toBe(true);
@@ -443,31 +453,22 @@ describe("prepareProjectPersistVolume", () => {
 });
 
 describe("persistVolumeQuota", () => {
-  it("is a fifth of the disk quota, but at least 256 MiB", () => {
-    expect(persistVolumeQuota({ homeQuota: 10 * GiB, env: {} })).toBe(2 * GiB);
+  it("is the limit of the project's files and history together", () => {
+    // the disk quota and a tenth more, at least 256 MiB more
+    expect(persistVolumeQuota({ homeQuota: 10 * GiB, env: {} })).toBe(11 * GiB);
     expect(persistVolumeQuota({ homeQuota: GiB / 2, env: {} })).toBe(
-      256 * 1024 ** 2,
+      768 * 1024 ** 2,
     );
   });
 
   it("is always a limit, even when the home has none", () => {
-    expect(persistVolumeQuota({ homeQuota: 0, env: {} })).toBe(2 * GiB);
-  });
-
-  it("leaves room for history imported beyond it, and is never lowered", () => {
+    expect(persistVolumeQuota({ homeQuota: 0, env: {} })).toBe(20 * GiB);
     expect(
-      persistVolumeQuota({ homeQuota: 10 * GiB, imported: 4 * GiB, env: {} }),
+      persistVolumeQuota({
+        homeQuota: 0,
+        env: { COCALC_PERSIST_VOLUME_QUOTA_MAX_BYTES: `${5 * GiB}` },
+      }),
     ).toBe(5 * GiB);
-    // the history fit in the disk quota, so it never earns more than that
-    expect(
-      persistVolumeQuota({ homeQuota: 10 * GiB, imported: 100 * GiB, env: {} }),
-    ).toBe(10 * GiB);
-    expect(
-      persistVolumeQuota({ homeQuota: 0, imported: 100 * GiB, env: {} }),
-    ).toBe(20 * GiB);
-    expect(
-      persistVolumeQuota({ homeQuota: 5 * GiB, current: 3 * GiB, env: {} }),
-    ).toBe(3 * GiB);
   });
 
   it("can be configured", () => {
@@ -475,11 +476,11 @@ describe("persistVolumeQuota", () => {
       persistVolumeQuota({
         homeQuota: 10 * GiB,
         env: {
-          COCALC_PERSIST_VOLUME_QUOTA_PERCENT: "50",
-          COCALC_PERSIST_VOLUME_QUOTA_MIN_BYTES: "nonsense",
+          COCALC_PERSIST_HISTORY_RESERVE_PERCENT: "50",
+          COCALC_PERSIST_HISTORY_RESERVE_MIN_BYTES: "nonsense",
         },
       }),
-    ).toBe(5 * GiB);
+    ).toBe(15 * GiB);
   });
 });
 
@@ -683,7 +684,10 @@ describe("in the project-host", () => {
     // edits after the snapshot
     await writeFile(join(root, "a.db"), "after the snapshot");
     await writeFile(join(root, "new.db"), "after the snapshot");
-    await restoreHome(snapshotPath);
+    const ops = fakeOps();
+    await restoreHome(snapshotPath, { ops });
+    // the history put in place counts against the project's quota
+    expect(ops.joined).toEqual([`${PROJECT}:${root}`]);
     expect(read(join(root, "a.db"))).toBe("live");
     expect(existsSync(join(root, "new.db"))).toBe(false);
     // the copy in the restored home is gone
@@ -695,7 +699,9 @@ describe("in the project-host", () => {
     const replacement = join(mount, "replacement");
     await mkdir(replacement);
     await writeFile(join(replacement, "work.txt"), "restored");
-    await restoreHome(replacement);
+    const ops = fakeOps();
+    await restoreHome(replacement, { ops });
+    expect(ops.joined).toEqual([]);
     expect(read(join(home, "work.txt"))).toBe("restored");
     expect(read(join(root, "a.db"))).toBe("live");
     // fenced (the persist server must have volumes), but nothing replaced
@@ -897,6 +903,7 @@ describe("in the project-host", () => {
     };
     await mergeRestoredHistory({ project_id: PROJECT, source, env, ops });
     expect(mergedWhileFenced).toBe(true);
+    expect(ops.joined).toEqual([`${PROJECT}:${root}`]);
     expect(read(join(root, "a.db"))).toBe("backup");
     // never an old log on a restored database
     expect(existsSync(join(root, "a.db-wal"))).toBe(false);
@@ -1363,14 +1370,14 @@ describe("in the project-host", () => {
     );
   });
 
-  it("raises the volume's limit with the disk quota", async () => {
+  it("sets the volume's limit with the disk quota", async () => {
     await readyVolume();
     const ops = fakeOps();
     ops.quotas.set(root, 3 * GiB);
     await syncPersistVolumeQuota(PROJECT, 20 * GiB, ops);
-    expect(ops.quotas.get(root)).toBe(4 * GiB);
+    expect(ops.quotas.get(root)).toBe(22 * GiB);
     await syncPersistVolumeQuota(PROJECT, 5 * GiB, ops);
-    expect(ops.quotas.get(root)).toBe(4 * GiB);
+    expect(ops.quotas.get(root)).toBe(5.5 * GiB);
     await syncPersistVolumeQuota(OTHER, 20 * GiB, ops);
     expect(ops.quotas.size).toBe(1);
   });
@@ -1439,6 +1446,8 @@ describe("in the project-host", () => {
     expect(read(join(copy, "a.db"))).toBe("live");
     expect(existsSync(join(copy, READY_MARKER))).toBe(true);
     expect(cloneLimit(ops)).toBe(3 * GiB);
+    // counted against the copy's quota
+    expect(ops.joined).toEqual([`${OTHER}:${copy}`]);
     // nothing left where copies are made
     expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
     await deletePersistVolume(OTHER);

@@ -172,6 +172,9 @@ jest.mock("../file-server", () => ({
   getMountPoint: jest.fn(() => "/mnt/cocalc"),
   resolveProjectContainerPath: (...args: any[]) =>
     resolveProjectContainerPath(...args),
+  // (the home's own quota: no history counted with it here)
+  projectHomeQuota: async (_project_id: string, vol: any) =>
+    await vol.quota.get(),
 }));
 jest.mock("@cocalc/project-runner/run/sandbox-exec", () => ({
   sandboxExec: (...args: any[]) => sandboxExec(...args),

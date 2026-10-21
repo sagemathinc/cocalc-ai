@@ -14,17 +14,27 @@ import {
   withBtrfsMutationContext,
   withBtrfsMutationLock,
 } from "./operation-cache";
+import { syncQuotaGroupNow } from "./quota-group";
 
 const logger = getLogger("file-server:btrfs:quota-queue");
 
-type QuotaWorkKind = "set_subvolume_limit";
+type QuotaWorkKind = "set_subvolume_limit" | "sync_quota_group";
 
-type QuotaWorkPayload = {
-  mount: string;
-  kind: "set_subvolume_limit";
-  path: string;
-  size: string;
-};
+type QuotaWorkPayload =
+  | {
+      mount: string;
+      kind: "set_subvolume_limit";
+      path: string;
+      size: string;
+    }
+  | {
+      mount: string;
+      // a quota group over several subvolumes (quota-group.ts)
+      kind: "sync_quota_group";
+      group: string;
+      members: string[];
+      size: string;
+    };
 
 type QueueStatusValue = "queued" | "in_progress" | "failed";
 
@@ -364,6 +374,15 @@ async function executeRow(row: QueueRow): Promise<void> {
               size: row.payload.size,
             });
             break;
+          case "sync_quota_group":
+            await ensureBtrfsQuotaMode(row.payload.mount);
+            await syncQuotaGroupNow({
+              mount: row.payload.mount,
+              group: row.payload.group,
+              members: row.payload.members,
+              size: row.payload.size,
+            });
+            break;
         }
         db()
           .prepare(`UPDATE ${TABLE} SET command_finished_at=? WHERE id=?`)
@@ -692,6 +711,47 @@ export function queueSetSubvolumeQuota(opts: {
       logicalKey: `${opts.mount}\0${opts.path}`,
       projectId: opts.project_id,
       volumeKind: opts.volume_kind,
+      operationId: opts.operation_id,
+      operationClass: opts.operation_class,
+      context,
+    },
+  );
+}
+
+// A quota group's members and limit (quota-group.ts), queued like a
+// subvolume's limit.
+export function queueSyncQuotaGroup(opts: {
+  mount: string;
+  group: string;
+  members: string[];
+  size: string | number;
+  wait?: boolean;
+  project_id?: string;
+  operation_id?: string;
+  operation_class?: string;
+  priority?: BtrfsMutationPriority;
+  context?: BtrfsMutationContext;
+}): Promise<void> | void {
+  const context = effectiveBtrfsMutationContext({
+    ...(opts.context ?? {}),
+    project_id: opts.project_id ?? opts.context?.project_id,
+    operation_id: opts.operation_id ?? opts.context?.operation_id,
+    operation_class: opts.operation_class ?? opts.context?.operation_class,
+    priority: opts.priority ?? opts.context?.priority,
+  });
+  return enqueueRow(
+    {
+      mount: opts.mount,
+      kind: "sync_quota_group",
+      group: opts.group,
+      members: opts.members,
+      size: `${opts.size}`,
+    },
+    {
+      wait: opts.wait ?? true,
+      logicalKey: `${opts.mount}\0${opts.group}`,
+      projectId: opts.project_id,
+      volumeKind: "quota-group",
       operationId: opts.operation_id,
       operationClass: opts.operation_class,
       context,

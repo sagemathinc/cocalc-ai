@@ -275,7 +275,13 @@ export interface Fileserver {
     scratch?: boolean;
   }) => Promise<{
     size: number;
+    // the home's: its files and edit history together (project-host
+    // project-quota-group.ts), split as well as btrfs can tell below
     used: number;
+    files_used?: number;
+    history_used?: number;
+    // what the history may use beyond `size`
+    history_reserve?: number;
     qgroupid?: string;
     scope?: "subvolume";
     warning?: string;
