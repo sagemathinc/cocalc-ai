@@ -4,6 +4,7 @@
  */
 
 import { once } from "node:events";
+import path from "node:path";
 import {
   createServer as createHttpServer,
   type Server as HttpServer,
@@ -16,6 +17,13 @@ import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
 import { initPersistFenceService } from "@cocalc/conat/persist/fence";
+import {
+  fileFenceStore,
+  isFenceHolderAlive,
+  removeFenceCapability,
+  writeFenceCapability,
+} from "@cocalc/backend/conat/persist-fence";
+import { resolveHostAgentDataDir } from "./host-agent-state";
 import {
   connect as connectToConat,
   type Client as ConatClient,
@@ -81,6 +89,12 @@ async function delay(ms: number): Promise<void> {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
+}
+
+// Where the persist daemon keeps its fences and its capability file
+// (conat/persist/fence.ts, persist-fence.ts).
+export function persistFenceDir(): string {
+  return path.join(resolveHostAgentDataDir(), "persist-fences");
 }
 
 export function isProjectHostExternalConatPersistEnabled(): boolean {
@@ -206,6 +220,20 @@ export async function startStandaloneProjectHostConatPersist({
       logger.error("failed starting persist maintenance coordinator", err);
     }
   }
+  // Before the persist server serves: it holds again the fences it held
+  // before a restart, and its capability file tells the host's main process
+  // that it has fences (persist-fence.ts).
+  const fenceDir = persistFenceDir();
+  const fenceService = await initPersistFenceService({
+    client,
+    holderAlive: isFenceHolderAlive,
+    store: fileFenceStore(fenceDir),
+  });
+  writeFenceCapability(fenceDir);
+  const closeFenceService = () => {
+    fenceService.close();
+    removeFenceCapability(fenceDir);
+  };
   // Both services share this process's stream cache, and so its maintenance
   // hooks.
   const maintenanceHooks = maintenance?.createLocalHooks(id);
@@ -220,7 +248,6 @@ export async function startStandaloneProjectHostConatPersist({
     service: BOARD_WRITE_SERVICE,
     maintenance: maintenanceHooks,
   });
-  const fenceService = initPersistFenceService({ client });
   maintenance?.start();
 
   let persistReady = false;
@@ -309,7 +336,7 @@ export async function startStandaloneProjectHostConatPersist({
     maintenance,
     persistServer,
     boardPersistServer,
-    fenceService,
+    fenceService: { close: closeFenceService },
     port: bindPort,
   };
 }

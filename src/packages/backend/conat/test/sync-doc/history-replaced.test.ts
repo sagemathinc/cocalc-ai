@@ -16,13 +16,20 @@ import {
   PERSIST_FENCE_SUBJECT,
   withPersistFence,
 } from "@cocalc/conat/persist/fence";
+import {
+  currentFenceHolder,
+  isFenceHolderAlive,
+} from "@cocalc/backend/conat/persist-fence";
 import { before, after, uuid, connect, server, once, wait } from "./setup";
 
 let fenceService: { close: () => void } | undefined;
 
 beforeAll(async () => {
   await before();
-  fenceService = initPersistFenceService({ client: connect() });
+  fenceService = await initPersistFenceService({
+    client: connect(),
+    holderAlive: isFenceHolderAlive,
+  });
   const client = connect();
   await wait({
     until: async () => {
@@ -98,7 +105,12 @@ const historyDir = (project_id: string) =>
 // A copy of all of the project's history, taken while nothing has it open.
 async function saveHistory(project_id: string): Promise<string[]> {
   const saved: string[] = [];
-  const fence = { client: connect(), project_id, replaces: false };
+  const fence = {
+    client: connect(),
+    project_id,
+    holder: currentFenceHolder(),
+    replaces: false,
+  };
   await withPersistFence(fence, async () => {
     for (const path of databases(historyDir(project_id))) {
       copyFileSync(path, `${path}.saved`);
@@ -110,16 +122,19 @@ async function saveHistory(project_id: string): Promise<string[]> {
 
 // Puts back the saved history, as restoring the project would.
 async function restoreHistory(project_id: string, saved: string[]) {
-  await withPersistFence({ client: connect(), project_id }, async () => {
-    for (const path of databases(historyDir(project_id))) {
-      if (!saved.includes(path)) rmSync(path);
-    }
-    for (const path of saved) {
-      rmSync(`${path}-wal`, { force: true });
-      rmSync(`${path}-shm`, { force: true });
-      copyFileSync(`${path}.saved`, path);
-    }
-  });
+  await withPersistFence(
+    { client: connect(), project_id, holder: currentFenceHolder() },
+    async () => {
+      for (const path of databases(historyDir(project_id))) {
+        if (!saved.includes(path)) rmSync(path);
+      }
+      for (const path of saved) {
+        rmSync(`${path}-wal`, { force: true });
+        rmSync(`${path}-shm`, { force: true });
+        copyFileSync(`${path}.saved`, path);
+      }
+    },
+  );
 }
 
 describe("a tab with nothing unsaved reloads the restored history", () => {
@@ -202,5 +217,46 @@ describe("a fence that only reads the history does not disturb an open tab", () 
     expect(other.to_str()).toBe("hello world, still here");
     other.close();
     doc.close();
+  });
+});
+
+describe("an edit made while the history is being replaced never reaches the restored history", () => {
+  const project_id = uuid();
+  const path = "during.txt";
+
+  it("is only in a recovery copy", async () => {
+    const { doc, fs } = await savedDocument(project_id, path);
+    const saved = await saveHistory(project_id);
+    const events = record(doc);
+    await withPersistFence(
+      { client: connect(), project_id, holder: currentFenceHolder() },
+      async () => {
+        // the tab keeps editing while its history is replaced under it
+        doc.from_str("hello during restore");
+        doc.commit();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        for (const path of saved) {
+          rmSync(`${path}-wal`, { force: true });
+          rmSync(`${path}-shm`, { force: true });
+          copyFileSync(`${path}.saved`, path);
+        }
+      },
+    );
+    await wait({ until: () => events.length > 0 });
+    const copies = await copiesOf(fs, path);
+    expect(copies).toHaveLength(1);
+    expect(await fs.readFile(copies[0], "utf8")).toBe("hello during restore");
+    expect(events).toEqual([
+      {
+        name: "history-reset",
+        x: expect.objectContaining({ copies, cause: "replaced" }),
+      },
+    ]);
+    // give a stale write every chance to land
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const reopened = open(project_id, path);
+    await once(reopened, "ready");
+    expect(reopened.to_str()).toBe("hello world");
+    reopened.close();
   });
 });

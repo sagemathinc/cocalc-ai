@@ -144,6 +144,48 @@ export async function releaseQueuedStreams(
   });
 }
 
+// Commands that change a stream.  Once the stream's files were replaced (a
+// fence, fence.ts), they are refused from a client that has not seen the
+// replacement's instance: whatever it would write was based on the replaced
+// history.
+const WRITE_COMMANDS = new Set([
+  "set",
+  "setMany",
+  "delete",
+  "setMetadata",
+  "patchMetadata",
+  "setCheckpoint",
+  "deleteCheckpoint",
+]);
+
+class StaleInstanceError extends ConatError {
+  constructor(readonly instance: string) {
+    super(
+      "this stream's history was replaced (e.g., the project was restored); load it again",
+      { code: 409 },
+    );
+  }
+}
+
+// A client says which instance it last saw (persist_instance: "" for none,
+// "*" if it has not read the stream, so it has nothing from the replaced
+// history).  A client from before persist_instance says nothing and is not
+// refused: it would write whatever it had once it saw the new instance anyway
+// (only newer clients keep that from the new history, see DStream), and
+// refusing would shut out the ones that only write.
+export function assertCurrentInstance({
+  replacedInstance,
+  claimed,
+}: {
+  replacedInstance?: string;
+  claimed?: unknown;
+}): void {
+  if (replacedInstance == null || typeof claimed != "string") return;
+  if (claimed != "*" && claimed !== replacedInstance) {
+    throw new StaleInstanceError(replacedInstance);
+  }
+}
+
 export function classifyPersistStorageErrorCode(
   err: unknown,
 ): string | undefined {
@@ -475,6 +517,12 @@ export function server({
           throw Error("bug");
         }
         assertBoardCommandAllowed(boardAccess, request);
+        if (WRITE_COMMANDS.has(request.cmd)) {
+          assertCurrentInstance({
+            replacedInstance: stream.replacedInstance,
+            claimed: request.persist_instance,
+          });
+        }
         if (request.cmd == "set") {
           mesg.respondSync(
             stream.set({
@@ -621,6 +669,12 @@ export function server({
             code: (err as any)?.code ?? classifyPersistStorageErrorCode(err),
             ...(typeof oversizedSeq == "number"
               ? { oversized_seq: oversizedSeq }
+              : {}),
+            ...(err instanceof StaleInstanceError
+              ? {
+                  persist_instance: err.instance,
+                  error_attrs: { persist_instance: err.instance },
+                }
               : {}),
           },
         });

@@ -22,11 +22,6 @@ import { randomId } from "@cocalc/conat/names";
 // with backoff and tries again.
 export const FENCED_OPEN_WAIT_MS = 15_000;
 
-// Bounds the replacement instances remembered.  Forgetting one is harmless:
-// that project's streams then report no instance again, so clients that saw
-// it start over once more.
-const MAX_REPLACED_INSTANCES = 10_000;
-
 interface Fence {
   token: string;
   released: Promise<void>;
@@ -49,6 +44,11 @@ export function projectOfStoragePath(
 
 export function isProjectFenced(project_id: string): boolean {
   return fences.has(project_id);
+}
+
+// Whether token holds the project's fence.
+export function isProjectFencedBy(project_id: string, token: string): boolean {
+  return fences.get(project_id)?.token === token;
 }
 
 // Waits while the project is fenced, then counts an open as under way until
@@ -177,30 +177,31 @@ export function beginProjectFence(project_id: string, token: string): void {
 
 // Releases the fence if token holds it (returns whether it did).  If the
 // project's files were (or may have been) replaced, its streams report a new
-// instance from now on.
+// instance from now on (instance, or a new random one).
 export function endProjectFence(
   project_id: string,
   token: string,
-  { replaced }: { replaced: boolean },
+  { replaced, instance }: { replaced: boolean; instance?: string },
 ): boolean {
   const current = fences.get(project_id);
   if (current == null || current.token !== token) return false;
   if (replaced) {
-    markProjectReplaced(project_id);
+    replacedInstances.set(project_id, instance ?? randomId());
   }
   fences.delete(project_id);
   current.release();
   return true;
 }
 
-export function markProjectReplaced(project_id: string): void {
-  replacedInstances.delete(project_id);
-  replacedInstances.set(project_id, randomId());
-  while (replacedInstances.size > MAX_REPLACED_INSTANCES) {
-    const oldest = replacedInstances.keys().next().value;
-    if (oldest == null) break;
-    replacedInstances.delete(oldest);
-  }
+// The instance the project's streams report since its files were last
+// replaced (e.g., loaded from where the fence service keeps them, so that it
+// survives a restart: a client that last saw the project before then must
+// still learn that it was replaced).
+export function setProjectReplacedInstance(
+  project_id: string,
+  instance: string,
+): void {
+  replacedInstances.set(project_id, instance);
 }
 
 export function projectReplacedInstance(

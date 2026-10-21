@@ -30,6 +30,10 @@ import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-m
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { initPersistFenceService } from "@cocalc/conat/persist/fence";
+import {
+  fileFenceStore,
+  isFenceHolderAlive,
+} from "@cocalc/backend/conat/persist-fence";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
@@ -195,6 +199,7 @@ import {
 } from "./browser-session";
 import {
   isProjectHostExternalConatPersistEnabled,
+  persistFenceDir,
   waitForProjectHostConatPersistReady,
 } from "./conat-persist";
 import {
@@ -580,6 +585,15 @@ export async function main(
   // Local persist must exist before ACP startup, which uses project-scoped
   // stores.
   const externalPersist = isProjectHostExternalConatPersistEnabled();
+  // Lets file-server restores fence a project's streams (as the daemon does);
+  // started before the persist server serves.
+  const persistFenceService = externalPersist
+    ? undefined
+    : await initPersistFenceService({
+        client: conatClient,
+        holderAlive: isFenceHolderAlive,
+        store: fileFenceStore(persistFenceDir()),
+      });
   const persistServer = externalPersist
     ? undefined
     : createPersistServer({ client: conatClient });
@@ -590,10 +604,6 @@ export async function main(
         client: conatClient,
         service: BOARD_WRITE_SERVICE,
       });
-  // Lets file-server restores fence a project's streams (as the daemon does).
-  const persistFenceService = externalPersist
-    ? undefined
-    : initPersistFenceService({ client: conatClient });
   if (externalPersist) {
     await waitForProjectHostConatPersistReady({ client: conatClient });
   }

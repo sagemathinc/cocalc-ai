@@ -130,6 +130,9 @@ export class DStream<T = any> extends EventEmitter {
   private sizeOf: (mesg: T) => number = () => 0;
   private opts: DStreamOptions;
   private lastHasUnsavedChanges = false;
+  // The files of this (disk-backed) stream were replaced under it: nothing
+  // more is written (see handleInstanceReset).
+  private replaced = false;
   private closing = false;
   private closePromise?: Promise<void>;
 
@@ -217,8 +220,24 @@ export class DStream<T = any> extends EventEmitter {
   // The ephemeral stream's server lost it and numbers messages from 1 again
   // (see CoreStream.resetForNewPersistInstance); emitted before any of the new
   // messages.  Unsaved local messages stay and are written to the new one.
+  //
+  // A disk-backed stream resets when its files were replaced, e.g., by a
+  // restore (conat/persist/fence.ts).  What this copy has not saved was based
+  // on the replaced history, so it is never written to the new one: it is
+  // kept for the owner like messages the history fence refused
+  // (pendingMessages), and so is everything published from now on.  The
+  // owner (SyncDoc) saves it elsewhere and opens the stream again.
   private handleInstanceReset = (instance?: string | null) => {
     this.saved = {};
+    if (!this.opts.ephemeral) {
+      this.replaced = true;
+      for (const id in this.local) {
+        this.rejected[id] = this.local[id];
+        delete this.publishOptions[id];
+      }
+      this.local = {};
+      this.updateHasUnsavedChanges();
+    }
     this.emit("instance-reset", instance);
   };
 
@@ -543,6 +562,12 @@ export class DStream<T = any> extends EventEmitter {
       throw Error("closed");
     }
     const id = randomId();
+    if (this.replaced) {
+      // never written (see handleInstanceReset)
+      this.rejected[id] = mesg;
+      this.addPending(mesg);
+      return;
+    }
     this.local[id] = mesg;
     this.addPending(mesg);
     this.updateHasUnsavedChanges();
@@ -628,6 +653,10 @@ export class DStream<T = any> extends EventEmitter {
     }
     this.updateHasUnsavedChanges();
   };
+
+  // Whether this (disk-backed) stream's files were replaced under it, so it
+  // writes nothing more (see handleInstanceReset).
+  isReplaced = (): boolean => this.replaced;
 
   hasUnsavedChanges = (): boolean => {
     if (this.isClosed()) {
@@ -869,6 +898,9 @@ export const cache = refCache<DStreamOptions & { client: Client }, DStream>({
     await dstream.init();
     return dstream;
   },
+  // A stream whose files were replaced writes nothing more: the next open
+  // gets a new one.
+  isValid: (dstream) => !dstream.isReplaced(),
 });
 
 export async function dstream<T>(

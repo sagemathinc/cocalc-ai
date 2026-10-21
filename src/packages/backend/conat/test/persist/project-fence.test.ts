@@ -16,9 +16,16 @@ import {
   withPersistFence,
 } from "@cocalc/conat/persist/fence";
 import { isProjectFenced } from "@cocalc/conat/persist/project-fence";
+import {
+  currentFenceHolder,
+  fileFenceStore,
+  isFenceHolderAlive,
+} from "@cocalc/backend/conat/persist-fence";
 import { copyFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { uuid } from "@cocalc/util/misc";
+import { messageData } from "@cocalc/conat/core/client";
+import { stream } from "@cocalc/conat/persist/client";
 
 beforeAll(before);
 afterAll(after);
@@ -38,6 +45,8 @@ function findDatabases(dir: string): string[] {
   return found;
 }
 
+const holder = currentFenceHolder();
+
 describe("fence a project, replace its history, and clients reload it", () => {
   const project_id = uuid();
   let service: { close: () => void };
@@ -47,7 +56,10 @@ describe("fence a project, replace its history, and clients reload it", () => {
   const saved = () => join(syncFiles.local, `saved-${project_id}.db`);
 
   it("starts the fence service and opens a project document", async () => {
-    service = initPersistFenceService({ client: connect() });
+    service = await initPersistFenceService({
+      client: connect(),
+      holderAlive: isFenceHolderAlive,
+    });
     client = connect();
     doc = await client.sync.dstream({ project_id, name: "fence-doc" });
     doc.publish("a");
@@ -71,7 +83,7 @@ describe("fence a project, replace its history, and clients reload it", () => {
         return false;
       },
     });
-    const fence = { client: connect(), project_id, replaces: false };
+    const fence = { client: connect(), project_id, holder, replaces: false };
     await withPersistFence(fence, async () => {
       expect(isProjectFenced(project_id)).toBe(true);
       expect(openProjectStreamPaths(project_id)).toEqual([]);
@@ -96,27 +108,61 @@ describe("fence a project, replace its history, and clients reload it", () => {
   });
 
   it("replaces the history under a fence; the client starts over with it", async () => {
-    await withPersistFence({ client: connect(), project_id }, async () => {
-      expect(openProjectStreamPaths(project_id)).toEqual([]);
-      rmSync(`${dbPath}-wal`, { force: true });
-      rmSync(`${dbPath}-shm`, { force: true });
-      copyFileSync(saved(), dbPath);
-    });
+    await withPersistFence(
+      { client: connect(), project_id, holder },
+      async () => {
+        expect(openProjectStreamPaths(project_id)).toEqual([]);
+        rmSync(`${dbPath}-wal`, { force: true });
+        rmSync(`${dbPath}-shm`, { force: true });
+        copyFileSync(saved(), dbPath);
+      },
+    );
     await wait({
       until: () => JSON.stringify(doc.getAll()) == JSON.stringify(["a", "b"]),
     });
     expect(doc.getAll()).toEqual(["a", "b"]);
   });
 
-  it("writes after the replacement land in the new history", async () => {
-    doc.publish("d");
+  it("the replaced stream writes nothing more; a new one writes to the new history", async () => {
+    expect(doc.isReplaced()).toBe(true);
+    doc.publish("stale");
     await doc.save();
+    // kept for its owner, never written
+    expect(doc.pendingMessages().map(({ mesg }) => mesg)).toEqual(["stale"]);
+    const fresh = await client.sync.dstream({ project_id, name: "fence-doc" });
+    expect(fresh).not.toBe(doc);
+    fresh.publish("d");
+    await fresh.save();
     const other = await connect().sync.dstream({
       project_id,
       name: "fence-doc",
     });
     expect(other.getAll()).toEqual(["a", "b", "d"]);
     other.close();
+    fresh.close();
+  });
+
+  it("a write from a client that has not seen the replacement is refused", async () => {
+    const persist = stream({
+      client: connect(),
+      user: { hub_id: "x" },
+      storage: { path: `projects/${project_id}/raw` },
+    });
+    await persist.set({ messageData: messageData("before") });
+    await persist.getAll({});
+    const seen = persist.getInstance();
+    await withPersistFence(
+      { client: connect(), project_id, holder },
+      async () => {},
+    );
+    await wait({ until: () => persist.socket?.state == "ready" });
+    await expect(
+      persist.set({ messageData: messageData("stale") }),
+    ).rejects.toThrow("history was replaced");
+    // the refusal told it the new instance, so now it may write
+    expect(persist.getInstance()).not.toBe(seen);
+    await persist.set({ messageData: messageData("after") });
+    persist.close();
   });
 
   it("opening a stream of a fenced project waits until the fence is released", async () => {
@@ -124,7 +170,7 @@ describe("fence a project, replace its history, and clients reload it", () => {
     let release: () => void = () => {};
     const released = new Promise<void>((resolve) => (release = resolve));
     const fenced = withPersistFence(
-      { client: connect(), project_id },
+      { client: connect(), project_id, holder },
       async () => {
         const opening = connect()
           .sync.dstream({ project_id, name: "fence-doc-2" })
@@ -153,7 +199,10 @@ describe("fence a project, replace its history, and clients reload it", () => {
     });
     eph.publish("x");
     await eph.save();
-    await withPersistFence({ client: connect(), project_id }, async () => {});
+    await withPersistFence(
+      { client: connect(), project_id, holder },
+      async () => {},
+    );
     eph.publish("y");
     await eph.save();
     expect(eph.getAll()).toEqual(["x", "y"]);
@@ -161,27 +210,27 @@ describe("fence a project, replace its history, and clients reload it", () => {
   });
 
   it("a second fence of the same project is refused while the first is held", async () => {
-    await withPersistFence({ client: connect(), project_id }, async () => {
-      await expect(
-        withPersistFence({ client: connect(), project_id }, async () => {}),
-      ).rejects.toThrow("already fenced");
-    });
+    await withPersistFence(
+      { client: connect(), project_id, holder },
+      async () => {
+        await expect(
+          withPersistFence(
+            { client: connect(), project_id, holder },
+            async () => {},
+          ),
+        ).rejects.toThrow("already fenced");
+      },
+    );
   });
 
-  it("a lease that is not renewed expires", async () => {
-    const c = connect();
-    const token = "lease-test";
-    await c.request(PERSIST_FENCE_SUBJECT, {
-      cmd: "acquire",
-      project_id,
-      token,
-      ttl_ms: 5000,
-    });
-    expect(isProjectFenced(project_id)).toBe(true);
-    await wait({ timeout: 15000, until: () => !isProjectFenced(project_id) });
+  it("refuses a holder that is not a running process", async () => {
     await expect(
-      c.request(PERSIST_FENCE_SUBJECT, { cmd: "renew", project_id, token }),
-    ).rejects.toThrow("not held");
+      withPersistFence(
+        { client: connect(), project_id, holder: { pid: 1, start: "x" } },
+        async () => {},
+      ),
+    ).rejects.toThrow("not a running process");
+    expect(isProjectFenced(project_id)).toBe(false);
   });
 
   it("reports when no fence service is running", async () => {
@@ -199,5 +248,88 @@ describe("fence a project, replace its history, and clients reload it", () => {
         }
       },
     });
+  });
+});
+
+describe("a fence is held until its holder releases it or is gone", () => {
+  const project_id = uuid();
+  const alive = new Set([1001, 1002]);
+  const holderAlive = ({ pid }) => alive.has(pid);
+  let dir: string;
+  let services: { close: () => void }[] = [];
+
+  afterAll(() => {
+    for (const s of services) s.close();
+  });
+
+  it("releases the fence of a holder that is gone, never on a timer", async () => {
+    dir = join(syncFiles.local, `fences-${project_id}`);
+    services.push(
+      await initPersistFenceService({
+        client: connect(),
+        holderAlive,
+        store: fileFenceStore(dir),
+        holderCheckMs: 100,
+      }),
+    );
+    const c = connect();
+    await c.request(PERSIST_FENCE_SUBJECT, {
+      cmd: "acquire",
+      project_id,
+      token: "held",
+      holder: { pid: 1001, start: "" },
+    });
+    expect(isProjectFenced(project_id)).toBe(true);
+    // the holder runs: held, however long
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(isProjectFenced(project_id)).toBe(true);
+    alive.delete(1001);
+    await wait({ until: () => !isProjectFenced(project_id) });
+    expect(fileFenceStore(dir).load()).toEqual([]);
+  });
+
+  it("a restarted service holds again the fences of holders that still run", async () => {
+    const store = fileFenceStore(dir);
+    store.save({
+      project_id,
+      token: "kept",
+      holder: { pid: 1002, start: "" },
+      since: Date.now(),
+    });
+    const other = uuid();
+    store.save({
+      project_id: other,
+      token: "gone",
+      holder: { pid: 1003, start: "" },
+      since: Date.now(),
+    });
+    for (const s of services.splice(0)) s.close();
+    services.push(
+      await initPersistFenceService({
+        client: connect(),
+        holderAlive,
+        store,
+        holderCheckMs: 100,
+      }),
+    );
+    expect(isProjectFenced(project_id)).toBe(true);
+    expect(isProjectFenced(other)).toBe(false);
+    const c = connect();
+    await wait({
+      until: async () => {
+        try {
+          const resp = await c.request(
+            PERSIST_FENCE_SUBJECT,
+            { cmd: "release", project_id, token: "kept" },
+            { timeout: 1000 },
+          );
+          return resp.data?.released === true;
+        } catch {
+          return false;
+        }
+      },
+    });
+    expect(isProjectFenced(project_id)).toBe(false);
+    expect(store.load()).toEqual([]);
   });
 });

@@ -16,6 +16,7 @@ import {
   waitForProjectOpens,
 } from "./project-fence";
 import { PersistStreamReleaseQueue } from "./release-queue";
+import { assertCurrentInstance } from "./server";
 
 const P = "11111111-1111-4111-8111-111111111111";
 const Q = "22222222-2222-4222-8222-222222222222";
@@ -120,5 +121,32 @@ describe("PersistStreamReleaseQueue.releaseMatching", () => {
     expect(queue.diagnostics().pending).toBe(1);
     await queue.drain();
     expect(closed).toEqual(["a", "a", "b"]);
+  });
+});
+
+describe("assertCurrentInstance", () => {
+  const check = (claimed?: unknown, replacedInstance?: string) => () =>
+    assertCurrentInstance({ replacedInstance, claimed });
+
+  it("allows any write to a stream whose files were never replaced", () => {
+    expect(check("", undefined)).not.toThrow();
+    expect(check("old", undefined)).not.toThrow();
+  });
+
+  it("refuses a write from a client that saw another instance, saying which is current", () => {
+    expect(check("", "R")).toThrow("history was replaced");
+    expect(check("old", "R")).toThrow("history was replaced");
+    try {
+      check("", "R")();
+    } catch (err) {
+      expect((err as any).code).toBe(409);
+      expect((err as any).instance).toBe("R");
+    }
+  });
+
+  it("allows the current instance, a client that has not read, and a client from before instances", () => {
+    expect(check("R", "R")).not.toThrow();
+    expect(check("*", "R")).not.toThrow();
+    expect(check(undefined, "R")).not.toThrow();
   });
 });

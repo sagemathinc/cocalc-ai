@@ -283,6 +283,12 @@ class PersistStreamClient extends EventEmitter {
 
   getInstance = (): string | null | undefined => this.instance;
 
+  // Sent with every write: the instance this client last saw ("" for none,
+  // "*" before its first read), so the server refuses writes based on a
+  // history it has replaced (see server.ts assertCurrentInstance).
+  private instanceHeader = (): string =>
+    this.instance === undefined ? "*" : (this.instance ?? "");
+
   // A new instance of an ephemeral stream starts again from seq 1 with none
   // of the old messages, so resuming from lastSeq would skip everything it
   // has.  Start over, and tell the stream so it drops its old state first.
@@ -885,12 +891,13 @@ class PersistStreamClient extends EventEmitter {
     time: number;
   }> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.writeRequest(null, {
         raw: messageData.raw,
         encoding: messageData.encoding,
         headers: {
           headers: messageData.headers,
           cmd: "set",
+          persist_instance: this.instanceHeader(),
           key,
           ttl,
           previousSeq,
@@ -910,9 +917,10 @@ class PersistStreamClient extends EventEmitter {
     ({ seq: number; time: number } | { error: string; code?: any })[]
   > => {
     return this.checkForError(
-      await this.socket.request(ops, {
+      await this.writeRequest(ops, {
         headers: {
           cmd: "setMany",
+          persist_instance: this.instanceHeader(),
           timeout,
         },
         timeout,
@@ -934,9 +942,10 @@ class PersistStreamClient extends EventEmitter {
     all?: boolean;
   }): Promise<{ seqs: number[] }> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.writeRequest(null, {
         headers: {
           cmd: "delete",
+          persist_instance: this.instanceHeader(),
           seq,
           seqs,
           last_seq,
@@ -988,9 +997,10 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<JSONValue | undefined> => {
     return this.checkForError(
-      await this.socket.request(metadata ?? null, {
+      await this.writeRequest(metadata ?? null, {
         headers: {
           cmd: "setMetadata",
+          persist_instance: this.instanceHeader(),
           timeout,
         } as any,
         timeout,
@@ -1003,9 +1013,10 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<JSONValue | undefined> => {
     return this.checkForError(
-      await this.socket.request(delta, {
+      await this.writeRequest(delta, {
         headers: {
           cmd: "patchMetadata",
+          persist_instance: this.instanceHeader(),
           timeout,
         } as any,
         timeout,
@@ -1100,9 +1111,10 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<StreamCheckpoint> => {
     return this.checkForError(
-      await this.socket.request(checkpoint, {
+      await this.writeRequest(checkpoint, {
         headers: {
           cmd: "setCheckpoint",
+          persist_instance: this.instanceHeader(),
           timeout,
         } as any,
         timeout,
@@ -1115,9 +1127,10 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<void> => {
     this.checkForError(
-      await this.socket.request(null, {
+      await this.writeRequest(null, {
         headers: {
           cmd: "deleteCheckpoint",
+          persist_instance: this.instanceHeader(),
           name,
           timeout,
         } as any,
@@ -1494,10 +1507,41 @@ class PersistStreamClient extends EventEmitter {
     );
   };
 
+  // A write refused because the stream's history was replaced (see
+  // server.ts assertCurrentInstance): start over with the new one.
+  private noteRefusedWrite = (refusal: {
+    code?: unknown;
+    persist_instance?: unknown;
+  }): void => {
+    if (refusal?.code != 409 || typeof refusal.persist_instance != "string") {
+      return;
+    }
+    const resets = this.instanceResets;
+    this.noteInstance(refusal.persist_instance);
+    if (this.instanceResets !== resets && this.changefeeds.length > 0) {
+      void this.getMissed({ reason: "instance_changed" }).catch(() => {});
+    }
+  };
+
+  // socket.request for a write: the refusal of a write based on a replaced
+  // history may come back as a thrown error
+  private writeRequest = async (
+    data: any,
+    opts: Parameters<ConatSocketClient["request"]>[1],
+  ) => {
+    try {
+      return await this.socket.request(data, opts);
+    } catch (err) {
+      this.noteRefusedWrite(err as any);
+      throw err;
+    }
+  };
+
   private checkForError = (mesg, noReturn = false) => {
     if (mesg.headers != null) {
       const { error, code } = mesg.headers;
       if (error || code) {
+        this.noteRefusedWrite(mesg.headers);
         throw errorFromHeaders(mesg.headers);
       }
     }

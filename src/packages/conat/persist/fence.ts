@@ -22,20 +22,25 @@ fenceProject:
 unfenceProject releases it.  With replaced, the project's streams report a
 new instance from then on, so clients drop what they have and load the new
 history, instead of resuming from seqs of the old files (as for a new
-ephemeral instance, see client.ts noteInstance).
+ephemeral instance, see client.ts noteInstance).  And nothing based on the
+old files is written to the new ones:
+- a write from a client that saw another instance is refused, with the
+  current one (server.ts assertCurrentInstance), so the client starts over;
+- a DStream keeps what it had not saved for its owner instead of writing it
+  (dstream.ts handleInstanceReset), and SyncDoc saves it to a recovery copy.
 
 Ephemeral streams are not affected: they have no files.
 
 Other processes fence a project through the persist fence service below,
 e.g., project-host's main process while the persist server runs as its own
 daemon.  Only the host's system account may use its subject (project-host
-conat-auth.ts).  A fence there is a lease: its holder renews it, and one not
-renewed within its ttl is released, as replaced, since its holder may have
-replaced files before it went away.
-
-Known limit: the fences are in memory.  If the persist server restarts while
-a project is fenced, the new one does not know, and clients can open the
-project's streams while its files are being replaced.
+conat-auth.ts).  A fence there fails closed: it is held until its holder, a
+process on this host, releases it or is gone (by pid and start time), never
+for a fixed time, so it cannot lapse while the holder may still be changing
+files.  The service keeps in a store the fences it holds, which a restarted
+service holds again before its persist server serves, and each replaced
+project's instance, saved before the fence is released: a client that last
+saw the project before a restart must still learn that it was replaced.
 */
 
 import { type Client, ConatError } from "@cocalc/conat/core/client";
@@ -50,6 +55,8 @@ import {
   beginProjectFence,
   closeProjectSockets,
   endProjectFence,
+  isProjectFencedBy,
+  setProjectReplacedInstance,
   waitForProjectOpens,
 } from "./project-fence";
 
@@ -58,10 +65,6 @@ const logger = getLogger("persist:fence");
 export const PERSIST_FENCE_SUBJECT = "persist-control.fence";
 
 export const DEFAULT_FENCE_TIMEOUT_MS = 60_000;
-export const DEFAULT_FENCE_TTL_MS = 120_000;
-const MIN_TTL_MS = 5_000;
-const MAX_TTL_MS = 30 * 60_000;
-const MAX_TIMEOUT_MS = 5 * 60_000;
 const POLL_MS = 25;
 
 // Where the project's disk-backed streams live on this server; every one is
@@ -129,12 +132,38 @@ export function unfenceProject({
   project_id,
   token,
   replaced,
+  instance,
 }: {
   project_id: string;
   token: string;
   replaced: boolean;
+  instance?: string;
 }): boolean {
-  return endProjectFence(project_id, token, { replaced });
+  return endProjectFence(project_id, token, { replaced, instance });
+}
+
+export interface PersistFenceHolder {
+  pid: number;
+  // the process's start time, so a reused pid is a different holder
+  start: string;
+}
+
+export interface PersistFenceRecord {
+  project_id: string;
+  token: string;
+  holder: PersistFenceHolder;
+  since: number;
+}
+
+// Where a fence service keeps the fences it holds, so it still holds them
+// after a restart, and the instance of each project whose files were
+// replaced, so its streams keep reporting it (by project).
+export interface PersistFenceStore {
+  load: () => PersistFenceRecord[];
+  save: (record: PersistFenceRecord) => void;
+  remove: (project_id: string, token: string) => void;
+  loadInstances: () => { [project_id: string]: string };
+  saveInstance: (project_id: string, instance: string) => void;
 }
 
 export type PersistFenceRequest =
@@ -142,11 +171,16 @@ export type PersistFenceRequest =
       cmd: "acquire";
       project_id: string;
       token: string;
-      ttl_ms?: number;
+      holder: PersistFenceHolder;
       timeout_ms?: number;
     }
-  | { cmd: "renew"; project_id: string; token: string; ttl_ms?: number }
   | { cmd: "release"; project_id: string; token: string; replaced?: boolean };
+
+const MAX_TIMEOUT_MS = 5 * 60_000;
+// how often the service checks that the holders of its fences still run
+const DEFAULT_HOLDER_CHECK_MS = 5_000;
+// A fence held longer than this is logged (and kept: see above).
+const LONG_FENCE_MS = 60 * 60_000;
 
 function boundedMs(
   value: unknown,
@@ -157,33 +191,131 @@ function boundedMs(
   return Math.min(max, Math.max(min, Math.round(n)));
 }
 
-// The persist fence service, for the persist server in this process.
-export function initPersistFenceService({ client }: { client: Client }): {
-  close: () => void;
-} {
-  // lease expiry, by project
-  const leases = new Map<
-    string,
-    { token: string; timer: ReturnType<typeof setTimeout> }
-  >();
-  // acquires under way, by token, so a retried acquire joins the first
+function isHolder(holder: unknown): holder is PersistFenceHolder {
+  const h = holder as PersistFenceHolder;
+  return (
+    h != null &&
+    Number.isSafeInteger(h.pid) &&
+    h.pid > 0 &&
+    typeof h.start == "string" &&
+    h.start.length <= 64
+  );
+}
+
+// The persist fence service, for the persist server in this process.  Start
+// it before the persist server serves: it first holds again the fences in
+// store whose holders still run.  Resolves once it is subscribed.
+export async function initPersistFenceService({
+  client,
+  holderAlive,
+  store,
+  holderCheckMs = DEFAULT_HOLDER_CHECK_MS,
+}: {
+  client: Client;
+  holderAlive: (holder: PersistFenceHolder) => boolean;
+  store?: PersistFenceStore;
+  holderCheckMs?: number;
+}): Promise<{ close: () => void }> {
+  // the fences this service holds, by project
+  const held = new Map<string, PersistFenceRecord>();
+  // acquires under way, by project and token, so a retried acquire joins
+  // the first
   const acquiring = new Map<string, Promise<{ closed_sockets: number }>>();
 
-  const armLease = (project_id: string, token: string, ttl: number) => {
-    const current = leases.get(project_id);
-    if (current != null) clearTimeout(current.timer);
-    const timer = setTimeout(() => {
-      if (leases.get(project_id)?.token !== token) return;
-      leases.delete(project_id);
-      if (unfenceProject({ project_id, token, replaced: true })) {
-        logger.warn("project fence lease expired; released it", {
-          project_id,
+  // Releases a fence this service holds.  A replacement's new instance is
+  // saved first: if that fails, the fence stays held (and this throws).
+  const releaseFence = ({
+    project_id,
+    token,
+    replaced,
+  }: {
+    project_id: string;
+    token: string;
+    replaced: boolean;
+  }): boolean => {
+    if (!isProjectFencedBy(project_id, token)) return false;
+    const instance = replaced ? randomId() : undefined;
+    if (instance != null) {
+      store?.saveInstance(project_id, instance);
+    }
+    const record = held.get(project_id);
+    if (record?.token === token) {
+      forget(record);
+    }
+    return unfenceProject({ project_id, token, replaced, instance });
+  };
+
+  const forget = (record: PersistFenceRecord) => {
+    if (held.get(record.project_id)?.token === record.token) {
+      held.delete(record.project_id);
+    }
+    try {
+      store?.remove(record.project_id, record.token);
+    } catch (err) {
+      logger.warn("unable to remove a persist fence from its store", {
+        project_id: record.project_id,
+        err: `${err}`,
+      });
+    }
+  };
+
+  for (const [project_id, instance] of Object.entries(
+    store?.loadInstances() ?? {},
+  )) {
+    setProjectReplacedInstance(project_id, instance);
+  }
+  for (const record of store?.load() ?? []) {
+    if (!holderAlive(record.holder)) {
+      // its holder is gone, and with it whatever it was changing
+      forget(record);
+      continue;
+    }
+    beginProjectFence(record.project_id, record.token);
+    held.set(record.project_id, record);
+    logger.warn("holding a persist fence again after a restart", {
+      project_id: record.project_id,
+      holder: record.holder,
+    });
+  }
+
+  const checkHolders = () => {
+    const now = Date.now();
+    for (const record of [...held.values()]) {
+      if (holderAlive(record.holder)) {
+        if (now - record.since > LONG_FENCE_MS) {
+          logger.warn("a persist fence has been held for a long time", {
+            project_id: record.project_id,
+            holder: record.holder,
+            since: new Date(record.since).toISOString(),
+          });
+        }
+        continue;
+      }
+      try {
+        // it may have replaced files before it went away
+        if (
+          releaseFence({
+            project_id: record.project_id,
+            token: record.token,
+            replaced: true,
+          })
+        ) {
+          logger.warn("released a persist fence whose holder is gone", {
+            project_id: record.project_id,
+            holder: record.holder,
+          });
+        }
+      } catch (err) {
+        // still held; tried again next time
+        logger.warn("unable to release a persist fence whose holder is gone", {
+          project_id: record.project_id,
+          err: `${err}`,
         });
       }
-    }, ttl);
-    timer.unref?.();
-    leases.set(project_id, { token, timer });
+    }
   };
+  const checker = setInterval(checkHolders, holderCheckMs);
+  checker.unref?.();
 
   const handle = async (request: PersistFenceRequest) => {
     const { cmd, project_id, token } = request ?? ({} as PersistFenceRequest);
@@ -194,11 +326,12 @@ export function initPersistFenceService({ client }: { client: Client }): {
       throw new ConatError("invalid token", { code: 400 });
     }
     if (request.cmd == "acquire") {
-      const ttl = boundedMs(request.ttl_ms, {
-        min: MIN_TTL_MS,
-        max: MAX_TTL_MS,
-        fallback: DEFAULT_FENCE_TTL_MS,
-      });
+      const { holder } = request;
+      if (!isHolder(holder) || !holderAlive(holder)) {
+        throw new ConatError("the fence holder is not a running process", {
+          code: 400,
+        });
+      }
       const timeoutMs = boundedMs(request.timeout_ms, {
         min: 1000,
         max: MAX_TIMEOUT_MS,
@@ -207,40 +340,29 @@ export function initPersistFenceService({ client }: { client: Client }): {
       const key = `${project_id}/${token}`;
       let pending = acquiring.get(key);
       if (pending == null) {
-        pending = fenceProject({ project_id, token, timeoutMs });
+        pending = (async () => {
+          const result = await fenceProject({ project_id, token, timeoutMs });
+          const record = { project_id, token, holder, since: Date.now() };
+          try {
+            store?.save(record);
+          } catch (err) {
+            // not held unless it would be held again after a restart
+            unfenceProject({ project_id, token, replaced: false });
+            throw err;
+          }
+          held.set(project_id, record);
+          return result;
+        })();
         acquiring.set(key, pending);
-        void pending
-          .then(
-            () => armLease(project_id, token, ttl),
-            () => {},
-          )
-          .finally(() => acquiring.delete(key));
+        void pending.catch(() => {}).finally(() => acquiring.delete(key));
       }
-      return { ...(await pending), ttl_ms: ttl };
-    }
-    if (request.cmd == "renew") {
-      const lease = leases.get(project_id);
-      if (lease == null || lease.token !== token) {
-        throw new ConatError("this fence is not held", { code: 404 });
-      }
-      const ttl = boundedMs(request.ttl_ms, {
-        min: MIN_TTL_MS,
-        max: MAX_TTL_MS,
-        fallback: DEFAULT_FENCE_TTL_MS,
-      });
-      armLease(project_id, token, ttl);
-      return { ttl_ms: ttl };
+      return await pending;
     }
     if (request.cmd == "release") {
       // An acquire still under way finishes first, so it cannot take the
       // fence after this release.
       await acquiring.get(`${project_id}/${token}`)?.catch(() => {});
-      const lease = leases.get(project_id);
-      if (lease?.token === token) {
-        clearTimeout(lease.timer);
-        leases.delete(project_id);
-      }
-      const released = unfenceProject({
+      const released = releaseFence({
         project_id,
         token,
         replaced: request.replaced !== false,
@@ -252,10 +374,13 @@ export function initPersistFenceService({ client }: { client: Client }): {
 
   let closed = false;
   let sub: any = undefined;
+  let resolveReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => (resolveReady = resolve));
   (async () => {
     while (!closed) {
       try {
         sub = await client.subscribe(PERSIST_FENCE_SUBJECT);
+        resolveReady();
         for await (const mesg of sub) {
           void (async () => {
             try {
@@ -276,39 +401,42 @@ export function initPersistFenceService({ client }: { client: Client }): {
         sub?.close();
         sub = undefined;
       }
-      if (!closed) await delay(3000);
+      if (!closed) await delay(1000);
     }
   })();
+  await ready;
 
   return {
     close: () => {
       closed = true;
+      clearInterval(checker);
       sub?.close();
-      for (const { timer } of leases.values()) clearTimeout(timer);
-      leases.clear();
     },
   };
 }
 
+// No fence service answered.  The caller decides whether that can only be a
+// persist server from before fences (then it may go ahead unfenced) or a
+// passing gap (then it must not).
 export class PersistFenceUnavailableError extends Error {}
 
-// Runs fn while project_id is fenced by the persist fence service, renewing
-// the lease meanwhile.  Throws PersistFenceUnavailableError if no persist
-// server on client's network offers the service (e.g., an older one), so the
-// caller can decide whether to go ahead without it.  Unless replaces is false
-// (fn only reads the files), clients load the history again afterwards.
+// Runs fn while project_id is fenced by the persist fence service, held by
+// holder (this process).  Unless replaces is false (fn only reads the files),
+// clients load the history again afterwards.  If the release does not get
+// through, it is retried until it does; meanwhile the project stays fenced
+// (as it does if this process exits first, until the service sees that).
 export async function withPersistFence<T>(
   {
     client,
     project_id,
+    holder,
     replaces = true,
-    ttlMs = DEFAULT_FENCE_TTL_MS,
     timeoutMs = DEFAULT_FENCE_TIMEOUT_MS,
   }: {
     client: Client;
     project_id: string;
+    holder: PersistFenceHolder;
     replaces?: boolean;
-    ttlMs?: number;
     timeoutMs?: number;
   },
   fn: () => Promise<T>,
@@ -316,26 +444,31 @@ export async function withPersistFence<T>(
   const token = randomId();
   const request = async (data: PersistFenceRequest, timeout: number) =>
     (await client.request(PERSIST_FENCE_SUBJECT, data, { timeout })).data;
-  const release = async (replaced: boolean) => {
+  const releaseOnce = async (replaced: boolean): Promise<boolean> => {
     try {
       await request({ cmd: "release", project_id, token, replaced }, 30_000);
+      return true;
     } catch (err) {
-      // its lease expires on its own
       logger.warn("failed releasing persist fence", {
         project_id,
         err: `${err}`,
       });
+      return false;
     }
+  };
+  // One attempt now; then in the background until it gets through.
+  const release = async (replaced: boolean) => {
+    if (await releaseOnce(replaced)) return;
+    void (async () => {
+      for (let attempt = 1; client.state != "closed"; attempt++) {
+        await delay(Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5)));
+        if (await releaseOnce(replaced)) return;
+      }
+    })();
   };
   try {
     await request(
-      {
-        cmd: "acquire",
-        project_id,
-        token,
-        ttl_ms: ttlMs,
-        timeout_ms: timeoutMs,
-      },
+      { cmd: "acquire", project_id, token, holder, timeout_ms: timeoutMs },
       timeoutMs + 10_000,
     );
   } catch (err) {
@@ -348,36 +481,12 @@ export async function withPersistFence<T>(
       );
     }
     // it may have been acquired after all (e.g., the reply was lost)
-    await release(false);
+    void release(false);
     throw err;
   }
-  let lost = false;
-  const renew = setInterval(
-    () => {
-      void request({ cmd: "renew", project_id, token, ttl_ms: ttlMs }, 15_000)
-        .then(() => {
-          lost = false;
-        })
-        .catch((err) => {
-          lost = true;
-          logger.warn("failed renewing persist fence", {
-            project_id,
-            err: `${err}`,
-          });
-        });
-    },
-    Math.max(1000, Math.floor(ttlMs / 4)),
-  );
-  renew.unref?.();
   try {
     return await fn();
   } finally {
-    clearInterval(renew);
-    if (lost) {
-      logger.warn("persist fence may have lapsed while it was held", {
-        project_id,
-      });
-    }
     // even if fn failed: it may have replaced some files
     await release(replaces);
   }
