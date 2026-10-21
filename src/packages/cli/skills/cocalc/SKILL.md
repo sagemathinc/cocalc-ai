@@ -452,6 +452,7 @@ again with `--update` to keep the same card. Times are local to `timezone`:
 {
   "format": "cocalc-calendar",
   "version": 1,
+  "id": "tax-calendar",
   "title": "Tax calendar",
   "timezone": "America/Los_Angeles",
   "default_view": "agenda",
@@ -486,7 +487,8 @@ marked `done` or `cancelled`; a `pending` item without one, once its time has
 passed. `recurrence` takes `freq`
 (`daily`, `weekly`, `monthly`, `yearly`), `interval`, `bymonthday`,
 `bymonth`, `byweekday` (`"MO"`...), `until` and `count`. Links must be
-http(s). The card names anything it cannot read and still shows the rest. A
+http(s). Keep the calendar's `id` and each event's `id` unchanged: they name
+the events in calendar apps that imported the .ics. The card names anything it cannot read and still shows the rest. A
 calendar is for people to see; to be woken at a time, also set a watcher
 (`cocalc sensor watch at`).
 

@@ -386,6 +386,79 @@ describe("occurrences", () => {
   });
 });
 
+describe("long-running recurrences", () => {
+  const recurring = (recurrence: object, start = "1990-01-01", n = 1) =>
+    calendarOf({
+      format: "cocalc-calendar",
+      version: 1,
+      title: "Long",
+      timezone: "America/Los_Angeles",
+      default_view: "agenda",
+      events: Array.from({ length: n }, (_, i) => ({
+        id: `e${i}`,
+        title: "Long",
+        start: `${start}T09:00`,
+        recurrence,
+      })),
+    });
+  const datesIn2026 = (cal) =>
+    calendarOccurrences(
+      cal,
+      Date.parse("2026-10-01T00:00:00Z"),
+      Date.parse("2026-11-01T00:00:00Z"),
+    ).map((o) => o.date);
+  // Whole days from 1990-01-01, by UTC dates.
+  const daysSince = (date: string) =>
+    (Date.parse(`${date}T00:00:00Z`) - Date.parse("1990-01-01T00:00:00Z")) /
+    86_400_000;
+
+  it("starting at the requested range keeps every interval's phase", () => {
+    const every3 = datesIn2026(recurring({ freq: "daily", interval: 3 }));
+    expect(every3.length).toBeGreaterThan(9);
+    expect(every3.every((d) => daysSince(d) % 3 === 0)).toBe(true);
+    const weekly = datesIn2026(
+      recurring({ freq: "weekly", interval: 2, byweekday: ["MO", "TH"] }),
+    );
+    // 1990-01-01 was a Monday: weeks counted from it, every other one.
+    expect(weekly.length).toBeGreaterThan(3);
+    for (const d of weekly) {
+      expect(Math.floor(daysSince(d) / 7) % 2).toBe(0);
+      expect(["MO", "TH"]).toContain(
+        ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][
+          new Date(`${d}T12:00:00Z`).getUTCDay()
+        ],
+      );
+    }
+  });
+
+  it("a count still counts from the start", () => {
+    // 100 days from Jan 1, 1990: over long before 2026.
+    expect(datesIn2026(recurring({ freq: "daily", count: 100 }))).toEqual([]);
+    const occ = calendarOccurrences(
+      recurring({ freq: "daily", interval: 2, count: 3 }),
+      Date.parse("1990-01-01T00:00:00Z"),
+      Date.parse("1990-02-01T00:00:00Z"),
+    ).map((o) => o.date);
+    expect(occ).toEqual(["1990-01-01", "1990-01-03", "1990-01-05"]);
+  });
+
+  it("is quick for many events that began long ago", () => {
+    const cal = recurring({ freq: "daily" }, "1900-01-01", 50);
+    const started = Date.now();
+    const agenda = calendarAgenda(cal, Date.parse("2026-10-21T15:00:00Z")); // 8 am
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(agenda.days[0].date).toBe("2026-10-21");
+    expect(agenda.days[0].occurrences).toHaveLength(50);
+  });
+
+  it("is expanded at most 200 years after its start", () => {
+    expect(datesIn2026(recurring({ freq: "daily" }, "1800-01-01"))).toEqual([]);
+    expect(datesIn2026(recurring({ freq: "monthly" }, "1800-01-01"))).toEqual(
+      [],
+    );
+  });
+});
+
 describe("the agenda", () => {
   const cal = calendarOf(ACCOUNTING);
   // Dec 19, 4 pm in Seattle.
@@ -462,9 +535,53 @@ describe("iCalendar export", () => {
     );
   });
 
+  it("names each calendar's events apart, and keeps an offset recurrence local", () => {
+    const one = (extra: object, events: object[]) =>
+      calendarToIcs(
+        calendarOf({
+          format: "cocalc-calendar",
+          version: 1,
+          title: "A",
+          timezone: "America/Los_Angeles",
+          default_view: "agenda",
+          ...extra,
+          events,
+        }),
+        { nowMs: 0 },
+      ).replace(/\r\n /g, "");
+    const event = {
+      id: "quarterly",
+      title: "Q",
+      start: "2027-01-06",
+      all_day: true,
+    };
+    const uid = (ics: string) => /UID:(.*)/.exec(ics)![1];
+    // The same event id in two calendars: two UIDs.
+    expect(uid(one({}, [event]))).not.toBe(uid(one({ title: "B" }, [event])));
+    // A calendar's own id names it, whatever its title.
+    expect(uid(one({ id: "taxes" }, [event]))).toBe(
+      "quarterly.taxes@calendar.cocalc.com",
+    );
+    expect(uid(one({ id: "taxes", title: "Renamed" }, [event]))).toBe(
+      "quarterly.taxes@calendar.cocalc.com",
+    );
+    expect(
+      parseCalendar(text({ ...ACCOUNTING, id: "no spaces" })).problems,
+    ).toEqual([
+      { path: "id", message: "must be 1 to 100 letters, digits or _ . : -" },
+    ]);
+    // A recurring start with an offset repeats Seattle's 08:30, as the
+    // agenda shows it, across DST; a one-off is that instant.
+    const offset = { id: "o", title: "O", start: "2026-11-03T08:30-08:00" };
+    expect(one({}, [{ ...offset, recurrence: { freq: "monthly" } }])).toContain(
+      "DTSTART;TZID=America/Los_Angeles:20261103T083000",
+    );
+    expect(one({}, [offset])).toContain("DTSTART:20261103T163000Z");
+  });
+
   it("exports one event alone", () => {
     const one = calendarToIcs(cal, { eventId: "delaware" });
     expect(one.match(/BEGIN:VEVENT/g)).toHaveLength(1);
-    expect(one).toContain("UID:delaware@");
+    expect(one).toMatch(/UID:delaware\.t[0-9a-z]+@/);
   });
 });

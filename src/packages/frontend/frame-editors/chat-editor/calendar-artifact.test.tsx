@@ -114,6 +114,41 @@ test("an agenda: overdue first, then the coming days, details on click", async (
   expect(within(overdue).queryByRole("link", { name: "Bad" })).toBeNull();
 });
 
+test("a due time is shown with its time; a due date without", async () => {
+  readFile.mockResolvedValue(
+    JSON.stringify({
+      ...calendar,
+      events: [
+        {
+          id: "timed",
+          title: "Timed deadline",
+          start: "2026-12-28",
+          all_day: true,
+          due: "2027-01-31T15:00",
+        },
+        {
+          id: "dated",
+          title: "Dated deadline",
+          start: "2026-12-29",
+          all_day: true,
+          due: "2027-01-31",
+        },
+      ],
+    }),
+  );
+  render(
+    <CalendarArtifact
+      path="/home/user/a.cal.json"
+      historical={false}
+      now={NOW}
+    />,
+  );
+  const row = async (title: string) =>
+    (await screen.findByText(title)).parentElement!;
+  expect(await row("Timed deadline")).toHaveTextContent(/due Jan 31.*3:00/);
+  expect(await row("Dated deadline")).toHaveTextContent(/due Jan 31$/);
+});
+
 test("problems are named, and what can be read is still shown", async () => {
   readFile.mockResolvedValue(
     JSON.stringify({

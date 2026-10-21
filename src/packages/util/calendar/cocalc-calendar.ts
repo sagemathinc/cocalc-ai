@@ -12,6 +12,7 @@ format.
 
   {
     "format": "cocalc-calendar", "version": 1,
+    "id"?: "sagemath-taxes",                   (keeps .ics UIDs apart)
     "title": "...", "description": "...",
     "timezone": "America/Los_Angeles",          (IANA; how local times read)
     "default_view": "agenda" | "month",
@@ -81,6 +82,9 @@ export interface CalendarEvent {
 export interface CocalcCalendar {
   format: typeof CALENDAR_FORMAT;
   version: 1;
+  /** Names this calendar in exported UIDs, so two calendars' events with the
+   * same id stay apart in one calendar app; the title's hash without it. */
+  id?: string;
   title: string;
   description?: string;
   timezone: string;
@@ -202,6 +206,10 @@ export function parseCalendar(text: string): {
     problem("title", "must be a non-empty string");
   if (value.description != null && typeof value.description !== "string")
     problem("description", "must be a string");
+  const idOk = (id: unknown): id is string =>
+    typeof id === "string" && /^[A-Za-z0-9_.:-]{1,100}$/.test(id);
+  if (value.id != null && !idOk(value.id))
+    problem("id", "must be 1 to 100 letters, digits or _ . : -");
   const timezone = value.timezone;
   if (!validZone(timezone))
     problem("timezone", "must be an IANA time zone, like America/Los_Angeles");
@@ -258,6 +266,7 @@ export function parseCalendar(text: string): {
           calendar: {
             format: CALENDAR_FORMAT,
             version: 1,
+            ...(idOk(value.id) ? { id: value.id } : {}),
             title:
               typeof value.title === "string" && value.title.trim()
                 ? value.title
@@ -489,17 +498,29 @@ function parseRecurrence(
 
 // --- time ---------------------------------------------------------------
 
+// Making a formatter is far slower than using one: one per zone.
+const formatters = new Map<string, Intl.DateTimeFormat>();
+function zonedFormatter(timeZone: string): Intl.DateTimeFormat {
+  let f = formatters.get(timeZone);
+  if (f == null) {
+    f = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    if (formatters.size > 100) formatters.clear();
+    formatters.set(timeZone, f);
+  }
+  return f;
+}
+
 function zonedParts(ms: number, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(new Date(ms));
+  const parts = zonedFormatter(timeZone).formatToParts(new Date(ms));
   const get = (type: string) =>
     Number(parts.find((x) => x.type === type)?.value ?? "0");
   return {
@@ -526,8 +547,10 @@ function zonedMs(
   let candidate = target;
   for (let i = 0; i < 4; i++) {
     const p = zonedParts(candidate, timeZone);
-    candidate +=
+    const off =
       target - Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+    if (off === 0) break;
+    candidate += off;
   }
   return candidate;
 }
@@ -562,10 +585,42 @@ function addDays(date: string, days: number): string {
   return ymd(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate());
 }
 
+// Days since 1970-01-01 for a proleptic Gregorian date, and back (integer
+// arithmetic, no Date objects: a long recurrence scans many days).
+function dayNumber(y: number, m: number, d: number): number {
+  const yy = m <= 2 ? y - 1 : y;
+  const era = Math.floor(yy / 400);
+  const yoe = yy - era * 400;
+  const doy = Math.floor((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+function civilDate(n: number): [number, number, number] {
+  const z = n + 719468;
+  const era = Math.floor(z / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor(
+    (doe -
+      Math.floor(doe / 1460) +
+      Math.floor(doe / 36524) -
+      Math.floor(doe / 146096)) /
+      365,
+  );
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp < 10 ? mp + 3 : mp - 9;
+  return [yoe + era * 400 + (m <= 2 ? 1 : 0), m, d];
+}
+
+/** A recurrence is expanded at most this long after its start. */
+const MAX_RECURRENCE_DAYS = 200 * 365 + 49;
+
 /**
  * The local dates an event occurs on, in order, from `fromDate` to
  * `lastDate` (inclusive), within its own until and count (counted from its
- * start).
+ * start), and at most 200 years after its start.
  */
 function occurrenceDates(
   event: CalendarEvent,
@@ -578,19 +633,23 @@ function occurrenceDates(
     : calendarLocalDate(calendarInstant(event.start, timeZone), timeZone);
   const r = event.recurrence;
   if (!r) return first <= lastDate ? [first] : [];
-  const last = r.until && r.until < lastDate ? r.until : lastDate;
+  const [sy, sm, sd] = first.split("-").map(Number);
+  const startDay = dayNumber(sy, sm, sd);
+  const horizon = ymd(...civilDate(startDay + MAX_RECURRENCE_DAYS));
+  let last = r.until && r.until < lastDate ? r.until : lastDate;
+  if (horizon < last) last = horizon;
   // `seen` counts every occurrence from the start (for count); only those
   // from fromDate are kept, at most maxOccurrences of them.
   let seen = 0;
   const count = r.count ?? Infinity;
   const interval = r.interval ?? 1;
-  const [sy, sm, sd] = first.split("-").map(Number);
   const out: string[] = [];
-  const weekday = (date: string) =>
-    WEEKDAYS[new Date(`${date}T12:00:00Z`).getUTCDay()];
+  // 1970-01-01 was a Thursday.
+  const weekday = (y: number, m: number, d: number) =>
+    WEEKDAYS[(((dayNumber(y, m, d) + 4) % 7) + 7) % 7];
   const fits = (y: number, m: number, d: number) =>
     (!r.bymonth || r.bymonth.includes(m)) &&
-    (!r.byweekday || r.byweekday.includes(weekday(ymd(y, m, d)))) &&
+    (!r.byweekday || r.byweekday.includes(weekday(y, m, d))) &&
     (!r.bymonthday ||
       r.bymonthday.some((n) => Math.min(n, daysInMonth(y, m)) === d));
   const full = () =>
@@ -604,11 +663,19 @@ function occurrenceDates(
   };
   if (r.freq === "daily" || r.freq === "weekly") {
     // Day by day from the start; every `interval` days, or weeks (weeks
-    // counted from the start's).
-    for (let i = 0; ; i++) {
-      const date = addDays(first, i);
-      if (date > last || full()) break;
-      const [y, m, d] = date.split("-").map(Number);
+    // counted from the start's). Without a count nothing before the range
+    // matters, so the scan starts at the period that holds `fromDate`.
+    const period = r.freq === "daily" ? interval : 7 * interval;
+    const [fy, fm, fd] = fromDate.split("-").map(Number);
+    const ahead = dayNumber(fy, fm, fd) - startDay;
+    const [ly, lm, ld] = last.split("-").map(Number);
+    const lastDay = dayNumber(ly, lm, ld);
+    for (
+      let i = count === Infinity && ahead > 0 ? ahead - (ahead % period) : 0;
+      startDay + i <= lastDay && !full();
+      i++
+    ) {
+      const [y, m, d] = civilDate(startDay + i);
       if (r.freq === "daily") {
         if (i % interval !== 0 || !fits(y, m, d)) continue;
       } else {
@@ -616,7 +683,7 @@ function occurrenceDates(
         if (r.byweekday ? !fits(y, m, d) : i % 7 !== 0) continue;
         if (!fits(y, m, d)) continue;
       }
-      if (!take(date)) break;
+      if (!take(ymd(y, m, d))) break;
     }
     return out;
   }
@@ -779,6 +846,16 @@ function icsLocal(ms: number, timeZone: string): string {
   return `${ymd(p.year, p.month, p.day).replace(/-/g, "")}T${two(p.hour)}${two(p.minute)}${two(p.second)}`;
 }
 
+/** A short, stable hash (FNV-1a, 32 bits) in base 36. */
+function fnv1a(text: string): string {
+  let h = 0x811c9dc5;
+  for (const byte of encoder.encode(text)) {
+    h ^= byte;
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
 /**
  * The calendar (or one event of it) as an iCalendar file, for Google, Apple
  * or Outlook calendars. Recurrences become RRULEs; Markdown details become
@@ -793,6 +870,7 @@ export function calendarToIcs(
   }: { eventId?: string; nowMs?: number; uidDomain?: string } = {},
 ): string {
   const tz = calendar.timezone;
+  const namespace = calendar.id ?? `t${fnv1a(calendar.title)}`;
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -806,7 +884,7 @@ export function calendarToIcs(
     const allDay = e.all_day === true;
     lines.push(
       "BEGIN:VEVENT",
-      `UID:${e.id}@${uidDomain}`,
+      `UID:${e.id}.${namespace}@${uidDomain}`,
       `DTSTAMP:${icsUtc(nowMs)}`,
     );
     if (allDay) {
@@ -815,7 +893,10 @@ export function calendarToIcs(
       lines.push(
         `DTEND;VALUE=DATE:${addDays(e.end ?? e.start, 1).replace(/-/g, "")}`,
       );
-    } else if (calendarTimeKind(e.start) === "zoned") {
+    } else if (calendarTimeKind(e.start) === "zoned" && !e.recurrence) {
+      // A fixed instant. A recurring one repeats the calendar zone's local
+      // time of its first instant (as the agenda does), so it is written
+      // as that local time below.
       lines.push(`DTSTART:${icsUtc(Date.parse(e.start))}`);
       if (e.end) lines.push(`DTEND:${icsUtc(calendarInstant(e.end, tz))}`);
     } else {

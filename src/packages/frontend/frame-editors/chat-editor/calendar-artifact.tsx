@@ -19,6 +19,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   calendarAgenda,
   calendarLinkAllowed,
+  calendarTimeKind,
   calendarToIcs,
   parseCalendar,
   type CalendarOccurrence,
@@ -265,6 +266,11 @@ function Item({
   const status = event.status;
   const struck = status === "done" || status === "cancelled";
   const hasMore = !!(event.details || event.links?.length || event.owner);
+  // A due date is due at the end of its day; a due time, at that time.
+  const dueHasTime =
+    event.due_offset_days == null &&
+    event.due != null &&
+    calendarTimeKind(event.due) !== "date";
   return (
     <div
       style={{
@@ -313,7 +319,7 @@ function Item({
               }}
             >
               {" "}
-              due {format(o.due, true, false)}
+              due {format(o.due, true, dueHasTime)}
             </span>
           )}
         </span>
