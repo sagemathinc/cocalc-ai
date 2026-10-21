@@ -9,6 +9,7 @@ import path from "node:path";
 import {
   type BeneathCopyOptions,
   type BeneathPath,
+  assertDistinctBeneath,
   beneathRelative,
   copyBeneath,
   kindBeneath,
@@ -58,10 +59,15 @@ export function archivePathIsAllowed({
 }
 
 // Copies `source` to exactly `destination` (both beneath trusted roots),
-// replacing whatever is there in one rename: the copy goes to a hidden sibling
-// first, and a failed copy leaves the destination untouched. Every step is
-// anchored beneath the destination root and refuses symlinks, so the project
-// owning that root cannot redirect it (see beneath-copy.ts).
+// replacing whatever is there: the copy goes to a hidden sibling first, so a
+// failed copy leaves the destination untouched; then the old destination is
+// moved aside and the copy renamed into place. These are two renames, so a
+// reader can briefly find nothing there, and if the host stops in between,
+// the old copy remains at its hidden ".previous" name. Without force, the copy
+// is placed only if nothing is there at that moment (one no-replace rename):
+// false if something is (or ERR_FS_CP_EEXIST with errorOnExist). Every step
+// is anchored beneath the destination root and refuses symlinks, so the
+// project owning that root cannot redirect it (see beneath-copy.ts).
 export async function replacePathFromStaging({
   source,
   destination,
@@ -70,17 +76,18 @@ export async function replacePathFromStaging({
   source: BeneathPath;
   destination: BeneathPath;
   options?: BeneathCopyOptions;
-}): Promise<void> {
+}): Promise<boolean> {
   const root = destination.root;
   const rel = beneathRelative(destination.path);
   if (!rel) {
     throw new Error("copy destination cannot be the root");
   }
+  await assertDistinctBeneath(source, destination);
   const parent = path.posix.dirname(rel);
-  const basename = path.posix.basename(rel);
   const token = randomUUID();
+  // Fixed-length names, whatever the length of the destination's own name.
   const sibling = (kind: string) => {
-    const name = `.${basename}.cocalc-${kind}-${token}`;
+    const name = `.cocalc-${kind}-${token}`;
     return parent === "." ? name : path.posix.join(parent, name);
   };
   const incoming = sibling("incoming");
@@ -99,9 +106,19 @@ export async function replacePathFromStaging({
         errorOnExist: false,
       },
     });
+    if (!(options?.force ?? true)) {
+      try {
+        renameBeneath(root, incoming, rel, { noReplace: true });
+        return true;
+      } catch (err) {
+        if (!`${(err as Error)?.message}`.startsWith("EEXIST")) throw err;
+        if (options?.errorOnExist) throw existsError();
+        return false;
+      }
+    }
     if ((await kindBeneath(root, rel)) === "missing") {
       renameBeneath(root, incoming, rel, { noReplace: true });
-      return;
+      return true;
     }
     renameBeneath(root, rel, previous, { noReplace: true });
     try {
@@ -120,9 +137,19 @@ export async function replacePathFromStaging({
       throw err;
     }
     await rmBeneath(root, previous).catch(() => {});
+    return true;
   } finally {
     await rmBeneath(root, incoming).catch(() => {});
   }
+}
+
+function existsError(): Error {
+  const err = new Error(
+    "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+  );
+  // @ts-ignore -- Node's SystemError code is not part of Error.
+  err.code = "ERR_FS_CP_EEXIST";
+  return err;
 }
 
 // Installs `source` at `destination`. Ordinary copies merge (cp -T); only
@@ -151,20 +178,14 @@ export async function installPathFromStaging({
     return true;
   }
 
+  // Checked first to skip the copy; replacePathFromStaging enforces it again
+  // when placing the copy, in case the destination appears meanwhile.
   const exists =
     (await kindBeneath(destination.root, destination.path)) !== "missing";
   if (exists && !(options?.force ?? true)) {
-    if (options?.errorOnExist) {
-      const err = new Error(
-        "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
-      );
-      // @ts-ignore -- Node's SystemError code is not part of Error.
-      err.code = "ERR_FS_CP_EEXIST";
-      throw err;
-    }
+    if (options?.errorOnExist) throw existsError();
     return false;
   }
 
-  await replacePathFromStaging({ source, destination, options });
-  return true;
+  return await replacePathFromStaging({ source, destination, options });
 }

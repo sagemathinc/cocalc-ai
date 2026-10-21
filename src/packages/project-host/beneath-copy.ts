@@ -50,6 +50,11 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { SandboxRoot } from "@cocalc/openat2";
+import { runNativeFsTask } from "@cocalc/backend/sandbox/native-fs-limit";
+
+// Like cp (backend/sandbox/cp.ts), a copy is bounded by its caller's
+// operation; without a timeout it still stops after this long.
+const DEFAULT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 // A trusted absolute root directory and a path beneath it ("" = the root).
 export interface BeneathPath {
@@ -70,6 +75,9 @@ export interface BeneathCopyOptions {
   // Called before each entry is copied; throw from it to stop the copy (for
   // example once the caller's deadline has passed).
   checkpoint?: () => void;
+  // Stop (between entries) once this many ms have passed; default 2 hours.
+  // Then the copy fails and writes nothing more.
+  timeout?: number;
 }
 
 type Kind = "missing" | "file" | "dir" | "symlink" | "other";
@@ -100,9 +108,10 @@ function codedError(code: string, message: string): NodeJS.ErrnoException {
   return err;
 }
 
-// Normalizes a relative path beneath a root; "" is the root itself.
+// Normalizes a relative path beneath a root; "" is the root itself. Paths are
+// POSIX: a backslash is an ordinary character of a name.
 export function beneathRelative(p: string): string {
-  const normalized = path.posix.normalize(p.replace(/\\/g, "/"));
+  const normalized = path.posix.normalize(p);
   if (normalized === "." || normalized === "./" || normalized === "") {
     return "";
   }
@@ -146,7 +155,15 @@ async function entryAt(
   if (parent !== ".") {
     // Must succeed as a symlink-free directory, so an ELOOP below is about
     // the final component itself.
-    const st = sandbox.stat(parent);
+    let st;
+    try {
+      st = sandbox.stat(parent);
+    } catch (err) {
+      if (errorCode(err) === "ENOENT") {
+        return { kind: "missing", ...NO_ENTRY };
+      }
+      throw err;
+    }
     if (kindOfMode(st.mode) !== "dir") {
       throw codedError("ENOTDIR", `not a directory: ${parent}`);
     }
@@ -227,8 +244,15 @@ async function readlinkBeneath(
   }
 }
 
+// Whether two entries are the same file or directory (symlinks carry no
+// identity here).
 function sameEntry(a: Entry, b: Entry): boolean {
-  return a.kind !== "missing" && a.dev === b.dev && a.ino === b.ino;
+  return (
+    (a.kind === "file" || a.kind === "dir") &&
+    a.kind === b.kind &&
+    a.dev === b.dev &&
+    a.ino === b.ino
+  );
 }
 
 function sameFileError(src: string, dest: string): NodeJS.ErrnoException {
@@ -240,8 +264,10 @@ function sameFileError(src: string, dest: string): NodeJS.ErrnoException {
   return err;
 }
 
+// A temporary name next to `rel`, of fixed length whatever the length of
+// rel's own name (which may already be the maximum).
 function tempSibling(rel: string): string {
-  const name = `.${path.posix.basename(rel)}.cocalc-copy-${randomUUID()}`;
+  const name = `.cocalc-copy-${randomUUID()}`;
   const parent = path.posix.dirname(rel);
   return parent === "." ? name : path.posix.join(parent, name);
 }
@@ -259,21 +285,36 @@ class Copier {
   private readonly src: SandboxRoot;
   private readonly dest: SandboxRoot;
 
+  private readonly deadline: number;
+
   constructor(
     private readonly srcRoot: string,
     private readonly destRoot: string,
     private readonly options: BeneathCopyOptions,
+    // The destination of the whole copy, which errorOnExist is about.
+    private readonly topRel: string,
   ) {
     this.src = new SandboxRoot(srcRoot);
     this.dest = new SandboxRoot(destRoot);
+    this.deadline = Date.now() + (options.timeout ?? DEFAULT_TIMEOUT_MS);
   }
 
   private get force(): boolean {
     return this.options.force ?? true;
   }
 
+  // Without force, an existing entry at `rel` is kept: true to skip it, or
+  // ERR_FS_CP_EEXIST when it is the destination and errorOnExist is set.
+  private keepExisting(rel: string): boolean {
+    if (this.options.errorOnExist && rel === this.topRel) {
+      throw existsError(rel);
+    }
+    return true;
+  }
+
   // Puts the temporary entry `tmp` at `rel`: over an existing non-directory
-  // when forcing, otherwise only if nothing is there.
+  // when forcing, otherwise only if nothing is there at that moment (the
+  // check and the placement are one rename).
   private place(tmp: string, rel: string): void {
     if (this.force) {
       this.dest.rename(tmp, rel);
@@ -284,6 +325,7 @@ class Copier {
     } catch (err) {
       if (errorCode(err) !== "EEXIST") throw err;
       this.dest.unlink(tmp);
+      this.keepExisting(rel);
     }
   }
 
@@ -302,7 +344,10 @@ class Copier {
     if (sameEntry(destEntry, entry)) {
       throw sameFileError(srcRel, destRel);
     }
-    if (destEntry.kind !== "missing" && !this.force) return;
+    if (destEntry.kind !== "missing" && !this.force) {
+      this.keepExisting(destRel);
+      return;
+    }
 
     const tmp = tempSibling(destRel);
     const srcFd = this.src.openRead(srcRel);
@@ -313,10 +358,14 @@ class Copier {
       try {
         // Both ends are the descriptors opened beneath their roots; the
         // /proc/self/fd links name exactly those open files.
-        await copyFile(
-          `/proc/self/fd/${srcFd}`,
-          `/proc/self/fd/${destFd}`,
-          constants.COPYFILE_FICLONE,
+        // A non-cloned copy occupies a libuv worker for its whole length:
+        // share the sandbox's bound on such operations.
+        await runNativeFsTask(() =>
+          copyFile(
+            `/proc/self/fd/${srcFd}`,
+            `/proc/self/fd/${destFd}`,
+            constants.COPYFILE_FICLONE,
+          ),
         );
         // Permission bits only: never setuid/setgid from a project's file.
         fchmodSync(destFd, (fstatSync(srcFd).mode ?? entry.mode) & 0o777);
@@ -356,7 +405,10 @@ class Copier {
         `Cannot overwrite directory '${destRel}' with non-directory '${srcRel}'`,
       );
     }
-    if (destEntry.kind !== "missing" && !this.force) return;
+    if (destEntry.kind !== "missing" && !this.force) {
+      this.keepExisting(destRel);
+      return;
+    }
     const target = await readlinkBeneath(this.src, this.srcRoot, srcRel);
     const tmp = tempSibling(destRel);
     this.dest.symlink(target, tmp);
@@ -383,7 +435,10 @@ class Copier {
     }
     let destEntry = await entryAt(this.dest, this.destRoot, destRel);
     if (destEntry.kind === "symlink") {
-      if (!this.force) return;
+      if (!this.force) {
+        this.keepExisting(destRel);
+        return;
+      }
       this.dest.unlink(destRel);
       destEntry = { ...destEntry, kind: "missing" };
     }
@@ -396,13 +451,26 @@ class Copier {
     if (sameEntry(destEntry, entry)) {
       throw sameFileError(srcRel, destRel);
     }
-    const created = destEntry.kind === "missing";
+    let created = destEntry.kind === "missing";
     if (created) {
       if (destRel === "") {
         throw codedError("EINVAL", "copy destination root does not exist");
       }
-      // Writable by us while filling it; its mode is set at the end.
-      this.dest.mkdir(destRel, false, 0o700);
+      try {
+        // Writable by us while filling it; its mode is set at the end.
+        this.dest.mkdir(destRel, false, 0o700);
+      } catch (err) {
+        if (errorCode(err) !== "EEXIST") throw err;
+        // Created meanwhile: the same rules as if it had been there.
+        if (!this.force) this.keepExisting(destRel);
+        if ((await entryAt(this.dest, this.destRoot, destRel)).kind !== "dir") {
+          throw codedError(
+            "ENOTDIR",
+            `cannot overwrite non-directory '${destRel}' with directory '${srcRel}'`,
+          );
+        }
+        created = false;
+      }
     }
 
     const names = await readdirBeneath(this.src, this.srcRoot, srcRel);
@@ -422,6 +490,12 @@ class Copier {
   }
 
   async copyEntry(srcRel: string, destRel: string): Promise<void> {
+    if (Date.now() > this.deadline) {
+      throw codedError(
+        "ETIMEDOUT",
+        `copy stopped after ${this.options.timeout ?? DEFAULT_TIMEOUT_MS} ms`,
+      );
+    }
     this.options.checkpoint?.();
     const entry = await entryAt(this.src, this.srcRoot, srcRel);
     switch (entry.kind) {
@@ -437,17 +511,20 @@ class Copier {
       case "symlink":
         return await this.copySymlink(srcRel, destRel);
       default:
-        // Sockets, FIFOs and devices are not copied.
-        return;
+        // Sockets, FIFOs and devices: fail rather than copy only part.
+        throw codedError(
+          "EINVAL",
+          `Unsupported source file type for cp: '${srcRel}'`,
+        );
     }
   }
 
-  async run(srcRel: string, destRel: string): Promise<void> {
+  async run(srcRel: string): Promise<void> {
     if (!this.force && this.options.errorOnExist) {
-      const destEntry = await entryAt(this.dest, this.destRoot, destRel);
-      if (destEntry.kind !== "missing") throw existsError(destRel);
+      const destEntry = await entryAt(this.dest, this.destRoot, this.topRel);
+      if (destEntry.kind !== "missing") throw existsError(this.topRel);
     }
-    await this.copyEntry(srcRel, destRel);
+    await this.copyEntry(srcRel, this.topRel);
   }
 }
 
@@ -463,6 +540,23 @@ export async function copyBeneath({
   dest: BeneathPath;
   options?: BeneathCopyOptions;
 }): Promise<void> {
+  const destRel = beneathRelative(dest.path);
+  const srcRel = await assertDistinctBeneath(src, dest);
+  const parent = path.posix.dirname(destRel);
+  if (destRel !== "" && parent !== ".") {
+    new SandboxRoot(dest.root).mkdir(parent, true, 0o755);
+  }
+  await new Copier(src.root, dest.root, options, destRel).run(srcRel);
+}
+
+// Refuses (as cp does) to copy something onto itself or into itself: the same
+// path, a destination inside the source, or the same file or directory by
+// device and inode (a hard link, another name for the root). Returns the
+// normalized source path.
+export async function assertDistinctBeneath(
+  src: BeneathPath,
+  dest: BeneathPath,
+): Promise<string> {
   const srcRel = beneathRelative(src.path);
   const destRel = beneathRelative(dest.path);
   // The roots are trusted, so resolving them by path is fine.
@@ -479,11 +573,14 @@ export async function copyBeneath({
       `cannot copy '${srcRel}' into itself ('${destRel}')`,
     );
   }
-  const parent = path.posix.dirname(destRel);
-  if (destRel !== "" && parent !== ".") {
-    new SandboxRoot(dest.root).mkdir(parent, true, 0o755);
+  const [srcEntry, destEntry] = await Promise.all([
+    entryAt(new SandboxRoot(src.root), src.root, srcRel),
+    entryAt(new SandboxRoot(dest.root), dest.root, destRel),
+  ]);
+  if (sameEntry(srcEntry, destEntry)) {
+    throw sameFileError(srcRel, destRel);
   }
-  await new Copier(src.root, dest.root, options).run(srcRel, destRel);
+  return srcRel;
 }
 
 // What is at `rel` under `root`, as for copyBeneath: "symlink" for a symlink
@@ -516,7 +613,8 @@ export function renameBeneath(
 // Removes `rel` under `root` recursively, if present, never following links.
 export async function rmBeneath(root: string, rel: string): Promise<void> {
   try {
-    await new SandboxRoot(root).rm(beneathRelative(rel), true, true);
+    const sandbox = new SandboxRoot(root);
+    await runNativeFsTask(() => sandbox.rm(beneathRelative(rel), true, true));
   } catch (err) {
     if (errorCode(err) !== "ENOENT") throw err;
   }

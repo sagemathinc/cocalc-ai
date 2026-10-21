@@ -21,6 +21,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { execFileSync } from "node:child_process";
+
+const mockNativeFsTask = jest.fn((fn: () => Promise<unknown>) => fn());
+jest.mock("@cocalc/backend/sandbox/native-fs-limit", () => ({
+  runNativeFsTask: (fn: () => Promise<unknown>) => mockNativeFsTask(fn),
+}));
+
 import { copyBeneath, kindBeneath, rmBeneath } from "./beneath-copy";
 
 describe("copyBeneath", () => {
@@ -279,5 +286,80 @@ describe("copyBeneath", () => {
         options: { recursive: true },
       }),
     ).rejects.toMatchObject({ code: "EINVAL" });
+  });
+
+  it("keeps a destination that appears during a no-clobber copy", async () => {
+    await mkdir(join(src, "d"));
+    await writeFile(join(src, "d", "f"), "from source");
+    let created = false;
+    // The destination's owner creates the file while the copy is running.
+    const appear = () => {
+      if (created) return;
+      created = true;
+      require("node:fs").mkdirSync(join(dest, "d"), { recursive: true });
+      require("node:fs").writeFileSync(join(dest, "d", "f"), "theirs");
+    };
+    await copy("d", "d", { recursive: true, force: false, checkpoint: appear });
+    expect(await readFile(join(dest, "d", "f"), "utf8")).toBe("theirs");
+
+    // With errorOnExist, a destination that appears while the data is being
+    // copied (after every check) fails the copy at placement.
+    await writeFile(join(src, "g"), "from source");
+    mockNativeFsTask.mockImplementationOnce((fn) => {
+      require("node:fs").writeFileSync(join(dest, "g"), "theirs");
+      return fn();
+    });
+    await expect(
+      copy("g", "g", { force: false, errorOnExist: true }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+    expect(await readFile(join(dest, "g"), "utf8")).toBe("theirs");
+  });
+
+  it("stops once its timeout has passed", async () => {
+    await mkdir(join(src, "d"));
+    for (const name of ["a", "b", "c"]) {
+      await writeFile(join(src, "d", name), name);
+    }
+    const start = Date.now();
+    let calls = 0;
+    const now = jest
+      .spyOn(Date, "now")
+      .mockImplementation(() => start + 600 * calls++);
+    try {
+      await expect(
+        copy("d", "d", { recursive: true, timeout: 1000 }),
+      ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+    } finally {
+      now.mockRestore();
+    }
+    expect((await readdir(join(dest, "d"))).length).toBeLessThan(3);
+  });
+
+  it("copies file data under the shared bound on native fs work", async () => {
+    mockNativeFsTask.mockClear();
+    await writeFile(join(src, "f"), "data");
+    await copy("f", "f", {});
+    expect(mockNativeFsTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails on a special file instead of copying only part of a tree", async () => {
+    await mkdir(join(src, "d"));
+    await writeFile(join(src, "d", "f"), "f");
+    execFileSync("mkfifo", [join(src, "d", "pipe")]);
+    await expect(copy("d", "d")).rejects.toMatchObject({ code: "EINVAL" });
+  });
+
+  it("copies to a name of the maximum length", async () => {
+    const long = "n".repeat(255);
+    await writeFile(join(src, "f"), "data");
+    await copy("f", long, {});
+    expect(await readFile(join(dest, long), "utf8")).toBe("data");
+    await noTempFiles(dest);
+  });
+
+  it("treats a backslash as part of a name", async () => {
+    await writeFile(join(src, "a\\b"), "data");
+    await copy("a\\b", "c\\d", {});
+    expect(await readFile(join(dest, "c\\d"), "utf8")).toBe("data");
   });
 });

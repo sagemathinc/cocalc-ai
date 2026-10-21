@@ -2670,6 +2670,8 @@ function beneathCopyOptions(options?: CopyOptions): BeneathCopyOptions {
     preserveTimestamps: options?.preserveTimestamps,
     recursive: options?.recursive ?? true,
     dereference: options?.dereference,
+    // The caller reports failure once this passes: stop writing by then.
+    timeout: options?.timeout,
   };
 }
 

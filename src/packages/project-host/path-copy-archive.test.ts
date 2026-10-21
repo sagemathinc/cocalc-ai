@@ -4,6 +4,7 @@
  */
 
 import {
+  link,
   mkdir,
   mkdtemp,
   readdir,
@@ -220,6 +221,89 @@ describe("path copy archive listings", () => {
       expect(await readdir(outside)).toEqual([]);
     } finally {
       await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an exact no-clobber destination that appears during the copy", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-race-"));
+    try {
+      await mkdir(path.join(root, "source"));
+      await writeFile(path.join(root, "source", "a.txt"), "from source");
+      const appear = () =>
+        require("node:fs").mkdirSync(path.join(root, "destination"), {
+          recursive: true,
+        });
+
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "source" },
+          destination: { root, path: "destination" },
+          exact: true,
+          options: { force: false, checkpoint: appear },
+        }),
+      ).resolves.toBe(false);
+      expect(await readdir(path.join(root, "destination"))).toEqual([]);
+
+      await rm(path.join(root, "destination"), { recursive: true });
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "source" },
+          destination: { root, path: "destination" },
+          exact: true,
+          options: { force: false, errorOnExist: true, checkpoint: appear },
+        }),
+      ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+      expect((await readdir(root)).sort()).toEqual(["destination", "source"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an exact copy onto itself, even through a hard link", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-self-"));
+    try {
+      await writeFile(path.join(root, "same"), "data");
+      await link(path.join(root, "same"), path.join(root, "alias"));
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "same" },
+          destination: { root, path: "same" },
+          exact: true,
+        }),
+      ).rejects.toMatchObject({ code: "EINVAL" });
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "same" },
+          destination: { root, path: "alias" },
+          exact: true,
+        }),
+      ).rejects.toMatchObject({ code: "ERR_FS_CP_EINVAL" });
+      expect((await readdir(root)).sort()).toEqual(["alias", "same"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces an exact destination whose name has the maximum length", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-long-"));
+    try {
+      const long = "n".repeat(255);
+      await mkdir(path.join(root, "source"));
+      await writeFile(path.join(root, "source", "a.txt"), "new");
+      await mkdir(path.join(root, long));
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "source" },
+          destination: { root, path: long },
+          exact: true,
+        }),
+      ).resolves.toBe(true);
+      expect(await readFile(path.join(root, long, "a.txt"), "utf8")).toBe(
+        "new",
+      );
+      expect((await readdir(root)).sort()).toEqual([long, "source"].sort());
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 });
