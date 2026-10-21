@@ -277,7 +277,19 @@ export async function finalizeRestoreStaging(
     await ensureHomeSubvolume(home);
     const oldPath = `${home}.restore_old.${Date.now()}`;
     await sudo({ command: "mv", args: [home, oldPath] });
-    await sudo({ command: "mv", args: [stagingPath, home] });
+    try {
+      await sudo({ command: "mv", args: [stagingPath, home] });
+    } catch (err) {
+      // put the home back: never leave the project without one
+      try {
+        await sudo({ command: "mv", args: [oldPath, home] });
+      } catch (rollbackErr) {
+        throw new Error(
+          `restore staging swap and rollback failed; the home may remain at ${oldPath}: ${err}; ${rollbackErr}`,
+        );
+      }
+      throw err;
+    }
     await deleteSubvolumeTree({
       path: oldPath,
       mountRoot: dirname(home),
