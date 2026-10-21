@@ -50,6 +50,8 @@ export async function deleteAccount(
  * - Saves the email address to email_address_before_delete
  * - Clears email_address (sets to null)
  * - Clears passports (sets to null)
+ * - Clears the other personal data in the row (names, password hash, avatar,
+ *   ssh keys, LTI identity, ...), like packages/server/accounts/delete.ts
  *
  * Either account_id or email_address must be provided.
  *
@@ -100,6 +102,18 @@ export async function markAccountDeleted(
       "email_address_before_delete::TEXT": email_address,
       email_address: null,
       passports: null,
+      // keep in sync with DELETED_ACCOUNT_PERSONAL_FIELDS in
+      // packages/server/accounts/deleted-account-retention.ts
+      display_name: null,
+      first_name: null,
+      last_name: null,
+      password_hash: null,
+      profile: null,
+      ssh_keys: null,
+      lti_id: null,
+      lti_data: null,
+      created_by: null,
+      sign_up_usage_intent: null,
     },
     where: { "account_id = $::UUID": account_id },
   });

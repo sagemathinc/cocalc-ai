@@ -173,6 +173,56 @@ describe("delete account", () => {
     });
   });
 
+  it("clears personal data and records who started the deletion, in the same transaction", async () => {
+    const db = { query: jest.fn(async () => ({ rows: [], rowCount: 1 })) };
+    withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
+      await fn(db);
+    });
+    const ADMIN_ID = "22222222-2222-4222-8222-222222222222";
+    const { default: deleteAccount } = await import("./delete");
+    await deleteAccount(ACCOUNT_ID, {
+      initiator: "admin",
+      actor_account_id: ADMIN_ID,
+    });
+    const calls = db.query.mock.calls as any[];
+    const update = calls.find(([sql]) =>
+      `${sql}`.startsWith("UPDATE accounts"),
+    );
+    expect(update[0]).toContain("deleted=true");
+    for (const field of [
+      "display_name",
+      "first_name",
+      "last_name",
+      "password_hash",
+      "ssh_keys",
+      "lti_id",
+    ]) {
+      expect(update[0]).toContain(`${field}=NULL`);
+    }
+    expect(update[1]).toEqual(["user@example.com", ACCOUNT_ID]);
+    const audit = calls.find(([sql]) =>
+      `${sql}`.includes("INSERT INTO account_admin_audit_log"),
+    );
+    expect(audit[1][1]).toBe(ACCOUNT_ID);
+    expect(audit[1][2]).toBe("account-deletion");
+    expect(audit[1][3]).toBe(ADMIN_ID);
+    expect(JSON.parse(audit[1][5])).toEqual({ initiator: "admin" });
+  });
+
+  it("records a system deletion when no initiator is given", async () => {
+    const db = { query: jest.fn(async () => ({ rows: [], rowCount: 1 })) };
+    withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
+      await fn(db);
+    });
+    const { default: deleteAccount } = await import("./delete");
+    await deleteAccount(ACCOUNT_ID);
+    const audit = (db.query.mock.calls as any[]).find(([sql]) =>
+      `${sql}`.includes("INSERT INTO account_admin_audit_log"),
+    );
+    expect(audit[1][3]).toBeNull();
+    expect(JSON.parse(audit[1][5])).toEqual({ initiator: "system" });
+  });
+
   it("queues no purges when marking the account deleted fails", async () => {
     withAccountRehomeWriteFenceMock.mockRejectedValue(new Error("fenced"));
     const { default: deleteAccount } = await import("./delete");

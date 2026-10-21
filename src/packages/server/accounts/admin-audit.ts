@@ -14,7 +14,8 @@ export type AccountAdminAuditAction =
   | "balance-adjustment"
   | "membership-package-purchase"
   | "grant-admin"
-  | "revoke-admin";
+  | "revoke-admin"
+  | "account-deletion";
 
 function normalizeReason(reason?: string | null): string | null {
   const trimmed = `${reason ?? ""}`.trim();

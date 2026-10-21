@@ -1,0 +1,112 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+/*
+Retention of personal data on deleted accounts.
+
+A deleted account keeps its row, since projects, logs, purchases, etc. refer to
+it. Deletion clears the personal data in that row right away (see
+markAccountDeleted), except the former email address, which is kept for
+DELETED_ACCOUNT_EMAIL_RETENTION_DAYS to help with recovery requests and abuse,
+then removed by this maintenance loop. The loop also clears the personal data
+of accounts deleted before deletion did that itself.
+
+Financial records (stripe ids, purchases, statements) are kept, since the law
+requires keeping them.
+*/
+
+import getPool from "@cocalc/database/pool";
+import { getLogger } from "@cocalc/backend/logger";
+import { ensureAccountRevocationsTable } from "./revocation";
+
+const log = getLogger("server:accounts:deleted-account-retention");
+
+export const DELETED_ACCOUNT_EMAIL_RETENTION_DAYS = 90;
+
+// Personal data in the accounts row, cleared when the account is deleted.
+export const DELETED_ACCOUNT_PERSONAL_FIELDS = [
+  "display_name",
+  "first_name",
+  "last_name",
+  "password_hash",
+  "profile",
+  "ssh_keys",
+  "lti_id",
+  "lti_data",
+  "created_by",
+  "sign_up_usage_intent",
+] as const;
+
+export const CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL =
+  DELETED_ACCOUNT_PERSONAL_FIELDS.map((field) => `${field}=NULL`).join(", ");
+
+const HAS_PERSONAL_FIELDS_SQL = DELETED_ACCOUNT_PERSONAL_FIELDS.map(
+  (field) => `${field} IS NOT NULL`,
+).join(" OR ");
+
+const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const BATCH_SIZE = 1000;
+
+export async function purgeDeletedAccountPersonalData({
+  retentionDays = DELETED_ACCOUNT_EMAIL_RETENTION_DAYS,
+  batchSize = BATCH_SIZE,
+}: {
+  retentionDays?: number;
+  batchSize?: number;
+} = {}): Promise<{ cleared: number; emailsPurged: number }> {
+  const pool = getPool();
+  const { rowCount: cleared } = await pool.query(
+    `UPDATE accounts SET ${CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL}
+      WHERE account_id IN (
+        SELECT account_id FROM accounts
+         WHERE deleted IS TRUE AND (${HAS_PERSONAL_FIELDS_SQL})
+         LIMIT $1)`,
+    [batchSize],
+  );
+  // The deletion time is the account's revocation time, which deletion
+  // records. Accounts deleted before revocations existed have no row; they are
+  // older than any retention period.
+  await ensureAccountRevocationsTable();
+  const { rowCount: emailsPurged } = await pool.query(
+    `UPDATE accounts SET email_address_before_delete=NULL
+      WHERE account_id IN (
+        SELECT a.account_id FROM accounts a
+          LEFT JOIN account_revocations r ON r.account_id = a.account_id
+         WHERE a.deleted IS TRUE
+           AND a.email_address_before_delete IS NOT NULL
+           AND (r.revoked_before IS NULL
+                OR r.revoked_before < NOW() - make_interval(days => $1::INTEGER))
+         LIMIT $2)`,
+    [retentionDays, batchSize],
+  );
+  return { cleared: cleared ?? 0, emailsPurged: emailsPurged ?? 0 };
+}
+
+export default function initDeletedAccountRetention(): void {
+  log.info("starting deleted-account retention loop", {
+    CHECK_INTERVAL_MS,
+    DELETED_ACCOUNT_EMAIL_RETENTION_DAYS,
+  });
+  const run = async () => {
+    try {
+      // repeat full batches, so a large backlog is cleared in one pass
+      for (let i = 0; i < 100; i++) {
+        const { cleared, emailsPurged } =
+          await purgeDeletedAccountPersonalData();
+        if (cleared > 0 || emailsPurged > 0) {
+          log.info("cleared personal data of deleted accounts", {
+            cleared,
+            emailsPurged,
+          });
+        }
+        if (cleared < BATCH_SIZE && emailsPurged < BATCH_SIZE) break;
+      }
+    } catch (err) {
+      log.error("deleted-account retention failed", err);
+    }
+  };
+  void run();
+  setInterval(run, CHECK_INTERVAL_MS);
+}
