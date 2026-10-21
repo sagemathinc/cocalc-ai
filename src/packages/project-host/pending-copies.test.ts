@@ -1,19 +1,18 @@
 import path from "node:path";
 import os from "node:os";
 import {
-  cp,
-  copyFile,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 
 let projectRoot: string;
 let mockCallHub: jest.Mock;
-let mockCpExec: jest.Mock;
 let mockRustic: jest.Mock;
 let mockStatusUpdates: any[];
 let mockExact: boolean;
@@ -44,6 +43,10 @@ jest.mock("@cocalc/backend/sandbox", () => ({
       return path.join(this.root, p.replace(/^\/+/, ""));
     }
 
+    async resolveAnchoredPath(p: string) {
+      return { root: this.root, path: p.replace(/^\/+/, "") };
+    }
+
     async rustic(args: string[], opts?: { timeout?: number }) {
       return (
         (await mockRustic(args, this.root, opts)) ?? {
@@ -54,11 +57,6 @@ jest.mock("@cocalc/backend/sandbox", () => ({
       );
     }
   },
-}));
-
-jest.mock("@cocalc/backend/sandbox/cp", () => ({
-  __esModule: true,
-  default: (...args: any[]) => mockCpExec(...args),
 }));
 
 jest.mock("@cocalc/conat/hub/call-hub", () => ({
@@ -115,10 +113,6 @@ describe("project-host pending copies", () => {
       }
       throw new Error(`unexpected callHub name ${name}`);
     });
-    mockCpExec = jest.fn(async (src: string, dest: string) => {
-      await mkdir(path.dirname(dest), { recursive: true });
-      await copyFile(src, dest);
-    });
     mockRustic = jest.fn(async (args: string[], root: string) => {
       const dest = path.join(root, args[2].replace(/^\/+/, ""));
       await mkdir(path.dirname(dest), { recursive: true });
@@ -146,16 +140,63 @@ describe("project-host pending copies", () => {
     await expect(readFile(path.join(projectRoot, "foo"), "utf8")).resolves.toBe(
       "notebook payload",
     );
-    const [stagingPath, destPath, copyOptions] = mockCpExec.mock.calls[0];
-    expect(stagingPath).toContain(path.join(".copy-staging"));
-    expect(stagingPath.endsWith("foo")).toBe(true);
-    expect(destPath).toContain(path.join(projectRoot, ".foo.cocalc-incoming-"));
-    expect(copyOptions).toEqual(
-      expect.objectContaining({
-        recursive: true,
-        reflink: true,
-      }),
-    );
+    // Nothing staged inside the project, and nothing left behind.
+    expect(await readdir(projectRoot)).toEqual(["foo"]);
+  });
+
+  it("restores outside the destination project, where its user cannot reach", async () => {
+    const { applyPendingCopies } = await import("./pending-copies");
+    await applyPendingCopies({ limit: 1 });
+
+    const [args, restoreRoot] = mockRustic.mock.calls[0];
+    expect(args[0]).toBe("restore");
+    expect(path.relative(projectRoot, restoreRoot).startsWith("..")).toBe(true);
+    // The staging directory is removed afterwards.
+    await expect(stat(restoreRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a destination through a symlink the destination project planted", async () => {
+    const outside = await mkdtemp(path.join(os.tmpdir(), "cocalc-outside-"));
+    try {
+      await symlink(outside, path.join(projectRoot, "evil"));
+      mockCallHub = jest.fn(async ({ name, args }) => {
+        if (name === "hosts.claimPendingCopies") {
+          return [
+            {
+              copy_id: "copy-1",
+              src_project_id: "src-project",
+              src_path: "test.ipynb",
+              dest_project_id: "dest-project",
+              dest_path: "evil/authorized_keys",
+              snapshot_id: "snap-1",
+              options: { force: true },
+              exact: mockExact,
+            },
+          ];
+        }
+        if (name === "hosts.updateCopyStatus") {
+          mockStatusUpdates.push(args[0]);
+          return;
+        }
+        throw new Error(`unexpected callHub name ${name}`);
+      });
+
+      const { applyPendingCopies } = await import("./pending-copies");
+      for (const exact of [true, false]) {
+        mockExact = exact;
+        mockStatusUpdates = [];
+        await applyPendingCopies({ limit: 1 });
+        expect(mockStatusUpdates).toEqual([
+          expect.objectContaining({
+            status: "failed",
+            last_error: expect.stringContaining("ELOOP"),
+          }),
+        ]);
+      }
+      expect(await readdir(outside)).toEqual([]);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   it("retries a transient missing snapshot during restore", async () => {
@@ -190,9 +231,6 @@ describe("project-host pending copies", () => {
     const restoreTimeout = mockRustic.mock.calls[0][2]?.timeout;
     expect(restoreTimeout).toBeGreaterThan(0);
     expect(restoreTimeout).toBeLessThanOrEqual(budget);
-    const cpTimeout = mockCpExec.mock.calls[0][2]?.timeout;
-    expect(cpTimeout).toBeGreaterThan(0);
-    expect(cpTimeout).toBeLessThanOrEqual(budget);
   });
 
   it("leaves later rows for the hub to reclaim once the claim's budget is spent", async () => {
@@ -235,7 +273,7 @@ describe("project-host pending copies", () => {
     // The first row stops before copying; the second is never started and
     // stays 'applying' until the hub hands it out again.
     expect(mockRustic).toHaveBeenCalledTimes(1);
-    expect(mockCpExec).not.toHaveBeenCalled();
+    expect(await readdir(projectRoot)).toEqual([]);
     expect(mockStatusUpdates).toEqual([
       expect.objectContaining({
         copy_id: "copy-1",
@@ -256,7 +294,7 @@ describe("project-host pending copies", () => {
     const { applyPendingCopies } = await import("./pending-copies");
     await applyPendingCopies({ limit: 1 });
 
-    expect(mockCpExec).not.toHaveBeenCalled();
+    expect(await readdir(projectRoot)).toEqual([]);
     expect(mockStatusUpdates).toEqual([
       expect.objectContaining({
         copy_id: "copy-1",
@@ -295,7 +333,6 @@ describe("project-host pending copies", () => {
     await expect(applyPendingCopies({ limit: 1 })).resolves.toBe(1);
 
     expect(mockRustic).not.toHaveBeenCalled();
-    expect(mockCpExec).not.toHaveBeenCalled();
     await expect(readFile(path.join(projectRoot, "foo"), "utf8")).resolves.toBe(
       "existing payload",
     );
@@ -335,9 +372,6 @@ describe("project-host pending copies", () => {
       await mkdir(dest, { recursive: true });
       await writeFile(path.join(dest, "new.txt"), "new");
     });
-    mockCpExec = jest.fn(async (src: string, dest: string) => {
-      await cp(src, dest, { force: false, recursive: true });
-    });
     const destination = path.join(projectRoot, "handouts", "lecture notes");
     await mkdir(destination, { recursive: true });
     await writeFile(path.join(destination, "keep.txt"), "keep");
@@ -354,6 +388,5 @@ describe("project-host pending copies", () => {
     await expect(
       readFile(path.join(destination, "lecture notes", "new.txt"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    expect(mockCpExec.mock.calls[0][1]).toBe(destination);
   });
 });
