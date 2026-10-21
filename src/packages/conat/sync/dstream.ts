@@ -96,6 +96,8 @@ function requireDstreamClient(
   return options as DStreamOptions & { client: Client };
 }
 
+const RECEIVED_THROUGH_MAX_STEPS = 10_000;
+
 export class DStream<T = any> extends EventEmitter {
   public readonly name: string;
   private stream: CoreStream;
@@ -391,6 +393,26 @@ export class DStream<T = any> extends EventEmitter {
       return undefined;
     }
     return await this.stream.patchMetadata(delta);
+  };
+
+  // Every message with seq at most this is in this stream's view: received
+  // from the server, or published from here and acknowledged (see
+  // CoreStream.receivedThroughSeq).  Steps past at most
+  // RECEIVED_THROUGH_MAX_STEPS seqs beyond what the stream itself received
+  // in order; a lower answer is always safe.
+  receivedThroughSeq = (): number => {
+    if (this.isClosed()) {
+      return 0;
+    }
+    let through = this.stream.receivedThroughSeq();
+    for (let i = 0; i < RECEIVED_THROUGH_MAX_STEPS; i++) {
+      const next = through + 1;
+      if (this.saved[next] === undefined && !this.stream.isReceivedSeq(next)) {
+        break;
+      }
+      through = next;
+    }
+    return through;
   };
 
   getCheckpoints = (): StreamCheckpoints => {

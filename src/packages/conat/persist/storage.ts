@@ -634,6 +634,10 @@ function archiveTableName(name: unknown): string | undefined {
     : undefined;
 }
 
+// The checkpoint sync documents set at their latest snapshot (see SyncDoc's
+// LATEST_SNAPSHOT_CHECKPOINT): the only checkpoints that are archive cuts.
+const SNAPSHOT_CHECKPOINT = "latest_snapshot";
+
 // results of resets kept by opId, so a repeated request gets the first result
 const MAX_HISTORY_OPS = 100;
 // closed epochs without an archive kept in history_epochs
@@ -2348,13 +2352,13 @@ export class PersistentStream extends EventEmitter {
       .get() as { first: number };
     // the empty document is a cut only if the scan starts at the epoch's start
     const startsEmpty = epoch.starts_empty && Number(first) === tailStart;
-    // the current checkpoints are cuts too (e.g., in streams from before
-    // history_cuts)
+    // the current snapshot checkpoint is a cut too (e.g., in streams from
+    // before history_cuts)
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO history_cuts(seq) SELECT seq FROM stream_checkpoints",
+        "INSERT OR IGNORE INTO history_cuts(seq) SELECT seq FROM stream_checkpoints WHERE name=?",
       )
-      .run();
+      .run(SNAPSHOT_CHECKPOINT);
 
     interface Run {
       first: number;
@@ -3267,9 +3271,11 @@ export class PersistentStream extends EventEmitter {
       `,
       )
       .run(name, seq, time, data === undefined ? null : JSON.stringify(data));
-    // Every checkpoint is a place a load can start from, so the archive
+    // A snapshot checkpoint is a place a load can start from, so the archive
     // segments of a reset start at them.  Only the newest checkpoint per name
-    // is kept above; this keeps all of them.
+    // is kept above; this keeps all of them.  Other checkpoints (e.g., the
+    // saved_file proof) describe no snapshot, so they are never cuts.
+    if (name !== SNAPSHOT_CHECKPOINT) return;
     this.db
       .prepare(
         `INSERT INTO history_cuts(seq, snapshot_seq) VALUES (?, ?)
