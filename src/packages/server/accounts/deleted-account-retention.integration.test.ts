@@ -98,6 +98,23 @@ describePglite("deleted account retention", () => {
        VALUES ($1, FALSE, 'active@example.com', 'Active')`,
       [ACTIVE],
     );
+    await getPool().query(`
+      CREATE TABLE billing_accounts (
+        account_id UUID PRIMARY KEY,
+        deleted BOOLEAN,
+        stripe_customer_id TEXT,
+        stripe_customer JSONB,
+        auto_balance JSONB,
+        stripe_checkout_session JSONB
+      )
+    `);
+    await getPool().query(
+      `INSERT INTO billing_accounts (account_id, deleted, stripe_customer_id,
+         stripe_customer, auto_balance, stripe_checkout_session)
+       VALUES ($1, TRUE, 'cus_old', '{"email":"old@example.com"}', '{"enabled":true}', '{"id":"cs_1"}'),
+              ($2, FALSE, 'cus_live', '{"email":"live@example.com"}', '{"enabled":true}', NULL)`,
+      [OLD, ACTIVE],
+    );
     const { ensureAccountRevocationsTable } = await import("./revocation");
     await ensureAccountRevocationsTable();
     await getPool().query(
@@ -172,6 +189,25 @@ describePglite("deleted account retention", () => {
     // accounts that are not deleted are untouched
     expect(byId[ACTIVE].email_address).toBe("active@example.com");
     expect(byId[ACTIVE].first_name).toBe("Active");
+
+    // the billing authority's copies: cleared for the deleted account only
+    const billing = Object.fromEntries(
+      (
+        await getPool().query(
+          "SELECT account_id, stripe_customer_id, stripe_customer, auto_balance, stripe_checkout_session FROM billing_accounts",
+        )
+      ).rows.map((row) => [row.account_id, row]),
+    );
+    expect(billing[OLD]).toEqual({
+      account_id: OLD,
+      stripe_customer_id: "cus_old",
+      stripe_customer: null,
+      auto_balance: null,
+      stripe_checkout_session: null,
+    });
+    expect(billing[ACTIVE].stripe_customer).toEqual({
+      email: "live@example.com",
+    });
 
     // a second pass has nothing left to do
     expect(await purgeDeletedAccountPersonalData()).toEqual({

@@ -1125,10 +1125,13 @@ async function assertLocalAccountDeleteAllowed({
   only_if_tag,
 }: AccountDirectoryDeleteRequest): Promise<void> {
   if (!only_if_tag) return;
-  const { rows } = await getPool().query<{ tags: string[] | null }>(
-    "SELECT tags FROM accounts WHERE account_id=$1",
-    [account_id],
-  );
+  const { rows } = await getPool().query<{
+    tags: string[] | null;
+    deleted: boolean | null;
+  }>("SELECT tags, deleted FROM accounts WHERE account_id=$1", [account_id]);
+  // Deletion clears tags, so a retry that finishes an already deleted account
+  // is allowed; the tag guard protects live accounts.
+  if (rows[0]?.deleted) return;
   const tags = rows[0]?.tags ?? [];
   if (!tags.includes(only_if_tag)) {
     throw new Error(

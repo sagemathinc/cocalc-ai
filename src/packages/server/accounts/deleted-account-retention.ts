@@ -69,6 +69,21 @@ export async function purgeDeletedAccountPersonalData({
          LIMIT $2)`,
     [retentionDays, batchSize],
   );
+  // The billing authority's copy of the transient billing controls and cached
+  // Stripe customer of deleted accounts. Deletion clears it now
+  // (account-stripe-cleanup); this backfills accounts deleted before that.
+  // Only the authoritative (seed) database has such billing rows.
+  await pool.query(
+    `UPDATE billing_accounts
+        SET stripe_customer=NULL, auto_balance=NULL, stripe_checkout_session=NULL
+      WHERE account_id IN (
+        SELECT account_id FROM billing_accounts
+         WHERE deleted IS TRUE
+           AND (stripe_customer IS NOT NULL OR auto_balance IS NOT NULL
+                OR stripe_checkout_session IS NOT NULL)
+         LIMIT $1)`,
+    [batchSize],
+  );
   return { cleared: cleared ?? 0, emailsPurged: emailsPurged ?? 0 };
 }
 
