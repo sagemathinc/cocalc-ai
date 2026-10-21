@@ -261,6 +261,10 @@ const MIN_DECOMPRESS_LIMIT_BYTES = 64 * 1024;
 const EFFECTIVE_SIZE_SQL =
   "MAX(IFNULL(CAST(size AS INTEGER), 0), length(raw) + IFNULL(length(headers), 0) + IFNULL(length(key), 0))";
 
+// sqlite3_set_authorizer return codes
+const SQLITE_OK = 0;
+const SQLITE_DENY = 1;
+
 // How long an operation waits for a lock held by another connection to the
 // same file.  The API is synchronous, so the whole server waits: keep it short.
 export const DEFAULT_PERSIST_SQLITE_BUSY_TIMEOUT_MS = 500;
@@ -856,6 +860,23 @@ export class PersistentStream extends EventEmitter {
     }
     // Functions with side effects can't run from the file's schema.
     this.db.exec("PRAGMA trusted_schema=OFF");
+    // The project can change the file while it is open, e.g., add a trigger
+    // after assertExpectedSchema checked it.  This server never uses triggers
+    // or views, so refuse anything done from inside one.  SQLite checks this
+    // whenever a statement is prepared, and re-prepares statements after any
+    // schema change.
+    const db = this.db as any;
+    if (typeof db.setAuthorizer === "function") {
+      db.setAuthorizer(
+        (
+          _action: number,
+          _arg1: string | null,
+          _arg2: string | null,
+          _dbName: string | null,
+          triggerOrView: string | null,
+        ) => (triggerOrView == null ? SQLITE_OK : SQLITE_DENY),
+      );
+    }
   };
 
   private assertExpectedSchema = () => {

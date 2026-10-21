@@ -165,6 +165,23 @@ describe("the connection to a stored database", () => {
     stream.close();
   });
 
+  it("runs nothing from a trigger the project adds while it is open", () => {
+    const path = serverFile();
+    const stream = open(path);
+    // the project changes the file after the schema was checked
+    tamper(
+      path,
+      "CREATE TABLE log(n); CREATE TRIGGER t AFTER INSERT ON messages BEGIN INSERT INTO log VALUES (1); END",
+    );
+    expect(() =>
+      stream.set({ encoding: 1 as any, raw: Buffer.from('{"c":3}') }),
+    ).toThrow(/not authorized/);
+    stream.close();
+    const db = new DatabaseSync(path + ".db");
+    expect(db.prepare("SELECT count(*) AS n FROM log").get()).toEqual({ n: 0 });
+    db.close();
+  });
+
   it("waits only briefly for locks", () => {
     expect(persistSqliteBusyTimeoutMs({})).toBe(500);
     expect(
