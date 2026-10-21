@@ -32,6 +32,7 @@ import {
   persistSqliteLockingMode,
   storedRowToMessage,
   unexpectedPersistSchema,
+  HISTORY_SCHEMA,
 } from "./storage";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
@@ -141,6 +142,28 @@ describe("the schema of a stored database", () => {
       .map(({ name }: any) => name);
     expect(tables).toContain(archive);
     stream.close();
+  });
+
+  it("opens files with the history tables, which a newer server creates", () => {
+    const path = serverFile();
+    // with the autoindexes of their primary keys, as SQLite makes them
+    tamper(path, Object.values(HISTORY_SCHEMA).join(";\n"));
+    const stream = open(path);
+    expect(
+      Buffer.from(stream.get({ seq: 1, key: undefined })!.raw).toString(),
+    ).toBe(
+      '{"a":1}',
+    );
+    stream.close();
+  });
+
+  it("refuses a changed history table", () => {
+    const path = serverFile();
+    tamper(
+      path,
+      "CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL, x BLOB)",
+    );
+    expect(() => open(path)).toThrow(/changed outside CoCalc/);
   });
 
   it("can be turned off in an emergency", () => {
