@@ -541,11 +541,12 @@ describe("createPaymentIntent", () => {
       expect(stripe.invoices.pay).not.toHaveBeenCalled();
       const [sql, params] = mockPoolQuery.mock.calls[0];
       expect(sql).toContain("INSERT INTO business_tax_id_refusals");
-      expect(params.slice(1, 5)).toEqual([
+      expect(params.slice(1, 6)).toEqual([
         "acct-1",
         "DE",
         "auto-balance",
         "missing",
+        "72",
       ]);
     });
 
@@ -593,10 +594,9 @@ describe("createPaymentIntent", () => {
         }),
       ).rejects.toThrow("could not calculate tax");
       expect(stripe.invoices.create).toHaveBeenCalled();
-      expect(stripe.invoices.update).not.toHaveBeenCalledWith(
-        "in_123",
-        { automatic_tax: { enabled: false } },
-      );
+      expect(stripe.invoices.update).not.toHaveBeenCalledWith("in_123", {
+        automatic_tax: { enabled: false },
+      });
       expect(stripe.invoices.pay).not.toHaveBeenCalled();
     });
 

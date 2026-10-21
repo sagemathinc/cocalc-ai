@@ -87,7 +87,10 @@ describe("businessTaxIdStatus", () => {
   it("prefers a verified ID when there are several", () => {
     expect(
       businessTaxIdStatus(
-        customer("DE", [vat("eu_vat", "unverified"), vat("eu_vat", "verified")]),
+        customer("DE", [
+          vat("eu_vat", "unverified"),
+          vat("eu_vat", "verified"),
+        ]),
       ),
     ).toMatchObject({ ok: true, verification: "verified" });
   });

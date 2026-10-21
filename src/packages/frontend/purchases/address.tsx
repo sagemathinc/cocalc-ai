@@ -141,7 +141,9 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
   const [country, setCountry] = useState<string>(
     `${customer?.address?.country ?? ""}`,
   );
-  const [vatId, setVatId] = useState<string>(`${customer?.vat_id?.value ?? ""}`);
+  const [vatId, setVatId] = useState<string>(
+    `${customer?.vat_id?.value ?? ""}`,
+  );
   const vatRequired = requiresBusinessTaxId(country);
 
   const handleSubmit = async (e) => {
@@ -212,7 +214,8 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
           <div style={{ marginBottom: "5px" }}>
             <b>VAT number</b>{" "}
             {customer?.vat_id?.value &&
-              customer.vat_id.value === vatId.replace(/\s+/g, "").toUpperCase() &&
+              customer.vat_id.value ===
+                vatId.replace(/\s+/g, "").toUpperCase() &&
               customer.vat_id.status && (
                 <Tag
                   color={

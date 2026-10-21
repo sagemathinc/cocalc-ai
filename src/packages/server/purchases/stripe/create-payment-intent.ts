@@ -115,7 +115,8 @@ export default async function createPaymentIntent({
     customer,
     account_id,
     path: purpose,
-    amount: total_excluding_tax_usd,
+    // total_excluding_tax_usd is in cents (Stripe units).
+    amount: total_excluding_tax_usd / 100,
   });
 
   logger.debug("createPaymentIntent -- create invoice:", { customer });

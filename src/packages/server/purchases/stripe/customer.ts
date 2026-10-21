@@ -59,7 +59,9 @@ async function setCustomerVatId({
   ).data.filter((id) => VAT_ID_TYPES.has(id.type));
   if (
     value &&
-    existing.some((id) => id.type === type && normalizeVatId(id.value) === value)
+    existing.some(
+      (id) => id.type === type && normalizeVatId(id.value) === value,
+    )
   ) {
     // Unchanged: keep it, with its verification. Remove any others.
     for (const id of existing) {
