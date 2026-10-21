@@ -207,6 +207,9 @@ function RuntimeCodexAttentionCard({
   });
   const agentMentionContext = {
     ...agentMentions.context,
+    // An answer's @agents are checked; artifacts and computers would reach
+    // the agent unresolved, so they are not offered here.
+    agentsOnly: true,
     source: {
       projectId: record.project_id,
       path: record.path,
