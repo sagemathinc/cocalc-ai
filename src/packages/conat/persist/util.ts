@@ -216,7 +216,14 @@ export async function getStream({
   }
   if (ephemeral || maintenance == null) {
     return withRecordCap(
-      pstream({ ...storage, path, archive, backup, archiveInterval }),
+      pstream({
+        ...storage,
+        path,
+        archive,
+        backup,
+        archiveInterval,
+        recordCap,
+      }),
       recordCap,
     );
   }
@@ -244,6 +251,8 @@ export async function getStream({
       archive,
       backup,
       archiveInterval,
+      // Before it opens: its limits are enforced as it does.
+      recordCap,
     });
     if (handle != null) {
       // This is needed on cache hits: the handle in constructor options came

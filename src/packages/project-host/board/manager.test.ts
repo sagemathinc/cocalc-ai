@@ -47,6 +47,7 @@ import {
   boardHandlers,
   canonicalBoardPath,
   closeBoards,
+  rememberRefusal,
   fileOf,
   openBoard,
   openBoardCount,
@@ -1561,6 +1562,144 @@ describe("a refused writer keeps its unsaved edits, and says where", () => {
       expect(await t.read()).toBe(text);
     } finally {
       testSetup.setBoardWriteFence(old);
+      await t.cleanup();
+    }
+  }, 60_000);
+
+  // astra CORR9562: no failure on the way loses them.
+  async function refusedWith(
+    wrap: (file: BoardFile) => BoardFile,
+    edit = "a fragile edit",
+  ) {
+    const t = await setup(canonical(BOARD), {
+      manager: { saveDelayMs: 600_000 },
+      wrap,
+    });
+    const old = testSetup.boardWriteFence;
+    try {
+      await until(() => itemText(t.syncdb, "a") === "hello world");
+      testSetup.setBoardWriteFence(STALE);
+      setText(t.syncdb, "a", edit);
+      await until(() => t.manager.isRetired(), 20_000);
+      return { t, status: t.manager.getStatus() as any };
+    } finally {
+      testSetup.setBoardWriteFence(old);
+    }
+  }
+  const failing = (code: string) =>
+    Object.assign(Error(`${code}: simulated`), { code });
+
+  test.each([
+    ["reading the file throws (EIO)", "read"],
+    ["the compare-and-swap throws (EIO)", "replace"],
+  ])(
+    "%s: kept in a copy",
+    async (_name, which) => {
+      let copies = 0;
+      let armed = false;
+      const { t, status } = await refusedWith((file) => ({
+        ...file,
+        read: async (max: number) => {
+          if (armed && which === "read") throw failing("EIO");
+          return await file.read(max);
+        },
+        replace: async (next: string, expected: string) => {
+          if (armed && which === "replace") throw failing("EIO");
+          return await file.replace(next, expected);
+        },
+        keepCopy: async (text: string, kind: string) => {
+          copies += 1;
+          return await file.keepCopy!(text, kind);
+        },
+        watch: (f: () => void) => {
+          armed = true;
+          return file.watch(f);
+        },
+      }));
+      try {
+        expect(status).toMatchObject({
+          state: "refused",
+          unsaved: { in: "copy" },
+        });
+        expect(copies).toBe(1);
+        expect(`${await t.fs.readFile(status.unsaved.path, "utf8")}`).toContain(
+          "a fragile edit",
+        );
+      } finally {
+        await t.cleanup();
+      }
+    },
+    60_000,
+  );
+
+  test("a copy name already taken: tried again with a new one", async () => {
+    let copies = 0;
+    const { t, status } = await refusedWith((file) => ({
+      ...file,
+      replace: async () => "conflict" as const,
+      keepCopy: async (text: string, kind: string) => {
+        copies += 1;
+        if (copies === 1) throw failing("EEXIST");
+        return await file.keepCopy!(text, kind);
+      },
+    }));
+    try {
+      expect(copies).toBe(2);
+      expect(status).toMatchObject({ unsaved: { in: "copy" } });
+      expect(`${await t.fs.readFile(status.unsaved.path, "utf8")}`).toContain(
+        "a fragile edit",
+      );
+    } finally {
+      await t.cleanup();
+    }
+  }, 60_000);
+
+  test("every place on disk fails (ENOSPC): held in memory, then saved on the next open", async () => {
+    let armed = false;
+    const { t, status } = await refusedWith((file) => ({
+      ...file,
+      read: async (max: number) => {
+        if (armed) throw failing("ENOSPC");
+        return await file.read(max);
+      },
+      keepCopy: async () => {
+        throw failing("ENOSPC");
+      },
+      watch: (f: () => void) => {
+        armed = true;
+        return file.watch(f);
+      },
+    }));
+    const opts = {
+      client: connect(),
+      project_id: t.project_id,
+      fs: t.local,
+      service: fileserver.service,
+    };
+    try {
+      expect(status).toMatchObject({
+        state: "refused",
+        unsaved: { in: "memory", error: expect.stringContaining("ENOSPC") },
+      });
+      expect(t.manager.keptUnsaved()).toContain("a fragile edit");
+      // The service holds it, and saves it as a copy when the board is
+      // next opened (the disk works again).
+      const first = await openBoard({ ...opts, path: t.path });
+      rememberRefusal(
+        `${t.project_id}:${first.path}`,
+        status,
+        t.manager.keptUnsaved(),
+      );
+      const next = await openBoard({ ...opts, path: t.path });
+      expect(next.lastRefusal).toMatchObject({ unsaved: { in: "copy" } });
+      expect(next.lastRefusal?.text).toBeUndefined();
+      const copy = (next.lastRefusal!.unsaved as any).path;
+      expect(`${await t.fs.readFile(copy, "utf8")}`).toContain(
+        "a fragile edit",
+      );
+    } finally {
+      await closeBoards(t.project_id);
+      opts.client.close();
       await t.cleanup();
     }
   }, 60_000);
