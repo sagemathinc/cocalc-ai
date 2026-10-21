@@ -211,6 +211,19 @@ export class AStream<T = any> {
     return await this.stream.resetHistory(opts);
   };
 
+  // the stream's newest seq, message count and limits
+  inventory = async () => {
+    return await this.stream.inventory();
+  };
+
+  getCheckpoints = async () => {
+    return await this.stream.getCheckpoints();
+  };
+
+  getMetadata = async () => {
+    return await this.stream.getMetadata();
+  };
+
   config = async (
     config: Partial<Configuration> = {},
   ): Promise<Configuration> => {
