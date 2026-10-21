@@ -678,6 +678,9 @@ function summarizeOpenStreams(now: number) {
 }
 
 // persistence for stream of messages with subject
+// Rows a capped getAll reads metadata for at a time.
+const GET_ALL_CHUNK = 1000;
+
 export class PersistentStream extends EventEmitter {
   // Identifies this in-memory copy of an ephemeral stream.  Its contents and
   // seq numbers do not survive a persist server restart, so a client that
@@ -704,8 +707,13 @@ export class PersistentStream extends EventEmitter {
   // undefined (see assertWithinRecordCap).
   private recordCap: number | undefined;
 
+  // A board's history: never trimmed by retention settings (enforceLimits).
+  // Board streams are exactly the streams with a record cap.
+  private noEviction = false;
+
   setRecordCap = (cap: number | undefined): void => {
     this.recordCap = cap;
+    this.noEviction = cap != null;
   };
 
   getRecordCap = (): number | undefined => this.recordCap;
@@ -1301,6 +1309,13 @@ export class PersistentStream extends EventEmitter {
   ): Array<{ seq: number; time: number } | { error: string; code?: any }> => {
     const changes: ChangefeedOperation[] = [];
     const msgIds: Array<{ msgID: string; time: number; seq: number }> = [];
+    // strictMsgID within the batch too: a msgID this batch already stored
+    // is the same message only byte for byte (nothing more is stored),
+    // else refused (msgIDs itself is updated only after the transaction).
+    const stored = new Map<
+      string,
+      { seq: number; time: number; encoding: DataEncoding; raw: Buffer }
+    >();
     let results: Array<
       { seq: number; time: number } | { error: string; code?: any }
     >;
@@ -1308,11 +1323,36 @@ export class PersistentStream extends EventEmitter {
       results = this.runTransaction(() =>
         operations.map((operation) => {
           try {
+            const earlier =
+              strictMsgID && operation.msgID != null
+                ? stored.get(operation.msgID)
+                : undefined;
+            if (earlier != null) {
+              if (
+                earlier.encoding !== operation.encoding ||
+                Buffer.compare(earlier.raw, operation.raw) !== 0
+              ) {
+                throw new ConatError(
+                  `a different message with msgID ${operation.msgID}, which is already stored`,
+                  { code: "msgid-conflict" },
+                );
+              }
+              return { time: earlier.time, seq: earlier.seq };
+            }
+            const isNew =
+              operation.msgID != null && !this.msgIDs?.has(operation.msgID);
             const result = this.setInternal({
               ...operation,
               changes,
               strictMsgID,
             });
+            if (strictMsgID && isNew) {
+              stored.set(operation.msgID!, {
+                ...result,
+                encoding: operation.encoding,
+                raw: operation.raw,
+              });
+            }
             if (operation.msgID !== undefined) {
               msgIds.push({
                 msgID: operation.msgID,
@@ -1569,44 +1609,76 @@ export class PersistentStream extends EventEmitter {
       where.push("seq<=?");
       v.push(end_seq);
     }
-    // With a record cap, rows over it are refused before their data is read;
-    // and the data is read only while still within the cap, so a row that
-    // grew since (and so is skipped by the guard) is refused once the
-    // iteration is done, its data never read.
-    const expected: number[] = [];
     if (this.recordCap != null) {
-      for (const row of this.db
-        .prepare(
-          `SELECT ${META_COLUMNS} FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`,
-        )
-        .iterate(...v) as Iterable<any>) {
-        assertWithinRecordCap(row, this.recordCap);
-        expected.push(Number(row.seq));
-      }
+      yield* this.getAllCapped(where, v);
+      return;
     }
-    const guard = capGuard(this.recordCap);
-    const conditions = [
-      ...where,
-      ...(guard.sql ? [guard.sql.replace(/^ AND /, "")] : []),
-    ];
-    query = `SELECT seq, key, time, compress, encoding, raw, headers FROM messages ${conditions.length == 0 ? "" : " where " + conditions.join(" AND ")} ORDER BY seq`;
+    query = `SELECT seq, key, time, compress, encoding, raw, headers FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`;
     stmt = this.db.prepare(query);
-    const skipped: number[] = [];
-    let k = 0;
-    for (const row of stmt.iterate(...v, ...guard.params) as Iterable<any>) {
-      while (k < expected.length && expected[k] < Number(row.seq)) {
-        skipped.push(expected[k++]);
-      }
-      if (k < expected.length && expected[k] === Number(row.seq)) k++;
+    for (const row of stmt.iterate(...v) as Iterable<any>) {
       yield dbToMessage(row, this.recordCap)!;
     }
-    skipped.push(...expected.slice(k));
-    for (const seq of skipped) {
-      // Gone (deleted meanwhile) is fine; grown over the cap is refused.
-      const meta = this.db
-        .prepare(`SELECT ${META_COLUMNS} FROM messages WHERE seq=?`)
-        .get(seq) as any;
-      if (meta != null) assertWithinRecordCap(meta, this.recordCap);
+  }
+
+  /*
+  getAll with a record cap: rows over it are refused before their data is
+  read, and the data is read only while still within the cap, so a row that
+  grew since (and so is skipped by the guard) is refused once its chunk is
+  done, its data never read. A chunk of GET_ALL_CHUNK rows at a time: the
+  metadata of one chunk, then its data, then the next; so a reader that
+  stops early (the board append check, at its record limit) reads only the
+  chunks it reached, never the whole table's metadata first.
+  */
+  private *getAllCapped(
+    where: string[],
+    v: number[],
+  ): IterableIterator<StoredMessage> {
+    const recordCap = this.recordCap!;
+    const guard = capGuard(recordCap);
+    let after: number | undefined;
+    for (;;) {
+      const metaWhere = [...where, ...(after == null ? [] : ["seq>?"])];
+      const metaParams = [...v, ...(after == null ? [] : [after])];
+      const metas = this.db
+        .prepare(
+          `SELECT ${META_COLUMNS} FROM messages ${metaWhere.length == 0 ? "" : " where " + metaWhere.join(" AND ")} ORDER BY seq LIMIT ${GET_ALL_CHUNK}`,
+        )
+        .all(...metaParams) as any[];
+      if (metas.length === 0) return;
+      for (const meta of metas) assertWithinRecordCap(meta, recordCap);
+      const expected = metas.map((m) => Number(m.seq));
+      const first = expected[0];
+      const last = expected[expected.length - 1];
+      const conditions = [
+        ...where,
+        "seq>=?",
+        "seq<=?",
+        ...(guard.sql ? [guard.sql.replace(/^ AND /, "")] : []),
+      ];
+      const rows = this.db
+        .prepare(
+          `SELECT seq, key, time, compress, encoding, raw, headers FROM messages where ${conditions.join(" AND ")} ORDER BY seq`,
+        )
+        .iterate(...v, first, last, ...guard.params) as Iterable<any>;
+      const skipped: number[] = [];
+      let k = 0;
+      for (const row of rows) {
+        while (k < expected.length && expected[k] < Number(row.seq)) {
+          skipped.push(expected[k++]);
+        }
+        if (k < expected.length && expected[k] === Number(row.seq)) k++;
+        yield dbToMessage(row, recordCap)!;
+      }
+      skipped.push(...expected.slice(k));
+      for (const seq of skipped) {
+        // Gone (deleted meanwhile) is fine; grown over the cap is refused.
+        const meta = this.db
+          .prepare(`SELECT ${META_COLUMNS} FROM messages WHERE seq=?`)
+          .get(seq) as any;
+        if (meta != null) assertWithinRecordCap(meta, recordCap);
+      }
+      if (metas.length < GET_ALL_CHUNK) return;
+      after = last;
     }
   }
 
@@ -2097,6 +2169,12 @@ export class PersistentStream extends EventEmitter {
     size: number = 0,
     deferredChanges?: ChangefeedOperation[],
   ) => {
+    // A board's history (noEviction) is never trimmed: a limit that would
+    // evict refuses the write instead, and ages and TTLs delete nothing. Its
+    // refusals are "branch" (a refusal the board writer keeps its edits
+    // for), never "reject" (which a dstream drops).
+    const evict = this.conf.discard_policy !== "new" && !this.noEviction;
+    const refused = this.noEviction ? "branch" : "reject";
     if (
       size > 0 &&
       (this.conf.max_msgs_per_second > 0 || this.conf.max_bytes_per_second > 0)
@@ -2111,7 +2189,7 @@ export class PersistentStream extends EventEmitter {
         msgs > this.conf.max_msgs_per_second
       ) {
         throw new ConatError("max_msgs_per_second exceeded", {
-          code: "reject",
+          code: refused,
         });
       }
       if (
@@ -2119,7 +2197,7 @@ export class PersistentStream extends EventEmitter {
         bytes > this.conf.max_bytes_per_second
       ) {
         throw new ConatError("max_bytes_per_second exceeded", {
-          code: "reject",
+          code: refused,
         });
       }
     }
@@ -2127,9 +2205,9 @@ export class PersistentStream extends EventEmitter {
     if (this.conf.max_msgs > -1) {
       const length = this.length + (size > 0 ? 1 : 0);
       if (length > this.conf.max_msgs) {
-        if (this.conf.discard_policy == "new") {
+        if (!evict) {
           if (size > 0) {
-            throw new ConatError("max_msgs limit reached", { code: "reject" });
+            throw new ConatError("max_msgs limit reached", { code: refused });
           }
         } else {
           // delete earliest messages to make room
@@ -2143,7 +2221,7 @@ export class PersistentStream extends EventEmitter {
       }
     }
 
-    if (this.conf.max_age > 0) {
+    if (this.conf.max_age > 0 && !this.noEviction) {
       const rows = this.db
         .prepare(
           `DELETE FROM messages WHERE seq IN (SELECT seq FROM messages WHERE time <= ?) RETURNING seq`,
@@ -2154,9 +2232,9 @@ export class PersistentStream extends EventEmitter {
 
     if (this.conf.max_bytes > -1) {
       if (size > this.conf.max_bytes) {
-        if (this.conf.discard_policy == "new") {
+        if (!evict) {
           if (size > 0) {
-            throw new ConatError("max_bytes limit reached", { code: "reject" });
+            throw new ConatError("max_bytes limit reached", { code: refused });
           }
         } else {
           // new message exceeds total, so this is the same as adding in the new message,
@@ -2188,10 +2266,10 @@ export class PersistentStream extends EventEmitter {
           }
 
           if (lastSeqToDelete !== null) {
-            if (this.conf.discard_policy == "new") {
+            if (!evict) {
               if (size > 0) {
                 throw new ConatError("max_bytes limit reached", {
-                  code: "reject",
+                  code: refused,
                 });
               }
             } else {
@@ -2205,7 +2283,7 @@ export class PersistentStream extends EventEmitter {
       }
     }
 
-    if (this.conf.allow_msg_ttl) {
+    if (this.conf.allow_msg_ttl && !this.noEviction) {
       const rows = this.db
         .prepare(
           `DELETE FROM messages WHERE ttl IS NOT null AND time + ttl/1000 < ? RETURNING seq`,
@@ -2217,7 +2295,7 @@ export class PersistentStream extends EventEmitter {
     if (this.conf.max_msg_size > -1 && size > this.conf.max_msg_size) {
       throw new ConatError(
         `max_msg_size of ${this.conf.max_msg_size} bytes exceeded`,
-        { code: "reject" },
+        { code: refused },
       );
     }
   };
