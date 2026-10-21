@@ -9524,7 +9524,12 @@ export async function withdrawAgentMessageTurn(
     };
   // Not withdrawn after all: the report goes out as it would have.
   const keepHeld = () => {
-    if (held) restoreAgentRpcReport(held);
+    if (!held) return;
+    // Only while its held turn still waits: one that started or ended
+    // meanwhile reports for itself.
+    const chain = jobs.map((row) => row.op_id);
+    const next = continuationOf(jobs[jobs.length - 1] ?? job);
+    restoreAgentRpcReport(held, next ? [...chain, next.op_id] : chain);
   };
   // A stopped turn waiting to be resumed: clearing its intent (only if
   // still set) means the worker or recovery poll never queues it again.

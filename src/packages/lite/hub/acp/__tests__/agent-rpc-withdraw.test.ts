@@ -14,6 +14,8 @@ import {
   claimAgentRpcReport,
   enqueueAgentRpcReport,
   listDueAgentRpcReports,
+  restoreAgentRpcReport,
+  takeAgentRpcReportByOpId,
 } from "../../sqlite/agent-rpc-reports";
 import { drainAgentRpcReports } from "../agent-rpc-report";
 import { parseTurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
@@ -452,9 +454,10 @@ describe("a held report and a withdrawal at the same time", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("a withdrawal that is rejected puts the report back", async () => {
+  it("a rejected withdrawal puts the report back only while its turn still waits", async () => {
     const { attempt, held } = heldChain();
-    // Its turn started just as the withdrawal looked.
+    // Its turn started just as the withdrawal looked: it reports for
+    // itself, so the old "held until" report stays gone.
     const turn = require("../agent-rpc-turn");
     const real = turn.agentRpcWithdrawable;
     const spy = jest
@@ -469,6 +472,20 @@ describe("a held report and a withdrawal at the same time", () => {
     } finally {
       spy.mockRestore();
     }
+    expect(listDueAgentRpcReports(Date.now() + 1)).toHaveLength(0);
+  });
+
+  it("a taken report goes back only while the held turn is queued", () => {
+    const { held } = heldChain();
+    const first = getAcpJobByOpId(held.op_id)!.recovery_parent_op_id!;
+    const taken = takeAgentRpcReportByOpId(`${first}:held`);
+    expect(taken).toMatchObject({ op_id: `${first}:held` });
+    set(held.op_id, { state: "completed", finished_at: Date.now() });
+    expect(restoreAgentRpcReport(taken as any, [first, held.op_id])).toBe(
+      false,
+    );
+    set(held.op_id, { state: "queued", finished_at: null });
+    expect(restoreAgentRpcReport(taken as any, [first, held.op_id])).toBe(true);
     expect(listDueAgentRpcReports(Date.now() + 1)).toHaveLength(1);
   });
 });

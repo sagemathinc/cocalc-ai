@@ -156,14 +156,28 @@ export function takeAgentRpcReportByOpId(
   return { ...rest, report: JSON.parse(report_json) };
 }
 
-/** Put back a report taken with takeAgentRpcReportByOpId. */
-export function restoreAgentRpcReport(row: AgentRpcReportRow): void {
+/**
+ * Put back a report taken with takeAgentRpcReportByOpId, but only while one
+ * of `whileQueued` (the held turn) is still queued, checked in the same
+ * statement: once that turn started or ended, its own report supersedes
+ * this one, which would only arrive out of date.
+ */
+export function restoreAgentRpcReport(
+  row: AgentRpcReportRow,
+  whileQueued: string[],
+): boolean {
   ensureInit();
-  getAcpDatabase()
+  if (whileQueued.length === 0) return false;
+  const result = getAcpDatabase()
     .prepare(
       `INSERT OR IGNORE INTO ${TABLE}
          (report_id, op_id, account_id, report_json, attempts, next_attempt_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       SELECT ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM acp_jobs
+         WHERE state = 'queued'
+           AND op_id IN (${whileQueued.map(() => "?").join(", ")})
+       )`,
     )
     .run(
       row.report_id,
@@ -173,7 +187,9 @@ export function restoreAgentRpcReport(row: AgentRpcReportRow): void {
       row.attempts,
       row.next_attempt_at,
       row.created_at,
+      ...whileQueued,
     );
+  return Number(result?.changes ?? 0) === 1;
 }
 
 /** Done: delivered, refused, or the sender already had a reply. */
