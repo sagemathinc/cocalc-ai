@@ -32,11 +32,12 @@ import {
   persistVolumeQuota,
   prepareProjectPersistVolume,
   replaceProjectHome,
-  restoreHistoryFromBackup,
+  restoreBackupWithHistory,
   restoredHistoryCandidates,
   syncPersistVolumeQuota,
   type PersistVolumeOps,
 } from "./persist-volume";
+import type { CapturedSnapshotData } from "@cocalc/file-server/btrfs/snapshot-preparer";
 
 // whether a persist fence is held (persist-fence.ts), as the code under test
 // sees it
@@ -390,6 +391,26 @@ describe("prepareProjectPersistVolume", () => {
     await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
     expect(existsSync(join(root, READY_MARKER))).toBe(true);
     expect(existsSync(join(home, LEGACY, "a.db"))).toBe(true);
+  });
+
+  it("deletes the old directory only after the volume is on disk", async () => {
+    if (process.getuid?.() === 0) return; // root can open anything
+    const ops = fakeOps();
+    const setQuota = ops.setQuota;
+    ops.setQuota = async (path, bytes) => {
+      await setQuota(path, bytes);
+      // the final limit, after the import: a database that can't be synced
+      if (existsSync(join(path, "a.db"))) {
+        await chmod(join(path, "a.db"), 0o000);
+      }
+    };
+    await expect(
+      prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env),
+    ).rejects.toThrow();
+    await chmod(join(root, "a.db"), 0o644);
+    expect(await isPersistVolumeReady(root)).toBe(false);
+    // the old directory is still the history
+    expect(read(join(home, LEGACY, "a.db"))).toBe("a");
   });
 
   it("marks nothing ready when part of the history can't be read", async () => {
@@ -788,7 +809,7 @@ describe("in the project-host", () => {
     }
   });
 
-  // a backup, as restoreHistoryFromBackup sees it
+  // a backup, as restoreBackupWithHistory sees it
   function backupWith(tree: Record<string, string>) {
     const listDirectory = async (dir: string) => {
       const names = new Map<string, boolean>();
@@ -810,7 +831,13 @@ describe("in the project-host", () => {
         await writeFile(target, content);
       }
     };
-    return { listDirectory, restoreInto, restored };
+    // the restore of the files themselves, and whether the history was
+    // fenced while it ran
+    const files: { fenced: boolean }[] = [];
+    const restoreFiles = async () => {
+      files.push({ fenced });
+    };
+    return { listDirectory, restoreInto, restored, restoreFiles, files };
   }
 
   it("restores only the history a restore of the backup covers", async () => {
@@ -822,7 +849,7 @@ describe("in the project-host", () => {
       ".local/bin/tool": "tool",
     });
     expect(
-      await restoreHistoryFromBackup({
+      await restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: restoredHistoryCandidates({
           path: ".local",
@@ -838,7 +865,7 @@ describe("in the project-host", () => {
     expect(read(join(root, "a.db"))).toBe("live");
     // the whole backup: its history
     expect(
-      await restoreHistoryFromBackup({
+      await restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
         ...backup,
@@ -858,7 +885,7 @@ describe("in the project-host", () => {
       [`${LEGACY}/a.db`]: "backup",
     });
     expect(
-      await restoreHistoryFromBackup({
+      await restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: [HISTORY_IN_SNAPSHOTS, LEGACY],
         ...backup,
@@ -881,7 +908,7 @@ describe("in the project-host", () => {
     });
     // restoring only .local covers just the old path
     expect(
-      await restoreHistoryFromBackup({
+      await restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: restoredHistoryCandidates({
           path: ".local",
@@ -897,7 +924,7 @@ describe("in the project-host", () => {
     expect(read(join(root, "a.db"))).toBe("live");
     // the whole backup: CoCalc's history, never the old path
     expect(
-      await restoreHistoryFromBackup({
+      await restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
         ...backup,
@@ -923,7 +950,7 @@ describe("in the project-host", () => {
     await mkdir(join(home, LEGACY), { recursive: true });
     await writeFile(join(home, LEGACY, "note.txt"), "mine");
     expect(
-      await restoreHistoryFromBackup({
+      await restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
         ...backup,
@@ -942,7 +969,7 @@ describe("in the project-host", () => {
     await mkdir(join(home, LEGACY), { recursive: true });
     await writeFile(join(home, LEGACY, "a.db"), "old backup");
     expect(
-      await restoreHistoryFromBackup({
+      await restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
         ...backup,
@@ -953,6 +980,65 @@ describe("in the project-host", () => {
     expect(backup.restored).toEqual([LEGACY]);
     expect(read(join(root, "a.db"))).toBe("old backup");
     expect(existsSync(join(home, LEGACY))).toBe(false);
+  });
+
+  it("restores the files and merges the history as one step", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    const order: string[] = [];
+    const restoreInto = backup.restoreInto;
+    let capturing: Promise<CapturedSnapshotData | undefined> | undefined;
+    let captured = false;
+    await restoreBackupWithHistory({
+      project_id: PROJECT,
+      candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+      listDirectory: backup.listDirectory,
+      restoreInto: async (path, dest) => {
+        order.push(`stage history (fenced: ${fenced})`);
+        await restoreInto(path, dest);
+      },
+      restoreFiles: async () => {
+        order.push(`restore files (fenced: ${fenced})`);
+        // a snapshot's capture waits until the history is merged too
+        capturing = capturePersistVolume({
+          subvolume: `project-${PROJECT}`,
+          stagingPath: join(mount, ".persist-import", "capture"),
+          env,
+        });
+        void capturing.then(() => (captured = true));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(captured).toBe(false);
+      },
+      env,
+      ops: fakeOps(),
+    });
+    expect(order).toEqual([
+      "stage history (fenced: false)",
+      "restore files (fenced: true)",
+    ]);
+    expect(read(join(root, "a.db"))).toBe("backup");
+    const capture = await capturing!;
+    expect(captured).toBe(true);
+    await capture?.release();
+  });
+
+  it("a backup without history where it is restored just restores the files", async () => {
+    await readyVolume();
+    const backup = backupWith({ "work/notes.txt": "notes" });
+    expect(
+      await restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        ...backup,
+        env,
+        ops: fakeOps(),
+      }),
+    ).toBe(false);
+    expect(backup.files).toEqual([{ fenced: false }]);
+    expect(read(join(root, "a.db"))).toBe("live");
   });
 
   it("restores no partial history from a backup", async () => {
@@ -967,7 +1053,7 @@ describe("in the project-host", () => {
       throw new Error("repository read error");
     };
     await expect(
-      restoreHistoryFromBackup({
+      restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: [HISTORY_IN_SNAPSHOTS, LEGACY],
         ...backup,
@@ -981,13 +1067,14 @@ describe("in the project-host", () => {
     expect(read(join(root, "a.db"))).toBe("live");
     // listing errors too
     await expect(
-      restoreHistoryFromBackup({
+      restoreBackupWithHistory({
         project_id: PROJECT,
         candidates: [HISTORY_IN_SNAPSHOTS],
         listDirectory: async () => {
           throw new Error("timeout");
         },
         restoreInto,
+        restoreFiles: async () => {},
         env,
         ops: fakeOps(),
       }),

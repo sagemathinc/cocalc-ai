@@ -238,7 +238,7 @@ import {
   deleteOrphanedPersistVolumes,
   deletePersistVolume,
   replaceProjectHome,
-  restoreHistoryFromBackup,
+  restoreBackupWithHistory,
   restoredHistoryCandidates,
   snapshotNeedsPersistVolume,
   syncPersistVolumeQuota,
@@ -4444,27 +4444,16 @@ async function restoreBackup({
 
   const progress = createLroRusticReporter(lro, "restore");
   const absoluteDest = relDest ? path.join(root, relDest) : root;
-  // In the old layout (history in the home), a restore that can write the
-  // project's persist files runs while nothing has them open
-  // (persist-fence.ts).
-  const fenced =
-    root === home &&
-    restoreTouchesPersistFiles({ project_id, home, dest: relDest });
-  await (fenced
-    ? withProjectPersistFenced(
-        { project_id, reason: "restore-backup" },
-        async () => await runRestore(),
-      )
-    : runRestore());
   const historyCandidates =
     root === home
       ? restoredHistoryCandidates({ path: restorePath, dest: relDest })
       : [];
   if (historyCandidates.length > 0) {
-    // The backup's edit history goes with its files: restored separately
-    // where only the host can write, then merged into the project's history
-    // while nothing has it open (persist-volume.ts).
-    await restoreHistoryFromBackup({
+    // The backup's edit history goes with its files: restored first where
+    // only the host can write, then the files restored and the history
+    // merged into the project's as one step, while nothing has it open
+    // (persist-volume.ts).
+    await restoreBackupWithHistory({
       project_id,
       candidates: historyCandidates,
       listDirectory: async (path) =>
@@ -4477,7 +4466,21 @@ async function restoreBackup({
           timeout: PROJECT_RUSTIC_TIMEOUT_MS,
         });
       },
+      restoreFiles: runRestore,
     });
+  } else {
+    // In the old layout (history in the home), a restore that can write the
+    // project's persist files runs while nothing has them open
+    // (persist-fence.ts).
+    const fenced =
+      root === home &&
+      restoreTouchesPersistFiles({ project_id, home, dest: relDest });
+    await (fenced
+      ? withProjectPersistFenced(
+          { project_id, reason: "restore-backup" },
+          async () => await runRestore(),
+        )
+      : runRestore());
   }
   invalidateProjectFsServer(project_id);
   void touchProjectLastEdited(project_id, "restore-backup");

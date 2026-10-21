@@ -38,6 +38,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
   opendir,
   readdir,
   rename,
@@ -435,17 +436,51 @@ async function prepare({
   }
 }
 
-// Marks a volume ready (atomically): its databases are the project's history.
+// Marks a volume ready, atomically and durably: its databases (synced
+// first) are the project's history.  Anything that relies on the volume, like
+// deleting the old directory, comes after this.
 async function writeReadyMarker(
   root: string,
   info: { [key: string]: unknown },
 ): Promise<void> {
+  await syncTree(root);
   const tmp = join(root, `.ready-${randomUUID()}`);
   await writeFile(
     tmp,
     JSON.stringify({ time: new Date().toISOString(), ...info }),
   );
+  await syncPath(tmp, false);
   await rename(tmp, join(root, READY_MARKER));
+  await syncPath(root, true);
+}
+
+async function syncPath(path: string, directory: boolean): Promise<void> {
+  const handle = await open(
+    path,
+    directory ? constants.O_RDONLY | constants.O_DIRECTORY : constants.O_RDONLY,
+  );
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+// Every file and directory under root (a host-only volume) reaches the disk,
+// or this throws.
+export async function syncTree(root: string): Promise<void> {
+  const walk = async (dir: string, depth: number) => {
+    for await (const entry of await opendir(dir)) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory() && depth < MAX_IMPORT_DEPTH) {
+        await walk(path, depth + 1);
+      } else if (entry.isFile()) {
+        await syncPath(path, false);
+      }
+    }
+    await syncPath(dir, true);
+  };
+  await walk(root, 0);
 }
 
 // After the project's disk quota changed: raise its persist volume's limit
@@ -690,16 +725,21 @@ export function restoredHistoryCandidates({
   return [];
 }
 
-// Restores the history a restore of a backup over the home covers (see
-// restoredHistoryCandidates) where only the host can write, and merges it
-// into the project's history (mergeRestoredHistory); false if the backup has
-// none there.  A HISTORY_IN_SNAPSHOTS without READY_MARKER is the project's
-// own directory, not history.  Any error is thrown: never a partial history.
-export async function restoreHistoryFromBackup({
+// A backup restored over the home, by restoreFiles.  If the backup has
+// history where the restore covers it (restoredHistoryCandidates), that is
+// first restored where only the host can write (restoreInto); then the files
+// are restored and the history merged into the project's (mergeRestoredHistory)
+// as one step, under the persist lock and a fence, so no edit, capture or copy
+// falls between them.  A HISTORY_IN_SNAPSHOTS without READY_MARKER is the
+// project's own directory, and so is the old directory in a backup that has
+// CoCalc's.  Whether the backup had history; any error is thrown: never a
+// partial history.
+export async function restoreBackupWithHistory({
   project_id,
   candidates,
   listDirectory,
   restoreInto,
+  restoreFiles,
   env = process.env,
   ops = btrfsOps,
 }: {
@@ -709,9 +749,49 @@ export async function restoreHistoryFromBackup({
   listDirectory: (path: string) => Promise<{ name: string; isDir: boolean }[]>;
   // restores `path` of the backup into the existing directory `dest`
   restoreInto: (path: string, dest: string) => Promise<void>;
+  // the restore itself, of files into the home
+  restoreFiles: () => Promise<void>;
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<boolean> {
+  const from = await backupHistory({ candidates, listDirectory });
+  const source =
+    from == null ? undefined : await newRestoreDirectory(project_id, env, ops);
+  if (from == null || source == null) {
+    await restoreFiles();
+    return false;
+  }
+  let previous: string | undefined;
+  try {
+    await restoreInto(from, source);
+    await withPersistLock(project_id, async () => {
+      await withProjectPersistFenced(
+        { project_id, reason: "restore-backup" },
+        async () => {
+          await restoreFiles();
+          previous = await mergeIntoVolume({ project_id, source, env, ops });
+        },
+      );
+      // still holding the lock (see replaceProjectHome)
+      await cleanRestoredHome({ project_id, from, env, ops });
+    });
+  } finally {
+    await ops.removeTree(source).catch(() => {});
+  }
+  if (previous != null) {
+    await ops.removeTree(previous).catch(() => {});
+  }
+  return true;
+}
+
+// Where the backup holds the history a restore covers, if it does.
+async function backupHistory({
+  candidates,
+  listDirectory,
+}: {
+  candidates: string[];
+  listDirectory: (path: string) => Promise<{ name: string; isDir: boolean }[]>;
+}): Promise<string | undefined> {
   const hasDirectory = async (path: string) => {
     let dir = "";
     // only directories known to exist are listed, so an error is an error
@@ -734,31 +814,13 @@ export async function restoreHistoryFromBackup({
   for (const candidate of candidates) {
     if (!(await hasDirectory(candidate))) continue;
     marked ??= await hasMarkedHistory();
-    if (candidate === HISTORY_IN_SNAPSHOTS && !marked) {
-      continue;
-    }
+    if (candidate === HISTORY_IN_SNAPSHOTS && !marked) continue;
     // A backup with CoCalc's history (taken after the import) has the
     // project's own files at the old directory, whatever the restore covers.
-    if (candidate !== HISTORY_IN_SNAPSHOTS && marked) {
-      continue;
-    }
-    const source = await newRestoreDirectory(project_id, env, ops);
-    if (source == null) return false;
-    try {
-      await restoreInto(candidate, source);
-      await mergeRestoredHistory({
-        project_id,
-        source,
-        from: candidate,
-        env,
-        ops,
-      });
-    } finally {
-      await ops.removeTree(source).catch(() => {});
-    }
-    return true;
+    if (candidate !== HISTORY_IN_SNAPSHOTS && marked) continue;
+    return candidate;
   }
-  return false;
+  return undefined;
 }
 
 // A new host-only volume for restored history, limited like the project's
@@ -1022,30 +1084,39 @@ export async function replaceProjectHome<T>({
   let previous: string | undefined;
   let result: T;
   try {
-    result = await withPersistLock(project_id, async () =>
+    result = await withPersistLock(project_id, async () => {
       // (with the history in the home, the fence covers just the home swap)
-      withProjectPersistFenced({ project_id, reason }, async () => {
-        if (staged != null) {
-          previous = await swapInVolume(project_id, staged.path, env);
-          swappedIn = true;
-        }
-        try {
-          return await swap();
-        } catch (err) {
+      const swapped = await withProjectPersistFenced(
+        { project_id, reason },
+        async () => {
           if (staged != null) {
-            // the history goes back with the home
-            const volume = persistVolumePath(project_id, env)!;
-            await sudo({ command: "mv", args: [volume, staged.path] });
-            swappedIn = false;
-            if (previous != null) {
-              await sudo({ command: "mv", args: [previous, volume] });
-              previous = undefined;
-            }
+            previous = await swapInVolume(project_id, staged.path, env);
+            swappedIn = true;
           }
-          throw err;
-        }
-      }),
-    );
+          try {
+            return await swap();
+          } catch (err) {
+            if (staged != null) {
+              // the history goes back with the home
+              const volume = persistVolumePath(project_id, env)!;
+              await sudo({ command: "mv", args: [volume, staged.path] });
+              swappedIn = false;
+              if (previous != null) {
+                await sudo({ command: "mv", args: [previous, volume] });
+                previous = undefined;
+              }
+            }
+            throw err;
+          }
+        },
+      );
+      // Still holding the lock, so no capture or copy sees the history's
+      // copy in the new home.
+      if (staged != null) {
+        await cleanRestoredHome({ project_id, from: staged.from, env, ops });
+      }
+      return swapped;
+    });
   } finally {
     if (staged != null && !swappedIn) {
       await ops.removeTree(staged.path).catch(() => {});
@@ -1059,17 +1130,14 @@ export async function replaceProjectHome<T>({
       });
     });
   }
-  if (staged != null) {
-    await cleanRestoredHome({ project_id, from: staged.from, env, ops });
-  }
   return result;
 }
 
 // A backup restored over the home (which keeps files the backup doesn't
 // have): the restored databases in `source` replace the project's, with
-// their write-ahead logs, and its other databases are kept.  Done on a
-// snapshot of the volume that is then swapped in, while nothing has the
-// history open.
+// their write-ahead logs, and its other databases are kept.  Under the
+// persist lock and a fence (see restoreBackupWithHistory for the whole
+// restore).
 export async function mergeRestoredHistory({
   project_id,
   source,
@@ -1084,62 +1152,78 @@ export async function mergeRestoredHistory({
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<void> {
-  const volume = persistVolumePath(project_id, env);
-  if (volume == null) return;
   let previous: string | undefined;
-  await withPersistLock(project_id, async () =>
-    withProjectPersistFenced(
+  await withPersistLock(project_id, async () => {
+    await withProjectPersistFenced(
       { project_id, reason: "restore-backup" },
       async () => {
-        // the history from the home first, if it is still there
-        if (!(await isPersistVolumeReady(volume))) {
-          await prepareProjectPersistVolume(
-            { project_id, root: volume },
-            ops,
-            env,
-          );
-        }
-        const staged = join(
-          dirname(volume),
-          IMPORT_STAGING_DIR,
-          stagingName("restore", project_id),
-        );
-        await btrfs({ args: ["subvolume", "snapshot", volume, staged] });
-        try {
-          const current = await ops.getQuota(volume);
-          const homeQuota = await homeQuotaOf(project_id, env, ops);
-          // a snapshot doesn't keep the limit
-          await ops.setQuota(
-            staged,
-            Math.max(current, persistVolumeCeiling(homeQuota, env)),
-          );
-          const imported = await importPersistDatabases({
-            source,
-            relative: "",
-            dest: staged,
-            merge: true,
-          });
-          await ops.setQuota(
-            staged,
-            persistVolumeQuota({
-              homeQuota,
-              current,
-              imported: imported.bytes,
-              env,
-            }),
-          );
-          previous = await swapInVolume(project_id, staged, env);
-        } catch (err) {
-          await ops.removeTree(staged).catch(() => {});
-          throw err;
-        }
+        previous = await mergeIntoVolume({ project_id, source, env, ops });
       },
-    ),
-  );
+    );
+    // still holding the lock (see replaceProjectHome)
+    await cleanRestoredHome({ project_id, from, env, ops });
+  });
   if (previous != null) {
     await ops.removeTree(previous).catch(() => {});
   }
-  await cleanRestoredHome({ project_id, from, env, ops });
+}
+
+// mergeRestoredHistory's merge, with the lock and a fence held: done on a
+// snapshot of the volume that is then swapped in.  The replaced volume's
+// path (to delete), if there was one.
+async function mergeIntoVolume({
+  project_id,
+  source,
+  env,
+  ops,
+}: {
+  project_id: string;
+  source: string;
+  env: NodeJS.ProcessEnv;
+  ops: PersistVolumeOps;
+}): Promise<string | undefined> {
+  const volume = persistVolumePath(project_id, env);
+  if (volume == null) return;
+  // the history from the home first, if it is still there
+  if (!(await isPersistVolumeReady(volume))) {
+    await prepareProjectPersistVolume({ project_id, root: volume }, ops, env);
+  }
+  const staged = join(
+    dirname(volume),
+    IMPORT_STAGING_DIR,
+    stagingName("restore", project_id),
+  );
+  await btrfs({ args: ["subvolume", "snapshot", volume, staged] });
+  try {
+    const current = await ops.getQuota(volume);
+    const homeQuota = await homeQuotaOf(project_id, env, ops);
+    // a snapshot doesn't keep the limit
+    await ops.setQuota(
+      staged,
+      Math.max(current, persistVolumeCeiling(homeQuota, env)),
+    );
+    const imported = await importPersistDatabases({
+      source,
+      relative: "",
+      dest: staged,
+      merge: true,
+    });
+    await ops.setQuota(
+      staged,
+      persistVolumeQuota({
+        homeQuota,
+        current,
+        imported: imported.bytes,
+        env,
+      }),
+    );
+    // on disk before it is the project's history
+    await syncTree(staged);
+    return await swapInVolume(project_id, staged, env);
+  } catch (err) {
+    await ops.removeTree(staged).catch(() => {});
+    throw err;
+  }
 }
 
 // Deletes persist volumes of projects without a home on this host: left by a
