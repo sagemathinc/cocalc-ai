@@ -512,6 +512,18 @@ export interface OpenableHistory {
   bytes: number;
 }
 
+export interface AppendProjection {
+  head?: string;
+  added: [string, string[]][];
+  digests: [string, string][];
+  // For each record, whether it adds to the history (else it is the stored
+  // record again).
+  fresh: boolean[];
+  // For each record, whether storage will write it (all but duplicates).
+  written: boolean[];
+  history: OpenableHistory;
+}
+
 function sameList(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((x, i) => x === b[i]);
 }
@@ -565,6 +577,9 @@ export interface AppendRecord {
   // Its bytes as stored (as the open check counts them).
   bytes: number;
   key?: string;
+  // Storage won't write it: its msgID is stored, with exactly this record
+  // (a strict-msgID retry, a no-op; storage.msgIDOutcome).
+  duplicate?: boolean;
 }
 
 export class BoardAppendCheck {
@@ -628,37 +643,39 @@ export class BoardAppendCheck {
     // The open check, over exactly these records: only a history it would
     // open is appended to.
     const open = new BoardHistoryCheck(limits);
-    let unopenable: string | undefined;
+    // The first refusal is final: nothing more is read (each record read
+    // is decoded and hashed), and a broken history needs no graph. So a
+    // stream past the open check's bounds costs at most those bounds, and
+    // its "broken" is cached like any other graph.
     for (const { value, digest, bytes, key } of records) {
-      if (unopenable == null) {
+      if (key != null) {
+        broken = "a stored record with a storage key";
+      } else {
+        const r = parseBoardRecord(value, limits);
+        if ("invalid" in r) {
+          broken = `a stored record that isn't a board patch: ${r.invalid}`;
+        } else {
+          const id = `${r.snapshot ? "s" : "p"}:${r.time}`;
+          const seen = digests.get(id);
+          if (seen != null) {
+            if (seen !== digest) broken = `two different records at ${r.time}`;
+          } else {
+            digests.set(id, digest);
+            if (r.snapshot) {
+              snapshots.push(r.time);
+            } else {
+              patches.set(r.time, r.parents!);
+            }
+          }
+        }
+      }
+      if (broken == null) {
         const stop = open.add(value, bytes, digest);
         if (stop != null && !stop.ok) {
-          unopenable = `its stored history isn't openable (${stop.reason}): ${stop.message}`;
+          broken = `its stored history isn't openable (${stop.reason}): ${stop.message}`;
         }
       }
-      if (key != null) {
-        broken ??= "a stored record with a storage key";
-        continue;
-      }
-      const r = parseBoardRecord(value, limits);
-      if ("invalid" in r) {
-        broken ??= `a stored record that isn't a board patch: ${r.invalid}`;
-        continue;
-      }
-      const id = `${r.snapshot ? "s" : "p"}:${r.time}`;
-      const seen = digests.get(id);
-      if (seen != null) {
-        if (seen !== digest) {
-          broken ??= `two different records at ${r.time}`;
-        }
-        continue;
-      }
-      digests.set(id, digest);
-      if (r.snapshot) {
-        snapshots.push(r.time);
-      } else {
-        patches.set(r.time, r.parents!);
-      }
+      if (broken != null) return new BoardAppendCheck({ seq, broken });
     }
     // A snapshot whose patch isn't stored (a trimmed history) is a node of
     // its own with no parents, as in PatchGraph; the chain after it hangs
@@ -674,7 +691,6 @@ export class BoardAppendCheck {
     if (patches.size > 0 && heads.length !== 1) {
       broken ??= `a stored history with ${heads.length} heads`;
     }
-    broken ??= unopenable;
     if (broken == null) {
       const verdict = open.finish();
       if (!verdict.ok) {
@@ -701,20 +717,15 @@ export class BoardAppendCheck {
     return this.head;
   }
 
-  // The new records and head after these records, or throws a refusal
-  // ("branch"). Changes nothing.
+  // The new records and head after exactly the records storage will write
+  // (every record but a duplicate, which storage leaves as it is), or
+  // throws a refusal ("branch"). Changes nothing. A record that is a stored
+  // record again but not a duplicate (a new msgID) is written again, as a
+  // copy, and counts as one.
   check(
     records: AppendRecord[],
     limits: BoardHistoryLimits = BOARD_HISTORY_LIMITS,
-  ): {
-    head?: string;
-    added: [string, string[]][];
-    digests: [string, string][];
-    // For each record, whether it adds to the history (else it is the
-    // stored record again).
-    fresh: boolean[];
-    history: OpenableHistory;
-  } {
+  ): AppendProjection {
     if (this.broken != null) {
       throw new ConatError(
         `this board's history can't be appended to: ${this.broken}`,
@@ -727,6 +738,7 @@ export class BoardAppendCheck {
     const parentsOf = (t: string) => added.get(t) ?? this.patches.get(t);
     const digestOf = (id: string) => newDigests.get(id) ?? this.digests.get(id);
     const fresh: boolean[] = [];
+    const written: boolean[] = [];
     // The history after the batch, as the open check will bound it. Every
     // record counts in the stream's totals (a record sent again may be
     // stored again, as a copy).
@@ -781,7 +793,15 @@ export class BoardAppendCheck {
         );
       }
     };
-    for (const { value, digest, bytes, key } of records) {
+    for (const { value, digest, bytes, key, duplicate } of records) {
+      if (duplicate) {
+        // Not written: nothing changes (CORR-956-1: projecting it as stored
+        // moved a cut that storage never moved).
+        fresh.push(false);
+        written.push(false);
+        continue;
+      }
+      written.push(true);
       recordCount += 1;
       byteCount += bytes;
       if (!(bytes <= limits.recordBytes)) {
@@ -811,7 +831,7 @@ export class BoardAppendCheck {
         // The same record again changes nothing; any other record at its
         // time is refused.
         if (stored === digest) {
-          // Stored again, it is read as the same record once more.
+          // Stored again (a copy), it is read as the same record once more.
           if (r.snapshot) {
             moveCut(r.time);
           } else {
@@ -889,6 +909,7 @@ export class BoardAppendCheck {
       added: [...added],
       digests: [...newDigests],
       fresh,
+      written,
       history: {
         cut,
         cutBytes,
@@ -900,7 +921,7 @@ export class BoardAppendCheck {
     };
   }
 
-  commit(next: ReturnType<BoardAppendCheck["check"]>, seq: number): void {
+  commit(next: AppendProjection, seq: number): void {
     for (const [t, parents] of next.added) this.patches.set(t, parents);
     for (const [id, digest] of next.digests) this.digests.set(id, digest);
     this.head = next.head;

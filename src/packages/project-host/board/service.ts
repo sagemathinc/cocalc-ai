@@ -51,6 +51,7 @@ import {
   type BoardFile,
   type BoardLib,
   type BoardRead,
+  type BoardStatus,
 } from "./manager";
 import {
   BoardRegistry,
@@ -450,6 +451,25 @@ export function fileOf(
     // writing over or deleting anyone else's version (see replaceBoardFile).
     replace: (text: string, expected: string) =>
       replaceBoardFile({ fs, path, text, expected, hooks }),
+    // A new file beside the board (<path>.<kind>-<time>-<id>, as conflict
+    // copies are named), written aside and then moved into place only where
+    // nothing is: never over any file.
+    keepCopy: async (text: string, kind: string) => {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const copy = `${path}.${kind}-${stamp}-${randomUUID().slice(0, 8)}`;
+      const tmp = sidePath(path, randomUUID(), "tmp");
+      try {
+        await fs.writeFile(tmp, text);
+        await fs.move(tmp, copy, { overwrite: false });
+      } finally {
+        await fs.unlink(tmp).catch(() => {});
+      }
+      logger.warn("board: kept a refused writer's unsaved edits", {
+        path,
+        copy,
+      });
+      return copy;
+    },
     watch: (onChange: () => void) => {
       let stopped = false;
       let iterator: any;
@@ -529,6 +549,14 @@ export async function startBoard({
     recordsToString,
     log: (message, extra) => logger.debug(message, { path, ...extra }),
     ...managerOptions,
+  });
+  // A refused writer's status is shown on the board's next opens too (its
+  // manager is closed at once, and the next one starts as "ok").
+  manager.onRetire(() => {
+    const status = manager.getStatus();
+    if (status.state === "refused") {
+      rememberRefusal(`${project_id}:${path}`, status);
+    }
   });
   try {
     await timeout(manager.start(), START_STEP_TIMEOUT_MS, `loading ${path}`);
@@ -754,8 +782,41 @@ function boardPaths(path: string) {
 
 export async function openBoard(opts: BoardRequest): Promise<BoardOpenResult> {
   const board = await managerFor(opts);
-  if ("status" in board) return board.status;
-  return result(board.path, board.manager);
+  const refusal = lastRefusal(`${opts.project_id}:${board.path}`);
+  const status =
+    "status" in board ? board.status : result(board.path, board.manager);
+  return refusal == null ? status : { ...status, lastRefusal: refusal };
+}
+
+// Refusals of a board's writer, by key, for an hour: so the board's next
+// opens still say its writer was refused and where the unsaved edits are.
+const REFUSAL_MEMORY_MS = 60 * 60 * 1000;
+const MAX_REFUSALS = 1000;
+const refusals = new Map<string, NonNullable<BoardOpenResult["lastRefusal"]>>();
+
+function rememberRefusal(
+  key: string,
+  status: Extract<BoardStatus, { state: "refused" }>,
+): void {
+  refusals.delete(key);
+  refusals.set(key, {
+    at: Date.now(),
+    message: status.message,
+    unsaved: status.unsaved,
+  });
+  while (refusals.size > MAX_REFUSALS) {
+    refusals.delete(refusals.keys().next().value!);
+  }
+}
+
+function lastRefusal(key: string): BoardOpenResult["lastRefusal"] {
+  const refusal = refusals.get(key);
+  if (refusal == null) return;
+  if (Date.now() - refusal.at > REFUSAL_MEMORY_MS) {
+    refusals.delete(key);
+    return;
+  }
+  return refusal;
 }
 
 export async function saveBoard(opts: BoardRequest): Promise<BoardOpenResult> {

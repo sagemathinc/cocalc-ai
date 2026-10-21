@@ -1453,12 +1453,150 @@ test("a writer whose fence went stale retires instead of retrying its saves", as
     await t.fs.writeFile(t.path, changed);
     await until(() => t.manager.isRetired(), 20_000);
     expect(refusals).toBe(1);
-    // One attempt: a later save returns at once, never retrying.
+    // The merged change was the file's: it is kept there, and the status
+    // says so (never "ok").
+    expect(t.manager.getStatus()).toMatchObject({
+      state: "refused",
+      code: "instance",
+      unsaved: { in: "file" },
+    });
+    // One attempt: a later save returns at once, never retrying, and with
+    // the refusal, never as if it saved.
     const start = Date.now();
-    await t.syncdb.save();
+    expect(await t.syncdb.save()).toMatchObject({
+      refused: { code: "instance" },
+    });
     expect(Date.now() - start).toBeLessThan(1000);
   } finally {
     testSetup.setBoardWriteFence(old);
     await t.cleanup();
   }
 }, 60_000);
+
+// astra CORR-956-2: a user's unsaved edits are never discarded silently.
+describe("a refused writer keeps its unsaved edits, and says where", () => {
+  const STALE = {
+    nonce: "2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f",
+    assertWritable() {},
+  };
+
+  test("in the board's file: through the refusal, a close and a reopen", async () => {
+    const text = canonical(BOARD);
+    // (No save of its own before the refusal: the edit is only unsaved.)
+    const t = await setup(text, { manager: { saveDelayMs: 600_000 } });
+    const old = testSetup.boardWriteFence;
+    try {
+      await until(() => itemText(t.syncdb, "a") === "hello world");
+      testSetup.setBoardWriteFence(STALE);
+      // The user's edit, in the writer's own document: its save is refused.
+      setText(t.syncdb, "a", "the user's unsaved edit");
+      await until(() => t.manager.isRetired(), 20_000);
+      expect(t.manager.getStatus()).toMatchObject({
+        state: "refused",
+        unsaved: { in: "file" },
+        message: expect.stringContaining("kept in the board's file"),
+      });
+      expect(await t.read()).toContain("the user's unsaved edit");
+    } finally {
+      testSetup.setBoardWriteFence(old);
+      await t.cleanup();
+    }
+    // Reopened (a new writer, the service's current fence): the edit is
+    // the board's.
+    const client = connect();
+    const syncdb = await openBoardSyncdb({
+      writer: true,
+      client,
+      project_id: t.project_id,
+      path: t.path,
+      service: fileserver.service,
+    });
+    const manager = new BoardManager({
+      lib,
+      syncdb: syncdb as any,
+      file: fileOf(t.local, t.path),
+      recordsToString,
+    });
+    try {
+      await manager.start();
+      await until(() => itemText(syncdb, "a") === "the user's unsaved edit");
+      expect(manager.getStatus()).toMatchObject({ state: "ok" });
+    } finally {
+      await manager.close();
+      await syncdb.close();
+      client.close();
+    }
+  }, 60_000);
+
+  test("in a copy beside it, when the file changed elsewhere", async () => {
+    const text = canonical(BOARD);
+    let conflict = false;
+    const t = await setup(text, {
+      manager: { saveDelayMs: 600_000 },
+      wrap: (file) => ({
+        ...file,
+        // The file changed under the save that would keep the edit.
+        replace: async (next: string, expected: string) =>
+          conflict ? "conflict" : await file.replace(next, expected),
+      }),
+    });
+    const old = testSetup.boardWriteFence;
+    try {
+      await until(() => itemText(t.syncdb, "a") === "hello world");
+      testSetup.setBoardWriteFence(STALE);
+      conflict = true;
+      setText(t.syncdb, "a", "kept in a copy");
+      await until(() => t.manager.isRetired(), 20_000);
+      const status: any = t.manager.getStatus();
+      expect(status).toMatchObject({
+        state: "refused",
+        unsaved: { in: "copy" },
+      });
+      expect(status.unsaved.path).toMatch(/\.board\.json\.unsaved-/);
+      expect(status.message).toContain(status.unsaved.path);
+      expect(`${await t.fs.readFile(status.unsaved.path, "utf8")}`).toContain(
+        "kept in a copy",
+      );
+      // The board's own file is left as it was.
+      expect(await t.read()).toBe(text);
+    } finally {
+      testSetup.setBoardWriteFence(old);
+      await t.cleanup();
+    }
+  }, 60_000);
+
+  test("the service shows the refusal on the board's next opens", async () => {
+    const project_id = uuid();
+    const client = connect();
+    const fs: any = client.fs({ project_id, service: fileserver.service });
+    const opts = {
+      client,
+      project_id,
+      fs: localFs(project_id),
+      service: fileserver.service,
+    };
+    const path = "refused.board.json";
+    const old = testSetup.boardWriteFence;
+    try {
+      await fs.writeFile(path, canonical(BOARD));
+      expect(await openBoard({ ...opts, path })).toMatchObject({ state: "ok" });
+      testSetup.setBoardWriteFence(STALE);
+      // A file change: merged, its save refused, the writer retired.
+      await fs.writeFile(path, canonical({ ...BOARD, title: "elsewhere" }));
+      await until(async () => openBoardCount() === 0, 20_000);
+      testSetup.setBoardWriteFence(old);
+      const next = await openBoard({ ...opts, path });
+      expect(next).toMatchObject({
+        state: "ok",
+        lastRefusal: {
+          unsaved: { in: "file" },
+          message: expect.stringContaining("changed elsewhere"),
+        },
+      });
+    } finally {
+      testSetup.setBoardWriteFence(old);
+      await closeBoards(project_id);
+      client.close();
+    }
+  }, 60_000);
+});

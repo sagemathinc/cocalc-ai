@@ -193,9 +193,24 @@ export interface BoardOpenResult {
   // "quarantined": the board's live history can't be opened on the host
   // (not one bounded chain from a snapshot: A2b design, section 8c, G1); it
   // is left as it is, not edited, until it is repaired.
-  state: "ok" | "invalid" | "missing" | "too-large" | "quarantined";
+  // "refused": the board write service refused the host's writer (the
+  // board was changed elsewhere); message says where its unsaved edits were
+  // kept, and the next open has a new writer. A frontend must show it.
+  state: "ok" | "invalid" | "missing" | "too-large" | "quarantined" | "refused";
   // Why the state is not "ok".
   message?: string;
+  // State "refused": where the unsaved edits are.
+  unsaved?:
+    | { in: "file" }
+    | { in: "copy"; path: string }
+    | { in: "nowhere"; error: string };
+  // The writer's most recent refusal, if any in the last hour, shown on the
+  // next opens too (state is then that of the new writer).
+  lastRefusal?: {
+    at: number;
+    message: string;
+    unsaved: BoardOpenResult["unsaved"];
+  };
   // The file's size when last read or written (state "ok"), or its size
   // (state "too-large").
   bytes?: number;

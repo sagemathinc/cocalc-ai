@@ -397,6 +397,7 @@ describe("the append rule", () => {
       digests: [],
       fresh: [false],
       history: expect.anything(),
+      written: [true],
     });
     expect(() => a.check([patch("t2", ["t0"])])).toThrow(/different patch/);
     expect(() => a.check([patch("t0", ["t2"])])).toThrow(/different patch/);
@@ -488,6 +489,7 @@ describe("the append rule", () => {
       digests: [],
       fresh: [false],
       history: expect.anything(),
+      written: [true],
     });
     // Within one batch too.
     expect(() =>

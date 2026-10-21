@@ -309,8 +309,10 @@ export class SyncTableStream extends EventEmitter {
     this.dstream?.discardUnsaved();
   };
 
+  // Resolves with the refusal if the board write service refused this
+  // writer (dstream.save).
   save = async () => {
-    await this.dstream?.save();
+    return await this.dstream?.save();
   };
 
   recoverNow = async (

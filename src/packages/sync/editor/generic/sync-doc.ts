@@ -2509,7 +2509,11 @@ export class SyncDoc extends EventEmitter {
     // happens immediately on save, which makes it possible for clients
     // to save current state without having to wait on an async, which is
     // useful to ensure specific undo points (e.g., right before a paste).
-    await this.patches_table.save();
+    // (A board writer the board write service refused resolves with that
+    // refusal, never as if saved: dstream.save.)
+    return (await this.patches_table.save()) as
+      | { refused: { code: string; message: string } }
+      | undefined;
   });
 
   /*

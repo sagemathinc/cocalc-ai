@@ -436,7 +436,7 @@ export function server({
             receivedAt,
             now: performance.now(),
           });
-          const records = requestRecords(request, mesg);
+          const records = requestRecords(request, mesg, stream);
           if (records != null) {
             append = appendCheck(stream, records);
           } else if (isFencedRequest(request)) {

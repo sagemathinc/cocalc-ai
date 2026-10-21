@@ -721,18 +721,18 @@ describe("the write service keeps a board's history one chain (G1)", () => {
       const path = "/home/user/msgid-batch.board.json";
       const w = hub(project_id, path);
       await setId(w, rec(1), "a");
-      // Refused in storage, all or nothing: every result is the refusal.
-      const results = await w.setMany(
-        [
-          { messageData: messageData(rec(2, 1)), msgID: "b" },
-          { messageData: messageData(rec(3, 2)), msgID: "a" },
-        ],
-        { timeout: 10_000 },
-      );
-      expect(results).toEqual([
-        expect.objectContaining({ code: "msgid-conflict" }),
-        expect.objectContaining({ code: "msgid-conflict" }),
-      ]);
+      // Refused before anything is stored (the append check resolves each
+      // msgID against storage first, as storage would: CORR-956-1), the
+      // whole request.
+      await expect(
+        w.setMany(
+          [
+            { messageData: messageData(rec(2, 1)), msgID: "b" },
+            { messageData: messageData(rec(3, 2)), msgID: "a" },
+          ],
+          { timeout: 10_000 },
+        ),
+      ).rejects.toMatchObject({ code: "msgid-conflict" });
       expect(await stored(project_id, path)).toEqual([rec(1)]);
       await set(w, rec(2, 1));
       w.close();
