@@ -110,7 +110,7 @@ import {
   setSensorIssueHookForTests,
   startSensorScheduler,
 } from "./sensor-scheduler";
-import { WATCHERS_PER_WAKE } from "./sensor-budget";
+import { pruneSensorEvents, WATCHERS_PER_WAKE } from "./sensor-budget";
 import { SENSOR_LIMITS } from "@cocalc/conat/agents/sensors";
 
 const HOST = "44444444-4444-4444-8444-444444444444";
@@ -1617,6 +1617,33 @@ describeDb("agent sensors", () => {
       );
     await expect(fileWatch()).rejects.toThrow(/used all 2 wakes/);
     await reminder(10);
+    // But one due within those 24 hours could not wake its agent either.
+    await expect(reminder(0.5)).rejects.toThrow(/used all 2 wakes/);
+  });
+
+  test("a deleted long reminder's budget row is pruned after the daily window, not its far deadline", async () => {
+    const row = async (released: string | null) => {
+      const id = randomUUID();
+      await getPool().query(
+        `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id,
+           agent_id, sensor_id, expires_at, created, released_at)
+         VALUES ($1, 'reminder', $2, $3, $4, $1, now() + interval '300 days',
+           now() - interval '3 days', ${released ?? "NULL"})`,
+        [id, owner, project_id, agent_id],
+      );
+      return id;
+    };
+    const deleted = await row("now() - interval '2 days'");
+    const pending = await row(null);
+    const releasedToday = await row("now() - interval '1 hour'");
+    await pruneSensorEvents();
+    const { rows } = await getPool().query(
+      "SELECT event_id FROM agent_sensor_events WHERE event_id = ANY($1)",
+      [[deleted, pending, releasedToday]],
+    );
+    expect(rows.map((r) => r.event_id).sort()).toEqual(
+      [pending, releasedToday].sort(),
+    );
   });
 
   test("an expired watcher says so once", async () => {

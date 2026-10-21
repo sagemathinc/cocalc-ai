@@ -251,9 +251,13 @@ export async function reserveSensorWatcherAtHome(
           )),
       );
     // Refused now rather than set: with no wake left it could fire but never
-    // wake the agent, which ended its turn to wait for it. (A reminder fires
-    // on another day, with that day's wakes.)
-    if (kind === "watch" && Number(counts[0]?.wakes) >= limits.maxWakesPerDay)
+    // wake the agent, which ended its turn to wait for it. A reminder due
+    // after the current 24 hours have rolled past fires with later wakes;
+    // one due sooner is refused like any watcher. (`expires` is an hour
+    // after a reminder's time.)
+    const dueWithinWindow =
+      kind === "watch" || expires - 3_600_000 < Date.now() + 86_400_000;
+    if (dueWithinWindow && Number(counts[0]?.wakes) >= limits.maxWakesPerDay)
       throw new Error(
         `this account's agents have used all ${limits.maxWakesPerDay} wakes of the last 24 hours, so a watcher could not wake you; wait in the foreground instead`,
       );
@@ -332,6 +336,7 @@ export async function releaseSensorWatcherAtHome({
 export async function pruneSensorEvents(): Promise<void> {
   await agentStore().query(
     `DELETE FROM agent_sensor_events WHERE created < now() - interval '2 days'
-       AND (expires_at IS NULL OR expires_at < now())`,
+       AND (expires_at IS NULL OR expires_at < now()
+            OR released_at < now() - interval '1 day')`,
   );
 }

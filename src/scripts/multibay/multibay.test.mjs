@@ -2338,14 +2338,89 @@ describe("sensor budgets on the account's home bay", () => {
     );
   });
 
-  async function countsFor(bay) {
+  it("keeps reminders set from another bay on the home bay, under their own cap", async () => {
+    // dave, also homed on the attached bay, with two wakes a day. A reminder
+    // may be far ahead; it is counted as a reminder, not a watcher, released
+    // when deleted, and refused only when it is due before the day's wakes
+    // come back.
+    const dave = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "dave",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { setAccountEntitlementOverrideLocal } = server("membership/entitlement-overrides.js");
+       await setAccountEntitlementOverrideLocal({
+         account_id: ${JSON.stringify(dave.account_id)},
+         actor_account_id: ${JSON.stringify(dave.account_id)},
+         override: { usage_limits: { sensor_max_wakes_per_day: { mode: "set", value: 2 } } },
+         reason: "multibay sensor reminder test",
+       });`,
+    );
+    const reminder = (hours) => ({
+      account_id: dave.account_id,
+      project_id,
+      agent_id,
+      sensor_id: randomUUID(),
+      // A reminder's reservation ends an hour after it is due.
+      expires_at: new Date(Date.now() + (hours + 1) * 3_600_000).toISOString(),
+      reminder: true,
+    });
+    const wake = () => ({
+      account_id: dave.account_id,
+      project_id,
+      agent_id,
+      sensor_id: randomUUID(),
+      run_id: randomUUID(),
+    });
+    const deleted = reminder(90 * 24);
+    const out = await fromSeed([
+      ["reserveWatcher", deleted],
+      [
+        "releaseWatcher",
+        { account_id: dave.account_id, sensor_id: deleted.sensor_id },
+      ],
+      ["reserveWake", wake()],
+      ["reserveWake", wake()],
+      // Due within the day, after its wakes are spent: it could not fire.
+      ["reserveWatcher", reminder(0.5)],
+      // Due in two months: the wakes are back by then.
+      ["reserveWatcher", reminder(60 * 24)],
+    ]);
+    assert.deepEqual(
+      out.map((o) => o.ok),
+      [true, true, true, true, false, true],
+      JSON.stringify(out),
+    );
+    assert.match(out[4].error, /used all 2 wakes/);
+    assert.deepEqual(await countsFor(ATTACHED, dave), {
+      reminder: 2,
+      wake: 2,
+    });
+    assert.deepEqual(await countsFor(SEED, dave), {});
+    assert.equal(
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT released_at IS NOT NULL AS released FROM agent_sensor_events WHERE account_id=$1 AND sensor_id=$2",
+           [${JSON.stringify(dave.account_id)}, ${JSON.stringify(deleted.sensor_id)}]);
+         return rows[0]?.released ?? null;`,
+      ),
+      true,
+    );
+  });
+
+  async function countsFor(bay, account = carol) {
     return await runInBay(
       cluster,
       bay,
       `const getPool = require("@cocalc/database/pool").default;
        const { rows } = await getPool().query(
          "SELECT kind, count(*)::int AS n FROM agent_sensor_events WHERE account_id=$1 GROUP BY kind ORDER BY kind",
-         [${JSON.stringify(carol.account_id)}]);
+         [${JSON.stringify(account.account_id)}]);
        return Object.fromEntries(rows.map((r) => [r.kind, r.n]));`,
     );
   }
