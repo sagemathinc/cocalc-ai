@@ -41,6 +41,7 @@ import { boardRecordCap } from "@cocalc/conat/persist/board-record-cap";
 import { storagePath } from "@cocalc/conat/sync/core-stream";
 import { DataEncoding, decode, encode } from "@cocalc/conat/core/codec";
 import { BOARD_HISTORY_LIMITS } from "@cocalc/conat/persist/board-history";
+import * as historyModule from "./history";
 import { checkBoardHistory } from "./history";
 import {
   type ReplaceHooks,
@@ -811,6 +812,54 @@ describe("G1: a board's history is checked before anything opens it", () => {
       expect(await openBoard({ ...opts, path })).toEqual(status);
       expect(openBoardCount()).toBe(0);
     } finally {
+      await closeBoards(project_id);
+      client.close();
+    }
+  });
+
+  test("codex 4333108641: a history changed between the check and the replay is checked again (here: quarantined)", async () => {
+    const project_id = uuid();
+    const client = connect();
+    const fs: any = client.fs({ project_id, service: fileserver.service });
+    const opts = {
+      client,
+      project_id,
+      fs: localFs(project_id),
+      service: fileserver.service,
+    };
+    const path = "raced.board.json";
+    const real = historyModule.assertBoardHistoryOpenable;
+    const spy = jest.spyOn(historyModule, "assertBoardHistoryOpenable");
+    try {
+      await fs.writeFile(path, canonical(BOARD));
+      expect(await openBoard({ ...opts, path })).toMatchObject({ state: "ok" });
+      await closeBoards(project_id);
+      // The first check passes; then, before the replay, a branch lands.
+      let checks = 0;
+      spy.mockImplementation(async (o) => {
+        checks += 1;
+        const verdict = await real(o);
+        if (checks === 1) {
+          const stream = await rawStream(project_id, path);
+          const first = record(stream, 1);
+          for (const c of ["racedBranchA", "racedBranchB"]) {
+            write(stream, {
+              time: `${first.time.split("_")[0]}_${c}`,
+              parents: [first.time],
+              patch: "[]",
+              is_snapshot: false,
+            });
+          }
+        }
+        return verdict;
+      });
+      const status = await openBoard({ ...opts, path });
+      // Checked again, and refused: the branched history is never opened.
+      expect(checks).toBe(2);
+      expect(status).toMatchObject({ state: "quarantined" });
+      expect(openBoardCount()).toBe(0);
+    } finally {
+      spy.mockRestore();
       await closeBoards(project_id);
       client.close();
     }

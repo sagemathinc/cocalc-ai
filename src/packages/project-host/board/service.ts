@@ -58,7 +58,11 @@ import {
   type BoardManagerLike,
   type StartedBoard,
 } from "./registry";
-import { assertBoardHistoryOpenable, BoardQuarantined } from "./history";
+import {
+  assertBoardHistoryOpenable,
+  boardHistoryInventory,
+  BoardQuarantined,
+} from "./history";
 
 import { startEditWorkCalibration } from "./edit-cost";
 
@@ -526,22 +530,33 @@ export async function startBoard({
   manager?: Partial<ConstructorParameters<typeof BoardManager>[0]>;
 }): Promise<StartedBoard & { syncdb: ImmerDB }> {
   const lib = await loadBoardLib();
-  // G1: nothing reconstructs a value from a history that isn't one bounded
-  // chain from a snapshot (BoardQuarantined).
-  await assertBoardHistoryOpenable({
-    client,
-    project_id,
-    path,
-    timeout: START_STEP_TIMEOUT_MS,
-  });
-  const syncdb = await openBoardSyncdb({
-    client,
-    project_id,
-    path,
-    service,
-    timeoutMs: START_STEP_TIMEOUT_MS,
-    writer: true,
-  });
+  const step = { client, project_id, path, timeout: START_STEP_TIMEOUT_MS };
+  let syncdb: Awaited<ReturnType<typeof openBoardSyncdb>> | undefined;
+  for (let attempt = 0; syncdb == null; attempt++) {
+    // G1: nothing reconstructs a value from a history that isn't one
+    // bounded chain from a snapshot (BoardQuarantined). The history
+    // replayed must be the one checked (codex 4333108641): its inventory
+    // is the same before the check and after the replay, before this host
+    // writes anything; else it is checked and replayed again.
+    const before = await boardHistoryInventory(step);
+    await assertBoardHistoryOpenable(step);
+    const opened = await openBoardSyncdb({
+      client,
+      project_id,
+      path,
+      service,
+      timeoutMs: START_STEP_TIMEOUT_MS,
+      writer: true,
+    });
+    if ((await boardHistoryInventory(step)) === before) {
+      syncdb = opened;
+    } else {
+      await opened.close().catch(() => {});
+      if (attempt >= 2) {
+        throw Error(`${path}: its history kept changing while it was opened`);
+      }
+    }
+  }
   const manager = new BoardManager({
     lib,
     syncdb: syncdb as any,

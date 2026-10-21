@@ -126,6 +126,40 @@ export async function checkBoardHistory({
   }
 }
 
+// The board history stream's inventory: its record count, bytes and newest
+// seq. Unchanged between two reads means no record was added or deleted in
+// between (startBoard: the history replayed is the one that was checked).
+export async function boardHistoryInventory({
+  client,
+  project_id,
+  path,
+  timeout = 30_000,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+  timeout?: number;
+}): Promise<string> {
+  const stream = persistStream({
+    client,
+    user: {},
+    storage: {
+      path: storagePath({
+        project_id,
+        name: patchesStreamName({ path: boardSyncdbPath(path) }),
+      }),
+    },
+    service: BOARD_WRITE_SERVICE,
+    noCache: true,
+  });
+  try {
+    const { count, bytes, seq } = await stream.inventory(timeout);
+    return `${count}:${bytes}:${seq}`;
+  } finally {
+    stream.close();
+  }
+}
+
 // Throws BoardQuarantined unless the board's history may be opened here.
 export async function assertBoardHistoryOpenable(
   opts: Parameters<typeof checkBoardHistory>[0],
