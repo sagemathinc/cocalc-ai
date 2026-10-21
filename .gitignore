@@ -146,7 +146,7 @@ src/go-landing
 src/packages/next/dist-types/
 
 src/packages/landing
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 **/landing-free/cache/
 **/.next
 
