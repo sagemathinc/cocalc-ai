@@ -148,9 +148,14 @@ export function initContentView(
           ].join("; "),
         );
         res.setHeader("X-Frame-Options", "DENY");
-        const print = new URLSearchParams(
-          q === -1 ? "" : req.originalUrl.slice(q + 1),
-        ).has("print");
+        // Only the site itself may ask for the print dialog (another site
+        // linking here can't pop it up).
+        const print =
+          `${req.header("Sec-Fetch-Site") ?? ""}`.toLowerCase() ===
+            "same-origin" &&
+          new URLSearchParams(
+            q === -1 ? "" : req.originalUrl.slice(q + 1),
+          ).has("print");
         res.type("html").send(contentViewPage({ url, nonce, print }));
       } catch (err) {
         logger.debug("content view fell back to the app", {

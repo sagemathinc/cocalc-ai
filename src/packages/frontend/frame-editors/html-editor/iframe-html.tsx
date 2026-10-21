@@ -261,6 +261,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   // origin (the rmd/qmd/rst views share this frame but not this actions API).
   useEffect(() => {
     (actions as any)?.setContentOriginReady?.(isolated);
+    return () => (actions as any)?.setContentOriginReady?.(false);
   }, [actions, isolated]);
 
   // A click inside a cross-origin frame is invisible here, but focus moves

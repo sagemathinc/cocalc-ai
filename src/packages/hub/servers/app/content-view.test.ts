@@ -114,15 +114,29 @@ describe("content view", () => {
   it("prints itself once loaded when asked, without telling the file", async () => {
     let res = await get(`/content-view/${PROJECT}/dir/a.html?print=1&x=2`, {
       "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Site": "same-origin",
     });
     let html = await res.text();
     expect(html).toContain('window.addEventListener("load",function(){window.print();});');
     expect(html).toContain(`data-src="${LINK}?x=2"`);
     res = await get(`/content-view/${PROJECT}/dir/a.html`, {
       "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Site": "same-origin",
     });
     html = await res.text();
     expect(html).not.toContain("window.print");
+  });
+
+  it("only the site itself can ask for the print dialog", async () => {
+    for (const site of ["cross-site", "same-site", "none", ""]) {
+      const headers: Record<string, string> = { "Sec-Fetch-Dest": "document" };
+      if (site) headers["Sec-Fetch-Site"] = site;
+      const res = await get(`/content-view/${PROJECT}/dir/a.html?print=1`, headers);
+      const html = await res.text();
+      expect(html).not.toContain("window.print");
+      // Still not passed on to the file.
+      expect(html).toContain(`data-src="${LINK}"`);
+    }
   });
 
   it("issues a link only for a page of its own", async () => {
