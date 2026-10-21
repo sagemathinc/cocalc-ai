@@ -1281,6 +1281,16 @@ describe("in the project-host", () => {
     await mkdir(replaced, { recursive: true });
     expect(await deleteOrphanedPersistVolumes({ env })).toEqual([]);
     await rm(replaced, { recursive: true });
+    // nor while what could name it can't be read (an error other than its
+    // being gone or not a directory)
+    await writeFile(join(mount, ".not-a-directory"), "");
+    const unreadable = join(mount, ".restore-staging");
+    await symlink(".restore-staging", unreadable);
+    await expect(deleteOrphanedPersistVolumes({ env })).rejects.toThrow(
+      /ELOOP/,
+    );
+    expect(existsSync(orphan)).toBe(true);
+    await rm(unreadable);
     expect(await deleteOrphanedPersistVolumes({ env })).toEqual([OTHER]);
   });
 

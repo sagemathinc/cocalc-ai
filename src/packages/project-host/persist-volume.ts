@@ -1443,7 +1443,8 @@ const UUIDS = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 // The projects named by `entries` of `mount` other than persist volumes, or
 // by what is in its hidden directories (staging of restores and copies, e.g.,
-// a home moved aside, file-server.ts swapProjectHome).
+// a home moved aside, file-server.ts swapProjectHome).  Fails if one of those
+// can't be read: then nothing is known to be an orphan.
 async function projectsNamedUnder(
   mount: string,
   entries: string[],
@@ -1458,7 +1459,15 @@ async function projectsNamedUnder(
       note(name);
       continue;
     }
-    const inner = await readdir(join(mount, name)).catch(() => [] as string[]);
+    let inner: string[];
+    try {
+      inner = await readdir(join(mount, name));
+    } catch (err) {
+      // gone since, or not a directory
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      throw err;
+    }
     inner.forEach(note);
   }
   return named;
