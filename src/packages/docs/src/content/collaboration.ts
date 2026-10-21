@@ -101,14 +101,16 @@ inside the project. The remaining collaborators are responsible for checking
 the project, just as on any shared server. If you remove someone you no longer
 trust:
 
-1. Open a terminal in the project and review \`~/.ssh/authorized_keys\`.
-   Delete any key you do not recognize.
-2. Review shell startup files such as \`~/.bashrc\` and \`~/.profile\`, and
+1. Stop the project right away. Removing someone does not end an SSH session
+   or a program they already started, and stopping the project ends both.
+2. Start the project and, before anything else, open a terminal and review
+   \`~/.ssh/authorized_keys\`. Delete any key you do not recognize.
+3. Review shell startup files such as \`~/.bashrc\` and \`~/.profile\`, and
    any scripts the project runs when it starts. Remove anything you did not
    expect.
-3. Check running processes with \`ps aux\`, then restart the project to stop
-   anything left running.
-4. Rotate any passwords, API keys, or [project secrets](/docs/projects/project-secrets)
+4. Restart the project once more, so nothing those files started keeps
+   running, and check the running processes with \`ps aux\`.
+5. Rotate any passwords, API keys, or [project secrets](/docs/projects/project-secrets)
    the collaborator could read.
 
 Keep the paths to the report, saved results, and next steps in the
