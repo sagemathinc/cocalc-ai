@@ -56,7 +56,10 @@ function ourCheck(patches: Rec[], snapshot?: string) {
     c.add({ ...p, patch: "[]" }, 100);
   }
   if (snapshot != null) {
-    c.add({ time: snapshot, is_snapshot: true, snapshot: "" }, 100);
+    c.add(
+      { time: snapshot, is_snapshot: true, snapshot: "", seq_info: { seq: 0 } },
+      100,
+    );
   }
   return c.finish();
 }
@@ -162,6 +165,14 @@ function graphHeads(records: any[]): string[] {
   return graph.getHeads();
 }
 
+function opens(records: any[]): boolean {
+  const c = new BoardHistoryCheck();
+  for (const r of records) {
+    if (c.add(r, 100) != null) return false;
+  }
+  return c.finish().ok;
+}
+
 test("the append rule agrees with patchflow on 2,000 random append sequences", () => {
   const random = rng(4242);
   let accepted = 0;
@@ -200,12 +211,18 @@ test("the append rule agrees with patchflow on 2,000 random append sequences", (
           // Its time again, with other parents.
           batch.push({ time: pick(), parents: [pick()], patch: "[]" });
         } else if (r < 0.9) {
-          batch.push({ time: pick(), is_snapshot: true, snapshot: "" });
+          batch.push({
+            time: pick(),
+            is_snapshot: true,
+            snapshot: "",
+            seq_info: { seq: 0 },
+          });
         } else {
           batch.push({
             time: legacyPatchId(5000 + next++),
             is_snapshot: true,
             snapshot: "",
+            seq_info: { seq: 0 },
           });
         }
       }
@@ -213,7 +230,11 @@ test("the append rule agrees with patchflow on 2,000 random append sequences", (
       let ok = true;
       try {
         const result = guard.check(
-          batch.map((value) => ({ value, digest: JSON.stringify(value) })),
+          batch.map((value) => ({
+            value,
+            digest: JSON.stringify(value),
+            bytes: 100,
+          })),
         );
         guard.commit(result, stored.length + batch.length);
       } catch {
@@ -229,6 +250,12 @@ test("the append rule agrees with patchflow on 2,000 random append sequences", (
           run,
           step,
           heads: [guard.currentHead],
+        });
+        // And the open check opens it.
+        expect({ run, step, ok: opens(stored) }).toEqual({
+          run,
+          step,
+          ok: true,
         });
       } else {
         refused += 1;
@@ -246,7 +273,9 @@ test("the append rule agrees with patchflow on 2,000 random append sequences", (
             JSON.stringify(first.parents) !== JSON.stringify(r.parents)
           );
         });
-        if (!conflicting) {
+        // (Or one the open check would refuse, e.g. a snapshot older than
+        // the newest one.)
+        if (!conflicting && opens([...stored, ...batch])) {
           expect({ run, step, heads: heads.length }).not.toEqual({
             run,
             step,

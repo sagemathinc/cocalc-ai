@@ -1431,3 +1431,34 @@ test("the manager's writer carries the write service's nonce, and can't open wit
     await syncdb.close();
   }
 });
+
+test("a writer whose fence went stale retires instead of retrying its saves", async () => {
+  const text = canonical(BOARD);
+  const t = await setup(text);
+  const old = testSetup.boardWriteFence;
+  try {
+    await until(() => itemText(t.browser, "a") === "hello world");
+    let refusals = 0;
+    t.syncdb.on("fence-refused", () => (refusals += 1));
+    // The write service restarts: this writer's nonce is stale.
+    testSetup.setBoardWriteFence({
+      nonce: "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+      assertWritable() {},
+    });
+    // A file change: the manager merges it and saves, and is refused.
+    const changed = canonical({
+      ...BOARD,
+      title: "changed on disk",
+    });
+    await t.fs.writeFile(t.path, changed);
+    await until(() => t.manager.isRetired(), 20_000);
+    expect(refusals).toBe(1);
+    // One attempt: a later save returns at once, never retrying.
+    const start = Date.now();
+    await t.syncdb.save();
+    expect(Date.now() - start).toBeLessThan(1000);
+  } finally {
+    testSetup.setBoardWriteFence(old);
+    await t.cleanup();
+  }
+}, 60_000);

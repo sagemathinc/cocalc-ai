@@ -569,17 +569,30 @@ export class DStream<T = any> extends EventEmitter {
     return Object.values(this.local);
   };
 
+  // The board write service refused this writer's messages for good (a
+  // FENCE_REFUSALS code): every later attempt would be refused the same way.
+  private fenceRefused?: { code: string; message: string };
+
   save = reuseInFlight(async () => {
     //console.log("save", this.noAutosave);
     await until(
       async () => {
-        if (this.isClosed()) {
+        if (this.isClosed() || this.fenceRefused != null) {
           return true;
         }
         try {
           await this.attemptToSave();
           //console.log("successfully saved");
-        } catch {}
+        } catch (err) {
+          // Never retried: the writer is told ("fence-refused") and its
+          // unsaved messages stay local, for it to discard.
+          const code = `${(err as any)?.code ?? ""}`;
+          if (FENCE_REFUSALS.has(code)) {
+            this.fenceRefused = { code, message: `${err}` };
+            this.emit("fence-refused", this.fenceRefused);
+            return true;
+          }
+        }
         return !this.hasUnsavedChanges();
       },
       { start: 150, decay: 1.3, max: 10000 },
@@ -682,10 +695,12 @@ export class DStream<T = any> extends EventEmitter {
     }
 
     let errors = false;
+    let refused: { error: string; code?: any } | undefined;
     for (let i = 0; i < w.length; i++) {
       const id = ids[i];
       if (w[i].error) {
         const x = w[i] as { error: string; code?: any };
+        if (FENCE_REFUSALS.has(`${x.code ?? ""}`)) refused ??= x;
         if (x.code == "reject") {
           delete this.local[id];
           const err = new ConatError(x.error, { code: x.code });
@@ -709,6 +724,9 @@ export class DStream<T = any> extends EventEmitter {
       delete this.publishOptions[id];
     }
     this.updateHasUnsavedChanges();
+    if (refused != null) {
+      throw new ConatError(refused.error, { code: refused.code });
+    }
     if (errors) {
       throw Error(`there were errors saving dstream '${this.name}'`);
     }

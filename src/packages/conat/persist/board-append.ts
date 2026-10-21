@@ -52,7 +52,11 @@ function* records(stream: AppendStream): Generator<AppendRecord> {
   for (const m of stream.getAll()) {
     if (++n > BOARD_HISTORY_LIMITS.records) {
       // Unreadable as a board's history: nothing may be appended.
-      yield { value: { invalid: "over the record limit" }, digest: "" };
+      yield {
+        value: { invalid: "over the record limit" },
+        digest: "",
+        bytes: 0,
+      };
       return;
     }
     let value: unknown;
@@ -64,6 +68,7 @@ function* records(stream: AppendStream): Generator<AppendRecord> {
     yield {
       value,
       digest: digestOf(m.encoding, m.raw),
+      bytes: m.raw?.length ?? 0,
       key: m.key ?? undefined,
     };
   }
@@ -113,6 +118,7 @@ export function requestRecords(
     return {
       value,
       digest: digestOf(encoding, data),
+      bytes: data?.length ?? 0,
       key: key == null ? undefined : `${key}`,
     };
   };
@@ -148,17 +154,18 @@ export function appendHead(stream: AppendStream): string | undefined {
 }
 
 // After a successful store: the new head, at the stream's newest seq, but
-// only if the store wrote every record the check took as new (each got a
-// seq the graph wasn't read at yet). Otherwise (a record deduplicated, say)
-// the graph is read from the stream again before the next append, so the
-// cache never holds a record the stream doesn't.
+// only if every record was new and the store wrote each of them (each got a
+// seq the graph wasn't read at yet). Otherwise (a record sent again, which
+// may or may not have been stored again, or one deduplicated) the graph is
+// read from the stream again before the next append, so the cache never
+// differs from what the stream holds.
 export function commitAppend(
   stream: AppendStream,
   { check, next }: ReturnType<typeof appendCheck>,
   results: { seq: number }[],
 ): void {
   const written = next.fresh.every(
-    (fresh, i) => !fresh || (results[i]?.seq ?? -Infinity) > check.atSeq,
+    (fresh, i) => fresh && (results[i]?.seq ?? -Infinity) > check.atSeq,
   );
   if (written && results.length === next.fresh.length) {
     check.commit(next, newestSeq(stream));

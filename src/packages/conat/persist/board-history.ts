@@ -116,6 +116,20 @@ function validId(x: unknown, limits: BoardHistoryLimits): x is string {
   );
 }
 
+function validSeq(x: unknown): boolean {
+  return typeof x === "number" && Number.isSafeInteger(x) && x >= 0;
+}
+
+function validSeqInfo(x: unknown): boolean {
+  if (x == null || typeof x !== "object" || Array.isArray(x)) return false;
+  const { seq, prev_seq, ...rest } = x as { [key: string]: unknown };
+  return (
+    Object.keys(rest).length === 0 &&
+    validSeq(seq) &&
+    (prev_seq == null || validSeq(prev_seq))
+  );
+}
+
 // One stored record's graph fields, or why it isn't a board patch record.
 // (Its stored size is checked before it is decoded: checkSize.)
 export function parseBoardRecord(
@@ -143,6 +157,11 @@ export function parseBoardRecord(
   if (r.is_snapshot === true) {
     if (typeof r.snapshot !== "string") {
       return { invalid: "a snapshot record without a snapshot" };
+    }
+    // SyncDoc reads a snapshot only with its seq_info (the seq of its
+    // patch, and of the snapshot before it, if any).
+    if (!validSeqInfo(r.seq_info)) {
+      return { invalid: "a snapshot record without a valid seq_info" };
     }
     // A snapshot record names its patch by time; its own parents are
     // never read (patchflow keeps the patch's).
@@ -193,9 +212,16 @@ export class BoardHistoryCheck {
   // The times of snapshot records, in stream order (newest last).
   private readonly snapshots: string[] = [];
   private failed?: HistoryVerdict;
+  // After an ok finish(): what the append check projects from.
+  private openable?: OpenableHistory;
 
   constructor(limits: BoardHistoryLimits = BOARD_HISTORY_LIMITS) {
     this.limits = limits;
+  }
+
+  // The history as finish() found it openable (undefined if it isn't).
+  openableHistory(): OpenableHistory | undefined {
+    return this.openable;
   }
 
   // Before decoding a record of this stored size: a refusal, or undefined.
@@ -264,17 +290,26 @@ export class BoardHistoryCheck {
         // A snapshot of a patch that isn't there, and nothing after it:
         // nothing to reconstruct from but the snapshot, which is fine only
         // if it is the one record.
-        return this.snapshots.length === 1
-          ? {
-              ok: true,
-              cut: this.snapshots[0],
-              suffix: 0,
-              suffixBytes: 0,
-              head: this.snapshots[0],
-              ...totals,
-            }
-          : historyError("non-linear", "snapshots without their patches");
+        if (this.snapshots.length !== 1) {
+          return historyError("non-linear", "snapshots without their patches");
+        }
+        this.openable = {
+          cut: this.snapshots[0],
+          cutBytes: 0,
+          below: [],
+          chain: [],
+          ...totals,
+        };
+        return {
+          ok: true,
+          cut: this.snapshots[0],
+          suffix: 0,
+          suffixBytes: 0,
+          head: this.snapshots[0],
+          ...totals,
+        };
       }
+      this.openable = { cutBytes: 0, below: [], chain: [], ...totals };
       return { ok: true, suffix: 0, suffixBytes: 0, ...totals };
     }
     // Children, by parent, among the loaded patches.
@@ -362,6 +397,30 @@ export class BoardHistoryCheck {
               : `${time} is neither before nor after the newest snapshot`,
           );
     }
+    // The line below the cut, as far as it is one: each patch the only
+    // parent of the one above it, and that one its only child. A snapshot
+    // of a patch on it moves the cut back without breaking the history.
+    // (No longer than the suffix may be: a cut further back would refuse.)
+    const below: { time: string; bytes: number }[] = [];
+    if (cut != null) {
+      let at = cut;
+      while (below.length < this.limits.suffixRecords) {
+        const parents = patches.get(at)?.parents;
+        if (parents?.length !== 1) break;
+        const q = parents[0];
+        const p = patches.get(q);
+        if (p == null || children.get(q)?.length !== 1) break;
+        below.push({ time: q, bytes: p.bytes });
+        at = q;
+      }
+    }
+    this.openable = {
+      cut,
+      cutBytes: cut == null ? 0 : (patches.get(cut)?.bytes ?? 0),
+      below,
+      chain: chain.map((time) => ({ time, bytes: patches.get(time)!.bytes })),
+      ...totals,
+    };
     return {
       ok: true,
       cut,
@@ -376,6 +435,20 @@ export class BoardHistoryCheck {
     this.failed ??= verdict;
     return this.failed;
   }
+}
+
+// An openable history, as the append check keeps it: the newest snapshot
+// (the cut) and its patch's stored bytes, the line below it (nearest
+// first, as far as it is one chain), the chain after it (from the root,
+// without a snapshot) with each patch's stored bytes, and the stream's
+// totals.
+export interface OpenableHistory {
+  cut?: string;
+  cutBytes: number;
+  below: { time: string; bytes: number }[];
+  chain: { time: string; bytes: number }[];
+  records: number;
+  bytes: number;
 }
 
 function sameList(a: string[], b: string[]): boolean {
@@ -409,6 +482,15 @@ batch so far:
   place (no new node, no new head), and at most one snapshot record per
   time: the same one again changes nothing, any other is refused; a snapshot
   of anything else is refused.
+And the history after the batch must still pass the open check: the stored
+history is read through it (BoardHistoryCheck) before anything is appended
+(so a stored history that isn't openable, e.g. a merge leaving one head, or
+a snapshot without its seq_info, is never appended to), and each batch is
+projected against its bounds: the records and bytes of the whole stream, and
+the chain after the newest snapshot (its patches and bytes). A snapshot
+moves the cut to its patch, which must be the cut or on the chain after it.
+A write the open check would refuse on the next open is refused now, so an
+accepted write never quarantines its board.
 So after every accepted batch, the stored history's PatchGraph has exactly
 one head, the cached head, and reopening it gives the value the live graph
 has.
@@ -419,6 +501,8 @@ has.
 export interface AppendRecord {
   value: unknown;
   digest: string;
+  // Its bytes as stored (as the open check counts them).
+  bytes: number;
   key?: string;
 }
 
@@ -435,6 +519,8 @@ export class BoardAppendCheck {
   // Why the stored history can't be appended to (it isn't one chain), or
   // undefined.
   private broken?: string;
+  // The stored history, as the open check bounds it.
+  private history: OpenableHistory;
 
   constructor({
     patches = new Map(),
@@ -442,18 +528,30 @@ export class BoardAppendCheck {
     head,
     seq,
     broken,
+    history,
   }: {
     patches?: Map<string, string[]>;
     digests?: Map<string, string>;
     head?: string;
     seq: number;
     broken?: string;
+    history?: OpenableHistory;
   }) {
     this.patches = patches;
     this.digests = digests;
     this.head = head;
     this.seq = seq;
     this.broken = broken;
+    if (history == null && broken == null && patches.size > 0) {
+      throw Error("a stored history needs its open-check state");
+    }
+    this.history = history ?? {
+      cutBytes: 0,
+      below: [],
+      chain: [],
+      records: 0,
+      bytes: 0,
+    };
   }
 
   // The graph of a stored stream's records, in stream order.
@@ -466,7 +564,17 @@ export class BoardAppendCheck {
     const digests = new Map<string, string>();
     const snapshots: string[] = [];
     let broken: string | undefined;
-    for (const { value, digest, key } of records) {
+    // The open check, over exactly these records: only a history it would
+    // open is appended to.
+    const open = new BoardHistoryCheck(limits);
+    let unopenable: string | undefined;
+    for (const { value, digest, bytes, key } of records) {
+      if (unopenable == null) {
+        const stop = open.add(value, bytes);
+        if (stop != null && !stop.ok) {
+          unopenable = `its stored history isn't openable (${stop.reason}): ${stop.message}`;
+        }
+      }
       if (key != null) {
         broken ??= "a stored record with a storage key";
         continue;
@@ -505,12 +613,22 @@ export class BoardAppendCheck {
     if (patches.size > 0 && heads.length !== 1) {
       broken ??= `a stored history with ${heads.length} heads`;
     }
+    broken ??= unopenable;
+    if (broken == null) {
+      const verdict = open.finish();
+      if (!verdict.ok) {
+        broken = `its stored history isn't openable (${verdict.reason}): ${verdict.message}`;
+      } else if (verdict.head !== (heads[0] as string | undefined)) {
+        broken = "its stored history's head is not its open check's";
+      }
+    }
     return new BoardAppendCheck({
       patches,
       digests,
       head: heads.length === 1 ? heads[0] : undefined,
       seq,
       broken,
+      history: broken == null ? open.openableHistory() : undefined,
     });
   }
 
@@ -534,6 +652,7 @@ export class BoardAppendCheck {
     // For each record, whether it adds to the history (else it is the
     // stored record again).
     fresh: boolean[];
+    history: OpenableHistory;
   } {
     if (this.broken != null) {
       throw new ConatError(
@@ -547,7 +666,72 @@ export class BoardAppendCheck {
     const parentsOf = (t: string) => added.get(t) ?? this.patches.get(t);
     const digestOf = (id: string) => newDigests.get(id) ?? this.digests.get(id);
     const fresh: boolean[] = [];
-    for (const { value, digest, key } of records) {
+    // The history after the batch, as the open check will bound it. Every
+    // record counts in the stream's totals (a record sent again may be
+    // stored again, as a copy).
+    let { cut, cutBytes } = this.history;
+    let below = [...this.history.below];
+    let chain = [...this.history.chain];
+    let recordCount = this.history.records;
+    let byteCount = this.history.bytes;
+    const tooLarge = (message: string) =>
+      new ConatError(
+        `a board's history is bounded (it would not open): ${message}`,
+        { code: "branch" },
+      );
+    const atChain = (t: string) => chain.findIndex((c) => c.time === t);
+    // A snapshot of t: the cut moves to t, which must be the cut, on the
+    // chain after it, or on the line below it (the open check reads the
+    // newest snapshot record in the stream as the cut).
+    const moveCut = (t: string) => {
+      if (t === cut) return;
+      const i = atChain(t);
+      if (i >= 0) {
+        // Forward: the cut and the chain up to t go below.
+        const passed = [
+          ...(cut == null ? [] : [{ time: cut, bytes: cutBytes }]),
+          ...chain.slice(0, i),
+        ];
+        below = [...passed.reverse(), ...below].slice(0, limits.suffixRecords);
+        cut = t;
+        cutBytes = chain[i].bytes;
+        chain = chain.slice(i + 1);
+        return;
+      }
+      const j = below.findIndex((c) => c.time === t);
+      if (j < 0) {
+        throw new ConatError(
+          `a snapshot of ${t}, which is not on this board's one chain`,
+          { code: "branch" },
+        );
+      }
+      // Back: the line from t up to the cut joins the chain.
+      chain = [
+        ...below.slice(0, j).reverse(),
+        { time: cut!, bytes: cutBytes },
+        ...chain,
+      ];
+      cut = t;
+      cutBytes = below[j].bytes;
+      below = below.slice(j + 1);
+      if (chain.length > limits.suffixRecords) {
+        throw tooLarge(
+          `over ${limits.suffixRecords} patches after the newest snapshot`,
+        );
+      }
+    };
+    for (const { value, digest, bytes, key } of records) {
+      recordCount += 1;
+      byteCount += bytes;
+      if (!(bytes <= limits.recordBytes)) {
+        throw tooLarge(`a record of ${bytes} bytes`);
+      }
+      if (recordCount > limits.records) {
+        throw tooLarge(`over ${limits.records} records`);
+      }
+      if (byteCount > limits.totalBytes) {
+        throw tooLarge(`over ${limits.totalBytes} bytes`);
+      }
       if (key != null) {
         throw new ConatError(
           "a board's records are stored without a storage key",
@@ -566,6 +750,21 @@ export class BoardAppendCheck {
         // The same record again changes nothing; any other record at its
         // time is refused.
         if (stored === digest) {
+          // Stored again, it is read as the same record once more.
+          if (r.snapshot) {
+            moveCut(r.time);
+          } else {
+            const i = atChain(r.time);
+            if (i >= 0) {
+              chain[i] = { ...chain[i], bytes: chain[i].bytes + bytes };
+            } else if (r.time === cut) {
+              cutBytes += bytes;
+            } else {
+              const j = below.findIndex((c) => c.time === r.time);
+              if (j >= 0)
+                below[j] = { ...below[j], bytes: below[j].bytes + bytes };
+            }
+          }
           fresh.push(false);
           continue;
         }
@@ -584,6 +783,7 @@ export class BoardAppendCheck {
             { code: "branch" },
           );
         }
+        moveCut(r.time);
         newDigests.set(id, digest);
         fresh.push(true);
         continue;
@@ -606,10 +806,10 @@ export class BoardAppendCheck {
           { code: "branch" },
         );
       }
-      if (this.patches.size + added.size >= limits.records) {
-        throw new ConatError(
-          `a board's history holds at most ${limits.records} patches`,
-          { code: "branch" },
+      chain.push({ time: r.time, bytes });
+      if (chain.length > limits.suffixRecords) {
+        throw tooLarge(
+          `over ${limits.suffixRecords} patches after the newest snapshot`,
         );
       }
       added.set(r.time, parents);
@@ -617,13 +817,33 @@ export class BoardAppendCheck {
       fresh.push(true);
       head = r.time;
     }
-    return { head, added: [...added], digests: [...newDigests], fresh };
+    const suffixBytes = chain.reduce((n, c) => n + c.bytes, 0);
+    if (suffixBytes > limits.suffixBytes) {
+      throw tooLarge(
+        `over ${limits.suffixBytes} bytes of patches after the newest snapshot`,
+      );
+    }
+    return {
+      head,
+      added: [...added],
+      digests: [...newDigests],
+      fresh,
+      history: {
+        cut,
+        cutBytes,
+        below,
+        chain,
+        records: recordCount,
+        bytes: byteCount,
+      },
+    };
   }
 
   commit(next: ReturnType<BoardAppendCheck["check"]>, seq: number): void {
     for (const [t, parents] of next.added) this.patches.set(t, parents);
     for (const [id, digest] of next.digests) this.digests.set(id, digest);
     this.head = next.head;
+    this.history = next.history;
     this.seq = seq;
   }
 }

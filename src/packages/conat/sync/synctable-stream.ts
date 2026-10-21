@@ -151,6 +151,9 @@ export class SyncTableStream extends EventEmitter {
     this.dstream.on("change", (mesg) => {
       this.handle(mesg, true);
     });
+    this.dstream.on("fence-refused", (refusal) => {
+      this.emit("fence-refused", refusal);
+    });
     this.dstream.on("reject", (err) => {
       console.warn("synctable-stream: rejected - ", err);
     });

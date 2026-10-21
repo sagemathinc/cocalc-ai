@@ -2167,6 +2167,11 @@ export class SyncDoc extends EventEmitter {
     this.patches_table.on("has-uncommitted-changes", (val) => {
       this.emit("has-uncommitted-changes", val);
     });
+    // A board writer's patches, refused by the board write service for good
+    // (dstream's FENCE_REFUSALS): its owner retires it.
+    this.patches_table.on("fence-refused", (refusal) => {
+      this.emit("fence-refused", refusal);
+    });
 
     this.on("change", () => {
       this.updateHasUnsavedChangesDebounced?.();

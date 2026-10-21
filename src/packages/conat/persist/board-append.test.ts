@@ -31,6 +31,7 @@ function fakeStream(records: object[]) {
 const record = (mesg: object) => ({
   value: mesg,
   digest: JSON.stringify(mesg),
+  bytes: encode({ encoding: DataEncoding.MsgPack, mesg }).length,
 });
 
 test("a record taken as new but not written: the cache is dropped, and read again from the stream", () => {

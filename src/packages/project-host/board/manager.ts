@@ -84,8 +84,10 @@ export interface BoardSyncdb {
   from_str(value: string, opts?: { base?: string }): void;
   commit(): unknown;
   save?(): Promise<void>;
-  on(event: "change", f: () => void): unknown;
-  removeListener(event: "change", f: () => void): unknown;
+  on(event: "change" | "fence-refused", f: () => void): unknown;
+  removeListener(event: "change" | "fence-refused", f: () => void): unknown;
+  // Drop every patch not yet stored (a retired writer's).
+  discardUnsaved?(): void;
 }
 
 export interface BoardFile {
@@ -236,6 +238,7 @@ export class BoardManager {
   }
 
   async start(): Promise<void> {
+    this.syncdb.on("fence-refused", this.onFenceRefused);
     await this.run(() => this.loadFromDisk());
     if (this.stopping || this.closed) return;
     this.syncdb.on("change", this.onDocumentChange);
@@ -286,6 +289,7 @@ export class BoardManager {
     }
     this.loadWaiting = false;
     this.syncdb.removeListener("change", this.onDocumentChange);
+    this.syncdb.removeListener("fence-refused", this.onFenceRefused);
     this.unwatch?.();
     this.unwatch = undefined;
   }
@@ -502,6 +506,8 @@ export class BoardManager {
       this.syncdb.from_str(value, { base });
       this.syncdb.commit();
       await this.syncdb.save?.();
+      // Refused by the board write service (onFenceRefused): not merged.
+      if (this.retired) return;
     }
     this.diskText = text;
     this.diskRecords = value;
@@ -573,6 +579,17 @@ export class BoardManager {
       } catch {}
     }
   }
+
+  // The board write service refused this writer's patches (its fence: the
+  // service restarted, so the nonce this writer was opened with is stale;
+  // or its append rule). Its saves are never tried again (dstream), so it
+  // retires: what it had not stored is dropped, its host closes it, and the
+  // board's next open starts a new writer with the service's current fence.
+  private onFenceRefused = (): void => {
+    this.syncdb.discardUnsaved?.();
+    this.log("board: the board write service refused this writer", {});
+    this.retire(this.status);
+  };
 
   // Call f when this manager retires.
   onRetire(f: () => void): void {

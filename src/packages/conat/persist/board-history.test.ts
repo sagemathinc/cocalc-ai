@@ -347,7 +347,12 @@ describe("the append rule", () => {
   // Records as the service sees them: a digest of their bytes (here their
   // JSON) and no storage key.
   const R = (records: any[], key?: string) =>
-    records.map((value) => ({ value, digest: JSON.stringify(value), key }));
+    records.map((value) => ({
+      value,
+      digest: JSON.stringify(value),
+      bytes: JSON.stringify(value).length,
+      key,
+    }));
   const stored = (records: any[]) => {
     const c = BoardAppendCheck.fromRecords(R(records), 0);
     return {
@@ -390,6 +395,7 @@ describe("the append rule", () => {
       added: [],
       digests: [],
       fresh: [false],
+      history: expect.anything(),
     });
     expect(() => a.check([patch("t2", ["t0"])])).toThrow(/different patch/);
     expect(() => a.check([patch("t0", ["t2"])])).toThrow(/different patch/);
@@ -480,6 +486,7 @@ describe("the append rule", () => {
       added: [],
       digests: [],
       fresh: [false],
+      history: expect.anything(),
     });
     // Within one batch too.
     expect(() =>
@@ -517,31 +524,210 @@ describe("the append rule", () => {
     );
     const keyed = BoardAppendCheck.fromRecords(
       [
-        { value: patch("t0"), digest: "d0" },
-        { value: patch("t1", ["t0"]), digest: "d1", key: "k" },
+        { value: patch("t0"), digest: "d0", bytes: 10 },
+        { value: patch("t1", ["t0"]), digest: "d1", bytes: 10, key: "k" },
       ],
       0,
     );
     expect(() =>
-      keyed.check([{ value: patch("t2", ["t1"]), digest: "d2" }]),
+      keyed.check([{ value: patch("t2", ["t1"]), digest: "d2", bytes: 10 }]),
     ).toThrow(/storage key/);
   });
 
   test("a stored history with two different records at one time takes no appends", () => {
     const c = BoardAppendCheck.fromRecords(
       [
-        { value: patch("A", [], { patch: '"old"' }), digest: "old" },
-        { value: patch("A", [], { patch: '"new"' }), digest: "new" },
+        { value: patch("A", [], { patch: '"old"' }), digest: "old", bytes: 10 },
+        { value: patch("A", [], { patch: '"new"' }), digest: "new", bytes: 10 },
       ],
       0,
     );
-    expect(() => c.check([{ value: patch("B", ["A"]), digest: "b" }])).toThrow(
-      /two different records at A/,
-    );
+    expect(() =>
+      c.check([{ value: patch("B", ["A"]), digest: "b", bytes: 10 }]),
+    ).toThrow(/two different records at A/);
   });
 
   test("records that aren't patches are refused", () => {
     const a = stored(chain(1));
     expect(() => a.check([{ edit: 1 }])).toThrow(branch);
+  });
+});
+
+describe("an append never makes a history the open check refuses", () => {
+  const L = BOARD_HISTORY_LIMITS;
+  const R = (records: any[]) =>
+    records.map((value) => ({
+      value,
+      digest: JSON.stringify(value),
+      bytes: JSON.stringify(value).length,
+    }));
+  const open = (records: any[], limits = L) => check(records, limits);
+  const branch = expect.objectContaining({ code: "branch" });
+
+  test("a stored merge leaving one head takes no appends (codex 4331981051)", () => {
+    const stored = [
+      patch("r"),
+      patch("a", ["r"]),
+      patch("b", ["r"]),
+      patch("m", ["a", "b"]),
+    ];
+    expect(open(stored)).toMatchObject({ ok: false, reason: "non-linear" });
+    const c = BoardAppendCheck.fromRecords(R(stored), 0);
+    expect(c.currentHead).toBe("m");
+    expect(() => c.check(R([patch("n", ["m"])]))).toThrow(/isn't openable/);
+  });
+
+  test("a snapshot needs its seq_info (codex 4331981059)", () => {
+    for (const seq_info of [
+      undefined,
+      {},
+      { seq: -1 },
+      { seq: 1.5 },
+      { seq: 1, prev_seq: "0" },
+      { seq: 1, x: 1 },
+    ]) {
+      const bad = { time: "t0", is_snapshot: true, snapshot: "{}", seq_info };
+      expect(open([patch("t0"), bad])).toMatchObject({
+        ok: false,
+        reason: "invalid",
+      });
+      const c = BoardAppendCheck.fromRecords(R([patch("t0")]), 0);
+      expect(() => c.check(R([bad]))).toThrow(branch);
+    }
+    const good = {
+      time: "t0",
+      is_snapshot: true,
+      snapshot: "{}",
+      seq_info: { seq: 1, prev_seq: 0 },
+    };
+    expect(open([patch("t0"), good])).toMatchObject({ ok: true });
+  });
+
+  // codex 4331981047: every bound of the open check, projected.
+  test("the record count includes snapshots", () => {
+    const limits = { ...L, records: 4 };
+    const c = BoardAppendCheck.fromRecords(R(chain(3)), 0, limits);
+    expect(() => c.check(R([snapshot("t2")]), limits)).not.toThrow();
+    expect(() =>
+      c.check(R([snapshot("t2"), patch("t3", ["t2"])]), limits),
+    ).toThrow(/over 4 records/);
+  });
+
+  test("the stream's bytes", () => {
+    const records = chain(3);
+    const bytes = R(records).reduce((n, r) => n + r.bytes, 0);
+    const limits = { ...L, totalBytes: bytes + 60 };
+    const c = BoardAppendCheck.fromRecords(R(records), 0, limits);
+    expect(() =>
+      c.check(
+        R([patch("t3", ["t2"], { patch: "[" + "1,".repeat(40) + "1]" })]),
+        limits,
+      ),
+    ).toThrow(/bytes/);
+  });
+
+  test("the chain after the newest snapshot, which a snapshot cuts", () => {
+    const limits = { ...L, suffixRecords: 3 };
+    const c = BoardAppendCheck.fromRecords(R(chain(3)), 0, limits);
+    expect(() => c.check(R([patch("t3", ["t2"])]), limits)).toThrow(
+      /after the newest snapshot/,
+    );
+    const next = c.check(R([snapshot("t2"), patch("t3", ["t2"])]), limits);
+    c.commit(next, 5);
+    expect(next.history).toMatchObject({ cut: "t2", chain: [{ time: "t3" }] });
+    const all = [...chain(3), snapshot("t2"), patch("t3", ["t2"])];
+    expect(open(all, limits)).toMatchObject({ ok: true, cut: "t2", suffix: 1 });
+  });
+
+  test("the chain's bytes", () => {
+    const limits = { ...L, suffixBytes: 400 };
+    const c = BoardAppendCheck.fromRecords(R(chain(2)), 0, limits);
+    expect(() =>
+      c.check(
+        R([patch("t2", ["t1"], { patch: `"${"x".repeat(300)}"` })]),
+        limits,
+      ),
+    ).toThrow(/bytes of patches/);
+  });
+
+  test("a snapshot older than the newest one: allowed on the line below it, refused off it", () => {
+    // On the line: the cut moves back, and the history still opens.
+    const line = [...chain(3), snapshot("t2")];
+    const c = BoardAppendCheck.fromRecords(R(line), 0);
+    const next = c.check(R([snapshot("t1"), patch("t3", ["t2"])]));
+    expect(next.history).toMatchObject({
+      cut: "t1",
+      chain: [{ time: "t2" }, { time: "t3" }],
+    });
+    expect(open([...line, snapshot("t1"), patch("t3", ["t2"])])).toMatchObject({
+      ok: true,
+      cut: "t1",
+      suffix: 2,
+    });
+    // Below a merge (ancestors of a cut may branch): refused, as the open
+    // check would refuse it.
+    const merged = [
+      patch("r"),
+      patch("a", ["r"]),
+      patch("b", ["r"]),
+      patch("m", ["a", "b"]),
+      snapshot("m"),
+    ];
+    expect(open(merged)).toMatchObject({ ok: true, cut: "m" });
+    const d = BoardAppendCheck.fromRecords(R(merged), 0);
+    expect(open([...merged, snapshot("a")])).toMatchObject({ ok: false });
+    expect(() => d.check(R([snapshot("a")]))).toThrow(
+      /not on this board's one chain/,
+    );
+  });
+
+  test("random accepted appends always open (agreement with the open check)", () => {
+    const limits = { ...L, records: 40, suffixRecords: 6, suffixBytes: 600 };
+    let seed = 7;
+    const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+    let accepted = 0;
+    let refused = 0;
+    for (let round = 0; round < 50; round++) {
+      const stored: any[] = [];
+      let c = BoardAppendCheck.fromRecords([], 0, limits);
+      let n = 0;
+      for (let step = 0; step < 60; step++) {
+        const head = c.currentHead;
+        const times = stored.filter((r) => !r.is_snapshot).map((r) => r.time);
+        const pick = () => times[Math.floor(rand() * times.length)];
+        const batch: any[] = [];
+        for (let k = 0; k < 1 + Math.floor(rand() * 3); k++) {
+          const x = rand();
+          const last =
+            batch.filter((r) => !r.is_snapshot).slice(-1)[0]?.time ?? head;
+          if (x < 0.6 || times.length === 0) {
+            batch.push(
+              patch(`p${n++}`, last == null ? [] : [last], {
+                patch: `"${"y".repeat(Math.floor(rand() * 80))}"`,
+              }),
+            );
+          } else if (x < 0.9) {
+            batch.push(snapshot(pick()));
+          } else {
+            batch.push(stored[Math.floor(rand() * stored.length)]);
+          }
+        }
+        let next;
+        try {
+          next = c.check(R(batch), limits);
+        } catch {
+          refused += 1;
+          continue;
+        }
+        accepted += 1;
+        stored.push(...batch);
+        if (next.fresh.every((f) => f)) c.commit(next, stored.length);
+        else c = BoardAppendCheck.fromRecords(R(stored), stored.length, limits);
+        expect(open(stored, limits)).toMatchObject({ ok: true });
+      }
+    }
+    // Both outcomes are exercised.
+    expect(accepted).toBeGreaterThan(500);
+    expect(refused).toBeGreaterThan(200);
   });
 });
