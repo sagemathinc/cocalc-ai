@@ -209,6 +209,9 @@ export interface Client extends ProjectClient {
     project_id: string;
     path: string;
     oversized_seq: number;
+    // How the document's patches are written (SyncDoc's patchesPersist): a
+    // board's go through the board write service, and so must its reset.
+    persist?: { service: string; persistUser: Record<string, never> };
   }) => Promise<{ history_epoch: number; reset: boolean }>;
 }
 

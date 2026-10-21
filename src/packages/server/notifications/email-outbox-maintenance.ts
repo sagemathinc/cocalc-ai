@@ -13,6 +13,7 @@ import {
   markNotificationEmailStatus,
   markNotificationEmailsSent,
   requeueNotificationEmail,
+  emailWaitsUntilAway,
   revalidateNotificationEmail,
   type NotificationEmailOutboxRow,
 } from "@cocalc/database/postgres/notification-email-outbox";
@@ -299,6 +300,15 @@ export async function sendQueuedNotificationEmailBatch(opts?: {
       const current = financial
         ? await getClusterAccountById(row.target_account_id)
         : undefined;
+      // Waiting until the person is away reads their home bay's activity;
+      // if the directory cannot say that is here, send as before (I3-C).
+      const waits = !financial && emailWaitsUntilAway(row);
+      const waitsHome = waits
+        ? await getClusterAccountById(row.target_account_id).then(
+            (account) => account?.home_bay_id ?? "",
+            () => "",
+          )
+        : undefined;
       const revalidation = await revalidateNotificationEmail({
         row,
         ...(financial
@@ -308,6 +318,9 @@ export async function sendQueuedNotificationEmailBatch(opts?: {
                 local: getConfiguredBayId(),
               },
             }
+          : {}),
+        ...(waitsHome != null
+          ? { home: { current: waitsHome, local: getConfiguredBayId() } }
           : {}),
       });
       if (revalidation.action === "skip") {

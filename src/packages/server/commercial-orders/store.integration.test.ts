@@ -8,6 +8,11 @@ import { createHash, randomUUID } from "node:crypto";
 import type * as Store from "./store";
 import type { CommercialOrderCreateRequest } from "@cocalc/conat/hub/api/commercial-orders";
 
+const mockGetMembershipPackages = jest.fn();
+jest.mock("@cocalc/server/conat/api/purchases", () => ({
+  getMembershipPackages: (...args: any[]) => mockGetMembershipPackages(...args),
+}));
+
 const describePglite =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
@@ -769,6 +774,111 @@ describePglite("commercial order store", () => {
     expect(revised.approved_by_account_id).toBeNull();
     expect(revised.agreed_total).toBe("4100.0000000000");
     expect(revised.next_action).toBe("Review agreement");
+  });
+
+  it("replays an exact provisioning retry but refuses a new one when the expected fulfillment state is given", async () => {
+    const created = await store.createCommercialOrder(request());
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve membership fulfillment fixture",
+    });
+    const attempt = {
+      account_id: actor,
+      id: approved.id,
+      expected_version: approved.version,
+      reason: "record membership packages",
+      idempotency_key: `membership-${randomUUID()}`,
+      fulfillment_state: "provisioned" as const,
+      expected_fulfillment_state: "not_provisioned" as const,
+    };
+    const provisioned = await store.setCommercialFulfillment(attempt);
+    expect(provisioned.fulfillment_state).toBe("provisioned");
+
+    // The exact same request (same key) replays, although the order is no
+    // longer not_provisioned and its version moved on.
+    const replay = await store.setCommercialFulfillment(attempt);
+    expect(replay.version).toBe(provisioned.version);
+    expect(replay.provisioned_at).toEqual(provisioned.provisioned_at);
+
+    // A new request cannot provision again.
+    await expect(
+      store.setCommercialFulfillment({
+        ...attempt,
+        expected_version: provisioned.version,
+        idempotency_key: `membership-${randomUUID()}`,
+      }),
+    ).rejects.toThrow("already provisioned");
+  });
+
+  it("replays an exact membership-fulfillment retry even after its packages changed", async () => {
+    const { recordCommercialMembershipFulfillment } =
+      await import("./fulfillment/membership");
+    const customer = randomUUID();
+    const packageId = randomUUID();
+    const day = 86_400_000;
+    const serviceEnds = new Date(Date.now() + 100 * day).toISOString();
+    const created = await store.createCommercialOrder(
+      request({
+        customer_account_id: customer,
+        service_ends_at: serviceEnds,
+        items: [
+          {
+            description: "Course seats",
+            quantity: "1",
+            unit_amount: "3900",
+            subtotal: "3900",
+            product_kind: "membership_package",
+          },
+        ],
+      } as any),
+    );
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve membership fulfillment fixture",
+    });
+    const pkg = {
+      id: packageId,
+      owner_account_id: customer,
+      kind: "team",
+      membership_class: "student",
+      seat_count: 26,
+      starts_at: new Date(Date.now() - day),
+      expires_at: new Date(Date.parse(serviceEnds) + day),
+      metadata: { commercial_order_number: approved.order_number },
+    };
+    mockGetMembershipPackages.mockReset().mockResolvedValue([pkg]);
+    const attempt = {
+      account_id: actor,
+      id: approved.order_number,
+      expected_version: approved.version,
+      reason: "record bridge packages",
+      membership_package_ids: [packageId],
+    };
+    const provisioned = await recordCommercialMembershipFulfillment(attempt);
+    expect(provisioned.fulfillment_state).toBe("provisioned");
+
+    // The response was lost; meanwhile the package expired and was edited.
+    mockGetMembershipPackages
+      .mockClear()
+      .mockResolvedValue([
+        { ...pkg, seat_count: 30, expires_at: new Date(Date.now() - day) },
+      ]);
+    const replay = await recordCommercialMembershipFulfillment(attempt);
+    expect(replay.version).toBe(provisioned.version);
+    expect(replay.provisioned_at).toEqual(provisioned.provisioned_at);
+    expect(mockGetMembershipPackages).not.toHaveBeenCalled();
+
+    // A new attempt is validated against the current package state.
+    await expect(
+      recordCommercialMembershipFulfillment({
+        ...attempt,
+        expected_version: provisioned.version,
+      }),
+    ).rejects.toThrow("has already expired");
   });
 
   it("enforces terminal and fulfillment transition invariants", async () => {

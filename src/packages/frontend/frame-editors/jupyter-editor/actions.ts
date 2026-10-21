@@ -37,6 +37,7 @@ export interface JupyterEditorState extends CodeEditorState {
   slideshow?: {
     state?: "built" | "building" | "";
     url?: string;
+    path?: string; // the slides' HTML file, shown on the content origin
   };
 }
 
@@ -575,10 +576,13 @@ export class JupyterEditorActions
       await this.save();
       if (this._state == "closed") return;
       this.set_status("Building slideshow: running nbconvert...", 15000);
-      const url = await revealjs_slideshow_html(this.project_id, this.path);
+      const { url, path } = await revealjs_slideshow_html(
+        this.project_id,
+        this.path,
+      );
       if (this._state == "closed") return;
       this.set_status(""); // really bad design... I need to make this like for courses...
-      this.setState({ slideshow: { state: "built", url } });
+      this.setState({ slideshow: { state: "built", url, path } });
     } catch (err) {
       if (this._state == "closed") return;
       this.set_error(`Error building slideshow -- ${err}`);

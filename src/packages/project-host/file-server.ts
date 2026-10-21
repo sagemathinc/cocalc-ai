@@ -2,6 +2,7 @@
 // This allows users to browse and generally use the filesystem of any project,
 // without having to run that project.
 
+import { createContentPathChecker } from "./content-origin";
 import { createHash, randomUUID } from "node:crypto";
 import { withArtifactCatalog } from "./artifact-catalog";
 import {
@@ -126,7 +127,6 @@ import {
   parseApiKeyViewerFsSubject,
 } from "@cocalc/conat/auth/project-host-api-key-subject";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
-import cpExec from "@cocalc/backend/sandbox/cp";
 import execSandbox from "@cocalc/backend/sandbox/exec";
 import rustic, {
   getHost as getRusticSnapshotHost,
@@ -281,8 +281,12 @@ import {
   archivePathIsAllowed,
   decodePathCopyArchiveListing,
   installPathFromStaging,
-  replacePathFromStaging,
 } from "./path-copy-archive";
+import {
+  type BeneathCopyOptions,
+  copyBeneath,
+  kindBeneath,
+} from "./beneath-copy";
 import { flushJupyterNotebooksToDisk } from "./jupyter-collaborative-flush";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
@@ -2609,78 +2613,67 @@ async function cp({
     rootfs: getRootfsMountpoint(dest.project_id),
     scratch: getScratchMountpoint(dest.project_id),
   });
-  let srcPaths = await srcFs.safeAbsPaths(src.path);
-  let destPath = await destFs.safeAbsPath(dest.path);
+  // Up-front errors for paths that resolve outside the sandboxes as they are
+  // now. They are no protection by themselves: both projects' users can plant
+  // symlinks in these trees at any time.
+  await srcFs.safeAbsPaths(src.path);
+  await destFs.safeAbsPath(dest.path);
 
+  // So every copy goes through descriptor-anchored operations that refuse
+  // symlinks (beneath-copy.ts), never cp, mkdir or rename by path.
   if (exact) {
     if (typeof src.path !== "string") {
       throw new Error("exact copy requires one source path");
     }
-    if (destPath === destVolume.path) {
+    const destination = await destFs.resolveAnchoredPath(dest.path);
+    if (!destination.path) {
       throw new Error("exact copy destination cannot be project root");
     }
-    const destStat = await lstatIfExists(destPath);
-    const force = options?.force ?? true;
-    if (destStat && !force) {
-      if (options?.errorOnExist) {
-        const err = new Error(
-          "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
-        );
-        // @ts-ignore
-        err.code = "ERR_FS_CP_EEXIST";
-        throw err;
-      }
-      return;
-    }
-    await replacePathFromStaging({
-      source: srcPaths[0],
-      destination: destPath,
-      destinationExists: destStat != null,
-      copy: async (source, destination) => {
-        await cpExec(source, destination, {
-          ...options,
-          recursive: options?.recursive ?? true,
-          reflink: true,
-        });
-      },
+    const installed = await installPathFromStaging({
+      source: await srcFs.resolveAnchoredPath(src.path),
+      destination,
+      exact: true,
+      options: beneathCopyOptions(options),
     });
-    void touchProjectLastEdited(dest.project_id, "cp-exact");
+    if (installed) {
+      void touchProjectLastEdited(dest.project_id, "cp-exact");
+    }
     return;
   }
 
-  const toRelative = (path: string) => {
-    if (!path.startsWith(fs!.subvolumes.fs.path)) {
-      throw Error("bug");
-    }
-    return path.slice(fs!.subvolumes.fs.path.length + 1);
-  };
-  const inSharedSubvolumeMount =
-    destPath.startsWith(fs.subvolumes.fs.path + "/") &&
-    srcPaths.every((p) => p.startsWith(fs!.subvolumes.fs.path + "/"));
-
-  if (inSharedSubvolumeMount) {
-    srcPaths = srcPaths.map(toRelative);
-    destPath = toRelative(destPath);
-    // Fast path: btrfs-aware copy inside the shared file-server mount.
-    await fs.subvolumes.fs.cp(
-      typeof src.path == "string" ? srcPaths[0] : srcPaths, // preserve string vs array
-      destPath,
-      { ...options, reflink: true },
-    );
-  } else {
-    // Fallback path for absolute rootfs/temp-volume locations that are outside
-    // the subvolume mount root.
-    await cpExec(
-      typeof src.path == "string" ? srcPaths[0] : srcPaths,
-      destPath,
-      {
-        ...options,
-        recursive: options?.recursive ?? true,
-        reflink: true,
-      },
-    );
+  const destination = await destFs.resolveAnchoredPath(dest.path);
+  for (const source of typeof src.path == "string" ? [src.path] : src.path) {
+    const anchored = await srcFs.resolveAnchoredPath(source);
+    await copyBeneath({
+      src: anchored,
+      // An array of sources goes into dest, like cp a b dir/.
+      dest:
+        typeof src.path == "string"
+          ? destination
+          : {
+              root: destination.root,
+              path: path.posix.join(
+                destination.path,
+                path.posix.basename(anchored.path),
+              ),
+            },
+      options: beneathCopyOptions(options),
+    });
   }
   void touchProjectLastEdited(dest.project_id, "cp");
+}
+
+// The cp options that a host-side anchored copy honors.
+function beneathCopyOptions(options?: CopyOptions): BeneathCopyOptions {
+  return {
+    force: options?.force,
+    errorOnExist: options?.errorOnExist,
+    preserveTimestamps: options?.preserveTimestamps,
+    recursive: options?.recursive ?? true,
+    dereference: options?.dereference,
+    // The caller reports failure once this passes: stop writing by then.
+    timeout: options?.timeout,
+  };
 }
 
 function pathCopyArchiveLimitError(message: string): Error {
@@ -2726,17 +2719,6 @@ function assertPathCopyArchiveRoots(roots: PathCopyArchiveRoot[]): void {
       throw new Error(`duplicate archive root: ${root.archive_path}`);
     }
     seen.add(root.archive_path);
-  }
-}
-
-async function lstatIfExists(pathToStat: string) {
-  try {
-    return await lstat(pathToStat);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return undefined;
-    }
-    throw err;
   }
 }
 
@@ -2815,25 +2797,28 @@ async function createPathCopyArchive({
   try {
     await volume.snapshots.create(snapshot, { quotaMode: "skip" });
     snapshotCreated = true;
-    const snapshotRoot = join(volume.path, volume.snapshots.path(snapshot));
     for (const root of roots) {
-      const sourceAbs = join(snapshotRoot, root.source_path);
-      if (!(await exists(sourceAbs))) {
+      // The source path is the project user's, and so is the .snapshots
+      // directory in their home: resolve both beneath the volume, refusing
+      // any symlink (ELOOP) that would read host files into the archive.
+      const source = path.posix.join(
+        volume.snapshots.path(snapshot),
+        root.source_path,
+      );
+      if ((await kindBeneath(volume.path, source)) === "missing") {
         throw new Error(`copy source path does not exist: ${root.source_path}`);
       }
       const stats = await collectPathCopyArchiveStats({
-        rootPath: sourceAbs,
+        rootPath: join(volume.path, source),
         maxFiles: maxFiles - file_count,
         maxUncompressedBytes: maxUncompressedBytes - uncompressed_bytes,
       });
       file_count += stats.file_count;
       uncompressed_bytes += stats.uncompressed_bytes;
-      const stagedAbs = join(stagingRoot, root.archive_path);
-      await mkdir(dirname(stagedAbs), { recursive: true });
-      await cpExec(sourceAbs, stagedAbs, {
-        recursive: true,
-        preserveTimestamps: true,
-        reflink: true,
+      await copyBeneath({
+        src: { root: volume.path, path: source },
+        dest: { root: stagingRoot, path: root.archive_path },
+        options: { recursive: true, preserveTimestamps: true },
       });
     }
 
@@ -2976,33 +2961,23 @@ async function applyPathCopyArchive({
         if (!root) {
           throw new Error(`archive root not found: ${archiveRootPath}`);
         }
-        const sourceAbs = join(stagingRoot, archiveRootPath);
-        if (!(await exists(sourceAbs))) {
+        if ((await kindBeneath(stagingRoot, archiveRootPath)) === "missing") {
           throw new Error(`archive did not extract ${archiveRootPath}`);
         }
         const destPath = normalizePathCopyArchivePath(
           rootDest.dest_path,
           "destination path",
         );
-        const destAbs = await destFs.safeAbsPath(destPath);
-        if (destAbs === projectRoot) {
+        const destination = await destFs.resolveAnchoredPath(destPath);
+        if (!destination.path) {
           throw new Error("dest_path cannot be project root");
         }
 
-        const destStat = await lstatIfExists(destAbs);
         const installed = await installPathFromStaging({
-          source: sourceAbs,
-          destination: destAbs,
-          destinationExists: destStat != null,
+          source: { root: stagingRoot, path: archiveRootPath },
+          destination,
           exact: rootDest.exact,
-          options,
-          copy: async (source, destination) => {
-            await cpExec(source, destination, {
-              ...options,
-              recursive: options?.recursive ?? true,
-              reflink: true,
-            });
-          },
+          options: beneathCopyOptions(options),
         });
         applied += 1;
         if (installed) {
@@ -5296,6 +5271,12 @@ async function createProjectFilesystem(project_id: string) {
       await deleteSnapshot({ project_id, name }),
   });
 }
+
+// For content links (content-origin.ts): whether path, with symlinks
+// resolved, is dir or inside it (dir resolved the same way).
+export const projectRealPathWithinDir = createContentPathChecker({
+  createFs: createProjectFilesystem,
+});
 
 export async function ensureFileDownloadReadServer({
   client,

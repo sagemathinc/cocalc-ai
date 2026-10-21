@@ -3856,12 +3856,14 @@ export async function updateProjectUsers({
   users,
   runtime_lifecycle_revision,
   users_revision,
+  content_epoch,
 }: {
   project_id: string;
   users?: any;
   runtime_lifecycle_revision?: number;
   /** Only the newest collaborator list is kept (sqlite/projects.ts). */
   users_revision?: number;
+  content_epoch?: number;
 }) {
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
@@ -3869,7 +3871,12 @@ export async function updateProjectUsers({
   const apply = () => {
     // Store collaborator map in the generic sqlite row mirror used by conat auth.
     // This is separate from the concrete projects SQL table schema.
-    upsertProject({ project_id, users, users_revision });
+    upsertProject({
+      project_id,
+      users,
+      users_revision,
+      ...(content_epoch == null ? {} : { content_epoch }),
+    });
     clearProjectHostConatAuthCaches();
   };
   // A versioned update is not queued behind start and stop: a start that hangs

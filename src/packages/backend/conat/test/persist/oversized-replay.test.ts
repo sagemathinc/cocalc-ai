@@ -211,7 +211,13 @@ describe("reading one message over the limit", () => {
         expect.objectContaining({ code: 413 }),
       );
       expect(queries.length).toBeGreaterThan(0);
-      expect(queries.some((q) => /\braw\b/.test(q))).toBe(false);
+      // length(raw) and typeof(raw) read only the stored length and type,
+      // not the data
+      expect(
+        queries.some((q) =>
+          /\braw\b/.test(q.replace(/(length|typeof)\(raw\)/g, "")),
+        ),
+      ).toBe(false);
       db.prepare = prepare;
       s.close();
     } finally {

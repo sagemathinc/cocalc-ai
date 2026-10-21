@@ -33,6 +33,7 @@ import {
 } from "@cocalc/frontend/keyboard/boundary";
 import { AITools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { EmptyNotebookPlaceholder } from "./empty-notebook-placeholder";
 import { JupyterActions } from "./browser-actions";
 import { Cell } from "./cell";
 import HeadingTagComponent from "./heading-tag";
@@ -270,6 +271,16 @@ export function canShowCellDragHandle(
 export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
   if (props.cell_list == null) {
     return renderLoading();
+  }
+  if (props.cell_list.size === 0 && props.actions != null && !props.read_only) {
+    // An empty notebook stores no cells until the user starts editing.
+    return (
+      <EmptyNotebookPlaceholder
+        actions={props.actions}
+        fontSize={props.font_size}
+        autoFocus={props.is_focused}
+      />
+    );
   }
   return <LoadedCellList {...props} cell_list={props.cell_list} />;
 };
