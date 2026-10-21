@@ -731,3 +731,59 @@ describe("an append never makes a history the open check refuses", () => {
     expect(refused).toBeGreaterThan(200);
   });
 });
+
+describe("the open check and the append check agree (codex round 6)", () => {
+  const R = (records: any[]) =>
+    records.map((value) => ({
+      value,
+      digest: JSON.stringify(value),
+      bytes: JSON.stringify(value).length,
+    }));
+
+  test("every snapshot-only node is a node: a leftover one is a second head (4332146118)", () => {
+    // An older snapshot whose patch is gone, an unrelated patch, and a
+    // newer snapshot of that patch: PatchGraph has two heads.
+    const records = [snapshot("gone"), patch("p"), snapshot("p")];
+    expect(check(records)).toMatchObject({ ok: false, reason: "non-linear" });
+    const c = BoardAppendCheck.fromRecords(R(records), 0);
+    expect(() => c.check(R([patch("q", ["p"])]))).toThrow(/heads|openable/);
+    // One trimmed snapshot with the chain after it still opens.
+    expect(
+      check([snapshot("gone"), patch("q", ["gone"]), patch("r", ["q"])]),
+    ).toMatchObject({ ok: true, cut: "gone", suffix: 2, head: "r" });
+  });
+
+  test("a copy of a patch must be the same record, not only the same parents (4332146123)", () => {
+    const a = patch("A", [], { patch: '"one"' });
+    const b = patch("A", [], { patch: '"two"' });
+    expect(check([a, b])).toMatchObject({
+      ok: false,
+      reason: "invalid",
+      message: "two different patches at A",
+    });
+    expect(check([a, { ...a }])).toMatchObject({ ok: true });
+    // With the stored bytes' identity, as the service reads it.
+    const c = new BoardHistoryCheck();
+    c.add(a, 10, "d1");
+    expect(c.add(a, 10, "d2")).toMatchObject({ ok: false, reason: "invalid" });
+    // And two different snapshots at one time.
+    expect(
+      check([patch("A"), snapshot("A"), { ...snapshot("A"), snapshot: "[1]" }]),
+    ).toMatchObject({ ok: false, message: "two different snapshots at A" });
+  });
+
+  test("a patch (or merge patch) that isn't JSON is refused (4332146126)", () => {
+    for (const bad of [
+      patch("A", [], { patch: "{not json" }),
+      patch("A", [], { merge_parent: "B", merge_patch: "[" }),
+    ]) {
+      expect(check([bad])).toMatchObject({ ok: false, reason: "invalid" });
+      const c = BoardAppendCheck.fromRecords([], 0);
+      expect(() => c.check(R([bad]))).toThrow(/not JSON/);
+    }
+    // merge_patch without a merge_parent is never parsed by SyncDoc.
+    expect(check([patch("A", [], { merge_patch: "[" })])).toMatchObject({
+      ok: true,
+    });
+  });
+});

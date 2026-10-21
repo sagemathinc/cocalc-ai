@@ -34,7 +34,7 @@ export interface AppendStream {
 }
 
 // A record's identity: its encoding and exact bytes, as stored.
-function digestOf(encoding: unknown, raw: Buffer | undefined): string {
+export function digestOf(encoding: unknown, raw: Buffer | undefined): string {
   return createHash("sha256")
     .update(`${encoding}\0`)
     .update(raw ?? Buffer.alloc(0))

@@ -27,6 +27,7 @@ import {
   BoardHistoryCheck,
   type HistoryVerdict,
 } from "@cocalc/conat/persist/board-history";
+import { digestOf } from "@cocalc/conat/persist/board-append";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { stream as persistStream } from "@cocalc/conat/persist/client";
 import { storagePath } from "@cocalc/conat/sync/core-stream";
@@ -100,7 +101,13 @@ export async function checkBoardHistory({
             message: `a record that can't be decoded: ${err}`.slice(0, 300),
           };
         }
-        const stop = check.add(value, bytes);
+        // Identified as the append check identifies it, so that the two
+        // agree on what is a copy of a stored record.
+        const stop = check.add(
+          value,
+          bytes,
+          digestOf(message.encoding, message.raw),
+        );
         if (stop) return stop;
       }
     }

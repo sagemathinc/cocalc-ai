@@ -116,6 +116,25 @@ function validId(x: unknown, limits: BoardHistoryLimits): x is string {
   );
 }
 
+function parsesAsJson(text: string): boolean {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A record's identity when its caller has none (its stored bytes' digest,
+// as the append check uses): its decoded value.
+function valueIdentity(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function validSeq(x: unknown): boolean {
   return typeof x === "number" && Number.isSafeInteger(x) && x >= 0;
 }
@@ -188,8 +207,20 @@ export function parseBoardRecord(
   if (r.patch != null && typeof r.patch !== "string") {
     return { invalid: "a record whose patch is not a string" };
   }
+  // SyncDoc parses a patch (and a merge patch, with its merge parent) as
+  // JSON when it loads the record: one that doesn't parse can't be opened.
+  if (typeof r.patch === "string" && !parsesAsJson(r.patch)) {
+    return { invalid: "a record whose patch is not JSON" };
+  }
   if (r.merge_parent != null && !validId(r.merge_parent, limits)) {
     return { invalid: "a record with an invalid merge parent" };
+  }
+  if (
+    r.merge_parent != null &&
+    typeof r.merge_patch === "string" &&
+    !parsesAsJson(r.merge_patch)
+  ) {
+    return { invalid: "a record whose merge patch is not JSON" };
   }
   return { time: r.time, parents: parents as string[], snapshot: false };
 }
@@ -204,13 +235,16 @@ export class BoardHistoryCheck {
   private readonly limits: BoardHistoryLimits;
   private bytes = 0;
   private count = 0;
-  // Patches by time: their parents, and their stored size.
+  // Patches by time: their parents, their stored size, and the identity of
+  // their record (a copy of it must be the same record).
   private readonly patches = new Map<
     string,
-    { parents: string[]; bytes: number }
+    { parents: string[]; bytes: number; identity: string }
   >();
-  // The times of snapshot records, in stream order (newest last).
+  // The times of snapshot records, in stream order (newest last), and the
+  // identity of each time's record.
   private readonly snapshots: string[] = [];
+  private readonly snapshotIdentity = new Map<string, string>();
   private failed?: HistoryVerdict;
   // After an ok finish(): what the append check projects from.
   private openable?: OpenableHistory;
@@ -254,7 +288,13 @@ export class BoardHistoryCheck {
     return undefined;
   }
 
-  add(value: unknown, rawBytes: number): HistoryVerdict | undefined {
+  // identity: the record's identity as the append check sees it (the
+  // digest of its encoding and stored bytes); by default its decoded value.
+  add(
+    value: unknown,
+    rawBytes: number,
+    identity: string = valueIdentity(value),
+  ): HistoryVerdict | undefined {
     const sized = this.checkSize(rawBytes);
     if (sized) return sized;
     this.bytes += rawBytes;
@@ -262,14 +302,23 @@ export class BoardHistoryCheck {
     const r = parseBoardRecord(value, this.limits);
     if ("invalid" in r) return this.fail(historyError("invalid", r.invalid));
     if (r.snapshot) {
+      // The same snapshot stored again must be the same record.
+      const seen = this.snapshotIdentity.get(r.time);
+      if (seen != null && seen !== identity) {
+        return this.fail(
+          historyError("invalid", `two different snapshots at ${r.time}`),
+        );
+      }
+      this.snapshotIdentity.set(r.time, identity);
       this.snapshots.push(r.time);
       return undefined;
     }
     const parents = r.parents!;
     const seen = this.patches.get(r.time);
     if (seen != null) {
-      // The same patch stored again must be the same patch.
-      if (!sameList(seen.parents, parents)) {
+      // The same patch stored again must be the same record, not only the
+      // same parents.
+      if (seen.identity !== identity) {
         return this.fail(
           historyError("invalid", `two different patches at ${r.time}`),
         );
@@ -277,38 +326,23 @@ export class BoardHistoryCheck {
       seen.bytes += rawBytes;
       return undefined;
     }
-    this.patches.set(r.time, { parents, bytes: rawBytes });
+    this.patches.set(r.time, { parents, bytes: rawBytes, identity });
     return undefined;
   }
 
   finish(): HistoryVerdict {
     if (this.failed) return this.failed;
-    const { patches } = this;
+    // A snapshot whose patch isn't stored (a trimmed history) is a node of
+    // its own with no parents, as in PatchGraph (and the append check):
+    // every one of them, not only the newest, so that one left over is a
+    // second head.
+    const patches = new Map(this.patches);
+    for (const t of this.snapshotIdentity.keys()) {
+      if (!patches.has(t))
+        patches.set(t, { parents: [], bytes: 0, identity: "" });
+    }
     const totals = { records: this.count, bytes: this.bytes };
     if (patches.size === 0) {
-      if (this.snapshots.length > 0) {
-        // A snapshot of a patch that isn't there, and nothing after it:
-        // nothing to reconstruct from but the snapshot, which is fine only
-        // if it is the one record.
-        if (this.snapshots.length !== 1) {
-          return historyError("non-linear", "snapshots without their patches");
-        }
-        this.openable = {
-          cut: this.snapshots[0],
-          cutBytes: 0,
-          below: [],
-          chain: [],
-          ...totals,
-        };
-        return {
-          ok: true,
-          cut: this.snapshots[0],
-          suffix: 0,
-          suffixBytes: 0,
-          head: this.snapshots[0],
-          ...totals,
-        };
-      }
       this.openable = { cutBytes: 0, below: [], chain: [], ...totals };
       return { ok: true, suffix: 0, suffixBytes: 0, ...totals };
     }
@@ -570,7 +604,7 @@ export class BoardAppendCheck {
     let unopenable: string | undefined;
     for (const { value, digest, bytes, key } of records) {
       if (unopenable == null) {
-        const stop = open.add(value, bytes);
+        const stop = open.add(value, bytes, digest);
         if (stop != null && !stop.ok) {
           unopenable = `its stored history isn't openable (${stop.reason}): ${stop.message}`;
         }

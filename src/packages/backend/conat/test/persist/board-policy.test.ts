@@ -209,10 +209,12 @@ test("a first reader can't choose how the host's writes are stored", async () =>
   await raw.getAll();
   // The host's writes go through, stored with the server's own options.
   const writer = await writerStream(project_id, path);
-  writer.publish({ ...rec(1), patch: "x".repeat(10_000) });
+  writer.publish({ ...rec(1), patch: JSON.stringify("x".repeat(10_000)) });
   await writer.save();
   const check = await readerStream(project_id, path);
-  expect(check.getAll()).toEqual([{ ...rec(1), patch: "x".repeat(10_000) }]);
+  expect(check.getAll()).toEqual([
+    { ...rec(1), patch: JSON.stringify("x".repeat(10_000)) },
+  ]);
   raw.close();
   writer.close();
   check.close();
@@ -295,6 +297,7 @@ describe("the write service's transport bounds", () => {
         time: "t1",
         is_snapshot: true,
         snapshot: "x".repeat(7 * MiB),
+        seq_info: { seq: 1 },
       }),
       timeout: 20_000,
     });
@@ -511,7 +514,12 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     const results = await w.setMany(
       [
         { messageData: messageData(rec(2, 1)) },
-        { messageData: messageData({ ...rec(3, 2), patch: "x".repeat(1000) }) },
+        {
+          messageData: messageData({
+            ...rec(3, 2),
+            patch: JSON.stringify("x".repeat(1000)),
+          }),
+        },
       ],
       { timeout: 10_000 },
     );
@@ -528,7 +536,12 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     const w = hub(project_id, path);
     await set(w, rec(1));
     await set(w, rec(2, 1));
-    await set(w, { time: "t1", is_snapshot: true, snapshot: "{}" });
+    await set(w, {
+      time: "t1",
+      is_snapshot: true,
+      snapshot: "{}",
+      seq_info: { seq: 1 },
+    });
     await set(w, rec(2, 1));
     await set(w, rec(3, 2));
     w.close();
@@ -544,7 +557,12 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     await expect(set(w, rec(1, 2))).rejects.toMatchObject({ code: "branch" });
     // A snapshot of a patch the history doesn't have.
     await expect(
-      set(w, { time: "t9", is_snapshot: true, snapshot: "{}" }),
+      set(w, {
+        time: "t9",
+        is_snapshot: true,
+        snapshot: "{}",
+        seq_info: { seq: 1 },
+      }),
     ).rejects.toMatchObject({ code: "branch" });
     expect(await stored(project_id, path)).toEqual([rec(1), rec(2, 1)]);
     w.close();
@@ -553,7 +571,12 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     w = hub(project_id, path);
     await expect(set(w, rec(1, 2))).rejects.toMatchObject({ code: "branch" });
     await expect(set(w, rec(3, 1))).rejects.toMatchObject({ code: "branch" });
-    await set(w, { time: "t1", is_snapshot: true, snapshot: "{}" });
+    await set(w, {
+      time: "t1",
+      is_snapshot: true,
+      snapshot: "{}",
+      seq_info: { seq: 1 },
+    });
     await set(w, rec(3, 2));
     w.close();
   });
