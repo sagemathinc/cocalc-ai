@@ -331,3 +331,105 @@ test("daybreak2's pathological batch (alternating snapshots) is refused at once"
   console.log(`pathological batch refused in ${ms.toFixed(1)} ms`);
   expect(ms).toBeLessThan(50);
 });
+
+describe("codex round 7 (on 956e675030)", () => {
+  test("4332257425: a msgID twice in one batch: the same record is stored once; another record is refused", () => {
+    const stream = astraHistory();
+    try {
+      const before = stream.seqBounds().newest_retained_seq!;
+      const next = { mesg: patch("t1001", ["t1000"]), msgID: "p1001" };
+      // (A snapshot first moves the cut, so the suffix has room.)
+      const results = write(stream, [
+        { mesg: snapshot("t1000"), msgID: "s1000-again" },
+        next,
+        next,
+      ]);
+      expect(results[1].seq).toBe(results[2].seq);
+      expect(stream.seqBounds().newest_retained_seq).toBe(before + 2);
+      expect(appendHead(stream as any)).toBe("t1001");
+      expect(opens(stream)).toMatchObject({ ok: true, head: "t1001" });
+      // Another record under a msgID earlier in the batch: refused, nothing
+      // stored.
+      expect(() =>
+        write(stream, [
+          { mesg: patch("t1002", ["t1001"]), msgID: "p1002" },
+          { mesg: patch("t1003", ["t1002"]), msgID: "p1002" },
+        ]),
+      ).toThrow(/msgID p1002, which is already stored/);
+      expect(stream.seqBounds().newest_retained_seq).toBe(before + 2);
+      // And storage itself, given such a batch directly, refuses it too.
+      const raw = (mesg: object) =>
+        Buffer.from(encode({ encoding: DataEncoding.MsgPack, mesg }));
+      const direct = stream.setMany(
+        [
+          { msgID: "q", encoding: DataEncoding.MsgPack, raw: raw(patch("x")) },
+          { msgID: "q", encoding: DataEncoding.MsgPack, raw: raw(patch("y")) },
+        ],
+        { allOrNothing: true, strictMsgID: true },
+      );
+      expect(direct).toEqual([
+        expect.objectContaining({ code: "msgid-conflict" }),
+        expect.objectContaining({ code: "msgid-conflict" }),
+      ]);
+      expect(stream.seqBounds().newest_retained_seq).toBe(before + 2);
+    } finally {
+      stream.close();
+    }
+  });
+
+  test("4332257420: retention settings never trim a board's history", () => {
+    const stream = newStream();
+    stream.setRecordCap(BOARD_HISTORY_LIMITS.recordBytes);
+    try {
+      write(stream, [{ mesg: patch("t0"), msgID: "p0" }]);
+      stream.config({ max_msgs: 1, max_age: 1, allow_msg_ttl: true } as any);
+      // An append that would evict t0 is refused ("branch": the board
+      // writer keeps its edits), and nothing is deleted.
+      expect(() =>
+        write(stream, [{ mesg: patch("t1", ["t0"]), msgID: "p1" }]),
+      ).toThrow();
+      const raw = Buffer.from(
+        encode({ encoding: DataEncoding.MsgPack, mesg: patch("t1", ["t0"]) }),
+      );
+      expect(() =>
+        stream.set({ encoding: DataEncoding.MsgPack, raw, msgID: "p1" }),
+      ).toThrow(expect.objectContaining({ code: "branch" }));
+      // Ages and TTLs delete nothing either (config enforces limits now).
+      stream.config({ max_age: 1 } as any);
+      expect([...stream.getAll()]).toHaveLength(1);
+      expect(opens(stream)).toMatchObject({ ok: true, head: "t0" });
+    } finally {
+      stream.close();
+    }
+  });
+
+  test("4332257428: a capped getAll reads metadata a chunk at a time", () => {
+    const stream = newStream();
+    stream.setRecordCap(BOARD_HISTORY_LIMITS.recordBytes);
+    try {
+      const raw = Buffer.from(
+        encode({ encoding: DataEncoding.MsgPack, mesg: patch("t") }),
+      );
+      stream.setMany(
+        Array.from({ length: 2_500 }, () => ({
+          encoding: DataEncoding.MsgPack,
+          raw,
+        })),
+      );
+      const prepare = jest.spyOn((stream as any).db, "prepare");
+      const it = stream.getAll();
+      expect(it.next().done).toBe(false);
+      const metaScans = () =>
+        prepare.mock.calls.filter(([sql]) => /LIMIT 1000/.test(`${sql}`))
+          .length;
+      // One chunk's metadata, not the whole table's.
+      expect(metaScans()).toBe(1);
+      let n = 1;
+      while (!it.next().done) n += 1;
+      expect(n).toBe(2_500);
+      expect(metaScans()).toBe(3);
+    } finally {
+      stream.close();
+    }
+  });
+});

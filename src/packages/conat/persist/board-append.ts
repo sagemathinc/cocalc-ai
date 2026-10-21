@@ -115,16 +115,33 @@ export function requestRecords(
   mesg: { raw?: Buffer; encoding?: any; data?: any },
   stream?: Pick<AppendStream, "msgIDOutcome">,
 ): AppendRecord[] | undefined {
+  // msgIDs earlier in this request that storage will write: a later record
+  // with one is a duplicate of it, or a conflict (storage's setMany does
+  // the same).
+  const inRequest = new Map<string, { encoding: any; data: Buffer }>();
   const record = (
     encoding: any,
     data: Buffer | undefined,
     key: unknown,
     msgID: unknown,
   ): AppendRecord => {
-    const outcome =
+    const bytes = data ?? Buffer.alloc(0);
+    let outcome =
       stream == null || typeof msgID !== "string"
         ? "new"
-        : stream.msgIDOutcome(msgID, encoding, data ?? Buffer.alloc(0));
+        : stream.msgIDOutcome(msgID, encoding, bytes);
+    if (outcome === "new" && stream != null && typeof msgID === "string") {
+      const earlier = inRequest.get(msgID);
+      if (earlier == null) {
+        inRequest.set(msgID, { encoding, data: bytes });
+      } else {
+        outcome =
+          earlier.encoding === encoding &&
+          Buffer.compare(earlier.data, bytes) === 0
+            ? "duplicate"
+            : "conflict";
+      }
+    }
     if (outcome === "conflict") {
       throw new ConatError(
         `a different message with msgID ${msgID}, which is already stored`,
@@ -192,12 +209,21 @@ export function commitAppend(
   { check, next }: ReturnType<typeof appendCheck>,
   results: { seq: number }[],
 ): void {
+  // (A duplicate of a record earlier in the same batch gets that record's
+  // new seq.)
+  const writtenSeqs = new Set(
+    next.written.flatMap((written, i) =>
+      written && results[i]?.seq != null ? [results[i].seq] : [],
+    ),
+  );
   const asProjected =
     results.length === next.written.length &&
     next.written.every((written, i) => {
       const seq = results[i]?.seq;
       if (seq == null) return false;
-      return written ? seq > check.atSeq : seq <= check.atSeq;
+      return written
+        ? seq > check.atSeq
+        : seq <= check.atSeq || writtenSeqs.has(seq);
     });
   if (asProjected) {
     check.commit(next, newestSeq(stream));
