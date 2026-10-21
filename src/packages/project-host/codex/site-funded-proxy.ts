@@ -27,6 +27,49 @@ const UNBILLED_PROVIDER_TOOL_TYPES = new Set([
   "local_shell",
 ]);
 
+// Projects reach this proxy through pasta as a host-local port, and the
+// project egress block (cocalc-runtime-storage, emit_project_metadata_rules in
+// bootstrap.py) drops new project connections to host-local ports except DNS,
+// the conat router and this range. Each ACP worker binds the first free port:
+// a draining worker keeps its port while the new one takes the next. Keep the
+// derivation and the range size in sync with project_site_codex_proxy_port.
+export const SITE_FUNDED_CODEX_PROXY_PORT_COUNT = 16;
+const SITE_FUNDED_CODEX_PROXY_PORT_OFFSET = 300;
+const DEFAULT_PROJECT_HOST_PORT = 9002;
+
+// Number(value) when it is a valid TCP port, as the bootstrap helper reads it.
+function tcpPort(value: string | undefined): number | undefined {
+  if (!value?.trim()) return undefined;
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535
+    ? port
+    : undefined;
+}
+
+export function siteFundedCodexProxyPorts(
+  env: NodeJS.ProcessEnv = process.env,
+): number[] {
+  let first = tcpPort(env.COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT);
+  if (first == null) {
+    // PORT as daemon.ts parsePort reads it: the text after the last ":".
+    first =
+      (tcpPort(env.PORT?.slice(env.PORT.lastIndexOf(":") + 1)) ??
+        DEFAULT_PROJECT_HOST_PORT) + SITE_FUNDED_CODEX_PROXY_PORT_OFFSET;
+    if (first > 65535) {
+      first = DEFAULT_PROJECT_HOST_PORT + SITE_FUNDED_CODEX_PROXY_PORT_OFFSET;
+    }
+  }
+  const ports: number[] = [];
+  for (
+    let port = first;
+    port <= 65535 && ports.length < SITE_FUNDED_CODEX_PROXY_PORT_COUNT;
+    port++
+  ) {
+    ports.push(port);
+  }
+  return ports;
+}
+
 export function siteFundedUsageEventId(
   reservationId: string,
   requestSequence: number,
@@ -312,10 +355,21 @@ function boundedProviderRequest({
 class SiteFundedCodexProxy {
   private readonly sessions = new Map<string, Session>();
   private server?: ReturnType<typeof createServer>;
-  private port?: number;
+  private listening?: Promise<number>;
+  // Tests listen on an ephemeral port instead of the host's fixed range.
+  ports?: number[];
 
-  private async ensureListening(): Promise<number> {
-    if (this.port != null) return this.port;
+  private ensureListening(): Promise<number> {
+    // Concurrent turns share one listen attempt; a failed attempt is retried
+    // by the next turn.
+    this.listening ??= this.listen().catch((err) => {
+      this.listening = undefined;
+      throw err;
+    });
+    return this.listening;
+  }
+
+  private async listen(): Promise<number> {
     if (!this.server) {
       this.server = createServer((request, response) => {
         void this.handle(request, response).catch((err) => {
@@ -330,29 +384,44 @@ class SiteFundedCodexProxy {
         });
       });
     }
-    await new Promise<void>((resolve, reject) => {
-      const onError = (err: Error) => {
-        this.server?.off("listening", onListening);
-        reject(err);
-      };
-      const onListening = () => {
-        this.server?.off("error", onError);
-        resolve();
-      };
-      this.server!.once("error", onError);
-      this.server!.once("listening", onListening);
-      this.server!.listen(0, "0.0.0.0");
-    });
-    const address = this.server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("failed to determine site-funded Codex proxy port");
+    const server = this.server;
+    const ports = this.ports ?? siteFundedCodexProxyPorts();
+    let lastError: unknown;
+    for (const port of ports) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onError = (err: Error) => {
+            server.off("listening", onListening);
+            reject(err);
+          };
+          const onListening = () => {
+            server.off("error", onError);
+            resolve();
+          };
+          server.once("error", onError);
+          server.once("listening", onListening);
+          // pasta delivers project connections to host.containers.internal
+          // on the host's loopback.
+          server.listen(port, "127.0.0.1");
+        });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== "EADDRINUSE") throw err;
+        lastError = err;
+        continue;
+      }
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("failed to determine site-funded Codex proxy port");
+      }
+      server.unref();
+      logger.info("site-funded Codex provider proxy listening", {
+        port: address.port,
+      });
+      return address.port;
     }
-    this.port = address.port;
-    this.server.unref();
-    logger.info("site-funded Codex provider proxy listening", {
-      port: this.port,
-    });
-    return this.port;
+    throw new Error(
+      `no free site-funded Codex proxy port in ${ports[0]}-${ports[ports.length - 1]}: ${lastError}`,
+    );
   }
 
   async startSession({
@@ -426,8 +495,8 @@ class SiteFundedCodexProxy {
     this.sessions.clear();
     const server = this.server;
     this.server = undefined;
-    this.port = undefined;
-    if (!server) return;
+    this.listening = undefined;
+    if (!server?.listening) return;
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
@@ -751,4 +820,9 @@ export async function startSiteFundedCodexProxySession(
 
 export async function shutdownSiteFundedCodexProxyForTests(): Promise<void> {
   await proxy.shutdown();
+}
+
+// undefined restores the host's fixed range.
+export function setSiteFundedCodexProxyPortsForTests(ports?: number[]): void {
+  proxy.ports = ports;
 }

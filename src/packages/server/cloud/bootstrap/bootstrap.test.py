@@ -4221,6 +4221,7 @@ normalize_project_io_class_state
             script = self._storage_wrapper_for(cfg)
             env_file = Path(cfg.env_file)
         self.assertIn('PROJECT_CONAT_ROUTER_PORT_DEFAULT="9110"', script)
+        self.assertIn('PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT="9310"', script)
         self.assertIn(f'PROJECT_HOST_ENV_FILE="{env_file}"', script)
         self.assertIn(
             f'PROJECT_HOST_LOCAL_ENV_FILE="{bootstrap.project_host_local_env_path(env_file)}"',
@@ -4254,6 +4255,7 @@ normalize_project_io_class_state
                     (
                         "PROJECT_METADATA_",
                         "PROJECT_CONAT_ROUTER_PORT_DEFAULT=",
+                        "PROJECT_SITE_CODEX_PROXY_PORT_",
                         "PROJECT_PRIVATE_IPV",
                         "PROJECT_NETWORK_TABLE=",
                         "PROJECT_NETWORK_CHAIN=",
@@ -4278,7 +4280,10 @@ normalize_project_io_class_state
                             "project_host_env_file_value",
                             "project_host_env_value",
                             "project_host_port_number",
+                            "project_host_derived_port",
                             "project_conat_router_port",
+                            "project_site_codex_proxy_ports",
+                            "project_egress_local_tcp_ports",
                             "emit_project_metadata_rules",
                         )
                     ),
@@ -4289,10 +4294,77 @@ normalize_project_io_class_state
                 ["bash", "-c", program], check=True, capture_output=True, text=True
             ).stdout.splitlines()
 
-    def _conat_exemption(self, rules: list[str]) -> str:
+    def _local_tcp_exemptions(self, rules: list[str]) -> list[str]:
         local_tcp = [rule for rule in rules if "egress-local-tcp" in rule]
         self.assertEqual(len(local_tcp), 1)
-        return local_tcp[0].split("tcp dport != { 53, ", 1)[1].split(" }", 1)[0]
+        return (
+            local_tcp[0].split("tcp dport != { ", 1)[1].split(" }", 1)[0].split(", ")
+        )
+
+    def _conat_exemption(self, rules: list[str]) -> str:
+        exemptions = self._local_tcp_exemptions(rules)
+        self.assertEqual(len(exemptions), 3)
+        self.assertEqual(exemptions[0], "53")
+        return exemptions[1]
+
+    def test_project_egress_allows_the_site_codex_proxy_range(self) -> None:
+        cases = [
+            ({}, ["53", "9102", "9302-9317"]),
+            ({"env_lines": ["PORT=9010"]}, ["53", "9110", "9310-9325"]),
+            ({"env": "PORT=9010\n"}, ["53", "9110", "9310-9325"]),
+            (
+                {
+                    "env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=9500\n",
+                    "local_env": "PORT=9020\n",
+                },
+                ["53", "9120", "9500-9515"],
+            ),
+            (
+                {"local_env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=nope\n"},
+                ["53", "9102", "9302-9317"],
+            ),
+            # PORT + 300 past 65535 falls back to the default range.
+            ({"env": "PORT=65300\n"}, ["53", "65400", "9302-9317"]),
+            # The range stops at 65535.
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=65530\n"},
+                ["53", "9102", "65530-65535"],
+            ),
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=65535\n"},
+                ["53", "9102", "65535"],
+            ),
+            # nft sets may not overlap: a port inside the range is left to it.
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=9100\n"},
+                ["53", "9100-9115"],
+            ),
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=50\n"},
+                ["9102", "50-65"],
+            ),
+            (
+                {"env": "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=53\n"},
+                ["53", "9302-9317"],
+            ),
+        ]
+        for kwargs, expected in cases:
+            with self.subTest(**kwargs):
+                self.assertEqual(
+                    self._local_tcp_exemptions(self._egress_rules(**kwargs)), expected
+                )
+
+    def test_project_site_codex_proxy_port_follows_project_host(self) -> None:
+        port = bootstrap.project_site_codex_proxy_port
+        self.assertEqual(port([]), 9302)
+        self.assertEqual(port(["PORT=9010"]), 9310)
+        self.assertEqual(port(["PORT=127.0.0.1:9010"]), 9310)
+        self.assertEqual(
+            port(["PORT=9010", "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=9555"]),
+            9555,
+        )
+        self.assertEqual(port(["COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=0"]), 9302)
+        self.assertEqual(port(["PORT=65300"]), 9302)
 
     def test_project_egress_conat_port_follows_the_daemon_env_files(self) -> None:
         # No env files: the bootstrap-derived default.
@@ -4436,7 +4508,7 @@ normalize_project_io_class_state
         self.assertEqual(
             rules[2:],
             [
-                f"{prefix} ct state new fib daddr type local meta l4proto tcp tcp dport != {{ 53, 9102 }} counter drop comment \"cocalc-project-network-egress-local-tcp\"",
+                f"{prefix} ct state new fib daddr type local meta l4proto tcp tcp dport != {{ 53, 9102, 9302-9317 }} counter drop comment \"cocalc-project-network-egress-local-tcp\"",
                 f"{prefix} ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop comment \"cocalc-project-network-egress-local-udp\"",
                 f"{prefix} ct state new ip daddr {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv4\"",
                 f"{prefix} ct state new ip6 daddr fc00::/7 meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv6\"",
@@ -4996,6 +5068,8 @@ reserve_project_startup_io_capacity
             )
             self.assertIn('PROJECT_CONAT_ROUTER_PORT_DEFAULT="9102"', script)
             self.assertNotIn("__PROJECT_CONAT_ROUTER_PORT__", script)
+            self.assertIn('PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT="9302"', script)
+            self.assertNotIn("__PROJECT_SITE_CODEX_PROXY_PORT__", script)
             self.assertNotIn("__PROJECT_HOST_ENV_FILE__", script)
             self.assertNotIn("__PROJECT_HOST_LOCAL_ENV_FILE__", script)
             self.assertIn(
@@ -5061,12 +5135,13 @@ reserve_project_startup_io_capacity
                 self.assertIn(f'comment "%s-{comment}"', emit_metadata_body)
             self.assertEqual(emit_metadata_body.count("ct state new"), 4)
             self.assertNotIn("counter accept", emit_metadata_body)
-            # The conat port is exempt for TCP only; UDP keeps only DNS.
+            # The conat router and Codex proxy ports are exempt for TCP only;
+            # UDP keeps only DNS.
             self.assertIn(
-                "ct state new fib daddr type local meta l4proto tcp tcp dport != { 53, %s } counter drop",
+                "ct state new fib daddr type local meta l4proto tcp tcp dport != { %s } counter drop",
                 emit_metadata_body,
             )
-            self.assertIn('"$(project_conat_router_port)"', emit_metadata_body)
+            self.assertIn('"$(project_egress_local_tcp_ports)"', emit_metadata_body)
             self.assertIn(
                 "ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop",
                 emit_metadata_body,

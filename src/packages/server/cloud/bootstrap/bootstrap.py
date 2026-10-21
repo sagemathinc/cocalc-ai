@@ -2213,12 +2213,27 @@ def js_positive_integer(value: str | None) -> int | None:
 
 
 def project_conat_router_port(env_lines: list[str]) -> int:
-    """The port of this host's conat router, the one host-local service
-    besides DNS that projects may connect to. Derived as project-host derives
-    it (project-host/daemon.ts): COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else
-    PORT + 100, with PORT defaulting to 9002. That is daemon index 0, the only
-    one bootstrap runs; another daemon on the same host (index > 0, PORT
-    9002 + index) would need its router port allowed too."""
+    """The port of this host's conat router, a host-local service projects
+    may connect to. Derived as project-host derives it (project-host/daemon.ts):
+    COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100, with PORT
+    defaulting to 9002. That is daemon index 0, the only one bootstrap runs;
+    another daemon on the same host (index > 0, PORT 9002 + index) would need
+    its router port allowed too."""
+    return project_host_derived_port(
+        env_lines, "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT", 100
+    )
+
+
+def project_site_codex_proxy_port(env_lines: list[str]) -> int:
+    """The first port of the site-funded Codex proxy range, which projects
+    may connect to: COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT, else PORT + 300
+    (siteFundedCodexProxyPorts in project-host/codex/site-funded-proxy.ts)."""
+    return project_host_derived_port(
+        env_lines, "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT", 300
+    )
+
+
+def project_host_derived_port(env_lines: list[str], key: str, offset: int) -> int:
     env: dict[str, str] = {}
     for line in env_lines:
         try:
@@ -2231,18 +2246,16 @@ def project_conat_router_port(env_lines: list[str]) -> int:
     def valid(number: int | None) -> int | None:
         return number if number is not None and number <= 65535 else None
 
-    # The router binds Number(COCALC_PROJECT_HOST_CONAT_ROUTER_PORT); PORT is
-    # read by parsePort, i.e. Number() of the text after the last ":".
-    explicit = valid(
-        js_positive_integer(env.get("COCALC_PROJECT_HOST_CONAT_ROUTER_PORT"))
-    )
+    # The explicit key is read with Number(); PORT is read by parsePort, i.e.
+    # Number() of the text after the last ":".
+    explicit = valid(js_positive_integer(env.get(key)))
     if explicit is not None:
         return explicit
     raw_port = env.get("PORT")
     base = (
         js_positive_integer(raw_port.rsplit(":", 1)[-1]) if raw_port else None
     ) or DEFAULT_PROJECT_HOST_PORT
-    return valid(base + 100) or DEFAULT_PROJECT_HOST_PORT + 100
+    return valid(base + offset) or DEFAULT_PROJECT_HOST_PORT + offset
 
 
 def read_env_assignments(path: str | Path) -> dict[str, str]:
@@ -6797,13 +6810,16 @@ PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"
 # arrives at the host's own services (sshd, the project-host API, ...), and a
 # connection to a VPC address leaves as the host. The only host-local services
 # a project needs are the host resolver (pasta forwards the project's DNS to
-# it) and this host's conat router. DNS to a private address stays allowed so
-# a host whose resolver is on its VPC keeps working; on GCP the project's DNS
-# goes to the host's 127.0.0.53, so this could later be narrowed to the
-# host's actual resolvers. The conat router port is read from the daemon's
-# env files when the rules are emitted (see project_conat_router_port); this
-# bootstrap-derived value applies only when neither file sets it.
+# it), this host's conat router and the site-funded Codex proxy. DNS to a
+# private address stays allowed so a host whose resolver is on its VPC keeps
+# working; on GCP the project's DNS goes to the host's 127.0.0.53, so this
+# could later be narrowed to the host's actual resolvers. The router and proxy
+# ports are read from the daemon's env files when the rules are emitted (see
+# project_host_derived_port); these bootstrap-derived values apply only when
+# neither file sets them.
 PROJECT_CONAT_ROUTER_PORT_DEFAULT="__PROJECT_CONAT_ROUTER_PORT__"
+PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT="__PROJECT_SITE_CODEX_PROXY_PORT__"
+PROJECT_SITE_CODEX_PROXY_PORT_COUNT=16
 PROJECT_HOST_ENV_FILE="__PROJECT_HOST_ENV_FILE__"
 PROJECT_HOST_LOCAL_ENV_FILE="__PROJECT_HOST_LOCAL_ENV_FILE__"
 PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"
@@ -8557,26 +8573,25 @@ project_host_port_number() {
   fi
 }
 
-# The port of this host's conat router, the one host-local TCP service besides
-# DNS that projects may connect to, derived as project-host's ensureDefaults
-# derives it: COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100, where an
-# empty or unparsable PORT means the default 9002. Presence matters: an empty
-# value in the local file still overrides the managed one. Only when neither
-# file sets either key does the bootstrap-derived value apply.
-project_conat_router_port() {
-  local explicit="" base="" has_explicit=0 has_base=0
-  if explicit="$(project_host_env_value COCALC_PROJECT_HOST_CONAT_ROUTER_PORT)"; then
+# A project-host port derived as project-host derives it from the daemon's env
+# files: the explicit key ($1), else PORT + offset ($2), where an empty or
+# unparsable PORT means the default 9002. Presence matters: an empty value in
+# the local file still overrides the managed one. Only when neither file sets
+# either key does the bootstrap-derived value ($3) apply.
+project_host_derived_port() {
+  local key="$1" offset="$2" bootstrap_default="$3" explicit="" base="" has_explicit=0 has_base=0
+  if explicit="$(project_host_env_value "$key")"; then
     has_explicit=1
   fi
   if base="$(project_host_env_value PORT)"; then
     has_base=1
   fi
   if [ "$has_explicit" -eq 0 ] && [ "$has_base" -eq 0 ]; then
-    echo "$PROJECT_CONAT_ROUTER_PORT_DEFAULT"
+    echo "$bootstrap_default"
     return
   fi
-  # The router binds Number(COCALC_PROJECT_HOST_CONAT_ROUTER_PORT); PORT goes
-  # through parsePort, i.e. Number() of the text after the last ":".
+  # The explicit key is read with Number(); PORT goes through parsePort,
+  # i.e. Number() of the text after the last ":".
   explicit="$(project_host_port_number "$explicit")"
   if [ "$has_explicit" -eq 1 ] && [ -n "$explicit" ]; then
     echo "$explicit"
@@ -8584,10 +8599,52 @@ project_conat_router_port() {
   fi
   base="$(project_host_port_number "${base##*:}")"
   [ -n "$base" ] || base=9002
-  if [ "$((base + 100))" -le 65535 ]; then
-    echo "$((base + 100))"
+  if [ "$((base + offset))" -le 65535 ]; then
+    echo "$((base + offset))"
   else
-    echo 9102
+    echo "$((9002 + offset))"
+  fi
+}
+
+# The port of this host's conat router, a host-local TCP service projects may
+# connect to: COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100.
+project_conat_router_port() {
+  project_host_derived_port COCALC_PROJECT_HOST_CONAT_ROUTER_PORT 100 \\
+    "$PROJECT_CONAT_ROUTER_PORT_DEFAULT"
+}
+
+# The ports of the site-funded Codex provider proxy, which Codex in a project
+# reaches as host.containers.internal: the first is
+# COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT, else PORT + 300, and each ACP
+# worker binds the first free one of PROJECT_SITE_CODEX_PROXY_PORT_COUNT (see
+# siteFundedCodexProxyPorts in project-host/codex/site-funded-proxy.ts).
+# Prints "first last".
+project_site_codex_proxy_ports() {
+  local first last
+  first="$(project_host_derived_port COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT 300 \\
+    "$PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT")"
+  last="$((first + PROJECT_SITE_CODEX_PROXY_PORT_COUNT - 1))"
+  [ "$last" -le 65535 ] || last=65535
+  echo "$first $last"
+}
+
+# The host-local TCP ports projects may open new connections to, as nft set
+# elements: DNS, the conat router and the Codex proxy range. Elements may not
+# overlap in an nft set, so a port inside the range is left to the range.
+project_egress_local_tcp_ports() {
+  local router first last elements=""
+  router="$(project_conat_router_port)"
+  read -r first last <<< "$(project_site_codex_proxy_ports)"
+  if [ 53 -lt "$first" ] || [ 53 -gt "$last" ]; then
+    elements="53, "
+  fi
+  if [ "$router" -ne 53 ] && { [ "$router" -lt "$first" ] || [ "$router" -gt "$last" ]; }; then
+    elements="${elements}${router}, "
+  fi
+  if [ "$first" -eq "$last" ]; then
+    echo "${elements}${first}"
+  else
+    echo "${elements}${first}-${last}"
   fi
 }
 
@@ -8607,11 +8664,12 @@ emit_project_metadata_rules() {
   # disabled policy's broad local accept. Only new connections are dropped;
   # replies on the inbound pasta forwards (SSH into the project, the host
   # proxy) go to host-local client ports and must keep flowing.
-  # Host-local: DNS over TCP and UDP, and the conat router (HTTP) over TCP only.
+  # Host-local: DNS over TCP and UDP, and over TCP only the conat router and
+  # the site-funded Codex proxy (both HTTP).
   marker="cocalc-project-network-egress"
-  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto tcp tcp dport != { 53, %s } counter drop comment "%s-local-tcp"\\n' \
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto tcp tcp dport != { %s } counter drop comment "%s-local-tcp"\\n' \
     "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
-    "$(project_conat_router_port)" "$marker"
+    "$(project_egress_local_tcp_ports)" "$marker"
   printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop comment "%s-local-udp"\\n' \
     "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
     "$marker"
@@ -11278,6 +11336,9 @@ esac
     storage_wrapper = storage_wrapper.replace(
         "__PROJECT_CONAT_ROUTER_PORT__",
         str(project_conat_router_port(getattr(cfg, "env_lines", None) or [])),
+    ).replace(
+        "__PROJECT_SITE_CODEX_PROXY_PORT__",
+        str(project_site_codex_proxy_port(getattr(cfg, "env_lines", None) or [])),
     )
     env_path = Path(getattr(cfg, "env_file", None) or DEFAULT_PROJECT_HOST_ENV_FILE)
     storage_wrapper = storage_wrapper.replace(
