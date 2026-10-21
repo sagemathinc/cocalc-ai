@@ -3187,6 +3187,14 @@ export class JupyterActions extends JupyterActions0 {
     return exportToHTML({ ...(await this.toExportInput()), passive });
   };
 
+  // The print popup has the app's origin, so every printout, trusted or
+  // not, is written through the passive-document boundary (CSP, no
+  // navigation, no frames): nothing in a notebook ever runs there.  Trust
+  // only decides how outputs are rendered (toHTML).
+  writePrintDocument = (popup: Window, html: string): void => {
+    writePassiveHtmlDocument(popup, html, { css: PRINT_CSS });
+  };
+
   nbconvertToHtml = async (
     format: "cocalc-html" | "cocalc-pdf" = "cocalc-pdf",
   ) => {
@@ -3214,14 +3222,7 @@ export class JupyterActions extends JupyterActions0 {
       }
       const popup = printWindow!;
       if (popup.closed) throw Error("Print window was closed. Please retry.");
-      if (passive) {
-        // Untrusted: the popup has the app's origin, so write it through the
-        // passive-document boundary (CSP, no navigation, no frames).
-        writePassiveHtmlDocument(popup, html, { css: PRINT_CSS });
-      } else {
-        popup.document.open();
-        popup.document.write(html);
-      }
+      this.writePrintDocument(popup, html);
       let printing: Promise<void> | undefined;
       const print = () => {
         return (printing ??= (async () => {
