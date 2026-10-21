@@ -1259,6 +1259,31 @@ describe("in the project-host", () => {
     expect(existsSync(root)).toBe(true);
   });
 
+  it("keeps a volume whose project a restore interrupted by a crash names", async () => {
+    const orphan = join(mount, `project-${OTHER}-persist`);
+    await mkdir(orphan);
+    // its home was moved aside, and the replacement never moved in
+    const aside = join(
+      mount,
+      ".snapshot-restore",
+      `project-${OTHER}.restore-old.${"0".repeat(8)}-0000-4000-8000-${"0".repeat(12)}`,
+    );
+    await mkdir(aside, { recursive: true });
+    expect(await deleteOrphanedPersistVolumes({ env })).toEqual([]);
+    expect(existsSync(orphan)).toBe(true);
+    // or the history it replaced is still staged
+    await rm(aside, { recursive: true });
+    const replaced = join(
+      mount,
+      ".persist-import",
+      `replaced-${OTHER}-abc-12345678`,
+    );
+    await mkdir(replaced, { recursive: true });
+    expect(await deleteOrphanedPersistVolumes({ env })).toEqual([]);
+    await rm(replaced, { recursive: true });
+    expect(await deleteOrphanedPersistVolumes({ env })).toEqual([OTHER]);
+  });
+
   it("bounds how long deleting orphaned volumes delays the start", async () => {
     const orphans = [OTHER, "77777777-8888-4999-8aaa-bbbbbbbbbbbb"];
     for (const id of orphans) {

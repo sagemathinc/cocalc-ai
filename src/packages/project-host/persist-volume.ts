@@ -1371,6 +1371,10 @@ async function prepareMergedVolume({
 // serves: a restore or copy (which can briefly leave a volume without a home)
 // is never running then.  So it takes at most about budgetMs (each volume up
 // to fenceMs to fence): what is left is deleted at the next start.
+//
+// A volume is kept while anything else under the mount names its project
+// (projectsNamedUnder): e.g., a crash in the middle of a restore can leave
+// its home moved aside, and its history is needed to recover it.
 export async function deleteOrphanedPersistVolumes({
   limit = 1000,
   budgetMs = 60_000,
@@ -1387,12 +1391,20 @@ export async function deleteOrphanedPersistVolumes({
   const mount = dirname(legacy.home);
   const deleted: string[] = [];
   const deadline = Date.now() + budgetMs;
-  for (const name of await readdir(mount)) {
+  const entries = await readdir(mount);
+  const named = await projectsNamedUnder(mount, entries);
+  for (const name of entries) {
     if (deleted.length >= limit) break;
     const project_id = name.match(/^project-([0-9a-f-]{36})-persist$/i)?.[1];
     if (project_id == null || !isValidUUID(project_id)) continue;
     if (persistVolumePath(project_id, env) !== join(mount, name)) continue;
     if (await exists(legacy.home.split("[project_id]").join(project_id))) {
+      continue;
+    }
+    if (named.has(project_id.toLowerCase())) {
+      logger.warn("keeping a persist volume a restore may still need", {
+        project_id,
+      });
       continue;
     }
     if (Date.now() >= deadline) {
@@ -1425,6 +1437,31 @@ export async function deleteOrphanedPersistVolumes({
     logger.info("deleted orphaned persist volumes", { deleted });
   }
   return deleted;
+}
+
+const UUIDS = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+// The projects named by `entries` of `mount` other than persist volumes, or
+// by what is in its hidden directories (staging of restores and copies, e.g.,
+// a home moved aside, file-server.ts swapProjectHome).
+async function projectsNamedUnder(
+  mount: string,
+  entries: string[],
+): Promise<Set<string>> {
+  const named = new Set<string>();
+  const note = (name: string) => {
+    for (const id of name.match(UUIDS) ?? []) named.add(id.toLowerCase());
+  };
+  for (const name of entries) {
+    if (/^project-[0-9a-f-]{36}-persist$/i.test(name)) continue;
+    if (!name.startsWith(".")) {
+      note(name);
+      continue;
+    }
+    const inner = await readdir(join(mount, name)).catch(() => [] as string[]);
+    inner.forEach(note);
+  }
+  return named;
 }
 
 export async function deletePersistVolume(project_id: string): Promise<void> {
