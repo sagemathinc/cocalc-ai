@@ -1,5 +1,11 @@
 /** @jest-environment jsdom */
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ClaudeSubscriptionConnect } from "../claude-subscription-connect";
@@ -227,17 +233,18 @@ test("a failed code submission keeps the code and allows correction", async () =
         onConnected={jest.fn()}
       />,
     );
-    const user = userEvent.setup();
-    await user.click(
+    fireEvent.click(
       screen.getByRole("button", {
         name: "Connect Claude Pro/Max",
       }),
     );
-    await user.type(
-      screen.getByRole("textbox", { name: "Claude sign-in code" }),
-      "examplecode#examplestate",
-    );
-    await user.click(screen.getByRole("button", { name: "Connect" }));
+    const code = await screen.findByRole("textbox", {
+      name: "Claude sign-in code",
+    });
+    fireEvent.change(code, {
+      target: { value: "examplecode#examplestate" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Unable to submit code",
     );
