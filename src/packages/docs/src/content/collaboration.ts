@@ -108,7 +108,8 @@ trust:
    these files in the editor and remove anything you did not expect:
    \`~/.local/share/cocalc/startup.sh\` (which runs every time the project
    starts), \`~/.ssh/authorized_keys\` (delete any key you do not recognize),
-   \`~/.bashrc\`, and \`~/.profile\`.
+   and the shell startup files \`~/.bashrc\`, \`~/.bash_profile\`,
+   \`~/.profile\`, and any others your shells read, such as \`~/.zshrc\`.
 3. Review any other scripts or scheduled jobs the project runs, and remove
    anything you did not expect.
 4. Restart the project once more, so nothing those files started keeps
