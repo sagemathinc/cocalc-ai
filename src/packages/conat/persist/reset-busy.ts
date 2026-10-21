@@ -15,14 +15,18 @@ import type { ResetHistoryResult } from "./storage";
 export const RESET_BUSY_ATTEMPTS = 30;
 export const RESET_BUSY_DELAY_MS = 1000;
 
-// The server's answer when another reset of the stream is in progress: a
-// refusal, or (before this socket's stream is open) an error with code 409.
+// The server's answer when it cannot admit a reset now: a refusal (another
+// reset of the stream is in progress), or an error with code 409 whose
+// message starts with "resetHistory: busy" (the same while this socket's
+// stream is not open yet, or this socket has not said which stream it is).
+export const RESET_BUSY_ERROR = "resetHistory: busy";
+
 export function isResetBusy(x: unknown): boolean {
   if (x == null) return false;
   if ((x as ResetHistoryResult).refused === "busy") return true;
   return (
     (x as any)?.code == 409 &&
-    `${(x as any)?.message ?? x}`.includes("another reset")
+    `${(x as any)?.message ?? x}`.includes(RESET_BUSY_ERROR)
   );
 }
 

@@ -154,11 +154,60 @@ describe("the persist server's reset slot", () => {
       { opId: "op-2" },
     );
     expect(headers?.headers?.code).toBe(409);
-    expect(headers?.headers?.error).toContain("another reset");
+    expect(headers?.headers?.error).toContain("resetHistory: busy");
 
     release();
     release2();
     await firstAnswer;
+  });
+
+  it("a reset before its socket said which stream it is never holds a slot (LIMIT-H1B3A-1)", async () => {
+    // socket A has connected but not sent its data yet
+    const early = new FakeSocket();
+    listener.emit("connection", early);
+    const [, refused] = await request(
+      early,
+      { cmd: "resetHistory" },
+      { opId: "op-early", seed: { raw: "x".repeat(1000) } },
+    );
+    // refused at once, as busy, so the client retries
+    expect(refused?.headers?.code).toBe(409);
+    expect(refused?.headers?.error).toContain("resetHistory: busy");
+
+    // an initialized socket for the same stream takes the stream's slot,
+    // held while its stream opens
+    const release = holdOpen(
+      fakeStream({ reset: true, history_epoch: 3, count: 1 }),
+    );
+    const second = connect("projects/x/early.sage-jupyter2");
+    const secondAnswer = request(
+      second,
+      { cmd: "resetHistory" },
+      { opId: "op-2" },
+    );
+
+    // A now says which stream it is and retries: the same stream's slot is
+    // taken, so it is refused, never a second held payload
+    const held = fakeStream({ reset: true, history_epoch: 2, count: 0 });
+    getStream.mockResolvedValueOnce(held);
+    early.emit("data", { storage: { path: "projects/x/early.sage-jupyter2" } });
+    await new Promise((resolve) => setImmediate(resolve));
+    const [retry] = await request(
+      early,
+      { cmd: "resetHistory" },
+      { opId: "op-early" },
+    );
+    expect(retry).toEqual({
+      reset: false,
+      refused: "busy",
+      history_epoch: 3,
+      count: 0,
+    });
+    expect(held.resetHistory).not.toHaveBeenCalled();
+
+    release();
+    const [result] = await secondAnswer;
+    expect(result.reset).toBe(true);
   });
 
   it("other streams are not affected", async () => {

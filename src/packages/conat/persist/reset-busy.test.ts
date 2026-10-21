@@ -3,7 +3,7 @@ import { isResetBusy, retryWhileResetBusy } from "./reset-busy";
 const busy = { reset: false, refused: "busy", history_epoch: 1, count: 0 };
 const busyError = Object.assign(
   new Error(
-    "resetHistory: another reset of this history is in progress; try again later",
+    "resetHistory: busy -- another reset of this history is in progress; try again later",
   ),
   { code: 409 },
 );
@@ -18,6 +18,17 @@ describe("isResetBusy", () => {
       isResetBusy(Object.assign(new Error("conflict"), { code: 409 })),
     ).toBe(false);
     expect(isResetBusy(undefined)).toBe(false);
+    // before the socket said which stream it is
+    expect(
+      isResetBusy(
+        Object.assign(
+          new Error(
+            "resetHistory: busy -- this connection has not said which stream it is yet; try again",
+          ),
+          { code: 409 },
+        ),
+      ),
+    ).toBe(true);
   });
 });
 

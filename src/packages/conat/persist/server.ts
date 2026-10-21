@@ -217,8 +217,10 @@ export function server({
   // H1b-3 r4, LIMIT-H1B3P-2.  A request takes its stream's slot as it
   // arrives, before any await (the only place a received request waits is
   // the stream's initialization); another one is answered at once and its
-  // payload dropped.  Keyed by storage path (or, before the socket said which
-  // stream it is, by its subject); the value identifies the holder.
+  // payload dropped.  Keyed by storage path; a reset that arrives before its
+  // socket said which stream it is (the path is not known yet) is refused at
+  // once as well, so one stream never has two keys (LIMIT-H1B3A-1).  The
+  // value identifies the holder.
   const resetSlots = new Map<string, object>();
 
   server.on("connection", (socket: ServerSocket) => {
@@ -398,10 +400,18 @@ export function server({
 
       let resetSlot: { key: string; holder: object } | undefined;
       if (request.cmd == "resetHistory") {
-        const key =
-          storage?.path != null
-            ? `path:${storage.path}`
-            : `subject:${socket.subject}`;
+        if (storage?.path == null) {
+          // the client retries busy (retryWhileResetBusy)
+          mesg.respondSync(null, {
+            headers: {
+              error:
+                "resetHistory: busy -- this connection has not said which stream it is yet; try again",
+              code: 409,
+            },
+          });
+          return;
+        }
+        const key = `path:${storage.path}`;
         if (resetSlots.has(key)) {
           if (stream != null) {
             mesg.respondSync({
@@ -414,7 +424,7 @@ export function server({
             mesg.respondSync(null, {
               headers: {
                 error:
-                  "resetHistory: another reset of this history is in progress; try again later",
+                  "resetHistory: busy -- another reset of this history is in progress; try again later",
                 code: 409,
               },
             });
