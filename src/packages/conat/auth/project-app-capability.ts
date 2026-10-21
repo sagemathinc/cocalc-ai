@@ -95,9 +95,16 @@ export function projectAppRouteFromPath(
     return;
   }
   if (kind === "port" || kind === "proxy") {
-    if (!/^[1-9][0-9]{0,4}$/.test(decoded)) return;
-    const port = Number(decoded);
-    return port <= 65535 ? { kind: "port", port } : undefined;
+    if (/^[1-9][0-9]{0,4}$/.test(decoded)) {
+      const port = Number(decoded);
+      return port <= 65535 ? { kind: "port", port } : undefined;
+    }
+    // A named server at /port/<name> (one that uses its base path) is the
+    // same app as /server/<name>.
+    if (/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(decoded)) {
+      return { kind: "server", name: decoded };
+    }
+    return;
   }
   if (kind === "server") return { kind: "server", name: decoded };
   if (kind === "apps") return { kind: "app", id: decoded };

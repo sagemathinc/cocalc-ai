@@ -97,12 +97,11 @@ export function initAppOpen(
         app_id,
       });
       if (!("url" in issued)) {
-        // No app origins here (or not for this project yet): the app's path
-        // on this site, as before.  The path was validated before signing.
-        if (issued.unavailable === "off") {
-          return res.redirect(302, `${basePath.replace(/\/+$/, "")}${path}`);
-        }
-        return fallback();
+        // No app origin for it (the site has none, or the project's host
+        // doesn't serve one yet): the app's path on this site, which the hub
+        // forwards to the host as before.  The path was validated first.
+        if (issued.unavailable === "no-access") return fallback();
+        return res.redirect(302, `${basePath.replace(/\/+$/, "")}${path}`);
       }
       res.redirect(302, issued.url);
     } catch (err) {

@@ -4,6 +4,7 @@ import ShowError from "@cocalc/frontend/components/error";
 import { useEffect } from "react";
 import AppStatus from "./app-status";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
+import { appOpenURL } from "@cocalc/frontend/project/app-server-open";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -35,6 +36,14 @@ export default function AppState({
   useEffect(() => {
     let canceled = false;
     void (async () => {
+      const open =
+        status?.state == "running" && status?.ready === true && status?.url
+          ? appOpenURL(project_id, status.url, name)
+          : undefined;
+      if (open) {
+        if (!canceled) setUrl(open);
+        return;
+      }
       const rawUrl =
         status?.state == "running" && status?.ready === true && status?.url
           ? withProjectHostBase(project_id, status.url)
@@ -59,7 +68,7 @@ export default function AppState({
     return () => {
       canceled = true;
     };
-  }, [project_id, status, setUrl]);
+  }, [project_id, name, status, setUrl]);
 
   useEffect(() => {
     onStatus?.(status);

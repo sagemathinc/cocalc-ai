@@ -71,6 +71,8 @@ describe("app origin keys and hostnames", () => {
     expect(projectAppRouteFromPath(p, `/${p}/proxy/3000/`)).toEqual({ kind: "port", port: 3000 });
     expect(projectAppRouteFromPath(p, `/${p}/server/code/x`)).toEqual({ kind: "server", name: "code" });
     expect(projectAppRouteFromPath(p, `/${p}/apps/my%20app/`)).toEqual({ kind: "app", id: "my app" });
+    // A named server at /port/<name> is the same app as /server/<name>.
+    expect(projectAppRouteFromPath(p, `/${p}/port/jupyterlab/lab`)).toEqual({ kind: "server", name: "jupyterlab" });
     for (const path of [
       `/${p}/port/0/`,
       `/${p}/port/99999/`,
@@ -79,6 +81,8 @@ describe("app origin keys and hostnames", () => {
       `/${otherProjectId}/port/8888/`,
       `/${p}/port/`,
       `/${p}/apps/%E0%A4%A/`,
+      `/${p}/port/9lives/`,
+      `/${p}/proxy/a%2Fb/`,
     ]) {
       expect(projectAppRouteFromPath(p, path)).toBeUndefined();
     }

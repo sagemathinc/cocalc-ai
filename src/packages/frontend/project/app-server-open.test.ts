@@ -5,7 +5,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       addProjectHostAuthToUrl: jest.fn(async ({ url }) => url),
       hub: {
         hosts: {
-          issueProjectAppUrl: (...args: any[]) => mockIssueProjectAppUrl(...args),
+          issueProjectAppUrl: (...args: any[]) =>
+            mockIssueProjectAppUrl(...args),
         },
         system: {
           inspectProjectAppPrivateHostname: jest.fn(
@@ -29,6 +30,7 @@ import type { AppSpec, ManagedAppStatus } from "@cocalc/conat/project/api/apps";
 import {
   buildPrivateHostnameOpenUrl,
   getPrivateProjectAppOpenUrl,
+  appOpenURL,
   getProjectAppOpenUrl,
   openProjectAppStatus,
 } from "./app-server-open";
@@ -303,12 +305,16 @@ describe("openProjectAppStatus", () => {
   it("sends the tab to the old URL when the site has no app origins", async () => {
     mockIssueProjectAppUrl.mockResolvedValue({ unavailable: "off" });
     await openProjectAppStatus({ project_id: PROJECT, status });
-    expect(tab.location.href).toBe(`https://host.example/${PROJECT}/proxy/8000/`);
+    expect(tab.location.href).toBe(
+      `https://host.example/${PROJECT}/proxy/8000/`,
+    );
     mockIssueProjectAppUrl.mockRejectedValue(new Error("not an app route"));
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     tab.location.href = "";
     await openProjectAppStatus({ project_id: PROJECT, status });
-    expect(tab.location.href).toBe(`https://host.example/${PROJECT}/proxy/8000/`);
+    expect(tab.location.href).toBe(
+      `https://host.example/${PROJECT}/proxy/8000/`,
+    );
     warn.mockRestore();
   });
 
@@ -321,5 +327,24 @@ describe("openProjectAppStatus", () => {
       "_blank",
       "noopener,noreferrer",
     );
+  });
+});
+
+describe("appOpenURL", () => {
+  const P = "11111111-1111-4111-8111-111111111111";
+  it("is a same-origin /app-open link for a project path", () => {
+    expect(appOpenURL(P, `/${P}/port/8000/a?b=1`)).toBe(
+      `/app-open/${P}/port/8000/a?b=1`,
+    );
+    expect(appOpenURL(P, `/${P}/myapp/`, "my app")).toBe(
+      `/app-open/${P}/myapp/?app=my%20app`,
+    );
+    expect(appOpenURL(P, `/${P}/x/?q=1`, "a")).toBe(
+      `/app-open/${P}/x/?q=1&app=a`,
+    );
+  });
+  it("is undefined for anything else", () => {
+    expect(appOpenURL(P, "/other/port/8000/")).toBeUndefined();
+    expect(appOpenURL(P, "https://h.example/x")).toBeUndefined();
   });
 });

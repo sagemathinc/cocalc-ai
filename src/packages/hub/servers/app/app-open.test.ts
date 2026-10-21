@@ -119,6 +119,10 @@ describe("app open", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe(`/${PROJECT}/port/8000/a?b=1`);
 
+    issue.mockResolvedValue({ unavailable: "host-not-ready" });
+    res = await get(`/app-open/${PROJECT}/port/8000/`, sameOrigin);
+    expect(res.headers.get("location")).toBe(`/${PROJECT}/port/8000/`);
+
     issue.mockResolvedValue({ unavailable: "no-access" });
     res = await get(`/app-open/${PROJECT}/port/8000/`, sameOrigin);
     expect(res.headers.get("location")).toBe(`/projects/${PROJECT}`);

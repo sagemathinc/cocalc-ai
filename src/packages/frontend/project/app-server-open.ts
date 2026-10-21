@@ -10,6 +10,23 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SHARED_BROWSER_APP_ID } from "@cocalc/util/shared-browser";
 import { withProjectHostBase } from "./host-url";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+
+// A same-origin link that opens a project app: the hub's /app-open sends
+// it to the app's own origin, or (on sites without app origins) to its old
+// path.  path is the app's path in the project (/<project_id>/...).
+export function appOpenURL(
+  project_id: string,
+  path: string,
+  app_id?: string,
+): string | undefined {
+  if (!path.startsWith(`/${project_id}/`)) return;
+  const base = appBasePath === "/" ? "" : appBasePath.replace(/\/+$/, "");
+  const query = app_id
+    ? `${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(app_id)}`
+    : "";
+  return `${base}/app-open${path}${query}`;
+}
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
