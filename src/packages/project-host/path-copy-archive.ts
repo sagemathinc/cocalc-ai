@@ -106,41 +106,59 @@ export async function replacePathFromStaging({
         errorOnExist: false,
       },
     });
-    if (!(options?.force ?? true)) {
-      try {
-        renameBeneath(root, incoming, rel, { noReplace: true });
-        return true;
-      } catch (err) {
-        if (!`${(err as Error)?.message}`.startsWith("EEXIST")) throw err;
-        if (options?.errorOnExist) throw existsError();
-        return false;
-      }
+    const place = () => renameBeneath(root, incoming, rel, { noReplace: true });
+    try {
+      place();
+      return true;
+    } catch (err) {
+      if (!hasCode(err, "EEXIST")) throw err;
     }
-    if ((await kindBeneath(root, rel)) === "missing") {
-      renameBeneath(root, incoming, rel, { noReplace: true });
+    if (!(options?.force ?? true)) {
+      if (options?.errorOnExist) throw existsError();
+      return false;
+    }
+    // Something is there: move it aside and place the copy. Someone else may
+    // create or remove the destination meanwhile, so retry a few times.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        renameBeneath(root, rel, previous, { noReplace: true });
+      } catch (err) {
+        if (!hasCode(err, "ENOENT")) throw err;
+        try {
+          place(); // it went away: place directly
+          return true;
+        } catch (err2) {
+          if (!hasCode(err2, "EEXIST")) throw err2;
+          continue;
+        }
+      }
+      try {
+        place();
+      } catch (err) {
+        try {
+          renameBeneath(root, previous, rel, { noReplace: true });
+        } catch (restoreErr) {
+          const failure = new Error(
+            `copy replacement and rollback both failed for ${rel}: ${err}; rollback: ${restoreErr}`,
+          );
+          // @ts-ignore -- Error.cause is unavailable in this package's lib target.
+          failure.cause = restoreErr;
+          throw failure;
+        }
+        if (hasCode(err, "EEXIST")) continue;
+        throw err;
+      }
+      await rmBeneath(root, previous).catch(() => {});
       return true;
     }
-    renameBeneath(root, rel, previous, { noReplace: true });
-    try {
-      renameBeneath(root, incoming, rel, { noReplace: true });
-    } catch (err) {
-      try {
-        renameBeneath(root, previous, rel, { noReplace: true });
-      } catch (restoreErr) {
-        const failure = new Error(
-          `copy replacement and rollback both failed for ${rel}: ${err}; rollback: ${restoreErr}`,
-        );
-        // @ts-ignore -- Error.cause is unavailable in this package's lib target.
-        failure.cause = restoreErr;
-        throw failure;
-      }
-      throw err;
-    }
-    await rmBeneath(root, previous).catch(() => {});
-    return true;
+    throw new Error(`copy destination ${rel} kept changing; not replaced`);
   } finally {
     await rmBeneath(root, incoming).catch(() => {});
   }
+}
+
+function hasCode(err: unknown, code: string): boolean {
+  return `${(err as Error)?.message ?? ""}`.startsWith(code);
 }
 
 function existsError(): Error {

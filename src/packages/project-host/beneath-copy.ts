@@ -56,6 +56,10 @@ import { runNativeFsTask } from "@cocalc/backend/sandbox/native-fs-limit";
 // operation; without a timeout it still stops after this long.
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
+// Mode bits a copy keeps: permissions and the sticky bit, as cp does, but
+// never setuid or setgid, which a project's file must not get on the host.
+const KEPT_MODE = 0o1777;
+
 // A trusted absolute root directory and a path beneath it ("" = the root).
 export interface BeneathPath {
   root: string;
@@ -303,6 +307,31 @@ class Copier {
     return this.options.force ?? true;
   }
 
+  // Throws once the copy's deadline has passed or its checkpoint says stop:
+  // before each entry, and again before data starts to move.
+  private check(): void {
+    if (Date.now() > this.deadline) {
+      throw codedError(
+        "ETIMEDOUT",
+        `copy stopped after ${this.options.timeout ?? DEFAULT_TIMEOUT_MS} ms`,
+      );
+    }
+    this.options.checkpoint?.();
+  }
+
+  // With errorOnExist (and no force), the copy's destination must not exist:
+  // checked again wherever it is found, whatever it turns out to be.
+  private refuseExistingTop(destEntry: Entry, rel: string): void {
+    if (
+      destEntry.kind !== "missing" &&
+      !this.force &&
+      this.options.errorOnExist &&
+      rel === this.topRel
+    ) {
+      throw existsError(rel);
+    }
+  }
+
   // Without force, an existing entry at `rel` is kept: true to skip it, or
   // ERR_FS_CP_EEXIST when it is the destination and errorOnExist is set.
   private keepExisting(rel: string): boolean {
@@ -335,6 +364,7 @@ class Copier {
     destRel: string,
   ): Promise<void> {
     const destEntry = await entryAt(this.dest, this.destRoot, destRel);
+    this.refuseExistingTop(destEntry, destRel);
     if (destEntry.kind === "dir") {
       throw codedError(
         "ERR_FS_CP_NON_DIR_TO_DIR",
@@ -360,15 +390,17 @@ class Copier {
         // /proc/self/fd links name exactly those open files.
         // A non-cloned copy occupies a libuv worker for its whole length:
         // share the sandbox's bound on such operations.
-        await runNativeFsTask(() =>
-          copyFile(
+        await runNativeFsTask(() => {
+          // The wait for a slot may be long: never start once it is too late.
+          this.check();
+          return copyFile(
             `/proc/self/fd/${srcFd}`,
             `/proc/self/fd/${destFd}`,
             constants.COPYFILE_FICLONE,
-          ),
-        );
-        // Permission bits only: never setuid/setgid from a project's file.
-        fchmodSync(destFd, (fstatSync(srcFd).mode ?? entry.mode) & 0o777);
+          );
+        });
+        // Never setuid/setgid from a project's file (the sticky bit stays).
+        fchmodSync(destFd, (fstatSync(srcFd).mode ?? entry.mode) & KEPT_MODE);
         if (this.options.preserveTimestamps) {
           futimesSync(
             destFd,
@@ -399,6 +431,7 @@ class Copier {
       );
     }
     const destEntry = await entryAt(this.dest, this.destRoot, destRel);
+    this.refuseExistingTop(destEntry, destRel);
     if (destEntry.kind === "dir") {
       throw codedError(
         "ERR_FS_CP_NON_DIR_TO_DIR",
@@ -434,6 +467,7 @@ class Copier {
       );
     }
     let destEntry = await entryAt(this.dest, this.destRoot, destRel);
+    this.refuseExistingTop(destEntry, destRel);
     if (destEntry.kind === "symlink") {
       if (!this.force) {
         this.keepExisting(destRel);
@@ -482,7 +516,7 @@ class Copier {
     }
 
     if (created && destRel !== "") {
-      this.dest.chmod(destRel, entry.mode & 0o777);
+      this.dest.chmod(destRel, entry.mode & KEPT_MODE);
     }
     if (this.options.preserveTimestamps && destRel !== "") {
       this.dest.utimes(destRel, entry.atimeNs, entry.mtimeNs);
@@ -490,13 +524,7 @@ class Copier {
   }
 
   async copyEntry(srcRel: string, destRel: string): Promise<void> {
-    if (Date.now() > this.deadline) {
-      throw codedError(
-        "ETIMEDOUT",
-        `copy stopped after ${this.options.timeout ?? DEFAULT_TIMEOUT_MS} ms`,
-      );
-    }
-    this.options.checkpoint?.();
+    this.check();
     const entry = await entryAt(this.src, this.srcRoot, srcRel);
     switch (entry.kind) {
       case "missing":

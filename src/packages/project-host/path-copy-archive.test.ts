@@ -306,4 +306,42 @@ describe("path copy archive listings", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("replaces an exact destination that appears just as the copy is placed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-handoff-"));
+    const { SandboxRoot } = require("@cocalc/openat2");
+    const real = SandboxRoot.prototype.renameNoReplace;
+    let raced = false;
+    const spy = jest
+      .spyOn(SandboxRoot.prototype, "renameNoReplace")
+      .mockImplementation(function (this: any, from: string, to: string) {
+        if (!raced && to === "destination") {
+          // An editor creates the destination right before the handoff.
+          raced = true;
+          require("node:fs").writeFileSync(
+            path.join(root, "destination"),
+            "theirs",
+          );
+        }
+        return real.call(this, from, to);
+      });
+    try {
+      await writeFile(path.join(root, "source"), "from source");
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "source" },
+          destination: { root, path: "destination" },
+          exact: true,
+        }),
+      ).resolves.toBe(true);
+      expect(raced).toBe(true);
+      expect(await readFile(path.join(root, "destination"), "utf8")).toBe(
+        "from source",
+      );
+      expect((await readdir(root)).sort()).toEqual(["destination", "source"]);
+    } finally {
+      spy.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

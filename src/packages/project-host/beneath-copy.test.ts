@@ -236,8 +236,10 @@ describe("copyBeneath", () => {
       copy("d", "d", {
         recursive: true,
         checkpoint: () => {
+          // Called for each entry and again before each file's data moves:
+          // d, a, a's data, then b stops the copy.
           calls += 1;
-          if (calls > 2) throw new Error("deadline passed");
+          if (calls > 3) throw new Error("deadline passed");
         },
       }),
     ).rejects.toThrow("deadline passed");
@@ -361,5 +363,66 @@ describe("copyBeneath", () => {
     await writeFile(join(src, "a\\b"), "data");
     await copy("a\\b", "c\\d", {});
     expect(await readFile(join(dest, "c\\d"), "utf8")).toBe("data");
+  });
+
+  it("does not start a copy whose deadline passed while it waited for a slot", async () => {
+    await writeFile(join(src, "f"), "data");
+    let t = 0;
+    const now = jest.spyOn(Date, "now").mockImplementation(() => t);
+    mockNativeFsTask.mockImplementationOnce((fn) => {
+      t = 2000; // a long wait for the shared slot
+      return fn();
+    });
+    try {
+      await expect(copy("f", "f", { timeout: 1000 })).rejects.toMatchObject({
+        code: "ETIMEDOUT",
+      });
+    } finally {
+      now.mockRestore();
+    }
+    expect(await readdir(dest)).toEqual([]);
+  });
+
+  it("reports a destination that appears before the copy reaches it", async () => {
+    await mkdir(join(src, "d"));
+    await writeFile(join(src, "d", "mine"), "mine");
+    const appear = (make: () => void) => {
+      let done = false;
+      return () => {
+        if (!done) {
+          done = true;
+          make();
+        }
+      };
+    };
+    await expect(
+      copy("d", "d", {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+        checkpoint: appear(() => {
+          require("node:fs").mkdirSync(join(dest, "d"));
+          require("node:fs").writeFileSync(join(dest, "d", "theirs"), "x");
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+    expect(await readdir(join(dest, "d"))).toEqual(["theirs"]);
+
+    // A file source whose destination appears as a directory: also EEXIST.
+    await writeFile(join(src, "f"), "f");
+    await expect(
+      copy("f", "f", {
+        force: false,
+        errorOnExist: true,
+        checkpoint: appear(() => require("node:fs").mkdirSync(join(dest, "f"))),
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+  });
+
+  it("keeps the sticky bit of a directory", async () => {
+    await mkdir(join(src, "shared"));
+    await chmod(join(src, "shared"), 0o1777);
+    await copy("shared", "shared");
+    expect((await stat(join(dest, "shared"))).mode & 0o7777).toBe(0o1777);
   });
 });
