@@ -21,6 +21,7 @@ import {
   type TurnOutcome,
 } from "@cocalc/conat/ai/acp/turn-outcome";
 import {
+  ACP_FENCE_INTENT_PREFIX,
   acpJobHasLiveFenceResume,
   countQueuedAcpJobsAhead,
   decodeAcpJobRequest,
@@ -56,15 +57,66 @@ function withChainToolRan(
   return (tool_ran === undefined ? rest : { ...rest, tool_ran }) as TurnOutcome;
 }
 
+/** The jobs of the turn this sender's attempt started, oldest first. */
+function turnJobs(
+  source: AgentRpcSource,
+  attempt: AgentRpcAttempt,
+  accountId: string,
+): AcpJobRow[] {
+  return listAcpJobsForAgentRpcAttempt({
+    attempt_id: attempt.attempt_id,
+    account_id: accountId,
+  }).filter((job) => sentBy(job, source, attempt));
+}
+
+/**
+ * What withdrawing this sender's message would take back: its turn's job
+ * while that has not started (queued, held until a usage limit resets, or
+ * held while the project restarts), or why it can't be withdrawn. Undefined
+ * when there is no record of it.
+ */
+export function agentRpcWithdrawable(
+  source: AgentRpcSource,
+  attempt: AgentRpcAttempt,
+  accountId: string,
+):
+  | { job: AcpJobRow; jobs: AcpJobRow[]; intent?: string }
+  | { reason: string }
+  | undefined {
+  const jobs = turnJobs(source, attempt, accountId);
+  const last = jobs.at(-1);
+  if (!last) return undefined;
+  // Queued, or held while the recipient's project restarts: not started.
+  if (
+    last.state === "queued" ||
+    (last.state === "canceled" && acpJobHasLiveFenceResume(last))
+  )
+    return { job: last, jobs };
+  // Stopped with a recovery intent (a limit hold, say) whose continuation
+  // is not queued yet: the turn would run again, so withdrawing it clears
+  // the intent.
+  if (
+    last.state === "error" &&
+    last.recovery_code &&
+    !last.recovery_code.startsWith(ACP_FENCE_INTENT_PREFIX)
+  )
+    return { job: last, jobs, intent: last.recovery_code };
+  if (last.state === "running")
+    return { reason: "Its turn is already running, so it can't be withdrawn." };
+  if (acpJobHasLiveFenceResume(last))
+    return {
+      reason:
+        "Its turn already started and resumes when the recipient's project runs again, so it can't be withdrawn.",
+    };
+  return { reason: "Its turn has already ended." };
+}
+
 export function agentRpcTurnState(
   source: AgentRpcSource,
   attempt: AgentRpcAttempt,
   accountId: string,
 ): AgentRpcTurnState | undefined {
-  const jobs = listAcpJobsForAgentRpcAttempt({
-    attempt_id: attempt.attempt_id,
-    account_id: accountId,
-  }).filter((job) => sentBy(job, source, attempt));
+  const jobs = turnJobs(source, attempt, accountId);
   if (jobs.length === 0) return undefined;
   const first = jobs[0];
   const last = jobs[jobs.length - 1];

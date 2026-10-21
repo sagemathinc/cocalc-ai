@@ -416,6 +416,17 @@ test("a send may ask to hear of no reply, with exactly true, and only a send", (
   ).toThrow("unexpected agent RPC field");
 });
 
+test("withdraw names an attempt like inspect, with no body", () => {
+  const { action: _, ...attempt } = { ...request(), action: "send" as const };
+  const { body: __, ...bare } = attempt as any;
+  expect(() =>
+    validateAgentRpcRequest({ ...bare, action: "withdraw" }),
+  ).not.toThrow();
+  expect(() =>
+    validateAgentRpcRequest({ ...bare, action: "withdraw", body: "hi" } as any),
+  ).toThrow("unexpected agent RPC field");
+});
+
 test("asking to hear of no reply is part of the attempt: a retry that changes it is refused", async () => {
   for (const [first, retry] of [
     [{}, { report_no_reply: true as const }],

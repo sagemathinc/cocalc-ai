@@ -687,6 +687,21 @@ describe("inspecting a sent message's turn across bays", () => {
                return { ...answer, turn: { state: "paused", queued_at: -1 } };
              return answer;
            },
+           withdrawAgentRpc: async ({ source, request, account_id }) => {
+             await note("withdraw:" + request.attempt_id, { source, account_id });
+             const answer = {
+               version: 3,
+               attempt_id: request.attempt_id,
+               agent_network_id: request.agent_network_id,
+               target: request.target,
+               outcome: "accepted",
+               observed_at: Date.now(),
+               reason: "Withdrawn: its turn will not run",
+             };
+             if (request.attempt_id === attempts.foreign)
+               return { ...answer, target: { ...request.target, agent_id: ${JSON.stringify(randomUUID())} } };
+             return answer;
+           },
          },
        });
        await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -698,7 +713,7 @@ describe("inspecting a sent message's turn across bays", () => {
     );
   }
 
-  async function inspectFromSeed(attempt_id, run_id = run) {
+  async function inspectFromSeed(attempt_id, run_id = run, action = "inspect") {
     return await runInBay(
       cluster,
       SEED,
@@ -707,7 +722,7 @@ describe("inspecting a sent message's turn across bays", () => {
        const { createAgentRpcControlClient } = require("@cocalc/conat/inter-bay/agent-rpc");
        const project_id = ${JSON.stringify(target_project)};
        const route = await resolveProjectBay(project_id);
-       return await createAgentRpcControlClient(getInterBayFabricClient(), ${JSON.stringify(ATTACHED)}).inspect({
+       return await createAgentRpcControlClient(getInterBayFabricClient(), ${JSON.stringify(ATTACHED)})[${JSON.stringify(action)}]({
          project_id,
          route: { bay_id: route.bay_id, epoch: route.epoch },
          account_id: ${JSON.stringify(rita.account_id)},
@@ -764,6 +779,53 @@ describe("inspecting a sent message's turn across bays", () => {
         (
           await db.query("SELECT 1 FROM multibay_fake_host WHERE key=$1", [
             forged,
+          ])
+        ).rows.length,
+        0,
+      );
+    } finally {
+      await db.end();
+      await host;
+    }
+  });
+  it("withdraws through the recipient's bay and host, and only the right turn", async () => {
+    const db = await connectBayDatabase(cluster, ATTACHED);
+    await db.query("DELETE FROM multibay_fake_host WHERE key='ready'");
+    const host = fakeHost(30_000);
+    try {
+      await eventually(
+        async () =>
+          (await db.query("SELECT 1 FROM multibay_fake_host WHERE key='ready'"))
+            .rows.length > 0,
+        { timeoutMs: 90_000, intervalMs: 1_000, what: "the fake host" },
+      );
+      const withdrawn = await inspectFromSeed(attempts.held, run, "withdraw");
+      assert.equal(withdrawn.outcome, "accepted", JSON.stringify(withdrawn));
+      assert.equal(withdrawn.reason, "Withdrawn: its turn will not run");
+      // The recipient's host was asked to withdraw the sender's turn, as the
+      // account's.
+      const asked = (
+        await db.query("SELECT value FROM multibay_fake_host WHERE key=$1", [
+          `withdraw:${attempts.held}`,
+        ])
+      ).rows[0]?.value;
+      assert.deepEqual(asked, {
+        source: { project_id: sender_project, agent_id: sender },
+        account_id: rita.account_id,
+      });
+      // An answer about another conversation's turn is not believed.
+      const foreign = await inspectFromSeed(attempts.foreign, run, "withdraw");
+      assert.equal(foreign.outcome, "unknown", JSON.stringify(foreign));
+      // A run the sender's bay never issued is refused before the host.
+      const forged = randomUUID();
+      await assert.rejects(
+        inspectFromSeed(forged, randomUUID(), "withdraw"),
+        /expired, revoked, or invalid/,
+      );
+      assert.equal(
+        (
+          await db.query("SELECT 1 FROM multibay_fake_host WHERE key=$1", [
+            `withdraw:${forged}`,
           ])
         ).rows.length,
         0,

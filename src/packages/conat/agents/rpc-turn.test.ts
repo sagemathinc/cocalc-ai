@@ -70,6 +70,19 @@ describe("a turn's state, as inspect reports it", () => {
     ],
     [
       {
+        state: "ended",
+        queued_at: T,
+        outcome: {
+          version: 1,
+          state: "canceled",
+          by: "sender",
+          tool_ran: false,
+        },
+      },
+      "Ended: you withdrew it. It had not run any tools.",
+    ],
+    [
+      {
         state: "queued",
         queued_at: T,
         started_at: T + 60_000,

@@ -12,11 +12,16 @@ import {
 } from "@cocalc/util/ai/site-funded-codex";
 import { uuid } from "@cocalc/util/misc";
 import {
+  SITE_FUNDED_CODEX_PROXY_PORT_COUNT,
+  setSiteFundedCodexProxyPortsForTests,
   shutdownSiteFundedCodexProxyForTests,
+  siteFundedCodexProxyPorts,
   siteFundedUsageEventId,
   startSiteFundedCodexProxySession,
 } from "./site-funded-proxy";
 
+// An ephemeral port, so tests never contend for the host's fixed range.
+beforeAll(() => setSiteFundedCodexProxyPortsForTests([0]));
 afterAll(shutdownSiteFundedCodexProxyForTests);
 
 function reservation(): SiteFundedCodexReservation {
@@ -837,5 +842,134 @@ describe("site-funded Codex provider proxy", () => {
 
     session.close();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  });
+});
+
+describe("site-funded Codex provider proxy port", () => {
+  afterEach(async () => {
+    await shutdownSiteFundedCodexProxyForTests();
+    setSiteFundedCodexProxyPortsForTests([0]);
+  });
+
+  // Keep in sync with project_site_codex_proxy_ports in bootstrap.py, which
+  // exempts this range from the project egress block.
+  it("derives the range the host egress block allows", () => {
+    const range = (first: number, count = SITE_FUNDED_CODEX_PROXY_PORT_COUNT) =>
+      Array.from({ length: count }, (_, i) => first + i);
+    expect(SITE_FUNDED_CODEX_PROXY_PORT_COUNT).toBe(16);
+    expect(siteFundedCodexProxyPorts({})).toEqual(range(9302));
+    expect(siteFundedCodexProxyPorts({ PORT: "9010" })).toEqual(range(9310));
+    expect(siteFundedCodexProxyPorts({ PORT: "127.0.0.1:9010" })).toEqual(
+      range(9310),
+    );
+    expect(siteFundedCodexProxyPorts({ PORT: "nope" })).toEqual(range(9302));
+    expect(siteFundedCodexProxyPorts({ PORT: "65300" })).toEqual(range(9302));
+    expect(
+      siteFundedCodexProxyPorts({
+        PORT: "9010",
+        COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "9500",
+      }),
+    ).toEqual(range(9500));
+    expect(
+      siteFundedCodexProxyPorts({
+        COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "0x2553",
+      }),
+    ).toEqual(range(9555));
+    for (const invalid of ["0", "", "nope", "70000", "h:9500", "80", "1023"]) {
+      expect(
+        siteFundedCodexProxyPorts({
+          COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: invalid,
+        }),
+      ).toEqual(range(9302));
+    }
+    expect(
+      siteFundedCodexProxyPorts({
+        COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "1024",
+      }),
+    ).toEqual(range(1024));
+    expect(
+      siteFundedCodexProxyPorts({
+        COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT: "65530",
+      }),
+    ).toEqual(range(65530, 6));
+  });
+
+  async function occupiedPort(): Promise<{
+    port: number;
+    close: () => Promise<void>;
+  }> {
+    const blocker = createServer();
+    await new Promise<void>((resolve) =>
+      blocker.listen(0, "127.0.0.1", resolve),
+    );
+    const address = blocker.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    return {
+      port: address.port,
+      close: () => new Promise<void>((resolve) => blocker.close(() => resolve())),
+    };
+  }
+
+  it("skips a port a draining worker still holds and serves on loopback", async () => {
+    const blocker = await occupiedPort();
+    try {
+      setSiteFundedCodexProxyPortsForTests([blocker.port, 0]);
+      const session = await startSiteFundedCodexProxySession({
+        reservation: reservation(),
+        apiKey: "real-site-key",
+        upstreamBaseUrl: "http://127.0.0.1:1/v1",
+        onUsage: async () => {},
+      });
+      const url = new URL(session.baseUrl);
+      expect(url.hostname).toBe("host.containers.internal");
+      expect(Number(url.port)).not.toBe(blocker.port);
+      expect(Number(url.port)).toBeGreaterThan(0);
+      const result = await fetch(`http://127.0.0.1:${url.port}/v1/responses`, {
+        method: "POST",
+        headers: { authorization: "Bearer wrong" },
+        body: "{}",
+      });
+      expect(result.status).toBe(401);
+      session.close();
+    } finally {
+      await blocker.close();
+    }
+  });
+
+  it("listens once for concurrent turns", async () => {
+    const start = () =>
+      startSiteFundedCodexProxySession({
+        reservation: reservation(),
+        apiKey: "real-site-key",
+        upstreamBaseUrl: "http://127.0.0.1:1/v1",
+        onUsage: async () => {},
+      });
+    const sessions = await Promise.all([start(), start(), start()]);
+    expect(new Set(sessions.map((session) => session.baseUrl)).size).toBe(1);
+    for (const session of sessions) session.close();
+  });
+
+  it("fails clearly when the whole range is taken, then recovers", async () => {
+    const blocker = await occupiedPort();
+    const start = () =>
+      startSiteFundedCodexProxySession({
+        reservation: reservation(),
+        apiKey: "real-site-key",
+        upstreamBaseUrl: "http://127.0.0.1:1/v1",
+        onUsage: async () => {},
+      });
+    try {
+      setSiteFundedCodexProxyPortsForTests([blocker.port]);
+      await expect(start()).rejects.toThrow(
+        `no free site-funded Codex proxy port in ${blocker.port}-${blocker.port}`,
+      );
+    } finally {
+      await blocker.close();
+    }
+    const session = await start();
+    expect(session.baseUrl).toBe(
+      `http://host.containers.internal:${blocker.port}/v1`,
+    );
+    session.close();
   });
 });

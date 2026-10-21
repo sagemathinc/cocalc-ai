@@ -21,6 +21,7 @@ import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
 import { CHAT_DRAFT_STORE } from "@cocalc/chat";
 import {
   agentRpcInspectSummary,
+  agentRpcWithdrawSummary,
   agentSendExitCode,
   agentSendSummary,
   sendAgentMessage,
@@ -343,6 +344,34 @@ export function registerAgentCommands(
       emitSuccess({ globals }, `${prefix} rpc inspect`, {
         ...outcome,
         summary: agentRpcInspectSummary(outcome),
+      });
+    });
+  rpc
+    .command("withdraw <attempt-id>")
+    .option("--external-agent <profile>", "use an enrolled external agent")
+    .requiredOption("--agent-network <uuid>", "exact Agent Network")
+    .requiredOption("--to-agent <uuid>", "target from the original outcome")
+    .requiredOption("--target-project <uuid>", "target project")
+    .description(
+      "take back a message whose turn is queued (then its agent never runs it) or held until a usage limit resets (then it never resumes; what its first attempt already did, including tools, stays done)",
+    )
+    .action(async (attempt_id, opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      const request = {
+        version: 3 as const,
+        action: "withdraw" as const,
+        attempt_id,
+        agent_network_id: opts.agentNetwork,
+        target: { project_id: opts.targetProject, agent_id: opts.toAgent },
+      };
+      const outcome = (
+        opts.externalAgent
+          ? await sendExternalAgentMessage(opts.externalAgent, request)
+          : await sendIdentityMessage(request, globals.api)
+      ) as AgentRpcOutcome;
+      emitSuccess({ globals }, `${prefix} rpc withdraw`, {
+        ...outcome,
+        summary: agentRpcWithdrawSummary(outcome),
       });
     });
   agent

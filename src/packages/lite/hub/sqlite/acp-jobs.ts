@@ -1651,6 +1651,54 @@ export function requeueFencedAcpJob(op_id: string): AcpJobRow | undefined {
   return job;
 }
 
+/** Note work still owed for an ended job (e.g. its chat projection),
+ * unless it already has an intent. */
+export function markAcpJobRecoveryIntent(op_id: string, code: string): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET recovery_code = ?, updated_at = ?
+       WHERE op_id = ? AND recovery_code IS NULL`,
+    )
+    .run(code, Date.now(), op_id);
+}
+
+/** Jobs in this state with this intent, oldest first. */
+export function listAcpJobsWithIntent(
+  state: string,
+  code: string,
+  limit = 100,
+): AcpJobRow[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE state = ? AND recovery_code = ?
+       ORDER BY updated_at ASC LIMIT ?`,
+    )
+    .all(state, code, Math.max(1, Math.floor(limit))) as AcpJobRow[];
+}
+
+/** Clear this job's recovery intent if it still is `code` (a withdrawal
+ * racing the worker or recovery poll that would act on it). */
+export function clearAcpJobRecoveryIntentIf(
+  op_id: string,
+  code: string,
+): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET recovery_code = NULL,
+           recovery_detail = NULL,
+           updated_at = ?
+       WHERE op_id = ? AND recovery_code = ?`,
+    )
+    .run(Date.now(), op_id, code);
+  return Number(result?.changes ?? 0) === 1;
+}
+
 export function clearAcpJobRecoveryIntent(op_id: string): void {
   ensureInit();
   getAcpDatabase()

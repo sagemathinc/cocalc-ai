@@ -148,6 +148,19 @@ jest.mock("@cocalc/chat/server", () => ({
   releaseChatSyncDB: jest.fn(),
 }));
 
+// As in production, the failed job records its recovery intent before a
+// continuation is queued for it (a withdrawal clears it, refusing one).
+async function recoverFailure(
+  opts: Parameters<
+    typeof acpTestInternals.enqueueFailureRecoveryContinuation
+  >[0],
+) {
+  getAcpDatabase()
+    .prepare("UPDATE acp_jobs SET recovery_code = ? WHERE op_id = ?")
+    .run(opts.recoveryCode ?? null, opts.job.op_id);
+  return await acpTestInternals.enqueueFailureRecoveryContinuation(opts);
+}
+
 describe("detached worker queue liveness", () => {
   it("lets a draining worker claim only work pinned to itself", () => {
     const draining = {
@@ -1344,7 +1357,7 @@ describe("terminal failure recovery", () => {
       makeSyncdb(rows),
     );
     const detail = JSON.stringify({ agent: "Claude", oom: true });
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "acp_harness_killed",
@@ -1356,7 +1369,7 @@ describe("terminal failure recovery", () => {
     expect(prompt).toContain("one at a time");
     // Not a second time in a row.
     expect(
-      await acpTestInternals.enqueueFailureRecoveryContinuation({
+      await recoverFailure({
         client: {} as ConatClient,
         job: { ...(resumed as any), started_at: Date.now() },
         recoveryCode: "acp_harness_killed",
@@ -1368,7 +1381,7 @@ describe("terminal failure recovery", () => {
   it("does not apply the harness kill recovery to a Codex job", async () => {
     const queued = enqueueAcpJob(makeRequest() as any);
     expect(
-      await acpTestInternals.enqueueFailureRecoveryContinuation({
+      await recoverFailure({
         client: {} as ConatClient,
         job: { ...queued, started_at: Date.now() },
         recoveryCode: "acp_harness_killed",
@@ -1381,7 +1394,7 @@ describe("terminal failure recovery", () => {
       ...makeRequest(),
       runtime: { version: 1, kind: "acp", profile: {} },
     } as any);
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_model_capacity",
@@ -1465,7 +1478,7 @@ describe("terminal failure recovery", () => {
       ]),
     );
     await expect(
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: { ...queued, started_at: Date.now() },
         recoveryCode: "codex_model_capacity",
@@ -1493,7 +1506,7 @@ describe("terminal failure recovery", () => {
     (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
     const before = Date.now();
 
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_model_capacity",
@@ -1513,7 +1526,7 @@ describe("terminal failure recovery", () => {
     );
 
     await expect(
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: queued,
         recoveryCode: "codex_model_capacity",
@@ -1545,7 +1558,7 @@ describe("terminal failure recovery", () => {
         },
       ]),
     );
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_model_capacity",
@@ -1582,7 +1595,7 @@ describe("terminal failure recovery", () => {
         .mockRejectedValueOnce(new Error("projection write failed"));
 
       await expect(
-        acpTestInternals.enqueueFailureRecoveryContinuation({
+        recoverFailure({
           client: {} as ConatClient,
           job: { ...queued, started_at: Date.now() },
           recoveryCode: "codex_model_capacity",
@@ -1622,12 +1635,12 @@ describe("terminal failure recovery", () => {
     (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
 
     await Promise.all([
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: { ...failed, started_at: Date.now() },
         recoveryCode: "codex_app_server_exited",
       }),
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: { ...failed, started_at: Date.now() },
         recoveryCode: "codex_app_server_exited",
@@ -1654,7 +1667,7 @@ describe("terminal failure recovery", () => {
     (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb([]));
 
     await expect(
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: queued,
         recoveryCode: "codex_model_capacity",
@@ -1675,7 +1688,7 @@ describe("terminal failure recovery", () => {
     const denial =
       "Codex blocked a command: rm -f style commands are not permitted. Use a safer approach";
 
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_command_blocked",
@@ -1707,7 +1720,7 @@ describe("terminal failure recovery", () => {
     };
     const second = enqueueAcpJob(secondRequest as any);
     await expect(
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: { ...second, started_at: Date.now() },
         recoveryCode: "codex_command_blocked",
@@ -1725,7 +1738,7 @@ describe("terminal failure recovery", () => {
       "Codex was killed by SIGKILL (exit code 137). This is usually caused by the project running out of RAM.";
     const before = Date.now();
 
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_resource_killed",
