@@ -145,6 +145,16 @@ export default function BoardArtifact({
         );
       } catch (err) {
         boardLoadFailed(key, generation);
+        if (!cancelled && !isLatestBoardLoad(key, generation)) {
+          // Superseded: the newest read's frame, if it makes one, is this
+          // view's too; only if it fails as well is this error shown.
+          const newest = await nextBoardFrame(key);
+          if (cancelled) return;
+          if (newest != null) {
+            setFrame(newest);
+            return;
+          }
+        }
         if (!cancelled) setError(String(err));
       } finally {
         if (!cancelled) setLoading(false);

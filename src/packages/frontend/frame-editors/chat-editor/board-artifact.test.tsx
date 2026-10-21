@@ -752,8 +752,12 @@ test("hidden everywhere, focus leaves the frame next to where it was last shown"
 
 function deferred() {
   let resolve!: (value: string) => void;
-  const promise = new Promise<string>((r) => (resolve = r));
-  return { promise, resolve };
+  let reject!: (err: Error) => void;
+  const promise = new Promise<string>((r, j) => {
+    resolve = r;
+    reject = j;
+  });
+  return { promise, resolve, reject };
 }
 
 for (const order of ["newer first", "older first"]) {
@@ -791,6 +795,30 @@ for (const order of ["newer first", "older first"]) {
     expect(posted.mock.calls[0][0].text).toBe(NEW);
   });
 }
+
+test("a superseded read that fails adopts the newest read's frame", async () => {
+  const older = deferred();
+  const newer = deferred();
+  readFile
+    .mockImplementationOnce(() => older.promise)
+    .mockImplementationOnce(() => newer.promise);
+  const first = render(<Board />);
+  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+  const second = render(<Board />);
+  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
+  await act(async () => {
+    older.promise.catch(() => {});
+    older.reject(Error("older read failed"));
+    newer.resolve(TEXT);
+    await newer.promise;
+  });
+  await waitFor(() =>
+    expect(screen.getAllByText("Current saved board")).toHaveLength(2),
+  );
+  expect(within(first.container).queryByText(/older read failed/)).toBeNull();
+  expect(document.querySelectorAll("iframe")).toHaveLength(1);
+  second.unmount();
+});
 
 test("a card waiting for an abandoned newer read reads the board itself", async () => {
   const older = deferred();
