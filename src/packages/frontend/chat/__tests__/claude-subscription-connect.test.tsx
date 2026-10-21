@@ -208,6 +208,18 @@ test("a failed code submission keeps the code and allows correction", async () =
       "claudeSubscriptionLoginSubmitCode",
     )
     .mockRejectedValue(Error("Unable to submit code"));
+  // Keep the background poll deterministic.  On a loaded runner the user
+  // interactions can cross the 1.5s poll interval; without this mock the
+  // ambient client rejects and renders a second, unrelated alert.
+  const status = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStatus",
+    )
+    .mockResolvedValue({
+      id: "login-failed",
+      state: "pending",
+    } as any);
   try {
     render(
       <ClaudeSubscriptionConnect
@@ -237,6 +249,7 @@ test("a failed code submission keeps the code and allows correction", async () =
   } finally {
     start.mockRestore();
     submit.mockRestore();
+    status.mockRestore();
   }
 });
 
