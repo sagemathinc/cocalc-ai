@@ -512,6 +512,9 @@ export interface OpenableHistory {
   bytes: number;
 }
 
+// Snapshot records a batch may write.
+export const MAX_SNAPSHOTS_PER_BATCH = 1;
+
 export interface AppendProjection {
   head?: string;
   added: [string, string[]][];
@@ -739,6 +742,8 @@ export class BoardAppendCheck {
     const digestOf = (id: string) => newDigests.get(id) ?? this.digests.get(id);
     const fresh: boolean[] = [];
     const written: boolean[] = [];
+    // Snapshot records this batch writes (a duplicate writes nothing).
+    let snapshotsWritten = 0;
     // The history after the batch, as the open check will bound it. Every
     // record counts in the stream's totals (a record sent again may be
     // stored again, as a copy).
@@ -824,6 +829,15 @@ export class BoardAppendCheck {
         throw new ConatError(`not a board patch record: ${r.invalid}`, {
           code: "branch",
         });
+      }
+      if (r.snapshot && ++snapshotsWritten > MAX_SNAPSHOTS_PER_BATCH) {
+        // SyncDoc writes at most one per save; more is no writer's, and
+        // each would move the cut (daybreak2: bounds the projection's
+        // work). Refused before anything is stored.
+        throw new ConatError(
+          `a batch writes at most ${MAX_SNAPSHOTS_PER_BATCH} snapshot record`,
+          { code: "branch" },
+        );
       }
       const id = `${r.snapshot ? "s" : "p"}:${r.time}`;
       const stored = digestOf(id);

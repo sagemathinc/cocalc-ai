@@ -257,9 +257,52 @@ describe("daybreak2: reading the stored graph stops at the first refusal", () =>
   });
 });
 
-test("daybreak2's pathological projection: an alternating snapshot batch, timed", () => {
-  // A suffix of 1000 patches, and a batch of tiny snapshot records moving
-  // the cut back and forth along all of it (each a new msgID: written).
+describe("at most one snapshot record per batch, counted after msgIDOutcome", () => {
+  test("(a) a duplicate snapshot plus one new written snapshot is accepted", () => {
+    const stream = astraHistory();
+    try {
+      const results = write(stream, [
+        // A duplicate: not written, so it doesn't count.
+        { mesg: snapshot("t1000"), msgID: "s1000" },
+        { mesg: snapshot("t500"), msgID: "s500" },
+      ]);
+      expect(results).toHaveLength(2);
+      expect(opens(stream)).toMatchObject({ ok: true, cut: "t500" });
+    } finally {
+      stream.close();
+    }
+  });
+
+  test("(b) two written snapshots are refused atomically: nothing stored", () => {
+    const stream = astraHistory();
+    try {
+      const before = stream.seqBounds().newest_retained_seq;
+      for (const batch of [
+        [
+          { mesg: snapshot("t500"), msgID: "s500" },
+          { mesg: snapshot("t600"), msgID: "s600" },
+        ],
+        // A stored snapshot sent again under a NEW msgID is written, and
+        // counts.
+        [
+          { mesg: snapshot("t1000"), msgID: "s1000-again" },
+          { mesg: snapshot("t500"), msgID: "s500" },
+        ],
+      ]) {
+        expect(() => write(stream, batch)).toThrow(/at most 1 snapshot record/);
+        expect(stream.seqBounds().newest_retained_seq).toBe(before);
+      }
+      expect(opens(stream)).toMatchObject({ ok: true, cut: "t0" });
+    } finally {
+      stream.close();
+    }
+  });
+});
+
+test("daybreak2's pathological batch (alternating snapshots) is refused at once", () => {
+  // A suffix of 1000 patches, and a batch of tiny snapshot records that
+  // would move the cut back and forth along all of it: refused at its
+  // second snapshot, before any projection work.
   const records: AppendRecord[] = [];
   const add = (value: object) =>
     records.push({
@@ -274,8 +317,7 @@ test("daybreak2's pathological projection: an alternating snapshot batch, timed"
   const batch: AppendRecord[] = [];
   const s0 = snapshot("t0");
   const s999 = snapshot("t999");
-  const limit = BOARD_HISTORY_LIMITS.records - records.length;
-  for (let i = 0; i < limit; i++) {
+  for (let i = 0; i < BOARD_HISTORY_LIMITS.records - records.length; i++) {
     const value = i % 2 === 0 ? s999 : s0;
     batch.push({
       value,
@@ -284,10 +326,8 @@ test("daybreak2's pathological projection: an alternating snapshot batch, timed"
     });
   }
   const start = performance.now();
-  const next = check.check(batch);
+  expect(() => check.check(batch)).toThrow(/at most 1 snapshot record/);
   const ms = performance.now() - start;
-  console.log(
-    `pathological projection: ${batch.length} records, ${ms.toFixed(0)} ms`,
-  );
-  expect(next.history.records).toBe(BOARD_HISTORY_LIMITS.records);
+  console.log(`pathological batch refused in ${ms.toFixed(1)} ms`);
+  expect(ms).toBeLessThan(50);
 });
