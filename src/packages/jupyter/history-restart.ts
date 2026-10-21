@@ -34,6 +34,7 @@ import { createHash } from "node:crypto";
 import { akv } from "@cocalc/conat/sync/akv";
 import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
 import type { ResetHistoryResult } from "@cocalc/conat/persist/storage";
+import type { SeedOversizedHistoryResult } from "@cocalc/conat/project/api/jupyter";
 import { RESET_BUSY_DELAY_MS } from "@cocalc/conat/persist/reset-busy";
 import { seedOfValue } from "@cocalc/sync/editor/generic/history-restart";
 import {
@@ -527,4 +528,132 @@ async function gateAllowsReset({
     now,
     track,
   });
+}
+
+// ---------------------------------------------------------------------------
+// (A) The live-writer seed (bounded history plan H1b-3 r4, §2): the project's
+// backend seeds a new history from its live value, when its syncdb is ready
+// in the epoch asked about.  Shares the run slot and the gate with (B).
+
+interface SyncDocLike {
+  isReady: () => boolean;
+  seedHistoryFromLiveValue?: (opts: {
+    epoch: number;
+    deadlineAt: number;
+    gate?: {
+      beforeReset: (reset: {
+        opId: string;
+        epoch: number;
+        revision: { seq: number; count: number };
+      }) => boolean;
+      answered: (opId: string) => void;
+    };
+    limits?: { stepMs?: number; reserveMs?: number; valueBytes?: number };
+    track?: <T>(p: Promise<T>) => Promise<T>;
+  }) => Promise<SeedOversizedHistoryResult>;
+}
+
+export function validSeedRequest(opts: any): string | undefined {
+  const path = opts?.path;
+  if (
+    typeof path !== "string" ||
+    path.length == 0 ||
+    Buffer.byteLength(path, "utf8") > RESTART_LIMITS.pathBytes
+  ) {
+    return `path must be a string of at most ${RESTART_LIMITS.pathBytes} UTF-8 bytes`;
+  }
+  if (!isNonnegativeSafeInteger(opts?.epoch)) {
+    return "epoch must be a nonnegative safe integer";
+  }
+  if (!isNonnegativeSafeInteger(opts?.oversizedSeq)) {
+    return "oversizedSeq must be a nonnegative safe integer";
+  }
+}
+
+export async function seedOversizedHistory({
+  project_id,
+  path,
+  epoch,
+  oversizedSeq,
+  syncdbOf,
+  syncClient,
+  now = Date.now,
+  limits,
+}: {
+  project_id: string;
+  path: string;
+  epoch: number;
+  oversizedSeq: number;
+  // for tests (see SyncDoc.seedHistoryFromLiveValue)
+  limits?: { stepMs?: number; reserveMs?: number; valueBytes?: number };
+  // the notebook's live syncdb in this backend, if it is running
+  syncdbOf: (ipynbPath: string) => SyncDocLike | undefined;
+  syncClient: Pick<SyncClient, "historyResetState">;
+  now?: () => number;
+}): Promise<SeedOversizedHistoryResult> {
+  const invalid = validSeedRequest({ path, epoch, oversizedSeq });
+  if (invalid) return { seeded: false, reason: "invalid", message: invalid };
+  const ipynb_path = ipynbPath(path);
+  const syncPath = syncdbPath(ipynb_path);
+  const syncdb = syncdbOf(ipynb_path);
+  if (syncdb == null) return { seeded: false, reason: "not-running" };
+  // a backend that is itself stuck on the 413 is not a live writer
+  if (
+    !syncdb.isReady() ||
+    typeof syncdb.seedHistoryFromLiveValue != "function"
+  ) {
+    return { seeded: false, reason: "not-ready" };
+  }
+  // as for (B): the slot is released only when every RPC this run started
+  // has settled (LIMIT-H1B3B-1)
+  const run = startRun(syncPath, {
+    deadlineMs: RESTART_LIMITS.deadlineMs,
+    now,
+  });
+  if (run == null) return { seeded: false, reason: "busy" };
+  const { deadlineAt, track } = run;
+  try {
+    if (
+      !(await gateAllowsReset({
+        syncPath,
+        project_id,
+        syncClient,
+        deadlineAt,
+        now,
+        track,
+      }))
+    ) {
+      return {
+        seeded: false,
+        reason: "busy",
+        message: "a reset of this notebook's history is already in progress",
+      };
+    }
+    return await syncdb.seedHistoryFromLiveValue({
+      epoch,
+      deadlineAt,
+      limits,
+      track,
+      gate: {
+        beforeReset: ({ opId, epoch, revision }) => {
+          // the one unresolved reset of this notebook
+          return setUnresolvedReset(syncPath, {
+            opId,
+            epoch,
+            revision,
+            observedAt: now(),
+          });
+        },
+        answered: (opId) => resolveGate(syncPath, opId),
+      },
+    });
+  } catch (err) {
+    if (err instanceof DeadlineExpired) {
+      return { seeded: false, reason: "deadline" };
+    }
+    logger.debug("seedOversizedHistory failed", { path, err: `${err}` });
+    return { seeded: false, reason: "failed", message: `${err}` };
+  } finally {
+    run.finish();
+  }
 }

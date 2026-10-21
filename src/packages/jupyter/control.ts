@@ -347,6 +347,12 @@ export function notebookCellsMatchExpected(opts: {
   return countMatches && cellsMatch && orderMatches && kernelMatches;
 }
 
+// The notebook's live syncdb in this backend, if it is running (for the
+// live-writer seed, history-restart.ts).
+export function liveSyncdb(path: string) {
+  return jupyterActions[ipynbPath(path)]?.syncdb as any;
+}
+
 export function isRunning(path): boolean {
   return jupyterActions[ipynbPath(path)] != null;
 }
