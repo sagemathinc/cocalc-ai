@@ -112,6 +112,7 @@ export const DOCS_ENTRY_IDS = [
   "collaboration.chat",
   "collaboration.mentions",
   "files.timetravel",
+  "files.history-unloadable",
   "files.git",
   "teaching.course-workflow",
   "teaching.course-compute",
@@ -161,6 +162,7 @@ const DOCS_PLUS_ENTRY_IDS = new Set<string>([
   "editors.r-markdown",
   "troubleshooting.memory",
   "files.timetravel",
+  "files.history-unloadable",
   "files.git",
 ]);
 

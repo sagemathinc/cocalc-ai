@@ -1598,13 +1598,17 @@ const assertHasWritePermission = ({ user, storage, service }) => {
 };
 
 // An error response from the persist server.  oversized_seq says which stored
-// message was too large to read (code 413).
+// message was too large to read (code 413), oversized_epoch in which history.
 function errorFromHeaders(headers): ConatError {
   const err = new ConatError(`${headers.error ?? "error"}`, {
     code: headers.code as string | number,
   });
   if (typeof headers.oversized_seq == "number") {
     (err as any).oversizedSeq = headers.oversized_seq;
+  }
+  // the history epoch it was read in
+  if (typeof headers.oversized_epoch == "number") {
+    (err as any).oversizedEpoch = headers.oversized_epoch;
   }
   return err;
 }

@@ -36,6 +36,19 @@ import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
 import type { ResetHistoryResult } from "@cocalc/conat/persist/storage";
 import { RESET_BUSY_DELAY_MS } from "@cocalc/conat/persist/reset-busy";
 import { seedOfValue } from "@cocalc/sync/editor/generic/history-restart";
+import {
+  DeadlineExpired,
+  gateAllowsReset as sharedGateAllowsReset,
+  isNonnegativeSafeInteger,
+  resetRunState,
+  resolveGate,
+  runInProgress,
+  setUnresolvedReset,
+  startRun,
+  unresolvedReset,
+  utf8Bytes,
+  withDeadline,
+} from "@cocalc/sync/editor/generic/reset-run";
 import { jsonMeasureCapped } from "@cocalc/util/json-size";
 import { ipynbPath, syncdbPath } from "@cocalc/util/jupyter/names";
 import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
@@ -79,54 +92,25 @@ export type RestartResult =
   | { restarted: false; reason: RestartRefusal; message?: string };
 
 // ---------------------------------------------------------------------------
-// One run per document, and at most one unresolved reset per document.  Shared
-// with the live-writer seed (A, H1b-3c).
+// One run per document, and at most one unresolved reset per document: the
+// shared bounds of sync/editor/generic/reset-run.ts (also the board rebuild).
 
-const runs = new Set<string>();
-
-interface Gate {
-  opId: string;
-  epoch: number;
-  revision: { seq: number; count: number };
-  // when this backend last asked the history whether it moved
-  observedAt: number;
-}
-const gates = new Map<string, Gate>();
+export { runInProgress, unresolvedReset };
 
 // for tests
 export function resetHistoryRestartState() {
-  runs.clear();
-  gates.clear();
-}
-
-// whether a run for this notebook is still doing (or waiting on) work
-export function runInProgress(syncPath: string): boolean {
-  return runs.has(syncPath);
-}
-
-export function unresolvedReset(syncPath: string): Gate | undefined {
-  return gates.get(syncPath);
-}
-
-// The reset answered: clear the gate, but only if it is this reset's (a late
-// answer to an older reset must not clear a newer gate).
-function resolveGate(syncPath: string, opId: string) {
-  if (gates.get(syncPath)?.opId === opId) gates.delete(syncPath);
+  resetRunState();
 }
 
 // ---------------------------------------------------------------------------
 // Validation
-
-function isNonnegativeSafeInteger(x: unknown): x is number {
-  return typeof x === "number" && Number.isSafeInteger(x) && x >= 0;
-}
 
 export function validRestartRequest(opts: any): string | undefined {
   const path = opts?.path;
   if (
     typeof path !== "string" ||
     path.length == 0 ||
-    Buffer.byteLength(path, "utf8") > RESTART_LIMITS.pathBytes
+    utf8Bytes(path) > RESTART_LIMITS.pathBytes
   ) {
     return `path must be a string of at most ${RESTART_LIMITS.pathBytes} UTF-8 bytes`;
   }
@@ -140,26 +124,6 @@ export function validRestartRequest(opts: any): string | undefined {
   ) {
     return "revision must be {seq, count} of nonnegative safe integers";
   }
-}
-
-// ---------------------------------------------------------------------------
-// The deadline: every step gets only what remains of it.
-
-class DeadlineExpired extends Error {}
-
-function withDeadline<T>(deadlineAt: number, p: Promise<T>): Promise<T> {
-  const remaining = deadlineAt - Date.now();
-  if (remaining <= 0) {
-    p.catch(() => {});
-    return Promise.reject(new DeadlineExpired());
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => {
-      timer = setTimeout(() => reject(new DeadlineExpired()), remaining);
-    }),
-  ]).finally(() => clearTimeout(timer));
 }
 
 // ---------------------------------------------------------------------------
@@ -344,19 +308,15 @@ export async function restartHistoryFromIpynb({
   const ipynb_path = ipynbPath(path);
   const syncPath = syncdbPath(ipynb_path);
 
-  // §3 step 0: the document's run slot, and the gate, before any work
-  if (runs.has(syncPath)) return { restarted: false, reason: "busy" };
-  runs.add(syncPath);
-  const deadlineAt = now() + RESTART_LIMITS.deadlineMs;
-  // Every operation this run starts.  The deadline only ends the caller's
-  // wait: the run's slot is released when all of them have settled, so a
-  // retry after a deadline can never start work beside abandoned work
-  // (LIMIT-H1B3B-1).  Each has its own finite RPC timeout.
-  const started: Promise<unknown>[] = [];
-  const track = <T>(p: Promise<T>): Promise<T> => {
-    started.push(p);
-    return p;
-  };
+  // §3 step 0: the document's run slot, and the gate, before any work.  The
+  // deadline only ends the caller's wait: the slot is released when every
+  // operation this run started has settled (LIMIT-H1B3B-1).
+  const run = startRun(syncPath, {
+    deadlineMs: RESTART_LIMITS.deadlineMs,
+    now,
+  });
+  if (run == null) return { restarted: false, reason: "busy" };
+  const { deadlineAt, track } = run;
   let blobStore: { close?: () => void } | undefined;
   try {
     if (
@@ -464,7 +424,16 @@ export async function restartHistoryFromIpynb({
     const time = now();
     const remaining = deadlineAt - now();
     if (remaining <= 0) throw new DeadlineExpired();
-    gates.set(syncPath, { opId, epoch, revision, observedAt: now() });
+    if (
+      !setUnresolvedReset(syncPath, {
+        opId,
+        epoch,
+        revision,
+        observedAt: now(),
+      })
+    ) {
+      return { restarted: false, reason: "busy" };
+    }
     const reset = syncClient.resetHistory({
       project_id,
       path: syncPath,
@@ -528,18 +497,12 @@ export async function restartHistoryFromIpynb({
     return { restarted: false, reason: "failed", message: `${err}` };
   } finally {
     // the slot (and the blob store) only when nothing of this run is left
-    void Promise.allSettled(started).then(() => {
-      blobStore?.close?.();
-      runs.delete(syncPath);
-    });
+    run.finish(() => blobStore?.close?.());
   }
 }
 
-// While a reset is unresolved, no other one is sent (LIMIT-H1B3P-2).  It is
-// resolved by its own answer (resolveGate), or here by an observation: the
-// epoch moved past it (it, or another reset, applied), or the revision moved
-// in its epoch (its ifRevision can no longer hold).  Observed at most every
-// gateObserveMs.
+// While a reset is unresolved, no other one is sent (LIMIT-H1B3P-2); see
+// reset-run.ts.
 async function gateAllowsReset({
   syncPath,
   project_id,
@@ -555,25 +518,13 @@ async function gateAllowsReset({
   now: () => number;
   track?: <T>(p: Promise<T>) => Promise<T>;
 }): Promise<boolean> {
-  const gate = gates.get(syncPath);
-  if (gate == null) return true;
-  if (now() - gate.observedAt < RESTART_LIMITS.gateObserveMs) return false;
-  gate.observedAt = now();
-  const state = await withDeadline(
+  return await sharedGateAllowsReset({
+    key: syncPath,
+    readState: () =>
+      syncClient.historyResetState({ project_id, path: syncPath }),
     deadlineAt,
-    track(syncClient.historyResetState({ project_id, path: syncPath })),
-  );
-  if (gates.get(syncPath) !== gate) {
-    // its answer came meanwhile
-    return !gates.has(syncPath);
-  }
-  if (
-    state.epoch > gate.epoch ||
-    (state.epoch == gate.epoch &&
-      (state.seq != gate.revision.seq || state.count != gate.revision.count))
-  ) {
-    gates.delete(syncPath);
-    return true;
-  }
-  return false;
+    observeMs: RESTART_LIMITS.gateObserveMs,
+    now,
+    track,
+  });
 }

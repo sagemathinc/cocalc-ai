@@ -23,6 +23,10 @@ import listing, {
   type Files,
 } from "./listing";
 import { isValidUUID } from "@cocalc/util/misc";
+import type {
+  BoardHistoryAction,
+  BoardHistoryCause,
+} from "@cocalc/util/board/history-unloadable";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import TTL from "@isaacs/ttlcache";
 import { getLogger } from "@cocalc/conat/logger";
@@ -190,12 +194,23 @@ export interface BoardOpenResult {
   // "missing": there is no file, or it was deleted or moved while open, and
   // the host never writes it again. "too-large": the file or the document
   // is over the editable limits, so the host neither loads nor saves it.
-  state: "ok" | "invalid" | "missing" | "too-large";
+  // "history-unloadable": the board's edit history could not be loaded and
+  // was not rebuilt from the file (cause says why; bounded history plan
+  // H1b-4).
+  state: "ok" | "invalid" | "missing" | "too-large" | "history-unloadable";
   // Why the state is not "ok".
   message?: string;
   // The file's size when last read or written (state "ok"), or its size
   // (state "too-large").
   bytes?: number;
+  // state "history-unloadable": why, and what the user can do instead
+  // (links to path only, never its content), with the docs page's slug.
+  cause?: BoardHistoryCause;
+  actions?: BoardHistoryAction[];
+  docs?: string;
+  // state "ok": the history could not be loaded and was rebuilt from the
+  // file (in history_epoch), by this host or another; shown once per epoch.
+  recovered?: { reason: string; time?: number; history_epoch: number };
 }
 
 export interface FilesystemBoardHandlers {
