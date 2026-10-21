@@ -430,6 +430,10 @@ interface PatchDocMetadataV1 {
   settings?: JSONValue;
 }
 
+// What SyncDoc.save() resolves with: nothing once saved, or the board
+// write service's refusal of a board writer (never as if saved).
+export type SaveResult = { refused: { code: string; message: string } } | void;
+
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
@@ -2467,7 +2471,9 @@ export class SyncDoc extends EventEmitter {
 
   Save any changes we have as a new patch.
   */
-  save = reuseInFlight(async () => {
+  // void (not undefined) when saved, so that a caller's or a fake's
+  // Promise<void> save still fits (cli project-chat-send.test.ts).
+  save = reuseInFlight(async (): Promise<SaveResult> => {
     const dbg = this.dbg("save");
     dbg();
     // We just keep trying while syncdoc is ready and there
@@ -2511,9 +2517,7 @@ export class SyncDoc extends EventEmitter {
     // useful to ensure specific undo points (e.g., right before a paste).
     // (A board writer the board write service refused resolves with that
     // refusal, never as if saved: dstream.save.)
-    return (await this.patches_table.save()) as
-      | { refused: { code: string; message: string } }
-      | undefined;
+    return (await this.patches_table.save()) as SaveResult;
   });
 
   /*
