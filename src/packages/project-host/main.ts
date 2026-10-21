@@ -426,6 +426,12 @@ export async function main(
 
   // 1) HTTP + conat server
   const app = express();
+  // Only the private-hostname rewriter sets this header: never trust a
+  // client's value (upgrades: see the emit wrapper below).
+  app.use((req, _res, next) => {
+    delete req.headers[PRIVATE_APP_HOST_HEADER];
+    next();
+  });
   // The per-project content origin (trust-free step 6) owns every request on
   // a content hostname, before any other route; see content-origin.ts.
   const contentDomain = getProjectContentDomain();
@@ -489,6 +495,14 @@ export async function main(
       return true;
     };
   });
+  {
+    // Outermost: runs before the guard and every upgrade listener.
+    const emit = httpServer.emit;
+    httpServer.emit = function (this: any, event: string | symbol, ...args: any[]) {
+      if (event === "upgrade") delete args[0]?.headers?.[PRIVATE_APP_HOST_HEADER];
+      return emit.apply(this, [event, ...args] as any);
+    } as typeof httpServer.emit;
+  }
   app.get("/healthz", (_req, res) =>
     res.json({
       ok: true,
@@ -1230,9 +1244,26 @@ export async function main(
         }
         if (decision) {
           res.statusCode = decision.refuse;
-          res.setHeader("Content-Type", "text/plain; charset=utf-8");
           res.setHeader("Cache-Control", "no-store");
-          res.end(`${decision.message}\n`);
+          const site = contentViewSiteOrigin({
+            req,
+            approvedOrigins: approvedBrowserOrigins(),
+            siteUrl: process.env.COCALC_SITE_URL,
+          });
+          if (site) {
+            // A page with a way back to the project (no request content).
+            res.setHeader("Content-Type", "text/html; charset=utf-8");
+            res.setHeader(
+              "Content-Security-Policy",
+              "default-src 'none'; frame-ancestors 'none'",
+            );
+            res.end(
+              `<!doctype html><meta charset="utf-8"><title>App</title><p>${decision.message}</p><p><a href="${site}/projects/${project_id}">Back to the project</a></p>`,
+            );
+          } else {
+            res.setHeader("Content-Type", "text/plain; charset=utf-8");
+            res.end(`${decision.message}\n`);
+          }
           return { handled: true };
         }
       }
