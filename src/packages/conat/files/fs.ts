@@ -203,6 +203,9 @@ export interface BoardOpenResult {
   unsaved?:
     | { in: "file" }
     | { in: "copy"; path: string }
+    // No place on disk took them: held by the host (bounded), and saved as
+    // a copy on a later open.
+    | { in: "memory"; error: string }
     | { in: "nowhere"; error: string };
   // The writer's most recent refusal, if any in the last hour, shown on the
   // next opens too (state is then that of the new writer).
@@ -210,6 +213,8 @@ export interface BoardOpenResult {
     at: number;
     message: string;
     unsaved: BoardOpenResult["unsaved"];
+    // unsaved "memory": the unsaved board text itself, until it is saved.
+    text?: string;
   };
   // The file's size when last read or written (state "ok"), or its size
   // (state "too-large").

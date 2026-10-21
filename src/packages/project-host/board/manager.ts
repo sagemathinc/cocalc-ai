@@ -152,6 +152,9 @@ export type BoardStatus =
 export type BoardUnsaved =
   | { in: "file" }
   | { in: "copy"; path: string }
+  // Every place on disk failed: the text is held in the host's memory
+  // (bounded), and saved as a copy on a later open (service.ts).
+  | { in: "memory"; error: string }
   | { in: "nowhere"; error: string };
 
 export interface BoardManagerOptions {
@@ -640,10 +643,15 @@ export class BoardManager {
     error: string | undefined,
     refusal?: { code?: string; message?: string },
   ): Promise<void> {
-    let unsaved: BoardUnsaved;
+    let unsaved: BoardUnsaved | undefined;
+    const errors: string[] = [];
     if (text === undefined) {
+      // The document itself couldn't be read: nothing to keep.
       unsaved = { in: "nowhere", error: error ?? "no document" };
     } else {
+      // 1. The board's file: it already has the text, or takes it the way
+      //    every save writes it. A failure here (EIO, say) falls through
+      //    to a copy (astra CORR9562).
       try {
         const now = await this.file.read(this.hardMaxBytes);
         const current = now != null && "text" in now ? now.text : undefined;
@@ -656,16 +664,34 @@ export class BoardManager {
         ) {
           this.diskText = text;
           unsaved = { in: "file" };
-        } else if (this.file.keepCopy != null) {
+        }
+      } catch (err) {
+        errors.push(`the board's file: ${err}`);
+      }
+      // 2. A copy beside it, with a fresh name again if one is taken.
+      for (
+        let attempt = 1;
+        unsaved == null && this.file.keepCopy != null && attempt <= 3;
+        attempt++
+      ) {
+        try {
           unsaved = {
             in: "copy",
             path: await this.file.keepCopy(text, "unsaved"),
           };
-        } else {
-          unsaved = { in: "nowhere", error: "no place to keep a copy" };
+        } catch (err: any) {
+          errors.push(`a copy: ${err}`);
+          if (err?.code !== "EEXIST") break;
         }
-      } catch (err) {
-        unsaved = { in: "nowhere", error: `${err}`.slice(0, 500) };
+      }
+      // 3. Nowhere on disk (ENOSPC everywhere, say): the text is kept in
+      //    the host's memory, for the service to hold and to save later.
+      if (unsaved == null) {
+        unsaved = {
+          in: "memory",
+          error: (errors.join("; ") || "no place to keep a copy").slice(0, 500),
+        };
+        this.kept = text;
       }
     }
     this.syncdb.discardUnsaved?.();
@@ -674,13 +700,22 @@ export class BoardManager {
         ? "your unsaved edits are kept in the board's file"
         : unsaved.in === "copy"
           ? `your unsaved edits are kept in ${unsaved.path}; open it to copy what you need`
-          : `your unsaved edits could not be kept (${unsaved.error})`;
+          : unsaved.in === "memory"
+            ? `your unsaved edits could not be saved to disk (${unsaved.error}); they are held by the host and saved as a copy when the board is next opened`
+            : `your unsaved edits could not be kept (${unsaved.error})`;
     this.retire({
       state: "refused",
       code: refusal?.code ?? "refused",
       message: `this board was changed elsewhere, so it was reopened: ${where}`,
       unsaved,
     });
+  }
+
+  // A refused writer's unsaved text that no place on disk took (unsaved
+  // "memory"), for the service to hold; undefined otherwise.
+  private kept?: string;
+  keptUnsaved(): string | undefined {
+    return this.kept;
   }
 
   // Call f when this manager retires.

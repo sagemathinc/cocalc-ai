@@ -513,6 +513,10 @@ export interface StorageOptions {
   ephemeral?: boolean;
   // compression configuration
   compression?: Compression;
+  // A board stream's record cap (board-record-cap.ts): set before anything
+  // else runs, so the stream is never trimmed by retention settings, not
+  // even by the limits enforced as it opens (astra CORR-F37-1).
+  recordCap?: number;
 }
 
 export const EPHEMERAL_SQLITE_CACHE_KIB_ENV =
@@ -720,6 +724,10 @@ export class PersistentStream extends EventEmitter {
 
   constructor(options: StorageOptions) {
     super();
+    if (options.recordCap != null) {
+      this.recordCap = options.recordCap;
+      this.noEviction = true;
+    }
     openPaths.add(options.path);
     try {
       logger.debug("constructor ", options.path);
@@ -1102,6 +1110,13 @@ export class PersistentStream extends EventEmitter {
     }
     if (key === null) {
       key = undefined;
+    }
+    // strictMsgID (a board stream's writes): a msgID is a string or none,
+    // in storage as in the append check (astra CORR9561).
+    if (strictMsgID && msgID != null && typeof msgID !== "string") {
+      throw new ConatError(`a msgID must be a string, not ${typeof msgID}`, {
+        code: "branch",
+      });
     }
     if (msgID != null && this.msgIDs?.has(msgID)) {
       const existing = this.msgIDs.get(msgID)! as { seq: number; time: number };

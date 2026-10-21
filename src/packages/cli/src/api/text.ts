@@ -50,7 +50,8 @@ type SyncStringLike = {
   close(): void | Promise<void>;
   to_str(): string;
   from_str(text: string): void;
-  save(): Promise<void>;
+  // (A board writer's save resolves with a refusal: sync-doc.ts.)
+  save(): Promise<unknown>;
   save_to_disk?: () => Promise<void>;
   historyLastVersion(): string | undefined;
   hash_of_live_version(): number | undefined;

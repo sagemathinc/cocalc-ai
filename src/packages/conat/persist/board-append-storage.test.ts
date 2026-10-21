@@ -433,3 +433,103 @@ describe("codex round 7 (on 956e675030)", () => {
     }
   });
 });
+
+test("astra CORR9561: a msgID that isn't a string is refused before storage", () => {
+  const stream = astraHistory();
+  try {
+    const before = stream.seqBounds().newest_retained_seq;
+    const raw = (mesg: object) =>
+      Buffer.from(encode({ encoding: DataEncoding.MsgPack, mesg }));
+    for (const msgID of [42, { id: "s1000" }, ["s1000"], true]) {
+      // astra's repro, with the retry's msgID as another type.
+      const data = [
+        {
+          msgID,
+          messageData: {
+            encoding: DataEncoding.MsgPack,
+            raw: raw(snapshot("t1000")),
+          },
+        },
+        {
+          msgID: "p1001",
+          messageData: {
+            encoding: DataEncoding.MsgPack,
+            raw: raw(patch("t1001", ["t1000"])),
+          },
+        },
+      ];
+      expect(() =>
+        requestRecords({ cmd: "setMany" }, { data }, stream),
+      ).toThrow(/msgID must be a string/);
+      expect(() =>
+        requestRecords(
+          { cmd: "set", msgID },
+          { encoding: DataEncoding.MsgPack, raw: raw(snapshot("t1000")) },
+          stream,
+        ),
+      ).toThrow(/msgID must be a string/);
+    }
+    expect(stream.seqBounds().newest_retained_seq).toBe(before);
+    expect(opens(stream)).toMatchObject({ ok: true });
+  } finally {
+    stream.close();
+  }
+});
+
+test("astra CORR9561: storage's strict mode refuses a msgID that isn't a string too", () => {
+  const stream = newStream();
+  try {
+    const raw = Buffer.from(
+      encode({ encoding: DataEncoding.MsgPack, mesg: patch("t0") }),
+    );
+    expect(() =>
+      stream.set({
+        encoding: DataEncoding.MsgPack,
+        raw,
+        msgID: 42 as any,
+        strictMsgID: true,
+      }),
+    ).toThrow(/msgID must be a string/);
+    expect(
+      stream.setMany(
+        [{ encoding: DataEncoding.MsgPack, raw, msgID: 42 as any }],
+        { allOrNothing: true, strictMsgID: true },
+      ),
+    ).toEqual([expect.objectContaining({ code: "branch" })]);
+    expect([...stream.getAll()]).toHaveLength(0);
+  } finally {
+    stream.close();
+  }
+});
+
+test("astra CORR-F37-1: a board stream's retention settings delete nothing as it reopens", async () => {
+  const { mkdtempSync } = require("node:fs");
+  const { tmpdir } = require("node:os");
+  const { join } = require("node:path");
+  const path = join(mkdtempSync(join(tmpdir(), "board-reopen-")), "stream");
+  const raw = Buffer.from(
+    encode({ encoding: DataEncoding.MsgPack, mesg: patch("t0") }),
+  );
+  const cap = BOARD_HISTORY_LIMITS.recordBytes;
+  let stream = new PersistentStream({ path, recordCap: cap });
+  stream.set({ encoding: DataEncoding.MsgPack, raw, ttl: 1 });
+  stream.config({ max_age: 1, allow_msg_ttl: true } as any);
+  expect([...stream.getAll()]).toHaveLength(1);
+  stream.close();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // Reopened as a board stream: the cap is there before its limits run.
+  stream = new PersistentStream({ path, recordCap: cap });
+  try {
+    expect([...stream.getAll()]).toHaveLength(1);
+    expect(stream.config()).toMatchObject({ max_age: 1, allow_msg_ttl: true });
+  } finally {
+    stream.close();
+  }
+  // (Without the cap, the same settings do delete it: the control.)
+  stream = new PersistentStream({ path });
+  try {
+    expect([...stream.getAll()]).toHaveLength(0);
+  } finally {
+    stream.close();
+  }
+});

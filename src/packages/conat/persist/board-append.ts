@@ -125,6 +125,15 @@ export function requestRecords(
     key: unknown,
     msgID: unknown,
   ): AppendRecord => {
+    // A board record's msgID is a string, or none (astra CORR9561: storage
+    // deduplicates any msgID it is given, so a number would slip past the
+    // prediction below). Anything else is refused before storage.
+    if (msgID != null && typeof msgID !== "string") {
+      throw new ConatError(
+        `a board record's msgID must be a string, not ${typeof msgID}`,
+        { code: "branch" },
+      );
+    }
     const bytes = data ?? Buffer.alloc(0);
     let outcome =
       stream == null || typeof msgID !== "string"

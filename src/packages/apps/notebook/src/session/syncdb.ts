@@ -31,7 +31,8 @@ interface NotebookSyncDBLike {
   set(obj: unknown): void;
   delete(where?: unknown): void;
   commit(): boolean;
-  save(): Promise<void>;
+  // (A board writer's save resolves with a refusal: sync-doc.ts.)
+  save(): Promise<unknown>;
   save_to_disk?(): Promise<void>;
 }
 

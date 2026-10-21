@@ -555,7 +555,7 @@ export async function startBoard({
   manager.onRetire(() => {
     const status = manager.getStatus();
     if (status.state === "refused") {
-      rememberRefusal(`${project_id}:${path}`, status);
+      rememberRefusal(`${project_id}:${path}`, status, manager.keptUnsaved());
     }
   });
   try {
@@ -782,7 +782,9 @@ function boardPaths(path: string) {
 
 export async function openBoard(opts: BoardRequest): Promise<BoardOpenResult> {
   const board = await managerFor(opts);
-  const refusal = lastRefusal(`${opts.project_id}:${board.path}`);
+  const key = `${opts.project_id}:${board.path}`;
+  await saveHeldUnsaved(key, opts.fs, board.path);
+  const refusal = lastRefusal(key);
   const status =
     "status" in board ? board.status : result(board.path, board.manager);
   return refusal == null ? status : { ...status, lastRefusal: refusal };
@@ -794,18 +796,58 @@ const REFUSAL_MEMORY_MS = 60 * 60 * 1000;
 const MAX_REFUSALS = 1000;
 const refusals = new Map<string, NonNullable<BoardOpenResult["lastRefusal"]>>();
 
-function rememberRefusal(
+// Held unsaved text (unsaved "memory") is bounded in all: past it, the
+// oldest is dropped, and that is logged as the loss it is.
+const MAX_HELD_BYTES = 64 * 1024 * 1024;
+
+export function rememberRefusal(
   key: string,
   status: Extract<BoardStatus, { state: "refused" }>,
+  text?: string,
 ): void {
   refusals.delete(key);
   refusals.set(key, {
     at: Date.now(),
     message: status.message,
     unsaved: status.unsaved,
+    ...(status.unsaved.in === "memory" && text != null ? { text } : {}),
   });
   while (refusals.size > MAX_REFUSALS) {
     refusals.delete(refusals.keys().next().value!);
+  }
+  let held = 0;
+  for (const r of [...refusals.values()].reverse()) {
+    if (r.text == null) continue;
+    held += r.text.length;
+    if (held > MAX_HELD_BYTES) {
+      logger.warn("board: dropping held unsaved edits over the bound", {
+        bytes: r.text.length,
+      });
+      delete r.text;
+    }
+  }
+}
+
+// A board's unsaved edits held in memory (no place on disk took them when
+// its writer was refused): saved as a copy beside the board now, if they
+// can be; held until then, never dropped for a failure.
+async function saveHeldUnsaved(
+  key: string,
+  fs: BoardFilesystem,
+  path: string,
+): Promise<void> {
+  const refusal = refusals.get(key);
+  if (refusal?.text == null) return;
+  try {
+    const copy = await fileOf(fs, path).keepCopy!(refusal.text, "unsaved");
+    refusal.unsaved = { in: "copy", path: copy };
+    refusal.message = `${refusal.message} (since saved as ${copy})`;
+    delete refusal.text;
+  } catch (err) {
+    logger.warn("board: still couldn't save held unsaved edits", {
+      path,
+      err: `${err}`,
+    });
   }
 }
 
