@@ -266,14 +266,36 @@ export async function ipynbSeedValue({
 // ---------------------------------------------------------------------------
 // The restart
 
-export async function restartHistoryFromIpynb({
+type RestartOptions = Parameters<typeof restartWith>[0];
+
+// The restart, with the history client it owns released however it ends
+// (LIMIT-H1B3C-1): one SyncClient per request listens to the long-lived
+// conat client until released.
+export async function restartHistoryFromIpynb(
+  opts: Omit<RestartOptions, "syncClient"> & {
+    syncClient?: RestartOptions["syncClient"];
+  },
+): Promise<RestartResult> {
+  const owned =
+    opts.syncClient == null ? new SyncClient(opts.client) : undefined;
+  try {
+    return await restartWith({
+      ...opts,
+      syncClient: opts.syncClient ?? owned!,
+    });
+  } finally {
+    owned?.release();
+  }
+}
+
+async function restartWith({
   project_id,
   path,
   epoch,
   revision,
   client,
   fs,
-  syncClient = new SyncClient(client),
+  syncClient,
   now = Date.now,
   blobStoreOf = (name) =>
     akv({
@@ -291,8 +313,8 @@ export async function restartHistoryFromIpynb({
   revision: { seq: number; count: number };
   client: any;
   fs: any;
-  // for tests
-  syncClient?: Pick<
+  // the history operations (tests pass their own)
+  syncClient: Pick<
     SyncClient,
     "historyResetState" | "readFileBounded" | "resetHistory"
   >;
