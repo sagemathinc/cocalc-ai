@@ -145,7 +145,7 @@ describe("a replay page's budget counts the bytes stored, not the size column (a
     const db = s.db;
     s.db = {
       prepare: (sql: string) => ({
-        all: () => (sql.includes("length(raw) AS stored") ? rows : []),
+        all: () => (sql.includes("AS stored") ? rows : []),
         get: (seq: number) => {
           fetched++;
           return {
@@ -289,13 +289,21 @@ describe("an over-cap blob is never read, whatever changed since its size was ch
   // carry a blob over the cap, because its data must never be read at all.
   // Optionally grow seq 2 just before the first statement that reads data
   // is prepared (a row changing between its size check and its read).
-  function watch(s: any, { growBeforeData = false } = {}) {
+  function watch(
+    s: any,
+    {
+      growBeforeData = false,
+      growSql = "UPDATE messages SET raw = zeroblob(?), compress = 0 WHERE seq = ?",
+    } = {},
+  ) {
     const db = s.db;
     const prepare = db.prepare.bind(db);
     const blobs: number[] = [];
     let grown = false;
     const seen = (row: any) => {
       if (row?.raw != null) blobs.push(row.raw.length);
+      if (row?.headers != null) blobs.push(`${row.headers}`.length);
+      if (row?.key != null) blobs.push(`${row.key}`.length);
       return row;
     };
     db.prepare = (sql: string) => {
@@ -305,9 +313,7 @@ describe("an over-cap blob is never read, whatever changed since its size was ch
         sql.startsWith("SELECT seq, key, time, compress, encoding, raw")
       ) {
         grown = true;
-        prepare(
-          "UPDATE messages SET raw = zeroblob(?), compress = 0 WHERE seq = ?",
-        ).run(64 * MiB, 2);
+        prepare(growSql).run(64 * MiB, 2);
       }
       const stmt = prepare(sql);
       return {
@@ -402,5 +408,78 @@ describe("an over-cap blob is never read, whatever changed since its size was ch
     } finally {
       w.restore();
     }
+  });
+
+  // A row whose headers or key (not its data) are huge, and whose size
+  // column says 1 byte: in SQLite, a 64 MiB text never made in JavaScript.
+  const HUGE_HEADERS =
+    "UPDATE messages SET headers = hex(zeroblob(?)), size = 1 WHERE seq = ?";
+  const HUGE_KEY =
+    "UPDATE messages SET key = hex(zeroblob(?)), size = 1 WHERE seq = ?";
+  const huge = (s: any, sql: string) => s.sqlite(sql, [32 * MiB, 2]);
+
+  for (const [column, sql] of [
+    ["headers", HUGE_HEADERS],
+    ["key", HUGE_KEY],
+  ] as const) {
+    test(`a row with 64 MiB of ${column} and a size of 1 is refused by get, readPage and getAll, never read`, async () => {
+      const s = await three(`huge-${column}`);
+      huge(s, sql);
+      const w = watch(s);
+      try {
+        expect(() => s.get({ seq: 2, key: undefined })).toThrow(
+          expect.objectContaining({ code: 413 }),
+        );
+        expect(() =>
+          s.planPage({ after_seq: 0, maxRows: 1000, maxBytes: 8_000_000 }),
+        ).toThrow(expect.objectContaining({ code: 413 }));
+        expect(() => s.readPage(0, 3, Infinity)).toThrow(
+          expect.objectContaining({ code: 413 }),
+        );
+        expect(() => {
+          for (const m of s.getAll()) void m;
+        }).toThrow(expect.objectContaining({ code: 413 }));
+        expect(w.biggest()).toBeLessThanOrEqual(CAP);
+      } finally {
+        w.restore();
+      }
+    });
+
+    test(`readPage: ${column} grown between its metadata and its data is refused by the guard, never read`, async () => {
+      const s = await three(`racing-${column}`);
+      const w = watch(s, {
+        growBeforeData: true,
+        growSql: sql
+          .replace("?", "?")
+          .replace("zeroblob(?)", "zeroblob(? / 2)"),
+      });
+      try {
+        expect(() => s.readPage(0, 3, Infinity)).toThrow(
+          expect.objectContaining({ code: 413 }),
+        );
+        expect(w.grown()).toBe(true);
+        expect(w.biggest()).toBeLessThanOrEqual(CAP);
+      } finally {
+        w.restore();
+      }
+    });
+  }
+
+  test("admission counts headers and key: a row with 512 KiB of headers and a size of 1 weighs them", async () => {
+    const s = await three("weighs-headers");
+    s.sqlite(
+      "UPDATE messages SET headers = hex(zeroblob(?)), size = 1 WHERE seq = ?",
+      [256 * 1024, 2],
+    );
+    const plan = s.planPage({
+      after_seq: 0,
+      maxRows: 1000,
+      maxBytes: 8_000_000,
+    });
+    expect(plan[1].size).toBeGreaterThanOrEqual(512 * 1024);
+    expect(plan[1].record).toBeGreaterThanOrEqual(512 * 1024);
+    // And it is still read (within the caps).
+    const rows = s.readPage(0, 3, Infinity);
+    expect(rows.map((r: any) => r.seq)).toEqual([1, 2, 3]);
   });
 });

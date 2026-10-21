@@ -322,11 +322,27 @@ export function recordBytes(row: { size: number; stored?: number }): number {
   return Math.max(Number(row.size) || 0, Number(row.stored) || 0);
 }
 
-// What a stored message weighs in a replay page, as a bound on the memory
-// the page holds: its stored bytes plus its uncompressed size (readPage keeps
-// the stored buffers while the replay inflates each one, so at its peak a
-// page holds about both). For an uncompressed message the two are one
-// buffer, so this counts it twice: conservative.
+// A stored message's variable-length columns, in bytes (computed by SQLite,
+// before any of them is read into JavaScript): raw, headers and key. What a
+// row stores is their sum.
+const HEADERS_BYTES = "coalesce(octet_length(headers), 0)";
+const KEY_BYTES = "coalesce(octet_length(key), 0)";
+const STORED_BYTES = `(octet_length(raw) + ${HEADERS_BYTES} + ${KEY_BYTES})`;
+// The metadata the size checks read (no column data).
+const META_COLUMNS = `seq, size, ${STORED_BYTES} AS stored, ${HEADERS_BYTES} AS headers_bytes, ${KEY_BYTES} AS key_bytes`;
+// On a capped stream, each of headers and key has its own cap too (a
+// board's records carry small headers and no key).
+export const RECORD_HEADERS_CAP = 1024 * 1024;
+export const RECORD_KEY_CAP = 64 * 1024;
+
+// What a stored message weighs in a replay page: its stored bytes (raw,
+// headers and key) plus its uncompressed size. readPage keeps the stored
+// buffers while the replay inflates each one, so at its peak a page holds
+// about both. For an uncompressed message the two are one buffer, so this
+// counts it twice: conservative. This bounds the page's payload buffers,
+// not its exact memory: the decompressor's workspace, per-row overhead and
+// serialization are outside it (and a page's metadata rows are bounded by
+// its row cap).
 export function pageBytes(row: { size: number; stored?: number }): number {
   return (Number(row.size) || 0) + (Number(row.stored) || 0);
 }
@@ -337,17 +353,38 @@ export function pageBytes(row: { size: number; stored?: number }): number {
 function capGuard(cap: number | undefined): { sql: string; params: number[] } {
   return cap == null
     ? { sql: "", params: [] }
-    : { sql: " AND length(raw) <= ?", params: [cap] };
+    : {
+        sql: ` AND ${STORED_BYTES} <= ? AND ${HEADERS_BYTES} <= ? AND ${KEY_BYTES} <= ?`,
+        params: [
+          cap,
+          Math.min(cap, RECORD_HEADERS_CAP),
+          Math.min(cap, RECORD_KEY_CAP),
+        ],
+      };
 }
 
 export function assertWithinRecordCap(
-  row: { seq: number; size: number; stored?: number },
+  row: {
+    seq: number;
+    size: number;
+    stored?: number;
+    headers_bytes?: number;
+    key_bytes?: number;
+  },
   cap: number | undefined,
 ): void {
   if (cap == null) return;
   const size = Math.max(Number(row.size) || 0, Number(row.stored) || 0);
   if (size > cap) {
     throw persistMessageTooLargeError({ size, limit: cap, seq: row.seq });
+  }
+  for (const [bytes, limit] of [
+    [Number(row.headers_bytes) || 0, Math.min(cap, RECORD_HEADERS_CAP)],
+    [Number(row.key_bytes) || 0, Math.min(cap, RECORD_KEY_CAP)],
+  ]) {
+    if (bytes > limit) {
+      throw persistMessageTooLargeError({ size: bytes, limit, seq: row.seq });
+    }
   }
 }
 
@@ -1156,9 +1193,7 @@ export class PersistentStream extends EventEmitter {
     raw: Buffer,
   ): boolean => {
     const meta = this.db
-      .prepare(
-        "SELECT seq, size, length(raw) AS stored FROM messages WHERE seq=?",
-      )
+      .prepare(`SELECT ${META_COLUMNS} FROM messages WHERE seq=?`)
       .get(seq) as { seq: number; size: number; stored: number } | undefined;
     if (meta == null) return false;
     assertWithinRecordCap(meta, this.recordCap);
@@ -1326,17 +1361,13 @@ export class PersistentStream extends EventEmitter {
     let meta: { seq: number; size: number } | undefined;
     if (seq) {
       meta = this.db
-        .prepare(
-          "SELECT seq, size, length(raw) AS stored FROM messages WHERE seq=?",
-        )
+        .prepare(`SELECT ${META_COLUMNS} FROM messages WHERE seq=?`)
         .get(seq) as any;
     } else if (key != null) {
       // NOTE: we guarantee when doing set above that there is at most one
       // row with a given key.  Also there's a unique constraint.
       meta = this.db
-        .prepare(
-          "SELECT seq, size, length(raw) AS stored FROM messages WHERE key=?",
-        )
+        .prepare(`SELECT ${META_COLUMNS} FROM messages WHERE key=?`)
         .get(key) as any;
     }
     if (meta == null) {
@@ -1416,7 +1447,7 @@ export class PersistentStream extends EventEmitter {
     const params = end_seq != null ? [after_seq, end_seq] : [after_seq];
     const sizes = this.db
       .prepare(
-        `SELECT seq, size, length(raw) AS stored FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
+        `SELECT ${META_COLUMNS} FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
       )
       .all(...params, maxRows) as {
       seq: number;
@@ -1455,7 +1486,7 @@ export class PersistentStream extends EventEmitter {
     return this.readTransaction(() => {
       const metas = this.db
         .prepare(
-          "SELECT seq, size, length(raw) AS stored FROM messages WHERE seq>? AND seq<=? ORDER BY seq",
+          `SELECT ${META_COLUMNS} FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
         )
         .all(after_seq, last_seq) as {
         seq: number;
@@ -1527,7 +1558,7 @@ export class PersistentStream extends EventEmitter {
     if (this.recordCap != null) {
       for (const row of this.db
         .prepare(
-          `SELECT seq, size, length(raw) AS stored FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`,
+          `SELECT ${META_COLUMNS} FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`,
         )
         .iterate(...v) as Iterable<any>) {
         assertWithinRecordCap(row, this.recordCap);
@@ -1535,7 +1566,10 @@ export class PersistentStream extends EventEmitter {
       }
     }
     const guard = capGuard(this.recordCap);
-    const conditions = [...where, ...(guard.sql ? ["length(raw) <= ?"] : [])];
+    const conditions = [
+      ...where,
+      ...(guard.sql ? [guard.sql.replace(/^ AND /, "")] : []),
+    ];
     query = `SELECT seq, key, time, compress, encoding, raw, headers FROM messages ${conditions.length == 0 ? "" : " where " + conditions.join(" AND ")} ORDER BY seq`;
     stmt = this.db.prepare(query);
     const skipped: number[] = [];
@@ -1551,9 +1585,7 @@ export class PersistentStream extends EventEmitter {
     for (const seq of skipped) {
       // Gone (deleted meanwhile) is fine; grown over the cap is refused.
       const meta = this.db
-        .prepare(
-          "SELECT seq, size, length(raw) AS stored FROM messages WHERE seq=?",
-        )
+        .prepare(`SELECT ${META_COLUMNS} FROM messages WHERE seq=?`)
         .get(seq) as any;
       if (meta != null) assertWithinRecordCap(meta, this.recordCap);
     }
