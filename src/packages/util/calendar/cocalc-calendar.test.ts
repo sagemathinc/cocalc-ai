@@ -728,6 +728,34 @@ describe("iCalendar export", () => {
     ]);
   });
 
+  it("an event has one deadline: due or due_offset_days", () => {
+    const parsed = parseCalendar(
+      text({
+        format: "cocalc-calendar",
+        version: 1,
+        title: "S",
+        timezone: "America/Los_Angeles",
+        default_view: "agenda",
+        events: [
+          {
+            id: "b",
+            title: "B",
+            start: "2027-01-06",
+            all_day: true,
+            due: "2027-01-31",
+            due_offset_days: 5,
+          },
+        ],
+      }),
+    );
+    expect(parsed.problems).toEqual([
+      {
+        path: "events[0].due",
+        message: "use either due or due_offset_days, not both",
+      },
+    ]);
+  });
+
   it("finds a long recurring occurrence that began before the range", () => {
     const week = single([
       {

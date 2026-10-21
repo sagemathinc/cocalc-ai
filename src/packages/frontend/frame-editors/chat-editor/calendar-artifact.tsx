@@ -142,11 +142,12 @@ export default function CalendarArtifact({
               {tool.label}
             </Button>
           ))}
-          <span role="status">
-            {loading ? "Loading current saved calendar..." : ""}
-          </span>
         </Space>
       )}
+      {/* Announced in the full-size page too, whose header has the tools. */}
+      <div role="status">
+        {loading ? "Loading current saved calendar..." : ""}
+      </div>
       {historical && (
         <div role="note">
           Published file reference; the calendar shown is current, not a

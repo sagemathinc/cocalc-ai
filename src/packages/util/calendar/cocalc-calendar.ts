@@ -332,6 +332,8 @@ function parseEvent(
     else if (e.recurrence != null)
       // One date cannot be each occurrence's deadline.
       bad("due", "a recurring event uses due_offset_days instead");
+    else if (e.due_offset_days != null)
+      bad("due", "use either due or due_offset_days, not both");
     else due = e.due;
   }
   if (

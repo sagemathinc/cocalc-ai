@@ -258,6 +258,12 @@ test("a full-size page gets the tools for its own header", async () => {
     />,
   );
   await screen.findByRole("heading", { name: "Accounting deadlines" });
+  // Loading is announced here too, without the inline toolbar.
+  readFile.mockReturnValueOnce(new Promise(() => {}));
+  act(() => onToolbarActions.mock.lastCall[0].at(-1).onClick());
+  expect(
+    await screen.findByText("Loading current saved calendar..."),
+  ).toBeInTheDocument();
   const tools = onToolbarActions.mock.lastCall[0];
   expect(tools.map((t) => t.key)).toEqual(["open", "ics", "refresh"]);
   expect(tools.find((t) => t.key === "ics").disabled).toBe(false);
