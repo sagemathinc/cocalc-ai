@@ -867,3 +867,45 @@ export function calendarToIcs(
   lines.push("END:VCALENDAR");
   return lines.map(fold).join("\r\n") + "\r\n";
 }
+
+// --- Agenda -----------------------------------------------------------------
+
+export interface CalendarAgenda {
+  /** Past due and not done, oldest first (looked for `pastDays` back). */
+  overdue: CalendarOccurrence[];
+  /** What is on or still to come, by local date in the calendar's zone. */
+  days: { date: string; occurrences: CalendarOccurrence[] }[];
+}
+
+/**
+ * What an agenda view shows at `nowMs`: overdue items first, then the next
+ * `days` days, grouped by date. An occurrence counts once, overdue or not.
+ */
+export function calendarAgenda(
+  calendar: CocalcCalendar,
+  nowMs: number,
+  { days = 60, pastDays = 90 }: { days?: number; pastDays?: number } = {},
+): CalendarAgenda {
+  const occurrences = calendarOccurrences(
+    calendar,
+    nowMs - pastDays * DAY_MS,
+    nowMs + days * DAY_MS,
+  );
+  const overdue: CalendarOccurrence[] = [];
+  const byDate = new Map<string, CalendarOccurrence[]>();
+  for (const o of occurrences) {
+    if (isOverdue(o, nowMs)) overdue.push(o);
+    else if ((o.end ?? o.start + 1) > nowMs) {
+      const list = byDate.get(o.date) ?? [];
+      list.push(o);
+      byDate.set(o.date, list);
+    }
+  }
+  return {
+    overdue,
+    days: [...byDate.entries()].map(([date, occurrences]) => ({
+      date,
+      occurrences,
+    })),
+  };
+}

@@ -4,6 +4,7 @@
  */
 
 import {
+  calendarAgenda,
   calendarOccurrences,
   calendarToIcs,
   isOverdue,
@@ -382,6 +383,52 @@ describe("occurrences", () => {
         calendarOccurrences(c, 0, Date.parse("2027-01-01T00:00:00Z"))[0].start,
       ),
     ).toBe("2026-11-05T09:00:00.000Z");
+  });
+});
+
+describe("the agenda", () => {
+  const cal = calendarOf(ACCOUNTING);
+  // Dec 19, 4 pm in Seattle.
+  const now = Date.parse("2026-12-20T00:00:00Z");
+
+  it("puts overdue items first, then what is to come by day, each once", () => {
+    const agenda = calendarAgenda(cal, now);
+    // The withdrawal was due Dec 16; the pending wire check was Oct 28.
+    expect(agenda.overdue.map((o) => o.event.id)).toEqual([
+      "oss-q3-wire",
+      "oss-withdrawal",
+    ]);
+    expect(agenda.days[0]).toMatchObject({
+      date: "2026-12-21",
+      occurrences: [{ event: { id: "vanta-renewal" } }],
+    });
+    // In date order, and the next 60 days only.
+    const dates = agenda.days.map((d) => d.date);
+    expect([...dates].sort()).toEqual(dates);
+    expect(dates.at(-1)! <= "2027-02-17").toBe(true);
+    const shown = [
+      ...agenda.overdue,
+      ...agenda.days.flatMap((d) => d.occurrences),
+    ].map((o) => `${o.event.id}@${o.date}`);
+    expect(new Set(shown).size).toBe(shown.length);
+  });
+
+  it("a past item that is done, or not due, is not shown again", () => {
+    const done = calendarOf({
+      ...ACCOUNTING,
+      events: ACCOUNTING.events.map((e: any) =>
+        e.id === "oss-withdrawal" ? { ...e, status: "done" } : e,
+      ),
+    });
+    expect(calendarAgenda(done, now).overdue.map((o) => o.event.id)).toEqual([
+      "oss-q3-wire",
+    ]);
+    // November's close is past and was never due: gone.
+    expect(
+      calendarAgenda(cal, now)
+        .days.flatMap((d) => d.occurrences)
+        .some((o) => o.date === "2026-12-03"),
+    ).toBe(false);
   });
 });
 

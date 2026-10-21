@@ -440,6 +440,56 @@ its result; the `graph` layout places the notes along the edges.
 }
 ```
 
+To keep a calendar of deadlines or reminders the user can see (taxes,
+renewals, a release schedule), write `foo.cal.json` and publish it with
+`--source`. The card shows an agenda: overdue items first, then the next 60
+days; a title opens its details, and "Download .ics" adds it to Google, Apple
+or Outlook calendars. Keep the file current (mark items `done`) and publish
+again with `--update` to keep the same card. Times are local to `timezone`:
+`"2026-11-03T08:30"`, or a date `"2026-12-01"` with `"all_day": true`.
+
+```json
+{
+  "format": "cocalc-calendar",
+  "version": 1,
+  "title": "Tax calendar",
+  "timezone": "America/Los_Angeles",
+  "default_view": "agenda",
+  "categories": { "tax": { "label": "Tax filing", "color": "#d9480f" } },
+  "events": [
+    {
+      "id": "q4-return",
+      "title": "File the Q4 return",
+      "start": "2027-01-04",
+      "all_day": true,
+      "due": "2027-01-31",
+      "category": "tax",
+      "status": "pending",
+      "details": "Markdown, shown when the item is opened.",
+      "links": [{ "label": "Portal", "url": "https://example.com" }]
+    },
+    {
+      "id": "quarterly",
+      "title": "Quarterly filing",
+      "start": "2027-01-06",
+      "all_day": true,
+      "recurrence": { "freq": "monthly", "interval": 3 },
+      "due_offset_days": 25
+    }
+  ]
+}
+```
+
+`status` is `scheduled`, `pending`, `done` or `cancelled`. An item with a
+`due` (or `due_offset_days`) is overdue once that day has ended, until it is
+marked `done` or `cancelled`; a `pending` item without one, once its time has
+passed. `recurrence` takes `freq`
+(`daily`, `weekly`, `monthly`, `yearly`), `interval`, `bymonthday`,
+`bymonth`, `byweekday` (`"MO"`...), `until` and `count`. Links must be
+http(s). The card names anything it cannot read and still shows the rest. A
+calendar is for people to see; to be woken at a time, also set a watcher
+(`cocalc sensor watch at`).
+
 JSON contains `title`, `markdown`, and optionally one of `file`, `actions`,
 `github_pr`, `commit`, plus optional `theme`. No message/operation/artifact IDs
 are needed for creation. Chat/thread/date default to current runtime context;
