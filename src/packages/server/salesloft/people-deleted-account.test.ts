@@ -35,6 +35,8 @@ describe("deleting the salesloft person of a deleted account", () => {
     const { destroyForDeletedAccount } = await import("./people");
     await destroyForDeletedAccount(ACCOUNT_ID, "42");
     expect(calls).toEqual(["delete /people/42", "clear link"]);
+    // a hung request cannot block the deletion pass
+    expect(clientDeleteMock.mock.calls[0][1]).toEqual({ timeout: 30_000 });
     expect(poolQueryMock.mock.calls[0][1]).toEqual([ACCOUNT_ID, "42"]);
   });
 

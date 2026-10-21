@@ -98,18 +98,12 @@ export default function initDeletedAccountRetention(): void {
     CHECK_INTERVAL_MS,
     DELETED_ACCOUNT_EMAIL_RETENTION_DAYS,
   });
-  let running = false;
-  const run = async () => {
-    // a long Salesloft pass must not overlap the next run
-    if (running) return;
-    running = true;
-    try {
-      await runOnce();
-    } finally {
-      running = false;
-    }
-  };
-  const runOnce = async () => {
+  // The database purge and the Salesloft pass have separate guards, so a slow
+  // or stuck external CRM never delays the database retention schedule.
+  let purging = false;
+  const purge = async () => {
+    if (purging) return;
+    purging = true;
     try {
       // repeat full batches, so a large backlog is cleared in one pass
       for (let i = 0; i < 100; i++) {
@@ -125,19 +119,29 @@ export default function initDeletedAccountRetention(): void {
       }
     } catch (err) {
       log.error("deleted-account retention failed", err);
+    } finally {
+      purging = false;
     }
+  };
+  let salesloftRunning = false;
+  const salesloft = async () => {
+    if (salesloftRunning) return;
+    salesloftRunning = true;
     try {
-      const salesloft = await purgeDeletedAccountSalesloftPeople();
-      if (
-        salesloft != null &&
-        (salesloft.deleted > 0 || salesloft.failed > 0)
-      ) {
-        log.info("deleted salesloft people of deleted accounts", salesloft);
+      const stats = await purgeDeletedAccountSalesloftPeople();
+      if (stats != null && (stats.deleted > 0 || stats.failed > 0)) {
+        log.info("deleted salesloft people of deleted accounts", stats);
       }
     } catch (err) {
       log.error("deleted-account salesloft purge failed", err);
+    } finally {
+      salesloftRunning = false;
     }
   };
-  void run();
+  const run = () => {
+    void purge();
+    void salesloft();
+  };
+  run();
   setInterval(run, CHECK_INTERVAL_MS);
 }

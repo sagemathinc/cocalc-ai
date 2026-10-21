@@ -25,6 +25,8 @@ export async function destroy(personId: string) {
   await client.delete(`/people/${personId}`);
 }
 
+const DELETE_TIMEOUT_MS = 30_000;
+
 // Delete the Salesloft person of a deleted cocalc account. The remote person is
 // deleted first (a person that is already gone counts as deleted), and only
 // then is the local link cleared, so a failure leaves the link for a retry
@@ -35,7 +37,9 @@ export async function destroyForDeletedAccount(
 ): Promise<void> {
   const client = await getClient();
   try {
-    await client.delete(`/people/${personId}`);
+    await client.delete(`/people/${personId}`, {
+      timeout: DELETE_TIMEOUT_MS,
+    });
   } catch (err) {
     if ((err as any)?.response?.status !== 404) {
       throw err;
