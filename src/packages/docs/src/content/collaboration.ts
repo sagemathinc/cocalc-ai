@@ -103,13 +103,14 @@ trust:
 
 1. Stop the project right away. Removing someone does not end an SSH session
    or a program they already started, and stopping the project ends both.
-2. Start the project and, before anything else, open a terminal and review
-   \`~/.ssh/authorized_keys\`. Delete any key you do not recognize.
-3. Review shell startup files such as \`~/.bashrc\` and \`~/.profile\`, and
-   any scripts the project runs when it starts. Remove anything you did not
-   expect.
+2. Start the project, but do not open a terminal yet: a new terminal runs
+   \`~/.bashrc\`. In the file explorer, choose **Show hidden files**, then open
+   \`~/.ssh/authorized_keys\`, \`~/.bashrc\`, and \`~/.profile\` in the
+   editor. Delete any key you do not recognize and anything you did not expect.
+3. Review any other scripts the project runs when it starts, and remove
+   anything you did not expect.
 4. Restart the project once more, so nothing those files started keeps
-   running, and check the running processes with \`ps aux\`.
+   running, then check the running processes in a terminal with \`ps aux\`.
 5. Revoke, at their source, any passwords or API keys the collaborator could
    read, including [project secrets](/docs/projects/project-secrets), for
    example by regenerating the key with the service that issued it.
