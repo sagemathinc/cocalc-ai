@@ -15,15 +15,25 @@ The parts of persist fences (conat/persist/fence.ts) that need this host:
   before fences (then it may).
 */
 
-import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import type {
   PersistFenceHolder,
   PersistFenceRecord,
   PersistFenceStore,
 } from "@cocalc/conat/persist/fence";
 import { isValidUUID } from "@cocalc/util/misc";
-import { fsyncDir, writeDurableJson } from "../computers/durable";
+import { randomBytes } from "node:crypto";
 
 const CAPABILITY_FILE = "capability.json";
 const INSTANCES_FILE = "instances.json";
@@ -134,10 +144,32 @@ function isProcessAlive({ pid, start }: PersistFenceHolder): boolean {
   }
 }
 
-// written durably (fsynced, renamed, directory fsynced): the fences and
-// instances must survive a crash of the host
+// The directory's entries reach the disk, or this throws.
+function fsyncDir(dir: string): void {
+  const fd = openSync(dir, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Written durably, or this throws: a temporary file, fsynced, renamed over
+// path, and the directory fsynced.  The fences and instances must survive a
+// crash of the host, and a failure must keep a fence held (no write counts
+// as done that might not be on disk).
 function writeJson(path: string, value: unknown): void {
-  writeDurableJson(path, value);
+  const dir = dirname(path);
+  const tmp = join(dir, `.${randomBytes(6).toString("hex")}.tmp`);
+  const fd = openSync(tmp, "wx", 0o600);
+  try {
+    writeSync(fd, JSON.stringify(value));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, path);
+  fsyncDir(dir);
 }
 
 // undefined if there is no such file; anything else that keeps it from being

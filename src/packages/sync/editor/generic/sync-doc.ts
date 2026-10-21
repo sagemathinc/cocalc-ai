@@ -496,9 +496,19 @@ export class SyncDoc extends EventEmitter {
   // history as after a reset, keeping any edits it lacks in a recovery copy.
   // (An ephemeral document's server instance changes when it restarts; that
   // copy keeps its value and writes it to the new instance, as before.)
+  // (While opening, it waits until the document is ready: see init.)
   private readonly patchesInstanceReset = () => {
     if (this.ephemeral || !this.isReady()) return;
     this.beginHistoryTransition(undefined, this.history_epoch, "replaced");
+  };
+
+  // Whether the patches' stream was replaced (it then writes nothing more).
+  private patchesReplaced = (): boolean => {
+    try {
+      return this.dstream()?.isReplaced?.() === true;
+    } catch {
+      return false;
+    }
   };
 
   public ipywidgets_state?: IpywidgetsState;
@@ -762,6 +772,10 @@ export class SyncDoc extends EventEmitter {
     if (this.isClosed()) return;
     this.set_state("ready");
     this.emitOpenPhase("sync_ready");
+    // replaced while this opened: hand off now
+    if (this.patchesReplaced()) {
+      this.patchesInstanceReset();
+    }
 
     // Success -- everything initialized with no issues.
     if (this.opts.ignoreInitialChanges) {

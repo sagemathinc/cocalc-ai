@@ -260,3 +260,45 @@ describe("an edit made while the history is being replaced never reaches the res
     reopened.close();
   });
 });
+
+describe("a replacement while the document opens", () => {
+  const project_id = uuid();
+  const path = "opening.txt";
+
+  it("hands off once the document is ready, instead of editing a stream that writes nothing", async () => {
+    const { doc: first } = await savedDocument(project_id, path);
+    first.close();
+    const doc = open(project_id, path);
+    const events = record(doc);
+    let reset = false;
+    doc.on("open-phase", ({ phase }) => {
+      if (phase == "patchflow_session_start" && !reset) {
+        reset = true;
+        // as when the history is replaced (see conat/sync/dstream.ts)
+        const dstream = (doc as any).dstream();
+        (dstream as any).handleInstanceReset("replaced-while-opening");
+        expect(dstream.isReplaced()).toBe(true);
+      }
+    });
+    await wait({ until: () => events.length > 0 });
+    expect(reset).toBe(true);
+    expect(events).toEqual([
+      {
+        name: "history-reset",
+        x: expect.objectContaining({ cause: "replaced" }),
+      },
+    ]);
+    expect(doc.isClosed()).toBe(true);
+    // a new copy edits and saves normally
+    const reopened = open(project_id, path);
+    await once(reopened, "ready");
+    reopened.from_str("after the replacement");
+    reopened.commit();
+    await reopened.save();
+    const reader = open(project_id, path);
+    await once(reader, "ready");
+    expect(reader.to_str()).toBe("after the replacement");
+    reader.close();
+    reopened.close();
+  });
+});
