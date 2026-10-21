@@ -2620,7 +2620,7 @@ export class BaseEditorActions<
     if (syncdoc == null || syncdoc.isClosed?.()) return;
     const why =
       reason == "too-large"
-        ? "the document is too large to save a recovery copy (over 32 MiB)"
+        ? "the document is too large to save a recovery copy (over 32 MiB, or too complex to measure)"
         : reason == "still-changing"
           ? "it kept changing while a recovery copy was saved"
           : "a recovery copy could not be written";

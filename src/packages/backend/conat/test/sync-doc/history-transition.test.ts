@@ -9,11 +9,45 @@ tab says NOT SAVED and keeps its value.
 pnpm test ./history-transition.test.ts
 */
 
+import { Readable } from "node:stream";
 import { purgeHistory } from "@cocalc/conat/hub/api/sync-impl";
-import { before, after, uuid, connect, server, once, wait } from "./setup";
+import { createServer as createReadServer } from "@cocalc/conat/files/read";
+import {
+  before,
+  after,
+  uuid,
+  connect,
+  server,
+  once,
+  wait,
+  delay,
+} from "./setup";
 
 beforeAll(before);
-afterAll(after);
+afterAll(async () => {
+  delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
+  await after();
+});
+
+// publishes held by tests, released after each test so nothing waits forever
+const held: (() => void)[] = [];
+afterEach(() => {
+  for (const release of held.splice(0)) release();
+});
+
+// Holds a tab's publishes until released (or the test ends).
+function holdPublishes(doc) {
+  const stream = (doc as any).patches_table.dstream.stream;
+  const publishMany = stream.publishMany.bind(stream);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  held.push(release);
+  stream.publishMany = async (v) => {
+    await gate;
+    return await publishMany(v);
+  };
+  return release;
+}
 
 jest.setTimeout(60000);
 
@@ -154,8 +188,7 @@ async function pendingTab(
 ) {
   const { doc, fs } = await savedDocument(project_id, path);
   const events = record(doc);
-  const stream = (doc as any).patches_table.dstream.stream;
-  stream.publishMany = () => new Promise(() => {});
+  holdPublishes(doc);
   const queries: any[] = [];
   (doc as any).client.historyInclusion = async (opts) => {
     queries.push(opts);
@@ -421,13 +454,25 @@ describe("a value over 32 MiB is NOT SAVED; nothing is serialized", () => {
   const project_id = uuid();
   const path = "huge.txt";
 
-  it("reports too-large and writes no copy", async () => {
-    const { doc, fs } = await savedDocument(project_id, path);
-    const events = record(doc);
+  it("reports too-large before any query or comparison, and writes no copy", async () => {
+    const { doc, fs, events, queries } = await pendingTab(
+      project_id,
+      path,
+      (ids) =>
+        Object.fromEntries(ids.map((id) => [id, { status: "included" }])),
+    );
     onCopy(doc, async () => {
       throw Error("no copy may be written");
     });
     doc.from_str("x".repeat(32 * 1024 * 1024 + 1));
+    // nothing may walk the whole document before it is measured
+    const value = (doc as any).doc;
+    let compared = 0;
+    const isEqual = value.is_equal.bind(value);
+    value.is_equal = (other) => {
+      compared += 1;
+      return isEqual(other);
+    };
     await purge(project_id, path);
     await wait({ until: () => events.length > 0 });
     expect(events).toEqual([
@@ -436,8 +481,189 @@ describe("a value over 32 MiB is NOT SAVED; nothing is serialized", () => {
         x: expect.objectContaining({ reason: "too-large", copies: [] }),
       },
     ]);
+    expect(queries).toEqual([]);
+    expect(compared).toBe(0);
     expect(await copiesOf(fs, path)).toEqual([]);
     expect(doc.isClosed()).toBe(false);
     doc.close();
+  });
+});
+
+describe("saving to disk never writes over the file once a reset began (CORR-H1B2-1)", () => {
+  const writes = (doc) => {
+    const fs = (doc as any).fs;
+    const calls: string[] = [];
+    for (const name of ["writeFileDelta", "writeFile"]) {
+      const f = fs[name].bind(fs);
+      fs[name] = async (path: string, ...rest) => {
+        calls.push(`${name} ${path}`);
+        return await f(path, ...rest);
+      };
+    }
+    return calls;
+  };
+
+  it("a save waiting for its acknowledgment when the reset arrives", async () => {
+    const project_id = uuid();
+    const path = "save-race.txt";
+    const { doc, fs } = await savedDocument(project_id, path);
+    const events = record(doc);
+    // a committed edit whose acknowledgment is held: doc == last, and
+    // save_to_disk waits for it in save()
+    const acknowledge = holdPublishes(doc);
+    doc.from_str("hello committed");
+    expect(doc.commit()).toBe(true);
+    // the transition is still running (asking about that patch) when the
+    // acknowledgment, here the fence's refusal, arrives
+    let releaseQuery!: () => void;
+    const queryHeld = new Promise<void>((resolve) => (releaseQuery = resolve));
+    let asked = false;
+    (doc as any).client.historyInclusion = async ({ ids }) => {
+      asked = true;
+      await queryHeld;
+      return {
+        ids: Object.fromEntries(ids.map((id) => [id, { status: "absent" }])),
+      };
+    };
+    const calls = writes(doc);
+    let saved = false;
+    const saving = doc
+      .save_to_disk()
+      .catch(() => {})
+      .then(() => (saved = true));
+    await delay(100);
+    expect(saved).toBe(false);
+    await purge(project_id, path);
+    await wait({ until: () => asked });
+    acknowledge();
+    await saving;
+    expect(calls.filter((x) => x.endsWith(` ${path}`))).toEqual([]);
+    releaseQuery();
+    await wait({ until: () => events.length > 0 });
+    expect(calls.filter((x) => x.endsWith(` ${path}`))).toEqual([]);
+    expect(await fs.readFile(path, "utf8")).toBe("hello world");
+    const copies = await copiesOf(fs, path);
+    expect(copies).toHaveLength(1);
+    expect(await fs.readFile(copies[0], "utf8")).toBe("hello committed");
+  });
+
+  it("writeFile itself, entered while transitioning or during its stat", async () => {
+    const project_id = uuid();
+    const path = "stat-race.txt";
+    const { doc, fs } = await savedDocument(project_id, path);
+    const calls = writes(doc);
+    // read only until a held stat says otherwise
+    let readOnly = true;
+    (doc as any).is_read_only = () => readOnly;
+    let releaseStat!: () => void;
+    const statHeld = new Promise<void>((resolve) => (releaseStat = resolve));
+    (doc as any).stat = async () => {
+      await statHeld;
+      readOnly = false;
+    };
+    const writing = doc.writeFile();
+    // the reset arrives during the stat
+    (doc as any).historyTransition = {
+      fromEpoch: 0,
+      toEpoch: 1,
+      startGeneration: 0,
+      copies: [],
+      restart: false,
+    };
+    releaseStat();
+    await writing;
+    // and entering it while transitioning
+    await doc.writeFile();
+    expect(calls).toEqual([]);
+    expect(await fs.readFile(path, "utf8")).toBe("hello world");
+    (doc as any).historyTransition = undefined;
+    doc.close();
+  });
+});
+
+// The project's file read service, so the saved file can be read with a bound.
+async function serveFileReads(project_id: string) {
+  const fs = connect().fs({ project_id, service: server.service });
+  await createReadServer({
+    project_id,
+    client: connect(),
+    createReadStream: (async (path: string, opts: any = {}) => {
+      const data = Buffer.from(await fs.readFile(path));
+      return Readable.from([
+        data.subarray(
+          opts.start ?? 0,
+          opts.end == null ? undefined : opts.end + 1,
+        ),
+      ]);
+    }) as any,
+  });
+}
+
+describe("a SEEDED reset: the new epoch never reaches this tab's value (CORR-H1B2-2)", () => {
+  const project_id = uuid();
+  const path = "seeded.txt";
+
+  it("keeps a pending edit, the draft and later typing through the seed and new-epoch patches", async () => {
+    delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
+    await serveFileReads(project_id);
+    const fs = connect().fs({ project_id, service: server.service });
+    await fs.writeFile(path, "hello");
+    const tab = open(project_id, path);
+    await once(tab, "ready");
+    // a huge history entry, then the saved file "hello again", whose proof
+    // covers every accepted edit: the next open restarts the history from
+    // the file automatically, with the file as the new epoch's seed
+    tab.from_str(`hello ${"x".repeat(50_000)}`);
+    tab.commit();
+    await tab.save();
+    tab.from_str("hello again");
+    tab.commit();
+    await tab.save();
+    await tab.save_to_disk();
+    expect(await fs.readFile(path, "utf8")).toBe("hello again");
+    const events = record(tab);
+
+    // this tab's pending edit: committed, not yet acknowledged
+    holdPublishes(tab);
+    tab.from_str("hello pending");
+    expect(tab.commit()).toBe(true);
+    void tab.save();
+    // its inclusion query is held until the seed and a new-epoch patch
+    // have reached the old graph
+    let releaseQuery!: () => void;
+    const queryHeld = new Promise<void>((resolve) => (releaseQuery = resolve));
+    let asked = 0;
+    (tab as any).client.historyInclusion = async ({ ids }) => {
+      asked += 1;
+      await queryHeld;
+      return {
+        ids: Object.fromEntries(ids.map((id) => [id, { status: "absent" }])),
+      };
+    };
+
+    process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES = "20000";
+    const other = open(project_id, path);
+    await once(other, "ready", 30000);
+    expect(other.to_str()).toBe("hello again");
+    delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
+    await wait({ until: () => asked > 0 });
+    // a new-epoch patch
+    other.from_str("hello from the new epoch");
+    other.commit();
+    await other.save();
+    await delay(500);
+    // the old graph may have them; this tab's value does not
+    expect(tab.to_str()).toBe("hello pending");
+    // a draft, and typing later
+    tab.from_str("hello pending, then typed");
+    releaseQuery();
+    await wait({ until: () => events.length > 0 });
+    expect(events[0].name).toBe("history-reset");
+    const copies = await copiesOf(fs, path);
+    expect(copies).toHaveLength(1);
+    expect(await fs.readFile(copies[0], "utf8")).toBe(
+      "hello pending, then typed",
+    );
+    other.close();
   });
 });

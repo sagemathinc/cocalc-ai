@@ -151,3 +151,70 @@ describe("utf8LengthCapped", () => {
     expect(utf8LengthCapped("€".repeat(10), 29)).toBeUndefined();
   });
 });
+
+describe("the work is capped, not only the bytes (LIMIT-H1B2I-2)", () => {
+  it("a very wide object of omitted members writes '{}' but gives up", () => {
+    const wide: any = {};
+    for (let i = 0; i < 200_000; i++) {
+      wide[`k${i}`] = i % 3 == 0 ? undefined : i % 3 == 1 ? () => 0 : Symbol();
+    }
+    expect(JSON.stringify(wide)).toBe("{}");
+    // within a large byte cap, the work cap (by default the byte cap) stops it
+    expect(jsonLengthCapped(wide, { max: 100_000 })).toBeUndefined();
+    // and with enough work allowed it measures exactly
+    expect(jsonLengthCapped(wide, { max: 100_000, maxWork: 300_000 })).toBe(2);
+  });
+
+  it("an omitted-only Immutable Map", () => {
+    const m = IMap(
+      Array.from({ length: 50_000 }, (_, i) => [`k${i}`, undefined]),
+    );
+    expect(jsonLengthCapped(m, { max: 10_000 })).toBeUndefined();
+  });
+
+  it("an array of undefined is counted (null), so it fits the work cap", () => {
+    const a = new Array(1000).fill(undefined);
+    expect(jsonLengthCapped(a, { max: 10_000 })).toBe(JSON.stringify(a).length);
+  });
+
+  describe("a polluted prototype", () => {
+    const keys: string[] = [];
+    beforeAll(() => {
+      for (let i = 0; i < 100_000; i++) {
+        const key = `__polluted${i}`;
+        (Object.prototype as any)[key] = i;
+        keys.push(key);
+      }
+    });
+    afterAll(() => {
+      for (const key of keys) delete (Object.prototype as any)[key];
+    });
+
+    it("inherited keys are not written, but visiting them counts", () => {
+      const small = { a: 1 };
+      expect(JSON.stringify(small)).toBe('{"a":1}');
+      expect(jsonLengthCapped(small, { max: 10_000 })).toBeUndefined();
+      expect(jsonLengthCapped(small, { max: 10_000, maxWork: 200_000 })).toBe(
+        7,
+      );
+    });
+  });
+
+  it("records skipped as empty count too", () => {
+    const records = new Array(100_000).fill(null);
+    expect(jsonLinesLengthCapped(records, { max: 1000 })).toBeUndefined();
+    expect(
+      jsonLinesLengthCapped([{ a: 1 }, null, { b: 2 }], { max: 1000 }),
+    ).toBe(15);
+  });
+
+  it("one work cap across all records", () => {
+    const record: any = {};
+    for (let i = 0; i < 600; i++) record[`k${i}`] = undefined;
+    // each record alone fits a 1000-step cap; 3 together do not
+    expect(jsonLengthCapped(record, { max: 1000 })).toBe(2);
+    expect(
+      jsonLinesLengthCapped([record, record, record], { max: 1000 }),
+    ).toBeUndefined();
+  });
+});

@@ -11,6 +11,13 @@ Both give up (return undefined) rather than under-count: past the cap, past
 the depth cap, or at any value whose JSON.stringify output they do not
 reproduce exactly (toJSON, Map, Set, typed arrays, BigInt, class instances,
 cycles).
+
+The byte cap alone does not bound the work: members JSON.stringify omits
+(undefined, functions, symbols) and inherited enumerable keys (which for..in
+visits) write nothing.  So every step of the walk also counts against a work
+cap, maxWork (by default max: a member written takes at least 4 bytes, an
+element at least 1, so nothing measurable within max needs more), and the
+walk gives up when it is used up (LIMIT-H1B2I-2).
 */
 
 // The UTF-8 width of the code unit at i: a valid surrogate pair counts 4 at
@@ -87,10 +94,15 @@ function containerKind(x: object): Kind | undefined {
   return "object";
 }
 
+// thrown when the work cap is used up
+class WorkExhausted extends Error {}
+
 // the own enumerable string keys of a plain object, one at a time (never a
-// list of all of them)
-function* ownKeys(obj: object): Generator<string> {
+// list of all of them); every key for..in visits, own or inherited, is a
+// step of work
+function* ownKeys(obj: object, tick: () => void): Generator<string> {
   for (const key in obj) {
+    tick();
     if (Object.prototype.hasOwnProperty.call(obj, key)) yield key;
   }
 }
@@ -104,9 +116,9 @@ interface Frame {
   written: boolean;
 }
 
-function frameFor(container: object, kind: Kind): Frame {
+function frameFor(container: object, kind: Kind, tick: () => void): Frame {
   if (kind === "object") {
-    const keys = ownKeys(container);
+    const keys = ownKeys(container, tick);
     return {
       container,
       kind,
@@ -165,7 +177,36 @@ const isOmitted = (v: unknown) =>
 // deeper than maxDepth, or holds a value this does not reproduce exactly.
 export function jsonLengthCapped(
   value: unknown,
-  { max, maxDepth = 1000 }: { max: number; maxDepth?: number },
+  opts: { max: number; maxDepth?: number; maxWork?: number },
+): number | undefined {
+  return measure(value, { maxWork: opts.max, ...opts })?.bytes;
+}
+
+function measure(
+  value: unknown,
+  {
+    max,
+    maxDepth = 1000,
+    maxWork,
+  }: { max: number; maxDepth?: number; maxWork: number },
+): { bytes: number; work: number } | undefined {
+  let work = 0;
+  const tick = () => {
+    work += 1;
+    if (work > maxWork) throw new WorkExhausted();
+  };
+  try {
+    const bytes = walk(value, { max, maxDepth, tick });
+    return bytes == null ? undefined : { bytes, work };
+  } catch (err) {
+    if (err instanceof WorkExhausted) return undefined;
+    throw err;
+  }
+}
+
+function walk(
+  value: unknown,
+  { max, maxDepth, tick }: { max: number; maxDepth: number; tick: () => void },
 ): number | undefined {
   let n = 0;
   const over = () => n > max;
@@ -193,7 +234,7 @@ export function jsonLengthCapped(
         return false;
       }
       n += 1; // { or [
-      stack.push(frameFor(v, kind));
+      stack.push(frameFor(v, kind, tick));
       onStack.add(v);
       return !over();
     }
@@ -216,6 +257,8 @@ export function jsonLengthCapped(
       if (over()) return undefined;
       continue;
     }
+    // a plain object's steps are counted as for..in visits its keys
+    if (frame.kind !== "object") tick();
     const isObject = frame.kind === "object" || frame.kind === "immutable-map";
     if (isObject && isOmitted(entry.value)) continue; // member omitted
     if (frame.written) n += 1; // ,
@@ -238,18 +281,32 @@ export function jsonLengthCapped(
 
 // The length of the records' JSON lines joined by newlines (what a db
 // document's to_str() writes), skipping empty slots, or undefined as above.
+// One work cap for all the records (each record, even a skipped one, is a
+// step).
 export function jsonLinesLengthCapped(
   records: Iterable<unknown>,
-  { max, maxDepth }: { max: number; maxDepth?: number },
+  {
+    max,
+    maxDepth,
+    maxWork = max,
+  }: { max: number; maxDepth?: number; maxWork?: number },
 ): number | undefined {
   let n = 0;
   let count = 0;
+  let work = 0;
   for (const record of records) {
+    work += 1;
+    if (work > maxWork) return undefined;
     if (record == null) continue;
     if (count > 0) n += 1; // \n
-    const len = jsonLengthCapped(record, { max: max - n, maxDepth });
-    if (len == null) return undefined;
-    n += len;
+    const result = measure(record, {
+      max: max - n,
+      maxDepth,
+      maxWork: maxWork - work,
+    });
+    if (result == null) return undefined;
+    n += result.bytes;
+    work += result.work;
     count += 1;
     if (n > max) return undefined;
   }

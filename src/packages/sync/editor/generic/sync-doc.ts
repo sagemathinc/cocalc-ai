@@ -1026,6 +1026,7 @@ export class SyncDoc extends EventEmitter {
       t.restart = true;
       t.unsaved = undefined;
     } else {
+      this.patchflowSession?.off?.("change", this.handlePatchflowChange);
       this.historyTransition = {
         // a document never reset has epoch 0; a wrong guess only means
         // nothing can be proven absent, so the value is copied
@@ -1104,6 +1105,10 @@ export class SyncDoc extends EventEmitter {
     const admitted =
       stats.count <= TRANSITION_MAX_PENDING &&
       stats.bytes <= TRANSITION_MAX_PENDING_BYTES;
+    // the value, measured capped before anything else touches the whole
+    // document (pendingMessages, the query, is_equal): over the cap, or not
+    // measurable, is NOT SAVED at once (plan r3 step 2, LIMIT-H1B2I-1)
+    if (!this.admitValue()) return;
     const pending: { id: string }[] =
       admitted && dstream?.pendingMessages != null
         ? dstream.pendingMessages()
@@ -1153,7 +1158,7 @@ export class SyncDoc extends EventEmitter {
         return result.ids;
       } catch (err) {
         this.dbg("queryHistoryInclusion")(`${err}`);
-        await delay(1000 * (attempt + 1));
+        if (attempt < 2) await delay(1000 * (attempt + 1));
       }
     }
     return undefined;
@@ -1169,10 +1174,7 @@ export class SyncDoc extends EventEmitter {
   ): Promise<void> => {
     const t = this.historyTransition!;
     for (let round = 0; round < 3; round++) {
-      if (valueBytesCapped(this.doc, TRANSITION_MAX_VALUE_BYTES) == null) {
-        this.reportUnsavedTransition("too-large");
-        return;
-      }
+      if (!this.admitValue()) return;
       const generation = this.localGeneration;
       const value = this.to_str();
       const path = await this.writeRecoveryCopy(value);
@@ -1209,10 +1211,24 @@ export class SyncDoc extends EventEmitter {
         return path;
       } catch (err) {
         this.dbg("writeRecoveryCopy")(`${err}`);
-        await delay(1000 * (attempt + 1));
+        if (attempt < 2) await delay(1000 * (attempt + 1));
       }
     }
     return undefined;
+  };
+
+  // Whether the current value is within the 32 MiB cap, measured capped and
+  // cached per document (documents are immutable, so the same object has the
+  // same size); otherwise reports NOT SAVED.
+  private admittedValueDoc?: Document;
+  private admitValue = (): boolean => {
+    if (this.doc != null && this.doc === this.admittedValueDoc) return true;
+    if (valueBytesCapped(this.doc, TRANSITION_MAX_VALUE_BYTES) == null) {
+      this.reportUnsavedTransition("too-large");
+      return false;
+    }
+    this.admittedValueDoc = this.doc;
+    return true;
   };
 
   // NOT SAVED: the tab keeps its value, which is saved nowhere; the editor
@@ -1577,6 +1593,8 @@ export class SyncDoc extends EventEmitter {
   */
   undo = (): Document => {
     this.assert_is_ready("undo");
+    // the old graph may hold the new epoch's seed (see handlePatchflowChange)
+    if (this.historyTransition != null) return this.doc!;
     const session = this.requirePatchflowSession();
     this.ensurePatchflowLiveDocCommitted();
     this.undo_mode = true;
@@ -1593,6 +1611,7 @@ export class SyncDoc extends EventEmitter {
 
   redo = (): Document => {
     this.assert_is_ready("redo");
+    if (this.historyTransition != null) return this.doc!;
     const session = this.requirePatchflowSession();
     this.undo_mode = true;
     const prev = session.getDocument() as Document;
@@ -4275,6 +4294,12 @@ export class SyncDoc extends EventEmitter {
   };
 
   private handlePatchflowChange = (doc: Document): void => {
+    if (this.historyTransition != null) {
+      // The history was reset: whatever reaches the old graph now (the new
+      // epoch's seed, its patches) must not replace this tab's value or its
+      // committed base, which is what the recovery copy saves (CORR-H1B2-2).
+      return;
+    }
     const committed = doc as Document;
     const previous = this.doc;
     const next =
@@ -4383,6 +4408,7 @@ export class SyncDoc extends EventEmitter {
         );
         return;
       }
+      if (this.historyTransition != null || this.isClosed()) return;
       this.valueOnDisk = diskValue;
       this.isDeleted = false;
       if (!diskValue) {
@@ -4581,6 +4607,11 @@ export class SyncDoc extends EventEmitter {
       );
     }
     this.assert_is_ready("commitExactPatch");
+    if (this.historyTransition != null) {
+      throw new Error(
+        "the edit history was reset; nothing more is committed to this session",
+      );
+    }
     const session = this.requirePatchflowSession();
     const codec = this.patchflowCodec;
     if (codec == null || this.patches_table == null) {
@@ -4701,6 +4732,9 @@ export class SyncDoc extends EventEmitter {
     if (this.opts.noSaveToDisk) {
       return;
     }
+    // once the history was reset, this tab's value goes to a recovery copy,
+    // never over the file (CORR-H1B2-1): checked here and after every await
+    if (this.historyTransition != null) return;
     const dbg = this.dbg("writeFile");
     if (this.client.is_deleted(this.path, this.project_id)) {
       dbg("not saving to disk because deleted");
@@ -4714,6 +4748,7 @@ export class SyncDoc extends EventEmitter {
         return;
       }
     }
+    if (this.historyTransition != null) return;
 
     const value = this.to_str();
     // in the same synchronous step as value (see captureFileProof)
@@ -4721,7 +4756,7 @@ export class SyncDoc extends EventEmitter {
     // include {ignore:true} with events for this long,
     // so no clients waste resources loading in response to us saving
     // to disk.
-    if (this.isClosed()) return;
+    if (this.isClosed() || this.historyTransition != null) return;
     this.last_save_to_disk_time = new Date();
     this.emit("before-save-to-disk");
     try {
@@ -4749,6 +4784,8 @@ export class SyncDoc extends EventEmitter {
     this.diskMissingOnLoad = false;
     this.localEditsSinceDiskBaseline = false;
     this.valueOnDisk = value;
+    // a proof in the old epoch would be refused anyway
+    if (this.historyTransition != null) return;
     // only after these exact bytes were written
     await this.publishFileProof(proof);
     if (this.isClosed()) return;
@@ -4777,6 +4814,8 @@ export class SyncDoc extends EventEmitter {
     // to disk. Otherwise a failed history commit followed by a disk write is
     // observed by sync-fs as a destructive edit made by "The Filesystem".
     await this.save();
+    // the transition may have begun while save() waited (CORR-H1B2-1)
+    if (this.historyTransition != null || this.isClosed()) return;
     if (
       this.doc == null ||
       this.last == null ||
