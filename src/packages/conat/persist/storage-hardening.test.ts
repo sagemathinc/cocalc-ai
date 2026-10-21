@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   copyFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -46,12 +47,16 @@ beforeAll(() => {
       zstdDecompressSync(data, maxOutputLength ? { maxOutputLength } : {}),
     decompressAsync: (data, maxOutputLength) =>
       zstdDecompressAsync(data, maxOutputLength ? { maxOutputLength } : {}),
+    // files in dir/project are "in a project"
+    isProjectOwnedDatabasePath: (path) =>
+      path.startsWith(join(dir, "project") + "/"),
     syncFiles,
     statSync,
     copyFileSync,
     ensureContainingDirectoryExists: async () => undefined,
   });
   dir = mkdtempSync(join(tmpdir(), "persist-hardening-"));
+  mkdirSync(join(dir, "project"));
 });
 
 afterAll(() => {
@@ -59,8 +64,10 @@ afterAll(() => {
 });
 
 // a stream file created by the server itself, then closed
-function serverFile(): string {
-  const path = join(dir, `stream-${n++}`);
+function serverFile({
+  inProject = false,
+}: { inProject?: boolean } = {}): string {
+  const path = join(dir, inProject ? "project" : "", `stream-${n++}`);
   const stream = new PersistentStream({ path, noCache: true } as any);
   stream.set({ encoding: 1 as any, raw: Buffer.from('{"a":1}') });
   stream.close();
@@ -174,8 +181,8 @@ describe("the connection to a stored database", () => {
     stream.close();
   });
 
-  it("keeps the WAL index in memory, so a project cannot crash the server through -shm", () => {
-    const path = serverFile();
+  it("keeps the WAL index of project files in memory, so a project cannot crash the server through -shm", () => {
+    const path = serverFile({ inProject: true });
     // e.g., left by an older server; a mapped -shm that the project
     // truncates raises SIGBUS in the server
     writeFileSync(path + ".db-shm", Buffer.alloc(32 * 1024));
@@ -200,31 +207,46 @@ describe("the connection to a stored database", () => {
     reopened.close();
   });
 
-  it("can share the file in an emergency", () => {
-    expect(persistSqliteLockingMode({})).toBe("exclusive");
-    expect(
-      persistSqliteLockingMode({
-        COCALC_PERSIST_SQLITE_LOCKING_MODE: "normal",
-      }),
-    ).toBe("normal");
-    process.env.COCALC_PERSIST_SQLITE_LOCKING_MODE = "normal";
+  it("shares files that are not in a project, unless configured otherwise", () => {
+    const inProject = join(dir, "project", "a.db");
+    const elsewhere = join(dir, "a.db");
+    expect(persistSqliteLockingMode(inProject, {})).toBe("exclusive");
+    expect(persistSqliteLockingMode(elsewhere, {})).toBe("normal");
+    expect(persistSqliteLockingMode(":memory:", {})).toBe("normal");
+    const normal = { COCALC_PERSIST_SQLITE_LOCKING_MODE: "normal" };
+    expect(persistSqliteLockingMode(inProject, normal)).toBe("normal");
+    const exclusive = { COCALC_PERSIST_SQLITE_LOCKING_MODE: "exclusive" };
+    expect(persistSqliteLockingMode(elsewhere, exclusive)).toBe("exclusive");
+    // e.g., several persist servers, or test workers, using the same file
+    const path = serverFile();
+    const stream = open(path);
+    tamper(path, "CREATE TABLE other(x); DROP TABLE other");
+    stream.close();
+  });
+
+  it("waits for locks also on the first read", () => {
+    const path = serverFile({ inProject: true });
+    const reader = new DatabaseSync(path + ".db", { readOnly: true });
+    reader.exec("BEGIN");
+    reader.prepare("SELECT count(*) FROM messages").get();
+    process.env.COCALC_PERSIST_SQLITE_BUSY_TIMEOUT_MS = "300";
+    const start = Date.now();
     try {
-      const path = serverFile();
-      const stream = open(path);
-      tamper(path, "SELECT 1");
-      stream.close();
+      expect(() => open(path)).toThrow(/database is locked/);
+      expect(Date.now() - start).toBeGreaterThanOrEqual(250);
     } finally {
-      delete process.env.COCALC_PERSIST_SQLITE_LOCKING_MODE;
+      delete process.env.COCALC_PERSIST_SQLITE_BUSY_TIMEOUT_MS;
+      reader.exec("COMMIT");
+      reader.close();
     }
+    open(path).close();
   });
 
   it("runs nothing from a trigger the project adds while it is open", () => {
-    // The project can change the bytes of the file whatever the locking mode;
-    // normal locking lets this test do that through SQLite.
-    process.env.COCALC_PERSIST_SQLITE_LOCKING_MODE = "normal";
+    // A project can change the bytes of its files whatever the locking mode;
+    // this file is not in a project, so this test can do it through SQLite.
     const path = serverFile();
     const stream = open(path);
-    delete process.env.COCALC_PERSIST_SQLITE_LOCKING_MODE;
     // the project changes the file after the schema was checked
     tamper(
       path,

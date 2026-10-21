@@ -73,6 +73,7 @@ import {
   copyFileSync,
   ensureContainingDirectoryExists,
   assertSafeDatabasePath,
+  isProjectOwnedDatabasePath,
 } from "./context";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
@@ -265,17 +266,26 @@ const NOT_A_BLOB_SIZE = Number.MAX_SAFE_INTEGER;
 // and length() of a BLOB do not read it.)
 const EFFECTIVE_SIZE_SQL = `CASE WHEN typeof(raw) <> 'blob' THEN ${NOT_A_BLOB_SIZE} ELSE MAX(IFNULL(CAST(size AS INTEGER), 0), length(raw) + IFNULL(length(headers), 0) + IFNULL(length(key), 0)) END`;
 
-// SQLite locking mode for persist databases.  "exclusive" (the default) keeps
-// the WAL index in this process's memory instead of a shared -shm file that
-// SQLite memory-maps: a project that owns that file could truncate it and
-// crash the whole persist server with SIGBUS.  The cost: no other connection
-// can open the file while this one has it open.
+// SQLite locking mode for the persist database at path.  A project owns the
+// -shm file of its databases, which SQLite memory-maps, so it could truncate
+// it and crash the whole persist server with SIGBUS.  "exclusive" keeps the
+// WAL index in this process's memory instead, but then no other connection
+// can open the file while this one has it open.  That is fine for project
+// files, which a project-host's single persist server opens, but persist
+// servers elsewhere (and tests) share files, so by default only project files
+// are exclusive.  COCALC_PERSIST_SQLITE_LOCKING_MODE=normal or =exclusive
+// applies one mode to every file.
 export function persistSqliteLockingMode(
+  path: string,
   env: NodeJS.ProcessEnv = process.env,
 ): "exclusive" | "normal" {
-  return env.COCALC_PERSIST_SQLITE_LOCKING_MODE === "normal"
-    ? "normal"
-    : "exclusive";
+  const mode = env.COCALC_PERSIST_SQLITE_LOCKING_MODE;
+  if (mode === "normal" || mode === "exclusive") {
+    return mode;
+  }
+  return path !== ":memory:" && isProjectOwnedDatabasePath(path)
+    ? "exclusive"
+    : "normal";
 }
 
 // sqlite3_set_authorizer return codes
@@ -805,7 +815,7 @@ export class PersistentStream extends EventEmitter {
       // defensive: no writable_schema or other ways to corrupt the file
       this.db = createDatabase(location, { defensive: true });
       try {
-        this.hardenConnection();
+        this.hardenConnection(location);
         if (location !== ":memory:") {
           this.assertExpectedSchema();
         }
@@ -878,8 +888,11 @@ export class PersistentStream extends EventEmitter {
 
   // Limit what this connection can do, whatever the (untrusted) file holds.
   // Runs before anything reads the database.
-  private hardenConnection = () => {
-    if (persistSqliteLockingMode() === "exclusive") {
+  private hardenConnection = (location: string) => {
+    // Avoid immediate "database is locked" errors under concurrent access
+    // (e.g., jest workers), also for the first read (the schema check).
+    this.db.exec(`PRAGMA busy_timeout=${persistSqliteBusyTimeoutMs()}`);
+    if (persistSqliteLockingMode(location) === "exclusive") {
       // Before the first read: then SQLite never creates or maps a -shm file
       // (see persistSqliteLockingMode).
       this.db.exec("PRAGMA locking_mode=EXCLUSIVE");
@@ -937,12 +950,9 @@ export class PersistentStream extends EventEmitter {
   };
 
   private initSchema = () => {
-    // Avoid immediate "database is locked" errors under concurrent access
-    // (e.g., jest workers) by enabling WAL and a small busy timeout.
+    // WAL, so readers and a writer can use the file at once (see also
+    // busy_timeout in hardenConnection).
     this.db.prepare("PRAGMA journal_mode=WAL").run();
-    this.db
-      .prepare(`PRAGMA busy_timeout=${persistSqliteBusyTimeoutMs()}`)
-      .run();
     if (!this.options.sync && !this.options.ephemeral) {
       // Unless sync is set, we do not require that the filesystem has commited changes
       // to disk after every insert. This can easily make things 10x faster.  sets are
