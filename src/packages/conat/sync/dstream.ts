@@ -98,6 +98,12 @@ function requireDstreamClient(
 
 const RECEIVED_THROUGH_MAX_STEPS = 10_000;
 
+// the persist server's refusal of a write from an older history epoch (see
+// PersistentStream.checkRequiredHeaders)
+function isHistoryFenceRejection(error: unknown): boolean {
+  return `${error ?? ""}`.includes("required header mismatch");
+}
+
 export class DStream<T = any> extends EventEmitter {
   public readonly name: string;
   private stream: CoreStream;
@@ -114,6 +120,14 @@ export class DStream<T = any> extends EventEmitter {
     };
   } = {};
   private saved: { [seq: number]: T } = {};
+  // Messages the history fence refused (they were written for an epoch the
+  // history has moved past).  Kept, not dropped, until the owner (SyncDoc)
+  // has saved them elsewhere: see pendingMessages and forgetRejected.
+  private rejected: { [id: string]: T } = {};
+  // running totals of local plus rejected, so their size is known in O(1)
+  private pendingCount = 0;
+  private pendingBytes = 0;
+  private sizeOf: (mesg: T) => number = () => 0;
   private opts: DStreamOptions;
   private lastHasUnsavedChanges = false;
   private closing = false;
@@ -179,7 +193,7 @@ export class DStream<T = any> extends EventEmitter {
       // this is critical with core-stream.ts, since otherwise there is a moment
       // when the same message is in both this.local *and* this.messages, and you'll
       // see it doubled in this.getAll().
-      delete this.local[msgID];
+      this.deleteLocal(msgID);
       this.updateHasUnsavedChanges();
     }
     this.emit("change", mesg, raw?.seq);
@@ -530,6 +544,7 @@ export class DStream<T = any> extends EventEmitter {
     }
     const id = randomId();
     this.local[id] = mesg;
+    this.addPending(mesg);
     this.updateHasUnsavedChanges();
     if (options != null) {
       this.publishOptions[id] = options;
@@ -556,11 +571,79 @@ export class DStream<T = any> extends EventEmitter {
     }
   };
 
+  private addPending = (mesg: T): void => {
+    this.pendingCount += 1;
+    this.pendingBytes += this.sizeOf(mesg);
+  };
+
+  private removePending = (mesg: T | undefined): void => {
+    if (mesg === undefined) return;
+    this.pendingCount -= 1;
+    this.pendingBytes -= this.sizeOf(mesg);
+  };
+
+  private deleteLocal = (id: string): void => {
+    if (this.local[id] === undefined) return;
+    this.removePending(this.local[id]);
+    delete this.local[id];
+  };
+
+  // How to size a pending message for pendingStats (e.g., its patch length).
+  // Normally set before anything is published; whatever is pending already
+  // is resized, so the totals stay exact.
+  setPendingSizeOf = (sizeOf: (mesg: T) => number): void => {
+    this.sizeOf = sizeOf;
+    let bytes = 0;
+    for (const id in this.local) bytes += sizeOf(this.local[id]);
+    for (const id in this.rejected) bytes += sizeOf(this.rejected[id]);
+    this.pendingBytes = bytes;
+  };
+
+  // The unsaved messages (not yet acknowledged, or refused by the history
+  // fence), counted in O(1).
+  pendingStats = (): { count: number; bytes: number } => ({
+    count: this.pendingCount,
+    bytes: this.pendingBytes,
+  });
+
+  // The unsaved messages with their ids (their msgIDs), in the order they
+  // were published.  The caller bounds how many (see pendingStats).
+  pendingMessages = (): { id: string; mesg: T; rejected: boolean }[] => {
+    const v: { id: string; mesg: T; rejected: boolean }[] = [];
+    for (const id in this.rejected) {
+      v.push({ id, mesg: this.rejected[id], rejected: true });
+    }
+    for (const id in this.local) {
+      v.push({ id, mesg: this.local[id], rejected: false });
+    }
+    return v;
+  };
+
+  // Forget the refused messages with these ids, once they are saved elsewhere.
+  forgetRejected = (ids: string[]): void => {
+    for (const id of ids) {
+      if (this.rejected[id] === undefined) continue;
+      this.removePending(this.rejected[id]);
+      delete this.rejected[id];
+    }
+    this.updateHasUnsavedChanges();
+  };
+
   hasUnsavedChanges = (): boolean => {
     if (this.isClosed()) {
       return false;
     }
     return Object.keys(this.local).length > 0;
+  };
+
+  // Refused by the history fence and not yet saved elsewhere (not counted by
+  // hasUnsavedChanges, which the save loop waits on: these are never retried).
+  hasRejectedChanges = (): boolean => {
+    if (this.isClosed()) {
+      return false;
+    }
+    for (const _ in this.rejected) return true;
+    return false;
   };
 
   private updateHasUnsavedChanges = (): void => {
@@ -626,7 +709,18 @@ export class DStream<T = any> extends EventEmitter {
       if (w[i].error) {
         const x = w[i] as { error: string; code?: any };
         if (x.code == "reject") {
-          delete this.local[id];
+          if (
+            isHistoryFenceRejection(x.error) &&
+            this.local[id] !== undefined
+          ) {
+            // keep it: it is unsaved data the owner must save elsewhere
+            this.rejected[id] = this.local[id];
+            delete this.local[id];
+            // never retried
+            delete this.publishOptions[id];
+          } else {
+            this.deleteLocal(id);
+          }
           const err = new ConatError(x.error, { code: x.code });
           // err has mesg and subject set.
           this.emit("reject", { err, mesg: v[i].mesg });
@@ -644,7 +738,7 @@ export class DStream<T = any> extends EventEmitter {
         // it still isn't in this.raw
         this.saved[seq] = v[i].mesg;
       }
-      delete this.local[id];
+      this.deleteLocal(id);
       delete this.publishOptions[id];
     }
     this.updateHasUnsavedChanges();

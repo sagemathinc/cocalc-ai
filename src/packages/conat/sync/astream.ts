@@ -216,6 +216,11 @@ export class AStream<T = any> {
     return await this.stream.inventory();
   };
 
+  // see PersistentStream.historyInclusion
+  historyInclusion = async (opts: { epoch: number; ids: string[] }) => {
+    return await this.stream.historyInclusion(opts);
+  };
+
   getCheckpoints = async () => {
     return await this.stream.getCheckpoints();
   };

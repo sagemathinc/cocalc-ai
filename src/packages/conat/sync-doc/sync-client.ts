@@ -16,6 +16,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { readFile } from "@cocalc/conat/files/read";
 import type {
+  HistoryInclusion,
   ResetHistoryOptions,
   ResetHistoryResult,
 } from "@cocalc/conat/persist/storage";
@@ -265,6 +266,33 @@ export class SyncClient extends EventEmitter implements Client0 {
       offset += chunk.length;
     }
     return { status: "ok", data };
+  };
+
+  // see Client.historyInclusion
+  historyInclusion = async ({
+    project_id,
+    path,
+    persist,
+    epoch,
+    ids,
+  }: {
+    project_id: string;
+    path: string;
+    persist?: { service: string; persistUser: Record<string, never> };
+    epoch: number;
+    ids: string[];
+  }): Promise<HistoryInclusion> => {
+    const stream = this.client.sync.astream({
+      project_id,
+      name: patchesStreamName({ path }),
+      noInventory: true,
+      ...(persist ?? {}),
+    });
+    try {
+      return await stream.historyInclusion({ epoch, ids });
+    } finally {
+      stream.close();
+    }
   };
 
   // see Client.resetHistory
