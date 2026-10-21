@@ -203,6 +203,27 @@ describe("what a holder started", () => {
   });
 });
 
+describe("without /proc", () => {
+  it("this process holds fences, of a start time that can't be told", () => {
+    const fs = require("node:fs");
+    const readFileSync = fs.readFileSync;
+    const spy = jest
+      .spyOn(fs, "readFileSync")
+      .mockImplementation((path: any, ...rest: any[]) => {
+        if (`${path}`.startsWith("/proc/")) {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }
+        return readFileSync(path, ...rest);
+      });
+    try {
+      expect(currentFenceHolder()).toEqual({ pid: process.pid, start: "" });
+      expect(isFenceHolderAlive({ pid: process.pid, start: "" })).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("when /proc can't be read", () => {
   it("only what is known to be gone is gone", () => {
     const fs = require("node:fs");

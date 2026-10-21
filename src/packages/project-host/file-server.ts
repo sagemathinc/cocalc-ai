@@ -3206,16 +3206,19 @@ async function restoreSnapshot({
     ) {
       throw new Error(`safety snapshot is missing: ${safety_snapshot_name}`);
     }
-    // The home holds the project's persist files: nothing may have them
+    // If the home holds the project's persist files, nothing may have them
     // open while it is swapped (persist-fence.ts).
-    ({ oldHomePath } = await withProjectPersistFenced(
-      { project_id, reason: "restore-snapshot" },
-      async () =>
-        await swapProjectHome({
-          project_id,
-          replacementPath: staged.path,
-        }),
-    ));
+    const swap = async () =>
+      await swapProjectHome({
+        project_id,
+        replacementPath: staged.path,
+      });
+    ({ oldHomePath } = homeHoldsPersistFiles(project_id)
+      ? await withProjectPersistFenced(
+          { project_id, reason: "restore-snapshot" },
+          swap,
+        )
+      : await swap());
     cleanupStagedClone = false;
   } finally {
     if (cleanupStagedClone) {
@@ -4477,6 +4480,16 @@ async function beginRestoreStaging({
   });
 }
 
+// Whether replacing the project's whole home replaces its persist files
+// (COCALC_SYNC_PROJECTS is in the home).
+function homeHoldsPersistFiles(project_id: string): boolean {
+  return restoreTouchesPersistFiles({
+    project_id,
+    home: projectMountpoint(project_id),
+    dest: "",
+  });
+}
+
 async function ensureRestoreStaging({
   handle,
 }: {
@@ -4490,12 +4503,15 @@ async function finalizeRestoreStaging({
 }: {
   handle: RestoreStagingHandle;
 }): Promise<void> {
-  // Swaps in a whole new home, with the project's persist files: nothing may
-  // have them open meanwhile (persist-fence.ts).
-  await withProjectPersistFenced(
-    { project_id: handle.project_id, reason: "restore-staging" },
-    async () => await finalizeRestoreStagingBtrfs(handle),
-  );
+  // Swaps in a whole new home: if it holds the project's persist files,
+  // nothing may have them open meanwhile (persist-fence.ts).
+  const finalize = async () => await finalizeRestoreStagingBtrfs(handle);
+  await (homeHoldsPersistFiles(handle.project_id)
+    ? withProjectPersistFenced(
+        { project_id: handle.project_id, reason: "restore-staging" },
+        finalize,
+      )
+    : finalize());
   invalidateProjectFsServer(handle.project_id);
   void touchProjectLastEdited(handle.project_id, "restore-staging");
 }
