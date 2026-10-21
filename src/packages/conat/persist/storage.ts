@@ -1386,7 +1386,11 @@ export class PersistentStream extends EventEmitter {
           this.db.close();
           closed = true;
         } catch (err) {
-          logger.debug("WARNING: error closing database", { path, err });
+          logger.warn("WARNING: error closing database", { path, err });
+          // it may still be open: never fenced as closed (fence.ts)
+          if (this.storageKind === "disk") {
+            unclosedDiskPaths.add(path);
+          }
         }
         if (closed) {
           this.backupClosedDatabase();
@@ -3632,10 +3636,14 @@ export function getPersistentStreamSqliteDiagnostics() {
   return result;
 }
 
+// Of disk-backed streams whose database failed to close: it may still be
+// open until this process exits.
+const unclosedDiskPaths = new Set<string>();
+
 // The local paths (without .db) of the disk-backed streams open in this
 // process.
 export function openDiskStreamPaths(): string[] {
-  const paths: string[] = [];
+  const paths: string[] = [...unclosedDiskPaths];
   for (const [stream, { kind }] of openStreams) {
     const path = stream.localPath();
     if (kind === "disk" && path != null) {
