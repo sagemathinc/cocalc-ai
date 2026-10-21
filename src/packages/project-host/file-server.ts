@@ -238,6 +238,7 @@ import {
   deleteOrphanedPersistVolumes,
   deletePersistVolume,
   replaceProjectHome,
+  withProjectStorageFenced,
   restoreBackupWithHistory,
   restoredHistoryCandidates,
   snapshotNeedsPersistVolume,
@@ -1351,113 +1352,118 @@ export async function deleteVolume(
     throw Error("file server not initialized");
   }
   invalidateProjectVolumeLifecycle(project_id);
-  await withProjectVolumeLifecycleLock(project_id, async () => {
-    const deleteIfExists = async ({
-      name,
-      volume_kind,
-      clearSnapshots = false,
-    }: {
-      name: string;
-      volume_kind: "home" | "scratch";
-      clearSnapshots?: boolean;
-    }) => {
-      const vol = await fs!.subvolumes.get(name);
-      if (!(await exists(vol.path))) {
+  await withProjectVolumeLifecycleLock(project_id, async () =>
+    // Nothing may have the project's history open while its storage goes
+    // (persist-volume.ts): streams of it close, and clients start over if
+    // it comes back (e.g., restored from an archive).
+    withProjectStorageFenced({ project_id, reason: "delete" }, async () => {
+      const deleteIfExists = async ({
+        name,
+        volume_kind,
+        clearSnapshots = false,
+      }: {
+        name: string;
+        volume_kind: "home" | "scratch";
+        clearSnapshots?: boolean;
+      }) => {
+        const vol = await fs!.subvolumes.get(name);
+        if (!(await exists(vol.path))) {
+          if (volume_kind === "home") {
+            await deleteStagedArchiveSnapshots(vol);
+          }
+          markProjectVolumeAbsent(project_id, volume_kind);
+          return;
+        }
+        if (clearSnapshots) {
+          try {
+            const snapshots = await vol.snapshots.readdir();
+            for (const snapshot of snapshots) {
+              await vol.snapshots.delete(snapshot);
+            }
+          } catch (err) {
+            logger.warn("deleteVolume: snapshot cleanup failed", {
+              project_id,
+              name,
+              err: `${err}`,
+            });
+          }
+        }
+        await fs!.subvolumes.delete(name);
         if (volume_kind === "home") {
+          // Automatic archive staging lives outside the project subvolume. This
+          // also covers deferred inventory cleanup after an unavailable host
+          // returns, including the idempotent parent-already-absent case above.
           await deleteStagedArchiveSnapshots(vol);
         }
         markProjectVolumeAbsent(project_id, volume_kind);
-        return;
-      }
-      if (clearSnapshots) {
-        try {
-          const snapshots = await vol.snapshots.readdir();
-          for (const snapshot of snapshots) {
-            await vol.snapshots.delete(snapshot);
-          }
-        } catch (err) {
-          logger.warn("deleteVolume: snapshot cleanup failed", {
-            project_id,
-            name,
-            err: `${err}`,
-          });
-        }
-      }
-      await fs!.subvolumes.delete(name);
-      if (volume_kind === "home") {
-        // Automatic archive staging lives outside the project subvolume. This
-        // also covers deferred inventory cleanup after an unavailable host
-        // returns, including the idempotent parent-already-absent case above.
-        await deleteStagedArchiveSnapshots(vol);
-      }
-      markProjectVolumeAbsent(project_id, volume_kind);
-    };
+      };
 
-    if (opts.expected_archive_generation == null) {
-      await deleteIfExists({
-        name: volName(project_id),
-        volume_kind: "home",
-        clearSnapshots: true,
-      });
-      await deleteIfExists({
-        name: scratchVolName(project_id),
-        volume_kind: "scratch",
-      });
-    } else {
-      const expectedBackupId =
-        `${opts.expected_archive_backup_id ?? ""}`.trim();
-      if (!expectedBackupId) {
-        throw new Error("an archive backup snapshot id is required");
-      }
-      const expectedGeneration = Number(opts.expected_archive_generation);
-      if (
-        !Number.isSafeInteger(expectedGeneration) ||
-        expectedGeneration <= 0
-      ) {
-        throw new Error("a valid archive backup generation is required");
-      }
-      const volume = await getVolumeForBackup(project_id);
-      try {
-        if (!(await volume.rustic.snapshotExists({ id: expectedBackupId }))) {
-          throw new Error(
-            `refusing to archive project because final backup ${expectedBackupId} no longer exists`,
-          );
-        }
-        const status = await assertFrozenVolumeMatchesBackup({
-          volume,
-          expectedGeneration,
+      if (opts.expected_archive_generation == null) {
+        await deleteIfExists({
+          name: volName(project_id),
+          volume_kind: "home",
+          clearSnapshots: true,
         });
-        // Scratch is ephemeral. Delete it before the durable home volume so a
-        // scratch cleanup failure can never reopen a project after home data
-        // was already removed. The durable backup was verified first.
         await deleteIfExists({
           name: scratchVolName(project_id),
           volume_kind: "scratch",
         });
-        if (status === "present") {
-          await fs!.subvolumes.delete(volName(project_id));
+      } else {
+        const expectedBackupId =
+          `${opts.expected_archive_backup_id ?? ""}`.trim();
+        if (!expectedBackupId) {
+          throw new Error("an archive backup snapshot id is required");
         }
-        await deleteStagedArchiveSnapshots(volume);
-        markProjectVolumeAbsent(project_id, "home");
-      } catch (err) {
-        // If cleanup did not complete, return the retained volume to a writable
-        // state before a retry. A missing volume is the idempotent-success case
-        // and releaseArchiveVolumeFreeze is a no-op.
-        await releaseArchiveVolumeFreeze(volume).catch((releaseErr) => {
-          logger.error("unable to release failed archive deletion freeze", {
-            project_id,
-            err: `${releaseErr}`,
+        const expectedGeneration = Number(opts.expected_archive_generation);
+        if (
+          !Number.isSafeInteger(expectedGeneration) ||
+          expectedGeneration <= 0
+        ) {
+          throw new Error("a valid archive backup generation is required");
+        }
+        const volume = await getVolumeForBackup(project_id);
+        try {
+          if (!(await volume.rustic.snapshotExists({ id: expectedBackupId }))) {
+            throw new Error(
+              `refusing to archive project because final backup ${expectedBackupId} no longer exists`,
+            );
+          }
+          const status = await assertFrozenVolumeMatchesBackup({
+            volume,
+            expectedGeneration,
           });
-        });
-        throw err;
+          // Scratch is ephemeral. Delete it before the durable home volume so a
+          // scratch cleanup failure can never reopen a project after home data
+          // was already removed. The durable backup was verified first.
+          await deleteIfExists({
+            name: scratchVolName(project_id),
+            volume_kind: "scratch",
+          });
+          if (status === "present") {
+            await fs!.subvolumes.delete(volName(project_id));
+          }
+          await deleteStagedArchiveSnapshots(volume);
+          markProjectVolumeAbsent(project_id, "home");
+        } catch (err) {
+          // If cleanup did not complete, return the retained volume to a writable
+          // state before a retry. A missing volume is the idempotent-success case
+          // and releaseArchiveVolumeFreeze is a no-op.
+          await releaseArchiveVolumeFreeze(volume).catch((releaseErr) => {
+            logger.error("unable to release failed archive deletion freeze", {
+              project_id,
+              err: `${releaseErr}`,
+            });
+          });
+          throw err;
+        }
       }
-    }
-    // the project's edit history goes with its home
-    await deletePersistVolume(project_id);
-    deleteProjectVolumeQuotas(project_id);
-    deleteProjectVolumeQuotaOverrides(project_id);
-    invalidateProjectFsServer(project_id);
-  });
+      // the project's edit history goes with its home
+      await deletePersistVolume(project_id);
+      deleteProjectVolumeQuotas(project_id);
+      deleteProjectVolumeQuotaOverrides(project_id);
+      invalidateProjectFsServer(project_id);
+    }),
+  );
   if (opts.reportProvisioned !== false) {
     queueProjectProvisioned(project_id, false);
   }

@@ -665,6 +665,17 @@ describe("in the project-host", () => {
     expect(read(join(home, HISTORY_IN_SNAPSHOTS, "a.db"))).toBe("mine");
   });
 
+  it("keeps the project's history when the restored home has none", async () => {
+    await readyVolume();
+    // e.g., a snapshot made without the history (legacy archive tools)
+    const replacement = join(mount, "replacement");
+    await mkdir(replacement);
+    await writeFile(join(replacement, "work.txt"), "restored");
+    await restoreHome(replacement);
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(read(join(home, "work.txt"))).toBe("restored");
+  });
+
   it("restores the history of a project that had no volume (e.g., archived)", async () => {
     const replacement = join(mount, "replacement");
     await mkdir(join(replacement, HISTORY_IN_SNAPSHOTS, "patchflow"), {
@@ -1162,6 +1173,28 @@ describe("in the project-host", () => {
       "restore",
       10 * GiB,
     ]);
+  });
+
+  it("deletes a volume whose project has no home here, fenced, and keeps it if it can't be", async () => {
+    const orphan = join(mount, `project-${OTHER}-persist`);
+    await mkdir(orphan);
+    await writeFile(join(orphan, "a.db"), "orphan");
+    const { withProjectPersistFenced } = require("./persist-fence");
+    // the fence can't be taken: kept for a later try
+    (withProjectPersistFenced as jest.Mock).mockRejectedValueOnce(
+      new Error("persist fence service unavailable"),
+    );
+    expect(await deleteOrphanedPersistVolumes({ env })).toEqual([]);
+    expect(existsSync(orphan)).toBe(true);
+    fenceRequires.length = 0;
+    expect(await deleteOrphanedPersistVolumes({ env })).toEqual([OTHER]);
+    expect(existsSync(orphan)).toBe(false);
+    // only while a persist daemon with volumes has none of its streams open
+    expect(fenceRequires).toEqual(["persist-volume"]);
+    // the project with a home keeps its volume
+    await readyVolume();
+    expect(await deleteOrphanedPersistVolumes({ env })).toEqual([]);
+    expect(existsSync(root)).toBe(true);
   });
 
   it("raises the volume's limit with the disk quota", async () => {

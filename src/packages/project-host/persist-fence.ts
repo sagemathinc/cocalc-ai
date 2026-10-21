@@ -99,7 +99,13 @@ export async function withProjectPersistFenced<T>(
   for (let attempt = 0; ; attempt++) {
     try {
       return await withPersistFence(
-        { client, project_id, holder: currentFenceHolder() },
+        {
+          client,
+          project_id,
+          holder: currentFenceHolder(),
+          // checked by the server that grants the fence
+          ...(requires != null ? { requires: [requires] } : {}),
+        },
         fn,
       );
     } catch (err) {

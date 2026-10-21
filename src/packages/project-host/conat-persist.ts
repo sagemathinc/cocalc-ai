@@ -225,15 +225,16 @@ export async function startStandaloneProjectHostConatPersist({
   // before a restart, and its capability file tells the host's main process
   // that it has fences (persist-fence.ts).
   const fenceDir = persistFenceDir();
+  // the history in volumes of their own (persist-volume.ts), which restores
+  // require of the server that fences them (persist-fence.ts)
+  const features = installProjectPersistVolumes() ? ["persist-volume"] : [];
   const fenceService = await initPersistFenceService({
     client,
     holderAlive: isFenceHolderAlive,
     store: fileFenceStore(fenceDir),
+    features,
   });
-  // the history in volumes of their own (persist-volume.ts), which restores
-  // rely on (persist-fence.ts), before anything is served
-  const persistVolumes = installProjectPersistVolumes();
-  writeFenceCapability(fenceDir, persistVolumes ? ["persist-volume"] : []);
+  writeFenceCapability(fenceDir, features);
   const closeFenceService = () => {
     fenceService.close();
     removeFenceCapability(fenceDir);

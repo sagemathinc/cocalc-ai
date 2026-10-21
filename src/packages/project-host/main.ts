@@ -588,16 +588,17 @@ export async function main(
   const externalPersist = isProjectHostExternalConatPersistEnabled();
   // Lets file-server restores fence a project's streams (as the daemon does);
   // started before the persist server serves.
+  // the history in volumes of their own (persist-volume.ts), before anything
+  // is served
+  const persistVolumes = !externalPersist && installProjectPersistVolumes();
   const persistFenceService = externalPersist
     ? undefined
     : await initPersistFenceService({
         client: conatClient,
         holderAlive: isFenceHolderAlive,
         store: fileFenceStore(persistFenceDir()),
+        features: persistVolumes ? ["persist-volume"] : [],
       });
-  if (!externalPersist) {
-    installProjectPersistVolumes();
-  }
   const persistServer = externalPersist
     ? undefined
     : createPersistServer({ client: conatClient });

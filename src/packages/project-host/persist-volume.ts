@@ -923,7 +923,7 @@ export async function historyInHome(
 
 // A new ready volume with the history in `replacement`, a home the project
 // can't reach yet (restore staging, or a snapshot's clone); undefined if
-// projects keep their history in their home.
+// projects keep their history in their home, or `replacement` has none.
 export async function stageRestoredVolume({
   project_id,
   replacement,
@@ -937,10 +937,18 @@ export async function stageRestoredVolume({
 }): Promise<{ path: string; from?: string } | undefined> {
   const { legacy } = projectPersistTemplates(env);
   if (legacy == null || persistVolumePath(project_id, env) == null) return;
+  const from = await historyInHome(replacement, legacy.relative);
+  if (from == null) {
+    // No history at all (e.g., a snapshot made without it): the project's
+    // history is kept, never replaced by an empty one.
+    logger.warn("restored home has no history; keeping the project's", {
+      project_id,
+    });
+    return;
+  }
   const staged = await newRestoreDirectory(project_id, env, ops);
   if (staged == null) return;
   try {
-    const from = await historyInHome(replacement, legacy.relative);
     let imported = { files: 0, bytes: 0, skipped: 0 };
     if (from != null) {
       // Copied by the root helper first (it never follows symlinks, and can
@@ -1010,6 +1018,38 @@ async function withPersistLock<T>(
   } finally {
     unlock();
   }
+}
+
+// Runs fn with the project's persist lock held and its streams fenced, for
+// anything that removes its storage (its home, its persist volume).
+export async function withProjectStorageFenced<T>(
+  {
+    project_id,
+    reason,
+    waitMs,
+    env = process.env,
+  }: {
+    project_id: string;
+    reason: string;
+    waitMs?: number;
+    env?: NodeJS.ProcessEnv;
+  },
+  fn: () => Promise<T>,
+): Promise<T> {
+  return await withPersistLock(project_id, async () =>
+    withProjectPersistFenced(
+      {
+        project_id,
+        reason,
+        requires:
+          persistVolumePath(project_id, env) == null
+            ? undefined
+            : "persist-volume",
+      },
+      fn,
+      waitMs == null ? undefined : { waitMs },
+    ),
+  );
 }
 
 // Puts the volume at `staged` in place of the project's persist volume; the
@@ -1117,7 +1157,10 @@ export async function replaceProjectHome<T>({
           project_id,
           reason,
           // (only when the history is in a volume of its own)
-          requires: staged == null ? undefined : "persist-volume",
+          requires:
+            persistVolumePath(project_id, env) == null
+              ? undefined
+              : "persist-volume",
         },
         async () => {
           if (staged != null) {
@@ -1291,7 +1334,11 @@ export async function deleteOrphanedPersistVolumes({
       continue;
     }
     try {
-      await deletePersistVolume(project_id);
+      // a persist daemon may still have its streams open
+      await withProjectStorageFenced(
+        { project_id, reason: "delete-orphan", waitMs: 5000, env },
+        async () => await deletePersistVolume(project_id),
+      );
       deleted.push(project_id);
     } catch (err) {
       logger.warn("unable to delete orphaned persist volume", {
