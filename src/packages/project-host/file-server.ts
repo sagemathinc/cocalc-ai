@@ -3236,6 +3236,7 @@ async function restoreSnapshot({
       project_id,
       replacement: staged.path,
       reason: "restore-snapshot",
+      historyInHome: homeHoldsPersistFiles(project_id),
       swap: async () =>
         await swapProjectHome({
           project_id,
@@ -4553,6 +4554,16 @@ async function beginRestoreStaging({
   });
 }
 
+// Whether replacing the project's whole home replaces its persist files
+// (COCALC_SYNC_PROJECTS is in the home).
+function homeHoldsPersistFiles(project_id: string): boolean {
+  return restoreTouchesPersistFiles({
+    project_id,
+    home: projectMountpoint(project_id),
+    dest: "",
+  });
+}
+
 async function ensureRestoreStaging({
   handle,
 }: {
@@ -4572,6 +4583,7 @@ async function finalizeRestoreStaging({
     project_id: handle.project_id,
     replacement: handle.stagingPath,
     reason: "restore-staging",
+    historyInHome: homeHoldsPersistFiles(handle.project_id),
     swap: async () => await finalizeRestoreStagingBtrfs(handle),
   });
   invalidateProjectFsServer(handle.project_id);

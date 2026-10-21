@@ -60,6 +60,7 @@ function processStat(pid: number | "self"): Stat {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT" && code !== "ESRCH") return "unknown";
     // without /proc, nothing is known from it
+    if (pid === "self") return "unknown";
     return Array.isArray(processStat("self")) ? "gone" : "unknown";
   }
 }

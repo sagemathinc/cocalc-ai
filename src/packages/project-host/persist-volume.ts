@@ -1191,12 +1191,15 @@ async function cleanRestoredHome({
 // with the one in `replacement`, as one step: the new history is staged
 // first, then both are swapped in while nothing has the project's history
 // open (a persist fence) and no snapshot captures it (the persist lock).  If
-// the home can't be swapped in, the history stays as it was.
+// the home can't be swapped in, the history stays as it was.  Clients load
+// the history again only if it was replaced: one staged from `replacement`,
+// or, without volumes, the files in the home (historyInHome).
 export async function replaceProjectHome<T>({
   project_id,
   replacement,
   reason,
   swap,
+  historyInHome = true,
   env = process.env,
   ops = btrfsOps,
 }: {
@@ -1204,6 +1207,8 @@ export async function replaceProjectHome<T>({
   replacement: string;
   reason: string;
   swap: () => Promise<T>;
+  // without volumes: whether the home holds the project's persist files
+  historyInHome?: boolean;
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<T> {
@@ -1218,39 +1223,44 @@ export async function replaceProjectHome<T>({
   let result: T;
   try {
     result = await withPersistLock(project_id, async () => {
+      const volume = persistVolumePath(project_id, env);
+      const replacesHistory =
+        staged != null || (volume == null && historyInHome);
+      const fenced = <S>(fn: () => Promise<S>): Promise<S> =>
+        // With volumes, always: the persist server must have them (requires)
+        // even when the history stays.  Without, only if the home holds it.
+        volume != null || replacesHistory
+          ? withProjectPersistFenced(
+              {
+                project_id,
+                reason,
+                ...(volume != null ? { requires: "persist-volume" } : {}),
+                ...(replacesHistory ? {} : { replaces: false }),
+              },
+              fn,
+            )
+          : fn();
       // (with the history in the home, the fence covers just the home swap)
-      const swapped = await withProjectPersistFenced(
-        {
-          project_id,
-          reason,
-          // (only when the history is in a volume of its own)
-          requires:
-            persistVolumePath(project_id, env) == null
-              ? undefined
-              : "persist-volume",
-        },
-        async () => {
+      const swapped = await fenced(async () => {
+        if (staged != null) {
+          previous = await swapInVolume(project_id, staged.path, env);
+          swappedIn = true;
+        }
+        try {
+          return await swap();
+        } catch (err) {
           if (staged != null) {
-            previous = await swapInVolume(project_id, staged.path, env);
-            swappedIn = true;
-          }
-          try {
-            return await swap();
-          } catch (err) {
-            if (staged != null) {
-              // the history goes back with the home
-              const volume = persistVolumePath(project_id, env)!;
-              await sudo({ command: "mv", args: [volume, staged.path] });
-              swappedIn = false;
-              if (previous != null) {
-                await sudo({ command: "mv", args: [previous, volume] });
-                previous = undefined;
-              }
+            // the history goes back with the home
+            await sudo({ command: "mv", args: [volume!, staged.path] });
+            swappedIn = false;
+            if (previous != null) {
+              await sudo({ command: "mv", args: [previous, volume!] });
+              previous = undefined;
             }
-            throw err;
           }
-        },
-      );
+          throw err;
+        }
+      });
       // Still holding the lock, so no capture or copy sees the history's
       // copy in the new home.
       if (staged != null) {

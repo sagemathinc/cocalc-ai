@@ -44,9 +44,11 @@ import type { CapturedSnapshotData } from "@cocalc/file-server/btrfs/snapshot-pr
 // sees it
 let fenced = false;
 const fenceRequires: (string | undefined)[] = [];
+const fenceOpts: any[] = [];
 jest.mock("./persist-fence", () => ({
   withProjectPersistFenced: jest.fn(async (opts, fn) => {
     fenceRequires.push(opts?.requires);
+    fenceOpts.push(opts);
     fenced = true;
     try {
       return await fn();
@@ -686,6 +688,44 @@ describe("in the project-host", () => {
     expect(existsSync(join(root, "new.db"))).toBe(false);
     // the copy in the restored home is gone
     expect(existsSync(join(home, HISTORY_IN_SNAPSHOTS))).toBe(false);
+  });
+
+  it("leaves the clients' history alone when the restored home has none", async () => {
+    await readyVolume();
+    const replacement = join(mount, "replacement");
+    await mkdir(replacement);
+    await writeFile(join(replacement, "work.txt"), "restored");
+    await restoreHome(replacement);
+    expect(read(join(home, "work.txt"))).toBe("restored");
+    expect(read(join(root, "a.db"))).toBe("live");
+    // fenced (the persist server must have volumes), but nothing replaced
+    expect(fenceOpts[fenceOpts.length - 1]).toMatchObject({ replaces: false });
+  });
+
+  it("without volumes, fences a home swap only if the home holds the history", async () => {
+    const { withProjectPersistFenced } = require("./persist-fence");
+    const fence = withProjectPersistFenced as jest.Mock;
+    // the persist files are elsewhere: no volumes
+    const outside = { COCALC_SYNC_PROJECTS: join(mount, "persist") };
+    const replacement = join(mount, "replacement");
+    await mkdir(replacement);
+    const replace = async (historyInHome: boolean) =>
+      await replaceProjectHome({
+        project_id: PROJECT,
+        replacement,
+        reason: "test",
+        historyInHome,
+        env: outside,
+        ops: fakeOps(),
+        swap: async () => "swapped",
+      });
+    fence.mockClear();
+    expect(await replace(false)).toBe("swapped");
+    expect(fence).not.toHaveBeenCalled();
+    expect(await replace(true)).toBe("swapped");
+    expect(fence).toHaveBeenCalledTimes(1);
+    // replaced: clients load it again
+    expect(fenceOpts[fenceOpts.length - 1].replaces).toBeUndefined();
   });
 
   it("restores the history of a snapshot taken before the import", async () => {
