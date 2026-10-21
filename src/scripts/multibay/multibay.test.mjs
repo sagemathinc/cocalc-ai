@@ -196,14 +196,17 @@ describe("agent delivery reports across bays", () => {
     agent_id = randomUUID(),
     kind = "error",
     tool_ran,
+    phase,
+    attempt_id = randomUUID(),
   }) {
     const report = {
       version: 1,
       report_id: randomUUID(),
-      attempt_id: randomUUID(),
+      attempt_id,
       turn_started_at: Date.now() - 60_000,
       kind,
       ...(tool_ran === undefined ? {} : { tool_ran }),
+      ...(phase ? { phase, resets_at: Date.now() + 3_600_000 } : {}),
     };
     return await runInBay(
       cluster,
@@ -286,6 +289,15 @@ describe("agent delivery reports across bays", () => {
         software: { project_host: "build-2" },
         agent_rpc_report: { version: 2, project_host: "build-2" },
       },
+      // Knows completed reports (version 3), not held ones (4).
+      "completed-report": {
+        software: { project_host: "build-3" },
+        agent_rpc_report: { version: 3, project_host: "build-3" },
+      },
+      "held-report": {
+        software: { project_host: "build-4" },
+        agent_rpc_report: { version: 4, project_host: "build-4" },
+      },
     };
     const hostIds = Object.fromEntries(
       Object.keys(hosts).map((name) => [name, randomUUID()]),
@@ -361,6 +373,50 @@ describe("agent delivery reports across bays", () => {
         );
       });
     }
+
+    it("holds a held report for a host that predates it", async () => {
+      for (const name of ["old", "current", "completed-report"]) {
+        await onHost(name);
+        assert.match(
+          await deliverFromSeed({
+            project_id,
+            agent_id,
+            kind: "limit",
+            tool_ran: false,
+            phase: "held",
+          }),
+          held,
+        );
+      }
+    });
+
+    it("forwards a held report and then the final one to a host that knows them", async () => {
+      await onHost("held-report");
+      const attempt_id = randomUUID();
+      for (const phase of ["held", undefined])
+        forwarded(
+          await deliverFromSeed({
+            project_id,
+            agent_id,
+            attempt_id,
+            kind: "limit",
+            tool_ran: false,
+            ...(phase ? { phase } : {}),
+          }),
+        );
+    });
+
+    it("forwards a completed report to a version-3 host", async () => {
+      await onHost("completed-report");
+      forwarded(
+        await deliverFromSeed({
+          project_id,
+          agent_id,
+          kind: "completed",
+          tool_ran: true,
+        }),
+      );
+    });
 
     it("forwards every report to a current host", async () => {
       await onHost("current");
@@ -2650,9 +2706,7 @@ describe("session idle timeout across bays", () => {
        return await runSessionMaintenance();`,
     );
     assert.equal(
-      await onHome(
-        "SELECT hash FROM remember_me WHERE hash = $1::CHAR(127)",
-      ),
+      await onHome("SELECT hash FROM remember_me WHERE hash = $1::CHAR(127)"),
       null,
     );
   });

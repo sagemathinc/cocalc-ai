@@ -167,6 +167,42 @@ describe("the sender's host writes the report", () => {
     expect(admit).not.toHaveBeenCalled();
   });
 
+  it("a held report and the final one are each once", async () => {
+    // The held report was written; the final report is not its duplicate.
+    syncdb.rows.push(
+      fromB("2026-10-12T20:00:09Z", {
+        delivery_report: { report_id: "held", attempt_id, phase: "held" },
+      }),
+    );
+    await expect(
+      deliverAgentRpcReport({} as any, delivery, running),
+    ).resolves.not.toEqual({ skipped: "duplicate" });
+    // But another held report for it is.
+    await expect(
+      deliverAgentRpcReport(
+        {} as any,
+        { ...delivery, report: { ...delivery.report, phase: "held" } },
+        running,
+      ),
+    ).resolves.toEqual({ skipped: "duplicate" });
+  });
+
+  it("a held report that arrives after the final one is out of date", async () => {
+    syncdb.rows.push(
+      fromB("2026-10-12T20:00:09Z", {
+        delivery_report: { report_id: "final", attempt_id },
+      }),
+    );
+    await expect(
+      deliverAgentRpcReport(
+        {} as any,
+        { ...delivery, report: { ...delivery.report, phase: "held" } },
+        running,
+      ),
+    ).resolves.toEqual({ skipped: "duplicate" });
+    expect(admit).not.toHaveBeenCalled();
+  });
+
   it("pending on disk before its turn is admitted, then admitted", async () => {
     let onDisk: any;
     syncdb.save_to_disk.mockImplementationOnce(async () => {
@@ -348,6 +384,49 @@ describe("the recipient's host reports a failed turn", () => {
         "This content was flagged",
       ),
     ).toMatchObject({ kind: "host-lost" });
+  });
+
+  it("a held turn once, and the final report after it too", () => {
+    const limit = {
+      version: 1,
+      state: "failed",
+      failure: { kind: "limit", scope: "credential" },
+      tool_ran: false,
+    };
+    const held = noteAgentMessageTurnFailed({
+      op_id: "op-held",
+      request: { chat: { agent_rpc_execution: execution } },
+      outcome: limit as any,
+      turn_started_at: STARTED,
+      held: { resume_at: STARTED + 3_600_000 },
+      now: STARTED + 60_000,
+    });
+    // No reset time from the provider: the time it resumes.
+    expect(held).toMatchObject({
+      kind: "limit",
+      phase: "held",
+      resets_at: STARTED + 3_600_000,
+    });
+    expect(
+      noteAgentMessageTurnFailed({
+        op_id: "op-held",
+        request: { chat: { agent_rpc_execution: execution } },
+        outcome: limit as any,
+        turn_started_at: STARTED,
+        held: { resume_at: STARTED + 3_600_000 },
+        now: STARTED + 60_000,
+      }),
+    ).toBeUndefined();
+    // The same message's final report is still sent.
+    expect(ended("op-held", limit)).toMatchObject({ kind: "limit" });
+    expect(ended("op-held", limit)).toBeUndefined();
+    // And replaces the held one if that was not sent yet: it would only
+    // arrive out of date.
+    expect(
+      listDueAgentRpcReports(STARTED + 60_000).map(
+        ({ report }) => report.phase,
+      ),
+    ).toEqual([undefined]);
   });
 
   it("a success only when the sender asked to hear of no reply", () => {
