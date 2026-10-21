@@ -21,6 +21,10 @@ export interface HistoryLimits {
   maxArchiveBytes: number;
   maxArchiveRecords: number;
   maxArchiveSegments: number;
+  // archived history beyond the bounds (e.g., from before them) removed per
+  // step: on open, after a reset, and on purge
+  maxTrimRecords: number;
+  maxTrimBytes: number;
   // archived epochs whose msg ids are kept, so a client can learn which of its
   // pending patches a reset included; older epochs answer "unknown"
   maxArchivedIdEpochs: number;
@@ -35,6 +39,8 @@ export const DEFAULT_HISTORY_LIMITS: Readonly<HistoryLimits> = Object.freeze({
   maxArchiveBytes: 1024 * MiB,
   maxArchiveRecords: 100_000,
   maxArchiveSegments: 1000,
+  maxTrimRecords: 10_000,
+  maxTrimBytes: 64 * MiB,
   maxArchivedIdEpochs: 2,
   maxInclusionIds: 1000,
 });
@@ -46,6 +52,8 @@ const ENV: { [key in keyof HistoryLimits]: string } = {
   maxArchiveBytes: "COCALC_HISTORY_MAX_ARCHIVE_BYTES",
   maxArchiveRecords: "COCALC_HISTORY_MAX_ARCHIVE_RECORDS",
   maxArchiveSegments: "COCALC_HISTORY_MAX_ARCHIVE_SEGMENTS",
+  maxTrimRecords: "COCALC_HISTORY_MAX_TRIM_RECORDS",
+  maxTrimBytes: "COCALC_HISTORY_MAX_TRIM_BYTES",
   maxArchivedIdEpochs: "COCALC_HISTORY_MAX_ARCHIVED_ID_EPOCHS",
   maxInclusionIds: "COCALC_HISTORY_MAX_INCLUSION_IDS",
 };

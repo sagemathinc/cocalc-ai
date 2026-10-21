@@ -1066,6 +1066,7 @@ class PersistStreamClient extends EventEmitter {
   }: { timeout?: number } = {}): Promise<{
     records: number;
     bytes: number;
+    done: boolean;
   }> => {
     return this.checkForError(
       await this.socket.request(null, {

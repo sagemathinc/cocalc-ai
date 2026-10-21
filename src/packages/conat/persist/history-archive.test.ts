@@ -10,6 +10,7 @@ import {
   PersistentStream,
 } from "./storage";
 import { initContext, syncFiles } from "./context";
+import { historyLimits } from "./history-limits";
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 import { DatabaseSync } from "node:sqlite";
 import { statSync, copyFileSync } from "node:fs";
@@ -25,7 +26,64 @@ const LIMIT_ENV = [
   "COCALC_HISTORY_MAX_ARCHIVE_RECORDS",
   "COCALC_HISTORY_MAX_ARCHIVE_SEGMENTS",
   "COCALC_HISTORY_MAX_ARCHIVED_ID_EPOCHS",
+  "COCALC_HISTORY_MAX_TRIM_RECORDS",
+  "COCALC_HISTORY_MAX_TRIM_BYTES",
 ];
+
+// Counts the rows each statement returns while fn runs.
+function rowsRead(fn: () => void): { max: number; total: number } {
+  const db = (stream as any).db;
+  const prepare = db.prepare.bind(db);
+  const counts = { max: 0, total: 0 };
+  const count = (statement: string, n: number) => {
+    // resetHistory's delete notification lists the live seqs (as on main)
+    if (statement === "SELECT seq FROM messages") return;
+    counts.max = Math.max(counts.max, n);
+    counts.total += n;
+  };
+  db.prepare = (statement: string) => {
+    const stmt = prepare(statement);
+    return new Proxy(stmt, {
+      get(target, key) {
+        if (key === "all") {
+          return (...args) => {
+            const rows = target.all(...args);
+            count(statement, rows.length);
+            return rows;
+          };
+        }
+        if (key === "get") {
+          return (...args) => {
+            const row = target.get(...args);
+            count(statement, row == null ? 0 : 1);
+            return row;
+          };
+        }
+        if (key === "iterate") {
+          return function* (...args) {
+            let n = 0;
+            try {
+              for (const row of target.iterate(...args)) {
+                n += 1;
+                yield row;
+              }
+            } finally {
+              count(statement, n);
+            }
+          };
+        }
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  try {
+    fn();
+  } finally {
+    db.prepare = prepare;
+  }
+  return counts;
+}
 
 beforeAll(() => {
   initContext({
@@ -265,6 +323,88 @@ describe("archive segments", () => {
     expect(sql(`SELECT COUNT(*) AS n FROM "${result.archive}"`)[0].n).toBe(20);
   });
 
+  it("bounds the work of archiving an epoch far larger than the archive bounds", () => {
+    process.env.COCALC_HISTORY_MAX_ARCHIVE_RECORDS = "50";
+    process.env.COCALC_HISTORY_MAX_TRIM_RECORDS = "100";
+    // e.g., from before the bounds: 2,000 messages, with a cut every 10
+    const db = (stream as any).db;
+    db.exec("BEGIN");
+    for (let i = 1; i <= 2000; i++) {
+      (stream as any).insertMessage({
+        encoding: DataEncoding.JsonCodec,
+        raw: Buffer.from('"x"'),
+        ...(i % 10 == 0
+          ? { checkpoint: { name: "latest_snapshot", seq: i - 1 } }
+          : {}),
+      });
+    }
+    db.exec("COMMIT");
+    let result: any;
+    const read = rowsRead(() => {
+      result = stream.resetHistory({ archive: true });
+    });
+    // the newest 50 scanned (and 1 more to stop), then segmented, then 100
+    // older ones trimmed; nothing in proportion to the 2,000
+    expect(read.total).toBeLessThan(400);
+    expect(read.max).toBeLessThanOrEqual(100);
+    expect(result.droppedArchived).toEqual({ records: 100, bytes: 300 });
+    const kept = stream.historyArchives()[0].kept.records;
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThanOrEqual(50);
+    const left = () =>
+      sql(`SELECT COUNT(*) AS n FROM "${result.archive}"`)[0].n;
+    expect(left()).toBe(2000 - 100 - (50 - kept));
+    // each later step removes at most 100 more, until only the segments
+    // are left
+    let steps = 0;
+    while (left() > kept) {
+      const before = left();
+      const step = rowsRead(() =>
+        (stream as any).runTransaction(() =>
+          (stream as any).trimArchivedHistory(historyLimits()),
+        ),
+      );
+      expect(step.total).toBeLessThan(250);
+      expect(before - left()).toBeLessThanOrEqual(100);
+      steps += 1;
+    }
+    expect(steps).toBe(Math.ceil((2000 - 100 - 50) / 100));
+    expect(stream.historyArchives()[0].kept.records).toBe(kept);
+  });
+
+  it("removes many archives from before segments in bounded steps, oldest first", () => {
+    // while these are made, each reset removes just 1 message of them
+    process.env.COCALC_HISTORY_MAX_TRIM_RECORDS = "1";
+    for (let epoch = 0; epoch < 30; epoch++) {
+      for (let i = 0; i < 3; i++) write(30, epoch > 0 ? { epoch } : {});
+      stream.resetHistory({ archive: true });
+      // as an older server left it: a table with no index
+      sql("DELETE FROM history_segments");
+      sql("UPDATE history_epochs SET archive=NULL");
+    }
+    const count = () =>
+      sql(
+        "SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'messages_archived_%'",
+      )[0].n;
+    let before = count();
+    expect(before).toBeGreaterThan(15);
+    process.env.COCALC_HISTORY_MAX_TRIM_RECORDS = "7";
+    let steps = 0;
+    while (count() > 0) {
+      const step = rowsRead(() =>
+        (stream as any).runTransaction(() =>
+          (stream as any).trimArchivedHistory(historyLimits()),
+        ),
+      );
+      // at most 8 names and 7 messages read
+      expect(step.max).toBeLessThanOrEqual(8);
+      expect(before - count()).toBeLessThanOrEqual(3);
+      before = count();
+      steps += 1;
+    }
+    expect(steps).toBeGreaterThan(5);
+  });
+
   it("keeps at most 100 archives, however small", () => {
     for (let epoch = 0; epoch < 102; epoch++) {
       write(10, epoch > 0 ? { epoch } : {});
@@ -286,7 +426,11 @@ describe("archive segments", () => {
   it("deletes archived history on request, keeping the current history and the ids", () => {
     write(10, { msgID: "a" });
     stream.resetHistory({ ...judge(), archive: true, seed: snapshot("v") });
-    expect(stream.purgeArchivedHistory()).toEqual({ records: 1, bytes: 10 });
+    expect(stream.purgeArchivedHistory()).toEqual({
+      records: 1,
+      bytes: 10,
+      done: true,
+    });
     expect(
       sql(
         "SELECT name FROM sqlite_master WHERE name LIKE 'messages_archived_%'",
