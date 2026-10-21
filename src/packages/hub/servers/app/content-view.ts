@@ -45,6 +45,8 @@ function appFileUrl(project_id: string, encodedPath: string): string {
 // Query parameters of the file route that the forwarded query must not set:
 // they change how the file is served, or carry credentials.
 const RESERVED_QUERY = new Set([
+  // Read by this page itself (print once loaded), never by the file.
+  "print",
   "download",
   "downloadFilename",
   "deleteAfterDownload",
@@ -67,9 +69,12 @@ export function contentFrameUrl(issuedUrl: string, search: string): string {
 export function contentViewPage({
   url,
   nonce,
+  print = false,
 }: {
   url: string;
   nonce: string;
+  // Print once the page, frame included, has loaded (the editor's Print).
+  print?: boolean;
 }): string {
   // The fragment never reaches the server; the script appends it.
   return `<!doctype html>
@@ -78,7 +83,7 @@ export function contentViewPage({
 <style nonce="${nonce}">html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}</style>
 </head><body>
 <iframe id="content" sandbox="${CONTENT_FRAME_SANDBOX}" allow="fullscreen" data-src="${escapeHtml(url)}"></iframe>
-<script nonce="${nonce}">(function(){var f=document.getElementById("content");f.src=f.getAttribute("data-src")+location.hash;})();</script>
+<script nonce="${nonce}">(function(){var f=document.getElementById("content");f.src=f.getAttribute("data-src")+location.hash;${print ? 'window.addEventListener("load",function(){window.print();});' : ""}})();</script>
 </body></html>`;
 }
 
@@ -143,7 +148,10 @@ export function initContentView(
           ].join("; "),
         );
         res.setHeader("X-Frame-Options", "DENY");
-        res.type("html").send(contentViewPage({ url, nonce }));
+        const print = new URLSearchParams(
+          q === -1 ? "" : req.originalUrl.slice(q + 1),
+        ).has("print");
+        res.type("html").send(contentViewPage({ url, nonce, print }));
       } catch (err) {
         logger.debug("content view fell back to the app", {
           project_id,
