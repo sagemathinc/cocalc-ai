@@ -181,9 +181,9 @@ describe("WidgetManager.close", () => {
     });
     const constructed = jest.fn();
     const loading = (manager.manager as any).loadClass(
-      "CustomView",
-      "k3d",
-      "2.16.0",
+      "IntSliderView",
+      "@jupyter-widgets/controls",
+      "2.0.0",
     );
     manager.close();
     release(
@@ -264,10 +264,13 @@ describe("widget code restrictions", () => {
         /not supported/,
       );
     }
+    // Third-party libraries too, until widgets run in an opaque frame.
+    await expect(lib.loadClass("Plot", "k3d", "2.16.0")).rejects.toThrow(
+      /not supported/,
+    );
     expect(original).not.toHaveBeenCalled();
     await lib.loadClass("IntSliderModel", "@jupyter-widgets/controls", "2.0.0");
-    await lib.loadClass("Plot", "k3d", "^2.16.0");
-    expect(original).toHaveBeenCalledTimes(2);
+    expect(original).toHaveBeenCalledTimes(1);
   });
 
   it("shows HTML descriptions as text", () => {
