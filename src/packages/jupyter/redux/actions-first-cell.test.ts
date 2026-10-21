@@ -49,9 +49,12 @@ describe("createFirstCell", () => {
     expect(actions._set).toHaveBeenCalledWith({
       type: "cell",
       id: "typed-1",
-      pos: 0,
+      pos: expect.any(Number),
       input: "x",
     });
+    // Its own position near 0, so concurrent typed starts do not tie.
+    const { pos } = actions._set.mock.calls[0][0];
+    expect(Math.abs(pos)).toBeLessThanOrEqual(0.5);
     expect(actions.set_trust_notebook).toHaveBeenCalledWith(true);
   });
 

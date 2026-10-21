@@ -2929,7 +2929,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       return id;
     }
     const id = input ? this.new_id() : FIRST_CELL_ID;
-    this._set({ type: "cell", id, pos: 0, input });
+    // Typed cells started at once by several clients each get their own
+    // position near 0, so cells inserted between them later land between.
+    const pos = input ? Math.random() - 0.5 : 0;
+    this._set({ type: "cell", id, pos, input });
     // It is safe to trust a notebook the user started from empty.
     this.set_trust_notebook(true);
     return id;
