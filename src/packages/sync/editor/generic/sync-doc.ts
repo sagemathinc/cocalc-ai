@@ -99,6 +99,7 @@ import {
   proofCoversHistory,
   resetOptions,
   savedFileOf,
+  historyRestartKind,
   savesThroughWriteFile,
   seedFor,
   validProof,
@@ -763,14 +764,11 @@ export class SyncDoc extends EventEmitter {
   });
 
   // A patch too large to load (e.g., a runaway notebook output saved as one
-  // 500 MB patch) makes every open of this document fail with 413.  Rather
-  // than leave whoever is opening it stuck, reset the history through the
-  // document's own patch stream, keeping the old history aside: open copies
-  // of the document see the new history epoch and close instead of writing
-  // stale state, and the persist server fences out writes from the old epoch.
-  // The reset only happens if that patch is still there, so when several
-  // clients hit it at once only the first resets the history.  This only
-  // happens when a client opens the document, at most once per SyncDoc.
+  // 500 MB patch) makes every open of this document fail with 413.  A
+  // document saved with writeFile may be reset from its saved file, but only
+  // when its proof covers every accepted edit (resetOversizedHistoryFromFile);
+  // nothing else is reset automatically.  The user is told instead
+  // (history-unloadable) and can choose a restart.  At most once per SyncDoc.
   private oversizedHistoryReset = false;
   private resetOversizedHistory = async (err: unknown): Promise<boolean> => {
     const oversized_seq = (err as any)?.oversizedHistorySeq;
@@ -782,44 +780,13 @@ export class SyncDoc extends EventEmitter {
       return await this.resetOversizedHistoryFromFile();
     }
     // Documents whose file is written elsewhere (a notebook's .ipynb, a
-    // board's file) have no proof yet; they keep this unseeded reset for now
-    // (bounded history H1b-3).
-    if (typeof this.client.resetOversizedHistory != "function") {
-      return false;
-    }
-    this.oversizedHistoryReset = true;
-    let result: { history_epoch: number; reset: boolean };
-    try {
-      result = await this.client.resetOversizedHistory({
-        project_id: this.project_id,
-        path: this.syncPath,
-        oversized_seq,
-        // The same route as the patches: a board's reset goes through the
-        // board write service (the ordinary one refuses it).
-        ...(this.opts.patchesPersist
-          ? { persist: this.opts.patchesPersist }
-          : {}),
-      });
-    } catch (resetErr) {
-      // e.g., no permission or no connection: keep retrying the open, and
-      // try the reset again next time
-      this.oversizedHistoryReset = false;
-      this.dbg("resetOversizedHistory")(`failed -- ${resetErr}`);
-      return false;
-    }
-    // Open with the epoch now in effect -- from our reset, or from whoever
-    // reset the history first -- rather than close, as this document would
-    // when it sees the epoch change.
-    this.history_epoch = result.history_epoch;
-    if (result.reset) {
-      this.client.alert_message?.({
-        type: "info",
-        title: "Edit history reset",
-        message: `The edit history (TimeTravel) of ${this.path} contained an entry too large to load, most likely a huge output, so its edit history was reset and the file opened normally. CoCalc kept a copy of the old history; contact support if you need it.`,
-        block: true,
-      });
-    }
-    return true;
+    // board's file) have no proof.  They are never reset automatically: that
+    // would silently drop every edit since the file was saved (bounded
+    // history plan H1b-3).  The user is told, and for a notebook can confirm
+    // restarting from the saved .ipynb (restartHistoryFromIpynb, through the
+    // project); the open keeps retrying meanwhile.
+    this.reportUnloadableHistory();
+    return false;
   };
 
   // The history holds an entry too large to load (a 413).  Reset it from the
@@ -937,7 +904,10 @@ export class SyncDoc extends EventEmitter {
   private reportUnloadableHistory = (): void => {
     if (this.unloadableHistoryReported) return;
     this.unloadableHistoryReported = true;
-    this.emit("history-unloadable", { path: this.path });
+    this.emit("history-unloadable", {
+      path: this.path,
+      restart: historyRestartKind(this.syncPath),
+    });
   };
 
   // The user's choice when the history cannot be loaded: restart it from the

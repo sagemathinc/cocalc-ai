@@ -11,6 +11,7 @@ import * as awaiting from "awaiting";
 import { fromJS, Map, Set as iSet } from "immutable";
 import { debounce, isEqual } from "lodash";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { attachHistoryResetHandlers } from "./history-reset-handlers";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
@@ -1631,6 +1632,14 @@ export class JupyterActions extends JupyterActions0 {
     this.syncdb.on("has-uncommitted-changes", this.set_save_status);
     this.syncdb.on("disconnected", this.handleSyncdbDisconnected);
     this.syncdb.on("open-phase", this.handleSyncdbOpenPhase);
+    // a reset or unloadable edit history (bounded history plan H1b-3)
+    attachHistoryResetHandlers({
+      project_id: this.project_id,
+      path: this.path,
+      syncdb: this.syncdb,
+      redux: this.redux,
+      isClosed: () => this.is_closed(),
+    });
 
     // Also maintain read_only state.
     this.syncdb.on("metadata-change", this.sync_read_only);

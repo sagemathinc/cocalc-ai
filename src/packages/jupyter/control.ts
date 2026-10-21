@@ -377,16 +377,38 @@ export async function start({
     client,
     fs: syncFs,
   });
+  const { actions } = initJupyterRedux(syncdb, client);
+  jupyterActions[ipynbPath(path)] = actions;
+  // Only this session's own end stops it: a late "closed" or "error" from an
+  // older session never stops its replacement (bounded history plan H1b-3,
+  // §4).
+  const stopThisSession = () => {
+    if (jupyterActions[ipynbPath(path)] === actions) {
+      stop({ path });
+    }
+  };
   syncdb.on("error", (err) => {
     // [ ] TODO: some way to convey this to clients (?)
     logger.debug(`syncdb error -- ${err}`, path);
-    stop({ path });
+    stopThisSession();
+  });
+  // After the history was reset (a completed hand-off, H1b-2), the notebook
+  // comes back in the new epoch, once.  The running kernel does not survive
+  // this; the notebook document does (it is the new history's seed).
+  let reopen = false;
+  syncdb.once("history-reset", () => {
+    reopen = true;
   });
   syncdb.once("closed", () => {
-    stop({ path });
+    const current = jupyterActions[ipynbPath(path)] === actions;
+    stopThisSession();
+    if (reopen && current && !isRunning(path)) {
+      logger.debug("start: reopening after a history reset", path);
+      start({ path, project_id: project_id0, client, fs }).catch((err) =>
+        logger.debug("start: reopening failed", { path, err: `${err}` }),
+      );
+    }
   });
-  const { actions } = initJupyterRedux(syncdb, client);
-  jupyterActions[ipynbPath(path)] = actions;
   if (syncdb.get_state() === "init") {
     await once(syncdb, "ready");
   }
@@ -394,7 +416,12 @@ export async function start({
     return;
   }
   try {
-    await hydrateNotebookFromIpynbIfNeeded({ actions, fs: syncFs, path });
+    // After a reset, the history's seed is the notebook: never refill it
+    // from the .ipynb, even when it has no cells (bounded history plan
+    // H1b-3, CORR-H1B3P-2).
+    if (syncdb.get_settings()?.get?.("history_reset") == null) {
+      await hydrateNotebookFromIpynbIfNeeded({ actions, fs: syncFs, path });
+    }
     await restoreKernelFromIpynb({ actions, fs: syncFs, path });
     await loadKernelSpecsIntoStore({ actions });
   } catch (err) {

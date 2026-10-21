@@ -305,11 +305,16 @@ export class SyncClient extends EventEmitter implements Client0 {
     path,
     persist,
     options,
+    busyAttempts,
   }: {
     project_id: string;
     path: string;
     persist?: { service: string; persistUser: Record<string, never> };
     options: ResetHistoryOptions;
+    // how many times to ask while another reset of this history is in
+    // progress (default: about the server's old 30 s wait); a caller with its
+    // own deadline passes fewer
+    busyAttempts?: number;
   }): Promise<ResetHistoryResult> => {
     const stream = this.client.sync.astream({
       project_id,
@@ -319,7 +324,9 @@ export class SyncClient extends EventEmitter implements Client0 {
     });
     try {
       // while another reset of this history is in progress, wait for it
-      return await retryWhileResetBusy(() => stream.resetHistory(options));
+      return await retryWhileResetBusy(() => stream.resetHistory(options), {
+        attempts: busyAttempts,
+      });
     } finally {
       stream.close();
     }
