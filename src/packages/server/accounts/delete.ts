@@ -21,7 +21,7 @@ import {
   recordAccountAdminAuditEventInTransaction,
 } from "./admin-audit";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
-import { CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL } from "./deleted-account-retention";
+import { CLEAR_DELETED_ACCOUNT_FIELDS_SQL } from "./deleted-account-retention";
 import {
   dropOnHosts,
   revokeComputersForAccount,
@@ -84,8 +84,8 @@ database, since it may be referred to by many other things (projects, logs,
 etc.). However, the deleted field is set to true, so the account is excluded
 from user search and it is not possible to sign in to this account.
 
-The personal data in the row (names, password hash, avatar, ssh keys, LTI
-identity, ...) is cleared. The former email address is kept for a limited time
+The personal data, credentials and per-user settings in the row are cleared
+(DELETED_ACCOUNT_CLEARED_FIELDS in @cocalc/util/db-schema/deleted-account-fields). The former email address is kept for a limited time
 to help with recovery requests and abuse, then removed by the retention loop in
 deleted-account-retention.ts. An audit row records who started the deletion.
 */
@@ -120,7 +120,7 @@ export async function markAccountDeleted(
            email_address_before_delete = CASE WHEN deleted IS TRUE THEN email_address_before_delete ELSE $1::TEXT END,
            deleted_at = CASE WHEN deleted IS TRUE THEN deleted_at ELSE NOW() END,
            deleted=true, email_address=NULL, passports=NULL,
-           ${CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL}
+           ${CLEAR_DELETED_ACCOUNT_FIELDS_SQL}
          WHERE account_id=$2::UUID`,
         [email_address_before_delete, account_id],
       );

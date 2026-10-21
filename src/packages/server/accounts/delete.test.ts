@@ -204,6 +204,11 @@ describe("delete account", () => {
       "ssh_keys",
       "lti_id",
       "email_address_verified",
+      "api_key",
+      "notes",
+      "other_settings",
+      "groups",
+      "auto_balance",
     ]) {
       expect(update[0]).toContain(`${field}=NULL`);
     }

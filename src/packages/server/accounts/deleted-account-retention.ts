@@ -7,45 +7,27 @@
 Retention of personal data on deleted accounts.
 
 A deleted account keeps its row, since projects, logs, purchases, etc. refer to
-it. Deletion clears the personal data in that row right away (see
-markAccountDeleted), except the former email address, which is kept for
-DELETED_ACCOUNT_EMAIL_RETENTION_DAYS to help with recovery requests and abuse,
-then removed by this maintenance loop. The loop also clears the personal data
-of accounts deleted before deletion did that itself.
-
-Financial records (stripe ids, purchases, statements) are kept, since the law
-requires keeping them.
+it. Deletion clears DELETED_ACCOUNT_CLEARED_FIELDS right away (see
+markAccountDeleted and @cocalc/util/db-schema/deleted-account-fields, which
+also lists what is kept and why), except the former email address, which is
+kept for DELETED_ACCOUNT_EMAIL_RETENTION_DAYS to help with recovery requests and
+abuse, then removed by this maintenance loop. The loop also clears those fields
+for accounts deleted before deletion did that itself.
 */
 
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
+import { DELETED_ACCOUNT_CLEARED_FIELDS } from "@cocalc/util/db-schema/deleted-account-fields";
 import { ensureAccountRevocationsTable } from "./revocation";
 
 const log = getLogger("server:accounts:deleted-account-retention");
 
 export const DELETED_ACCOUNT_EMAIL_RETENTION_DAYS = 90;
 
-// Personal data in the accounts row, cleared when the account is deleted.
-export const DELETED_ACCOUNT_PERSONAL_FIELDS = [
-  "display_name",
-  "first_name",
-  "last_name",
-  "password_hash",
-  "profile",
-  "ssh_keys",
-  "lti_id",
-  "lti_data",
-  "created_by",
-  "sign_up_usage_intent",
-  "email_address_verified",
-  "email_address_challenge",
-  "email_address_problem",
-] as const;
+export const CLEAR_DELETED_ACCOUNT_FIELDS_SQL =
+  DELETED_ACCOUNT_CLEARED_FIELDS.map((field) => `${field}=NULL`).join(", ");
 
-export const CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL =
-  DELETED_ACCOUNT_PERSONAL_FIELDS.map((field) => `${field}=NULL`).join(", ");
-
-const HAS_PERSONAL_FIELDS_SQL = DELETED_ACCOUNT_PERSONAL_FIELDS.map(
+const HAS_UNCLEARED_FIELDS_SQL = DELETED_ACCOUNT_CLEARED_FIELDS.map(
   (field) => `${field} IS NOT NULL`,
 ).join(" OR ");
 
@@ -61,10 +43,10 @@ export async function purgeDeletedAccountPersonalData({
 } = {}): Promise<{ cleared: number; emailsPurged: number }> {
   const pool = getPool();
   const { rowCount: cleared } = await pool.query(
-    `UPDATE accounts SET ${CLEAR_DELETED_ACCOUNT_PERSONAL_FIELDS_SQL}
+    `UPDATE accounts SET ${CLEAR_DELETED_ACCOUNT_FIELDS_SQL}
       WHERE account_id IN (
         SELECT account_id FROM accounts
-         WHERE deleted IS TRUE AND (${HAS_PERSONAL_FIELDS_SQL})
+         WHERE deleted IS TRUE AND (${HAS_UNCLEARED_FIELDS_SQL})
          LIMIT $1)`,
     [batchSize],
   );
@@ -88,7 +70,14 @@ export async function purgeDeletedAccountPersonalData({
   return { cleared: cleared ?? 0, emailsPurged: emailsPurged ?? 0 };
 }
 
+let started = false;
+
+// Started by the primary conat-api bay worker (server/conat/index.ts) and by
+// single-hub deployments (hub maintenance block); it runs once per process.
+// The purge is idempotent, so overlapping runs only repeat work.
 export default function initDeletedAccountRetention(): void {
+  if (started) return;
+  started = true;
   log.info("starting deleted-account retention loop", {
     CHECK_INTERVAL_MS,
     DELETED_ACCOUNT_EMAIL_RETENTION_DAYS,

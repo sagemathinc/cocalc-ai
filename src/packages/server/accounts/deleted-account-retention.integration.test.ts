@@ -25,6 +25,38 @@ describePglite("deleted account retention", () => {
     process.env.COCALC_DB = "pglite";
     process.env.COCALC_PGLITE_DATA_DIR = "memory://";
     const getPool = (await import("@cocalc/database/pool")).default;
+    // every cleared field, typed like the real schema
+    const types: { [field: string]: string } = {
+      profile: "JSONB",
+      ssh_keys: "JSONB",
+      lti_data: "JSONB",
+      email_address_verified: "JSONB",
+      email_address_challenge: "JSONB",
+      email_address_problem: "JSONB",
+      other_settings: "JSONB",
+      editor_settings: "JSONB",
+      terminal: "JSONB",
+      customize: "JSONB",
+      stripe_checkout_session: "JSONB",
+      auto_balance: "JSONB",
+      lti_id: "TEXT[]",
+      tags: "TEXT[]",
+      groups: "TEXT[]",
+      tours: "TEXT[]",
+      autosave: "INTEGER",
+      font_size: "INTEGER",
+      unread_message_count: "INTEGER",
+      trusted_product_access: "BOOLEAN",
+      unlisted: "BOOLEAN",
+      email_daily_statements: "BOOLEAN",
+      balance_alert: "BOOLEAN",
+      last_message_summary: "TIMESTAMP",
+    };
+    const { DELETED_ACCOUNT_CLEARED_FIELDS } =
+      await import("@cocalc/util/db-schema/deleted-account-fields");
+    const columns = DELETED_ACCOUNT_CLEARED_FIELDS.map(
+      (field) => `${field} ${types[field] ?? "TEXT"}`,
+    ).join(",\n        ");
     await getPool().query(`
       CREATE TABLE accounts (
         account_id UUID PRIMARY KEY,
@@ -32,19 +64,8 @@ describePglite("deleted account retention", () => {
         deleted_at TIMESTAMP,
         email_address VARCHAR(254),
         email_address_before_delete VARCHAR(254),
-        display_name VARCHAR(254),
-        first_name VARCHAR(254),
-        last_name VARCHAR(254),
-        password_hash VARCHAR(173),
-        profile JSONB,
-        ssh_keys JSONB,
-        lti_id TEXT[],
-        lti_data JSONB,
-        created_by VARCHAR(254),
-        sign_up_usage_intent TEXT,
-        email_address_verified JSONB,
-        email_address_challenge JSONB,
-        email_address_problem JSONB
+        stripe_customer_id TEXT,
+        ${columns}
       )
     `);
     const deleted = [RECENT, OLD, NO_REVOCATION, RECENT_NO_REVOCATION];
@@ -52,10 +73,12 @@ describePglite("deleted account retention", () => {
       await getPool().query(
         `INSERT INTO accounts (account_id, deleted, email_address_before_delete,
            display_name, first_name, last_name, password_hash, profile, ssh_keys,
-           lti_id, created_by, email_address_verified)
+           lti_id, created_by, email_address_verified, api_key, notes,
+           other_settings, groups, stripe_customer_id)
          VALUES ($1, TRUE, $2, 'Ada L', 'Ada', 'Lovelace', 'hash',
            '{"color":"red"}', '{"fp":{"value":"ssh-ed25519 AAAA ada@example.com"}}',
-           ARRAY['iss','sub'], '203.0.113.7', $3::JSONB)`,
+           ARRAY['iss','sub'], '203.0.113.7', $3::JSONB, 'sk_legacy', 'crm note',
+           '{"newsletter":true}', ARRAY['admin'], 'cus_123')`,
         [
           account_id,
           `${account_id}@example.com`,
@@ -122,9 +145,15 @@ describePglite("deleted account retention", () => {
         "lti_id",
         "created_by",
         "email_address_verified",
+        "api_key",
+        "notes",
+        "other_settings",
+        "groups",
       ]) {
         expect(row[field]).toBeNull();
       }
+      // financial records are kept
+      expect(row.stripe_customer_id).toBe("cus_123");
     }
     // deleted 10 days ago: the former email is kept until the retention ends
     expect(byId[RECENT].email_address_before_delete).toBe(

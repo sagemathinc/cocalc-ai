@@ -818,11 +818,13 @@ export const privacyPolicy: PublicPolicy = {
         </p>{" "}
         <p>
           When you delete your account, Sagemath removes your email address,
-          name, password, profile picture, SSH keys and sign-in connections from
-          your account record. We keep your former email address for 90 days to
-          help with account recovery requests and to prevent abuse, and then
-          delete it. Records that we must keep by law, such as purchase and tax
-          records, are kept for as long as the law requires.
+          name, password, profile picture, SSH keys, sign-in connections,
+          settings and other personal data from your account record, and deletes
+          any contact record about you in our sales and marketing system. We
+          keep your former email address for 90 days to help with account
+          recovery requests and to prevent abuse, and then delete it. Records
+          that we must keep by law, such as purchase and tax records, are kept
+          for as long as the law requires.
         </p>
       </PolicySection>{" "}
       <PolicySection
