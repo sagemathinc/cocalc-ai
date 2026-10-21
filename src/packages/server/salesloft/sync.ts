@@ -48,7 +48,13 @@ exponential backoff with up to 10 minutes between attempts.
 */
 
 import getPool from "@cocalc/database/pool";
-import { create, destroy, list, update } from "./people";
+import {
+  create,
+  destroy,
+  destroyForDeletedAccount,
+  list,
+  update,
+} from "./people";
 import getLogger from "@cocalc/backend/logger";
 import { delay } from "awaiting";
 import { isMarketingConsentEnabled } from "@cocalc/util/notification-preferences";
@@ -239,6 +245,31 @@ export async function removeOptedOutUsers(delayMs: number = 1000) {
     ),
     delayMs,
   );
+}
+
+// Deleted accounts never sync again (they have no email address), so their
+// Salesloft people are deleted here. Called by the deleted-account retention
+// loop (server/accounts/deleted-account-retention.ts), which runs in every
+// deployment, unlike the Salesloft sync loop.
+export async function removeDeletedUsers(
+  delayMs: number = 1000,
+): Promise<{ deleted: number; failed: number }> {
+  const { rows } = await getPool().query(
+    "SELECT account_id, salesloft_id FROM accounts WHERE deleted IS TRUE AND salesloft_id IS NOT NULL",
+  );
+  const stats = { deleted: 0, failed: 0 };
+  for (const { account_id, salesloft_id } of rows) {
+    try {
+      await destroyForDeletedAccount(account_id, `${salesloft_id}`);
+      stats.deleted += 1;
+    } catch (err) {
+      // the link is kept, so the next run retries
+      log("failed to delete the salesloft person of a deleted account", err);
+      stats.failed += 1;
+    }
+    await delay(delayMs);
+  }
+  return stats;
 }
 
 function marketingConsentSql(): string {
