@@ -4,9 +4,18 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  type BeneathCopyOptions,
+  type BeneathPath,
+  beneathRelative,
+  copyBeneath,
+  kindBeneath,
+  mkdirBeneath,
+  renameBeneath,
+  rmBeneath,
+} from "./beneath-copy";
 import { decodeTarCQuotedString } from "./legacy-migration/tar-output";
 
 export function decodePathCopyArchiveListing(output: Buffer): string[] {
@@ -48,38 +57,61 @@ export function archivePathIsAllowed({
   return false;
 }
 
+// Copies `source` to exactly `destination` (both beneath trusted roots),
+// replacing whatever is there in one rename: the copy goes to a hidden sibling
+// first, and a failed copy leaves the destination untouched. Every step is
+// anchored beneath the destination root and refuses symlinks, so the project
+// owning that root cannot redirect it (see beneath-copy.ts).
 export async function replacePathFromStaging({
   source,
   destination,
-  destinationExists,
-  copy,
+  options,
 }: {
-  source: string;
-  destination: string;
-  destinationExists: boolean;
-  copy: (source: string, destination: string) => Promise<void>;
+  source: BeneathPath;
+  destination: BeneathPath;
+  options?: BeneathCopyOptions;
 }): Promise<void> {
-  const parent = path.dirname(destination);
-  const basename = path.basename(destination);
+  const root = destination.root;
+  const rel = beneathRelative(destination.path);
+  if (!rel) {
+    throw new Error("copy destination cannot be the root");
+  }
+  const parent = path.posix.dirname(rel);
+  const basename = path.posix.basename(rel);
   const token = randomUUID();
-  const incoming = path.join(parent, `.${basename}.cocalc-incoming-${token}`);
-  const previous = path.join(parent, `.${basename}.cocalc-previous-${token}`);
-  await mkdir(parent, { recursive: true });
+  const sibling = (kind: string) => {
+    const name = `.${basename}.cocalc-${kind}-${token}`;
+    return parent === "." ? name : path.posix.join(parent, name);
+  };
+  const incoming = sibling("incoming");
+  const previous = sibling("previous");
+  if (parent !== ".") {
+    mkdirBeneath(root, parent);
+  }
   try {
-    await copy(source, incoming);
-    if (!destinationExists) {
-      await rename(incoming, destination);
+    await copyBeneath({
+      src: source,
+      dest: { root, path: incoming },
+      options: {
+        ...options,
+        recursive: options?.recursive ?? true,
+        force: true,
+        errorOnExist: false,
+      },
+    });
+    if ((await kindBeneath(root, rel)) === "missing") {
+      renameBeneath(root, incoming, rel, { noReplace: true });
       return;
     }
-    await rename(destination, previous);
+    renameBeneath(root, rel, previous, { noReplace: true });
     try {
-      await rename(incoming, destination);
+      renameBeneath(root, incoming, rel, { noReplace: true });
     } catch (err) {
       try {
-        await rename(previous, destination);
+        renameBeneath(root, previous, rel, { noReplace: true });
       } catch (restoreErr) {
         const failure = new Error(
-          `copy replacement and rollback both failed for ${destination}: ${err}; rollback: ${restoreErr}`,
+          `copy replacement and rollback both failed for ${rel}: ${err}; rollback: ${restoreErr}`,
         );
         // @ts-ignore -- Error.cause is unavailable in this package's lib target.
         failure.cause = restoreErr;
@@ -87,37 +119,41 @@ export async function replacePathFromStaging({
       }
       throw err;
     }
-    await rm(previous, { recursive: true, force: true }).catch(() => {});
+    await rmBeneath(root, previous).catch(() => {});
   } finally {
-    await rm(incoming, { recursive: true, force: true }).catch(() => {});
+    await rmBeneath(root, incoming).catch(() => {});
   }
 }
 
+// Installs `source` at `destination`. Ordinary copies merge (cp -T); only
+// collection requests (`exact`) atomically replace the destination. Returns
+// false when an exact no-clobber copy finds the destination already there.
 export async function installPathFromStaging({
   source,
   destination,
-  destinationExists,
   exact,
   options,
-  copy,
 }: {
-  source: string;
-  destination: string;
-  destinationExists: boolean;
+  source: BeneathPath;
+  destination: BeneathPath;
   exact?: boolean;
-  options?: { force?: boolean; errorOnExist?: boolean };
-  copy: (source: string, destination: string) => Promise<void>;
+  options?: BeneathCopyOptions;
 }): Promise<boolean> {
   // The hub resolves array and base-relative sources to their final destination
   // paths. Ordinary copies must therefore use cp's -T-style merge semantics;
   // only collection requests explicitly opt into atomic replacement.
   if (!exact) {
-    await mkdir(path.dirname(destination), { recursive: true });
-    await copy(source, destination);
+    await copyBeneath({
+      src: source,
+      dest: destination,
+      options: { ...options, recursive: options?.recursive ?? true },
+    });
     return true;
   }
 
-  if (destinationExists && !(options?.force ?? true)) {
+  const exists =
+    (await kindBeneath(destination.root, destination.path)) !== "missing";
+  if (exists && !(options?.force ?? true)) {
     if (options?.errorOnExist) {
       const err = new Error(
         "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
@@ -129,11 +165,6 @@ export async function installPathFromStaging({
     return false;
   }
 
-  await replacePathFromStaging({
-    source,
-    destination,
-    destinationExists,
-    copy,
-  });
+  await replacePathFromStaging({ source, destination, options });
   return true;
 }

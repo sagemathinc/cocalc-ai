@@ -418,6 +418,7 @@ const INTERNAL_METHODS = new Set([
   "cpSafeDirectoryRecursive",
   "cpSafeOne",
   "resolveOuchOptionPaths",
+  "resolveAnchoredPath",
 ]);
 
 export class SandboxedFilesystem {
@@ -1603,6 +1604,23 @@ export class SandboxedFilesystem {
       absoluteTempAlias,
       compareBasePath: compareBase,
     });
+  };
+
+  // The trusted base directory (home, rootfs or scratch) that `path` belongs
+  // to, and the path relative to it. For host code that does its own
+  // descriptor-anchored operations beneath that base (see
+  // project-host/beneath-copy.ts); nothing on disk is consulted, so a symlink
+  // in the path is left for those operations to refuse.
+  resolveAnchoredPath = async (
+    path: string,
+  ): Promise<{ root: string; path: string }> => {
+    const { pathInSandbox, sandboxBasePath } =
+      await this.resolvePathInSandbox(path);
+    const rel = relativePathWithin(pathInSandbox, sandboxBasePath);
+    if (rel == null) {
+      throw Error(`'${path}' is outside of the sandbox`);
+    }
+    return { root: sandboxBasePath, path: rel };
   };
 
   safeAbsPath = async (path: string): Promise<string> => {

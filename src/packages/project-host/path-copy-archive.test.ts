@@ -3,7 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -54,20 +62,18 @@ describe("path copy archive listings", () => {
   it("replaces an existing directory at the exact destination", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-replace-"));
     try {
-      const source = path.join(root, "source-assignment");
+      await mkdir(path.join(root, "source-assignment"));
+      await mkdir(path.join(root, "collected-assignment"));
+      await writeFile(path.join(root, "source-assignment", "new.txt"), "new");
+      await writeFile(
+        path.join(root, "collected-assignment", "old.txt"),
+        "old",
+      );
       const destination = path.join(root, "collected-assignment");
-      await mkdir(source);
-      await mkdir(destination);
-      await writeFile(path.join(source, "new.txt"), "new");
-      await writeFile(path.join(destination, "old.txt"), "old");
 
       await replacePathFromStaging({
-        source,
-        destination,
-        destinationExists: true,
-        copy: async (src, dest) => {
-          await cp(src, dest, { recursive: true });
-        },
+        source: { root, path: "source-assignment" },
+        destination: { root, path: "collected-assignment" },
       });
 
       expect(await readFile(path.join(destination, "new.txt"), "utf8")).toBe(
@@ -82,6 +88,10 @@ describe("path copy archive listings", () => {
           "utf8",
         ),
       ).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await readdir(root)).sort()).toEqual([
+        "collected-assignment",
+        "source-assignment",
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -90,21 +100,16 @@ describe("path copy archive listings", () => {
   it("merges an ordinary directory copy at the resolved destination", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-merge-"));
     try {
-      const source = path.join(root, "source");
       const destination = path.join(root, "handouts", "lecture notes");
-      await mkdir(source);
+      await mkdir(path.join(root, "source"));
       await mkdir(destination, { recursive: true });
-      await writeFile(path.join(source, "new.txt"), "new");
+      await writeFile(path.join(root, "source", "new.txt"), "new");
       await writeFile(path.join(destination, "keep.txt"), "keep");
 
       await installPathFromStaging({
-        source,
-        destination,
-        destinationExists: true,
+        source: { root, path: "source" },
+        destination: { root, path: "handouts/lecture notes" },
         options: { force: false },
-        copy: async (src, dest) => {
-          await cp(src, dest, { force: false, recursive: true });
-        },
       });
 
       expect(await readFile(path.join(destination, "new.txt"), "utf8")).toBe(
@@ -122,44 +127,99 @@ describe("path copy archive listings", () => {
   });
 
   it("skips an exact no-clobber copy when the destination exists", async () => {
-    const copy = jest.fn();
-    await expect(
-      installPathFromStaging({
-        source: "/staging/source",
-        destination: "/project/destination",
-        destinationExists: true,
-        exact: true,
-        options: { force: false },
-        copy,
-      }),
-    ).resolves.toBe(false);
-    expect(copy).not.toHaveBeenCalled();
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-skip-"));
+    try {
+      await writeFile(path.join(root, "source"), "new");
+      await writeFile(path.join(root, "destination"), "keep");
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "source" },
+          destination: { root, path: "destination" },
+          exact: true,
+          options: { force: false },
+        }),
+      ).resolves.toBe(false);
+      expect(await readFile(path.join(root, "destination"), "utf8")).toBe(
+        "keep",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("leaves the destination untouched when staging the copy fails", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-replace-"));
     try {
-      const source = path.join(root, "source");
-      const destination = path.join(root, "destination");
-      await mkdir(source);
-      await mkdir(destination);
-      await writeFile(path.join(destination, "keep.txt"), "keep");
+      await mkdir(path.join(root, "destination"));
+      await writeFile(path.join(root, "destination", "keep.txt"), "keep");
 
       await expect(
         replacePathFromStaging({
-          source,
-          destination,
-          destinationExists: true,
-          copy: async () => {
-            throw new Error("copy failed");
-          },
+          source: { root, path: "missing-source" },
+          destination: { root, path: "destination" },
         }),
-      ).rejects.toThrow("copy failed");
-      expect(await readFile(path.join(destination, "keep.txt"), "utf8")).toBe(
-        "keep",
-      );
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        await readFile(path.join(root, "destination", "keep.txt"), "utf8"),
+      ).toBe("keep");
+      expect(await readdir(root)).toEqual(["destination"]);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never writes through a symlink the destination project planted", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "cocalc-copy-escape-"));
+    try {
+      const staging = path.join(base, "staging");
+      const home = path.join(base, "home");
+      const outside = path.join(base, "outside");
+      await mkdir(staging);
+      await mkdir(home);
+      await mkdir(outside);
+      await writeFile(path.join(staging, "payload"), "attacker data");
+      await symlink(outside, path.join(home, "evil"));
+
+      for (const exact of [false, true]) {
+        await expect(
+          installPathFromStaging({
+            source: { root: staging, path: "payload" },
+            destination: { root: home, path: "evil/authorized_keys" },
+            exact,
+          }),
+        ).rejects.toThrow(/ELOOP/);
+      }
+      expect(await readdir(outside)).toEqual([]);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces a destination that is itself a symlink, not its target", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "cocalc-copy-escape-"));
+    try {
+      const staging = path.join(base, "staging");
+      const home = path.join(base, "home");
+      const outside = path.join(base, "outside");
+      await mkdir(staging);
+      await mkdir(home);
+      await mkdir(outside);
+      await mkdir(path.join(staging, "assignment"));
+      await writeFile(path.join(staging, "assignment", "a.txt"), "a");
+      await symlink(outside, path.join(home, "assignment"));
+
+      await installPathFromStaging({
+        source: { root: staging, path: "assignment" },
+        destination: { root: home, path: "assignment" },
+        exact: true,
+      });
+
+      expect(
+        await readFile(path.join(home, "assignment", "a.txt"), "utf8"),
+      ).toBe("a");
+      expect(await readdir(outside)).toEqual([]);
+    } finally {
+      await rm(base, { recursive: true, force: true });
     }
   });
 });
