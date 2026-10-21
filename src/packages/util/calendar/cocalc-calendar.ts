@@ -627,6 +627,7 @@ function occurrenceDates(
   timeZone: string,
   fromDate: string,
   lastDate: string,
+  max: number = CALENDAR_LIMITS.maxOccurrences,
 ): string[] {
   const first = DATE.test(event.start)
     ? event.start
@@ -652,8 +653,7 @@ function occurrenceDates(
     (!r.byweekday || r.byweekday.includes(weekday(y, m, d))) &&
     (!r.bymonthday ||
       r.bymonthday.some((n) => Math.min(n, daysInMonth(y, m)) === d));
-  const full = () =>
-    seen >= count || out.length >= CALENDAR_LIMITS.maxOccurrences;
+  const full = () => seen >= count || out.length >= max;
   const take = (date: string): boolean => {
     if (date > last || full()) return false;
     if (date < first) return true;
@@ -729,6 +729,25 @@ export interface CalendarOccurrence {
   index: number;
 }
 
+/** An event's first local date (a recurrence's first that fits its rule),
+ * or undefined if it never occurs. */
+function firstOccurrenceDate(
+  event: CalendarEvent,
+  timeZone: string,
+): string | undefined {
+  const start = DATE.test(event.start)
+    ? event.start
+    : calendarLocalDate(calendarInstant(event.start, timeZone), timeZone);
+  return occurrenceDates(event, timeZone, start, "9999-12-31", 1)[0];
+}
+
+/** Whole days from one date to another. */
+function daysBetween(from: string, to: string): number {
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  return dayNumber(ty, tm, td) - dayNumber(fy, fm, fd);
+}
+
 /**
  * Every occurrence that overlaps [fromMs, toMs), across all events, in time
  * order. Recurring events are expanded here, for display.
@@ -740,17 +759,26 @@ export function calendarOccurrences(
 ): CalendarOccurrence[] {
   const tz = calendar.timezone;
   const lastDate = calendarLocalDate(toMs, tz);
-  // A day early, for occurrences that began before the range and last into it.
-  const fromDate = addDays(calendarLocalDate(fromMs, tz), -1);
+  const rangeStart = calendarLocalDate(fromMs, tz);
   const out: CalendarOccurrence[] = [];
   for (const event of calendar.events) {
     const allDay = event.all_day === true;
     const startMs = calendarInstant(event.start, tz);
     const p = zonedParts(startMs, tz);
+    // An all-day event lasts whole local days (by date, whatever DST does);
+    // a timed one, a fixed time.
+    const allDaySpan =
+      allDay && event.end != null ? daysBetween(event.start, event.end) : 0;
     const duration =
-      event.end != null
-        ? calendarInstant(event.end, tz) - startMs + (allDay ? DAY_MS : 0)
+      !allDay && event.end != null
+        ? calendarInstant(event.end, tz) - startMs
         : undefined;
+    // Early enough for an occurrence that began before the range and lasts
+    // into it: a day, plus the event's own length.
+    const fromDate = addDays(
+      rangeStart,
+      -1 - allDaySpan - Math.ceil((duration ?? 0) / DAY_MS),
+    );
     const endOfDay = (date: string) => {
       const [y, m, d] = date.split("-").map(Number);
       return zonedMs(y, m, d + 1, 0, 0, 0, tz) - 1;
@@ -766,12 +794,11 @@ export function calendarOccurrences(
       const start = allDay
         ? zonedMs(y, m, d, 0, 0, 0, tz)
         : zonedMs(y, m, d, p.hour, p.minute, p.second, tz);
-      const end =
-        duration != null
+      const end = allDay
+        ? zonedMs(y, m, d + 1 + allDaySpan, 0, 0, 0, tz)
+        : duration != null
           ? start + duration
-          : allDay
-            ? zonedMs(y, m, d + 1, 0, 0, 0, tz)
-            : undefined;
+          : undefined;
       if ((end ?? start + 1) <= fromMs || start >= toMs) return;
       const due =
         event.due_offset_days != null
@@ -820,16 +847,23 @@ const encoder = new TextEncoder();
 /** Lines folded at 75 octets, as RFC 5545 asks (never inside a character). */
 function fold(line: string): string {
   const out: string[] = [];
-  let rest = line;
+  let current = "";
+  let bytes = 0;
   let limit = 75;
-  while (encoder.encode(rest).length > limit) {
-    let cut = Math.min(rest.length, limit);
-    while (encoder.encode(rest.slice(0, cut)).length > limit) cut--;
-    out.push(rest.slice(0, cut));
-    rest = rest.slice(cut);
-    limit = 74; // continuation lines start with a space
+  // By code point, so a character (an emoji's surrogate pair too) is never
+  // split.
+  for (const char of line) {
+    const size = encoder.encode(char).length;
+    if (bytes + size > limit) {
+      out.push(current);
+      current = "";
+      bytes = 0;
+      limit = 74; // continuation lines start with a space
+    }
+    current += char;
+    bytes += size;
   }
-  out.push(rest);
+  out.push(current);
   return out.join("\r\n ");
 }
 
@@ -882,16 +916,30 @@ export function calendarToIcs(
   for (const e of calendar.events) {
     if (eventId != null && e.id !== eventId) continue;
     const allDay = e.all_day === true;
+    // A recurrence's DTSTART is its first instance in iCalendar: the first
+    // date that fits its rule, as the agenda shows it (not a declared start
+    // the rule skips). One that never occurs is left out, as in the agenda.
+    let shift = 0;
+    if (e.recurrence) {
+      const startDate = DATE.test(e.start)
+        ? e.start
+        : calendarLocalDate(calendarInstant(e.start, tz), tz);
+      const firstDate = firstOccurrenceDate(e, tz);
+      if (firstDate == null) continue;
+      shift = daysBetween(startDate, firstDate);
+    }
     lines.push(
       "BEGIN:VEVENT",
       `UID:${e.id}.${namespace}@${uidDomain}`,
       `DTSTAMP:${icsUtc(nowMs)}`,
     );
     if (allDay) {
-      lines.push(`DTSTART;VALUE=DATE:${e.start.replace(/-/g, "")}`);
+      lines.push(
+        `DTSTART;VALUE=DATE:${addDays(e.start, shift).replace(/-/g, "")}`,
+      );
       // An all-day DTEND is exclusive: the day after the last day.
       lines.push(
-        `DTEND;VALUE=DATE:${addDays(e.end ?? e.start, 1).replace(/-/g, "")}`,
+        `DTEND;VALUE=DATE:${addDays(e.end ?? e.start, 1 + shift).replace(/-/g, "")}`,
       );
     } else if (calendarTimeKind(e.start) === "zoned" && !e.recurrence) {
       // A fixed instant. A recurring one repeats the calendar zone's local
@@ -900,12 +948,15 @@ export function calendarToIcs(
       lines.push(`DTSTART:${icsUtc(Date.parse(e.start))}`);
       if (e.end) lines.push(`DTEND:${icsUtc(calendarInstant(e.end, tz))}`);
     } else {
-      lines.push(
-        `DTSTART;TZID=${tz}:${icsLocal(calendarInstant(e.start, tz), tz)}`,
-      );
+      // The same local time of day, `shift` days on.
+      const startMs = calendarInstant(e.start, tz);
+      const p = zonedParts(startMs, tz);
+      const [y, m, d] = calendarLocalDate(startMs, tz).split("-").map(Number);
+      const first = zonedMs(y, m, d + shift, p.hour, p.minute, p.second, tz);
+      lines.push(`DTSTART;TZID=${tz}:${icsLocal(first, tz)}`);
       if (e.end)
         lines.push(
-          `DTEND;TZID=${tz}:${icsLocal(calendarInstant(e.end, tz), tz)}`,
+          `DTEND;TZID=${tz}:${icsLocal(first + calendarInstant(e.end, tz) - startMs, tz)}`,
         );
     }
     const r = e.recurrence;

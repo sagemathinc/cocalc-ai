@@ -579,6 +579,104 @@ describe("iCalendar export", () => {
     expect(one({}, [offset])).toContain("DTSTART:20261103T163000Z");
   });
 
+  const single = (events: object[]) =>
+    calendarOf({
+      format: "cocalc-calendar",
+      version: 1,
+      title: "S",
+      timezone: "America/Los_Angeles",
+      default_view: "agenda",
+      events,
+    });
+
+  it("never splits a character when folding, an emoji included", () => {
+    // SUMMARY: is 8 octets; the emoji (4) starts at octet 72 of 75, where
+    // its first half alone would fit.
+    const title = "a".repeat(64) + "\u{1F600}" + "b".repeat(80);
+    const ics = calendarToIcs(
+      single([{ id: "e", title, start: "2027-01-01", all_day: true }]),
+      { nowMs: 0 },
+    );
+    expect(ics).not.toContain("\uFFFD");
+    const encoder = new TextEncoder();
+    for (const line of ics.split("\r\n")) {
+      expect(encoder.encode(line).length).toBeLessThanOrEqual(75);
+      // No lone surrogate at either end of a line.
+      expect(line).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/);
+    }
+    expect(ics.replace(/\r\n /g, "")).toContain(`SUMMARY:${title}`);
+  });
+
+  it("a recurrence's DTSTART is its first instance, as the agenda shows", () => {
+    const rule = { freq: "monthly", bymonthday: [15] };
+    const allDay = single([
+      {
+        id: "a",
+        title: "A",
+        start: "2027-01-01",
+        all_day: true,
+        recurrence: rule,
+      },
+    ]);
+    expect(
+      calendarOccurrences(
+        allDay,
+        Date.parse("2027-01-01T08:00:00Z"),
+        Date.parse("2027-02-01T08:00:00Z"),
+      ).map((o) => o.date),
+    ).toEqual(["2027-01-15"]);
+    const ics = calendarToIcs(allDay, { nowMs: 0 });
+    expect(ics).toContain("DTSTART;VALUE=DATE:20270115");
+    expect(ics).toContain("DTEND;VALUE=DATE:20270116");
+    expect(
+      calendarToIcs(
+        single([
+          { id: "t", title: "T", start: "2027-01-01T09:00", recurrence: rule },
+        ]),
+        { nowMs: 0 },
+      ),
+    ).toContain("DTSTART;TZID=America/Los_Angeles:20270115T090000");
+  });
+
+  it("an all-day event ends at local midnight after its last day, across DST", () => {
+    // DST starts in Seattle on March 14, 2027.
+    const [o] = calendarOccurrences(
+      single([
+        {
+          id: "s",
+          title: "Spring",
+          start: "2027-03-13",
+          end: "2027-03-14",
+          all_day: true,
+        },
+      ]),
+      Date.parse("2027-03-01T00:00:00Z"),
+      Date.parse("2027-04-01T00:00:00Z"),
+    );
+    expect(iso(o.end!)).toBe("2027-03-15T07:00:00.000Z");
+  });
+
+  it("finds a long recurring occurrence that began before the range", () => {
+    const week = single([
+      {
+        id: "w",
+        title: "Conference week",
+        start: "2026-10-05",
+        end: "2026-10-09",
+        all_day: true,
+        recurrence: { freq: "monthly" },
+      },
+    ]);
+    // October 8: the occurrence from October 5 is still on.
+    expect(
+      calendarOccurrences(
+        week,
+        Date.parse("2026-10-08T19:00:00Z"),
+        Date.parse("2026-10-09T19:00:00Z"),
+      ).map((o) => o.date),
+    ).toEqual(["2026-10-05"]);
+  });
+
   it("exports one event alone", () => {
     const one = calendarToIcs(cal, { eventId: "delaware" });
     expect(one.match(/BEGIN:VEVENT/g)).toHaveLength(1);
