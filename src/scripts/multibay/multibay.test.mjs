@@ -3158,3 +3158,38 @@ describe("membership-seat order fulfillment across bays", () => {
     await recordOnSeed({ admin, customer: admin });
   });
 });
+
+describe("EU/UK VAT refusal notice across bays", () => {
+  // Automatic payments run on the seed (billing authority); the refused
+  // customer may be homed on another bay and must get the notice there.
+  it("delivers the off-session refusal notice from the seed to a customer homed on the attached bay", async () => {
+    const result = await runInBay(
+      cluster,
+      SEED,
+      `const { sendOffSessionRefusalNotice } = server("purchases/stripe/business-tax-id-gate.js");
+       const first = await sendOffSessionRefusalNotice(${JSON.stringify(bob.account_id)});
+       const second = await sendOffSessionRefusalNotice(${JSON.stringify(bob.account_id)});
+       const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT target_home_bay_id FROM notification_target_outbox WHERE target_account_id=$1 AND kind='account_notice' ORDER BY created_at DESC LIMIT 1",
+         [${JSON.stringify(bob.account_id)}]);
+       return { first, second, target: rows[0]?.target_home_bay_id };`,
+    );
+    assert.equal(result.first, true);
+    assert.equal(result.second, false);
+    assert.equal(result.target, ATTACHED);
+    const isThisNotice = (row) =>
+      row.summary?.title === "Automatic payment not made: EU and UK customers";
+    await eventually(
+      async () =>
+        (await bob.client.call("notifications.list", { limit: 50 })).some(
+          isThisNotice,
+        ),
+      { timeoutMs: 60_000, what: "the VAT refusal notice to reach bob" },
+    );
+    const notices = (
+      await bob.client.call("notifications.list", { limit: 50 })
+    ).filter(isThisNotice);
+    assert.equal(notices.length, 1);
+  });
+});
