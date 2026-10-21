@@ -541,8 +541,9 @@ export function examHostnameFromProjectHostPublicUrl(
 
 // The public ingress in front of the conat router and the main host server.
 // Content hostnames (trust-free step 6) never reach the router or /healthz:
-// HTTP goes to the main server's content handler, and websocket upgrades are
-// refused here.
+// HTTP goes to the main server's content handler.  Websocket upgrades on
+// file hostnames are refused here; on app hostnames they go on to the main
+// server, whose app origin authorizes them (content-app-origin.ts).
 export function attachProjectHostIngress({
   app,
   httpServers,
@@ -557,7 +558,11 @@ export function attachProjectHostIngress({
   hostId: string;
 }): void {
   for (const server of httpServers) {
-    installContentHostnameUpgradeGuard(server, getProjectContentDomain());
+    installContentHostnameUpgradeGuard(
+      server,
+      getProjectContentDomain(),
+      () => async () => true,
+    );
   }
   app.get("/healthz", (req, res, next) => {
     if (isContentRequestHost(req.headers.host, getProjectContentDomain())) {
