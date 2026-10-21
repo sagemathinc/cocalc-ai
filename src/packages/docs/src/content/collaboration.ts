@@ -103,18 +103,22 @@ trust:
 
 1. Stop the project right away. Removing someone does not end an SSH session
    or a program they already started, and stopping the project ends both.
-2. Start the project, but do not open a terminal yet: a new terminal runs
+2. In **Settings -> People**, remove any collaborator you do not recognize: the
+   person you removed may have invited another account of their own. Under
+   **Collaborator Management**, consider turning off **Allow other users to
+   manage collaborators**, so only the owner can add people.
+3. Start the project, but do not open a terminal yet: a new terminal runs
    \`~/.bashrc\`. In the file explorer, choose **Show hidden files**, then open
    these files in the editor and remove anything you did not expect:
    \`~/.local/share/cocalc/startup.sh\` (which runs every time the project
    starts), \`~/.ssh/authorized_keys\` (delete any key you do not recognize),
    and the shell startup files \`~/.bashrc\`, \`~/.bash_profile\`,
    \`~/.profile\`, and any others your shells read, such as \`~/.zshrc\`.
-3. Review any other scripts or scheduled jobs the project runs, and remove
+4. Review any other scripts or scheduled jobs the project runs, and remove
    anything you did not expect.
-4. Restart the project once more, so nothing those files started keeps
+5. Restart the project once more, so nothing those files started keeps
    running, then check the running processes in a terminal with \`ps aux\`.
-5. Revoke or replace, at their source, every credential the collaborator could
+6. Revoke or replace, at their source, every credential the collaborator could
    read: passwords, API keys, tokens, certificates, SSH private keys (remove
    the matching public key wherever it is authorized), and
    [project secrets](/docs/projects/project-secrets). For example, regenerate a
