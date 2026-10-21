@@ -40,6 +40,79 @@ function isFilesystemJupyterUnsupported(err: unknown): boolean {
   );
 }
 
+async function loadGlobalBlob({
+  client,
+  project_id,
+  blobUuid,
+}: {
+  client: any;
+  project_id: string;
+  blobUuid: string;
+}): Promise<{ bytes: Buffer } | undefined> {
+  const result = await callHub({
+    client,
+    project_id,
+    name: "db.getBlob",
+    args: [{ project_id, uuid: blobUuid }],
+    timeout: 60_000,
+  });
+  if (result?.blob == null) {
+    return;
+  }
+  return { bytes: Buffer.from(result.blob, "base64") };
+}
+
+// A notebook's attachments moved out of the ipynb, as the syncdb holds them:
+// through the project host's filesystem when it can, else to the hub's blob
+// store.  Shared by setToIpynb and the history restart from the saved
+// notebook (history-restart.ts), which runs without a live syncdb.
+export async function prepareIpynbAttachments({
+  ipynb,
+  fs,
+  client,
+  project_id,
+}: {
+  ipynb: any;
+  fs: any;
+  client: any;
+  project_id: string;
+}): Promise<any> {
+  const importIpynb = fs?.jupyterImportIpynb;
+  if (typeof importIpynb === "function") {
+    try {
+      return (await importIpynb(ipynb)).ipynb;
+    } catch (err) {
+      if (!isFilesystemJupyterUnsupported(err)) {
+        throw err;
+      }
+    }
+  }
+  return await externalizeJupyterAttachments({
+    ipynb,
+    loadBlob: async (blobUuid) =>
+      await loadGlobalBlob({ client, project_id, blobUuid }),
+    saveBlob: async ({ bytes, content_id, filename }) => {
+      const { uuid: savedUuid } = await callHub({
+        client,
+        project_id,
+        name: "db.saveBlob",
+        args: [
+          {
+            project_id,
+            uuid: content_id,
+            blob: bytes.toString("base64"),
+          },
+        ],
+        timeout: 60_000,
+      });
+      return {
+        uuid: savedUuid,
+        url: `/blobs/${encodeURIComponent(filename)}?uuid=${savedUuid}`,
+      };
+    },
+  });
+}
+
 export class JupyterActions extends JupyterActions0 {
   private clearKernelErrorTimeout?: ReturnType<typeof setTimeout>;
 
@@ -90,55 +163,22 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   protected override async prepareIpynbForSyncdoc(ipynb: any): Promise<any> {
-    const importIpynb = this.syncdb.fs.jupyterImportIpynb;
-    if (typeof importIpynb === "function") {
-      try {
-        return (await importIpynb(ipynb)).ipynb;
-      } catch (err) {
-        if (!isFilesystemJupyterUnsupported(err)) {
-          throw err;
-        }
-      }
-    }
-    return await externalizeJupyterAttachments({
+    return await prepareIpynbAttachments({
       ipynb,
-      loadBlob: async (blobUuid) => await this.loadGlobalBlob(blobUuid),
-      saveBlob: async ({ bytes, content_id, filename }) => {
-        const { uuid: savedUuid } = await callHub({
-          client: this.requireConatClient("saveJupyterAttachment"),
-          project_id: this.project_id,
-          name: "db.saveBlob",
-          args: [
-            {
-              project_id: this.project_id,
-              uuid: content_id,
-              blob: bytes.toString("base64"),
-            },
-          ],
-          timeout: 60_000,
-        });
-        return {
-          uuid: savedUuid,
-          url: `/blobs/${encodeURIComponent(filename)}?uuid=${savedUuid}`,
-        };
-      },
+      fs: this.syncdb.fs,
+      client: this.requireConatClient("prepareJupyterAttachments"),
+      project_id: this.project_id,
     });
   }
 
   private async loadGlobalBlob(
     blobUuid: string,
   ): Promise<{ bytes: Buffer } | undefined> {
-    const result = await callHub({
+    return await loadGlobalBlob({
       client: this.requireConatClient("loadJupyterAttachment"),
       project_id: this.project_id,
-      name: "db.getBlob",
-      args: [{ project_id: this.project_id, uuid: blobUuid }],
-      timeout: 60_000,
+      blobUuid,
     });
-    if (result?.blob == null) {
-      return;
-    }
-    return { bytes: Buffer.from(result.blob, "base64") };
   }
 
   ensureKernelIsReady = () => {

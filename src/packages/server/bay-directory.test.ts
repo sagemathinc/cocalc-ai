@@ -292,6 +292,32 @@ describe("bay-directory", () => {
     expect(getClusterAccountByIdMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["single-bay", undefined],
+    ["attached", "bay-1"],
+  ])(
+    "throws a recognizable AccountNotFoundError for a missing account (%s)",
+    async (role, bayId) => {
+      if (role === "attached") {
+        process.env.COCALC_CLUSTER_ROLE = "attached";
+        process.env.COCALC_BAY_ID = bayId!;
+        localAccountRowIfHomedHereMock = jest.fn(async () => null);
+        getClusterAccountByIdMock = jest.fn(async () => null);
+      }
+      // Deleted accounts are filtered out of the local row lookup.
+      queryMock = jest.fn(async () => ({ rows: [] }));
+      const { resolveAccountHomeBay, isAccountNotFoundError } =
+        await import("./bay-directory");
+      const err = await resolveAccountHomeBay({ account_id: ACCOUNT_ID }).then(
+        () => undefined,
+        (err) => err,
+      );
+      expect(err?.message).toBe(`account '${ACCOUNT_ID}' not found`);
+      expect(isAccountNotFoundError(err)).toBe(true);
+      expect(isAccountNotFoundError(new Error("timeout"))).toBe(false);
+    },
+  );
+
   it("serves an account homed on this attached bay from its own row, without the seed", async () => {
     process.env.COCALC_CLUSTER_ROLE = "attached";
     process.env.COCALC_BAY_ID = "bay-1";

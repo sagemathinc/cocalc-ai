@@ -40,6 +40,9 @@ describe("CoCalc Plus docs filter", () => {
         "editors.r-markdown",
         "troubleshooting.memory",
         "files.timetravel",
+        // what to do when a file's, notebook's or board's history can't be
+        // loaded applies to the single local project as well
+        "files.history-unloadable",
         "files.git",
         // Quick Navigation is a frontend feature that works in the single
         // local project as well

@@ -11,8 +11,9 @@ still open, without losing an edit (bounded history plan r3, §2.3):
 - otherwise nothing is reset automatically: the editor is told, and the user
   can choose to restart the history from the saved file, which moves newer
   edits out of the live document into the archived history;
-- documents saved some other way (noSaveToDisk, e.g., a notebook's .ipynb)
-  keep the unseeded reset for now (H1b-3).
+- documents saved some other way (a notebook's .ipynb, a board's file) are
+  never reset automatically (H1b-3): the editor is told, with the restart
+  that applies (a notebook: from its saved .ipynb, through the project).
 
 When several clients hit the oversized entry at once, only one resets the
 history, and a late reset never deletes edits made after the first.
@@ -400,54 +401,41 @@ describe("two browsers opening the document at once", () => {
   });
 });
 
-describe("a document whose file is written elsewhere (a notebook's syncdb) keeps the unseeded reset", () => {
+describe("a document whose file is written elsewhere (a notebook's syncdb) is never reset automatically", () => {
   const project_id = uuid();
   // as a notebook's syncdb: its .ipynb is written by the Jupyter code
   const path = ".other.ipynb.sage-jupyter2";
-  let opened, firstReset;
+  let editor, opened;
 
-  it("resets the history and opens, empty for its own import to refill (e.g., Jupyter's)", async () => {
-    const editor = await documentWithLargeHistoryEntry(project_id, path, {
+  it("does not reset, and tells the editor, with a restart from the saved .ipynb", async () => {
+    editor = await documentWithLargeHistoryEntry(project_id, path, {
       noSaveToDisk: true,
     });
     const before = await archivedHistories();
+    const unloadable: any[] = [];
     opened = open(connect(), project_id, path, { noSaveToDisk: true });
-    await once(opened, "ready", 30000);
-    // a noSaveToDisk document does not load its file itself
-    expect(opened.to_str()).toBe("");
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toMatchObject({ title: "Edit history reset" });
-    expect(resets).toHaveLength(1);
-    expect(resets[0]).toMatchObject({
-      name: "resetOversizedHistory",
-      result: { reset: true },
-    });
-    firstReset = resets[0].opts;
-    await wait({
-      until: () => editor.get_state() === "closed",
-      timeout: 10000,
-    });
-    expect((await archivedHistories()).length).toBe(before.length + 1);
+    opened.on("history-unloadable", (x) => unloadable.push(x));
+    await wait({ until: () => unloadable.length > 0, timeout: 30000 });
+    expect(unloadable).toEqual([
+      // with the epoch the persist server failed in
+      expect.objectContaining({ path, restart: "ipynb", history_epoch: 0 }),
+    ]);
+    // nothing was reset, archived or announced
+    expect(resets).toEqual([]);
+    expect(alerts).toEqual([]);
+    expect(await archivedHistories()).toEqual(before);
+    // the opener keeps retrying; the live copy keeps its value
+    expect(opened.get_state()).toBe("init");
+    expect(editor.get_state()).toBe("ready");
+    expect(editor.to_str()).toBe("hello again");
   });
 
-  it("a late reset for the same oversized entry changes nothing", async () => {
-    opened.from_str("after reset");
-    opened.commit();
-    await opened.save();
-    const archives = await archivedHistories();
-    const result = await new SyncClient(connect()).resetOversizedHistory(
-      firstReset,
-    );
-    expect(result.reset).toBe(false);
-    expect(opened.get_state()).toBe("ready");
-    expect(await archivedHistories()).toEqual(archives);
-  });
-
-  it("purging the history (TimeTravel) also drops the history kept aside", async () => {
-    const before = await archivedHistories();
+  it("purging the history (TimeTravel) still lets it open", async () => {
+    delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
     const result = await purgeHistory({ project_id, path, client: connect() });
     expect(result.reset).toBe(true);
-    expect((await archivedHistories()).length).toBe(before.length - 1);
+    await once(opened, "ready", 30000);
     opened.close();
+    editor.close();
   });
 });

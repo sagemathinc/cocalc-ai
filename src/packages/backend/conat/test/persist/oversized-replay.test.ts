@@ -124,6 +124,29 @@ describe("message size limit", () => {
     delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
     expect(await s.getAll({ timeout: 5000 })).toHaveLength(1);
   });
+
+  it("says which message, and in which history epoch (H1b-4: a later reset is a recovery)", async () => {
+    const s = stream({
+      client: connect(),
+      user: { hub_id: "x" },
+      storage: { path: `hub/oversized-epoch-${Math.random()}` },
+    });
+    await s.set({ messageData: messageData("small") });
+    const reset = await s.resetHistory({});
+    expect(reset.history_epoch).toBeGreaterThan(0);
+    // written in the new history (its fence requires the epoch)
+    const { seq } = await s.set({
+      messageData: messageData("x".repeat(500_000), {
+        headers: { history_epoch: reset.history_epoch },
+      }),
+    });
+    process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES = "100000";
+    await expect(s.getAll({ timeout: 5000 })).rejects.toMatchObject({
+      code: 413,
+      oversizedSeq: seq,
+      oversizedEpoch: reset.history_epoch,
+    });
+  });
 });
 
 describe("a message written during a replay", () => {

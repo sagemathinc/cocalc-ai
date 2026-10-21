@@ -17,9 +17,13 @@ jest.mock("@cocalc/jupyter/control", () => ({
   start: jest.fn(),
   save: jest.fn(),
   load: jest.fn(),
+  liveSyncdb: jest.fn(),
 }));
 
-const mockClient = {};
+// The project's long-lived conat client: every SyncClient made for a request
+// listens to its "closed" event until released.
+const mockConat = new (require("node:events").EventEmitter)();
+const mockClient = { conat: () => mockConat };
 
 describe("project Jupyter filesystem paths", () => {
   const previousHome = process.env.HOME;
@@ -123,5 +127,68 @@ describe("project Jupyter filesystem paths", () => {
     control.isRunning.mockReturnValue(true);
     await api.start("/home/user/fixture.ipynb");
     expect(control.start).not.toHaveBeenCalled();
+  });
+});
+
+// LIMIT-H1B3C-1: each history request owns its SyncClient and releases it,
+// however the request ends, so repeated requests leave no listeners behind.
+describe("history requests release their SyncClient", () => {
+  const N = 30;
+  let api: typeof import("./jupyter");
+  let control: jest.Mocked<typeof import("@cocalc/jupyter/control")>;
+
+  beforeEach(async () => {
+    jest.resetModules();
+    api = await import("./jupyter");
+    control = jest.requireMock("@cocalc/jupyter/control");
+    const { resetHistoryRestartState } =
+      await import("@cocalc/jupyter/history-restart");
+    resetHistoryRestartState();
+  });
+
+  const listeners = () => mockConat.listenerCount("closed");
+  const seed = () =>
+    api.seedOversizedHistory({
+      path: "/home/user/a.ipynb",
+      epoch: 0,
+      oversizedSeq: 3,
+    });
+
+  it("the live-writer seed, on every path: not running, not ready, seeded, refused, error, deadline", async () => {
+    const { DeadlineExpired } =
+      await import("@cocalc/sync/editor/generic/reset-run");
+    const live = (seedHistoryFromLiveValue?: () => Promise<any>) => ({
+      isReady: () => seedHistoryFromLiveValue != null,
+      ...(seedHistoryFromLiveValue ? { seedHistoryFromLiveValue } : {}),
+    });
+    const paths: [string, any][] = [
+      ["not-running", undefined],
+      ["not-ready", live()],
+      ["seeded", live(async () => ({ seeded: true, history_epoch: 1 }))],
+      ["busy", live(async () => ({ seeded: false, reason: "busy" }))],
+      [
+        "failed",
+        live(async () => {
+          throw Error("the history service is down");
+        }),
+      ],
+      [
+        "deadline",
+        live(async () => {
+          throw new DeadlineExpired();
+        }),
+      ],
+    ];
+    const before = listeners();
+    for (const [expected, syncdb] of paths) {
+      control.liveSyncdb.mockReturnValue(syncdb);
+      for (let i = 0; i < N; i++) {
+        const result: any = await seed();
+        expect(expected == "seeded" ? result.seeded : result.reason).toBe(
+          expected == "seeded" ? true : expected,
+        );
+        expect(listeners()).toBe(before);
+      }
+    }
   });
 });

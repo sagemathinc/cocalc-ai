@@ -376,6 +376,43 @@ export const HISTORY_SCHEMA = {
         )`,
 } as const;
 
+// The tables the bounded reset work keeps (bounded history plan H1c): the
+// stream's live and trash counts, and the ledger of trash left by resets
+// (renamed tables, id ranges and cuts, removed in bounded steps).  This
+// server only ACCEPTS them (H1c-0), so a server can roll back to it after
+// H1c has created them; H1c creates them.
+export const RESET_TRASH_SCHEMA = {
+  stream_counts: `CREATE TABLE IF NOT EXISTS stream_counts (
+          id INTEGER PRIMARY KEY CHECK(id = 1),
+          records INTEGER NOT NULL DEFAULT 0,
+          bytes INTEGER NOT NULL DEFAULT 0,
+          initialized INTEGER NOT NULL DEFAULT 0,
+          init_cursor INTEGER,
+          init_records INTEGER NOT NULL DEFAULT 0,
+          init_bytes INTEGER NOT NULL DEFAULT 0,
+          counted_through_seq INTEGER,
+          trash_items INTEGER NOT NULL DEFAULT 0,
+          trash_records INTEGER NOT NULL DEFAULT 0,
+          trash_bytes INTEGER NOT NULL DEFAULT 0,
+          trash_unknown_items INTEGER NOT NULL DEFAULT 0
+        )`,
+  history_trash: `CREATE TABLE IF NOT EXISTS history_trash (
+          id INTEGER PRIMARY KEY,
+          kind TEXT NOT NULL,
+          target TEXT,
+          lo INTEGER,
+          hi INTEGER,
+          cursor INTEGER,
+          epoch_id INTEGER,
+          records INTEGER NOT NULL,
+          bytes INTEGER NOT NULL,
+          exact INTEGER NOT NULL,
+          removed_records INTEGER NOT NULL DEFAULT 0,
+          removed_bytes INTEGER NOT NULL DEFAULT 0,
+          time INTEGER NOT NULL
+        )`,
+} as const;
+
 // The schema objects this server creates, keyed by name.  Opening a file with
 // anything else (triggers, views, other indexes or tables, or a changed
 // definition) is refused: such objects run code on every write or change
@@ -418,6 +455,66 @@ function normalizeSchemaSql(sql: string): string {
 }
 
 const ARCHIVED_MESSAGES_TABLE = /^messages_archived_\d+(?:_\d+)?$/;
+// a message_ids table moved aside by a reset (H1c), removed in bounded steps
+const TRASH_MESSAGE_IDS_TABLE = /^message_ids_trash_\d+$/;
+
+// The indexes of the tables that resets rename (H1c): each has a purpose (its
+// one column) and an owner (the live table, or a table a reset renamed it
+// with).  A renamed table keeps its indexes, under their names, and the
+// live table's new ones get a generation suffix, so names never collide.
+const PURPOSE_INDEXES: {
+  name: RegExp;
+  column: string;
+  owner: RegExp;
+}[] = [
+  {
+    name: /^idx_messages_key(?:_g\d+)?$/,
+    column: "key",
+    owner: /^(?:messages|messages_archived_\d+(?:_\d+)?)$/,
+  },
+  {
+    name: /^idx_messages_time(?:_g\d+)?$/,
+    column: "time",
+    owner: /^(?:messages|messages_archived_\d+(?:_\d+)?)$/,
+  },
+  {
+    name: /^idx_message_ids_msg_id(?:_g\d+)?$/,
+    column: "msg_id",
+    owner: /^(?:message_ids|message_ids_trash_\d+)$/,
+  },
+];
+
+// Why an index of a renamed table's family is not exactly one this server
+// (or H1c) creates, or undefined if it is: a plain index on its purpose's
+// one column, of an owner of that purpose.
+function unexpectedPurposeIndex(
+  name: string,
+  tbl_name: string,
+  sql: string | null,
+): string | undefined {
+  const purpose = PURPOSE_INDEXES.find((p) => p.name.test(name));
+  if (purpose == null) return "unexpected";
+  if (!purpose.owner.test(tbl_name)) return "unexpected";
+  const table =
+    tbl_name === "messages" || tbl_name === "message_ids"
+      ? tbl_name
+      : `"${tbl_name}"`;
+  const expected = normalizeSchemaSql(
+    `CREATE INDEX ${name} ON ${table}(${purpose.column})`,
+  );
+  // SQLite stores a renamed table's name quoted, and a created one as written
+  const stored = normalizeSchemaSql(sql ?? "");
+  if (
+    stored === expected ||
+    stored ===
+      normalizeSchemaSql(
+        `CREATE INDEX ${name} ON ${tbl_name}(${purpose.column})`,
+      )
+  ) {
+    return undefined;
+  }
+  return "changed";
+}
 
 export function persistSchemaCheckEnabled(
   env: NodeJS.ProcessEnv = process.env,
@@ -442,6 +539,15 @@ export function unexpectedPersistSchema(
     ]),
   );
   const archivedTable = normalizeSchemaSql(SCHEMA.messages);
+  const trashIdsTable = normalizeSchemaSql(HISTORY_SCHEMA.message_ids);
+  const resetTrash = new Map(
+    Object.entries(RESET_TRASH_SCHEMA).map(([name, sql]) => [
+      name,
+      normalizeSchemaSql(sql),
+    ]),
+  );
+  // at most one index of each purpose per table (H1c)
+  const purposes = new Set<string>();
   const ourTables = new Set([
     "messages",
     "config",
@@ -467,6 +573,29 @@ export function unexpectedPersistSchema(
       if (renamed === archivedTable) continue;
       return `changed ${label}`;
     }
+    if (type === "table" && TRASH_MESSAGE_IDS_TABLE.test(name)) {
+      // created by ALTER TABLE message_ids RENAME TO "<name>" (H1c)
+      const renamed = normalizeSchemaSql(sql ?? "").replace(
+        /^create table "?message_ids_trash_\d+"?\(/,
+        "create table message_ids(",
+      );
+      if (renamed === trashIdsTable) continue;
+      return `changed ${label}`;
+    }
+    if (type === "table" && resetTrash.has(name)) {
+      if (normalizeSchemaSql(sql ?? "") === resetTrash.get(name)) continue;
+      return `changed ${label}`;
+    }
+    if (type === "index" && PURPOSE_INDEXES.some((p) => p.name.test(name))) {
+      const problem = unexpectedPurposeIndex(name, tbl_name, sql);
+      if (problem != null) return `${problem} ${label}`;
+      const purpose = `${tbl_name}\u0000${
+        PURPOSE_INDEXES.find((p) => p.name.test(name))!.column
+      }`;
+      if (purposes.has(purpose)) return `duplicate ${label}`;
+      purposes.add(purpose);
+      continue;
+    }
     if (
       (type === "table" || type === "index") &&
       expected.has(name) &&
@@ -484,10 +613,13 @@ export function persistMessageTooLargeError({
   size,
   limit,
   seq,
+  epoch,
 }: {
   size: number;
   limit: number;
   seq: number;
+  // the history epoch it was read in, when known
+  epoch?: number;
 }): ConatError {
   const err = new ConatError(
     size >= NOT_A_BLOB_SIZE
@@ -498,6 +630,8 @@ export function persistMessageTooLargeError({
   // which message, so a client can ask for exactly this one to be dealt with
   // (see resetHistory)
   (err as any).oversizedSeq = seq;
+  // and in which history: a recovery is only a later one (H1b-4)
+  if (typeof epoch == "number") (err as any).oversizedEpoch = epoch;
   return err;
 }
 
@@ -1180,8 +1314,12 @@ export class PersistentStream extends EventEmitter {
     this.db.prepare(SCHEMA.stream_metadata).run();
     this.db.prepare(SCHEMA.stream_checkpoints).run();
     this.db.prepare(SCHEMA.idx_stream_checkpoints_seq).run();
-    for (const sql of Object.values(HISTORY_SCHEMA)) {
-      this.db.prepare(sql).run();
+    for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
+      if (name === "idx_message_ids_msg_id") {
+        this.ensurePurposeIndex("message_ids", "msg_id", name);
+      } else {
+        this.db.prepare(sql).run();
+      }
     }
 
     this.conf = this.config();
@@ -1287,8 +1425,28 @@ export class PersistentStream extends EventEmitter {
     // time is in *seconds* since the epoch, since that is standard for sqlite.
     // ttl is in milliseconds.
     this.db.prepare(SCHEMA.messages).run();
-    this.db.prepare(SCHEMA.idx_messages_key).run();
-    this.db.prepare(SCHEMA.idx_messages_time).run();
+    this.ensurePurposeIndex("messages", "key", "idx_messages_key");
+    this.ensurePurposeIndex("messages", "time", "idx_messages_time");
+  };
+
+  // The index of table on column, unless it has one (under any name of its
+  // purpose: a reset may have given the live table a generation-suffixed
+  // one, H1c).  A free name: the base name, else the next generation.
+  private ensurePurposeIndex = (
+    table: "messages" | "message_ids",
+    column: string,
+    base: string,
+  ) => {
+    const indexes = this.db
+      .prepare(
+        "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND (name = ? OR name LIKE ?)",
+      )
+      .all(base, `${base}_g%`) as { name: string; tbl_name: string }[];
+    if (indexes.some((i) => i.tbl_name === table)) return;
+    const taken = new Set(indexes.map((i) => i.name));
+    let name = base;
+    for (let g = 1; taken.has(name); g++) name = `${base}_g${g}`;
+    this.db.prepare(`CREATE INDEX ${name} ON ${table}(${column})`).run();
   };
 
   private readSqliteCacheKiB = (): number => {
@@ -1784,6 +1942,7 @@ export class PersistentStream extends EventEmitter {
         size: Number(meta.size),
         limit: sizeLimit,
         seq: Number(meta.seq),
+        epoch: this.currentEpoch(),
       });
     }
     const x = this.db
@@ -1894,6 +2053,7 @@ export class PersistentStream extends EventEmitter {
         size: Number(oversized.size),
         limit: sizeLimit,
         seq: Number(oversized.seq),
+        epoch: this.currentEpoch(),
       });
     }
     query = `SELECT seq, key, time, compress, encoding, raw, headers, ${EFFECTIVE_SIZE_SQL} AS size FROM messages ${whereSql} ORDER BY seq`;

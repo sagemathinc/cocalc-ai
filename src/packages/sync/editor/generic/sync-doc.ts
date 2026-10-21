@@ -70,8 +70,10 @@ import type {
   CompressedPatch,
   DocType,
   Document,
+  LiveSeedResult,
   Patch,
 } from "./types";
+import { sha256Utf8 } from "@cocalc/util/sha256-utf8";
 import { isTestClient, patch_cmp } from "./util";
 import mergeDeep from "@cocalc/util/immutable-deep-merge";
 import { type Filesystem, type Stats } from "@cocalc/conat/files/fs";
@@ -99,8 +101,10 @@ import {
   proofCoversHistory,
   resetOptions,
   savedFileOf,
+  historyRestartKind,
   savesThroughWriteFile,
   seedFor,
+  seedOfValue,
   validProof,
 } from "./history-restart";
 import type { ResetHistoryResult } from "@cocalc/conat/persist/storage";
@@ -445,6 +449,45 @@ interface PatchDocMetadataV1 {
   settings?: JSONValue;
 }
 
+// The live-writer seed's encoded size (bounded history plan H1b-3, §2 step 6).
+const LIVE_SEED_MAX_BYTES = 40 * 1024 * 1024;
+// how long an opener waits for the live writer's answer, in all (the
+// writer's own deadline is shorter), and how often it looks for another
+// opener's seed when the writer is busy with it
+const LIVE_SEED_WAIT_MS = 60_000;
+const LIVE_SEED_POLL_MS = 2_000;
+
+class DeadlineExpired extends Error {}
+
+function withDeadlineAt<T>(
+  deadlineAt: number,
+  p: Promise<T>,
+  now: () => number,
+): Promise<T> {
+  const ms = deadlineAt - now();
+  if (ms <= 0) {
+    p.catch(() => {});
+    return Promise.reject(new DeadlineExpired());
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new DeadlineExpired()), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+// True once cond holds, false after ms (checked every 25 ms).
+async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
+  const end = Date.now() + Math.max(0, ms);
+  for (;;) {
+    if (cond()) return true;
+    if (Date.now() >= end) return false;
+    await delay(25);
+  }
+}
+
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
@@ -763,14 +806,11 @@ export class SyncDoc extends EventEmitter {
   });
 
   // A patch too large to load (e.g., a runaway notebook output saved as one
-  // 500 MB patch) makes every open of this document fail with 413.  Rather
-  // than leave whoever is opening it stuck, reset the history through the
-  // document's own patch stream, keeping the old history aside: open copies
-  // of the document see the new history epoch and close instead of writing
-  // stale state, and the persist server fences out writes from the old epoch.
-  // The reset only happens if that patch is still there, so when several
-  // clients hit it at once only the first resets the history.  This only
-  // happens when a client opens the document, at most once per SyncDoc.
+  // 500 MB patch) makes every open of this document fail with 413.  A
+  // document saved with writeFile may be reset from its saved file, but only
+  // when its proof covers every accepted edit (resetOversizedHistoryFromFile);
+  // nothing else is reset automatically.  The user is told instead
+  // (history-unloadable) and can choose a restart.  At most once per SyncDoc.
   private oversizedHistoryReset = false;
   private resetOversizedHistory = async (err: unknown): Promise<boolean> => {
     const oversized_seq = (err as any)?.oversizedHistorySeq;
@@ -782,44 +822,298 @@ export class SyncDoc extends EventEmitter {
       return await this.resetOversizedHistoryFromFile();
     }
     // Documents whose file is written elsewhere (a notebook's .ipynb, a
-    // board's file) have no proof yet; they keep this unseeded reset for now
-    // (bounded history H1b-3).
-    if (typeof this.client.resetOversizedHistory != "function") {
+    // board's file) have no proof.  They are never reset automatically: that
+    // would silently drop every edit since the file was saved (bounded
+    // history plan H1b-3).  A notebook asks its live writer, the project's
+    // backend, to seed a new history from its live value (A), once; failing
+    // that, the user is told, and can confirm restarting from the saved
+    // .ipynb (B, restartHistoryFromIpynb); the open keeps retrying meanwhile.
+    if (
+      historyRestartKind(this.syncPath) == "ipynb" &&
+      (await this.askLiveWriterToSeed(oversized_seq))
+    ) {
+      return true;
+    }
+    this.reportUnloadableHistory((err as any)?.oversizedHistoryEpoch);
+    return false;
+  };
+
+  // (A), asked at most once per SyncDoc.  True if the history now has a new
+  // epoch seeded with the live value (from this request, or one before it).
+  // No answer, a refusal, or an error is never a rollback: false.
+  private liveSeedAsked = false;
+  // One deadline for the whole request: every await below, the writer's
+  // answer and each poll included (the tests shorten them).
+  private liveSeedWaitMs = LIVE_SEED_WAIT_MS;
+  private liveSeedPollMs = LIVE_SEED_POLL_MS;
+  private askLiveWriterToSeed = async (
+    oversizedSeq: number,
+  ): Promise<boolean> => {
+    const client = this.client;
+    if (
+      this.liveSeedAsked ||
+      typeof client.askLiveWriterToSeed != "function" ||
+      typeof client.historyResetState != "function"
+    ) {
       return false;
     }
-    this.oversizedHistoryReset = true;
-    let result: { history_epoch: number; reset: boolean };
+    this.liveSeedAsked = true;
+    const end = Date.now() + this.liveSeedWaitMs;
+    const bounded = <T>(p: Promise<T>) => withDeadlineAt(end, p, Date.now);
     try {
-      result = await this.client.resetOversizedHistory({
-        project_id: this.project_id,
-        path: this.syncPath,
-        oversized_seq,
-        // The same route as the patches: a board's reset goes through the
-        // board write service (the ordinary one refuses it).
-        ...(this.opts.patchesPersist
-          ? { persist: this.opts.patchesPersist }
-          : {}),
-      });
-    } catch (resetErr) {
-      // e.g., no permission or no connection: keep retrying the open, and
-      // try the reset again next time
-      this.oversizedHistoryReset = false;
-      this.dbg("resetOversizedHistory")(`failed -- ${resetErr}`);
+      const state = await bounded(
+        client.historyResetState({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+        }),
+      );
+      const result = await bounded(
+        client.askLiveWriterToSeed({
+          project_id: this.project_id,
+          path: this.syncPath,
+          epoch: state.epoch,
+          oversizedSeq,
+        }),
+      );
+      if (!result?.seeded) {
+        this.dbg("askLiveWriterToSeed")(
+          `not seeded -- ${result?.reason} ${result?.message ?? ""}`,
+        );
+        // busy: another opener's request is seeding it right now; if its
+        // epoch moves within this request's time, open with it
+        if (result?.reason == "busy") {
+          while (Date.now() < end && !this.isClosed()) {
+            await delay(Math.min(this.liveSeedPollMs, end - Date.now()));
+            const now = await bounded(
+              client.historyResetState({
+                project_id: this.project_id,
+                path: this.syncPath,
+                ...this.patchesPersistOpts(),
+              }),
+            );
+            if (now.epoch > state.epoch) {
+              this.oversizedHistoryReset = true;
+              this.history_epoch = now.epoch;
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+      this.oversizedHistoryReset = true;
+      this.history_epoch = result.history_epoch;
+      if (!result.repeated) {
+        this.client.alert_message?.({
+          type: "info",
+          title: "Edit history archived and restarted",
+          message: `The edit history (TimeTravel) of ${this.path} had an entry too large to load, most likely a huge output. It was archived and restarted from the running notebook, which includes every edit, and the notebook opened normally. Its kernel was restarted: variables and anything it was running are lost.`,
+          block: true,
+        });
+      }
+      return true;
+    } catch (err) {
+      this.dbg("askLiveWriterToSeed")(`no answer -- ${err}`);
       return false;
     }
-    // Open with the epoch now in effect -- from our reset, or from whoever
-    // reset the history first -- rather than close, as this document would
-    // when it sees the epoch change.
-    this.history_epoch = result.history_epoch;
-    if (result.reset) {
-      this.client.alert_message?.({
-        type: "info",
-        title: "Edit history reset",
-        message: `The edit history (TimeTravel) of ${this.path} contained an entry too large to load, most likely a huge output, so its edit history was reset and the file opened normally. CoCalc kept a copy of the old history; contact support if you need it.`,
-        block: true,
-      });
+  };
+
+  // (A) The live-writer seed (bounded history plan H1b-3 r4, §2).  This
+  // document, open and ready, seeds a new history from its live value when
+  // that value covers exactly the history's revision N: caught up to N, with
+  // nothing of its own pending, captured in one synchronous step, then reset
+  // with ifRevision N and ifInitEpoch, coveredSeq N.  Anything accepted after
+  // N refuses the reset (moved): at most 3 rounds.  Everything is bounded by
+  // deadlineAt.  The caller's gate (gate.beforeReset) admits the one reset
+  // mutation; gate.answered is called with its opId whenever its answer
+  // arrives, also after the deadline.  Never a rollback: any doubt refuses.
+  seedHistoryFromLiveValue = async ({
+    epoch,
+    deadlineAt,
+    gate,
+    now = Date.now,
+    limits = {},
+    track = (p) => p,
+  }: {
+    epoch: number;
+    deadlineAt: number;
+    // every RPC this starts, so the caller can wait for them to settle after
+    // a deadline before it lets another run start (LIMIT-H1B3B-1)
+    track?: <T>(p: Promise<T>) => Promise<T>;
+    // for tests
+    limits?: { stepMs?: number; reserveMs?: number; valueBytes?: number };
+    gate?: {
+      beforeReset: (reset: {
+        opId: string;
+        epoch: number;
+        revision: { seq: number; count: number };
+      }) => boolean;
+      answered: (opId: string) => void;
+    };
+    now?: () => number;
+  }): Promise<LiveSeedResult> => {
+    const client = this.client;
+    if (
+      typeof client.historyResetState != "function" ||
+      typeof client.resetHistory != "function"
+    ) {
+      return { seeded: false, reason: "failed", message: "not supported" };
     }
-    return true;
+    // kept for the reset itself
+    const RESERVE_MS = limits.reserveMs ?? 10_000;
+    const STEP_MS = limits.stepMs ?? 10_000;
+    const VALUE_BYTES = limits.valueBytes ?? TRANSITION_MAX_VALUE_BYTES;
+    const remaining = () => deadlineAt - now();
+    const notReady = () => !this.isReady() || this.historyTransition != null;
+    const dstream = this.dstream();
+    const caughtUpTo = (seq: number) =>
+      dstream.receivedThroughSeq() >= seq &&
+      !this.remotePatchesPending &&
+      !(this.patchflowSession as any)?.needsMoreHistory?.();
+    const quiet = () =>
+      (dstream.pendingStats?.().count ?? 0) == 0 &&
+      !this.remotePatchesPending &&
+      this.doc != null &&
+      this.last != null &&
+      this.documentsEqual(this.doc, this.last);
+    try {
+      for (let round = 0; round < 3; round++) {
+        if (notReady()) return { seeded: false, reason: "not-ready" };
+        if ((this.history_epoch ?? 0) !== epoch) {
+          return { seeded: false, reason: "epoch" };
+        }
+        if (remaining() < RESERVE_MS) {
+          return { seeded: false, reason: "deadline" };
+        }
+        const state = await withDeadlineAt(
+          deadlineAt,
+          track(
+            client.historyResetState({
+              project_id: this.project_id,
+              path: this.syncPath,
+              ...this.patchesPersistOpts(),
+            }),
+          ),
+          now,
+        );
+        if (state.epoch !== epoch) return { seeded: false, reason: "epoch" };
+        const N = state.seq;
+        // catch up to N
+        if (
+          !(await waitFor(
+            () => notReady() || caughtUpTo(N),
+            Math.min(STEP_MS, remaining() - RESERVE_MS),
+          )) ||
+          notReady()
+        ) {
+          return notReady()
+            ? { seeded: false, reason: "not-ready" }
+            : { seeded: false, reason: "not-caught-up" };
+        }
+        // quiesce: everything of ours acknowledged, so at a seq at most N
+        if (
+          this.doc != null &&
+          this.last != null &&
+          !this.documentsEqual(this.doc, this.last)
+        ) {
+          this.commit();
+        }
+        if (
+          !(await waitFor(
+            () => notReady() || quiet(),
+            Math.min(STEP_MS, remaining() - RESERVE_MS),
+          )) ||
+          notReady()
+        ) {
+          return notReady()
+            ? { seeded: false, reason: "not-ready" }
+            : { seeded: false, reason: "busy" };
+        }
+        // capture, in one synchronous step
+        if (dstream.receivedThroughSeq() !== N || !caughtUpTo(N) || !quiet()) {
+          // something arrived meanwhile: another round
+          continue;
+        }
+        if (valueBytesCapped(this.doc, VALUE_BYTES) == null) {
+          return { seeded: false, reason: "too-large" };
+        }
+        const value = this.to_str();
+        const seed = seedOfValue(value);
+        if (seed.raw.length > LIVE_SEED_MAX_BYTES) {
+          return { seeded: false, reason: "too-large" };
+        }
+        const revision = { seq: N, count: state.count };
+        const opId = [
+          "live-seed",
+          epoch,
+          N,
+          state.count,
+          sha256Utf8(value)?.sha256,
+        ].join(":");
+        if (remaining() <= 0) return { seeded: false, reason: "deadline" };
+        if (gate != null && !gate.beforeReset({ opId, epoch, revision })) {
+          return { seeded: false, reason: "busy" };
+        }
+        const time = now();
+        const reset = client.resetHistory({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+          busyAttempts: Math.max(1, Math.floor(remaining() / 1000) - 1),
+          options: {
+            ifRevision: revision,
+            ifInitEpoch: epoch,
+            coveredSeq: N,
+            allowRollback: false,
+            archive: true,
+            seed,
+            reason: "live-seed",
+            opId,
+            settings: {
+              history_purged_at: time,
+              history_reset: {
+                reason: "live-seed",
+                coverage: "proven",
+                coveredSeq: N,
+                time,
+              },
+            },
+          } as any,
+        });
+        track(reset);
+        reset.then(
+          () => gate?.answered(opId),
+          () => gate?.answered(opId),
+        );
+        const result = await withDeadlineAt(deadlineAt, reset, now);
+        if (result.reset) {
+          return {
+            seeded: true,
+            history_epoch: result.history_epoch,
+            ...(result.repeated ? { repeated: true } : {}),
+          };
+        }
+        if (result.refused == "moved") continue;
+        return {
+          seeded: false,
+          reason:
+            result.refused == "epoch"
+              ? "epoch"
+              : result.refused == "busy"
+                ? "busy"
+                : result.refused == "seed-too-large"
+                  ? "too-large"
+                  : "failed",
+          message: result.refused,
+        };
+      }
+      return { seeded: false, reason: "moved" };
+    } catch (err) {
+      if (err instanceof DeadlineExpired) {
+        return { seeded: false, reason: "deadline" };
+      }
+      return { seeded: false, reason: "failed", message: `${err}` };
+    }
   };
 
   // The history holds an entry too large to load (a 413).  Reset it from the
@@ -934,10 +1228,16 @@ export class SyncDoc extends EventEmitter {
     });
 
   private unloadableHistoryReported = false;
-  private reportUnloadableHistory = (): void => {
+  // history_epoch: the epoch the persist server failed to load the history
+  // in, when it said (so a later reset is recognized as a recovery, H1b-4).
+  private reportUnloadableHistory = (history_epoch?: number): void => {
     if (this.unloadableHistoryReported) return;
     this.unloadableHistoryReported = true;
-    this.emit("history-unloadable", { path: this.path });
+    this.emit("history-unloadable", {
+      path: this.path,
+      restart: historyRestartKind(this.syncPath),
+      ...(typeof history_epoch == "number" ? { history_epoch } : {}),
+    });
   };
 
   // The user's choice when the history cannot be loaded: restart it from the
@@ -1263,6 +1563,9 @@ export class SyncDoc extends EventEmitter {
     const seq = (err as any)?.oversizedSeq;
     if ((err as any)?.code == 413 && typeof seq == "number") {
       (err as any).oversizedHistorySeq = seq;
+      // the history epoch the persist server read it in
+      const epoch = (err as any)?.oversizedEpoch;
+      if (typeof epoch == "number") (err as any).oversizedHistoryEpoch = epoch;
     }
     return err;
   };

@@ -33,6 +33,7 @@ import {
   storedRowToMessage,
   unexpectedPersistSchema,
   HISTORY_SCHEMA,
+  RESET_TRASH_SCHEMA,
 } from "./storage";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
@@ -293,6 +294,147 @@ describe("the schema of a stored database", () => {
         stream.historyInclusion({ epoch: 1, ids: ["a", "x"] }).ids,
       ).toEqual({ a: { status: "included", seq: 3 }, x: { status: "absent" } });
       stream.close();
+    });
+  });
+
+  // H1c-0: a server rolled back past H1c must still open what H1c wrote
+  describe("the reset-trash schema (accepted for H1c)", () => {
+    // what H1c leaves after a purge and an archive: the counts and trash
+    // tables; renamed tables keeping their indexes; and the live tables'
+    // generation-suffixed indexes
+    const H1C_SHAPE = [
+      ...Object.values(RESET_TRASH_SCHEMA),
+      'ALTER TABLE messages RENAME TO "messages_archived_3"',
+      "CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, time INTEGER NOT NULL, headers TEXT, compress NUMBER NOT NULL, encoding NUMBER NOT NULL, raw BLOB NOT NULL, size NUMBER NOT NULL, ttl NUMBER)",
+      "CREATE INDEX idx_messages_key_g1 ON messages(key)",
+      "CREATE INDEX idx_messages_time_g1 ON messages(time)",
+      'ALTER TABLE message_ids RENAME TO "message_ids_trash_7"',
+      "CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL)",
+      "CREATE INDEX idx_message_ids_msg_id_g1 ON message_ids(msg_id)",
+      "INSERT INTO messages(time, compress, encoding, raw, size) VALUES (1, 0, 1, CAST('{\"b\":2}' AS BLOB), 7)",
+    ].join(";\n");
+
+    const indexesOf = (path: string) => {
+      const db = new DatabaseSync(path + ".db");
+      try {
+        return db
+          .prepare(
+            "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+          )
+          .all() as { name: string; tbl_name: string }[];
+      } finally {
+        db.close();
+      }
+    };
+
+    it("opens, reads and writes a database H1c shaped, and creates no second index of a purpose", () => {
+      const path = serverFile();
+      tamper(path, H1C_SHAPE);
+      const before = indexesOf(path);
+      let stream = open(path);
+      expect(
+        [...stream.getAll()].map((m) => Buffer.from(m.raw).toString()),
+      ).toEqual(['{"b":2}']);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"c"'), msgID: "c" });
+      stream.close();
+      // the live tables' indexes are the same: they already had theirs (the
+      // renamed messages table is unindexed archive, which the open trims)
+      const live = (list: { name: string; tbl_name: string }[]) =>
+        list.filter((i) => ["messages", "message_ids"].includes(i.tbl_name));
+      expect(live(indexesOf(path))).toEqual(live(before));
+      expect(live(before)).toHaveLength(3);
+      // and it still opens
+      stream = open(path);
+      expect([...stream.getAll()]).toHaveLength(2);
+      stream.close();
+    });
+
+    it("gives a live table without an index of a purpose one under a free name", () => {
+      const path = serverFile();
+      // the base name is carried by a renamed table
+      tamper(
+        path,
+        [
+          'ALTER TABLE message_ids RENAME TO "message_ids_trash_2"',
+          "CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL)",
+        ].join(";\n"),
+      );
+      open(path).close();
+      expect(
+        indexesOf(path).filter((i) => i.name.startsWith("idx_message_ids")),
+      ).toEqual([
+        { name: "idx_message_ids_msg_id", tbl_name: "message_ids_trash_2" },
+        { name: "idx_message_ids_msg_id_g1", tbl_name: "message_ids" },
+      ]);
+    });
+
+    it.each([
+      [
+        "a second index of a purpose on one table",
+        "CREATE INDEX idx_messages_key_g5 ON messages(key)",
+      ],
+      [
+        "an index whose column is not its name's",
+        "CREATE INDEX idx_messages_key_g5 ON messages(time)",
+      ],
+      [
+        "a unique index of a purpose",
+        "DROP INDEX idx_messages_time; CREATE UNIQUE INDEX idx_messages_time_g2 ON messages(time)",
+      ],
+      [
+        "an index of a purpose on another table",
+        "CREATE INDEX idx_messages_key_g5 ON message_ids(msg_id)",
+      ],
+      [
+        "an index of a purpose on a table of another purpose",
+        "CREATE INDEX idx_message_ids_msg_id_g5 ON messages(key)",
+      ],
+      [
+        "an index of a purpose on two columns",
+        "DROP INDEX idx_messages_time; CREATE INDEX idx_messages_time_g2 ON messages(time, raw)",
+      ],
+      [
+        "a generation that is not a number",
+        "DROP INDEX idx_messages_time; CREATE INDEX idx_messages_time_gx ON messages(time)",
+      ],
+      [
+        "a changed counts table",
+        RESET_TRASH_SCHEMA.stream_counts.replace(
+          "trash_unknown_items INTEGER NOT NULL DEFAULT 0",
+          "trash_unknown_items INTEGER NOT NULL DEFAULT 0, x BLOB",
+        ),
+      ],
+      [
+        "a changed trash ledger",
+        RESET_TRASH_SCHEMA.history_trash.replace(
+          "kind TEXT NOT NULL",
+          "kind BLOB",
+        ),
+      ],
+      [
+        "a changed renamed id table",
+        'CREATE TABLE "message_ids_trash_4" (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL, x BLOB)',
+      ],
+      [
+        "a trash id table name with a quote",
+        `CREATE TABLE "message_ids_trash_1""; --"(seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL)`,
+      ],
+    ])("refuses %s", (_, sql) => {
+      const path = serverFile();
+      tamper(path, sql);
+      expect(() => open(path)).toThrow(/changed outside CoCalc/);
+    });
+
+    it("this server does not create the reset-trash tables", () => {
+      const path = serverFile();
+      const db = new DatabaseSync(path + ".db");
+      const names = (
+        db.prepare("SELECT name FROM sqlite_master").all() as { name: string }[]
+      ).map(({ name }) => name);
+      db.close();
+      for (const name of Object.keys(RESET_TRASH_SCHEMA)) {
+        expect(names).not.toContain(name);
+      }
     });
   });
 

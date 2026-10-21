@@ -10,12 +10,14 @@ import * as control from "@cocalc/jupyter/control";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { type ServerSocket } from "@cocalc/conat/socket";
 import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
+import {
+  restartHistoryFromIpynb as restartHistory,
+  seedOversizedHistory as seedHistory,
+} from "@cocalc/jupyter/history-restart";
+import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
 
 let fs: SandboxedFilesystem | null = null;
-export async function start(path: string) {
-  if (control.isRunning(path)) {
-    return;
-  }
+function projectFs(): SandboxedFilesystem {
   fs ??= new SandboxedFilesystem(process.env.HOME ?? "/tmp", {
     unsafeMode: true,
     // Workspace processes use a real directory as HOME while notebook paths
@@ -24,7 +26,33 @@ export async function start(path: string) {
       ? [process.env.COCALC_RUNTIME_HOME]
       : undefined,
   });
-  await control.start({ project_id, path, client: getClient(), fs });
+  return fs;
+}
+
+export async function start(path: string) {
+  if (control.isRunning(path)) {
+    return;
+  }
+  await control.start({
+    project_id,
+    path,
+    client: getClient(),
+    fs: projectFs(),
+  });
+}
+
+// Not start(): the notebook's history cannot load, and this never needs it.
+export async function restartHistoryFromIpynb(opts: {
+  path: string;
+  epoch: number;
+  revision: { seq: number; count: number };
+}) {
+  return await restartHistory({
+    ...opts,
+    project_id,
+    client: getClient().conat(),
+    fs: control.createJupyterSyncFilesystem(projectFs()),
+  });
 }
 
 // IMPORTANT: run is NOT used directly by the API, but instead by packages/project/conat/jupyter.ts
@@ -97,3 +125,25 @@ export async function ipywidgetsGetBuffer(opts) {
 
 import apiExecute from "@cocalc/jupyter/stateless-api/execute";
 export { apiExecute };
+
+// The live-writer seed (option A): only from a notebook this backend has open
+// and ready; never starts one.
+// One SyncClient per request, released however the request ends: each
+// listens to the long-lived conat client until released (LIMIT-H1B3C-1).
+export async function seedOversizedHistory(opts: {
+  path: string;
+  epoch: number;
+  oversizedSeq: number;
+}) {
+  const syncClient = new SyncClient(getClient().conat());
+  try {
+    return await seedHistory({
+      ...opts,
+      project_id,
+      syncdbOf: (path) => control.liveSyncdb(path),
+      syncClient,
+    });
+  } finally {
+    syncClient.release();
+  }
+}

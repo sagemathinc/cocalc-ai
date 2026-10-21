@@ -109,7 +109,7 @@ describe("Account deletion methods", () => {
 
       // Verify the account was marked deleted
       const result = await pool.query(
-        "SELECT deleted, email_address, email_address_before_delete, passports FROM accounts WHERE account_id = $1",
+        "SELECT deleted, email_address, email_address_before_delete, passports, first_name FROM accounts WHERE account_id = $1",
         [accountId],
       );
 
@@ -118,6 +118,7 @@ describe("Account deletion methods", () => {
       expect(result.rows[0].email_address).toBeNull();
       expect(result.rows[0].email_address_before_delete).toBe(email);
       expect(result.rows[0].passports).toBeNull();
+      expect(result.rows[0].first_name).toBeNull();
     });
 
     it("marks account as deleted using email_address", async () => {
@@ -145,21 +146,19 @@ describe("Account deletion methods", () => {
       expect(result.rows[0].email_address_before_delete).toBe(email);
     });
 
-    it("preserves account record in database", async () => {
+    it("keeps the account record but clears its personal data", async () => {
       const accountId = uuid();
       const email = `preserve-${Date.now()}@example.com`;
-      const firstName = "Preserved";
-      const lastName = "User";
 
       // Create account with data
       await pool.query(
         "INSERT INTO accounts (account_id, email_address, first_name, last_name) VALUES ($1, $2, $3, $4)",
-        [accountId, email, firstName, lastName],
+        [accountId, email, "Preserved", "User"],
       );
 
       await mark_account_deleted_wrapper({ account_id: accountId });
 
-      // Account should still exist with other data intact
+      // The row stays (other records refer to it), without the user's name
       const result = await pool.query(
         "SELECT account_id, first_name, last_name, deleted FROM accounts WHERE account_id = $1",
         [accountId],
@@ -167,9 +166,35 @@ describe("Account deletion methods", () => {
 
       expect(result.rows.length).toBe(1);
       expect(result.rows[0].account_id).toBe(accountId);
-      expect(result.rows[0].first_name).toBe(firstName);
-      expect(result.rows[0].last_name).toBe(lastName);
+      expect(result.rows[0].first_name).toBeNull();
+      expect(result.rows[0].last_name).toBeNull();
       expect(result.rows[0].deleted).toBe(true);
+    });
+
+    it("keeps the former email and deletion time when marked deleted again", async () => {
+      const accountId = uuid();
+      const email = `retry-${Date.now()}@example.com`;
+      await pool.query(
+        "INSERT INTO accounts (account_id, email_address) VALUES ($1, $2)",
+        [accountId, email],
+      );
+
+      await mark_account_deleted_wrapper({ account_id: accountId });
+      const first = await pool.query(
+        "SELECT deleted_at FROM accounts WHERE account_id = $1",
+        [accountId],
+      );
+      // e.g. a retry after a later deletion step failed
+      await mark_account_deleted_wrapper({ account_id: accountId });
+
+      const result = await pool.query(
+        "SELECT deleted, email_address_before_delete, deleted_at FROM accounts WHERE account_id = $1",
+        [accountId],
+      );
+      expect(result.rows[0].deleted).toBe(true);
+      expect(result.rows[0].email_address_before_delete).toBe(email);
+      expect(first.rows[0].deleted_at).not.toBeNull();
+      expect(result.rows[0].deleted_at).toEqual(first.rows[0].deleted_at);
     });
 
     it("clears passports field", async () => {
