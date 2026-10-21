@@ -49,6 +49,7 @@ describe("resetHistory with a seed, through the persist server", () => {
         history_epoch: 1,
         seedSeq: 3,
         coveredSeq: 2,
+        segments: 1,
       });
       // a lost reply: the retry gets the same result
       expect(await persisted.resetHistory(opts)).toEqual({
@@ -76,6 +77,17 @@ describe("resetHistory with a seed, through the persist server", () => {
           c: { status: "absent" },
         },
       });
+      const archives = await persisted.historyArchives();
+      expect(archives).toHaveLength(1);
+      expect(archives[0]).toMatchObject({
+        epoch: 0,
+        covered_seq: 2,
+        kept: { records: 2 },
+      });
+      expect(await persisted.purgeArchivedHistory()).toMatchObject({
+        records: 2,
+      });
+      expect((await persisted.historyArchives())[0].archive).toBeUndefined();
     } finally {
       persisted.close();
       client.close();

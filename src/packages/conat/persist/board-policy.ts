@@ -53,6 +53,7 @@ const BOARD_READ_COMMANDS = new Set([
   "checkpoints",
   "metadata",
   "historyInclusion",
+  "historyArchives",
 ]);
 
 export type BoardStreamClass =

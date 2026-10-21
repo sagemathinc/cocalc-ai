@@ -454,6 +454,10 @@ export function server({
           mesg.respondSync(stream.resetHistory(mesg.data ?? {}));
         } else if (request.cmd == "historyInclusion") {
           mesg.respondSync(stream.historyInclusion(mesg.data ?? {}));
+        } else if (request.cmd == "historyArchives") {
+          mesg.respondSync(stream.historyArchives());
+        } else if (request.cmd == "purgeArchivedHistory") {
+          mesg.respondSync(stream.purgeArchivedHistory());
         } else if (request.cmd == "checkpoints") {
           mesg.respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {
