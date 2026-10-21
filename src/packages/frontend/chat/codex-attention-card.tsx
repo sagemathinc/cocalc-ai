@@ -132,6 +132,9 @@ export type CodexAttentionDraftUpdater = (
   current: CodexAttentionDraft,
 ) => CodexAttentionDraft;
 
+/** The approval dialog was opened by Send, not by an answer's picker. */
+const SEND_FOCUS = "\u0000send";
+
 export function CodexAttentionCard({
   initialRecord,
   responseInActivity,
@@ -193,7 +196,10 @@ function RuntimeCodexAttentionCard({
     }
     return control;
   };
+  // Which answer was last typed in, or Send when Send asked for approval:
+  // the dialog returns focus to whichever opened it.
   const lastAnswer = useRef<string | undefined>(undefined);
+  const sendButton = useRef<HTMLButtonElement>(null);
   const agentMentions = useAgentMentions({
     projectId: record.project_id,
     path: record.path,
@@ -202,7 +208,8 @@ function RuntimeCodexAttentionCard({
     runnable: !lite,
     restoreFocus: () => {
       const id = lastAnswer.current;
-      if (id) answerControls.current.get(id)?.current?.focus?.();
+      if (id === SEND_FOCUS) sendButton.current?.focus();
+      else if (id) answerControls.current.get(id)?.current?.focus?.();
     },
   });
   const agentMentionContext = {
@@ -802,10 +809,12 @@ function RuntimeCodexAttentionCard({
             ) : answerable ? (
               <Space wrap>
                 <Button
+                  ref={sendButton}
                   type="primary"
                   disabled={!canSubmit || uploads > 0}
                   loading={submitting}
-                  onClick={() =>
+                  onClick={() => {
+                    lastAnswer.current = SEND_FOCUS;
                     void agentMentions.preflight(
                       // Only what the person wrote: an agent's own choices may
                       // name agents, with no picker to bind them.
@@ -813,8 +822,8 @@ function RuntimeCodexAttentionCard({
                         .filter((value) => value?.trim())
                         .join("\n"),
                       () => respond(false),
-                    )
-                  }
+                    );
+                  }}
                 >
                   {lateQuestion ? "Send as new message" : "Send response"}
                 </Button>

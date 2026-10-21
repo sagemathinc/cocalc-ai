@@ -930,4 +930,41 @@ describe("Codex question attention", () => {
     expect(mockFocus).toHaveBeenCalledTimes(1);
     view.unmount();
   });
+
+  it("after approval that Send asked for, focus returns to Send, not the last answer", async () => {
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [
+            { ...questionRecord.questions[0], isOther: true },
+            {
+              ...questionRecord.questions[0],
+              id: "size",
+              header: "Size",
+              isOther: true,
+            },
+          ],
+        }}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Custom answer for Size" }),
+      { target: { value: "Ask @reviewer" } },
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Custom answer for Region" }),
+      { target: { value: "EU" } },
+    );
+    // Send opens the approval dialog (and waits there).
+    mockPreflight.mockImplementationOnce(async () => {});
+    const send = screen.getByRole("button", { name: "Send response" });
+    fireEvent.click(send);
+    await waitFor(() => expect(mockPreflight).toHaveBeenCalled());
+    mockFocus.mockClear();
+    mockRestoreFocus?.();
+    expect(send).toHaveFocus();
+    expect(mockFocus).not.toHaveBeenCalled();
+    view.unmount();
+  });
 });
