@@ -11,9 +11,11 @@ import {
   listQueuedAcpJobs,
 } from "../../sqlite/acp-jobs";
 import {
+  claimAgentRpcReport,
   enqueueAgentRpcReport,
   listDueAgentRpcReports,
 } from "../../sqlite/agent-rpc-reports";
+import { drainAgentRpcReports } from "../agent-rpc-report";
 import { parseTurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
 import { acpTestInternals, withdrawAgentMessageTurn } from "../index";
 
@@ -384,5 +386,89 @@ describe("a withdrawal that loses the race to its resumed turn", () => {
     }
     expect(getAcpJobByOpId(next.op_id)?.state).toBe("running");
     expect(getAcpJobByOpId(parent.op_id)?.outcome_json ?? null).toBeNull();
+  });
+});
+
+describe("a held report and a withdrawal at the same time", () => {
+  function heldChain() {
+    const attempt = randomUUID();
+    const first = job(attempt);
+    set(first.op_id, {
+      state: "error",
+      started_at: first.created_at + 1,
+      finished_at: first.created_at + 2,
+    });
+    const held = job(attempt);
+    set(held.op_id, {
+      created_at: first.created_at + 3,
+      recovery_parent_op_id: first.op_id,
+      available_at: Date.now() + 3_600_000,
+    });
+    const report_id = randomUUID();
+    enqueueAgentRpcReport({
+      op_id: `${first.op_id}:held`,
+      account_id: ACCOUNT,
+      report: { report_id, phase: "held" } as any,
+    });
+    return { attempt, held, report_id };
+  }
+
+  it("a report being sent: the withdrawal waits (rejected, the turn stays held)", async () => {
+    const { attempt, held, report_id } = heldChain();
+    expect(claimAgentRpcReport(report_id)).toBe(true);
+    expect(await withdraw(attempt)).toMatchObject({
+      outcome: "rejected",
+      reason:
+        "Its turn's hold was being reported just now; try withdrawing again.",
+    });
+    expect(getAcpJobByOpId(held.op_id)?.state).toBe("queued");
+  });
+
+  it("a report listed but not yet sent is never sent after the withdrawal", async () => {
+    const { attempt } = heldChain();
+    const sent: any[] = [];
+    // The drain has listed the report; the withdrawal lands before it sends.
+    const reports = require("../../sqlite/agent-rpc-reports");
+    const real = reports.listDueAgentRpcReports;
+    const spy = jest
+      .spyOn(reports, "listDueAgentRpcReports")
+      .mockImplementationOnce((...args: any[]) => {
+        const rows = real(...args);
+        withdrawal = withdraw(attempt);
+        return rows;
+      });
+    let withdrawal: Promise<any> | undefined;
+    try {
+      await drainAgentRpcReports({
+        reportRpcTurnFailure: async (opts: any) => {
+          sent.push(opts);
+          return {} as any;
+        },
+      } as any);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await withdrawal).toMatchObject({ outcome: "accepted" });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("a withdrawal that is rejected puts the report back", async () => {
+    const { attempt, held } = heldChain();
+    // Its turn started just as the withdrawal looked.
+    const turn = require("../agent-rpc-turn");
+    const real = turn.agentRpcWithdrawable;
+    const spy = jest
+      .spyOn(turn, "agentRpcWithdrawable")
+      .mockImplementationOnce((...args: any[]) => {
+        const found = real(...args);
+        set(held.op_id, { state: "running", started_at: Date.now() });
+        return found;
+      });
+    try {
+      expect(await withdraw(attempt)).toMatchObject({ outcome: "rejected" });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(listDueAgentRpcReports(Date.now() + 1)).toHaveLength(1);
   });
 });

@@ -103,6 +103,79 @@ export function deleteAgentRpcReportByOpId(op_id: string): void {
   getAcpDatabase().prepare(`DELETE FROM ${TABLE} WHERE op_id = ?`).run(op_id);
 }
 
+/** Being sent now (see claimAgentRpcReport), until its lease ends. */
+const IN_FLIGHT = "in flight";
+/** A claim this old was lost (its process died): the report is due again. */
+export const AGENT_RPC_REPORT_CLAIM_MS = 5 * 60_000;
+
+/** Claim a due report before sending it; false if it is gone (withdrawn,
+ * say) or another process is sending it. */
+export function claimAgentRpcReport(
+  report_id: string,
+  now = Date.now(),
+): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET next_attempt_at = ?, last_error = ?
+         WHERE report_id = ? AND next_attempt_at <= ?`,
+    )
+    .run(now + AGENT_RPC_REPORT_CLAIM_MS, IN_FLIGHT, report_id, now);
+  return Number(result?.changes ?? 0) === 1;
+}
+
+/**
+ * Take a report back before it is sent: the row, once removed (put it back
+ * with restoreAgentRpcReport if the reason for taking it goes away);
+ * "in-flight" if it is being sent right now; undefined if there is none.
+ */
+export function takeAgentRpcReportByOpId(
+  op_id: string,
+  now = Date.now(),
+): AgentRpcReportRow | "in-flight" | undefined {
+  ensureInit();
+  const db = getAcpDatabase();
+  const row = db
+    .prepare(
+      `SELECT report_id, op_id, account_id, report_json, attempts, next_attempt_at, created_at
+         FROM ${TABLE} WHERE op_id = ?`,
+    )
+    .get(op_id) as any;
+  if (!row) return;
+  // One statement, so a claim in another process either came first (and
+  // this deletes nothing) or never happens.
+  const result = db
+    .prepare(
+      `DELETE FROM ${TABLE}
+         WHERE report_id = ?
+           AND NOT (last_error IS ? AND next_attempt_at > ?)`,
+    )
+    .run(row.report_id, IN_FLIGHT, now);
+  if (Number(result?.changes ?? 0) !== 1) return "in-flight";
+  const { report_json, ...rest } = row;
+  return { ...rest, report: JSON.parse(report_json) };
+}
+
+/** Put back a report taken with takeAgentRpcReportByOpId. */
+export function restoreAgentRpcReport(row: AgentRpcReportRow): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `INSERT OR IGNORE INTO ${TABLE}
+         (report_id, op_id, account_id, report_json, attempts, next_attempt_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      row.report_id,
+      row.op_id,
+      row.account_id,
+      JSON.stringify(row.report),
+      row.attempts,
+      row.next_attempt_at,
+      row.created_at,
+    );
+}
+
 /** Done: delivered, refused, or the sender already had a reply. */
 export function deleteAgentRpcReport(report_id: string): void {
   ensureInit();

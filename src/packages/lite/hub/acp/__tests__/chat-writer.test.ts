@@ -4619,6 +4619,48 @@ describe("queued ACP user message projection", () => {
     ).toBe("user-queued-2");
   });
 
+  it("never shows a message withdrawn meanwhile as queued again", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        state: "running",
+      },
+    ]);
+    syncdb.set({
+      event: "chat",
+      date: "2026-03-19T20:20:00.000Z",
+      sender_id: "user",
+      message_id: "user-withdrawn-1",
+      thread_id: "thread-1",
+      history: [{ content: "withdrawn followup" }],
+    });
+    // Its admission's "queued" write arrives after the sender withdrew it.
+    const jobs = require("../../sqlite/acp-jobs");
+    const spy = jest
+      .spyOn(jobs, "getAcpJob")
+      .mockReturnValue({ state: "canceled" } as any);
+    try {
+      await acpTestInternals.persistQueuedUserMessageProjection({
+        client: makeFakeClient() as any,
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        user_message_id: "user-withdrawn-1",
+        queued: true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      syncdb.get_one({ event: "chat", message_id: "user-withdrawn-1" })
+        ?.acp_state ?? null,
+    ).toBeNull();
+  });
+
   it("does not mark an idle submitted message as queued", async () => {
     const { syncdb } = makeFakeSyncDB();
     (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);

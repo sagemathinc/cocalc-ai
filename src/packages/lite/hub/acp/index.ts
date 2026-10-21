@@ -20,7 +20,11 @@ import {
   drainAgentRpcReports,
   noteAgentMessageTurnFailed,
 } from "./agent-rpc-report";
-import { deleteAgentRpcReportByOpId } from "../sqlite/agent-rpc-reports";
+import {
+  deleteAgentRpcReportByOpId,
+  restoreAgentRpcReport,
+  takeAgentRpcReportByOpId,
+} from "../sqlite/agent-rpc-reports";
 import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-reports";
 import { toolUseTracker } from "./tool-use";
 import {
@@ -7078,6 +7082,15 @@ function startAcpTerminalRecoveryPoller(client: ConatClient): void {
         } catch (err) {
           logger.warn("ACP project fence follow-up poll failed", err);
         }
+        // Here too, not only in the worker (which exits once idle, perhaps
+        // before a withdrawn message's chat could be updated).
+        try {
+          await retryWithdrawnProjections(100, (job) =>
+            projectWithdrawnMessage(job, client),
+          );
+        } catch (err) {
+          logger.warn("withdrawn messages' chat retry poll failed", err);
+        }
       } while (acpTerminalRecoveryPollAgain);
     } finally {
       acpTerminalRecoveryPollInFlight = false;
@@ -8661,7 +8674,7 @@ async function persistQueuedUserMessageProjection({
   path,
   thread_id,
   user_message_id,
-  queued,
+  queued: requestedQueued,
   readyTimeoutMs,
 }: {
   client: ConatClient;
@@ -8678,6 +8691,12 @@ async function persistQueuedUserMessageProjection({
     path,
     readyTimeoutMs,
     fn: async (syncdb) => {
+      // Decided as it is written, not when it was asked for: a message
+      // withdrawn meanwhile is never shown as queued again by a late write
+      // (e.g. its admission's) landing after the withdrawal's own.
+      const queued =
+        requestedQueued &&
+        getAcpJob({ project_id, path, user_message_id })?.state !== "canceled";
       const versionCountBefore = syncdbVersionCount(syncdb);
       const waitingInLine =
         threadHasRunningState(syncdb, thread_id) ||
@@ -9472,11 +9491,28 @@ export async function withdrawAgentMessageTurn(
       ...turnOf(source, attempt, accountId),
     };
   const { job, jobs, intent } = found;
+  // Its "held until ..." report, taken back first: after an accepted
+  // withdrawal it would be untrue (and the sender asked for none). If it is
+  // being sent this moment, the withdrawal waits for that (tried again).
+  const held = takeHeldReport(jobs);
+  if (held === "in-flight")
+    return {
+      ...rpcOutcome(attempt, "rejected", {
+        reason:
+          "Its turn's hold was being reported just now; try withdrawing again.",
+      }),
+      ...turnOf(source, attempt, accountId),
+    };
+  // Not withdrawn after all: the report goes out as it would have.
+  const keepHeld = () => {
+    if (held) restoreAgentRpcReport(held);
+  };
   // A stopped turn waiting to be resumed: clearing its intent (only if
   // still set) means the worker or recovery poll never queues it again.
   // If it was queued meanwhile, that continuation is what is withdrawn.
   if (intent) {
     if (!clearAcpJobRecoveryIntentIf(job.op_id, intent)) {
+      keepHeld();
       if (retried)
         return {
           ...rpcOutcome(attempt, "rejected", {
@@ -9499,13 +9535,15 @@ export async function withdrawAgentMessageTurn(
           account_id: next.account_id ?? accountId,
           thread_id: next.thread_id,
         }).canceled;
-      if (!canceled)
+      if (!canceled) {
+        keepHeld();
         return {
           ...rpcOutcome(attempt, "rejected", {
             reason: "Its turn resumed just now, so it was not withdrawn.",
           }),
           ...turnOf(source, attempt, accountId),
         };
+      }
       recordAcpJobOutcome(next.op_id, {
         version: 1,
         state: "canceled",
@@ -9521,7 +9559,6 @@ export async function withdrawAgentMessageTurn(
         }),
       );
     }
-    dropHeldReport(jobs);
     recordAcpJobOutcome(job.op_id, {
       version: 1,
       state: "canceled",
@@ -9552,13 +9589,15 @@ export async function withdrawAgentMessageTurn(
     account_id: job.account_id ?? accountId,
     thread_id: job.thread_id,
   });
-  if (!canceled)
+  if (!canceled) {
+    keepHeld();
     return {
       ...rpcOutcome(attempt, "rejected", {
         reason: "Its turn started or ended just now, so it was not withdrawn.",
       }),
       ...turnOf(source, attempt, accountId),
     };
+  }
   // A continuation that never ran still belongs to a turn that may have.
   const tool_ran = chainToolRan(
     jobs.map((row) =>
@@ -9571,7 +9610,6 @@ export async function withdrawAgentMessageTurn(
     by: "sender",
     ...(tool_ran !== undefined ? { tool_ran } : {}),
   });
-  dropHeldReport(jobs);
   // Recorded first, even if the projection below succeeds: the send that
   // queued it may still be writing its "queued" projection, which would land
   // after ours. The recovery poll projects it once more, then clears this.
@@ -9593,18 +9631,23 @@ export async function withdrawAgentMessageTurn(
   };
 }
 
-/** A "held until ..." report for the chain, if still waiting to be sent:
- * after a withdrawal it would be untrue (and the sender asked for none). */
-function dropHeldReport(jobs: AcpJobRow[]): void {
+/** The chain's "held until ..." report, taken out of the outbox if it is
+ * still waiting to be sent (see takeAgentRpcReportByOpId). */
+function takeHeldReport(
+  jobs: AcpJobRow[],
+): ReturnType<typeof takeAgentRpcReportByOpId> {
   const root = jobs[0]?.op_id;
-  if (root) deleteAgentRpcReportByOpId(`${root}:held`);
+  return root ? takeAgentRpcReportByOpId(`${root}:held`) : undefined;
 }
 
 /** The chat stops showing a withdrawn message as queued. */
-async function projectWithdrawnMessage(job: AcpJobRow): Promise<void> {
-  if (!conatClient) throw new Error("conat client unavailable");
+async function projectWithdrawnMessage(
+  job: AcpJobRow,
+  client: ConatClient | null | undefined = conatClient,
+): Promise<void> {
+  if (!client) throw new Error("conat client unavailable");
   await persistQueuedUserMessageProjection({
-    client: conatClient,
+    client,
     project_id: job.project_id,
     path: job.path,
     thread_id: job.thread_id,
