@@ -49,8 +49,15 @@ export const SENSOR_LIMITS = {
   /** Watchers give up (and say so) after this long. */
   maxWatchHours: 72,
   defaultWatchHours: 24,
-  /** How far ahead a reminder may be set. */
-  maxReminderHours: 7 * 24,
+  /** How far ahead a reminder (`watch at`) may be set: far enough for
+   * deadlines months away. */
+  maxReminderHours: 400 * 24,
+  /**
+   * Pending reminders, counted apart from the other watchers (they check
+   * nothing until they fire, so they take no watcher's place).
+   */
+  maxRemindersPerAgent: 50,
+  maxRemindersPerAccount: 200,
   /** How much of the end of a file a file watcher reads. */
   maxWatchFileBytes: 1_000_000,
   /** How much of the end of a command's output an exit watcher reports. */
