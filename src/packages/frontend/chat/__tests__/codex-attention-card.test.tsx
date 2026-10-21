@@ -46,6 +46,19 @@ beforeEach(() => {
 jest.mock("@cocalc/frontend/agents/api", () => ({
   useNamedAgents: () => mockNamedAgents(),
 }));
+const mockPreflight = jest.fn(
+  async (_value: string, send: () => void | Promise<void>) => {
+    await send();
+  },
+);
+jest.mock("@cocalc/frontend/agents/use-agent-mentions", () => ({
+  useAgentMentions: () => ({
+    context: { allowAgentMentions: true, onSelect: jest.fn(), states: {} },
+    preflight: (value: string, send: () => void | Promise<void>) =>
+      mockPreflight(value, send),
+    ui: null,
+  }),
+}));
 jest.mock("@cocalc/frontend/misc/open-browser-tab", () => ({
   open_new_tab: jest.fn(),
 }));
@@ -819,6 +832,46 @@ describe("Codex question attention", () => {
         expect.objectContaining({
           action: "respond",
           answers: { region: ["**EU**\n![map](.chat-images/map.png)"] },
+        }),
+      ),
+    );
+    view.unmount();
+  });
+
+  it("offers @agents in a custom answer and checks them like the composer before sending", async () => {
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [{ ...questionRecord.questions[0], isOther: true }],
+        }}
+      />,
+    );
+    expect(mockMarkdownInput).toHaveBeenLastCalledWith(
+      expect.objectContaining({ enableMentions: true }),
+    );
+    const answer =
+      'Ask <span class="agent-mention" data-agent-reference="x">@reviewer</span> first';
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Custom answer for Region" }),
+      { target: { value: answer } },
+    );
+    // The check holds the answer back (an Agent Network still needs approval).
+    mockPreflight.mockImplementationOnce(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Send response" }));
+    await waitFor(() =>
+      expect(mockPreflight).toHaveBeenCalledWith(answer, expect.any(Function)),
+    );
+    expect(webapp_client.conat_client.attentionAcp).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "respond" }),
+    );
+    // Once it passes, the answer goes out with its reference as written.
+    fireEvent.click(screen.getByRole("button", { name: "Send response" }));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          answers: { region: [answer] },
         }),
       ),
     );

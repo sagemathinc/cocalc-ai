@@ -258,6 +258,7 @@ import { agentUserTimeContext } from "./user-locale";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
+  resolveHumanAgentMentions,
   resolveHumanTurnMentions,
   resolveHumanTurnArtifactMentions,
 } from "./turn-mentions";
@@ -11993,6 +11994,23 @@ async function handleAcpAttentionRequest(
       const answers = Object.fromEntries(
         Object.entries(normalized).map(([id, value]) => [id, value.answers]),
       );
+      // @agents in an answer are checked as in a person's own message: each
+      // must name an available agent, checked under this account.
+      if (!request.decline) {
+        try {
+          await resolveHumanAgentMentions(
+            Object.values(answers).flat().join("\n"),
+            { account_id: request.account_id, project_id: request.project_id },
+            hubApi.agent,
+          );
+        } catch (err) {
+          return {
+            ok: false,
+            state: current.state,
+            error: `${(err as Error)?.message ?? err}. Your answer was not sent.`,
+          };
+        }
+      }
       const submitted = submitAcpAttentionResponse({
         codex_credential_id: request.codex_credential_id,
         attention_id: request.attention_id,

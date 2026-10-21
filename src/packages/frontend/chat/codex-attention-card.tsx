@@ -29,6 +29,8 @@ import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { lite } from "@cocalc/frontend/lite";
 import { useNamedAgents } from "@cocalc/frontend/agents/api";
+import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
+import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
 import { findWorkspaceAgentForThread } from "@cocalc/frontend/agents/workspace-model";
 
 import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
@@ -178,6 +180,24 @@ function RuntimeCodexAttentionCard({
     record.thread_id,
   );
   const agentName = namedAgent ? `@${namedAgent.name}` : undefined;
+  // @agents in a custom answer are checked as in the composer (an active
+  // Agent Network with this agent, approved here if needed) before sending.
+  const agentMentions = useAgentMentions({
+    projectId: record.project_id,
+    path: record.path,
+    threadId: record.thread_id,
+    threadTitle: agentName,
+    runnable: !lite,
+    restoreFocus: () => {},
+  });
+  const agentMentionContext = {
+    ...agentMentions.context,
+    source: {
+      projectId: record.project_id,
+      path: record.path,
+      threadId: record.thread_id,
+    },
+  };
   const [localDraft, setLocalDraft] = useState<CodexAttentionDraft>({
     selected: {},
     other: {},
@@ -671,37 +691,44 @@ function RuntimeCodexAttentionCard({
                         role="group"
                         aria-label={`Custom answer for ${question.header}`}
                       >
-                        <MarkdownInput
-                          cacheId={`codex-answer:${record.attention_id}:${question.id}`}
-                          project_id={record.project_id}
-                          path={record.path}
-                          placeholder={`Custom answer for ${question.header}`}
-                          autoGrow
-                          autoGrowMaxHeight={220}
-                          hideHelp
-                          compact
-                          enableMentions={false}
-                          enableUpload
-                          saveDebounceMs={0}
-                          undoMode="local"
-                          redoMode="local"
-                          onUploadStart={() => setUploads((n) => n + 1)}
-                          onUploadEnd={() =>
-                            setUploads((n) => Math.max(0, n - 1))
-                          }
-                          value={draft.other[question.id] ?? ""}
-                          onChange={(value) => {
-                            updateDraft((current) => ({
-                              other: { ...current.other, [question.id]: value },
-                              selected: value
-                                ? {
-                                    ...current.selected,
-                                    [question.id]: undefined,
-                                  }
-                                : current.selected,
-                            }));
-                          }}
-                        />
+                        <AgentMentionContext.Provider
+                          value={agentMentionContext}
+                        >
+                          <MarkdownInput
+                            cacheId={`codex-answer:${record.attention_id}:${question.id}`}
+                            project_id={record.project_id}
+                            path={record.path}
+                            placeholder={`Custom answer for ${question.header}`}
+                            autoGrow
+                            autoGrowMaxHeight={220}
+                            hideHelp
+                            compact
+                            enableMentions={!lite}
+                            enableUpload
+                            saveDebounceMs={0}
+                            undoMode="local"
+                            redoMode="local"
+                            onUploadStart={() => setUploads((n) => n + 1)}
+                            onUploadEnd={() =>
+                              setUploads((n) => Math.max(0, n - 1))
+                            }
+                            value={draft.other[question.id] ?? ""}
+                            onChange={(value) => {
+                              updateDraft((current) => ({
+                                other: {
+                                  ...current.other,
+                                  [question.id]: value,
+                                },
+                                selected: value
+                                  ? {
+                                      ...current.selected,
+                                      [question.id]: undefined,
+                                    }
+                                  : current.selected,
+                              }));
+                            }}
+                          />
+                        </AgentMentionContext.Provider>
                         <div role="status" aria-live="polite">
                           <Text
                             type={
@@ -727,6 +754,7 @@ function RuntimeCodexAttentionCard({
             {error ? (
               <Alert type="error" showIcon message={error} role="alert" />
             ) : null}
+            {agentMentions.ui}
             {pendingFreshAuth ? (
               <Space wrap>
                 <Button
@@ -757,7 +785,12 @@ function RuntimeCodexAttentionCard({
                   type="primary"
                   disabled={!canSubmit || uploads > 0}
                   loading={submitting}
-                  onClick={() => void respond(false)}
+                  onClick={() =>
+                    void agentMentions.preflight(
+                      Object.values(answers).flat().join("\n"),
+                      () => respond(false),
+                    )
+                  }
                 >
                   {lateQuestion ? "Send as new message" : "Send response"}
                 </Button>
