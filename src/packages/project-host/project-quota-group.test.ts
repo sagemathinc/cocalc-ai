@@ -1,6 +1,7 @@
 const qgroupShow = new Map<string, string>();
 const existing = new Set<string>();
 const queued: any[] = [];
+let queueError: Error | undefined;
 const destroyed: string[] = [];
 let filesystemQgroups = "";
 
@@ -15,6 +16,7 @@ jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
 jest.mock("@cocalc/file-server/btrfs/quota-queue", () => ({
   queueSyncQuotaGroup: jest.fn(async (opts: any) => {
     queued.push(opts);
+    if (queueError) throw queueError;
   }),
 }));
 jest.mock("@cocalc/file-server/btrfs/quota-group", () => ({
@@ -25,6 +27,8 @@ jest.mock("@cocalc/file-server/btrfs/quota-group", () => ({
   }),
 }));
 jest.mock("@cocalc/file-server/btrfs/util", () => ({
+  refusedByStorageWrapper: (err: unknown) =>
+    /SECURITY_DENY/.test(`${(err as any)?.message ?? err}`),
   btrfs: jest.fn(async () => ({
     stdout: filesystemQgroups,
     stderr: "",
@@ -46,6 +50,7 @@ import {
   projectQuotaGroup,
   projectQuotaGroupInSync,
   projectQuotaGroupLimit,
+  projectQuotaGroupsPermitted,
   projectQuotaWithHistory,
   syncProjectQuotaGroup,
 } from "./project-quota-group";
@@ -86,6 +91,7 @@ function show({
 }
 
 beforeEach(() => {
+  queueError = undefined;
   qgroupShow.clear();
   existing.clear();
   queued.length = 0;
@@ -233,5 +239,55 @@ describe("deleteEmptyQuotaGroups", () => {
       "1/4",
     ]);
     expect(destroyed).toEqual(["1/2", "1/4"]);
+  });
+});
+
+// last: it leaves the module refusing quota groups for an hour
+describe("a host whose root helper refuses quota groups", () => {
+  it("keeps separate limits for a while, then tries again", async () => {
+    const opts = {
+      project_id: PROJECT,
+      mount: "/mnt/cocalc",
+      home: HOME,
+      quota: 10 * GiB,
+      env: {},
+    };
+    expect(await projectQuotaGroupsPermitted("/mnt/cocalc")).toBe(true);
+    queueError = new Error(
+      "btrfs quota queue item x failed after 1 attempts: SECURITY_DENY code=relative-path-not-allowed detail=1/7",
+    );
+    await expect(syncProjectQuotaGroup(opts)).rejects.toThrow("SECURITY_DENY");
+    expect(queued).toHaveLength(1);
+    // not again, and nothing for the audit to repair
+    await syncProjectQuotaGroup(opts);
+    expect(queued).toHaveLength(1);
+    expect(await projectQuotaGroupInSync(opts)).toBe(true);
+    expect(await projectQuotaGroupsPermitted("/mnt/cocalc")).toBe(true);
+    // an hour later
+    queueError = undefined;
+    const now = Date.now();
+    const spy = jest.spyOn(Date, "now").mockReturnValue(now + 61 * 60_000);
+    try {
+      await syncProjectQuotaGroup(opts);
+      expect(queued).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("is noticed by asking to destroy a group that doesn't exist", async () => {
+    const { destroyQuotaGroup } = jest.requireMock(
+      "@cocalc/file-server/btrfs/quota-group",
+    );
+    (destroyQuotaGroup as jest.Mock).mockRejectedValueOnce(
+      new Error("SECURITY_DENY code=relative-path-not-allowed"),
+    );
+    const now = Date.now();
+    const spy = jest.spyOn(Date, "now").mockReturnValue(now + 3 * 60 * 60_000);
+    try {
+      expect(await projectQuotaGroupsPermitted("/mnt/cocalc")).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

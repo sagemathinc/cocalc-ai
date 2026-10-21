@@ -42,14 +42,62 @@ import {
 import { queueSyncQuotaGroup } from "@cocalc/file-server/btrfs/quota-queue";
 import type { BtrfsMutationPriority } from "@cocalc/file-server/btrfs/mutation-context";
 import { btrfsQuotasDisabled } from "@cocalc/file-server/btrfs/config";
-import { btrfs } from "@cocalc/file-server/btrfs/util";
+import { btrfs, refusedByStorageWrapper } from "@cocalc/file-server/btrfs/util";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import getLogger from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
+import { randomInt } from "node:crypto";
 
 const logger = getLogger("project-host:project-quota-group");
 
 const MiB = 1024 * 1024;
+
+// A host whose root helper predates quota groups refuses them (its policy is
+// installed by the host's bootstrap, server/cloud/bootstrap/bootstrap.py
+// check_qgroup_args, updated by a reconcile of the host).  Then each project
+// keeps the separate limits of its home and persist volume, and quota groups
+// are tried again after a while.
+const REFUSED_RETRY_MS = 60 * 60_000;
+let refusedUntil = 0;
+
+function refused(): boolean {
+  return Date.now() < refusedUntil;
+}
+
+async function unlessRefused<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (refusedByStorageWrapper(err)) {
+      if (!refused()) {
+        logger.warn(
+          "this host's root helper refuses project quota groups: files and edit history keep separate limits until the host's bootstrap is updated",
+          { retry_in_ms: REFUSED_RETRY_MS, err: `${err}` },
+        );
+      }
+      refusedUntil = Date.now() + REFUSED_RETRY_MS;
+    }
+    throw err;
+  }
+}
+
+// Whether this host's root helper allows quota groups: asks to destroy a group
+// that doesn't exist, which btrfs refuses harmlessly (an older helper refuses
+// it by its policy).
+export async function projectQuotaGroupsPermitted(
+  mount: string,
+): Promise<boolean> {
+  if (btrfsQuotasDisabled()) return false;
+  try {
+    await unlessRefused(
+      async () =>
+        await destroyQuotaGroup({ mount, group: `1/${randomInt(1, 2 ** 47)}` }),
+    );
+  } catch {
+    return !refused();
+  }
+  return true;
+}
 
 // The project's quota group: level 1, numbered by the first 48 bits of its id.
 export function projectQuotaGroup(project_id: string): string {
@@ -122,23 +170,25 @@ export async function syncProjectQuotaGroup({
   priority?: BtrfsMutationPriority;
   env?: NodeJS.ProcessEnv;
 }): Promise<void> {
-  if (btrfsQuotasDisabled()) return;
+  if (btrfsQuotasDisabled() || refused()) return;
   if (
     !force &&
     (await projectQuotaGroupInSync({ project_id, home, history, quota, env }))
   ) {
     return;
   }
-  await queueSyncQuotaGroup({
-    mount,
-    group: projectQuotaGroup(project_id),
-    members: history ? [home, history] : [home],
-    size: projectQuotaGroupLimit(quota, env),
-    wait: true,
-    project_id,
-    operation_id,
-    operation_class,
-    priority,
+  await unlessRefused(async () => {
+    await queueSyncQuotaGroup({
+      mount,
+      group: projectQuotaGroup(project_id),
+      members: history ? [home, history] : [home],
+      size: projectQuotaGroupLimit(quota, env),
+      wait: true,
+      project_id,
+      operation_id,
+      operation_class,
+      priority,
+    });
   });
   invalidateBtrfsQgroupShowRaw(mount);
 }
@@ -154,8 +204,15 @@ export async function joinProjectQuotaGroup({
   mount: string;
   path: string;
 }): Promise<void> {
-  if (btrfsQuotasDisabled()) return;
-  await addToQuotaGroup({ mount, group: projectQuotaGroup(project_id), path });
+  if (btrfsQuotasDisabled() || refused()) return;
+  await unlessRefused(
+    async () =>
+      await addToQuotaGroup({
+        mount,
+        group: projectQuotaGroup(project_id),
+        path,
+      }),
+  );
   invalidateBtrfsQgroupShowRaw(mount);
 }
 
@@ -171,7 +228,7 @@ export async function deleteEmptyQuotaGroups({
   mount: string;
   limit?: number;
 }): Promise<string[]> {
-  if (btrfsQuotasDisabled()) return [];
+  if (btrfsQuotasDisabled() || refused()) return [];
   const { stdout } = await btrfs({
     args: ["qgroup", "show", "-prc", "--raw", mount],
     verbose: false,
@@ -182,9 +239,12 @@ export async function deleteEmptyQuotaGroups({
     if (!row.qgroupid.startsWith("1/") || row.children.length > 0) continue;
     if (row.referenced !== 0) continue;
     try {
-      await destroyQuotaGroup({ mount, group: row.qgroupid });
+      await unlessRefused(
+        async () => await destroyQuotaGroup({ mount, group: row.qgroupid }),
+      );
       destroyed.push(row.qgroupid);
     } catch (err) {
+      if (refused()) break;
       logger.warn("unable to destroy an empty project quota group", {
         group: row.qgroupid,
         err: `${err}`,
@@ -251,7 +311,8 @@ export async function projectQuotaGroupInSync({
   quota: number;
   env?: NodeJS.ProcessEnv;
 }): Promise<boolean> {
-  if (btrfsQuotasDisabled()) return true;
+  // (nothing to repair while the host refuses quota groups)
+  if (btrfsQuotasDisabled() || refused()) return true;
   const fromHome = await readProjectQuotaGroup({ project_id, path: home });
   if (
     !fromHome?.member ||

@@ -9256,6 +9256,21 @@ check_args() {
   done
 }
 
+# btrfs qgroup commands also take quota group ids ("level/id"): only a
+# project's quota group (level 1, project-host project-quota-group.ts) is
+# allowed besides paths, never a subvolume's own (level 0).
+check_qgroup_args() {
+  local arg
+  local -a rest=()
+  for arg in "$@"; do
+    if [[ "$arg" =~ ^1/[0-9]{1,15}$ ]]; then
+      continue
+    fi
+    rest+=("$arg")
+  done
+  check_args "${rest[@]}"
+}
+
 set_rustic_profile_parts() {
   local profile="$1"
   if [[ "$profile" != *.toml ]]; then
@@ -9938,7 +9953,11 @@ PY
     reconcile_project_network_limits
     ;;
   btrfs|btrfs-maintenance)
-    check_args "$@"
+    if [ "${1:-}" = "qgroup" ]; then
+      check_qgroup_args "$@"
+    else
+      check_args "$@"
+    fi
     if [ "$cmd" = "btrfs-maintenance" ]; then
       attach_maintenance_worker
     fi

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { btrfs } from "./util";
+import { btrfs, refusedByStorageWrapper } from "./util";
 import { btrfsQuotasDisabled } from "./config";
 import { ensureBtrfsQuotaMode } from "./quota-mode";
 import {
@@ -505,7 +505,7 @@ async function runWorker(): Promise<void> {
           typeof (err as any)?.stderr === "string" && (err as any).stderr.trim()
             ? `${(err as any).stderr}`.trim()
             : `${(err as any)?.message ?? err}`;
-        if (shouldRetry(claimed)) {
+        if (shouldRetry(claimed) && !refusedByStorageWrapper(err)) {
           const delayMs = retryDelayMs(claimed.attempts);
           db()
             .prepare(

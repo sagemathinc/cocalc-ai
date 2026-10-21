@@ -251,6 +251,7 @@ import {
   deleteEmptyQuotaGroups,
   joinProjectQuotaGroup,
   projectQuotaGroupInSync,
+  projectQuotaGroupsPermitted,
   projectQuotaWithHistory,
   syncProjectQuotaGroup,
   type ProjectQuotaBreakdown,
@@ -5871,10 +5872,13 @@ export async function initFileServer({
     mountpoint: fs.opts.mount,
     filesystem_uuid: quotaRuntime.filesystem_uuid,
     // with how quotas are laid out: a new layout starts a new quota epoch, so
-    // every project's quota is applied again (once)
-    quota_mode: quotaRuntime.status.enabled
-      ? `${quotaRuntime.status.mode}/${PROJECT_QUOTA_LAYOUT}`
-      : quotaRuntime.status.mode,
+    // every project's quota is applied again (once), e.g., to put existing
+    // projects in their quota groups once the host's root helper allows them
+    quota_mode:
+      quotaRuntime.status.enabled &&
+      (await projectQuotaGroupsPermitted(fs.opts.mount))
+        ? `${quotaRuntime.status.mode}/${PROJECT_QUOTA_LAYOUT}`
+        : quotaRuntime.status.mode,
     quota_mode_reconciled: quotaRuntime.reconciled,
   });
   logger.info("initialized durable project filesystem quota state", {

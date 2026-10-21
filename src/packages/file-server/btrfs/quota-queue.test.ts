@@ -194,6 +194,44 @@ describe("btrfs simple-quota queue", () => {
     expect(getBtrfsQuotaQueueStatus("/mnt/test")?.failed_count).toBe(0);
   });
 
+  it("fails a command the host's root helper refuses at once", async () => {
+    process.env.COCALC_BTRFS_QUOTA_MODE = "simple";
+    const btrfsMock = jest.fn(async ({ args }: { args: string[] }) => {
+      if (args.join(" ") === "filesystem show /mnt/test") {
+        return {
+          exit_code: 0,
+          stdout: "Label: none  uuid: 11111111-2222-4333-8444-555555555555\n",
+          stderr: "",
+        };
+      }
+      throw new Error(
+        "command 'sudo' exited with nonzero code 2 -- stderr='SECURITY_DENY code=relative-path-not-allowed detail=1/42'",
+      );
+    });
+    jest.doMock("./util", () => ({
+      refusedByStorageWrapper: (err: unknown) =>
+        /SECURITY_DENY/.test(`${(err as any)?.message ?? err}`),
+      btrfs: (opts: { args: string[] }) => btrfsMock(opts),
+    }));
+    jest.doMock("node:fs/promises", () => ({
+      readFile: async (path: string) =>
+        path.endsWith("/enabled") ? "1\n" : "simple\n",
+    }));
+    jest.doMock("@cocalc/backend/misc/async-utils-node", () => ({
+      exists: async () => true,
+    }));
+    const { queueSyncQuotaGroup } = await import("./quota-queue");
+    await expect(
+      queueSyncQuotaGroup({
+        mount: "/mnt/test",
+        group: "1/42",
+        members: ["/mnt/test/project-1"],
+        size: "110M",
+        wait: true,
+      }),
+    ).rejects.toThrow(/failed after 1 attempts: .*SECURITY_DENY/);
+  });
+
   it("treats the old qgroup mode env as simple quotas", async () => {
     process.env.COCALC_BTRFS_QUOTA_MODE = "qgroup";
     const { btrfsQuotaMode } = await import("./config");
