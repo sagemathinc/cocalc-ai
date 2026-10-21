@@ -126,7 +126,7 @@ import {
 import { NewAgentPeople } from "./new-agent-people";
 import { ShareAgentModal } from "./share-agent-modal";
 import { useMobileSearchNavigation } from "./use-mobile-search-navigation";
-import { lite } from "@cocalc/frontend/lite";
+import { lite, project_id as liteProjectId } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
 import {
   ProjectContext,
@@ -351,6 +351,7 @@ import {
   waitingKey,
   waitingThreads,
 } from "./sidebar-recent";
+import { useLiteWaitingThreads } from "./use-lite-waiting";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -3752,7 +3753,16 @@ export function MyAgentsWorkspacePage({
     ),
   );
   const mentions = useTypedRedux("mentions", "mentions");
-  const waiting = useMemo(() => waitingThreads(mentions), [mentions]);
+  // Lite has no notifications: its project's attention records instead.
+  const liteWaiting = useLiteWaitingThreads({
+    active: lite,
+    project_id: liteProjectId,
+    account_id: webapp_client.account_id ?? undefined,
+  });
+  const waiting = useMemo(
+    () => (lite ? liteWaiting : waitingThreads(mentions)),
+    [mentions, liteWaiting],
+  );
   const isWaiting = (agent: NamedAgent) =>
     waiting.has(waitingKey(agent.endpoint.project_id, agent.thread_id));
   // The sidebar's sections (Agents, Projects, Artifacts, People) stay where

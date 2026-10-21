@@ -48,6 +48,38 @@ export function waitingThreads(
   return waiting;
 }
 
+type AttentionLike = {
+  project_id: string;
+  thread_id?: string | null;
+  account_id?: string;
+  state: string;
+  response_submitted_at?: number | null;
+  expires_at?: number | null;
+};
+
+/**
+ * The same from the project's attention records, which CoCalc Lite has
+ * instead of account notifications: a pending request of this account's,
+ * not yet answered or expired.
+ */
+export function waitingThreadsFromAttention(
+  records: readonly AttentionLike[] | null | undefined,
+  account_id?: string,
+  now = Date.now(),
+): Set<string> {
+  const waiting = new Set<string>();
+  for (const record of records ?? []) {
+    if (record.state !== "pending" || record.response_submitted_at != null)
+      continue;
+    if (account_id && record.account_id !== account_id) continue;
+    if (record.expires_at && record.expires_at <= now) continue;
+    const thread_id = `${record.thread_id ?? ""}`.trim();
+    if (!record.project_id || !thread_id) continue;
+    waiting.add(waitingKey(record.project_id, thread_id));
+  }
+  return waiting;
+}
+
 /**
  * The unpinned agents the sidebar lists without a search: the most recent
  * `count`, then every other one waiting for an answer, then the open one.

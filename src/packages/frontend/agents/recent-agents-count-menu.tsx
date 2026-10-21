@@ -5,7 +5,8 @@
 
 // The sidebar's "Recent" heading: a menu choosing how many recent agents it
 // shows (J6). Keyboard: Enter or Space opens it, the arrow keys move, Enter
-// chooses, Escape closes; focus returns to the heading either way.
+// chooses, Escape closes; focus returns to the heading either way (not
+// when a click on another control closed it).
 
 import { useEffect, useId, useRef, useState } from "react";
 import { Button, Dropdown } from "antd";
@@ -34,8 +35,18 @@ export function RecentAgentsCountMenu({
   }, [open, menuId]);
   const close = () => {
     setOpen(false);
-    // Back to the heading, whether a count was chosen or not.
-    setTimeout(() => button.current?.focus(), 0);
+    // Back to the heading, whether a count was chosen or not; but a click
+    // on another control outside the menu keeps the focus it gave that one.
+    setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        active == null ||
+        active === document.body ||
+        document.getElementById(menuId)?.contains(active)
+      ) {
+        button.current?.focus();
+      }
+    }, 0);
   };
   return (
     <Dropdown

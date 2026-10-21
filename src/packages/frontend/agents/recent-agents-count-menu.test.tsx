@@ -14,7 +14,10 @@ jest.mock("@cocalc/frontend/components", () => ({
 function setup(count = 3) {
   const onChange = jest.fn();
   render(
-    <RecentAgentsCountMenu title="Recent" count={count} onChange={onChange} />,
+    <>
+      <RecentAgentsCountMenu title="Recent" count={count} onChange={onChange} />
+      <button>Another agent</button>
+    </>,
   );
   const heading = screen.getByRole("button", {
     name: `Recent agents: showing ${count}. Change how many`,
@@ -71,6 +74,24 @@ describe("choosing how many recent agents the sidebar shows", () => {
       expect(heading).toHaveAttribute("aria-expanded", "false"),
     );
     await waitFor(() => expect(heading).toHaveFocus());
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a click on another control closes it and leaves focus there", async () => {
+    const user = userEvent.setup();
+    const { onChange, heading } = setup(3);
+    await user.click(heading);
+    const menu = await screen.findByRole("menu");
+    await waitFor(() =>
+      expect(menu.contains(document.activeElement)).toBe(true),
+    );
+    const other = screen.getByRole("button", { name: "Another agent" });
+    await user.click(other);
+    await waitFor(() =>
+      expect(heading).toHaveAttribute("aria-expanded", "false"),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(other).toHaveFocus();
     expect(onChange).not.toHaveBeenCalled();
   });
 });
