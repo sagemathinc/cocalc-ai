@@ -177,6 +177,9 @@ export type PersistFenceRequest =
       token: string;
       holder: PersistFenceHolder;
       timeout_ms?: number;
+      // features the persist server must have (e.g., "persist-volume"):
+      // the fence is refused if it lacks one
+      requires?: string[];
     }
   | { cmd: "release"; project_id: string; token: string; replaced?: boolean };
 
@@ -214,6 +217,7 @@ export async function initPersistFenceService({
   client,
   holderAlive,
   store,
+  features = [],
   holderCheckMs = DEFAULT_HOLDER_CHECK_MS,
 }: {
   client: Client;
@@ -221,6 +225,8 @@ export async function initPersistFenceService({
   // since) to change the files, still runs
   holderAlive: (holder: PersistFenceHolder, since: number) => boolean;
   store?: PersistFenceStore;
+  // what else this persist server does, which a holder may require
+  features?: string[];
   holderCheckMs?: number;
 }): Promise<{ close: () => void }> {
   // the fences this service holds, by project
@@ -322,6 +328,15 @@ export async function initPersistFenceService({
     }
     if (request.cmd == "acquire") {
       const { holder } = request;
+      const missing = (
+        Array.isArray(request.requires) ? request.requires : []
+      ).filter((feature) => !features.includes(`${feature}`));
+      if (missing.length > 0) {
+        throw new ConatError(
+          `this persist server lacks ${missing.join(", ")} (it is from an older version)`,
+          { code: 412 },
+        );
+      }
       if (!isHolder(holder) || !holderAlive(holder, Date.now())) {
         throw new ConatError("the fence holder is not a running process", {
           code: 400,
@@ -426,12 +441,15 @@ export async function withPersistFence<T>(
     project_id,
     holder,
     replaces = true,
+    requires,
     timeoutMs = DEFAULT_FENCE_TIMEOUT_MS,
   }: {
     client: Client;
     project_id: string;
     holder: PersistFenceHolder;
     replaces?: boolean;
+    // features the persist server granting the fence must have
+    requires?: string[];
     timeoutMs?: number;
   },
   fn: () => Promise<T>,
@@ -463,7 +481,14 @@ export async function withPersistFence<T>(
   };
   try {
     await request(
-      { cmd: "acquire", project_id, token, holder, timeout_ms: timeoutMs },
+      {
+        cmd: "acquire",
+        project_id,
+        token,
+        holder,
+        timeout_ms: timeoutMs,
+        ...(requires?.length ? { requires } : {}),
+      },
       timeoutMs + 10_000,
     );
   } catch (err) {

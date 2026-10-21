@@ -226,6 +226,21 @@ describe("fence a project, replace its history, and clients reload it", () => {
     );
   });
 
+  it("refuses a fence that needs a feature this persist server lacks", async () => {
+    await expect(
+      withPersistFence(
+        {
+          client: connect(),
+          project_id,
+          holder,
+          requires: ["persist-volume"],
+        },
+        async () => {},
+      ),
+    ).rejects.toThrow("lacks persist-volume");
+    expect(isProjectFenced(project_id)).toBe(false);
+  });
+
   it("refuses a holder that is not a running process", async () => {
     await expect(
       withPersistFence(
@@ -586,6 +601,91 @@ describe("a release that can't be recorded leaves the fence held", () => {
       // the holder's release, retried in the background
       await wait({ timeout: 10000, until: () => !isProjectFenced(project_id) });
       expect(store.load()).toEqual([]);
+    } finally {
+      service.close();
+    }
+  });
+});
+
+describe("a stream's configuration is not applied to a replaced history", () => {
+  it("keeps the restored messages a stale limit would delete", async () => {
+    const project_id = uuid();
+    const holder = currentFenceHolder();
+    const service = await initPersistFenceService({
+      client: connect(),
+      holderAlive: isFenceHolderAlive,
+    });
+    try {
+      const writer = await connect().sync.dstream({
+        project_id,
+        name: "fence-config",
+      });
+      for (const x of ["a", "b", "c", "d"]) writer.publish(x);
+      await writer.save();
+      const dir = join(syncFiles.local, "projects", project_id);
+      const db = readdirSync(dir).find((name) => name.endsWith(".db"));
+      expect(db).toBeDefined();
+      const path = join(dir, db!);
+      await withPersistFence(
+        { client: connect(), project_id, holder, replaces: false },
+        async () => copyFileSync(path, `${path}.saved`),
+      );
+      // a client that asks for a lower limit (which trims the stream)
+      const limited = await connect().sync.dstream({
+        project_id,
+        name: "fence-config",
+        config: { max_msgs: 2 },
+      });
+      await wait({ until: () => limited.getAll().length == 2 });
+      // the history is restored under it
+      await withPersistFence(
+        { client: connect(), project_id, holder },
+        async () => {
+          rmSync(`${path}-wal`, { force: true });
+          rmSync(`${path}-shm`, { force: true });
+          copyFileSync(`${path}.saved`, path);
+        },
+      );
+      await wait({ until: () => limited.getAll().length == 4 });
+      // give a reapplied limit every chance to trim it
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const reader = await connect().sync.dstream({
+        project_id,
+        name: "fence-config",
+      });
+      expect(reader.getAll()).toEqual(["a", "b", "c", "d"]);
+      reader.close();
+      limited.close();
+      writer.close();
+    } finally {
+      service.close();
+    }
+  });
+});
+
+describe("a persist server with features", () => {
+  it("grants a fence that requires them", async () => {
+    const project_id = uuid();
+    const service = await initPersistFenceService({
+      client: connect(),
+      holderAlive: isFenceHolderAlive,
+      features: ["persist-volume"],
+    });
+    try {
+      let ran = false;
+      await withPersistFence(
+        {
+          client: connect(),
+          project_id,
+          holder: currentFenceHolder(),
+          requires: ["persist-volume"],
+          replaces: false,
+        },
+        async () => {
+          ran = isProjectFenced(project_id);
+        },
+      );
+      expect(ran).toBe(true);
     } finally {
       service.close();
     }
