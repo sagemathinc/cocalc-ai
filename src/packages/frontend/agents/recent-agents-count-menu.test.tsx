@@ -50,6 +50,9 @@ describe("choosing how many recent agents the sidebar shows", () => {
       "Show 7 recent agents",
       "Show 10 recent agents",
     ]);
+    // Portaled to the body, but inside a keyboard boundary: its keys never
+    // reach a page or editor shortcut handler.
+    expect(menu.closest("[data-cocalc-keyboard-boundary]")).not.toBeNull();
     // The menu takes focus, so the arrow keys move within it.
     await waitFor(() =>
       expect(menu.contains(document.activeElement)).toBe(true),

@@ -11,6 +11,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Button, Dropdown } from "antd";
 import { Icon } from "@cocalc/frontend/components";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { SIDEBAR_RECENT_AGENTS_CHOICES } from "./sidebar-recent";
 
@@ -53,6 +54,13 @@ export function RecentAgentsCountMenu({
       trigger={["click"]}
       open={open}
       onOpenChange={(next) => (next ? setOpen(true) : close())}
+      // The menu is portaled to the page body: its keys (arrows, Enter,
+      // Escape) must not also reach a page or editor shortcut handler.
+      popupRender={(menu) => (
+        <KeyboardBoundary boundary="recent-agents-count">
+          {menu}
+        </KeyboardBoundary>
+      )}
       menu={{
         selectable: true,
         selectedKeys: [`${count}`],
