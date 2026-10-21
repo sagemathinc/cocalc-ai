@@ -782,7 +782,7 @@ describe("the open check and the append check agree (codex round 6)", () => {
   test("a patch (or merge patch) that isn't JSON is refused (4332146126)", () => {
     for (const bad of [
       patch("A", [], { patch: "{not json" }),
-      patch("A", [], { merge_parent: "B", merge_patch: "[" }),
+      patch("A", ["B"], { merge_parent: "B", merge_patch: "[" }),
     ]) {
       expect(check([bad])).toMatchObject({ ok: false, reason: "invalid" });
       const c = BoardAppendCheck.fromRecords([], 0);
@@ -841,7 +841,8 @@ describe("G1's record depth contract (32, as the recovery scan)", () => {
         ],
         0,
       ]),
-      parents: ["lz3k1v4b_a1b2c3"],
+      // A merge: its merge_parent is one of its parents.
+      parents: ["lz3k1v4b_a1b2c3", "lz3k1v4a_a1b2c3"],
       version: 7,
       size: 100,
       file: true,
@@ -906,5 +907,32 @@ test("codex 4332517570: a snapshot's body must be a board document (one JSON obj
     expect(() =>
       c.check([{ value: snap(bad), digest: "s", bytes: 10 }]),
     ).toThrow(/isn't a board document/);
+  }
+});
+
+test("codex 4332816476: a merge parent must be one of the record's parents", () => {
+  const R = (records: any[]) =>
+    records.map((value) => ({
+      value,
+      digest: JSON.stringify(value),
+      bytes: JSON.stringify(value).length,
+    }));
+  const merged = [
+    patch("a"),
+    patch("b", ["a"]),
+    patch("m", ["b"], { merge_parent: "b", merge_patch: "[]" }),
+  ];
+  expect(check(merged)).toMatchObject({ ok: true });
+  for (const bad of [
+    // Off the chain, or missing.
+    patch("m", ["b"], { merge_parent: "a", merge_patch: "[]" }),
+    patch("m", ["b"], { merge_parent: "zz", merge_patch: "[]" }),
+    // A merge patch that isn't a string.
+    patch("m", ["b"], { merge_parent: "b", merge_patch: [] }),
+  ]) {
+    const records = [patch("a"), patch("b", ["a"]), bad];
+    expect(check(records)).toMatchObject({ ok: false, reason: "invalid" });
+    const c = BoardAppendCheck.fromRecords(R(records.slice(0, 2)), 0);
+    expect(() => c.check(R([bad]))).toThrow(/merge (parent|patch)/);
   }
 });

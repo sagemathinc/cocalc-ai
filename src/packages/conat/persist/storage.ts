@@ -1417,8 +1417,10 @@ export class PersistentStream extends EventEmitter {
         : {};
     for (const [key, expected] of Object.entries(required)) {
       if (!Object.is(provided[key], expected)) {
+        // A board stream's ("branch", never "reject": the board writer keeps
+        // its edits for that one, and a dstream drops them for "reject").
         throw new ConatError(`required header mismatch for '${key}'`, {
-          code: "reject",
+          code: this.noEviction ? "branch" : "reject",
         });
       }
     }

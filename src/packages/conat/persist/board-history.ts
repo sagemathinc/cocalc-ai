@@ -266,6 +266,15 @@ export function parseBoardRecord(
   if (r.merge_parent != null && !validId(r.merge_parent, limits)) {
     return { invalid: "a record with an invalid merge parent" };
   }
+  // The merge parent is one of the record's parents (sync/editor/generic
+  // types.ts): one outside them would be a dependency the ancestry check
+  // never bounded (codex 4332816476).
+  if (r.merge_parent != null && !parents.includes(r.merge_parent)) {
+    return { invalid: "a record whose merge parent isn't one of its parents" };
+  }
+  if (r.merge_patch != null && typeof r.merge_patch !== "string") {
+    return { invalid: "a record whose merge patch is not a string" };
+  }
   if (
     r.merge_parent != null &&
     typeof r.merge_patch === "string" &&
@@ -601,7 +610,8 @@ has.
 export interface AppendRecord {
   value: unknown;
   digest: string;
-  // Its bytes as stored (as the open check counts them).
+  // Its footprint as stored: bytes, headers and key (board-append.ts
+  // storedBytes; as the open check counts them).
   bytes: number;
   key?: string;
   // Storage won't write it: its msgID is stored, with exactly this record

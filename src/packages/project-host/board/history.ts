@@ -27,7 +27,7 @@ import {
   BoardHistoryCheck,
   type HistoryVerdict,
 } from "@cocalc/conat/persist/board-history";
-import { digestOf } from "@cocalc/conat/persist/board-append";
+import { digestOf, storedBytes } from "@cocalc/conat/persist/board-append";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { stream as persistStream } from "@cocalc/conat/persist/client";
 import { storagePath } from "@cocalc/conat/sync/core-stream";
@@ -88,7 +88,8 @@ export async function checkBoardHistory({
     }
     for await (const page of stream.getAllIter({ timeout })) {
       for (const message of page) {
-        const bytes = message.raw?.length ?? 0;
+        // With its headers and key (codex 4332730147), as appends count it.
+        const bytes = storedBytes(message.raw, message.headers, message.key);
         const sized = check.checkSize(bytes);
         if (sized) return sized;
         let value: unknown;

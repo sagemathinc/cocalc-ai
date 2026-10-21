@@ -16,6 +16,7 @@ import {
   appendHead,
   commitAppend,
   requestRecords,
+  storedBytes,
 } from "./board-append";
 import {
   BOARD_HISTORY_LIMITS,
@@ -84,7 +85,7 @@ function opens(stream: PersistentStream) {
   for (const m of stream.getAll()) {
     const stop = check.add(
       decode({ encoding: m.encoding, data: m.raw }),
-      m.raw.length,
+      storedBytes(m.raw, m.headers, m.key),
     );
     if (stop) return stop;
   }
@@ -529,6 +530,65 @@ test("astra CORR-F37-1: a board stream's retention settings delete nothing as it
   stream = new PersistentStream({ path });
   try {
     expect([...stream.getAll()]).toHaveLength(0);
+  } finally {
+    stream.close();
+  }
+});
+
+test('codex 4332816468: a board stream refuses a legacy required-header mismatch as "branch"', () => {
+  const raw = Buffer.from(
+    encode({ encoding: DataEncoding.MsgPack, mesg: patch("t0") }),
+  );
+  for (const [cap, code] of [
+    [BOARD_HISTORY_LIMITS.recordBytes, "branch"],
+    [undefined, "reject"],
+  ] as const) {
+    const stream = newStream();
+    if (cap != null) stream.setRecordCap(cap);
+    try {
+      stream.config({ required_headers: { history_epoch: 7 } } as any);
+      expect(() =>
+        stream.set({ encoding: DataEncoding.MsgPack, raw, msgID: "p0" }),
+      ).toThrow(expect.objectContaining({ code }));
+      expect([...stream.getAll()]).toHaveLength(0);
+    } finally {
+      stream.close();
+    }
+  }
+});
+
+test("codex 4332730147: a record's stored headers count toward the history's bytes", () => {
+  const raw = Buffer.from(
+    encode({ encoding: DataEncoding.MsgPack, mesg: patch("t0") }),
+  );
+  const headers = { big: "x".repeat(900_000) };
+  const expected = raw.length + JSON.stringify(headers).length;
+  // In a request ...
+  const [set] = requestRecords(
+    { cmd: "set", headers },
+    { raw, encoding: DataEncoding.MsgPack },
+  )!;
+  expect(set.bytes).toBe(expected);
+  const [many] = requestRecords(
+    { cmd: "setMany" },
+    {
+      data: [{ messageData: { raw, encoding: DataEncoding.MsgPack, headers } }],
+    },
+  )!;
+  expect(many.bytes).toBe(expected);
+  // ... and as stored, read back (as the open check and readGraph count it).
+  const stream = newStream();
+  try {
+    stream.set({ encoding: DataEncoding.MsgPack, raw, headers } as any);
+    const [m] = [...stream.getAll()];
+    expect(storedBytes(m.raw, m.headers, m.key)).toBe(expected);
+    // 80 such records: about 72 MB, over the 64 MiB a history may hold.
+    const check = new BoardHistoryCheck();
+    let stop: any;
+    for (let i = 0; i < 80 && !stop; i++) {
+      stop = check.add(patch(`t${i}`, i ? [`t${i - 1}`] : []), expected);
+    }
+    expect(stop).toMatchObject({ ok: false, reason: "too-large" });
   } finally {
     stream.close();
   }

@@ -24,6 +24,50 @@ const inFile = {
   unsaved: { in: "file" as const },
 };
 
+// A filesystem whose first writeFile waits until released.
+function slowFs() {
+  const files = new Map<string, string>();
+  let release!: () => void;
+  let first = true;
+  const fs: any = {
+    writeFile: async (p: string, text: string) => {
+      if (first) {
+        first = false;
+        await new Promise<void>((r) => (release = r));
+      }
+      files.set(p, text);
+    },
+    move: async (from: string, to: string) => {
+      files.set(to, files.get(from)!);
+      files.delete(from);
+    },
+    unlink: async (p: string) => {
+      files.delete(p);
+    },
+  };
+  return { fs, files, release: () => release() };
+}
+
+// A filesystem that saves every copy at once.
+function fastFs() {
+  const files = new Map<string, string>();
+  let writes = 0;
+  const fs: any = {
+    writeFile: async (p: string, text: string) => {
+      writes += 1;
+      files.set(p, text);
+    },
+    move: async (from: string, to: string) => {
+      files.set(to, files.get(from)!);
+      files.delete(from);
+    },
+    unlink: async (p: string) => {
+      files.delete(p);
+    },
+  };
+  return { fs, files, writes: () => writes };
+}
+
 let n = 0;
 const key = () => `p:/held-${process.pid}-${n++}.board.json`;
 
@@ -88,30 +132,6 @@ describe("astra: each refusal's text is its own generation", () => {
     });
   });
 
-  // A filesystem whose first writeFile waits until released.
-  function slowFs() {
-    const files = new Map<string, string>();
-    let release!: () => void;
-    let first = true;
-    const fs: any = {
-      writeFile: async (p: string, text: string) => {
-        if (first) {
-          first = false;
-          await new Promise<void>((r) => (release = r));
-        }
-        files.set(p, text);
-      },
-      move: async (from: string, to: string) => {
-        files.set(to, files.get(from)!);
-        files.delete(from);
-      },
-      unlink: async (p: string) => {
-        files.delete(p);
-      },
-    };
-    return { fs, files, release: () => release() };
-  }
-
   test("a newer text held while an older one is being saved stays held, unsaved", async () => {
     const k = key();
     const { fs, files, release } = slowFs();
@@ -138,4 +158,149 @@ describe("astra: each refusal's text is its own generation", () => {
     expect(done.unsaved).toEqual({ in: "copy", path: done.copies![1] });
     expect(files.get(done.copies![1])).toBe("NEW text");
   });
+});
+
+describe("daybreak2 (round 12): generations and copies are bounded", () => {
+  test("one board holds at most 8 generations; an open saves at most 8", async () => {
+    const k = key();
+    const before = heldUnsavedStats();
+    for (let i = 0; i < 20; i++) rememberRefusal(k, memory(`r${i}`), `T${i}`);
+    expect(heldUnsavedStats().entries - before.entries).toBe(8);
+    expect(heldUnsavedStats().dropped - before.dropped).toBe(12);
+    expect(lastRefusal(k)).toMatchObject({ text: "T19", held: 8, lost: 12 });
+    const { fs, files, writes } = fastFs();
+    await saveHeldUnsaved(k, fs, "/b.board.json");
+    expect(writes()).toBe(8);
+    const after = lastRefusal(k)!;
+    expect(after.held).toBeUndefined();
+    expect(after.copies!.map((c) => files.get(c))).toEqual(
+      [12, 13, 14, 15, 16, 17, 18, 19].map((i) => `T${i}`),
+    );
+    expect(after.unsaved).toEqual({ in: "copy", path: after.copies![7] });
+  });
+
+  test("at most 1024 generations in all, oldest dropped first, in O(1) each", () => {
+    const before = heldUnsavedStats();
+    const keys: string[] = [];
+    const t0 = Date.now();
+    for (let i = 0; i < 20000; i++) {
+      const k = key();
+      keys.push(k);
+      rememberRefusal(k, memory(), `t${i}`);
+    }
+    // 20,000 boards: quadratic eviction would scan ~10^7 lists.
+    expect(Date.now() - t0).toBeLessThan(5000);
+    const stats = heldUnsavedStats();
+    expect(stats.entries).toBeLessThanOrEqual(1024);
+    expect(stats.dropped - before.dropped).toBeGreaterThanOrEqual(20000 - 1024);
+    expect(lastRefusal(keys[19999])).toMatchObject({ text: "t19999" });
+    // codex: a dropped generation's refusal says it is lost, not "memory".
+    // (The newest boards' refusals are kept: the last dropped one's.)
+    const lost = lastRefusal(keys[20000 - 1025])!;
+    expect(lost.text).toBeUndefined();
+    expect(lost.lost).toBe(1);
+    expect(lost.unsaved).toMatchObject({ in: "nowhere" });
+    expect(lost.message).toMatch(/LOST/);
+  });
+
+  test("refusal/save cycles keep at most 8 copies listed, newest by generation", async () => {
+    const k = key();
+    const { fs, files } = fastFs();
+    for (let i = 0; i < 50; i++) {
+      rememberRefusal(k, memory(), `C${i}`);
+      await saveHeldUnsaved(k, fs, "/b.board.json");
+    }
+    const r = lastRefusal(k)!;
+    expect(r.copies).toHaveLength(8);
+    expect(r.copiesSaved).toBe(50);
+    expect(files.get(r.copies![7])).toBe("C49");
+    expect(r.unsaved).toEqual({ in: "copy", path: r.copies![7] });
+  });
+
+  test("a generation dropped while being saved, and then saved, is not lost", async () => {
+    const k = key();
+    const { fs, files, release } = slowFs();
+    rememberRefusal(k, memory(), "SLOW");
+    const saving = saveHeldUnsaved(k, fs, "/b.board.json");
+    await new Promise((r) => setImmediate(r));
+    // Eight newer generations push SLOW out of the board's bound.
+    for (let i = 0; i < 8; i++) rememberRefusal(k, memory(), `N${i}`);
+    expect(lastRefusal(k)?.lost).toBe(1);
+    release();
+    await saving;
+    const r = lastRefusal(k)!;
+    expect(r.lost).toBeUndefined();
+    expect(files.get(r.copies![0])).toBe("SLOW");
+  });
+});
+
+describe("astra CORR-C07-1: the location is the latest refusal's", () => {
+  test("an older saved copy never overrides a newer refusal in the file", async () => {
+    const k = key();
+    const { fs } = fastFs();
+    rememberRefusal(k, memory("old"), "OLD");
+    await saveHeldUnsaved(k, fs, "/b.board.json");
+    rememberRefusal(k, inFile);
+    const r = lastRefusal(k)!;
+    expect(r.unsaved).toEqual({ in: "file" });
+    expect(r.copies).toHaveLength(1);
+  });
+
+  test("nor a newer refusal's own copy", async () => {
+    const k = key();
+    const { fs } = fastFs();
+    rememberRefusal(k, memory("old"), "OLD");
+    await saveHeldUnsaved(k, fs, "/b.board.json");
+    rememberRefusal(k, {
+      ...inFile,
+      unsaved: { in: "copy" as const, path: "/b.board.json.unsaved-NEW" },
+    });
+    expect(lastRefusal(k)!.unsaved).toEqual({
+      in: "copy",
+      path: "/b.board.json.unsaved-NEW",
+    });
+  });
+
+  test("copies completing out of order are listed by generation", async () => {
+    const k = key();
+    const { fs, files, release } = slowFs();
+    rememberRefusal(k, memory("old"), "OLD");
+    rememberRefusal(k, memory("new"), "NEW");
+    // OLD's write waits; a second open skips it and saves NEW first.
+    const first = saveHeldUnsaved(k, fs, "/b.board.json");
+    await new Promise((r) => setImmediate(r));
+    await saveHeldUnsaved(k, fs, "/b.board.json");
+    const mid = lastRefusal(k)!;
+    expect(mid.unsaved).toEqual({ in: "copy", path: mid.copies![0] });
+    expect(files.get(mid.copies![0])).toBe("NEW");
+    expect(mid.held).toBe(1);
+    release();
+    await first;
+    const done = lastRefusal(k)!;
+    expect(done.copies!.map((c) => files.get(c))).toEqual(["OLD", "NEW"]);
+    expect(done.unsaved).toEqual({ in: "copy", path: done.copies![1] });
+  });
+});
+
+test("astra CORR-C07-2: a copy saved hours after the refusal is still reported", async () => {
+  const k = key();
+  const { fs, files } = fastFs();
+  const now = Date.now();
+  rememberRefusal(k, memory(), "HELD_TWO_HOURS");
+  const spy = jest.spyOn(Date, "now").mockReturnValue(now + 2 * 3600_000);
+  try {
+    expect(lastRefusal(k)).toMatchObject({ text: "HELD_TWO_HOURS" });
+    // openBoard: save the held text, then report the refusal.
+    await saveHeldUnsaved(k, fs, "/b.board.json");
+    const r = lastRefusal(k)!;
+    expect(r.unsaved).toMatchObject({ in: "copy" });
+    expect(files.get((r.unsaved as any).path)).toBe("HELD_TWO_HOURS");
+    // ... for an hour from the copy.
+    spy.mockReturnValue(now + 2.9 * 3600_000);
+    expect(lastRefusal(k)?.unsaved).toMatchObject({ in: "copy" });
+    spy.mockReturnValue(now + 3.1 * 3600_000);
+    expect(lastRefusal(k)).toBeUndefined();
+  } finally {
+    spy.mockRestore();
+  }
 });
