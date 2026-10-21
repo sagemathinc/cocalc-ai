@@ -225,8 +225,11 @@ export function agentRpcReportText(
     const at = report.resets_at
       ? `${new Date(report.resets_at).toISOString()}${report.resets_at > now ? ` (in about ${inAbout(report.resets_at - now)})` : ""}`
       : "soon";
+    const signIn = report.kind === "sign-in";
     return [
-      `[Delivery report] ${B} stopped working on your message because ${KIND_TEXT[report.kind] ?? "an error"} was reached. Its turn is paused, not over: CoCalc resumes it automatically at ${at}.`,
+      signIn
+        ? `[Delivery report] ${B} stopped working on your message because its sign-in needs renewing. Its turn is paused, not over: CoCalc resumes it automatically once its owner signs in again, or gives up at ${at}.`
+        : `[Delivery report] ${B} stopped working on your message because ${KIND_TEXT[report.kind] ?? "an error"} was reached. Its turn is paused, not over: CoCalc resumes it automatically at ${at}.`,
       `You will get another report only if that resumed turn ends without replying to you.`,
       `If you cannot wait, send the work to another agent instead (and tell ${B}), or carry on without it.`,
       `This report is from CoCalc, not from ${B}.`,

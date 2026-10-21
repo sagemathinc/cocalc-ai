@@ -325,3 +325,20 @@ describe("a turn held until its usage limit resets", () => {
     ).toThrow("invalid phase");
   });
 });
+
+test("a turn held for its sign-in says it resumes once the owner signs in", () => {
+  const NOW = 1_791_800_000_000;
+  const text = agentRpcReportText(
+    report({
+      kind: "sign-in",
+      detail: undefined,
+      resets_at: NOW + 24 * 3_600_000,
+      phase: "held",
+    }),
+    "@reviewer",
+    NOW,
+  );
+  expect(text).toMatch(
+    /because its sign-in needs renewing\. Its turn is paused, not over: CoCalc resumes it automatically once its owner signs in again, or gives up at .*\(in about 24 hours\)\./,
+  );
+});

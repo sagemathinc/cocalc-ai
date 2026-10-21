@@ -87,6 +87,7 @@ export const setPaymentSelections = payments.setPaymentSelections;
 export const copyPaymentSelection = payments.copyPaymentSelection;
 export const resolvePaymentSelection = payments.resolvePaymentSelection;
 export const reportRuntime = identities.reportRuntime;
+export const credentialUpdatedAt = identities.credentialUpdatedAt;
 export const reportStatus = identities.reportStatus;
 export const describeNetworkSelf = identities.describeNetworkSelf;
 export const disableIdentity = identities.disableIdentity;

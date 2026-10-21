@@ -43,6 +43,8 @@ export function wireHostsApi(): void {
     forwardHost("agent.resolvePaymentSelection", [opts]);
   hubApi.agent.reportRuntime = (opts) =>
     forwardHost("agent.reportRuntime", [opts]);
+  hubApi.agent.credentialUpdatedAt = (opts) =>
+    forwardHost("agent.credentialUpdatedAt", [opts]);
   hubApi.agent.reportStatus = (opts) =>
     forwardHost("agent.reportStatus", [opts]);
   hubApi.agent.describeNetworkSelf = (opts) =>

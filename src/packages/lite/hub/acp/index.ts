@@ -235,6 +235,9 @@ import {
   listQueuedAcpJobThreadKeys,
   listQueuedAcpJobs,
   listAcpJobsByRecoveryParent,
+  listHeldAcpJobs,
+  releaseHeldAcpJob,
+  setQueuedAcpJobRequest,
   listAcpJobsWithFenceIntent,
   listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobsForThread,
@@ -748,6 +751,17 @@ const HOLD_REPORT_MARGIN_MS = 60 * 60_000;
 const ACP_LIMIT_HOLD_MAX_RETRIES = 4;
 const LIMIT_HOLD_NOTICE =
   "**Conversation paused because a usage limit was reached.**";
+// A turn whose sign-in failed is held until the account signs in again (the
+// host asks the hub when the credential was last updated, about once a
+// minute), until a day after it was first held; then it is over (I4c).
+const ACP_SIGNIN_HOLD_MS = envNumber(
+  "COCALC_ACP_SIGNIN_HOLD_MS",
+  24 * 60 * 60_000,
+);
+const ACP_SIGNIN_HOLD_MAX = 20;
+const SIGNIN_HOLD_REASON = "sign-in hold";
+const SIGNIN_HOLD_NOTICE =
+  "**Conversation paused because the subscription's sign-in needs renewing.** Sign in again and it resumes on its own.";
 const ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS = envNumber(
   "COCALC_ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS",
   5 * 60_000,
@@ -9490,6 +9504,332 @@ async function enqueueLimitHold({
   return held;
 }
 
+/** When this job's chain was first held for its sign-in, if it was. */
+function signInHoldStart(job: AcpJobRow): number | undefined {
+  let start: number | undefined;
+  let row: AcpJobRow | undefined = job;
+  for (let hops = 0; row && hops < 50; hops++) {
+    if (row.recovery_reason === SIGNIN_HOLD_REASON) start = row.created_at;
+    row = row.recovery_parent_op_id
+      ? getAcpJobByOpId(row.recovery_parent_op_id)
+      : undefined;
+  }
+  return start;
+}
+
+/**
+ * Hold a turn whose sign-in failed until the account signs in again (I4c):
+ * a continuation due when the day since it was first held ends, released
+ * early by releaseRenewedSignInHolds. A released turn that fails the same
+ * way (the update was not a new sign-in) is held again, never past that day.
+ */
+async function enqueueSignInHold({
+  client,
+  job,
+  outcome,
+  now = Date.now(),
+  credentialUpdatedAt = defaultCredentialUpdatedAt,
+}: {
+  client: ConatClient;
+  job: AcpJobRow;
+  outcome: TurnOutcome;
+  now?: number;
+  credentialUpdatedAt?: CredentialUpdatedAt;
+}): Promise<AcpJobRow | undefined> {
+  if (outcome.state !== "failed" || outcome.failure.kind !== "sign-in")
+    return undefined;
+  const failed = decodeAcpJobRequest(job);
+  if (failed.chat?.agent_rpc_report) return undefined;
+  // Only a subscription's sign-in can be renewed (and seen renewed): an
+  // invalid API key ends the turn as an ordinary failure.
+  if (!signInRenewable(failed, outcome)) return undefined;
+  const count = Math.floor(Number(job.recovery_count ?? 0));
+  if (count >= ACP_SIGNIN_HOLD_MAX) return undefined;
+  const base = job.finished_at ?? now;
+  // The day since it was first held, and for another agent's message no
+  // later than its report can still be sent (as for limit holds).
+  const reportable = agentRpcReportCapabilityExpiresAt(
+    failed.chat?.agent_rpc_execution?.report_capability,
+  );
+  const deadline = Math.min(
+    (signInHoldStart(job) ?? now) + ACP_SIGNIN_HOLD_MS,
+    reportable != null ? reportable - HOLD_REPORT_MARGIN_MS : Infinity,
+  );
+  // From when the turn ended, as the continuation is scheduled.
+  const delayMs = deadline - base;
+  if (delayMs < 60_000) return undefined;
+  const ranTools = toolRanOf(outcome) === true;
+  const held = await enqueueRecoveryContinuationForJob({
+    client,
+    job,
+    interruptedNotice: SIGNIN_HOLD_NOTICE,
+    recoveryReason: SIGNIN_HOLD_REASON,
+    delayMs,
+    maxRetries: ACP_SIGNIN_HOLD_MAX,
+    // Not after the sender withdrew it (that clears the intent).
+    requireParentFenceIntent: ACP_HOLD_INTENT,
+    recoveryGuidance: [
+      "The previous attempt stopped because the subscription's sign-in needed renewing; CoCalc held this turn until it was signed in again.",
+      ranTools
+        ? "It had already run tools before it stopped: check the current state of what it was doing before you continue, and do not repeat completed steps."
+        : "It had not run any tools before it stopped.",
+    ].join(" "),
+  });
+  if (held) {
+    logger.info("held ACP turn until its sign-in is renewed", {
+      failed_op_id: job.op_id,
+      held_op_id: held.op_id,
+      available_at: held.available_at ?? null,
+    });
+    await takeSignInHoldBaseline(held, credentialUpdatedAt);
+  }
+  return held;
+}
+
+const API_KEY_PAYMENT_SOURCES = [
+  "project-api-key",
+  "account-api-key",
+  "site-api-key",
+];
+
+/** Whether this sign-in failure is a subscription's, which signing in again
+ * renews: a Claude subscription credential, or a Codex turn whose failure
+ * names its subscription credential (never an API key). */
+function signInRenewable(
+  request: AcpJobRequest,
+  outcome: TurnOutcome,
+): boolean {
+  const failure = outcome.state === "failed" ? outcome.failure : undefined;
+  if (failure?.kind !== "sign-in") return false;
+  const harness = request.harness_credential as
+    | { mode?: string; credentialId?: string }
+    | undefined;
+  if (request.runtime !== undefined)
+    return harness?.mode === "account-subscription" && !!harness.credentialId;
+  const source = `${(request.config as { paymentSource?: string } | undefined)?.paymentSource ?? ""}`;
+  return !!failure.credential_id && !API_KEY_PAYMENT_SOURCES.includes(source);
+}
+
+/** The credential a held sign-in turn waits for, and its provider. */
+function heldSignInCredential(
+  job: AcpJobRow,
+): { credential_id: string; provider: string } | undefined {
+  const request = decodeAcpJobRequest(job);
+  const harness = request.harness_credential as
+    | { provider?: string; credentialId?: string }
+    | undefined;
+  if (harness?.credentialId && harness.provider)
+    return { credential_id: harness.credentialId, provider: harness.provider };
+  // A Codex turn: the failed attempt names its subscription.
+  let row: AcpJobRow | undefined = job;
+  for (let hops = 0; row && hops < 50; hops++) {
+    const outcome = parseTurnOutcome(row.outcome_json);
+    if (
+      outcome?.state === "failed" &&
+      outcome.failure.kind === "sign-in" &&
+      outcome.failure.credential_id
+    )
+      return {
+        credential_id: outcome.failure.credential_id,
+        provider: request.runtime ? "anthropic" : "openai",
+      };
+    row = row.recovery_parent_op_id
+      ? getAcpJobByOpId(row.recovery_parent_op_id)
+      : undefined;
+  }
+  return undefined;
+}
+
+type CredentialUpdatedAt = (opts: {
+  account_id: string;
+  project_id: string;
+  credential_id: string;
+  provider: string;
+}) => Promise<{
+  updated_at?: number;
+  revoked?: boolean;
+  newest_updated_at?: number;
+  newest_credential_id?: string;
+}>;
+
+/**
+ * The credential a released turn should run with: the one it was held for,
+ * unless signing in made a newer one of the same kind (or revoked it), in
+ * which case that newer one, by id.
+ */
+function replacementCredentialId(
+  held: string,
+  answer: Awaited<ReturnType<CredentialUpdatedAt>>,
+): string | undefined {
+  const replacement = answer.newest_credential_id;
+  if (!replacement || replacement === held) return undefined;
+  return answer.revoked ||
+    (answer.newest_updated_at ?? 0) > (answer.updated_at ?? 0)
+    ? replacement
+    : undefined;
+}
+
+/** Pin this queued job to another credential of the same kind (false if
+ * it was pinned to the old one and could not be changed). */
+function repinHeldCredential(
+  job: AcpJobRow,
+  from: string,
+  to: string,
+): boolean {
+  const request = decodeAcpJobRequest(job) as AcpJobRequest & {
+    harness_credential?: { credentialId?: string };
+    config?: { credentialId?: string };
+  };
+  let changed = false;
+  if (request.harness_credential?.credentialId === from) {
+    request.harness_credential = {
+      ...request.harness_credential,
+      credentialId: to,
+    };
+    changed = true;
+  }
+  if (request.config?.credentialId === from) {
+    request.config = { ...request.config, credentialId: to };
+    changed = true;
+  }
+  // Nothing pinned to it: the turn takes the account's current credential.
+  return !changed || setQueuedAcpJobRequest(job.op_id, request);
+}
+
+/** Slack for clock skew between this host and the account's home bay. */
+const SIGNIN_HOLD_SKEW_MS = 2 * 60_000;
+
+/**
+ * The newest credential update each held sign-in turn has seen, by op_id,
+ * taken when it was held. Timestamps come from the home bay's clock, so
+ * comparing an answer with the baseline never mixes clocks; only a turn
+ * without one (e.g. after a restart) compares with its hold start.
+ */
+const signInHoldBaselines = new Map<string, number>();
+
+const defaultCredentialUpdatedAt: CredentialUpdatedAt = (opts) =>
+  hubApi.agent.credentialUpdatedAt(opts);
+
+/** The newest sign-in this answer shows, if it shows any. */
+function signInSeen(answer: {
+  updated_at?: number;
+  revoked?: boolean;
+  newest_updated_at?: number;
+}): number | undefined {
+  if (answer.updated_at == null && answer.newest_updated_at == null)
+    return undefined;
+  const own = !answer.revoked ? (answer.updated_at ?? 0) : 0;
+  return Math.max(own, answer.newest_updated_at ?? 0);
+}
+
+/**
+ * Record what the home bay shows when a turn is held, so that any update
+ * after it (even a sign-in seconds later) releases the turn, and any
+ * update the failing attempt made itself (a token refresh) does not.
+ */
+async function takeSignInHoldBaseline(
+  held: AcpJobRow,
+  credentialUpdatedAt: CredentialUpdatedAt,
+): Promise<void> {
+  const credential = heldSignInCredential(held);
+  if (!credential || !held.account_id) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const answer = await Promise.race([
+      credentialUpdatedAt({
+        account_id: held.account_id,
+        project_id: held.project_id,
+        ...credential,
+      }),
+      new Promise<{}>((resolve) => {
+        timer = setTimeout(() => resolve({}), 10_000);
+      }),
+    ]);
+    const seen = signInSeen(answer);
+    if (seen != null && !signInHoldBaselines.has(held.op_id))
+      signInHoldBaselines.set(held.op_id, seen);
+  } catch {
+    // No baseline: releaseRenewedSignInHolds falls back to the hold time.
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Release every held sign-in turn whose account signed in again since it
+ * was first held: its credential, or a newer one of the same kind, was
+ * updated (not just revoked). An unanswered lookup changes nothing.
+ */
+async function releaseRenewedSignInHolds(
+  credentialUpdatedAt: CredentialUpdatedAt = defaultCredentialUpdatedAt,
+  now = Date.now(),
+): Promise<number> {
+  // One lookup per account and credential per pass.
+  const asked = new Map<string, ReturnType<CredentialUpdatedAt>>();
+  let released = 0;
+  const held = listHeldAcpJobs(SIGNIN_HOLD_REASON, now);
+  const heldIds = new Set(held.map((job) => job.op_id));
+  for (const op_id of signInHoldBaselines.keys())
+    if (!heldIds.has(op_id)) signInHoldBaselines.delete(op_id);
+  for (const job of held) {
+    const credential = heldSignInCredential(job);
+    if (!credential || !job.account_id) continue;
+    const start = signInHoldStart(job) ?? job.created_at;
+    const key = JSON.stringify([
+      job.account_id,
+      job.project_id,
+      credential.credential_id,
+    ]);
+    if (!asked.has(key))
+      asked.set(
+        key,
+        credentialUpdatedAt({
+          account_id: job.account_id,
+          project_id: job.project_id,
+          ...credential,
+        }).catch(() => ({})),
+      );
+    const answer = await asked.get(key)!;
+    const seen = signInSeen(answer);
+    if (seen == null) continue;
+    const baseline = signInHoldBaselines.get(job.op_id);
+    if (baseline == null) {
+      // No baseline from the hold (its lookup failed, or this host
+      // restarted): only an update clearly before the hold becomes one.
+      // One near or after it releases; if that was not a sign-in, the turn
+      // fails the same way and is held again, with a baseline.
+      if (seen <= start - SIGNIN_HOLD_SKEW_MS) {
+        signInHoldBaselines.set(job.op_id, seen);
+        continue;
+      }
+    } else if (seen <= baseline) continue;
+    signInHoldBaselines.delete(job.op_id);
+    // Signed in as a new credential: the turn runs with it, not the old one.
+    const replacement = replacementCredentialId(
+      credential.credential_id,
+      answer,
+    );
+    if (
+      replacement &&
+      !repinHeldCredential(job, credential.credential_id, replacement)
+    )
+      logger.warn("held sign-in turn not repinned to its new credential", {
+        op_id: job.op_id,
+      });
+    if (releaseHeldAcpJob(job.op_id, now)) released += 1;
+  }
+  if (released > 0) scheduleNextDelayedAcpQueueWake();
+  return released;
+}
+
+/** How a turn that ended this way is held, if it is (I4). */
+function holdFor(outcome: TurnOutcome | undefined) {
+  if (limitHoldDelayMs(outcome) != null) return enqueueLimitHold;
+  if (outcome?.state === "failed" && outcome.failure.kind === "sign-in")
+    return enqueueSignInHold;
+  return undefined;
+}
+
 /**
  * The sender takes back its message (I2-E): its turn's job is canceled if it
  * has not started, and that is all. No delivery report: the sender asked.
@@ -9756,11 +10096,12 @@ async function recoverPendingFailureRecoveryIntents({
       // A hold whose worker died before its continuation was queued.
       try {
         const outcome = parseTurnOutcome(job.outcome_json);
+        const hold = holdFor(outcome);
         // Its worker may also have died after queueing the continuation,
         // before clearing the intent: then that continuation is the hold.
         const held =
-          (outcome
-            ? await enqueueLimitHold({ client, job, outcome })
+          (outcome && hold
+            ? await hold({ client, job, outcome })
             : undefined) ?? continuationOf(job);
         // Withdrawn meanwhile (the sender cleared the intent): no report.
         if (!holdIntentStillSet(job)) continue;
@@ -10649,9 +10990,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       recovery_code:
         result.terminalState === "error"
           ? (result.recoveryCode ??
-            (limitHoldDelayMs(result.outcome) != null
-              ? ACP_HOLD_INTENT
-              : undefined))
+            (holdFor(result.outcome) ? ACP_HOLD_INTENT : undefined))
           : undefined,
       recovery_detail:
         result.terminalState === "error" ? result.recoveryDetail : undefined,
@@ -10668,13 +11007,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       });
       return;
     }
-    if (
-      result.terminalState === "error" &&
-      !result.recoveryCode &&
-      limitHoldDelayMs(result.outcome) != null
-    ) {
+    const hold = holdFor(result.outcome);
+    if (result.terminalState === "error" && !result.recoveryCode && hold) {
       try {
-        resumed = await enqueueLimitHold({
+        resumed = await hold({
           client: conatClient,
           job: getAcpJobByOpId(job.op_id) ?? job,
           outcome: result.outcome,
@@ -12607,6 +12943,11 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
   let ticks = 0;
   codexActionReconcileTimer = setInterval(() => {
     void reconcilePendingCodexActions(client);
+    // Held sign-in turns whose account signed in again (about once a minute).
+    if (ticks % 6 === 3)
+      void releaseRenewedSignInHolds().catch((err) =>
+        logger.debug("sign-in hold release failed", { err: `${err}` }),
+      );
     // What each agent here is doing, for its peers and lists.
     void sweepAgentStatus().catch((err) =>
       logger.debug("agent status sweep failed", { err: `${err}` }),
@@ -13939,6 +14280,9 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  signInRenewable,
+  releaseRenewedSignInHolds,
+  signInHoldStart,
   retryWithdrawnProjections,
   harnessKilledFailure,
   loadAgentMemoryContext,

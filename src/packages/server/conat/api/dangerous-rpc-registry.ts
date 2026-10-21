@@ -4,9 +4,7 @@
  */
 
 export type DangerousRpcFreshAuthDecision =
-  | "fresh-auth-required"
-  | "fresh-auth-not-required"
-  | "internal-auth-only";
+  "fresh-auth-required" | "fresh-auth-not-required" | "internal-auth-only";
 
 export type DangerousRpcDecision = {
   decision: DangerousRpcFreshAuthDecision;
@@ -132,6 +130,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "agent.reportRuntime": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.credentialUpdatedAt": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
