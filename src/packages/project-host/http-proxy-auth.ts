@@ -751,7 +751,12 @@ export function createProjectHostHttpProxyAuth({
       const isProjectFileRequest =
         classifyProjectRoute(req, project_id) === "file";
       const isExplicitDownload = url.searchParams.has("download");
-      if (isProjectFileRequest && !isExplicitDownload) {
+      // A file opened as a page (a new tab): the session cookie was just set
+      // first-party, so drop the token from the address bar and history.
+      // Embedded previews keep loading without a redirect.
+      const isTopLevelPage =
+        `${req.headers["sec-fetch-dest"] ?? ""}`.toLowerCase() === "document";
+      if (isProjectFileRequest && !isExplicitDownload && !isTopLevelPage) {
         stripQueryToken(req);
         return false;
       }
