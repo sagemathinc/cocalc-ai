@@ -486,6 +486,40 @@ describe("the agenda", () => {
     expect(new Set(shown).size).toBe(shown.length);
   });
 
+  it("an item that started long ago is overdue once its deadline passes", () => {
+    const late = calendarOf({
+      ...ACCOUNTING,
+      events: [
+        {
+          id: "slow",
+          title: "Slow",
+          start: "2026-01-01",
+          all_day: true,
+          due_offset_days: 300,
+          status: "pending",
+        },
+        {
+          id: "fixed",
+          title: "Fixed",
+          start: "2026-01-02",
+          all_day: true,
+          due: "2026-10-30",
+          status: "pending",
+        },
+      ],
+    });
+    // Due Oct 28 and Oct 30; started 10 months before.
+    expect(
+      calendarAgenda(late, Date.parse("2026-11-01T19:00:00Z")).overdue.map(
+        (o) => o.event.id,
+      ),
+    ).toEqual(["slow", "fixed"]);
+    // Due more than 90 days ago: no longer listed.
+    expect(
+      calendarAgenda(late, Date.parse("2027-03-01T19:00:00Z")).overdue,
+    ).toEqual([]);
+  });
+
   it("a past item that is done, or not due, is not shown again", () => {
     const done = calendarOf({
       ...ACCOUNTING,
@@ -764,6 +798,72 @@ describe("iCalendar export", () => {
     expect(ics).toContain("SUMMARY:a\\nb\\nc\\nd");
     // Only CRLF line ends: no CR or LF anywhere else.
     expect(ics.replace(/\r\n/g, "")).not.toMatch(/[\r\n]/);
+  });
+
+  it("exports rules that pick the same days in calendar apps", () => {
+    const rrule = (start: string, recurrence: object) =>
+      /RRULE:(.*)/.exec(
+        calendarToIcs(
+          single([{ id: "r", title: "R", start, all_day: true, recurrence }]),
+          { nowMs: 0 },
+        ),
+      )![1];
+    // A yearly rule's days are in its start's month, not all year.
+    expect(rrule("2027-01-04", { freq: "yearly", byweekday: ["MO"] })).toBe(
+      "FREQ=YEARLY;BYMONTH=1;BYDAY=MO",
+    );
+    expect(rrule("2027-01-15", { freq: "yearly", bymonthday: [15] })).toBe(
+      "FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=15",
+    );
+    // Every other week, weeks counted from a Wednesday start, as the agenda.
+    const biweekly = single([
+      {
+        id: "b",
+        title: "B",
+        start: "2027-01-06",
+        all_day: true,
+        recurrence: { freq: "weekly", interval: 2, byweekday: ["MO", "FR"] },
+      },
+    ]);
+    expect(
+      calendarOccurrences(
+        biweekly,
+        Date.parse("2027-01-01T08:00:00Z"),
+        Date.parse("2027-01-27T08:00:00Z"),
+      ).map((o) => o.date),
+    ).toEqual(["2027-01-08", "2027-01-11", "2027-01-22", "2027-01-25"]);
+    const ics = calendarToIcs(biweekly, { nowMs: 0 });
+    expect(ics).toContain("DTSTART;VALUE=DATE:20270108");
+    expect(ics).toContain("RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,FR;WKST=WE");
+  });
+
+  it("days of the month are for monthly and yearly rules only", () => {
+    for (const freq of ["daily", "weekly"]) {
+      const parsed = parseCalendar(
+        text({
+          format: "cocalc-calendar",
+          version: 1,
+          title: "S",
+          timezone: "America/Los_Angeles",
+          default_view: "agenda",
+          events: [
+            {
+              id: "d",
+              title: "D",
+              start: "2027-01-01",
+              all_day: true,
+              recurrence: { freq, bymonthday: [31] },
+            },
+          ],
+        }),
+      );
+      expect(parsed.problems).toEqual([
+        {
+          path: "events[0].recurrence.bymonthday",
+          message: "is for monthly and yearly rules",
+        },
+      ]);
+    }
   });
 
   it("exports one event alone", () => {

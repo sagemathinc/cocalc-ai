@@ -189,6 +189,25 @@ test("while open, an item becomes overdue when its time comes", async () => {
   }
 });
 
+test("a refresh that fails shows no stale calendar and offers no .ics", async () => {
+  render(
+    <CalendarArtifact
+      path="/home/user/a.cal.json"
+      historical={false}
+      now={NOW}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Accounting deadlines" });
+  expect(screen.getByRole("button", { name: "Download .ics" })).toBeEnabled();
+  readFile.mockRejectedValueOnce(new Error("ENOENT: no such file"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(await screen.findByText(/ENOENT/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "Accounting deadlines" }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: "Download .ics" })).toBeDisabled();
+});
+
 test("problems are named, and what can be read is still shown", async () => {
   readFile.mockResolvedValue(
     JSON.stringify({

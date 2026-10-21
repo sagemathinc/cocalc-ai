@@ -526,6 +526,12 @@ function parseRecurrence(
     bad("bymonthday", "must be days 1 to 31");
     return;
   }
+  // As in iCalendar, whose rules these export as: days of the month pick
+  // within a month or a year, not within days or weeks.
+  if (r.bymonthday != null && (r.freq === "daily" || r.freq === "weekly")) {
+    bad("bymonthday", "is for monthly and yearly rules");
+    return;
+  }
   if (r.bymonth != null && !ints(r.bymonth, 1, 12)) {
     bad("bymonth", "must be months 1 to 12");
     return;
@@ -1052,9 +1058,21 @@ export function calendarToIcs(
       } else {
         parts.push(`FREQ=${r.freq.toUpperCase()}`);
         if (r.interval) parts.push(`INTERVAL=${r.interval}`);
-        if (r.bymonth) parts.push(`BYMONTH=${r.bymonth.join(",")}`);
+        // A yearly rule's days are picked in its start's month, unless it
+        // names months; in iCalendar they would be picked all year.
+        const bymonth =
+          r.bymonth ??
+          (r.freq === "yearly" && (r.bymonthday || r.byweekday)
+            ? [+startDate.slice(5, 7)]
+            : undefined);
+        if (bymonth) parts.push(`BYMONTH=${bymonth.join(",")}`);
         if (r.bymonthday) parts.push(`BYMONTHDAY=${r.bymonthday.join(",")}`);
         if (r.byweekday) parts.push(`BYDAY=${r.byweekday.join(",")}`);
+        // Weeks are counted from the start's weekday, here and in iCalendar.
+        if (r.freq === "weekly" && (r.interval ?? 1) > 1)
+          parts.push(
+            `WKST=${WEEKDAYS[new Date(`${startDate}T12:00:00Z`).getUTCDay()]}`,
+          );
       }
       if (r.count) parts.push(`COUNT=${r.count}`);
       if (r.until)
@@ -1108,16 +1126,31 @@ export function calendarAgenda(
   nowMs: number,
   { days = 60, pastDays = 90 }: { days?: number; pastDays?: number } = {},
 ): CalendarAgenda {
+  // Overdue history goes by when things were due: look back far enough for
+  // an occurrence that started long before its deadline.
+  const tz = calendar.timezone;
+  let dueReach = 0;
+  for (const e of calendar.events) {
+    if (e.due_offset_days != null)
+      dueReach = Math.max(dueReach, (e.due_offset_days + 1) * DAY_MS);
+    else if (e.due != null && !e.recurrence)
+      dueReach = Math.max(
+        dueReach,
+        calendarInstant(e.due, tz) - calendarInstant(e.start, tz) + DAY_MS,
+      );
+  }
+  const historyStart = nowMs - pastDays * DAY_MS;
   const occurrences = calendarOccurrences(
     calendar,
-    nowMs - pastDays * DAY_MS,
+    historyStart - dueReach,
     nowMs + days * DAY_MS,
   );
   const overdue: CalendarOccurrence[] = [];
   const byDate = new Map<string, CalendarOccurrence[]>();
   for (const o of occurrences) {
-    if (isOverdue(o, nowMs)) overdue.push(o);
-    else if ((o.end ?? o.start + 1) > nowMs) {
+    if (isOverdue(o, nowMs)) {
+      if ((o.due ?? o.end ?? o.start) >= historyStart) overdue.push(o);
+    } else if ((o.end ?? o.start + 1) > nowMs) {
       const list = byDate.get(o.date) ?? [];
       list.push(o);
       byDate.set(o.date, list);

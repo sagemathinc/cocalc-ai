@@ -62,7 +62,11 @@ export default function CalendarArtifact({
         const raw = await fs.readFile(path, "utf8");
         if (!cancelled) setText(typeof raw === "string" ? raw : `${raw}`);
       } catch (err) {
-        if (!cancelled) setError(`${err}`);
+        if (!cancelled) {
+          // Never show (or export) a calendar the file no longer has.
+          setText(undefined);
+          setError(`${err}`);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
