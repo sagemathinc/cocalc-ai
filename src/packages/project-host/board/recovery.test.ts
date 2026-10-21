@@ -885,6 +885,77 @@ describe("astra's round-2 re-review (CORR-DFC-2/3/4), with a stand-in child", ()
     expect(took).toBeGreaterThanOrEqual(490);
   });
 
+  // Reads the job, then (in the same callback) holds the loop for blockMs
+  // before answering.
+  async function answerLate(proc: any, jobId: string, blockMs: number) {
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      proc.stdin.on("data", (b: Buffer) => chunks.push(b));
+      proc.stdin.on("end", resolve);
+    });
+    const until = performance.now() + blockMs;
+    while (performance.now() < until) {}
+    const body = Buffer.concat(chunks).subarray(4);
+    proc.stdout.write(
+      encodeFrame({
+        v: 1,
+        type: "result",
+        job_id: jobId,
+        input_sha256: createHash("sha256").update(body).digest("hex"),
+        verdict: "clean",
+        value: "{}",
+        identifiers: [],
+      }),
+    );
+  }
+
+  test("CORR-3DD-1: a result, end and exit observed after the wall deadline are late, timer or not", async () => {
+    const launcher = new StandIn();
+    const r = runner(launcher as any, {
+      setupMs: 10,
+      wallMs: 20,
+      firstStopMinMs: 100,
+    });
+    const running = r.run(() => []);
+    const { proc, jobId } = await started(launcher);
+    proc.stdout.write(hello(jobId));
+    await answerLate(proc, jobId, 40);
+    proc.stdout.end();
+    proc.emit("exit", 0, null);
+    expect(await running).toMatchObject({ state: "timeout", reason: "wall" });
+  });
+
+  test("CORR-3DD-1: a timely result with a late end of output is late too", async () => {
+    const launcher = new StandIn();
+    const r = runner(launcher as any, {
+      setupMs: 50,
+      wallMs: 100,
+      firstStopMinMs: 200,
+    });
+    const running = r.run(() => []);
+    const { proc, jobId } = await started(launcher);
+    proc.stdout.write(hello(jobId));
+    await answer(proc, jobId);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const until = performance.now() + 150;
+    while (performance.now() < until) {}
+    proc.stdout.end();
+    proc.emit("exit", 0, null);
+    expect(await running).toMatchObject({ state: "timeout", reason: "wall" });
+  });
+
+  test("CORR-3DD-1 control: finishing just before the wall deadline is complete", async () => {
+    const launcher = new StandIn();
+    const r = runner(launcher as any, { wallMs: 400, firstStopMinMs: 100 });
+    const running = r.run(() => []);
+    const { proc, jobId } = await started(launcher);
+    proc.stdout.write(hello(jobId));
+    await answerLate(proc, jobId, 200);
+    proc.stdout.end();
+    proc.emit("exit", 0, null);
+    expect(await running).toMatchObject({ state: "complete" });
+  });
+
   test.each([
     ["a wrong-UID hello", (jobId: string) => hello(jobId, 0)],
     ["a malformed hello", () => Uint8Array.from([0, 0, 0, 2, 0xc1, 0xc1])],

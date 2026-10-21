@@ -267,20 +267,22 @@ export class RecoveryRunner {
         };
       }
       let outcome: RecoveryOutcome;
+      const job = new Job(
+        this.launcher,
+        this.identity,
+        this.limits,
+        this.now,
+        records,
+      );
       try {
-        outcome = await new Job(
-          this.launcher,
-          this.identity,
-          this.limits,
-          this.now,
-          records,
-        ).run();
-      } catch (err) {
+        outcome = await job.run();
+      } catch (err: any) {
         // Never an escape: an unexpected failure is a crash whose cleanup
         // isn't confirmed, so its slot stays held.
         outcome = {
           state: "crash",
-          reason: `the runner failed: ${err}`.slice(0, 300),
+          jobId: job.jobId,
+          reason: `the runner failed: ${err?.stack ?? err}`.slice(0, 2000),
           held: true,
         };
       }
@@ -298,7 +300,7 @@ export class RecoveryRunner {
 }
 
 class Job {
-  private readonly jobId = randomBytes(16).toString("hex");
+  readonly jobId = randomBytes(16).toString("hex");
   private readonly start: number;
   private proc?: ChildProcess;
   private exited?: { code: number | null; signal: NodeJS.Signals | null };
@@ -314,6 +316,8 @@ class Job {
     Record<"timeout" | "protocol-error" | "refused", string>
   > = {};
   private exitAt?: number;
+  private resultAt?: number;
+  private stdoutEndAt?: number;
   private stdoutEnded = false;
   private stdoutWaiters: (() => void)[] = [];
   private reader?: FrameReader;
@@ -403,6 +407,7 @@ class Job {
     // Only "end" is a clean EOF; a close or an error before it is a broken
     // transport, never a completed protocol (astra CORR-DFC-2).
     proc.stdout?.on("end", () => {
+      this.stdoutEndAt = this.now();
       this.stdoutEnded = true;
       this.wakeStdoutWaiters();
     });
@@ -472,6 +477,7 @@ class Job {
     if (result.input_sha256 !== this.inputSha256) {
       throw new ProtocolError("a result for another input");
     }
+    this.resultAt = this.now();
     this.result = result;
   }
 
@@ -638,6 +644,17 @@ class Job {
   */
   private classify(report: StopReport, confirmed: boolean): RecoveryOutcome {
     const base = { jobId: this.jobId, report, held: !confirmed };
+    // Completion is judged by when it was observed, not by whether the wall
+    // timer's callback happened to run first (astra CORR-3DD-1): a result,
+    // an end of output or an exit seen after the wall deadline is late.
+    const wall = this.start + this.limits.wallMs;
+    if (
+      [this.resultAt, this.stdoutEndAt, this.exitAt].some(
+        (t) => t != null && t > wall,
+      )
+    ) {
+      this.causes.timeout ??= "wall";
+    }
     if ((report.oom_kill ?? 0) > 0) {
       return { state: "oom", reason: "oom_kill", ...base };
     }
