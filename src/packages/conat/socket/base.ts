@@ -50,6 +50,10 @@ export abstract class ConatSocketBase extends EventEmitter {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private recoveryRegistration?: RegisteredRecoverableResource;
   protected readonly lifecycleReporter?: ConatSocketOptions["lifecycleReporter"];
+  // Set here, not in the server's constructor: connect() runs before a
+  // subclass's field initializers.
+  protected readonly receiveLimits?: ConatSocketOptions["receiveLimits"];
+  protected readonly statusReceiveLimits?: ConatSocketOptions["statusReceiveLimits"];
   // The client whose connection carries this socket's traffic when its subject
   // is routed elsewhere, e.g., a browser's per-host client for a project
   // subject.  Its connection can drop while this.client stays connected.
@@ -94,8 +98,12 @@ export abstract class ConatSocketBase extends EventEmitter {
     keepAliveTimeout = DEFAULT_KEEP_ALIVE_TIMEOUT,
     desc,
     lifecycleReporter,
+    receiveLimits,
+    statusReceiveLimits,
   }: ConatSocketOptions) {
     super();
+    this.receiveLimits = receiveLimits;
+    this.statusReceiveLimits = statusReceiveLimits;
     this.maxQueueSize = maxQueueSize;
     this.reconnection = reconnection;
     this.subject = subject;

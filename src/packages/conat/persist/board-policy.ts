@@ -26,9 +26,15 @@ Unicode normalization, since distinct Linux names are distinct boards.
 import { posix } from "node:path";
 import { isValidUUID } from "@cocalc/util/misc";
 
-export const BOARD_WRITE_SERVICE = "persist-board-write";
-// The only user segment the board write service serves.
-export const BOARD_WRITE_USER = "hub";
+// The service names and limits live in board-constants.ts, which has no Node
+// imports, so browser code (e.g. the load balancer) can use them.
+export {
+  BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
+  BOARD_WRITE_RECEIVE_LIMITS,
+  BOARD_WRITE_SERVICE,
+  BOARD_WRITE_USER,
+} from "./board-constants";
+import { BOARD_WRITE_SERVICE, BOARD_WRITE_USER } from "./board-constants";
 
 const BOARD_STREAM_SUFFIX = ".sage-board";
 const PATCHFLOW_SEGMENT = "patchflow";

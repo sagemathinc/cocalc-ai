@@ -26,6 +26,10 @@ collaborative editing badly.
 import { type Client } from "@cocalc/conat/core/client";
 import { getLogger } from "@cocalc/conat/logger";
 import { SERVICE } from "./util";
+import {
+  BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
+  BOARD_WRITE_SERVICE,
+} from "./board-constants";
 import { hash_string } from "@cocalc/util/misc";
 import { delay } from "awaiting";
 import type { SocketServerInfo } from "../socket/util";
@@ -54,7 +58,12 @@ export function initLoadBalancer({
       let sub: any = undefined;
       try {
         logger.debug("creating persist load balancer: ", { subject, ids });
-        sub = await client.subscribe(subject);
+        sub = await client.subscribe(subject, {
+          receiveLimits:
+            service === BOARD_WRITE_SERVICE
+              ? BOARD_WRITE_CONTROL_RECEIVE_LIMITS
+              : undefined,
+        });
         for await (const mesg of sub) {
           const id = getId(ids, mesg.subject);
           mesg.respondSync(getPersistServerDiscoveryResponse(id));
