@@ -1112,6 +1112,12 @@ describeDb("agent sensors", () => {
     );
     limits.sensor_max_active_watchers = 0;
     await expect(fileWatch()).rejects.toThrow(/does not include agent sensors/);
+    // Reminders are counted apart: still allowed, while the tier has wakes.
+    await reminder(30);
+    limits.sensor_max_wakes_per_day = 0;
+    await expect(reminder(31)).rejects.toThrow(
+      /does not include agent sensors/,
+    );
   });
 
   test("a per-agent limit keeps one agent from using all of the account's watchers", async () => {

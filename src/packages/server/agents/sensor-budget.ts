@@ -194,11 +194,15 @@ export async function reserveSensorWatcherAtHome(
   // Watchers replace polling: any membership that allows wakes has them,
   // limited by maxWatchers, maxWatchersPerAgent and the wake budget, not
   // maxActive.
-  if (limits.maxWakesPerDay === 0 || limits.maxWatchers === 0)
-    throw new Error(NO_SENSORS);
   // A reminder (`watch at`) checks nothing until it fires, perhaps months
-  // away: it is counted apart, so it never takes another watcher's place.
+  // away: it is counted apart, so it never takes another watcher's place
+  // (and a tier with no watchers still has reminders, if it has wakes).
   const kind = opts.reminder === true ? "reminder" : "watch";
+  if (
+    limits.maxWakesPerDay === 0 ||
+    (kind === "watch" && limits.maxWatchers === 0)
+  )
+    throw new Error(NO_SENSORS);
   await agentStore().transaction(async (client) => {
     await lockAccountSensors(client, opts.account_id);
     const { rows: counts } = await client.query<{
