@@ -275,7 +275,10 @@ test("the append rule agrees with patchflow on 2,000 random append sequences", (
         });
         // (Or one the open check would refuse, e.g. a snapshot older than
         // the newest one.)
-        if (!conflicting && opens([...stored, ...batch])) {
+        // (Or one writing more than one snapshot record: at most one per
+        // batch.)
+        const snapshots = batch.filter((r) => r.is_snapshot).length;
+        if (!conflicting && snapshots <= 1 && opens([...stored, ...batch])) {
           expect({ run, step, heads: heads.length }).not.toEqual({
             run,
             step,
