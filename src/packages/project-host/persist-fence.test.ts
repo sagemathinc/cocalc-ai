@@ -201,6 +201,19 @@ describe("withProjectPersistFenced", () => {
     persistServerHasFeature.mockReturnValue(true);
   });
 
+  it("lets the persist server take at most timeoutMs to fence", async () => {
+    withPersistFence.mockImplementation(async (_opts, fn) => await fn());
+    await withProjectPersistFenced(
+      { project_id, reason: "test" },
+      async () => {},
+      { timeoutMs: 5000 },
+    );
+    expect(withPersistFence).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 5000 }),
+      expect.any(Function),
+    );
+  });
+
   it("fails, without running fn, when the fence cannot be taken", async () => {
     withPersistFence.mockRejectedValue(new Error("already fenced"));
     const fn = jest.fn(async () => "done");

@@ -73,6 +73,9 @@ async function whenUnavailable(
 // persist server must have that feature (its capability file says so, see
 // conat-persist.ts), and it never goes ahead unfenced: a daemon from before
 // would keep using the history where it was, and its writes would be lost.
+//
+// waitMs bounds the wait for an unreachable fence service, and timeoutMs how
+// long the persist server may take to close the project's streams.
 export async function withProjectPersistFenced<T>(
   {
     project_id,
@@ -80,7 +83,10 @@ export async function withProjectPersistFenced<T>(
     requires,
   }: { project_id: string; reason: string; requires?: string },
   fn: () => Promise<T>,
-  { waitMs = UNAVAILABLE_WAIT_MS }: { waitMs?: number } = {},
+  {
+    waitMs = UNAVAILABLE_WAIT_MS,
+    timeoutMs,
+  }: { waitMs?: number; timeoutMs?: number } = {},
 ): Promise<T> {
   const client = fenceClient;
   if (client == null) {
@@ -105,6 +111,7 @@ export async function withProjectPersistFenced<T>(
           holder: currentFenceHolder(),
           // checked by the server that grants the fence
           ...(requires != null ? { requires: [requires] } : {}),
+          ...(timeoutMs != null ? { timeoutMs } : {}),
         },
         fn,
       );

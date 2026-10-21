@@ -706,6 +706,56 @@ export async function copyPersistVolumeIntoSnapshot(opts: {
   }
 }
 
+// A read-only snapshot at `dest` in the project's ~/.snapshots of `source`,
+// its home or a snapshot of it, with its edit history as in every snapshot
+// there (subvolume-snapshots.ts does the same for the usual ones).  The
+// project can write its home, and the history must never be writable there:
+// the snapshot is completed in host-only staging first.
+export async function snapshotWithHistory({
+  project_id,
+  source,
+  dest,
+  env = process.env,
+}: {
+  project_id: string;
+  source: string;
+  dest: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<void> {
+  const subvolume = `project-${project_id}`;
+  let captured = await capturePersistVolume({ subvolume, env });
+  try {
+    if (captured == null) {
+      await btrfs({ args: ["subvolume", "snapshot", "-r", source, dest] });
+      // There was nothing to add, but there may be now (the history just
+      // moved out of the home): then take the snapshot again with it.
+      captured = await capturePersistVolume({ subvolume, env });
+      if (captured == null) return;
+      await btrfs({ args: ["subvolume", "delete", dest] });
+    }
+    const staged = join(
+      dirname(persistVolumePath(project_id, env)!),
+      IMPORT_STAGING_DIR,
+      stagingName("snapshot", project_id),
+    );
+    await btrfs({ args: ["subvolume", "snapshot", source, staged] });
+    try {
+      await captured.addTo(staged);
+      await btrfs({ args: ["property", "set", "-ts", staged, "ro", "true"] });
+      await btrfs({ args: ["subvolume", "snapshot", "-r", staged, dest] });
+    } finally {
+      await btrfs({ args: ["subvolume", "delete", staged] }).catch((err) => {
+        logger.warn("unable to delete a staged snapshot", {
+          staged,
+          err: `${err}`,
+        });
+      });
+    }
+  } finally {
+    await captured?.release();
+  }
+}
+
 // Where restoring `path` of a backup to `dest` in the project's home puts
 // the backup's history back, if it does, in the order to look for it in the
 // backup: HISTORY_IN_SNAPSHOTS (newer backups) and the old directory (older
@@ -1027,11 +1077,14 @@ export async function withProjectStorageFenced<T>(
     project_id,
     reason,
     waitMs,
+    timeoutMs,
     env = process.env,
   }: {
     project_id: string;
     reason: string;
+    // (withProjectPersistFenced)
     waitMs?: number;
+    timeoutMs?: number;
     env?: NodeJS.ProcessEnv;
   },
   fn: () => Promise<T>,
@@ -1047,7 +1100,7 @@ export async function withProjectStorageFenced<T>(
             : "persist-volume",
       },
       fn,
-      waitMs == null ? undefined : { waitMs },
+      { waitMs, timeoutMs },
     ),
   );
 }
@@ -1316,15 +1369,24 @@ async function prepareMergedVolume({
 // crash between deleting a project's home and its volume, or by older
 // software deleting a project. Run when the file server starts, before it
 // serves: a restore or copy (which can briefly leave a volume without a home)
-// is never running then.
+// is never running then.  So it takes at most about budgetMs (each volume up
+// to fenceMs to fence): what is left is deleted at the next start.
 export async function deleteOrphanedPersistVolumes({
   limit = 1000,
+  budgetMs = 60_000,
+  fenceMs = 5000,
   env = process.env,
-}: { limit?: number; env?: NodeJS.ProcessEnv } = {}): Promise<string[]> {
+}: {
+  limit?: number;
+  budgetMs?: number;
+  fenceMs?: number;
+  env?: NodeJS.ProcessEnv;
+} = {}): Promise<string[]> {
   const { legacy } = projectPersistTemplates(env);
   if (legacy == null) return [];
   const mount = dirname(legacy.home);
   const deleted: string[] = [];
+  const deadline = Date.now() + budgetMs;
   for (const name of await readdir(mount)) {
     if (deleted.length >= limit) break;
     const project_id = name.match(/^project-([0-9a-f-]{36})-persist$/i)?.[1];
@@ -1333,10 +1395,22 @@ export async function deleteOrphanedPersistVolumes({
     if (await exists(legacy.home.split("[project_id]").join(project_id))) {
       continue;
     }
+    if (Date.now() >= deadline) {
+      logger.warn("orphaned persist volumes left for the next start", {
+        budgetMs,
+      });
+      break;
+    }
     try {
       // a persist daemon may still have its streams open
       await withProjectStorageFenced(
-        { project_id, reason: "delete-orphan", waitMs: 5000, env },
+        {
+          project_id,
+          reason: "delete-orphan",
+          waitMs: fenceMs,
+          timeoutMs: fenceMs,
+          env,
+        },
         async () => await deletePersistVolume(project_id),
       );
       deleted.push(project_id);

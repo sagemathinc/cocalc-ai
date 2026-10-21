@@ -34,6 +34,7 @@ import {
   replaceProjectHome,
   restoreBackupWithHistory,
   restoredHistoryCandidates,
+  snapshotWithHistory,
   syncPersistVolumeQuota,
   type PersistVolumeOps,
 } from "./persist-volume";
@@ -572,6 +573,67 @@ describe("in the project-host", () => {
     await copyPersistVolumeIntoSnapshot({ subvolume, snapshotPath });
     expect(read(join(snapshotPath, HISTORY_IN_SNAPSHOTS, "a.db"))).toBe("live");
     expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
+  });
+
+  describe("snapshotWithHistory", () => {
+    // (in ~/.snapshots on btrfs, which a copy can't do)
+    const dest = () => join(mount, "before-restore");
+    const snapshot = async () => {
+      await snapshotWithHistory({
+        project_id: PROJECT,
+        source: home,
+        dest: dest(),
+        env,
+      });
+    };
+
+    it("adds the history in host-only staging, never in the home", async () => {
+      await readyVolume();
+      await writeFile(join(home, "work.txt"), "work");
+      await snapshot();
+      expect(read(join(dest(), "work.txt"))).toBe("work");
+      const copy = join(dest(), HISTORY_IN_SNAPSHOTS);
+      expect(read(join(copy, "a.db"))).toBe("live");
+      expect(existsSync(join(copy, READY_MARKER))).toBe(true);
+      // made read-only in staging, then snapshotted read-only into the home
+      const ops = (btrfs as jest.Mock).mock.calls.map(([{ args }]) => args);
+      const staged = ops.find(
+        (args) =>
+          args[1] === "snapshot" && args[2] === home && args.length === 4,
+      )?.[3];
+      expect(staged).toContain(join(mount, ".persist-import"));
+      expect(ops).toContainEqual([
+        "property",
+        "set",
+        "-ts",
+        staged,
+        "ro",
+        "true",
+      ]);
+      expect(ops).toContainEqual([
+        "subvolume",
+        "snapshot",
+        "-r",
+        staged,
+        dest(),
+      ]);
+      expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
+    });
+
+    it("is a plain snapshot until the history was imported", async () => {
+      await snapshot();
+      expect(read(join(dest(), LEGACY, "a.db"))).toBe("a");
+      expect(existsSync(join(dest(), HISTORY_IN_SNAPSHOTS))).toBe(false);
+      expect(sudo).not.toHaveBeenCalled();
+    });
+
+    it("fails, leaving no snapshot, rather than replace a project's own .cocalc-persist", async () => {
+      await readyVolume();
+      await writeFile(join(home, HISTORY_IN_SNAPSHOTS), "mine");
+      await expect(snapshot()).rejects.toThrow(/reserved for CoCalc/);
+      expect(existsSync(dest())).toBe(false);
+      expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
+    });
   });
 
   const leftovers = () =>
@@ -1195,6 +1257,35 @@ describe("in the project-host", () => {
     await readyVolume();
     expect(await deleteOrphanedPersistVolumes({ env })).toEqual([]);
     expect(existsSync(root)).toBe(true);
+  });
+
+  it("bounds how long deleting orphaned volumes delays the start", async () => {
+    const orphans = [OTHER, "77777777-8888-4999-8aaa-bbbbbbbbbbbb"];
+    for (const id of orphans) {
+      await mkdir(join(mount, `project-${id}-persist`));
+    }
+    const { withProjectPersistFenced } = require("./persist-fence");
+    const fence = withProjectPersistFenced as jest.Mock;
+    // a persist server that answers, but can't close the project's streams
+    // (or none that answers) takes at most fenceMs for each volume
+    fence.mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      throw new Error(
+        "timed out closing 1 of this project's persistent streams",
+      );
+    });
+    expect(
+      await deleteOrphanedPersistVolumes({ env, budgetMs: 10, fenceMs: 1000 }),
+    ).toEqual([]);
+    expect(fence).toHaveBeenCalledTimes(1);
+    expect(fence.mock.calls[0][2]).toEqual({ waitMs: 1000, timeoutMs: 1000 });
+    // the rest is left for the next start
+    for (const id of orphans) {
+      expect(existsSync(join(mount, `project-${id}-persist`))).toBe(true);
+    }
+    expect((await deleteOrphanedPersistVolumes({ env })).sort()).toEqual(
+      [...orphans].sort(),
+    );
   });
 
   it("raises the volume's limit with the disk quota", async () => {

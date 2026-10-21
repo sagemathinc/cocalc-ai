@@ -242,6 +242,7 @@ import {
   restoreBackupWithHistory,
   restoredHistoryCandidates,
   snapshotNeedsPersistVolume,
+  snapshotWithHistory,
   syncPersistVolumeQuota,
 } from "./persist-volume";
 import { setSnapshotPreparer } from "@cocalc/file-server/btrfs/snapshot-preparer";
@@ -443,10 +444,7 @@ const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
   projectMountpoint,
   createWritableSnapshot: async (source, dest) =>
     await btrfsSnapshotWritable({ source, dest }),
-  createReadonlySnapshot: async (source, dest) =>
-    await btrfsSnapshotReadonly({ source, dest }),
-  setSubvolumeReadonly: async (path, readOnly) =>
-    await btrfsSetSubvolumeReadonly({ path, readOnly }),
+  createProjectSnapshot: snapshotWithHistory,
   deleteSubvolumeTree,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -1092,20 +1090,6 @@ async function btrfsSnapshotWritable({
 }): Promise<void> {
   await btrfs({
     args: ["subvolume", "snapshot", source, dest],
-    err_on_exit: true,
-    verbose: false,
-  });
-}
-
-async function btrfsSetSubvolumeReadonly({
-  path,
-  readOnly,
-}: {
-  path: string;
-  readOnly: boolean;
-}): Promise<void> {
-  await btrfs({
-    args: ["property", "set", "-ts", path, "ro", readOnly ? "true" : "false"],
     err_on_exit: true,
     verbose: false,
   });
