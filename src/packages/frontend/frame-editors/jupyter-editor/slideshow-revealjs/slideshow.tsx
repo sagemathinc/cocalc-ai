@@ -28,10 +28,62 @@ import {
 } from "@cocalc/frontend/app-framework";
 
 import { Loading } from "@cocalc/frontend/components";
+import { useProjectContentUrl } from "@cocalc/frontend/project/use-project-content-url";
+import { CONTENT_FRAME_SANDBOX } from "@cocalc/util/project-content-origin";
 
 import { Map } from "immutable";
 
 import { JupyterEditorActions } from "../actions";
+
+// The slides are HTML that nbconvert made from the notebook, including its
+// outputs (which may come from anyone who could edit it), so on sites with a
+// content origin they are shown there, sandboxed, like the HTML editor does.
+export function SlideshowFrame({
+  project_id,
+  path,
+  url,
+}: {
+  project_id: string;
+  path: string;
+  url: string;
+}) {
+  const content = useProjectContentUrl({ project_id, path, enabled: !!path });
+  if (content.status == "ready") {
+    return (
+      <iframe
+        title="Jupyter slideshow preview"
+        width="100%"
+        height="100%"
+        style={{ border: 0 }}
+        src={content.url}
+        sandbox={CONTENT_FRAME_SANDBOX}
+      />
+    );
+  }
+  if (content.status == "unavailable") {
+    // No content origin on this site: as before.
+    return (
+      <iframe
+        title="Jupyter slideshow preview"
+        width="100%"
+        height="100%"
+        src={url}
+      />
+    );
+  }
+  if (content.status == "no-access") {
+    return (
+      <div style={{ margin: "15px", color: "#666" }}>
+        The slideshow can only be shown to collaborators of this project.
+      </div>
+    );
+  }
+  return (
+    <div style={{ textAlign: "center" }}>
+      <Loading theme="medium" />
+    </div>
+  );
+}
 
 interface Props {
   actions: JupyterEditorActions;
@@ -51,11 +103,10 @@ class Slideshow extends Component<Props, {}> {
   private render_iframe(): Rendered {
     if (this.props.slideshow == null) return;
     return (
-      <iframe
-        title="Jupyter slideshow preview"
-        width="100%"
-        height="100%"
-        src={this.props.slideshow.get("url")}
+      <SlideshowFrame
+        project_id={this.props.actions.project_id}
+        path={this.props.slideshow.get("path") ?? ""}
+        url={this.props.slideshow.get("url") ?? ""}
       />
     );
   }

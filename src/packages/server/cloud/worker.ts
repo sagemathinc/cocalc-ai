@@ -22,6 +22,7 @@ import {
   getEffectiveParallelOpsLimits,
 } from "@cocalc/server/lro/worker-config";
 import { enqueueDueHostDnsReconciliation } from "./host-dns-reconciliation";
+import { sweepProjectContentDns } from "./host-content-dns";
 
 const logger = getLogger("server:cloud:worker");
 const pool = () => getPool();
@@ -248,6 +249,10 @@ export function startCloudVmWorker(opts: {
   const interval_ms = opts.interval_ms ?? 2000;
   const refreshScanIntervalMs = 30_000;
   const dnsReconciliationScanIntervalMs = 30_000;
+  // Backstop for content-origin DNS whose host is gone or moved (see
+  // host-content-dns.ts).
+  const contentDnsSweepIntervalMs = 15 * 60_000;
+  let lastContentDnsSweep = 0;
   let lastRefreshScan = 0;
   let lastDnsReconciliationScan = 0;
   let stopped = false;
@@ -302,6 +307,13 @@ export function startCloudVmWorker(opts: {
           logger.info("project-host DNS reconciliation enqueue scan", {
             enqueued,
           });
+        }
+      }
+      if (Date.now() - lastContentDnsSweep >= contentDnsSweepIntervalMs) {
+        lastContentDnsSweep = Date.now();
+        const swept = await sweepProjectContentDns();
+        if (swept.deleted) {
+          logger.info("project content DNS sweep", swept);
         }
       }
     } catch (err) {

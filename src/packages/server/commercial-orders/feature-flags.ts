@@ -71,6 +71,7 @@ export const COMMERCIAL_ACTION_CAPABILITIES = {
   issueManualInvoice: "manualSettlement",
   provision: "fulfillment",
   endFulfillment: "fulfillment",
+  recordMembershipFulfillment: "fulfillment",
 } as const satisfies Record<string, CommercialReceivablesCapability>;
 
 export async function isCommercialReceivablesCapabilityEnabled(

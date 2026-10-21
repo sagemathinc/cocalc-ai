@@ -237,6 +237,7 @@ describe("hub API argument transforms", () => {
       "agent.renewCocalcConnectorTurn",
       "agent.reportRpcTurnFailure",
       "agent.reportRuntime",
+      "agent.reportStatus",
       "agent.resolvePaymentSelection",
       "aiSessions.upsertProjectHostSession",
       "apiKeys.getViewerReadPolicy",
@@ -269,6 +270,7 @@ describe("hub API argument transforms", () => {
     "agent.beginCliConnectorTurn",
     "agent.resolvePaymentSelection",
     "agent.reportRuntime",
+    "agent.reportStatus",
     "agent.describeNetworkSelf",
     "apiKeys.getViewerReadPolicy",
   ])(
@@ -460,6 +462,27 @@ describe("hub API argument transforms", () => {
     });
 
     expect(args[0].session_hash).toBe("explicit-session-hash");
+  });
+
+  it("binds content-link issuance to the authenticated account and session", async () => {
+    const args = await transformArgs({
+      name: "hosts.issueProjectContentUrl",
+      args: [
+        {
+          account_id: "attacker-selected-account",
+          project_id: "project-1",
+          path: "a.html",
+          session_hash: "attacker-selected-session",
+        },
+      ],
+      account_id: "acct-1",
+      auth_session_hash: "authenticated-session",
+    });
+
+    expect(args[0]).toMatchObject({
+      account_id: "acct-1",
+      session_hash: "authenticated-session",
+    });
   });
 
   it("binds project-host token policy to the authenticated session", async () => {

@@ -191,6 +191,10 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_worker_updated_idx ON ${TABLE}(worker_id, updated_at)`,
   );
+  // The agent status sweep reads what changed recently, every few seconds.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_jobs_updated_idx ON ${TABLE}(updated_at)`,
+  );
   ensureAcpTableMigrated(TABLE);
   installThreadSuccessorFence(TABLE);
   removeRetiredAutomationJobs(db);
@@ -471,6 +475,134 @@ export function getAcpJobByOpId(op_id: string): AcpJobRow | undefined {
   return db.prepare(`SELECT * FROM ${TABLE} WHERE op_id = ?`).get(op_id) as
     | AcpJobRow
     | undefined;
+}
+
+/** Conversations whose jobs changed since `since` (ms), each with the
+ * account of its latest job. */
+export function listAcpThreadsChangedSince(since: number): {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  account_id: string;
+}[] {
+  ensureInit();
+  const rows = getAcpDatabase()
+    .prepare(
+      `SELECT project_id, path, thread_id, account_id FROM ${TABLE}
+       WHERE updated_at > ? ORDER BY updated_at DESC`,
+    )
+    .all(since) as {
+    project_id: string;
+    path: string;
+    thread_id: string;
+    account_id: string;
+  }[];
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = JSON.stringify([row.project_id, row.path, row.thread_id]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Conversations with a job that ended at a sign-in or usage limit, of any
+ * age (a block can outlast every other activity), at most `limit`. */
+export function listAcpThreadsWithBlockingFailure(limit = 10_000): {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  account_id: string;
+}[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT project_id, path, thread_id, account_id FROM ${TABLE}
+       WHERE state = 'error'
+         AND json_extract(outcome_json, '$.failure.kind') IN ('sign-in', 'limit')
+       GROUP BY project_id, path, thread_id
+       LIMIT ?`,
+    )
+    .all(limit) as {
+    project_id: string;
+    path: string;
+    thread_id: string;
+    account_id: string;
+  }[];
+}
+
+/** What a conversation's jobs say now: how many run and wait, and the
+ * latest that ended. */
+export function acpThreadJobSummary({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): {
+  running: number;
+  queued: number;
+  last?: AcpJobRow;
+  /** Each account's latest ended job (limits and sign-ins are per account). */
+  lastByAccount: Record<string, AcpJobRow>;
+  /** Each account's running jobs. */
+  runningByAccount: Record<string, number>;
+} {
+  ensureInit();
+  const db = getAcpDatabase();
+  const counts = db
+    .prepare(
+      `SELECT SUM(state = 'running') AS running, SUM(state = 'queued') AS queued
+       FROM ${TABLE} WHERE project_id = ? AND path = ? AND thread_id = ?`,
+    )
+    .get(project_id, path, thread_id) as {
+    running?: number | null;
+    queued?: number | null;
+  };
+  const last = db
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state IN ('completed', 'error', 'canceled', 'interrupted')
+         AND finished_at IS NOT NULL
+       ORDER BY finished_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(project_id, path, thread_id) as AcpJobRow | undefined;
+  // SQLite returns the row holding MAX(finished_at) for each account.
+  const lastByAccount: Record<string, AcpJobRow> = {};
+  for (const row of db
+    .prepare(
+      `SELECT *, MAX(finished_at) AS latest_finished_at FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state IN ('completed', 'error', 'canceled', 'interrupted')
+         AND finished_at IS NOT NULL AND account_id IS NOT NULL
+       GROUP BY account_id LIMIT 100`,
+    )
+    .all(project_id, path, thread_id) as (AcpJobRow & {
+    latest_finished_at?: number;
+  })[]) {
+    const { latest_finished_at: _l, ...job } = row;
+    lastByAccount[`${job.account_id}`] = job as AcpJobRow;
+  }
+  const runningByAccount: Record<string, number> = {};
+  for (const row of db
+    .prepare(
+      `SELECT account_id, COUNT(*) AS n FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state = 'running' AND account_id IS NOT NULL
+       GROUP BY account_id`,
+    )
+    .all(project_id, path, thread_id) as { account_id: string; n: number }[])
+    runningByAccount[row.account_id] = Number(row.n);
+  return {
+    running: Number(counts?.running ?? 0),
+    queued: Number(counts?.queued ?? 0),
+    ...(last ? { last } : {}),
+    lastByAccount,
+    runningByAccount,
+  };
 }
 
 /**

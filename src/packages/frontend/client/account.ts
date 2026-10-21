@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { notifyAllContentLinksRevoked } from "@cocalc/frontend/project/content-link-revocations";
 import { callback } from "awaiting";
 declare const $: any; // jQuery
 import { WebappClient } from "./client";
@@ -40,6 +41,19 @@ export class AccountClient {
     newPassword: string = "",
   ): Promise<void> => {
     await api("/accounts/set-password", { currentPassword, newPassword });
+    this.afterOtherSessionsEnded();
+  };
+
+  // The server ended this account's other sessions (password change, passkey
+  // or 2FA setup): project hosts now refuse host credentials and content
+  // links issued before, this browser's included. Get fresh ones.
+  afterOtherSessionsEnded = (): void => {
+    notifyAllContentLinksRevoked();
+    void this.client.conat_client
+      ?.renewProjectHostCredentials?.()
+      .catch((err) =>
+        console.warn("could not renew project-host credentials", err),
+      );
   };
 
   change_email = async (

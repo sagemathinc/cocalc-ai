@@ -548,6 +548,12 @@ Table({
       pg_type: "BIGINT",
       desc: "Monotonic owning-bay revision for the persistent desired run quota.",
     },
+    content_epoch: {
+      type: "integer",
+      pg_type: "BIGINT",
+      pg_default: "0",
+      desc: "Revocation counter for the project's content-origin links: bumping it (\"Revoke content links\") invalidates every link issued before (trust-free step 6).",
+    },
     runtime_lifecycle_revision: {
       type: "integer",
       pg_type: "BIGINT",

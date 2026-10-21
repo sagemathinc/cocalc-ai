@@ -58,12 +58,17 @@ export function sorted_cell_list(cells: Map<string, any>): List<string> {
   if (cells == null) {
     return List([]);
   }
-  return cells
-    .map((record, id) => ({ id, pos: record.get("pos", -1) }))
-    .filter((x) => x.id != null)
-    .sort(field_cmp("pos"))
-    .map((x) => x.id)
-    .toList();
+  const byPos = field_cmp("pos");
+  return (
+    cells
+      .map((record, id) => ({ id, pos: record.get("pos", -1) }))
+      .filter((x) => x.id != null)
+      // Equal positions (e.g. cells created at once by two clients) are
+      // ordered by id, so every client shows the same order.
+      .sort((a, b) => byPos(a, b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .map((x) => x.id)
+      .toList()
+  );
 }
 
 export function ensurePositionsAreUnique(cells?: Map<string, any>) {

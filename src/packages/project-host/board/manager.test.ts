@@ -30,6 +30,10 @@ import {
 } from "@cocalc/util/board/names";
 import { BoardManager, type BoardFile } from "./manager";
 import { fsServer } from "@cocalc/conat/files/fs";
+import { dstream } from "@cocalc/conat/sync/dstream";
+import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
+import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import { boardSyncdbPath } from "@cocalc/util/board/names";
 import {
   type ReplaceHooks,
   boardHandlers,
@@ -120,6 +124,9 @@ async function setup(
   const fs: any = client.fs({ project_id, service: fileserver.service });
   await fs.writeFile(path, text);
   const syncdb = await openBoardSyncdb({
+    // Writes as the host does (only the manager writes in production; these
+    // replicas stand in for edits the host has admitted).
+    writer: true,
     client,
     project_id,
     path,
@@ -147,6 +154,9 @@ async function setup(
   await manager.start();
   // A second replica, as a browser has.
   const browser = await openBoardSyncdb({
+    // Writes as the host does (only the manager writes in production; these
+    // replicas stand in for edits the host has admitted).
+    writer: true,
     client: connect(),
     project_id,
     path,
@@ -291,6 +301,9 @@ test("the file is the official version when a board is opened again", async () =
   await t.fs.writeFile(t.path, changed);
   const client = connect();
   const syncdb = await openBoardSyncdb({
+    // Writes as the host does (only the manager writes in production; these
+    // replicas stand in for edits the host has admitted).
+    writer: true,
     client,
     project_id: t.project_id,
     path: t.path,
@@ -511,6 +524,9 @@ test("two managers: one that lost the board cannot write over the next", async (
     // The next owner: another manager of the same file, with its own
     // document, as after a takeover elsewhere.
     const other = await openBoardSyncdb({
+      // Writes as the host does (only the manager writes in production; these
+      // replicas stand in for edits the host has admitted).
+      writer: true,
       client: connect(),
       project_id: uuid(),
       path: t.path,
@@ -1041,6 +1057,9 @@ test.each([
     const gated: any = connect().fs({ project_id, service });
     await files.writeFile("gated.board.json", canonical(BOARD));
     const writer = await openBoardSyncdb({
+      // Writes as the host does (only the manager writes in production; these
+      // replicas stand in for edits the host has admitted).
+      writer: true,
       client: connect(),
       project_id,
       path: "gated.board.json",
@@ -1076,3 +1095,45 @@ test.each([
   },
   120_000,
 );
+
+test("an invalid snapshot checkpoint is repaired through the board write service", async () => {
+  const t = await setup(canonical(BOARD));
+  await until(() => itemText(t.browser, "a") === "hello world");
+  setText(t.browser, "b", "before the bad checkpoint");
+  await until(async () =>
+    (await t.read()).includes("before the bad checkpoint"),
+  );
+  await t.cleanup();
+  // Point the latest-snapshot checkpoint at a patch that is no snapshot.
+  const ds = await dstream({
+    client: connect(),
+    project_id: t.project_id,
+    name: patchesStreamName({ path: boardSyncdbPath(t.path) }),
+    service: BOARD_WRITE_SERVICE,
+    persistUser: {},
+    noInventory: true,
+  });
+  const n = ds.length;
+  expect(n).toBeGreaterThan(1);
+  await ds.setCheckpoint({
+    name: "latest_snapshot",
+    seq: ds.seq(n - 1)!,
+    data: { patchId: "not-a-snapshot" },
+  });
+  ds.close();
+  // The manager's syncdb opens anyway: the fallback full load and its
+  // checkpoint repair go through the write service too.
+  const syncdb = await openBoardSyncdb({
+    writer: true,
+    client: connect(),
+    project_id: t.project_id,
+    path: t.path,
+    service: fileserver.service,
+    timeoutMs: 20_000,
+  });
+  try {
+    expect(itemText(syncdb, "b")).toBe("before the bad checkpoint");
+  } finally {
+    await syncdb.close();
+  }
+});

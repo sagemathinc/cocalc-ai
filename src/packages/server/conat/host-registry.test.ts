@@ -525,6 +525,35 @@ describe("host-registry automatic convergence retry", () => {
     ).toBeUndefined();
   });
 
+  it("re-delivers project content epochs in the hosts' catch-up sync", async () => {
+    const seen: string[] = [];
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM projects") && sql.includes("users")) {
+        seen.push(sql);
+        // Like the database: the column is only there if selected.
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              users: {},
+              runtime_lifecycle_revision: "1",
+              ...(sql.includes("AS content_epoch") ? { content_epoch: "3" } : {}),
+              updated_ms: "10",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { initHostRegistryService } = await import("./host-registry");
+    const service: any = await initHostRegistryService();
+    const deltas = await service.listProjectUserDeltas({ host_id: "host-1" });
+    const reconcile = await service.listProjectUserReconcile({ host_id: "host-1" });
+    expect(deltas.rows[0].content_epoch).toBe("3");
+    expect(reconcile.rows[0].content_epoch).toBe("3");
+    expect(seen).toHaveLength(2);
+  });
+
   it("preserves existing host bay ownership when heartbeats arrive on another bay", async () => {
     currentMetadata = {
       host_session_id: "session-1",
