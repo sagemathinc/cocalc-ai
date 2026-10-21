@@ -8,12 +8,17 @@
 const mockGetMembershipPackages = jest.fn();
 const mockGetCommercialOrder = jest.fn();
 const mockSetCommercialFulfillment = jest.fn();
+const mockFindCommercialMutationReplay = jest.fn();
 
 jest.mock("@cocalc/server/conat/api/purchases", () => ({
   getMembershipPackages: (...args: any[]) => mockGetMembershipPackages(...args),
 }));
 
 jest.mock("../store", () => ({
+  commercialFulfillmentEventType: (state: string) =>
+    state === "ended" ? "fulfillment-ended" : "fulfillment-provisioned",
+  findCommercialMutationReplay: (...args: any[]) =>
+    mockFindCommercialMutationReplay(...args),
   commercialIdempotencyKey: (operation: string, opts: any) =>
     opts.idempotency_key ?? `${operation}:key`,
   getCommercialOrder: (...args: any[]) => mockGetCommercialOrder(...args),
@@ -74,6 +79,7 @@ const request = {
 describe("recordCommercialMembershipFulfillment", () => {
   beforeEach(() => {
     mockGetCommercialOrder.mockReset().mockResolvedValue(order());
+    mockFindCommercialMutationReplay.mockReset().mockResolvedValue(undefined);
     mockSetCommercialFulfillment
       .mockReset()
       .mockImplementation(async (opts) => ({
@@ -121,20 +127,38 @@ describe("recordCommercialMembershipFulfillment", () => {
     );
   });
 
-  it("leaves an exact retry after success to the store's replay", async () => {
-    // The order is already provisioned by the first attempt; the retried
-    // request must still reach setCommercialFulfillment with the same key,
-    // which returns the replay instead of failing.
-    mockGetCommercialOrder.mockResolvedValue(
-      order({ fulfillment_state: "provisioned" }),
-    );
+  it("passes the same request-only replay identity to the pre-check and the store", async () => {
     await recordCommercialMembershipFulfillment(request as any);
+    const identity = {
+      membership_package_ids: [STUDENTS, INSTRUCTOR],
+      expected_version: 14,
+      fulfillment_state: "provisioned",
+      expected_fulfillment_state: "not_provisioned",
+    };
+    expect(mockFindCommercialMutationReplay).toHaveBeenCalledWith({
+      action: "fulfillment-provisioned",
+      id: "AR-2026-170745EA",
+      idempotency_key: "cli-key-1",
+      identity,
+    });
     expect(mockSetCommercialFulfillment).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotency_key: "cli-key-1",
-        expected_fulfillment_state: "not_provisioned",
+        replay_identity: identity,
       }),
     );
+  });
+
+  it("returns an exact replay before re-reading the order or packages", async () => {
+    const replayed = { ...order(), fulfillment_state: "provisioned" };
+    mockFindCommercialMutationReplay.mockResolvedValue(replayed);
+    mockGetMembershipPackages.mockResolvedValue([]);
+    await expect(
+      recordCommercialMembershipFulfillment(request as any),
+    ).resolves.toBe(replayed);
+    expect(mockGetCommercialOrder).not.toHaveBeenCalled();
+    expect(mockGetMembershipPackages).not.toHaveBeenCalled();
+    expect(mockSetCommercialFulfillment).not.toHaveBeenCalled();
   });
 
   it("accepts provenance by order id", async () => {

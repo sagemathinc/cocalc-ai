@@ -973,6 +973,9 @@ async function mutateOrder(
     changes?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
   }>,
+  // What an exact retry must repeat; defaults to the whole request. Override
+  // it when the request carries values derived from mutable state.
+  identity: Record<string, unknown> = opts as any,
 ): Promise<CommercialOrder> {
   const reason = requireReason(opts.reason);
   assertProviderMutationEnums({ source: opts.source });
@@ -982,7 +985,7 @@ async function mutateOrder(
     const replay = await replayOrderId(client, key, {
       action: eventType,
       order_id: orderId,
-      payload: opts as any,
+      payload: identity,
     });
     if (replay) {
       recordCommercialOperator(eventType, "replay");
@@ -1021,10 +1024,31 @@ async function mutateOrder(
       before: before as any,
       after: after as any,
       metadata: result.metadata,
-      identity_payload: opts as any,
+      identity_payload: identity,
     });
     return after;
   });
+}
+
+// The order an exact retry of a mutation would replay, if that mutation has
+// already been recorded, without locking or changing anything. Lets an adapter
+// return a replay before it re-validates external state that may have changed
+// since the first attempt; mutateOrder still replays inside its transaction.
+export async function findCommercialMutationReplay(opts: {
+  action: string;
+  id: string;
+  idempotency_key: string;
+  identity: Record<string, unknown>;
+}): Promise<CommercialOrder | undefined> {
+  assertSeedAuthority();
+  const pool = getPool();
+  const orderId = await resolveOrderId(pool, opts.id);
+  const replay = await replayOrderId(pool, opts.idempotency_key, {
+    action: opts.action,
+    order_id: orderId,
+    payload: opts.identity,
+  });
+  return replay ? await loadOrder(pool, replay) : undefined;
 }
 
 function assertOrderNotTerminal(
@@ -2607,74 +2631,86 @@ export async function setCommercialFulfillment(
     // Checked inside the transaction, after an exact replay is returned, so a
     // retried request still replays while a new one cannot re-provision.
     expected_fulfillment_state?: CommercialFulfillmentState;
+    // Replay identity, when the request carries values derived from mutable
+    // state (see mutateOrder).
+    replay_identity?: Record<string, unknown>;
   },
 ): Promise<CommercialOrder> {
-  const eventType =
-    opts.fulfillment_state === "ended"
-      ? "fulfillment-ended"
-      : "fulfillment-provisioned";
-  return await mutateOrder(eventType, opts, async (_client, before) => {
-    if (before.workflow_state === "cancelled") {
-      throw Error("fulfillment is not allowed on a cancelled order");
-    }
-    if (!before.approved_at || !before.approved_by_account_id) {
-      throw Error("the commercial order must be approved before fulfillment");
-    }
-    if (!["provisioned", "ended"].includes(opts.fulfillment_state)) {
-      throw Error("fulfillment_state must be provisioned or ended");
-    }
-    if (
-      opts.expected_fulfillment_state != null &&
-      before.fulfillment_state !== opts.expected_fulfillment_state
-    ) {
-      throw Error(
-        `commercial fulfillment is already ${before.fulfillment_state}`,
-      );
-    }
-    if (
-      opts.fulfillment_state === "ended" &&
-      before.fulfillment_state !== "provisioned"
-    ) {
-      throw Error("fulfillment cannot end before it has been provisioned");
-    }
-    if (
-      before.fulfillment_state === "ended" &&
-      opts.fulfillment_state !== "ended"
-    ) {
-      throw Error("ended fulfillment cannot be reopened");
-    }
-    const provisional = {
-      ...before,
-      fulfillment_state: opts.fulfillment_state,
-      site_license_id: opts.site_license_id ?? before.site_license_id,
-    };
-    const complete = shouldComplete(provisional);
-    const nextAction = complete
-      ? "Complete"
-      : opts.fulfillment_state === "ended"
-        ? "Resolve exception"
-        : opts.fulfillment_state === "provisioned" &&
-            ["open", "overdue", "partially_paid"].includes(
-              before.collection_state,
-            )
-          ? "Collect payment"
-          : before.next_action;
-    return {
-      changes: {
+  const eventType = commercialFulfillmentEventType(opts.fulfillment_state);
+  const { replay_identity, ...request } = opts;
+  return await mutateOrder(
+    eventType,
+    request,
+    async (_client, before) => {
+      if (before.workflow_state === "cancelled") {
+        throw Error("fulfillment is not allowed on a cancelled order");
+      }
+      if (!before.approved_at || !before.approved_by_account_id) {
+        throw Error("the commercial order must be approved before fulfillment");
+      }
+      if (!["provisioned", "ended"].includes(opts.fulfillment_state)) {
+        throw Error("fulfillment_state must be provisioned or ended");
+      }
+      if (
+        opts.expected_fulfillment_state != null &&
+        before.fulfillment_state !== opts.expected_fulfillment_state
+      ) {
+        throw Error(
+          `commercial fulfillment is already ${before.fulfillment_state}`,
+        );
+      }
+      if (
+        opts.fulfillment_state === "ended" &&
+        before.fulfillment_state !== "provisioned"
+      ) {
+        throw Error("fulfillment cannot end before it has been provisioned");
+      }
+      if (
+        before.fulfillment_state === "ended" &&
+        opts.fulfillment_state !== "ended"
+      ) {
+        throw Error("ended fulfillment cannot be reopened");
+      }
+      const provisional = {
+        ...before,
         fulfillment_state: opts.fulfillment_state,
         site_license_id: opts.site_license_id ?? before.site_license_id,
-        provisioned_at:
-          opts.fulfillment_state === "provisioned"
-            ? new Date()
-            : before.provisioned_at,
-        workflow_state: complete ? "complete" : before.workflow_state,
-        completed_at: complete ? new Date() : before.completed_at,
-        next_action: nextAction,
-        next_action_due_at: complete ? null : before.next_action_due_at,
-      },
-      metadata: opts.metadata,
-    };
-  });
+      };
+      const complete = shouldComplete(provisional);
+      const nextAction = complete
+        ? "Complete"
+        : opts.fulfillment_state === "ended"
+          ? "Resolve exception"
+          : opts.fulfillment_state === "provisioned" &&
+              ["open", "overdue", "partially_paid"].includes(
+                before.collection_state,
+              )
+            ? "Collect payment"
+            : before.next_action;
+      return {
+        changes: {
+          fulfillment_state: opts.fulfillment_state,
+          site_license_id: opts.site_license_id ?? before.site_license_id,
+          provisioned_at:
+            opts.fulfillment_state === "provisioned"
+              ? new Date()
+              : before.provisioned_at,
+          workflow_state: complete ? "complete" : before.workflow_state,
+          completed_at: complete ? new Date() : before.completed_at,
+          next_action: nextAction,
+          next_action_due_at: complete ? null : before.next_action_due_at,
+        },
+        metadata: opts.metadata,
+      };
+    },
+    replay_identity,
+  );
+}
+
+export function commercialFulfillmentEventType(
+  state: CommercialFulfillmentState,
+): string {
+  return state === "ended" ? "fulfillment-ended" : "fulfillment-provisioned";
 }
 
 export async function createCommercialInvoiceIntent(opts: {

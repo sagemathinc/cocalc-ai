@@ -2696,19 +2696,20 @@ describe("membership-seat order fulfillment across bays", () => {
   // Commercial orders live on the seed; membership packages are account-home
   // state. Recording fulfillment on the seed for a customer homed on the
   // attached bay must read the packages from that bay.
-  it("records fulfillment on the seed from packages on the customer's home bay", async () => {
-    const admin = await createAccount(cluster, {
-      home_bay_id: SEED,
-      name: "mira",
-    });
-    await runInBay(
-      cluster,
-      SEED,
-      `const getPool = require("@cocalc/database/pool").default;
-       await getPool().query(
-         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
-         [${JSON.stringify(admin.account_id)}]);`,
-    );
+  async function makeAdmin(account) {
+    for (const bay of [SEED, ATTACHED]) {
+      await runInBay(
+        cluster,
+        bay,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(
+           "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+           [${JSON.stringify(account.account_id)}]);`,
+      );
+    }
+  }
+
+  async function recordOnSeed({ admin, customer }) {
     const serviceEnds = new Date(Date.now() + 100 * 86_400_000).toISOString();
     const order = await runInBay(
       cluster,
@@ -2721,7 +2722,7 @@ describe("membership-seat order fulfillment across bays", () => {
          source: "cli",
          idempotency_key: "multibay-membership-" + ${JSON.stringify(randomUUID())},
          organization_name: "Multibay Membership University",
-         customer_account_id: ${JSON.stringify(bob.account_id)},
+         customer_account_id: ${JSON.stringify(customer.account_id)},
          collection_mode: "manual_invoice",
          agreed_subtotal: "100",
          agreed_total: "100",
@@ -2744,10 +2745,10 @@ describe("membership-seat order fulfillment across bays", () => {
       `const getPool = require("@cocalc/database/pool").default;
        await getPool().query(
          "INSERT INTO membership_packages (id, owner_account_id, kind, membership_class, seat_count, starts_at, expires_at, metadata, created, updated) VALUES ($1::uuid, $2::uuid, 'team', 'student', 3, NOW() - interval '1 day', $3::timestamp + interval '3 days', $4::jsonb, NOW(), NOW())",
-         [${JSON.stringify(package_id)}, ${JSON.stringify(bob.account_id)}, ${JSON.stringify(serviceEnds)},
+         [${JSON.stringify(package_id)}, ${JSON.stringify(customer.account_id)}, ${JSON.stringify(serviceEnds)},
           JSON.stringify({ commercial_order_number: ${JSON.stringify(order.order_number)} })]);`,
     );
-    // The package exists only on bob's home bay.
+    // The package exists only on the customer's home bay.
     assert.equal(
       await runInBay(
         cluster,
@@ -2777,5 +2778,23 @@ describe("membership-seat order fulfillment across bays", () => {
        return { fulfillment_state: result.fulfillment_state };`,
     );
     assert.equal(recorded.fulfillment_state, "provisioned");
+  }
+
+  it("records fulfillment on the seed from packages on the customer's home bay", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "mira",
+    });
+    await makeAdmin(admin);
+    await recordOnSeed({ admin, customer: bob });
+  });
+
+  it("reads the home bay when the acting admin is the customer, homed on the attached bay", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "nadia",
+    });
+    await makeAdmin(admin);
+    await recordOnSeed({ admin, customer: admin });
   });
 });

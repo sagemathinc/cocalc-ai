@@ -27,7 +27,9 @@ import type { MembershipPackageRecord } from "@cocalc/conat/hub/api/purchases";
 import type { CommercialOrder } from "@cocalc/util/commercial-orders";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
+  commercialFulfillmentEventType,
   commercialIdempotencyKey,
+  findCommercialMutationReplay,
   getCommercialOrder,
   setCommercialFulfillment,
 } from "../store";
@@ -148,6 +150,30 @@ export async function recordCommercialMembershipFulfillment(
     throw Error("account_id and expected_version are required");
   }
   const packageIds = normalizePackageIds(opts.membership_package_ids);
+
+  // An exact retry replays before anything else is checked: the order and
+  // packages may have changed since the first attempt committed (a package
+  // expired or was edited, the order was completed), and the recorded
+  // metadata is derived from package state, so the replay identity is only
+  // the request itself.
+  const idempotency_key = commercialIdempotencyKey(
+    "membership-fulfillment",
+    opts as any,
+  );
+  const replay_identity = {
+    membership_package_ids: packageIds,
+    expected_version: opts.expected_version,
+    fulfillment_state: "provisioned",
+    expected_fulfillment_state: "not_provisioned",
+  };
+  const replay = await findCommercialMutationReplay({
+    action: commercialFulfillmentEventType("provisioned"),
+    id: opts.id,
+    idempotency_key,
+    identity: replay_identity,
+  });
+  if (replay) return replay;
+
   const order = await getCommercialOrder(opts.id);
   assertMembershipOrder(order);
 
@@ -173,10 +199,8 @@ export async function recordCommercialMembershipFulfillment(
     expected_version: opts.expected_version,
     reason,
     source: opts.source,
-    idempotency_key: commercialIdempotencyKey(
-      "membership-fulfillment",
-      opts as any,
-    ),
+    idempotency_key,
+    replay_identity,
     fulfillment_state: "provisioned",
     expected_fulfillment_state: "not_provisioned",
     metadata: {
