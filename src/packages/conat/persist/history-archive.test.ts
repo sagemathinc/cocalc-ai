@@ -163,6 +163,19 @@ describe("archive segments", () => {
     return write(bytes, { checkpoint: { name: "latest_snapshot", seq } });
   }
 
+  it("takes only snapshot checkpoints as cuts, never e.g. the saved_file proof", () => {
+    write(10, { checkpoint: { name: "saved_file" } });
+    stream.setCheckpoint({ name: "saved_file", seq: 1 });
+    snapshotAt(1, 10);
+    stream.setCheckpoint({ name: "latest_snapshot", seq: 2 });
+    expect(
+      sql("SELECT seq, snapshot_seq FROM history_cuts ORDER BY seq"),
+    ).toEqual([
+      { seq: 1, snapshot_seq: 2 },
+      { seq: 2, snapshot_seq: null },
+    ]);
+  });
+
   it("keeps maximal loadable stretches, and removes (and counts) what no load can reach", () => {
     process.env.COCALC_HISTORY_MAX_SNAPSHOT_BYTES = "100";
     process.env.COCALC_HISTORY_MAX_SUFFIX_BYTES = "50";

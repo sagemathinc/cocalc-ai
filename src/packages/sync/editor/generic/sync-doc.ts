@@ -79,6 +79,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import * as remote from "./remote";
 import type { JSONValue } from "@cocalc/util/types";
 import { rebaseLocalDocument } from "./rebase-local-document";
+import { type FileProof, SAVED_FILE_CHECKPOINT, fileProof } from "./file-proof";
 
 const fallbackCursorPresence = new PatchflowMemoryPresenceAdapter();
 
@@ -2497,6 +2498,64 @@ export class SyncDoc extends EventEmitter {
     await this.patches_table.save();
   });
 
+  // Remote patches received but not applied to this.doc yet: they are
+  // applied in a microtask (see the patchflow subscribe adapter).
+  private remotePatchesPending = false;
+
+  // The proof that value, about to be written to the file, is this document's
+  // value including every patch with seq at most receivedThroughSeq.  Called
+  // in the same synchronous step that captured value, so no remote patch
+  // can be applied in between.  Undefined when that cannot be proven, e.g.,
+  // remote patches are still to be applied or there is an uncommitted draft;
+  // the file is still written, without a proof.
+  private captureFileProof = (value: string): FileProof | undefined => {
+    if (
+      this.remotePatchesPending ||
+      this.patchflowSession == null ||
+      !this.patchflowReady() ||
+      (this.patchflowSession as any).needsMoreHistory?.() ||
+      this.doc == null ||
+      this.last == null ||
+      !this.documentsEqual(this.doc, this.last)
+    ) {
+      return undefined;
+    }
+    let seq: number;
+    try {
+      const dstream = this.dstream();
+      if (typeof dstream.receivedThroughSeq !== "function") return undefined;
+      seq = dstream.receivedThroughSeq();
+    } catch {
+      return undefined;
+    }
+    return fileProof({ value, epoch: this.history_epoch ?? 0, seq });
+  };
+
+  // After the bytes of proof were written: record it, if this is still the
+  // epoch it belongs to.  A failure only means there is no proof.
+  private publishFileProof = async (proof?: FileProof): Promise<void> => {
+    if (
+      proof == null ||
+      this.isClosed() ||
+      (this.history_epoch ?? 0) !== proof.epoch
+    ) {
+      return;
+    }
+    try {
+      await this.dstream().setCheckpoint({
+        name: SAVED_FILE_CHECKPOINT,
+        seq: proof.seq,
+        data: {
+          sha256: proof.sha256,
+          bytes: proof.bytes,
+          epoch: proof.epoch,
+        },
+      });
+    } catch (err) {
+      this.dbg("publishFileProof")(`${err}`);
+    }
+  };
+
   private dstream = () => {
     // @ts-ignore -- in general patches_table might not be a conat one still,
     // or at least dstream is an internal implementation detail.
@@ -3051,16 +3110,21 @@ export class SyncDoc extends EventEmitter {
         const pendingKeys = new Set<any>();
         const flush = () => {
           scheduled = false;
-          if (closed || pendingKeys.size === 0) {
+          try {
+            if (closed || pendingKeys.size === 0) {
+              pendingKeys.clear();
+              return;
+            }
+            const keys = [...pendingKeys];
             pendingKeys.clear();
-            return;
+            this.applyPatchflowRemoteEnvelopes(
+              this.patchflowEnvelopesForKeys(keys),
+              onEnvelope,
+            );
+          } finally {
+            // patches that arrived while this one applied are scheduled again
+            this.remotePatchesPending = scheduled;
           }
-          const keys = [...pendingKeys];
-          pendingKeys.clear();
-          this.applyPatchflowRemoteEnvelopes(
-            this.patchflowEnvelopesForKeys(keys),
-            onEnvelope,
-          );
         };
         const handler = (keys: any[]) => {
           for (const key of keys ?? []) {
@@ -3068,6 +3132,7 @@ export class SyncDoc extends EventEmitter {
           }
           if (!scheduled) {
             scheduled = true;
+            this.remotePatchesPending = true;
             queueMicrotask(flush);
           }
         };
@@ -3076,6 +3141,7 @@ export class SyncDoc extends EventEmitter {
         return () => {
           closed = true;
           pendingKeys.clear();
+          this.remotePatchesPending = false;
           if (table?.off) {
             table.off("change", handler);
           } else if (table?.removeListener) {
@@ -4184,6 +4250,8 @@ export class SyncDoc extends EventEmitter {
     }
 
     const value = this.to_str();
+    // in the same synchronous step as value (see captureFileProof)
+    const proof = this.captureFileProof(value);
     // include {ignore:true} with events for this long,
     // so no clients waste resources loading in response to us saving
     // to disk.
@@ -4215,6 +4283,9 @@ export class SyncDoc extends EventEmitter {
     this.diskMissingOnLoad = false;
     this.localEditsSinceDiskBaseline = false;
     this.valueOnDisk = value;
+    // only after these exact bytes were written
+    await this.publishFileProof(proof);
+    if (this.isClosed()) return;
     this.emit("save-to-disk");
   };
 

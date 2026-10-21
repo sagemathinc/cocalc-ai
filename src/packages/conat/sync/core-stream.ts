@@ -1165,6 +1165,23 @@ export class CoreStream<T = any> extends EventEmitter {
 
   private processPersistentSetLargestSeq: number = 0;
   private missingMessages = new Set<number>();
+
+  // Every message with seq at most this has been received (or deleted before
+  // it could be): the largest seq received, unless the changefeed skipped
+  // some that are not recovered yet.
+  receivedThroughSeq = (): number => {
+    let through = this.processPersistentSetLargestSeq;
+    for (const seq of this.missingMessages) {
+      through = Math.min(through, seq - 1);
+    }
+    return through;
+  };
+
+  // Was seq received (or deleted before it could be)?  Only meaningful for
+  // seq at most the largest seq received.
+  isReceivedSeq = (seq: number): boolean =>
+    seq <= this.processPersistentSetLargestSeq &&
+    !this.missingMessages.has(seq);
   private processPersistentSet = (
     { seq, time, key, encoding, raw: data, headers, msgID }: SetOperation,
     {
