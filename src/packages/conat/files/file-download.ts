@@ -1,10 +1,12 @@
 import { readFile } from "./read";
 import { fsClient, fsSubject } from "./fs";
 import { once } from "events";
-import { path_split } from "@cocalc/util/misc";
 import { getLogger } from "@cocalc/conat/logger";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
-import mime from "mime-types";
+import {
+  isPassiveInlineType,
+  projectFileResponseName,
+} from "./file-response-type";
 import { isTemporaryDownloadArchivePath } from "./download-archive";
 import { readIdleWait } from "./read-flow";
 
@@ -47,18 +49,13 @@ function parseDownloadUrl(url: string): { project_id: string; path: string } {
 function getDownloadQueryOptions(url: string): {
   explicitDownload: boolean;
   deleteAfterDownload: boolean;
-  downloadFilename?: string;
 } {
   try {
     const parsed = new URL(url, "http://127.0.0.1");
-    const downloadFilename = parsed.searchParams.get("downloadFilename");
     return {
       explicitDownload: parsed.searchParams.has("download"),
       deleteAfterDownload:
         parsed.searchParams.get("deleteAfterDownload") == "1",
-      downloadFilename: downloadFilename
-        ? path_split(downloadFilename).tail
-        : undefined,
     };
   } catch {
     return { explicitDownload: false, deleteAfterDownload: false };
@@ -207,6 +204,7 @@ export async function handleFileDownload({
   statSubject,
   account_id,
   conditional,
+  nonPassive,
   // Idle timeout, not a limit on the duration of a progressing download.
   maxWait = 1000 * 60 * 60,
 }: {
@@ -236,6 +234,10 @@ export async function handleFileDownload({
   // unchanged image isn't downloaded again on every page reload.  Explicit
   // downloads are never cached.
   conditional?: boolean;
+  // Files that aren't passive (isPassiveInlineType: HTML, SVG, XML, unknown)
+  // on an origin that carries the user's session: "sandbox" serves them in an
+  // opaque origin (CSP sandbox), "attachment" also makes them downloads.
+  nonPassive?: "sandbox" | "attachment";
 }) {
   url ??= req.url;
   logger.debug("downloading file from project to browser", url);
@@ -246,10 +248,18 @@ export async function handleFileDownload({
   }
   const { project_id, path } = parseDownloadUrl(url);
   logger.debug("conat: get file", { project_id, path, url });
-  const { explicitDownload, deleteAfterDownload, downloadFilename } =
-    getDownloadQueryOptions(url);
-  const fileName = downloadFilename || path_split(path).tail;
-  const contentType = mime.lookup(fileName);
+  const { explicitDownload, deleteAfterDownload } = getDownloadQueryOptions(url);
+  const { fileName, contentType } = projectFileResponseName({ path, url });
+  const passive = isPassiveInlineType(contentType);
+  if (nonPassive != null) {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    if (!passive) {
+      res.setHeader(
+        "Content-Security-Policy",
+        "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
+      );
+    }
+  }
   const cleanupClient =
     req.method !== "HEAD" &&
     explicitDownload &&
@@ -260,7 +270,8 @@ export async function handleFileDownload({
       : undefined;
   if (
     explicitDownload ||
-    (!allowUnsafe && DANGEROUS_CONTENT_TYPE.has(contentType))
+    (nonPassive === "attachment" && !passive) ||
+    (!allowUnsafe && !!contentType && DANGEROUS_CONTENT_TYPE.has(contentType))
   ) {
     const fileNameEncoded = encodeURIComponent(fileName)
       .replace(/['()]/g, escape)

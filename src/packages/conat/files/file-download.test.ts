@@ -142,6 +142,66 @@ describe("handleFileDownload", () => {
     expect(res.statusCode).toBe(200);
   });
 
+  describe("non-passive files on a logged-in origin", () => {
+    const headersFor = async (url: string, nonPassive?: "sandbox" | "attachment") => {
+      mockFsStat.mockResolvedValue({ size: 1 });
+      const res: any = {
+        statusCode: undefined,
+        setHeader: jest.fn(),
+        end: jest.fn(),
+        on: jest.fn(),
+        writableEnded: false,
+        destroyed: false,
+      };
+      await handleFileDownload({
+        req: { method: "HEAD", url },
+        res,
+        client: { id: "client-1" } as any,
+        nonPassive,
+      });
+      return Object.fromEntries(
+        res.setHeader.mock.calls.map(([k, v]) => [k.toLowerCase(), v]),
+      );
+    };
+    const SANDBOX =
+      "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads";
+
+    it("are sandboxed into an opaque origin", async () => {
+      const h = await headersFor("/projects/p/files/a.html", "sandbox");
+      expect(h["content-security-policy"]).toBe(SANDBOX);
+      expect(h["x-content-type-options"]).toBe("nosniff");
+      expect(h["content-disposition"]).toBeUndefined();
+      expect(h["content-type"]).toBe("text/html");
+    });
+
+    it("are attachments for shares and API clients", async () => {
+      const h = await headersFor("/projects/p/files/a.xml", "attachment");
+      expect(h["content-security-policy"]).toBe(SANDBOX);
+      expect(h["content-disposition"]).toMatch(/^attachment/);
+    });
+
+    it("passive files are unchanged (but never sniffed)", async () => {
+      const h = await headersFor("/projects/p/files/a.png", "attachment");
+      expect(h["x-content-type-options"]).toBe("nosniff");
+      expect(h["content-security-policy"]).toBeUndefined();
+      expect(h["content-disposition"]).toBeUndefined();
+    });
+
+    it("unchanged without the option (the content origin, sites without one)", async () => {
+      const h = await headersFor("/projects/p/files/a.html");
+      expect(h["content-security-policy"]).toBeUndefined();
+    });
+
+    it("downloadFilename can't change an inline response's type", async () => {
+      const h = await headersFor(
+        "/projects/p/files/a.png?downloadFilename=x.html",
+        "sandbox",
+      );
+      expect(h["content-type"]).toBe("image/png");
+      expect(h["content-security-policy"]).toBeUndefined();
+    });
+  });
+
   it("uses an explicit stat subject for HEAD downloads", async () => {
     mockFsStat.mockResolvedValue({ size: 456 });
     const req: any = {

@@ -120,6 +120,10 @@ import { resolveProjectHostId } from "./host-id";
 import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-node";
 import { getAccountContentRevokedBeforeMs } from "./sqlite/account-revocations";
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
+import {
+  contentViewSiteOrigin,
+  rawRouteContentRedirect,
+} from "./raw-route-content-redirect";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { applyProjectHostProcessTitle } from "./process-role";
@@ -1221,6 +1225,27 @@ export async function main(
           project_id,
           account_id,
         });
+        // Once the site has content origins, a non-passive file (HTML, SVG,
+        // XML...) opened as a page goes to the content view, and is never
+        // shown inline here (see raw-route-content-redirect.ts).
+        const contentRedirect = rawRouteContentRedirect({
+          req,
+          project_id,
+          contentDomain,
+          siteOrigin: contentViewSiteOrigin({
+            req,
+            approvedOrigins: approvedBrowserOrigins(),
+            siteUrl: process.env.COCALC_SITE_URL,
+          }),
+          share: readOnlyDownloadContext?.type === "share",
+        });
+        if (contentRedirect) {
+          res.statusCode = 302;
+          res.setHeader("Location", contentRedirect);
+          res.setHeader("Cache-Control", "no-store");
+          res.end();
+          return { handled: true };
+        }
         const readOptions =
           readOnlyDownloadContext?.type === "share"
             ? await ensureShareFileDownloadReadServer({
@@ -1252,6 +1277,14 @@ export async function main(
             PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
           statSubject: readOptions?.statSubject,
           conditional: true,
+          // Whatever wasn't redirected (subresources, shares, which the share
+          // viewer frames) is shown in an opaque origin; clients with an
+          // Authorization header get a download.
+          nonPassive: contentDomain
+            ? req.headers.authorization
+              ? "attachment"
+              : "sandbox"
+            : undefined,
           beforeExplicitDownload: explicitDownload
             ? async ({ project_id }: { project_id: string; path: string }) =>
                 await checkManagedFileDownloadAllowedBestEffort({

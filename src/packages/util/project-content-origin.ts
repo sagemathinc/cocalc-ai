@@ -62,3 +62,9 @@ export function hostContentWildcardHostname({
 }): string {
   return `*.${hostContentLabel(host_id)}.${domain}`;
 }
+
+// The sandbox of a frame showing a page from a content origin. The content
+// origin is a separate site, so the page keeps its own origin (storage,
+// relative loads) but can't navigate the app's tab.
+export const CONTENT_FRAME_SANDBOX =
+  "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
