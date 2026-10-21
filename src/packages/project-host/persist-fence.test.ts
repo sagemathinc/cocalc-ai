@@ -108,7 +108,12 @@ describe("withProjectPersistFenced", () => {
       ),
     ).resolves.toBe("done");
     expect(withPersistFence).toHaveBeenCalledWith(
-      { client: {}, project_id, holder: { pid: 123, start: "9" } },
+      {
+        client: {},
+        project_id,
+        holder: { pid: 123, start: "9" },
+        reason: "test",
+      },
       expect.any(Function),
     );
   });

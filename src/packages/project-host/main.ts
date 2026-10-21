@@ -32,6 +32,7 @@ import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { initPersistFenceService } from "@cocalc/conat/persist/fence";
 import {
   fileFenceStore,
+  describeFenceHolder,
   isFenceHolderAlive,
 } from "@cocalc/backend/conat/persist-fence";
 import { init as initRunner } from "@cocalc/project-runner/run";
@@ -592,6 +593,7 @@ export async function main(
     : await initPersistFenceService({
         client: conatClient,
         holderAlive: isFenceHolderAlive,
+        describeHolder: describeFenceHolder,
         store: fileFenceStore(persistFenceDir()),
       });
   const persistServer = externalPersist

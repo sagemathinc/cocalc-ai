@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   currentFenceHolder,
+  describeFenceHolder,
   fenceCapableServerRunning,
   fileFenceStore,
   isFenceHolderAlive,
@@ -181,6 +182,17 @@ describe("what a holder started", () => {
     try {
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(isFenceHolderAlive(gone, since)).toBe(true);
+      // which a person is told
+      // (and whatever else of this group started since, e.g., in other tests)
+      const state = describeFenceHolder(gone, since);
+      expect(state.holder_running).toBe(false);
+      expect(state.keeping).toContainEqual({
+        pid: child.pid,
+        command: "sleep 30",
+      });
+      expect(describeFenceHolder(holder, since)).toEqual({
+        holder_running: true,
+      });
       // processes from before the fence don't count
       expect(isFenceHolderAlive(gone, Date.now() + 10_000)).toBe(false);
     } finally {

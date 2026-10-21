@@ -196,6 +196,24 @@ export interface PersistFenceRecord {
   token: string;
   holder: PersistFenceHolder;
   since: number;
+  // what the holder does (e.g., "restore-snapshot"), to tell a person
+  reason?: string;
+}
+
+// What keeps a fence held (see initPersistFenceService describeHolder).
+export interface PersistFenceHolderState {
+  holder_running: boolean;
+  // if the holder is gone: the processes it started since the fence was taken
+  keeping?: { pid: number; command: string }[];
+}
+
+// A fence this service holds, to tell a person (e.g., in diagnostics).
+export interface PersistFenceDiagnostic extends Partial<PersistFenceHolderState> {
+  project_id: string;
+  reason?: string;
+  since: string;
+  age_seconds: number;
+  holder: PersistFenceHolder;
 }
 
 // Where a fence service keeps the fences it holds, so it still holds them
@@ -219,14 +237,20 @@ export type PersistFenceRequest =
       // features the persist server must have (e.g., "persist-volume"):
       // the fence is refused if it lacks one
       requires?: string[];
+      reason?: string;
     }
   | { cmd: "release"; project_id: string; token: string; replaced?: boolean };
 
 const MAX_TIMEOUT_MS = 5 * 60_000;
 // how often the service checks that the holders of its fences still run
 const DEFAULT_HOLDER_CHECK_MS = 5_000;
-// A fence held longer than this is logged (and kept: see above).
-const LONG_FENCE_MS = 60 * 60_000;
+// A fence held this long is logged as such, and again each time as long
+// again (it is kept: see above).  Its holder does the same.
+export const LONG_FENCE_MS = 15 * 60_000;
+
+function reasonOf(value: unknown): string | undefined {
+  return typeof value == "string" && value ? value.slice(0, 200) : undefined;
+}
 
 function boundedMs(
   value: unknown,
@@ -258,6 +282,8 @@ export async function initPersistFenceService({
   store,
   features = [],
   holderCheckMs = DEFAULT_HOLDER_CHECK_MS,
+  describeHolder,
+  longFenceMs = LONG_FENCE_MS,
 }: {
   client: Client;
   // whether holder, or anything it started (since the fence was taken, at
@@ -267,9 +293,29 @@ export async function initPersistFenceService({
   // what else this persist server does, which a holder may require
   features?: string[];
   holderCheckMs?: number;
-}): Promise<{ close: () => void }> {
+  // what keeps a fence held, to tell a person
+  describeHolder?: (
+    holder: PersistFenceHolder,
+    since: number,
+  ) => PersistFenceHolderState;
+  longFenceMs?: number;
+}): Promise<{ close: () => void; fences: () => PersistFenceDiagnostic[] }> {
   // the fences this service holds, by project
   const held = new Map<string, PersistFenceRecord>();
+  // when to log each long-held fence again, by token
+  const warnAt = new Map<string, number>();
+
+  const describe = (
+    record: PersistFenceRecord,
+    now = Date.now(),
+  ): PersistFenceDiagnostic => ({
+    project_id: record.project_id,
+    ...(record.reason ? { reason: record.reason } : {}),
+    since: new Date(record.since).toISOString(),
+    age_seconds: Math.round((now - record.since) / 1000),
+    holder: record.holder,
+    ...describeHolder?.(record.holder, record.since),
+  });
   // acquires under way, by project and token, so a retried acquire joins
   // the first
   const acquiring = new Map<string, Promise<{ closed_sockets: number }>>();
@@ -297,6 +343,7 @@ export async function initPersistFenceService({
     if (held.get(project_id)?.token === token) {
       held.delete(project_id);
     }
+    warnAt.delete(token);
     return unfenceProject({ project_id, token, replaced, instance });
   };
 
@@ -313,6 +360,7 @@ export async function initPersistFenceService({
     held.set(record.project_id, record);
     logger.warn("holding a persist fence again after a restart", {
       project_id: record.project_id,
+      reason: record.reason,
       holder: record.holder,
     });
   }
@@ -321,12 +369,17 @@ export async function initPersistFenceService({
     const now = Date.now();
     for (const record of [...held.values()]) {
       if (holderAlive(record.holder, record.since)) {
-        if (now - record.since > LONG_FENCE_MS) {
-          logger.warn("a persist fence has been held for a long time", {
-            project_id: record.project_id,
-            holder: record.holder,
-            since: new Date(record.since).toISOString(),
-          });
+        const due = warnAt.get(record.token) ?? record.since + longFenceMs;
+        if (now >= due) {
+          warnAt.set(record.token, now + (now - record.since));
+          const info = describe(record, now);
+          logger.warn(
+            `persist fence of project ${record.project_id} held for ${Math.round(info.age_seconds / 60)} minutes: its documents can't be opened until it is released. ` +
+              (info.holder_running === false
+                ? `Its holder (pid ${record.holder.pid}) is gone; it is released once the processes it started since are gone (keeping).`
+                : `Its holder (pid ${record.holder.pid}, ${record.reason ?? "no reason given"}) still runs; if it is stuck, restarting it releases the fence.`),
+            info,
+          );
         }
         continue;
       }
@@ -341,7 +394,9 @@ export async function initPersistFenceService({
         ) {
           logger.warn("released a persist fence whose holder is gone", {
             project_id: record.project_id,
+            reason: record.reason,
             holder: record.holder,
+            age_seconds: Math.round((now - record.since) / 1000),
           });
         }
       } catch (err) {
@@ -391,7 +446,14 @@ export async function initPersistFenceService({
       if (pending == null) {
         pending = (async () => {
           const result = await fenceProject({ project_id, token, timeoutMs });
-          const record = { project_id, token, holder, since: Date.now() };
+          const reason = reasonOf(request.reason);
+          const record = {
+            project_id,
+            token,
+            holder,
+            since: Date.now(),
+            ...(reason ? { reason } : {}),
+          };
           try {
             store?.save(record);
           } catch (err) {
@@ -461,6 +523,7 @@ export async function initPersistFenceService({
       clearInterval(checker);
       sub?.close();
     },
+    fences: () => [...held.values()].map((record) => describe(record)),
   };
 }
 
@@ -482,6 +545,8 @@ export async function withPersistFence<T>(
     replaces = true,
     requires,
     timeoutMs = DEFAULT_FENCE_TIMEOUT_MS,
+    reason,
+    longFenceMs = LONG_FENCE_MS,
   }: {
     client: Client;
     project_id: string;
@@ -490,6 +555,9 @@ export async function withPersistFence<T>(
     // features the persist server granting the fence must have
     requires?: string[];
     timeoutMs?: number;
+    // what fn does (e.g., "restore-snapshot"), to tell a person
+    reason?: string;
+    longFenceMs?: number;
   },
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -527,6 +595,7 @@ export async function withPersistFence<T>(
         holder,
         timeout_ms: timeoutMs,
         ...(requires?.length ? { requires } : {}),
+        ...(reason ? { reason } : {}),
       },
       timeoutMs + 10_000,
     );
@@ -543,9 +612,25 @@ export async function withPersistFence<T>(
     void release(false);
     throw err;
   }
+  // logged while fn runs long, and again each time as long again
+  const since = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const warnLater = (ms: number) => {
+    timer = setTimeout(() => {
+      const minutes = Math.round((Date.now() - since) / 60_000);
+      logger.warn(
+        `still holding the persist fence of project ${project_id} after ${minutes} minutes (${reason ?? "no reason given"}): its documents can't be opened until this finishes`,
+        { project_id, reason, minutes },
+      );
+      warnLater(Date.now() - since);
+    }, ms);
+    timer.unref?.();
+  };
+  warnLater(longFenceMs);
   try {
     return await fn();
   } finally {
+    clearTimeout(timer);
     // even if fn failed: it may have replaced some files
     await release(replaces);
   }

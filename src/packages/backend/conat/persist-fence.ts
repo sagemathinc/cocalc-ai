@@ -29,6 +29,7 @@ import {
 import { dirname, join } from "node:path";
 import type {
   PersistFenceHolder,
+  PersistFenceHolderState,
   PersistFenceRecord,
   PersistFenceStore,
 } from "@cocalc/conat/persist/fence";
@@ -126,6 +127,45 @@ export function isFenceHolderAlive(
     pgid > 1 &&
     processGroupRunsSince(pgid, since)
   );
+}
+
+// What keeps a fence held, to tell a person: whether the holder process
+// itself runs, and if not, the processes of its group that started since the
+// fence was taken (their pids and commands, at most `limit`).
+export function describeFenceHolder(
+  holder: PersistFenceHolder,
+  since: number,
+  { limit = 10 }: { limit?: number } = {},
+): PersistFenceHolderState {
+  if (isProcessAlive(holder)) return { holder_running: true };
+  const keeping: { pid: number; command: string }[] = [];
+  const { pgid } = holder;
+  const boot = bootTimeMs();
+  if (pgid == null || !Number.isSafeInteger(pgid) || pgid <= 1 || !boot) {
+    return { holder_running: false, keeping };
+  }
+  let names: string[] = [];
+  try {
+    names = readdirSync("/proc");
+  } catch {}
+  for (const name of names) {
+    if (keeping.length >= limit) break;
+    if (!/^[0-9]+$/.test(name)) continue;
+    const stat = processStat(Number(name));
+    if (!Array.isArray(stat) || Number(stat[2]) !== pgid) continue;
+    const started = boot + (Number(stat[19]) / CLOCK_TICKS_PER_SECOND) * 1000;
+    if (started < since - 1000) continue;
+    let command = "";
+    try {
+      command = readFileSync(`/proc/${name}/cmdline`, "utf8")
+        .split("\0")
+        .join(" ")
+        .trim()
+        .slice(0, 200);
+    } catch {}
+    keeping.push({ pid: Number(name), command });
+  }
+  return { holder_running: false, keeping };
 }
 
 // Whether the holder process itself may still run: the same process, not
@@ -268,6 +308,10 @@ export function fileFenceStore(
             ...(pgid != null ? { pgid } : {}),
           },
           since: record.since,
+          // only to tell a person
+          ...(typeof record.reason == "string" && record.reason
+            ? { reason: record.reason.slice(0, 200) }
+            : {}),
         });
       }
       return records;
