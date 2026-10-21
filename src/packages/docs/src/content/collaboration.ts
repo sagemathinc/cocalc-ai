@@ -110,8 +110,14 @@ trust:
    expect.
 4. Restart the project once more, so nothing those files started keeps
    running, and check the running processes with \`ps aux\`.
-5. Rotate any passwords, API keys, or [project secrets](/docs/projects/project-secrets)
-   the collaborator could read.
+5. Revoke, at their source, any passwords or API keys the collaborator could
+   read, including [project secrets](/docs/projects/project-secrets), for
+   example by regenerating the key with the service that issued it.
+
+These steps catch the usual ways access is left behind, but they cannot prove a
+project is clean. If you need that certainty, create a new project, copy in
+only the files you need after reviewing them, and add new secrets there
+instead of in the old project.
 
 Keep the paths to the report, saved results, and next steps in the
 [research handoff](/docs/projects/research-handoff). For coauthors editing
