@@ -211,6 +211,16 @@ describe("the sender takes back its message", () => {
     expect(listDueAgentRpcReports(Date.now() + 3_600_000)).toHaveLength(0);
   });
 
+  it("its chat is projected once more later, whatever happens now", async () => {
+    const attempt = randomUUID();
+    const mine = job(attempt);
+    expect(await withdraw(attempt)).toMatchObject({ outcome: "accepted" });
+    // The send's own "queued" projection may still land after this one.
+    expect(getAcpJobByOpId(mine.op_id)?.recovery_code).toBe(
+      "cocalc-withdrawn-projection",
+    );
+  });
+
   it("its chat is updated later if that fails now", async () => {
     const attempt = randomUUID();
     const mine = job(attempt);

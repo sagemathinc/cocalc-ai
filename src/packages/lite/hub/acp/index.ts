@@ -9562,11 +9562,14 @@ export async function withdrawAgentMessageTurn(
     ...(tool_ran !== undefined ? { tool_ran } : {}),
   });
   dropHeldReport(jobs);
+  // Recorded first, even if the projection below succeeds: the send that
+  // queued it may still be writing its "queued" projection, which would land
+  // after ours. The recovery poll projects it once more, then clears this.
+  markAcpJobRecoveryIntent(job.op_id, ACP_WITHDRAWN_PROJECTION_INTENT);
   try {
     await projectWithdrawnMessage(job);
   } catch (err) {
     // Withdrawn regardless; the recovery poll updates the chat later.
-    markAcpJobRecoveryIntent(job.op_id, ACP_WITHDRAWN_PROJECTION_INTENT);
     logger.warn("withdrawn message's chat not updated yet", {
       op_id: job.op_id,
       err: `${err}`,
