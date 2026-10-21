@@ -14,7 +14,8 @@ jest.mock("@cocalc/frontend/project/app-server-open", () => ({
 }));
 jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
 jest.mock("@cocalc/frontend/project/host-url", () => ({
-  withProjectHostBase: (_p: string, url?: string) => url,
+  withProjectHostBase: (_p: string, url?: string) =>
+    url ? `https://host-1.example${url}` : url,
 }));
 
 import { useAppFrameSrc } from "./app-frame-src";
@@ -34,7 +35,7 @@ describe("useAppFrameSrc", () => {
     getProjectAppFrameUrl.mockReset();
     let n = 0;
     getProjectAppFrameUrl.mockImplementation(
-      async () => `${FRAME_ORIGIN}/_af/CAP${++n}?next=x`,
+      async () => ({ url: `${FRAME_ORIGIN}/_af/CAP${++n}?next=x` }),
     );
   });
 
@@ -53,12 +54,38 @@ describe("useAppFrameSrc", () => {
     expect(result.current.openUrl).toBe(`/app-open/${P}/proxy/8000/?app=a`);
   });
 
-  it("uses the host URL on sites without app origins", async () => {
-    getProjectAppFrameUrl.mockResolvedValue(undefined);
+  it("frames the project-host URL only on sites without app origins", async () => {
+    getProjectAppFrameUrl.mockResolvedValue({ unavailable: "off" });
     const { result } = renderHook(() =>
       useAppFrameSrc({ projectId: P, appId: "a", hostUrl: HOST_URL }),
     );
     await waitFor(() => expect(result.current.src).toBe(HOST_URL));
+  });
+
+  it("never falls back to the host origin otherwise", async () => {
+    for (const r of [
+      { unavailable: "host-not-ready" },
+      { unavailable: "other-bay" },
+      { error: "boom" },
+    ]) {
+      getProjectAppFrameUrl.mockResolvedValue(r);
+      const { result } = renderHook(() =>
+        useAppFrameSrc({ projectId: P, appId: "a", hostUrl: HOST_URL }),
+      );
+      await waitFor(() => expect(result.current.failed).toBeDefined());
+      expect(result.current.src).toBeUndefined();
+    }
+    // "off", but the reported URL is somewhere else: not framed.
+    getProjectAppFrameUrl.mockResolvedValue({ unavailable: "off" });
+    const { result } = renderHook(() =>
+      useAppFrameSrc({
+        projectId: P,
+        appId: "a",
+        hostUrl: `https://elsewhere.example/${P}/proxy/8000/`,
+      }),
+    );
+    await waitFor(() => expect(result.current.failed).toBeDefined());
+    expect(result.current.src).toBeUndefined();
   });
 
   it("bootstraps once more when the frame has no session, then gives up", async () => {

@@ -20,7 +20,7 @@ import {
 import type { ArtifactApp } from "@cocalc/chat";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { getProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
-import { useAppFrameSrc } from "./app-frame-src";
+import { APP_CARD_FRAME_SANDBOX, useAppFrameSrc } from "./app-frame-src";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   ensureSharedBrowserKey,
@@ -409,6 +409,28 @@ function ProjectAppFrame({
   if (run.stopped) return <Stopped title={title} onStart={run.start} />;
   if (run.error)
     return <Failed title={title} error={run.error} onRetry={run.retry} />;
+  if (frame.failed)
+    return (
+      <Flex align="center" justify="center" style={{ height: "100%" }}>
+        <Alert
+          type="warning"
+          showIcon
+          message={frame.failed}
+          description={
+            <>
+              <Button size="small" onClick={frame.retry}>
+                Retry
+              </Button>{" "}
+              {frame.openUrl && (
+                <a href={frame.openUrl} target="_blank" rel="noopener">
+                  Open it in a new tab
+                </a>
+              )}
+            </>
+          }
+        />
+      </Flex>
+    );
   if (frame.blocked)
     return (
       <Flex align="center" justify="center" style={{ height: "100%" }}>
@@ -452,6 +474,7 @@ function ProjectAppFrame({
           key={frame.src}
           src={frame.src}
           referrerPolicy="strict-origin"
+          sandbox={APP_CARD_FRAME_SANDBOX}
           title={title}
           style={{ border: 0, width: "100%", height: "100%", display: "block" }}
         />
