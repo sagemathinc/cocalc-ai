@@ -149,3 +149,44 @@ test("desktop notifications use the system's notifier, where there is one", () =
     ["osascript", "-e", 'display notification "say \\"hi\\"" with title "T"'],
   ]);
 });
+
+test("one request at a time: a stalled service never piles up polls", async () => {
+  let calls = 0;
+  let release: (state: HandoffState) => void = () => {};
+  const said: string[] = [];
+  const order: string[] = [];
+  const handoff = startHandoff({
+    api: {
+      state: () => {
+        calls++;
+        order.push("state");
+        return new Promise<HandoffState>((resolve) => (release = resolve));
+      },
+      setDriver: async (driver) => {
+        order.push(`set ${driver}`);
+        return { ...agent, driver };
+      },
+    },
+    say: (line) => said.push(line),
+    intervalMs: 60_000,
+  });
+  try {
+    const first = handoff.poll();
+    void handoff.poll();
+    void handoff.poll();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(calls, 1);
+    // A key waits for the stalled poll, so its answer lands last.
+    const key = handoff.key("t");
+    release(agent);
+    await first;
+    await key;
+    assert.deepEqual(order, ["state", "set human"]);
+    assert.equal(
+      said.at(-1),
+      "You're driving: the agent waits. Press h to hand back.",
+    );
+  } finally {
+    handoff.stop();
+  }
+});

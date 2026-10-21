@@ -152,7 +152,17 @@ export function startHandoff({
     if (next.ask && next.ask.at !== previous?.ask?.at && previous != null)
       notify("The agent asks you to take over", next.ask.message);
   };
-  const poll = async () => {
+  // One request at a time: a stalled service never piles up polls, and a
+  // slow answer never lands after a newer one.
+  let pending: Promise<void> | null = null;
+  const serial = (op: () => Promise<void>): Promise<void> => {
+    const next = (pending ?? Promise.resolve()).then(op).finally(() => {
+      if (pending === next) pending = null;
+    });
+    pending = next;
+    return next;
+  };
+  const pollOnce = async () => {
     if (stopped) return;
     try {
       report(await api.state());
@@ -166,20 +176,24 @@ export function startHandoff({
       failing = true;
     }
   };
+  // A tick while a request is still out is skipped.
+  const poll = () => pending ?? serial(pollOnce);
   const timer = setInterval(() => void poll(), intervalMs);
   timer.unref?.();
   return {
     poll,
-    key: async (key) => {
+    key: (key) => {
       const driver = driverForKey(key);
-      if (!driver || stopped) return;
-      try {
-        report(await api.setDriver(driver));
-      } catch (err) {
-        say(
-          `Could not ${driver === "human" ? "take over" : "hand back"}: ${(err as Error)?.message ?? err}`,
-        );
-      }
+      if (!driver || stopped) return Promise.resolve();
+      return serial(async () => {
+        try {
+          report(await api.setDriver(driver));
+        } catch (err) {
+          say(
+            `Could not ${driver === "human" ? "take over" : "hand back"}: ${(err as Error)?.message ?? err}`,
+          );
+        }
+      });
     },
     stop: () => {
       stopped = true;
