@@ -96,6 +96,23 @@ describe("never back past persist volumes", () => {
     );
   });
 
+  it("does no work when imported, so the daemon CLI passes its own environment on", () => {
+    // @cocalc/backend/data sets process.env.DATA when imported, and the
+    // daemon CLI (which imports this) starts the host agent with its env
+    const saved = { ...process.env };
+    delete process.env.DATA;
+    delete process.env.COCALC_DATA_DIR;
+    try {
+      jest.isolateModules(() => {
+        require("./persist-layout-guard");
+        require("./daemon");
+      });
+      expect(process.env.DATA).toBeUndefined();
+    } finally {
+      process.env = saved;
+    }
+  });
+
   it("allows it by hand", () => {
     symlinkSync(bundle(true), current);
     commitToPersistVolumes(where());

@@ -22,6 +22,10 @@ switch.  Of two that race, at least one sees the other.
 
 COCALC_ALLOW_PERSIST_LAYOUT_DOWNGRADE=1 in the host's environment allows a
 downgrade anyway, by hand (e.g., in an emergency).
+
+The daemon CLI (daemon.ts) uses this, so it imports nothing that does work
+when imported: e.g., @cocalc/backend/logger loads @cocalc/backend/data, which
+sets process.env.DATA, and then every process the daemon starts inherits it.
 */
 
 import {
@@ -36,10 +40,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import getLogger from "@cocalc/backend/logger";
 import { resolveHostAgentDataDir } from "./host-agent-state";
-
-const logger = getLogger("project-host:persist-layout-guard");
 
 const RECORD = "persist-volume-layout";
 
@@ -102,9 +103,8 @@ export function assertBundleKeepsPersistVolumes(
   if (bundleHasPersistVolumes(root)) return;
   if (!hostCommittedToPersistVolumes(dataDir)) return;
   if (overridden(env)) {
-    logger.warn(
-      "running project-host software from before persist volumes (COCALC_ALLOW_PERSIST_LAYOUT_DOWNGRADE=1)",
-      { root },
+    console.warn(
+      `running project-host ${root} from before persist volumes (COCALC_ALLOW_PERSIST_LAYOUT_DOWNGRADE=1)`,
     );
     return;
   }
@@ -126,7 +126,6 @@ export function commitToPersistVolumes({
     syncPath(tmp);
     renameSync(tmp, path);
     syncPath(dirname(path));
-    logger.info("this host keeps projects' edit history in persist volumes");
   }
   // An activation of an older bundle may have raced this one: then no
   // history moves.  (No current bundle, e.g., in development: nothing to
