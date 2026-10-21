@@ -105,9 +105,11 @@ trust:
    or a program they already started, and stopping the project ends both.
 2. Start the project, but do not open a terminal yet: a new terminal runs
    \`~/.bashrc\`. In the file explorer, choose **Show hidden files**, then open
-   \`~/.ssh/authorized_keys\`, \`~/.bashrc\`, and \`~/.profile\` in the
-   editor. Delete any key you do not recognize and anything you did not expect.
-3. Review any other scripts the project runs when it starts, and remove
+   these files in the editor and remove anything you did not expect:
+   \`~/.local/share/cocalc/startup.sh\` (which runs every time the project
+   starts), \`~/.ssh/authorized_keys\` (delete any key you do not recognize),
+   \`~/.bashrc\`, and \`~/.profile\`.
+3. Review any other scripts or scheduled jobs the project runs, and remove
    anything you did not expect.
 4. Restart the project once more, so nothing those files started keeps
    running, then check the running processes in a terminal with \`ps aux\`.
@@ -116,7 +118,8 @@ trust:
    example by regenerating the key with the service that issued it.
 
 These steps catch the usual ways access is left behind, but they cannot prove a
-project is clean. If you need that certainty, create a new project, copy in
+project is clean: the startup script, for example, has already run once by the
+time you can open it. If you need that certainty, create a new project, copy in
 only the files you need after reviewing them, and add new secrets there
 instead of in the old project.
 
