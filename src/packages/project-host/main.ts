@@ -33,6 +33,7 @@ import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run"
 import {
   configureProjectHostAcpContainerFileIO,
   ensureFileDownloadReadServer,
+  projectRealPathWithinDir,
   ensureShareFileDownloadReadServer,
   ensureFileUploadWriteServer,
   ensureViewerFileDownloadReadServer,
@@ -117,7 +118,12 @@ import { isProjectHostDevGcpReverseTunnelEnabled } from "./master-conat-server";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
 import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-node";
+import { getAccountContentRevokedBeforeMs } from "./sqlite/account-revocations";
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
+import {
+  contentViewSiteOrigin,
+  rawRouteContentRedirect,
+} from "./raw-route-content-redirect";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { applyProjectHostProcessTitle } from "./process-role";
@@ -223,7 +229,20 @@ import {
   corsOrigin,
   persistHubBrowserOrigins,
   setHubBrowserOrigins,
+  approvedBrowserOrigins,
 } from "./browser-origin-policy";
+import { getProjectHostAuthPublicKey } from "./auth-public-key";
+import {
+  createContentOriginHandler,
+  getProjectContentDomain,
+  installContentHostnameUpgradeGuard,
+  isContentRequestHost,
+} from "./content-origin";
+import {
+  hasProjectContentReadAccess,
+  observeProjectContentEpoch,
+  projectContentEpoch,
+} from "./content-origin-access";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -394,6 +413,29 @@ export async function main(
 
   // 1) HTTP + conat server
   const app = express();
+  // The per-project content origin (trust-free step 6) owns every request on
+  // a content hostname, before any other route; see content-origin.ts.
+  const contentDomain = getProjectContentDomain();
+  let handleContentRequest:
+    | ((
+        req: IncomingMessage,
+        res: ServerResponse,
+        next: NextFunction,
+      ) => Promise<void>)
+    | undefined;
+  // Content-shaped hostnames are claimed even when no content domain is
+  // configured, so they fail closed rather than reach the host's routes.
+  app.use((req, res, next) => {
+    if (!isContentRequestHost(req.headers.host, contentDomain)) {
+      return next();
+    }
+    if (!handleContentRequest) {
+      res.statusCode = contentDomain ? 503 : 404;
+      res.end();
+      return;
+    }
+    void handleContentRequest(req, res, next).catch(() => res.destroy());
+  });
   let handlePrivateAppHttpRequest:
     | ((
         req: IncomingMessage,
@@ -411,6 +453,7 @@ export async function main(
   });
   app.use(express.json());
   const { httpServer } = await startHttpListener(app, port, host, tls);
+  installContentHostnameUpgradeGuard(httpServer, contentDomain);
   app.get("/healthz", (_req, res) =>
     res.json({
       ok: true,
@@ -427,6 +470,37 @@ export async function main(
     systemAccountPassword: localConatPassword,
   });
   setConatServer(conatRouterUrl);
+  if (contentDomain) {
+    handleContentRequest = createContentOriginHandler({
+      domain: contentDomain,
+      host_id: hostId,
+      getPublicKey: getProjectHostAuthPublicKey,
+      frameAncestors: () => [...approvedBrowserOrigins()],
+      hasReadAccess: hasProjectContentReadAccess,
+      currentEpoch: projectContentEpoch,
+      observeEpoch: observeProjectContentEpoch,
+      accountRevokedBeforeMs: getAccountContentRevokedBeforeMs,
+      realPathWithinDir: projectRealPathWithinDir,
+      serveFile: async ({ req, res, project_id, account_id }) => {
+        await ensureFileDownloadReadServer({ client: conatClient, project_id });
+        await handleFileDownload({
+          req,
+          res,
+          client: conatClient,
+          account_id,
+          // Served on the project's own origin, so SVG may render inline.
+          allowUnsafe: true,
+          conditional: true,
+          readServiceName: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
+        });
+      },
+      onError: ({ project_id, err }) =>
+        logger.debug("content origin request failed", {
+          project_id,
+          err: `${err}`,
+        }),
+    });
+  }
   setConatClient({
     conat: () => conatClient,
     getLogger,
@@ -1151,6 +1225,27 @@ export async function main(
           project_id,
           account_id,
         });
+        // Once the site has content origins, a non-passive file (HTML, SVG,
+        // XML...) opened as a page goes to the content view, and is never
+        // shown inline here (see raw-route-content-redirect.ts).
+        const contentRedirect = rawRouteContentRedirect({
+          req,
+          project_id,
+          contentDomain,
+          siteOrigin: contentViewSiteOrigin({
+            req,
+            approvedOrigins: approvedBrowserOrigins(),
+            siteUrl: process.env.COCALC_SITE_URL,
+          }),
+          share: readOnlyDownloadContext?.type === "share",
+        });
+        if (contentRedirect) {
+          res.statusCode = 302;
+          res.setHeader("Location", contentRedirect);
+          res.setHeader("Cache-Control", "no-store");
+          res.end();
+          return { handled: true };
+        }
         const readOptions =
           readOnlyDownloadContext?.type === "share"
             ? await ensureShareFileDownloadReadServer({
@@ -1181,6 +1276,15 @@ export async function main(
             readOptions?.readServiceName ??
             PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
           statSubject: readOptions?.statSubject,
+          conditional: true,
+          // Whatever wasn't redirected (subresources, shares, which the share
+          // viewer frames) is shown in an opaque origin; clients with an
+          // Authorization header get a download.
+          nonPassive: contentDomain
+            ? req.headers.authorization
+              ? "attachment"
+              : "sandbox"
+            : undefined,
           beforeExplicitDownload: explicitDownload
             ? async ({ project_id }: { project_id: string; path: string }) =>
                 await checkManagedFileDownloadAllowedBestEffort({

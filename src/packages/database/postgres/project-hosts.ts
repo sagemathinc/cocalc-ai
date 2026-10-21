@@ -74,6 +74,9 @@ export async function upsertProjectHost({
   delete hostMetadata.public_route;
   delete hostMetadata.dns;
   delete hostMetadata.cloudflare_tunnel;
+  // The content-origin DNS record the hub created; release deletes the
+  // recorded name, so a host must never be able to choose it.
+  delete hostMetadata.content_dns;
   const mergedMetadata = {
     ...hostMetadata,
     ...(sshpiperd_public_key ? { sshpiperd_public_key } : {}),
@@ -100,7 +103,8 @@ export async function upsertProjectHost({
           - 'runtime_deployments'
           - 'public_route'
           - 'dns'
-          - 'cloudflare_tunnel'),
+          - 'cloudflare_tunnel'
+          - 'content_dns'),
       tier = COALESCE(EXCLUDED.tier, project_hosts.tier),
       last_seen = EXCLUDED.last_seen,
       updated = NOW()

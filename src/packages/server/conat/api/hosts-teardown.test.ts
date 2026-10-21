@@ -40,6 +40,8 @@ describe("hosts teardown helpers", () => {
       deleteCloudflareTunnel: jest.fn(async () => undefined),
       hasDns: async () => false,
       deleteHostDns: jest.fn(async () => undefined),
+      releaseHostContentDns: jest.fn(async () => undefined),
+      alertAdmin: jest.fn(async () => undefined),
       logWarn: jest.fn(),
       updateHostDeprovisionedRecord,
       markHostProjectsUnprovisioned,
@@ -65,6 +67,87 @@ describe("hosts teardown helpers", () => {
     expect(removeHostSshKnownHostAliasMock).toHaveBeenCalledWith({
       host_id: "e5536552-6cb0-4426-b214-212af4779efd",
       reason: "delete",
+    });
+  });
+
+  describe("project content DNS on force deprovision", () => {
+    const content_dns = {
+      name: "*.h-e55365526cb04426b214212af4779efd.usercontent.example.org",
+      record_id: "rec-1",
+      domain: "usercontent.example.org",
+    };
+    const run = async (releaseHostContentDns: jest.Mock) => {
+      const updateHostDeprovisionedRecord = jest.fn(async () => undefined);
+      const logWarn = jest.fn();
+      const alertAdmin = jest.fn(async (_opts: any) => undefined);
+      await markHostDeprovisionedInternal({
+        row: {
+          id: "e5536552-6cb0-4426-b214-212af4779efd",
+          metadata: {
+            machine: { cloud: "gcp" },
+            dns: { record_id: "dns-1" },
+            cloudflare_tunnel: { id: "tunnel-1" },
+            content_dns,
+          },
+        },
+        action: "delete",
+        logStatusUpdate: jest.fn(),
+        revokeProjectHostTokensForHost: jest.fn(async () => undefined),
+        // a tunnel site: the host record cleanup takes the tunnel branch
+        hasCloudflareTunnel: async () => true,
+        deleteCloudflareTunnel: jest.fn(async () => undefined),
+        hasDns: async () => true,
+        deleteHostDns: jest.fn(async () => undefined),
+        releaseHostContentDns,
+        alertAdmin,
+        logWarn,
+        updateHostDeprovisionedRecord,
+        markHostProjectsUnprovisioned: jest.fn(async () => undefined),
+        clearProjectHostMetrics: jest.fn(async () => undefined),
+        clearHostRuntimeDeployments: jest.fn(async () => undefined),
+        logCloudVmEvent: jest.fn(async () => undefined),
+        normalizeProviderId: (provider) => provider,
+      });
+      return { updateHostDeprovisionedRecord, logWarn, alertAdmin };
+    };
+
+    it("removes it whatever the route mode, then drops the record", async () => {
+      const releaseHostContentDns = jest.fn(async () => undefined);
+      const { updateHostDeprovisionedRecord, alertAdmin } = await run(
+        releaseHostContentDns,
+      );
+      expect(releaseHostContentDns).toHaveBeenCalledTimes(1);
+      expect(alertAdmin).not.toHaveBeenCalled();
+      expect(updateHostDeprovisionedRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nextMetadata: expect.not.objectContaining({ content_dns: expect.anything() }),
+        }),
+      );
+    });
+
+    it("keeps the record for a retry when removal fails", async () => {
+      const releaseHostContentDns = jest.fn(async () => {
+        throw new Error("forbidden");
+      });
+      const { updateHostDeprovisionedRecord, logWarn, alertAdmin } = await run(
+        releaseHostContentDns,
+      );
+      // An admin hears about it: the sweeper can't help if the token is the cause.
+      expect(alertAdmin).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: expect.stringContaining("content DNS not removed"),
+          body: expect.stringContaining(content_dns.name),
+        }),
+      );
+      expect(updateHostDeprovisionedRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nextMetadata: expect.objectContaining({ content_dns }),
+        }),
+      );
+      expect(logWarn).toHaveBeenCalledWith(
+        "force deprovision content DNS cleanup failed",
+        expect.objectContaining({ err: "Error: forbidden" }),
+      );
     });
   });
 
