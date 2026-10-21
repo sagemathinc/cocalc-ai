@@ -3158,3 +3158,71 @@ describe("membership-seat order fulfillment across bays", () => {
     await recordOnSeed({ admin, customer: admin });
   });
 });
+
+describe("admin credit attribution across bays", () => {
+  // Admin balance adjustments are read and attributed on the seed (billing
+  // authority), while the acting admin and the attributed admin may be homed
+  // on another bay.
+  it("lets an admin homed on the attached bay attribute a credit to another attached-bay admin", async () => {
+    const actor = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "olga",
+    });
+    const attributed = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "petra",
+    });
+    for (const account of [actor, attributed]) {
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(
+           "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+           [${JSON.stringify(account.account_id)}]);`,
+      );
+    }
+    const customer = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "quinn",
+    });
+    const result = await runInBay(
+      cluster,
+      SEED,
+      `const createCredit = server("purchases/create-credit.js").default;
+       const purchase_id = await createCredit({
+         account_id: ${JSON.stringify(customer.account_id)},
+         amount: 24,
+         tag: "admin-purchase",
+         description: {
+           description: "Admin balance adjustment",
+           purpose: "admin-balance-adjustment",
+         },
+       });
+       // Cluster-aware admin and account checks, as with the billing authority.
+       process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+       const attribution = server("purchases/admin-credit-attribution.js");
+       const actor = ${JSON.stringify(actor.account_id)};
+       const missing = await attribution.listAdminCreditAttribution({
+         admin_account_id: actor,
+         missing_only: true,
+       });
+       const attached = await attribution.attachAdminCreditAttribution({
+         admin_account_id: actor,
+         purchase_id,
+         attributed_admin_account_id: ${JSON.stringify(attributed.account_id)},
+         reason: "multibay attribution",
+         commit: true,
+       });
+       return {
+         purchase_id,
+         missing: missing.map((row) => row.purchase_id),
+         after: attached.after,
+       };`,
+    );
+    assert.ok(result.missing.includes(result.purchase_id));
+    assert.equal(result.after.source, "attached");
+    assert.equal(result.after.created_by, attributed.account_id);
+    assert.equal(result.after.attached_by, actor.account_id);
+  });
+});

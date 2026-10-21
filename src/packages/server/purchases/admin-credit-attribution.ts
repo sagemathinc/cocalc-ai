@@ -23,7 +23,8 @@ import {
   ensureAccountAdminAuditLogSchema,
   recordAccountAdminAuditEvent,
 } from "@cocalc/server/accounts/admin-audit";
-import userIsInGroup from "@cocalc/server/accounts/is-in-group";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { isBillingAccountAdmin } from "@cocalc/server/purchases/billing-account";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
   AdminCreditAttribution,
@@ -111,11 +112,25 @@ const SELECT = `
     FROM purchases p
    WHERE p.description->>'purpose' = 'admin-balance-adjustment'`;
 
+// Admins and attributed accounts may be homed on any bay, so both checks go
+// through the cluster account directory.
 async function assertAdmin(admin_account_id: string): Promise<void> {
-  if (!(await userIsInGroup(admin_account_id, "admin"))) {
+  if (!(await isBillingAccountAdmin(admin_account_id))) {
     throw Error("must be an admin");
   }
 }
+
+// The SQL condition for "no recorded creator": no balance-adjustment audit
+// entry, no creator in the old notes, and no attached attribution.
+const MISSING = `
+  NOT EXISTS (SELECT 1 FROM account_admin_audit_log
+               WHERE action = 'balance-adjustment'
+                 AND actor_account_id IS NOT NULL
+                 AND metadata->>'purchase_id' = p.id::text)
+  AND COALESCE(p.notes, '') !~ 'Admin-assisted purchase created by account \`[0-9a-fA-F-]{36}\`'
+  AND NOT EXISTS (SELECT 1 FROM account_admin_audit_log
+                   WHERE action = '${ATTRIBUTION_ACTION}'
+                     AND metadata->>'purchase_id' = p.id::text)`;
 
 export async function listAdminCreditAttribution({
   admin_account_id,
@@ -137,14 +152,12 @@ export async function listAdminCreditAttribution({
     `${SELECT}
        AND ($1::timestamptz IS NULL OR p.time >= $1)
        AND ($2::timestamptz IS NULL OR p.time < $2)
+       ${missing_only ? `AND ${MISSING}` : ""}
      ORDER BY p.time DESC, p.id DESC
      LIMIT $3`,
-    [iso(since), iso(until), missing_only ? MAX_LIMIT : n],
+    [iso(since), iso(until), n],
   );
-  const result = rows.map(attributionFromRow);
-  return missing_only
-    ? result.filter((row) => row.source === "missing").slice(0, n)
-    : result;
+  return rows.map(attributionFromRow);
 }
 
 export async function getAdminCreditAttribution(
@@ -196,11 +209,7 @@ export async function attachAdminCreditAttribution({
       `purchase ${id} is already attributed to ${before.created_by} (${before.source})`,
     );
   }
-  const { rows } = await getPool().query(
-    "SELECT 1 FROM accounts WHERE account_id = $1",
-    [attributed],
-  );
-  if (rows.length === 0) {
+  if ((await getClusterAccountById(attributed)) == null) {
     throw Error(`account ${attributed} does not exist`);
   }
   const after: AdminCreditAttribution = {
@@ -214,17 +223,30 @@ export async function attachAdminCreditAttribution({
   if (!commit) {
     return { committed: false, before, after };
   }
-  await recordAccountAdminAuditEvent({
-    account_id: before.account_id,
-    action: ATTRIBUTION_ACTION,
-    actor_account_id: admin_account_id,
-    reason: why,
-    metadata: {
-      purchase_id: id,
-      attributed_admin_account_id: attributed,
-      amount: before.amount,
-    },
-  });
+  try {
+    // A unique index allows one attribution per purchase
+    // (account_admin_audit_log_attribution_purchase_unique), so of two
+    // concurrent attaches exactly one is recorded.
+    await recordAccountAdminAuditEvent({
+      account_id: before.account_id,
+      action: ATTRIBUTION_ACTION,
+      actor_account_id: admin_account_id,
+      reason: why,
+      metadata: {
+        purchase_id: id,
+        attributed_admin_account_id: attributed,
+        amount: before.amount,
+      },
+    });
+  } catch (err) {
+    if ((err as any)?.code === "23505") {
+      const current = await getAdminCreditAttribution(id);
+      throw Error(
+        `purchase ${id} is already attributed to ${current?.created_by} (${current?.source})`,
+      );
+    }
+    throw err;
+  }
   return {
     committed: true,
     before,

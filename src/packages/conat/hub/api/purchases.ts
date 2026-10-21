@@ -2145,7 +2145,7 @@ export const purchases = {
   getClaimableMembershipPackages: authFirstRequireAccount,
   claimMembershipPackageSeat: authFirstRequireAccount,
   adminProvisionSiteLicense: authFirstRequireAccount,
-  adminListCreditAttribution: authFirstRequireAccount,
+  adminListCreditAttribution: authFirstRequireAccountWithBoundSession,
   adminAttachCreditAttribution: authFirstRequireAccountWithBoundSession,
   adminCreateMembershipPackagePurchase: authFirstRequireAccountWithBoundSession,
   listSiteLicenseOverviews: authFirstRequireAccount,

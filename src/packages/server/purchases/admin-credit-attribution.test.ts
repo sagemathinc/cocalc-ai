@@ -178,6 +178,59 @@ describe("admin credit attribution", () => {
     ).rejects.toThrow("is not an admin balance adjustment");
   });
 
+  it("records exactly one of two concurrent attributions of the same credit", async () => {
+    const purchase_id = await legacyCredit(user);
+    const results = await Promise.allSettled([
+      attachAdminCreditAttribution({
+        admin_account_id: admin,
+        purchase_id,
+        attributed_admin_account_id: otherAdmin,
+        reason: "first",
+        commit: true,
+      }),
+      attachAdminCreditAttribution({
+        admin_account_id: otherAdmin,
+        purchase_id,
+        attributed_admin_account_id: admin,
+        reason: "second",
+        commit: true,
+      }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((r) => r.status === "rejected") as
+      | PromiseRejectedResult
+      | undefined;
+    expect(`${rejected?.reason}`).toContain("already attributed");
+    const { rows } = await getPool().query(
+      `SELECT count(*)::int AS n FROM account_admin_audit_log
+        WHERE action='balance-adjustment-attribution'
+          AND metadata->>'purchase_id' = $1`,
+      [`${purchase_id}`],
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
+  it("finds a missing attribution below newer attributed credits, within the limit", async () => {
+    const missing = await legacyCredit(user);
+    for (let i = 0; i < 3; i++) {
+      await adminPurchase({
+        admin_account_id: admin,
+        balance_admin_note: `newer ${i}`,
+        price: 1,
+        product: "balance",
+        source: "free",
+        user_account_id: user,
+      });
+    }
+    const rows = await listAdminCreditAttribution({
+      admin_account_id: admin,
+      missing_only: true,
+      limit: 1,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ purchase_id: missing, source: "missing" });
+  });
+
   it("requires a reason and an existing account", async () => {
     const purchase_id = await legacyCredit(user);
     await expect(
