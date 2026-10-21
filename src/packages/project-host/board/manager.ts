@@ -83,9 +83,13 @@ export interface BoardSyncdb {
   // a change made from base, merged with whatever reached the document.
   from_str(value: string, opts?: { base?: string }): void;
   commit(): unknown;
-  save?(): Promise<void>;
-  on(event: "change" | "fence-refused", f: () => void): unknown;
-  removeListener(event: "change" | "fence-refused", f: () => void): unknown;
+  // Resolves with the refusal if the board write service refused it.
+  save?(): Promise<void | { refused: { code: string; message: string } }>;
+  on(event: "change" | "fence-refused", f: (refusal?: any) => void): unknown;
+  removeListener(
+    event: "change" | "fence-refused",
+    f: (refusal?: any) => void,
+  ): unknown;
   // Drop every patch not yet stored (a retired writer's).
   discardUnsaved?(): void;
 }
@@ -103,6 +107,9 @@ export interface BoardFile {
   // Call onChange (any number of times) when the file may have changed.
   // Returns a function that stops watching.
   watch(onChange: () => void): () => void;
+  // Keep text in a new file beside the board, never over any file; its
+  // path.
+  keepCopy?(text: string, kind: string): Promise<string>;
 }
 
 export interface BoardFileInfo {
@@ -128,7 +135,24 @@ export type BoardStatus =
   // The file changed by more than a merge on the host may cost (G2): it is
   // not merged; the file and the live document stay as they are, for an
   // isolated repair (A4).
-  | { state: "quarantined"; message: string };
+  | { state: "quarantined"; message: string }
+  // The board write service refused this writer (its fence or append rule):
+  // the board's history was changed elsewhere. Its unsaved edits are kept
+  // first (unsaved says where), and the board reopens with a new writer.
+  | {
+      state: "refused";
+      code: string;
+      message: string;
+      unsaved: BoardUnsaved;
+    };
+
+// Where a refused writer's unsaved edits are: in the board's file (they were
+// already there, or were saved to it), in a copy beside it (the file had
+// changed elsewhere), or nowhere, with why (never silently).
+export type BoardUnsaved =
+  | { in: "file" }
+  | { in: "copy"; path: string }
+  | { in: "nowhere"; error: string };
 
 export interface BoardManagerOptions {
   lib: BoardLib;
@@ -505,9 +529,9 @@ export class BoardManager {
       }
       this.syncdb.from_str(value, { base });
       this.syncdb.commit();
-      await this.syncdb.save?.();
+      const saved = await this.syncdb.save?.();
       // Refused by the board write service (onFenceRefused): not merged.
-      if (this.retired) return;
+      if (this.retired || (saved != null && "refused" in saved)) return;
     }
     this.diskText = text;
     this.diskRecords = value;
@@ -585,11 +609,79 @@ export class BoardManager {
   // or its append rule). Its saves are never tried again (dstream), so it
   // retires: what it had not stored is dropped, its host closes it, and the
   // board's next open starts a new writer with the service's current fence.
-  private onFenceRefused = (): void => {
-    this.syncdb.discardUnsaved?.();
-    this.log("board: the board write service refused this writer", {});
-    this.retire(this.status);
+  //
+  // A user's unsaved edits are never discarded silently (astra CORR-956-2):
+  // the document as it is now, refused patches and all, is captured at once
+  // and kept, in the board's file if it can be (it already holds it, or
+  // takes it the way every save writes it, only over the version this
+  // manager last saw), else in a copy beside it. Only then are the refused
+  // patches dropped, and the manager retires with a "refused" status that
+  // says where the edits are.
+  private onFenceRefused = (refusal?: { code?: string; message?: string }) => {
+    if (this.refusing != null || this.retired) return;
+    let text: string | undefined;
+    let error: string | undefined;
+    try {
+      text = this.documentText();
+    } catch (err) {
+      error = `${err}`;
+    }
+    this.log("board: the board write service refused this writer", {
+      code: refusal?.code,
+    });
+    this.refusing = this.run(() =>
+      this.keepUnsavedAndRetire(text, error, refusal),
+    );
   };
+  private refusing?: Promise<void>;
+
+  private async keepUnsavedAndRetire(
+    text: string | undefined,
+    error: string | undefined,
+    refusal?: { code?: string; message?: string },
+  ): Promise<void> {
+    let unsaved: BoardUnsaved;
+    if (text === undefined) {
+      unsaved = { in: "nowhere", error: error ?? "no document" };
+    } else {
+      try {
+        const now = await this.file.read(this.hardMaxBytes);
+        const current = now != null && "text" in now ? now.text : undefined;
+        if (current === text) {
+          unsaved = { in: "file" };
+        } else if (
+          current !== undefined &&
+          current === this.diskText &&
+          (await this.file.replace(text, this.diskText)) === "ok"
+        ) {
+          this.diskText = text;
+          unsaved = { in: "file" };
+        } else if (this.file.keepCopy != null) {
+          unsaved = {
+            in: "copy",
+            path: await this.file.keepCopy(text, "unsaved"),
+          };
+        } else {
+          unsaved = { in: "nowhere", error: "no place to keep a copy" };
+        }
+      } catch (err) {
+        unsaved = { in: "nowhere", error: `${err}`.slice(0, 500) };
+      }
+    }
+    this.syncdb.discardUnsaved?.();
+    const where =
+      unsaved.in === "file"
+        ? "your unsaved edits are kept in the board's file"
+        : unsaved.in === "copy"
+          ? `your unsaved edits are kept in ${unsaved.path}; open it to copy what you need`
+          : `your unsaved edits could not be kept (${unsaved.error})`;
+    this.retire({
+      state: "refused",
+      code: refusal?.code ?? "refused",
+      message: `this board was changed elsewhere, so it was reopened: ${where}`,
+      unsaved,
+    });
+  }
 
   // Call f when this manager retires.
   onRetire(f: () => void): void {

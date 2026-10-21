@@ -1185,6 +1185,25 @@ export class PersistentStream extends EventEmitter {
     };
   };
 
+  // What a strict-msgID set of this message would do, without doing it
+  // (setInternal's own rule, from the same msgID table): "new" if its msgID
+  // isn't stored (it would be written), "duplicate" if it is and the stored
+  // message is this one byte for byte (nothing would be written),
+  // "conflict" if it is another message (it would be refused). The board
+  // write service projects its append check over exactly what will be
+  // written (board-append.ts), in the same synchronous step as the store.
+  msgIDOutcome = (
+    msgID: string | undefined,
+    encoding: DataEncoding,
+    raw: Buffer,
+  ): "new" | "duplicate" | "conflict" => {
+    if (msgID == null || !this.msgIDs?.has(msgID)) return "new";
+    const existing = this.msgIDs.get(msgID)! as { seq: number };
+    return this.storedIs(existing.seq, encoding, raw)
+      ? "duplicate"
+      : "conflict";
+  };
+
   // Whether the message stored at seq is this one, byte for byte (its
   // encoding and its uncompressed bytes), read within the record cap.
   private storedIs = (

@@ -71,6 +71,11 @@ const FENCE_REFUSALS = new Set([
   "msgid-conflict",
 ]);
 
+// What save() resolves with when the board write service refused the writer.
+export interface SaveRefused {
+  refused: { code: string; message: string };
+}
+
 export interface DStreamOptions {
   // what it's called by us
   name: string;
@@ -293,7 +298,7 @@ export class DStream<T = any> extends EventEmitter {
         (async () => {
           // Joining the current batch alone would miss messages queued after
           // it started. No new writes are admitted once closing begins.
-          while (this.hasUnsavedChanges()) {
+          while (this.hasUnsavedChanges() && this.fenceRefused == null) {
             await this.attemptToSaveBatch();
           }
         })(),
@@ -573,7 +578,10 @@ export class DStream<T = any> extends EventEmitter {
   // FENCE_REFUSALS code): every later attempt would be refused the same way.
   private fenceRefused?: { code: string; message: string };
 
-  save = reuseInFlight(async () => {
+  // Resolves when everything is saved, or with the refusal if the board
+  // write service refused this writer (then nothing more is saved: never
+  // resolved as if it were).
+  save = reuseInFlight(async (): Promise<SaveRefused | void> => {
     //console.log("save", this.noAutosave);
     await until(
       async () => {
@@ -597,6 +605,7 @@ export class DStream<T = any> extends EventEmitter {
       },
       { start: 150, decay: 1.3, max: 10000 },
     );
+    if (this.fenceRefused != null) return { refused: this.fenceRefused };
   });
 
   /*

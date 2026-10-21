@@ -31,6 +31,12 @@ import {
 export interface AppendStream {
   seqBounds(): { newest_retained_seq?: number };
   getAll(): Iterable<{ encoding: any; raw: Buffer; key?: string }>;
+  // What a strict-msgID set of this message would do (storage.ts).
+  msgIDOutcome(
+    msgID: string | undefined,
+    encoding: any,
+    raw: Buffer,
+  ): "new" | "duplicate" | "conflict";
 }
 
 // A record's identity: its encoding and exact bytes, as stored.
@@ -97,16 +103,34 @@ function checkFor(stream: AppendStream): BoardAppendCheck {
 }
 
 // The records a set or setMany request would store: decoded, with the
-// digest of the bytes it would store and the storage key it names.
+// digest of the bytes it would store, the storage key it names, and whether
+// storage will write it at all: a record whose msgID is stored with exactly
+// this record is a duplicate (a no-op); one whose msgID is stored with
+// another record is refused here ("msgid-conflict"), as storage would refuse
+// it. Resolved against the stream in the same synchronous step as the check
+// and the store (server.ts), so the append check projects exactly what
+// storage writes (CORR-956-1).
 export function requestRecords(
-  request: { cmd?: unknown; key?: unknown },
+  request: { cmd?: unknown; key?: unknown; msgID?: unknown },
   mesg: { raw?: Buffer; encoding?: any; data?: any },
+  stream?: Pick<AppendStream, "msgIDOutcome">,
 ): AppendRecord[] | undefined {
   const record = (
     encoding: any,
     data: Buffer | undefined,
     key: unknown,
+    msgID: unknown,
   ): AppendRecord => {
+    const outcome =
+      stream == null || typeof msgID !== "string"
+        ? "new"
+        : stream.msgIDOutcome(msgID, encoding, data ?? Buffer.alloc(0));
+    if (outcome === "conflict") {
+      throw new ConatError(
+        `a different message with msgID ${msgID}, which is already stored`,
+        { code: "msgid-conflict" },
+      );
+    }
     let value: unknown;
     try {
       value = decode({ encoding, data });
@@ -120,19 +144,21 @@ export function requestRecords(
       digest: digestOf(encoding, data),
       bytes: data?.length ?? 0,
       key: key == null ? undefined : `${key}`,
+      ...(outcome === "duplicate" ? { duplicate: true } : {}),
     };
   };
   if (request.cmd === "set") {
-    return [record(mesg.encoding, mesg.raw, request.key)];
+    return [record(mesg.encoding, mesg.raw, request.key, request.msgID)];
   }
   if (request.cmd === "setMany") {
     return (
       mesg.data as {
         key?: unknown;
+        msgID?: unknown;
         messageData: { raw: Buffer; encoding: any };
       }[]
-    ).map(({ key, messageData }) =>
-      record(messageData.encoding, messageData.raw, key),
+    ).map(({ key, msgID, messageData }) =>
+      record(messageData.encoding, messageData.raw, key, msgID),
     );
   }
   return undefined;
@@ -153,21 +179,27 @@ export function appendHead(stream: AppendStream): string | undefined {
   return checkFor(stream).currentHead;
 }
 
-// After a successful store: the new head, at the stream's newest seq, but
-// only if every record was new and the store wrote each of them (each got a
-// seq the graph wasn't read at yet). Otherwise (a record sent again, which
-// may or may not have been stored again, or one deduplicated) the graph is
-// read from the stream again before the next append, so the cache never
-// differs from what the stream holds.
+// After a successful store: the new head, at the stream's newest seq, if
+// storage wrote exactly what the check projected (each record it was to
+// write got a seq the graph wasn't read at; each duplicate got its stored
+// record's seq, nothing written). Otherwise (an error, any surprise) the
+// graph is read from the stream again before the next append, so the cache
+// never differs from what the stream holds. That read is bounded by the open
+// check's caps and stops at the first refusal; it is repeated after each
+// such store, and after any delete or reset.
 export function commitAppend(
   stream: AppendStream,
   { check, next }: ReturnType<typeof appendCheck>,
   results: { seq: number }[],
 ): void {
-  const written = next.fresh.every(
-    (fresh, i) => fresh && (results[i]?.seq ?? -Infinity) > check.atSeq,
-  );
-  if (written && results.length === next.fresh.length) {
+  const asProjected =
+    results.length === next.written.length &&
+    next.written.every((written, i) => {
+      const seq = results[i]?.seq;
+      if (seq == null) return false;
+      return written ? seq > check.atSeq : seq <= check.atSeq;
+    });
+  if (asProjected) {
     check.commit(next, newestSeq(stream));
   } else {
     checks.delete(stream);
