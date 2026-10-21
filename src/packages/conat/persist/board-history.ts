@@ -128,14 +128,37 @@ export function snapshotBody(value: unknown): string | undefined {
     : undefined;
 }
 
-function parsesAsJson(text: string): boolean {
+// What is wrong with a stored patch (or merge patch), if anything: "json"
+// if it doesn't parse; "shape" if it isn't a board (db document) patch, an
+// array of (op, records) pairs with each records operand a list of objects,
+// or none (codex 4333184438: anything else throws when it is replayed).
+// Whether each object fits the board's schema is not checked here: a replay
+// that fails anyway is a damaged history like any other.
+function patchProblem(text: string): "json" | "shape" | undefined {
+  let patch: unknown;
   try {
-    JSON.parse(text);
-    return true;
+    patch = JSON.parse(text);
   } catch {
-    return false;
+    return "json";
   }
+  if (!Array.isArray(patch)) return "shape";
+  for (let i = 1; i < patch.length; i += 2) {
+    const records = patch[i];
+    if (records == null) continue;
+    if (!Array.isArray(records)) return "shape";
+    for (const x of records) {
+      if (x == null || typeof x !== "object" || Array.isArray(x)) {
+        return "shape";
+      }
+    }
+  }
+  return undefined;
 }
+
+const patchInvalid = (what: string, problem: "json" | "shape") =>
+  problem === "json"
+    ? `a record whose ${what} is not JSON`
+    : `a record whose ${what} isn't a board patch`;
 
 // A record's identity when its caller has none (its stored bytes' digest,
 // as the append check uses): its decoded value.
@@ -236,9 +259,9 @@ export function parseBoardRecord(
   }
   // SyncDoc parses a patch (and a merge patch, with its merge parent) as
   // JSON when it loads the record: one that doesn't parse can't be opened.
-  if (typeof r.patch === "string" && !parsesAsJson(r.patch)) {
-    return { invalid: "a record whose patch is not JSON" };
-  }
+  const problem =
+    typeof r.patch === "string" ? patchProblem(r.patch) : undefined;
+  if (problem != null) return { invalid: patchInvalid("patch", problem) };
   if (r.merge_parent != null && !validId(r.merge_parent, limits)) {
     return { invalid: "a record with an invalid merge parent" };
   }
@@ -251,12 +274,12 @@ export function parseBoardRecord(
   if (r.merge_patch != null && typeof r.merge_patch !== "string") {
     return { invalid: "a record whose merge patch is not a string" };
   }
-  if (
-    r.merge_parent != null &&
-    typeof r.merge_patch === "string" &&
-    !parsesAsJson(r.merge_patch)
-  ) {
-    return { invalid: "a record whose merge patch is not JSON" };
+  const mergeProblem =
+    r.merge_parent != null && typeof r.merge_patch === "string"
+      ? patchProblem(r.merge_patch)
+      : undefined;
+  if (mergeProblem != null) {
+    return { invalid: patchInvalid("merge patch", mergeProblem) };
   }
   return { time: r.time, parents: parents as string[], snapshot: false };
 }

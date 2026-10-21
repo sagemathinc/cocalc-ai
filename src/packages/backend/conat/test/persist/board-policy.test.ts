@@ -209,11 +209,14 @@ test("a first reader can't choose how the host's writes are stored", async () =>
   await raw.getAll();
   // The host's writes go through, stored with the server's own options.
   const writer = await writerStream(project_id, path);
-  writer.publish({ ...rec(1), patch: JSON.stringify("x".repeat(10_000)) });
+  writer.publish({
+    ...rec(1),
+    patch: JSON.stringify([1, [{ v: "x".repeat(10_000) }]]),
+  });
   await writer.save();
   const check = await readerStream(project_id, path);
   expect(check.getAll()).toEqual([
-    { ...rec(1), patch: JSON.stringify("x".repeat(10_000)) },
+    { ...rec(1), patch: JSON.stringify([1, [{ v: "x".repeat(10_000) }]]) },
   ]);
   raw.close();
   writer.close();
@@ -518,7 +521,7 @@ describe("the write service keeps a board's history one chain (G1)", () => {
         {
           messageData: messageData({
             ...rec(3, 2),
-            patch: JSON.stringify("x".repeat(1000)),
+            patch: JSON.stringify([1, [{ v: "x".repeat(1000) }]]),
           }),
         },
       ],

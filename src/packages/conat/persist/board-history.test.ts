@@ -7,6 +7,8 @@ import {
 } from "./board-history";
 
 // A patch record and a snapshot record, as SyncDoc writes them.
+// A board patch (one set of one record) that carries tag, to tell records apart.
+const bp = (tag: string) => JSON.stringify([1, [{ id: "r", v: tag }]]);
 const patch = (time: string, parents: string[] = [], extra = {}) => ({
   time,
   parents,
@@ -471,18 +473,18 @@ describe("the append rule", () => {
   });
 
   test("astra's round 2: a retry changes nothing only if it is the stored record exactly", () => {
-    const a = stored([patch("A", [], { patch: '"old"' })]);
+    const a = stored([patch("A", [], { patch: bp("old") })]);
     // The same time and parents, another payload: refused (PatchGraph keeps
     // the first, so a reopened board could differ from the live one).
-    expect(() => a.check([patch("A", [], { patch: '"new"' })])).toThrow(
+    expect(() => a.check([patch("A", [], { patch: bp("new") })])).toThrow(
       /different patch at A/,
     );
     // The same payload, other parents: refused.
-    expect(() => a.check([patch("A", ["A0"], { patch: '"old"' })])).toThrow(
+    expect(() => a.check([patch("A", ["A0"], { patch: bp("old") })])).toThrow(
       /different patch at A/,
     );
     // Exactly the stored record again: nothing changes.
-    expect(a.check([patch("A", [], { patch: '"old"' })])).toEqual({
+    expect(a.check([patch("A", [], { patch: bp("old") })])).toEqual({
       head: "A",
       added: [],
       digests: [],
@@ -493,8 +495,8 @@ describe("the append rule", () => {
     // Within one batch too.
     expect(() =>
       a.check([
-        patch("B", ["A"], { patch: '"b"' }),
-        patch("B", ["A"], { patch: '"b2"' }),
+        patch("B", ["A"], { patch: bp("b") }),
+        patch("B", ["A"], { patch: bp("b2") }),
       ]),
     ).toThrow(/different patch at B/);
   });
@@ -539,8 +541,16 @@ describe("the append rule", () => {
   test("a stored history with two different records at one time takes no appends", () => {
     const c = BoardAppendCheck.fromRecords(
       [
-        { value: patch("A", [], { patch: '"old"' }), digest: "old", bytes: 10 },
-        { value: patch("A", [], { patch: '"new"' }), digest: "new", bytes: 10 },
+        {
+          value: patch("A", [], { patch: bp("old") }),
+          digest: "old",
+          bytes: 10,
+        },
+        {
+          value: patch("A", [], { patch: bp("new") }),
+          digest: "new",
+          bytes: 10,
+        },
       ],
       0,
     );
@@ -622,7 +632,7 @@ describe("an append never makes a history the open check refuses", () => {
     const c = BoardAppendCheck.fromRecords(R(records), 0, limits);
     expect(() =>
       c.check(
-        R([patch("t3", ["t2"], { patch: "[" + "1,".repeat(40) + "1]" })]),
+        R([patch("t3", ["t2"], { patch: "[" + "1,null,".repeat(20) + "1]" })]),
         limits,
       ),
     ).toThrow(/bytes/);
@@ -645,10 +655,7 @@ describe("an append never makes a history the open check refuses", () => {
     const limits = { ...L, suffixBytes: 400 };
     const c = BoardAppendCheck.fromRecords(R(chain(2)), 0, limits);
     expect(() =>
-      c.check(
-        R([patch("t2", ["t1"], { patch: `"${"x".repeat(300)}"` })]),
-        limits,
-      ),
+      c.check(R([patch("t2", ["t1"], { patch: bp("x".repeat(300)) })]), limits),
     ).toThrow(/bytes of patches/);
   });
 
@@ -705,7 +712,7 @@ describe("an append never makes a history the open check refuses", () => {
           if (x < 0.6 || times.length === 0) {
             batch.push(
               patch(`p${n++}`, last == null ? [] : [last], {
-                patch: `"${"y".repeat(Math.floor(rand() * 80))}"`,
+                patch: bp("y".repeat(Math.floor(rand() * 80))),
               }),
             );
           } else if (x < 0.9) {
@@ -756,8 +763,8 @@ describe("the open check and the append check agree (codex round 6)", () => {
   });
 
   test("a copy of a patch must be the same record, not only the same parents (4332146123)", () => {
-    const a = patch("A", [], { patch: '"one"' });
-    const b = patch("A", [], { patch: '"two"' });
+    const a = patch("A", [], { patch: bp("one") });
+    const b = patch("A", [], { patch: bp("two") });
     expect(check([a, b])).toMatchObject({
       ok: false,
       reason: "invalid",
@@ -846,4 +853,44 @@ test("codex 4332816476: a merge parent must be one of the record's parents", () 
     const c = BoardAppendCheck.fromRecords(R(records.slice(0, 2)), 0);
     expect(() => c.check(R([bad]))).toThrow(/merge (parent|patch)/);
   }
+});
+
+test("codex 4333184438: a patch (or merge patch) must be a board patch: (op, list of objects) pairs", () => {
+  for (const good of [
+    "[]",
+    "[-1,[{}]]",
+    '[1,[{"id":"a"}],-1,[{"id":"b"}]]',
+    "[1]",
+    "[1,null]",
+  ]) {
+    expect(check([patch("A", [], { patch: good })])).toMatchObject({
+      ok: true,
+    });
+  }
+  for (const bad of [
+    "1",
+    '{"a":1}',
+    "[1,5]",
+    '[1,["x"]]',
+    "[1,[[]]]",
+    "[-1,[null]]",
+  ]) {
+    const record = patch("A", [], { patch: bad });
+    expect(check([record])).toMatchObject({ ok: false, reason: "invalid" });
+    const c = BoardAppendCheck.fromRecords([], 0);
+    const R = (records: any[]) =>
+      records.map((value) => ({
+        value,
+        digest: JSON.stringify(value),
+        bytes: JSON.stringify(value).length,
+      }));
+    expect(() => c.check(R([record]))).toThrow(/isn't a board patch/);
+  }
+  // A merge patch, likewise.
+  expect(
+    check([
+      patch("a"),
+      patch("m", ["a"], { merge_parent: "a", merge_patch: "[1,5]" }),
+    ]),
+  ).toMatchObject({ ok: false, reason: "invalid" });
 });
