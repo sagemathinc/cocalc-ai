@@ -29,6 +29,18 @@ import type { FileArtifactAction } from "./file-artifact";
 
 const PREVIEW_LIMIT = 1024 * 1024;
 
+/** Black or white text, whichever reads better on a #rrggbb background
+ * (WCAG relative luminance). */
+export function readableOn(hex: string): string {
+  const channel = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const l = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+  // Contrast with black (l + 0.05) / 0.05 against white 1.05 / (l + 0.05).
+  return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? "#000000" : "#ffffff";
+}
+
 export default function CalendarArtifact({
   path,
   historical,
@@ -319,7 +331,21 @@ function Item({
               {event.title}
             </span>
           )}{" "}
-          {category && <Tag color={category.color}>{category.label}</Tag>}
+          {category && (
+            <Tag
+              style={
+                category.color
+                  ? {
+                      background: category.color,
+                      borderColor: category.color,
+                      color: readableOn(category.color),
+                    }
+                  : undefined
+              }
+            >
+              {category.label}
+            </Tag>
+          )}
           {status && status !== "scheduled" && <Tag>{status}</Tag>}
           {o.due != null && (
             <span

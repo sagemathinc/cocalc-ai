@@ -756,6 +756,39 @@ describe("iCalendar export", () => {
     ]);
   });
 
+  it("a time the clocks skip moves forward across the gap, consistently", () => {
+    // 02:30 does not exist in Seattle on March 14, 2027: it is 03:30 PDT.
+    const cal = single([
+      {
+        id: "g",
+        title: "Gap",
+        start: "2027-03-14T02:30",
+        recurrence: { freq: "daily", count: 2 },
+      },
+    ]);
+    const [first, second] = calendarOccurrences(
+      cal,
+      Date.parse("2027-03-14T00:00:00Z"),
+      Date.parse("2027-03-16T00:00:00Z"),
+    );
+    expect(iso(first.start)).toBe("2027-03-14T10:30:00.000Z");
+    expect(iso(second.start)).toBe("2027-03-15T10:30:00.000Z");
+    expect(calendarToIcs(cal, { nowMs: 0 })).toContain(
+      "DTSTART;TZID=America/Los_Angeles:20270314T033000",
+    );
+    // An ordinary time, and the repeated fall-back hour's first 01:30.
+    const at = (start: string) =>
+      iso(
+        calendarOccurrences(
+          single([{ id: "t", title: "T", start }]),
+          Date.parse("2026-01-01T00:00:00Z"),
+          Date.parse("2028-01-01T00:00:00Z"),
+        )[0].start,
+      );
+    expect(at("2027-07-01T09:00")).toBe("2027-07-01T16:00:00.000Z");
+    expect(at("2026-11-01T01:30")).toBe("2026-11-01T08:30:00.000Z");
+  });
+
   it("finds a long recurring occurrence that began before the range", () => {
     const week = single([
       {

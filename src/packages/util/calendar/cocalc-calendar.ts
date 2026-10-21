@@ -629,15 +629,20 @@ function zonedMs(
   timeZone: string,
 ): number {
   const target = Date.UTC(y, mo - 1, d, h, mi, s);
-  let candidate = target;
-  for (let i = 0; i < 4; i++) {
-    const p = zonedParts(candidate, timeZone);
-    const off =
-      target - Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-    if (off === 0) break;
-    candidate += off;
+  // How far the zone's wall clock is from UTC at an instant.
+  const offset = (t: number) => {
+    const p = zonedParts(t, timeZone);
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - t;
+  };
+  // The usual case, and a repeated (fall-back) hour: its first instant.
+  for (const guess of [target - offset(target), target]) {
+    const candidate = target - offset(guess);
+    if (candidate + offset(candidate) === target) return candidate;
   }
-  return candidate;
+  // A time the clocks skip (spring forward) does not exist: read it with
+  // the offset before the change, which lands as far past the gap (02:30
+  // becomes 03:30), as calendar apps do.
+  return target - offset(target - DAY_MS);
 }
 
 /** When a calendar time string is; a date is its local midnight. */

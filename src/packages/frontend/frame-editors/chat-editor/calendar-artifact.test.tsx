@@ -4,7 +4,7 @@
  */
 
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import CalendarArtifact from "./calendar-artifact";
+import CalendarArtifact, { readableOn } from "./calendar-artifact";
 import { isCalendarPath } from "./file-artifact";
 
 const readFile = jest.fn();
@@ -268,4 +268,29 @@ test("a full-size page gets the tools for its own header", async () => {
   expect(tools.map((t) => t.key)).toEqual(["open", "ics", "refresh"]);
   expect(tools.find((t) => t.key === "ics").disabled).toBe(false);
   expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+});
+
+test("category labels stay legible on any color", () => {
+  expect(readableOn("#ffffff")).toBe("#000000");
+  expect(readableOn("#ffd43b")).toBe("#000000");
+  expect(readableOn("#000000")).toBe("#ffffff");
+  expect(readableOn("#1971c2")).toBe("#ffffff");
+});
+
+test("a light category gets dark text", async () => {
+  readFile.mockResolvedValue(
+    JSON.stringify({
+      ...calendar,
+      categories: { tax: { label: "Tax filing", color: "#ffffff" } },
+    }),
+  );
+  render(
+    <CalendarArtifact
+      path="/home/user/a.cal.json"
+      historical={false}
+      now={NOW}
+    />,
+  );
+  const [tag] = await screen.findAllByText("Tax filing");
+  expect(tag).toHaveStyle({ color: "#000000" });
 });
