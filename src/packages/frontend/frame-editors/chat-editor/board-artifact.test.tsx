@@ -17,10 +17,13 @@ import {
   BOARD_FRAME_HIDDEN_TTL_MS,
   BOARD_FRAME_MAX_HIDDEN,
   BOARD_FRAME_PENDING_MS,
+  attachBoardFrame,
   createBoardFrame,
+  getBoardFrame,
   layoutBoardFrames,
   resetBoardFrames,
 } from "./board-frame-host";
+import * as frameHost from "./board-frame-host";
 
 const readFile = jest.fn();
 const stat = jest.fn();
@@ -569,6 +572,88 @@ test("Refresh in one of two places: the other place shows, focuses and hides the
   expect(replaced.isConnected).toBe(true);
   expect(replaced.style.visibility).toBe("hidden");
   expect(replaced.style.pointerEvents).toBe("none");
+});
+
+test("a cached frame retrieved by a remount is claimed until it attaches, not dropped at its time", () => {
+  jest.useFakeTimers({ now: Date.now() });
+  try {
+    const frame = createBoardFrame({
+      key: "claimed",
+      path: PATH,
+      frameUrl: FRAME,
+      sandbox: "allow-scripts",
+      text: TEXT,
+      name: "overnight.board.json",
+      title: TITLE,
+    });
+    // Shown, then hidden: its time starts.
+    const element = document.createElement("div");
+    document.body.appendChild(element);
+    attachBoardFrame(frame, element, () => {})();
+    jest.advanceTimersByTime(BOARD_FRAME_HIDDEN_TTL_MS - 100);
+    // A remount finds it, just before its time is up...
+    expect(getBoardFrame("claimed")).toBe(frame);
+    // ...and it is kept past it, while the card attaches.
+    jest.advanceTimersByTime(200);
+    expect(frame.iframe.isConnected).toBe(true);
+    // Never attached: once the claim lapses, it goes as a hidden frame.
+    jest.advanceTimersByTime(BOARD_FRAME_PENDING_MS + 10);
+    expect(frame.iframe.isConnected).toBe(false);
+    element.remove();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("a frame lost before the card could attach it is read again, never a blank card", async () => {
+  const { view, frame } = await renderBoard();
+  view.unmount();
+  const live = jest
+    .spyOn(frameHost, "isBoardFrameLive")
+    .mockReturnValueOnce(false);
+  try {
+    render(<Board />);
+    await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
+    await screen.findByText("Current saved board");
+    const shown = screen.getByTitle(TITLE);
+    expect(shown).not.toBe(frame);
+  } finally {
+    live.mockRestore();
+  }
+});
+
+test("hiding a frame that has focus moves focus to a visible control first", async () => {
+  const view = render(
+    <div>
+      <button>before</button>
+      <Board />
+      <button>after</button>
+    </div>,
+  );
+  const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+  await screen.findByText("Current saved board");
+  const shown = placeholder(view.container);
+  const size = jest
+    .spyOn(shown, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 50, 400, 300));
+  act(() => layoutBoardFrames());
+  act(() => shown.focus());
+  expect(document.activeElement).toBe(frame);
+  // The card is hidden (a tab switch, say): focus leaves the frame for the
+  // next visible control, not an invisible board.
+  size.mockReturnValue(rect(0, 0, 0, 0));
+  act(() => layoutBoardFrames());
+  expect(frame.style.visibility).toBe("hidden");
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "after" }),
+  );
+  // And when the card goes while the frame has focus, focus leaves it too.
+  size.mockReturnValue(rect(10, 50, 400, 300));
+  act(() => layoutBoardFrames());
+  act(() => shown.focus());
+  expect(document.activeElement).toBe(frame);
+  view.unmount();
+  expect(document.activeElement).not.toBe(frame);
 });
 
 test("refuses a board over the preview limit without reading it", async () => {

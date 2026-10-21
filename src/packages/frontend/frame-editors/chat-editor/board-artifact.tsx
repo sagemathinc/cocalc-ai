@@ -36,6 +36,7 @@ import {
   createBoardFrame,
   focusBoardFrame,
   getBoardFrame,
+  isBoardFrameLive,
   type BoardFrame,
 } from "./board-frame-host";
 
@@ -138,6 +139,13 @@ export default function BoardArtifact({
   useLayoutEffect(() => {
     const element = placeholderRef.current;
     if (frame == null || element == null) return;
+    // A frame dropped before this card could attach it (claimed frames are
+    // kept, but never show a blank card): read the board again.
+    if (!isBoardFrameLive(frame)) {
+      setFrame(undefined);
+      setRefresh((r) => r + 1);
+      return;
+    }
     return attachBoardFrame(frame, element, (state) => {
       setFrameError(state.frameError);
       setShownElsewhere(!state.active);

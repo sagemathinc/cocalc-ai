@@ -168,7 +168,21 @@ function notify(entry: Entry): void {
   }
 }
 
-function hide(entry: Entry): void {
+// Hide a frame. If focus is in it, it first moves to the nearest visible
+// control around the place it was shown (`from`), so keystrokes never go to
+// an invisible board; with none, focus leaves the frame.
+function hide(entry: Entry, from?: HTMLElement): void {
+  if (document.activeElement === entry.iframe) {
+    const target =
+      from?.isConnected === true
+        ? (adjacentControl(from, true) ?? adjacentControl(from, false))
+        : undefined;
+    if (target != null) {
+      target.focus();
+    } else {
+      entry.iframe.blur();
+    }
+  }
   Object.assign(entry.iframe.style, {
     visibility: "hidden",
     pointerEvents: "none",
@@ -337,7 +351,7 @@ export function layoutBoardFrames(): void {
       bottom <= top ||
       !shownToUser(placeholder.element)
     ) {
-      hide(entry);
+      hide(entry, placeholder.element);
       continue;
     }
 
@@ -430,7 +444,18 @@ function evictHidden(now = Date.now()): void {
 /** The live frame for this view, if there is one. */
 export function getBoardFrame(key: string): BoardFrame | undefined {
   evictHidden();
-  return entries.get(key);
+  const entry = entries.get(key);
+  // Claimed for the card that asked, until it attaches: pending, so neither
+  // its time nor the limit drops it meanwhile (as for a new frame).
+  if (entry != null && entry.placeholders.length === 0) {
+    entry.pendingSince = Date.now();
+  }
+  return entry;
+}
+
+/** Whether this frame (or the one that replaced it) is still live. */
+export function isBoardFrameLive(frame: BoardFrame): boolean {
+  return liveEntry(frame) != null;
 }
 
 /** A new frame for this view, replacing any earlier one; it loads at once,
@@ -547,7 +572,7 @@ export function attachBoardFrame(
     element.removeAttribute("aria-owns");
     if (entry.placeholders.length === 0) {
       entry.hiddenSince = Date.now();
-      hide(entry);
+      hide(entry, element);
       evictHidden();
     } else {
       notify(entry);
