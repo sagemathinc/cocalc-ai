@@ -56,6 +56,20 @@ import { runNativeFsTask } from "@cocalc/backend/sandbox/native-fs-limit";
 // operation; without a timeout it still stops after this long.
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
+// A check for a copy's options that throws once its timeout (from now) has
+// passed or its checkpoint says stop. Run before every entry and before
+// anything is published, so an expired copy never places more.
+export function copyDeadline(options: BeneathCopyOptions): () => void {
+  const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + timeout;
+  return () => {
+    if (Date.now() > deadline) {
+      throw codedError("ETIMEDOUT", `copy stopped after ${timeout} ms`);
+    }
+    options.checkpoint?.();
+  };
+}
+
 // Mode bits a copy keeps: permissions and the sticky bit, as cp does, but
 // never setuid or setgid, which a project's file must not get on the host.
 const KEPT_MODE = 0o1777;
@@ -289,7 +303,9 @@ class Copier {
   private readonly src: SandboxRoot;
   private readonly dest: SandboxRoot;
 
-  private readonly deadline: number;
+  // Throws once the copy's deadline has passed or its checkpoint says stop:
+  // before each entry, before data starts to move, and before placing.
+  private readonly check: () => void;
 
   constructor(
     private readonly srcRoot: string,
@@ -300,23 +316,11 @@ class Copier {
   ) {
     this.src = new SandboxRoot(srcRoot);
     this.dest = new SandboxRoot(destRoot);
-    this.deadline = Date.now() + (options.timeout ?? DEFAULT_TIMEOUT_MS);
+    this.check = copyDeadline(options);
   }
 
   private get force(): boolean {
     return this.options.force ?? true;
-  }
-
-  // Throws once the copy's deadline has passed or its checkpoint says stop:
-  // before each entry, and again before data starts to move.
-  private check(): void {
-    if (Date.now() > this.deadline) {
-      throw codedError(
-        "ETIMEDOUT",
-        `copy stopped after ${this.options.timeout ?? DEFAULT_TIMEOUT_MS} ms`,
-      );
-    }
-    this.options.checkpoint?.();
   }
 
   // With errorOnExist (and no force), the copy's destination must not exist:
@@ -399,6 +403,9 @@ class Copier {
             constants.COPYFILE_FICLONE,
           );
         });
+        // Data that finished after the deadline is not published: the
+        // temporary file is removed below.
+        this.check();
         // Never setuid/setgid from a project's file (the sticky bit stays).
         fchmodSync(destFd, (fstatSync(srcFd).mode ?? entry.mode) & KEPT_MODE);
         if (this.options.preserveTimestamps) {
@@ -443,6 +450,7 @@ class Copier {
       return;
     }
     const target = await readlinkBeneath(this.src, this.srcRoot, srcRel);
+    this.check();
     const tmp = tempSibling(destRel);
     this.dest.symlink(target, tmp);
     try {

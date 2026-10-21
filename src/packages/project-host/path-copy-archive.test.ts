@@ -344,4 +344,104 @@ describe("path copy archive listings", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  function raceRenames(root: string, racer: (call: number) => boolean) {
+    const { SandboxRoot } = require("@cocalc/openat2");
+    const real = SandboxRoot.prototype.renameNoReplace;
+    let call = 0;
+    return jest
+      .spyOn(SandboxRoot.prototype, "renameNoReplace")
+      .mockImplementation(function (this: any, from: string, to: string) {
+        if (to === "destination" && from.includes("cocalc-incoming")) {
+          call += 1;
+          if (racer(call)) {
+            require("node:fs").writeFileSync(
+              path.join(root, "destination"),
+              `racer ${call}`,
+            );
+          }
+        }
+        return real.call(this, from, to);
+      });
+  }
+
+  it("keeps replacing when the destination reappears after the old one was moved aside", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-reappear-"));
+    // The second placement (after moving the original aside) meets a racer.
+    const spy = raceRenames(root, (call) => call === 2);
+    try {
+      await writeFile(path.join(root, "source"), "from source");
+      await writeFile(path.join(root, "destination"), "original");
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "source" },
+          destination: { root, path: "destination" },
+          exact: true,
+        }),
+      ).resolves.toBe(true);
+      expect(await readFile(path.join(root, "destination"), "utf8")).toBe(
+        "from source",
+      );
+      expect((await readdir(root)).sort()).toEqual(["destination", "source"]);
+    } finally {
+      spy.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("says where the original is kept when the destination never settles", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-unsettled-"));
+    const spy = raceRenames(root, (call) => call >= 2);
+    try {
+      await writeFile(path.join(root, "source"), "from source");
+      await writeFile(path.join(root, "destination"), "original");
+      let message = "";
+      await installPathFromStaging({
+        source: { root, path: "source" },
+        destination: { root, path: "destination" },
+        exact: true,
+      }).catch((err) => (message = `${err.message}`));
+      const kept = message.match(/is kept at (\S+)/)?.[1];
+      expect(kept).toBeDefined();
+      expect(await readFile(path.join(root, kept!), "utf8")).toBe("original");
+    } finally {
+      spy.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not place an exact copy once its deadline passed during staging", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-expired-"));
+    try {
+      await mkdir(path.join(root, "source"));
+      await writeFile(path.join(root, "source", "a.txt"), "new");
+      await mkdir(path.join(root, "destination"));
+      await writeFile(path.join(root, "destination", "keep.txt"), "keep");
+      // Expires once the staged copy is complete, just before placement.
+      const staged = () =>
+        (require("node:fs").readdirSync(root) as string[]).some(
+          (n) =>
+            n.includes("cocalc-incoming") &&
+            require("node:fs").existsSync(path.join(root, n, "a.txt")),
+        );
+      await expect(
+        installPathFromStaging({
+          source: { root, path: "source" },
+          destination: { root, path: "destination" },
+          exact: true,
+          options: {
+            checkpoint: () => {
+              if (staged()) throw new Error("claim expired");
+            },
+          },
+        }),
+      ).rejects.toThrow("claim expired");
+      expect(await readdir(path.join(root, "destination"))).toEqual([
+        "keep.txt",
+      ]);
+      expect((await readdir(root)).sort()).toEqual(["destination", "source"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

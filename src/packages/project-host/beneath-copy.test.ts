@@ -231,15 +231,19 @@ describe("copyBeneath", () => {
     for (const name of ["a", "b", "c"]) {
       await writeFile(join(src, "d", name), name);
     }
-    let calls = 0;
+    const nodeFs = require("node:fs");
+    const landed = () =>
+      nodeFs.existsSync(join(dest, "d"))
+        ? nodeFs
+            .readdirSync(join(dest, "d"))
+            .filter((n: string) => !n.startsWith("."))
+        : [];
     await expect(
       copy("d", "d", {
         recursive: true,
+        // Stop as soon as one file has landed.
         checkpoint: () => {
-          // Called for each entry and again before each file's data moves:
-          // d, a, a's data, then b stops the copy.
-          calls += 1;
-          if (calls > 3) throw new Error("deadline passed");
+          if (landed().length >= 1) throw new Error("deadline passed");
         },
       }),
     ).rejects.toThrow("deadline passed");
@@ -424,5 +428,24 @@ describe("copyBeneath", () => {
     await chmod(join(src, "shared"), 0o1777);
     await copy("shared", "shared");
     expect((await stat(join(dest, "shared"))).mode & 0o7777).toBe(0o1777);
+  });
+
+  it("does not publish a file whose copy finished after the deadline", async () => {
+    await writeFile(join(src, "f"), "data");
+    let t = 0;
+    const now = jest.spyOn(Date, "now").mockImplementation(() => t);
+    mockNativeFsTask.mockImplementationOnce(async (fn) => {
+      const result = await fn();
+      t = 2000; // a long copy
+      return result;
+    });
+    try {
+      await expect(copy("f", "f", { timeout: 1000 })).rejects.toMatchObject({
+        code: "ETIMEDOUT",
+      });
+    } finally {
+      now.mockRestore();
+    }
+    expect(await readdir(dest)).toEqual([]);
   });
 });

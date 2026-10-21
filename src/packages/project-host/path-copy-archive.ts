@@ -12,6 +12,7 @@ import {
   assertDistinctBeneath,
   beneathRelative,
   copyBeneath,
+  copyDeadline,
   kindBeneath,
   mkdirBeneath,
   renameBeneath,
@@ -63,7 +64,7 @@ export function archivePathIsAllowed({
 // failed copy leaves the destination untouched; then the old destination is
 // moved aside and the copy renamed into place. These are two renames, so a
 // reader can briefly find nothing there, and if the host stops in between,
-// the old copy remains at its hidden ".previous" name. Without force, the copy
+// the old copy remains at its hidden ".cocalc-previous*" name. Without force, the copy
 // is placed only if nothing is there at that moment (one no-replace rename):
 // false if something is (or ERR_FS_CP_EEXIST with errorOnExist). Every step
 // is anchored beneath the destination root and refuses symlinks, so the
@@ -83,6 +84,7 @@ export async function replacePathFromStaging({
     throw new Error("copy destination cannot be the root");
   }
   await assertDistinctBeneath(source, destination);
+  const check = copyDeadline(options ?? {});
   const parent = path.posix.dirname(rel);
   const token = randomUUID();
   // Fixed-length names, whatever the length of the destination's own name.
@@ -91,7 +93,6 @@ export async function replacePathFromStaging({
     return parent === "." ? name : path.posix.join(parent, name);
   };
   const incoming = sibling("incoming");
-  const previous = sibling("previous");
   if (parent !== ".") {
     mkdirBeneath(root, parent);
   }
@@ -106,7 +107,10 @@ export async function replacePathFromStaging({
         errorOnExist: false,
       },
     });
-    const place = () => renameBeneath(root, incoming, rel, { noReplace: true });
+    const place = () => {
+      check(); // never publish once the copy's deadline has passed
+      renameBeneath(root, incoming, rel, { noReplace: true });
+    };
     try {
       place();
       return true;
@@ -117,41 +121,51 @@ export async function replacePathFromStaging({
       if (options?.errorOnExist) throw existsError();
       return false;
     }
-    // Something is there: move it aside and place the copy. Someone else may
-    // create or remove the destination meanwhile, so retry a few times.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        renameBeneath(root, rel, previous, { noReplace: true });
-      } catch (err) {
-        if (!hasCode(err, "ENOENT")) throw err;
+    // Something is there: move it aside and place the copy. Others may create
+    // or remove the destination meanwhile, so whatever is found there is
+    // moved aside in turn (force replaces it), a few times at most.
+    const asides: string[] = [];
+    try {
+      for (let attempt = 0; ; attempt++) {
+        if (attempt >= 5) {
+          throw new Error(
+            `copy destination ${rel} kept changing; not replaced`,
+          );
+        }
+        const aside = sibling(`previous${attempt}`);
         try {
-          place(); // it went away: place directly
-          return true;
-        } catch (err2) {
-          if (!hasCode(err2, "EEXIST")) throw err2;
-          continue;
+          renameBeneath(root, rel, aside, { noReplace: true });
+          asides.push(aside);
+        } catch (err) {
+          if (!hasCode(err, "ENOENT")) throw err; // gone meanwhile: place
+        }
+        try {
+          place();
+          break;
+        } catch (err) {
+          if (!hasCode(err, "EEXIST")) throw err;
         }
       }
-      try {
-        place();
-      } catch (err) {
+    } catch (err) {
+      // Put the original back; if its name is taken, say where it is kept.
+      if (asides.length > 0) {
         try {
-          renameBeneath(root, previous, rel, { noReplace: true });
+          renameBeneath(root, asides[0], rel, { noReplace: true });
         } catch (restoreErr) {
           const failure = new Error(
-            `copy replacement and rollback both failed for ${rel}: ${err}; rollback: ${restoreErr}`,
+            `copy replacement failed for ${rel}: ${err}; the previous ${rel} is kept at ${asides[0]} (${restoreErr})`,
           );
           // @ts-ignore -- Error.cause is unavailable in this package's lib target.
-          failure.cause = restoreErr;
+          failure.cause = err;
           throw failure;
         }
-        if (hasCode(err, "EEXIST")) continue;
-        throw err;
       }
-      await rmBeneath(root, previous).catch(() => {});
-      return true;
+      throw err;
     }
-    throw new Error(`copy destination ${rel} kept changing; not replaced`);
+    for (const aside of asides) {
+      await rmBeneath(root, aside).catch(() => {});
+    }
+    return true;
   } finally {
     await rmBeneath(root, incoming).catch(() => {});
   }
