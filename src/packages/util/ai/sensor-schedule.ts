@@ -24,6 +24,19 @@ export type SensorSchedule =
       times: string[];
       timezone: string;
       days?: number[];
+    }
+  | {
+      /** Days of the month, e.g. the 3rd; quarterly or yearly with `months`. */
+      kind: "monthly";
+      /** Days of the month, 1 to 31; a day past a month's end runs on its
+       * last day (31 runs on Feb 28, Apr 30, ...). */
+      dates: number[];
+      /** Months, 1 = January (quarterly: [1, 4, 7, 10]); default every month. */
+      months?: number[];
+      /** Local times of day ("HH:MM"), at most 24. */
+      times: string[];
+      timezone: string;
+      days?: undefined;
     };
 
 export const SENSOR_MAX_DAILY_TIMES = 24;
@@ -70,9 +83,51 @@ function days(value: unknown): number[] | undefined {
   return result.length === 7 ? undefined : result;
 }
 
+function wholeNumbers(
+  value: unknown,
+  name: string,
+  min: number,
+  max: number,
+): number[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some((n) => !Number.isInteger(n) || n < min || n > max)
+  )
+    throw new Error(`schedule ${name} must be whole numbers ${min} to ${max}`);
+  return [...new Set(value as number[])].sort((a, b) => a - b);
+}
+
 function onlyKeys(value: Record<string, unknown>, keys: string[]) {
   const unknown = Object.keys(value).find((key) => !keys.includes(key));
   if (unknown) throw new Error(`unknown schedule field "${unknown}"`);
+}
+
+/** Times of day, at most 24, no two closer than the tier minimum. */
+function dailyTimes(value: unknown, minIntervalMinutes: number): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > SENSOR_MAX_DAILY_TIMES
+  )
+    throw new Error(
+      `schedule times must list 1 to ${SENSOR_MAX_DAILY_TIMES} local times`,
+    );
+  const times = [
+    ...new Set(value.map((time) => localTime(time, "schedule time"))),
+  ].sort();
+  // Neighbouring times, including last-to-first across midnight, must
+  // respect the tier minimum like an interval would.
+  for (let i = 0; i < times.length && times.length > 1; i++) {
+    const next = (i + 1) % times.length;
+    const gap =
+      (minutesOf(times[next]) - minutesOf(times[i]) + 24 * 60) % (24 * 60);
+    if (gap < minIntervalMinutes)
+      throw new Error(
+        `schedule times must be at least ${minIntervalMinutes} minutes apart (your membership's minimum)`,
+      );
+  }
+  return times;
 }
 
 /**
@@ -122,28 +177,7 @@ export function validateSensorSchedule(
   }
   if (s.kind === "daily") {
     onlyKeys(s, ["kind", "times", "timezone", "days"]);
-    if (
-      !Array.isArray(s.times) ||
-      s.times.length === 0 ||
-      s.times.length > SENSOR_MAX_DAILY_TIMES
-    )
-      throw new Error(
-        `schedule times must list 1 to ${SENSOR_MAX_DAILY_TIMES} local times`,
-      );
-    const times = [
-      ...new Set(s.times.map((time) => localTime(time, "schedule time"))),
-    ].sort();
-    // Neighbouring times, including last-to-first across midnight, must
-    // respect the tier minimum like an interval would.
-    for (let i = 0; i < times.length && times.length > 1; i++) {
-      const next = (i + 1) % times.length;
-      const gap =
-        (minutesOf(times[next]) - minutesOf(times[i]) + 24 * 60) % (24 * 60);
-      if (gap < minIntervalMinutes)
-        throw new Error(
-          `schedule times must be at least ${minIntervalMinutes} minutes apart (your membership's minimum)`,
-        );
-    }
+    const times = dailyTimes(s.times, minIntervalMinutes);
     const d = days(s.days);
     return {
       kind: "daily",
@@ -152,7 +186,21 @@ export function validateSensorSchedule(
       ...(d ? { days: d } : {}),
     };
   }
-  throw new Error('schedule kind must be "interval" or "daily"');
+  if (s.kind === "monthly") {
+    onlyKeys(s, ["kind", "dates", "months", "times", "timezone"]);
+    const dates = wholeNumbers(s.dates, "dates", 1, 31);
+    const months =
+      s.months == null ? undefined : wholeNumbers(s.months, "months", 1, 12);
+    const times = dailyTimes(s.times, minIntervalMinutes);
+    return {
+      kind: "monthly",
+      dates,
+      ...(months && months.length < 12 ? { months } : {}),
+      times,
+      timezone: timezone(s.timezone),
+    };
+  }
+  throw new Error('schedule kind must be "interval", "daily" or "monthly"');
 }
 
 export function describeSensorSchedule(schedule: SensorSchedule): string {
@@ -173,6 +221,30 @@ export function describeSensorSchedule(schedule: SensorSchedule): string {
         ? ` (${schedule.timezone ?? "UTC"})`
         : "";
     return `Every ${every}${window}${on}${tz}`;
+  }
+  if (schedule.kind === "monthly") {
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    const ordinal = (n: number) =>
+      `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
+    const which = schedule.months
+      ? schedule.months.join(",") === "1,4,7,10"
+        ? "Quarterly"
+        : `In ${schedule.months.map((m) => monthNames[m - 1]).join(", ")}`
+      : "Monthly";
+    return `${which} on the ${schedule.dates.map(ordinal).join(", ")} at ${schedule.times.join(", ")} (${schedule.timezone})`;
   }
   return `Daily at ${schedule.times.join(", ")}${on} (${schedule.timezone})`;
 }
@@ -235,11 +307,43 @@ function localDate(nowMs: number, timeZone: string, dayOffset: number) {
   };
 }
 
-/** The first run strictly after `nowMs`, or undefined if none in 8 days. */
+/** A monthly schedule's first run strictly after `nowMs` (within 13
+ * months, since every schedule names at least one month). */
+function nextMonthlyRunAt(
+  schedule: Extract<SensorSchedule, { kind: "monthly" }>,
+  nowMs: number,
+): number | undefined {
+  const tz = schedule.timezone;
+  const now = zonedParts(new Date(nowMs), tz);
+  const months = new Set(
+    schedule.months ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  );
+  const slots = schedule.times.map(minutesOf);
+  for (let offset = 0; offset <= 13; offset++) {
+    const first = new Date(Date.UTC(now.year, now.month - 1 + offset, 1, 12));
+    const year = first.getUTCFullYear();
+    const month = first.getUTCMonth() + 1;
+    if (!months.has(month)) continue;
+    const lastDay = new Date(Date.UTC(year, month, 0, 12)).getUTCDate();
+    const days = [
+      ...new Set(schedule.dates.map((d) => Math.min(d, lastDay))),
+    ].sort((a, b) => a - b);
+    for (const day of days)
+      for (const minute of slots) {
+        const at = zonedEpochMs({ year, month, day }, minute, tz);
+        if (at > nowMs) return at;
+      }
+  }
+  return undefined;
+}
+
+/** The first run strictly after `nowMs`, or undefined if none in 8 days
+ * (monthly schedules: within 13 months). */
 export function nextSensorRunAt(
   schedule: SensorSchedule,
   nowMs: number,
 ): number | undefined {
+  if (schedule.kind === "monthly") return nextMonthlyRunAt(schedule, nowMs);
   const tz = schedule.timezone ?? "UTC";
   const allowed = new Set(schedule.days ?? ALL_DAYS);
   if (
