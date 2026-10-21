@@ -65,8 +65,11 @@ import {
   MemoryPresenceAdapter as PatchflowMemoryPresenceAdapter,
 } from "patchflow";
 import type { RecoveryState } from "@cocalc/conat/sync/core-stream";
-import { stringMerge3 } from "./string-merge3";
-import { dbMerge3 } from "../db/merge3";
+import {
+  patchFromRecord,
+  patchflowCodec,
+  toPatchflowEnvelope,
+} from "./patchflow-record";
 import type {
   Client,
   CompressedPatch,
@@ -2718,136 +2721,20 @@ export class SyncDoc extends EventEmitter {
     }
   }, 60000);
 
-  /*- x - patch object
-    - patch: if given will be used as an actual patch
-        instead of x.patch, which is a JSON string.
-  */
-  private processPatch = ({
-    x,
-    patch,
-    size: size0,
-  }: {
+  // A stored patch record (x) as a patch (patchflow-record.ts).
+  private processPatch = (opts: {
     x: Map<string, any>;
     patch?: any;
     size?: number;
-  }): Patch => {
-    const normalizePatchId = (raw: unknown): PatchId => {
-      if (typeof raw === "string") {
-        // Backward compat: some old patches used ISO timestamps for `time`.
-        if (!raw.includes("_")) {
-          const legacy = new Date(raw).valueOf();
-          if (!Number.isNaN(legacy)) {
-            return legacyPatchId(legacy);
-          }
-        }
-        return raw;
-      }
-      if (typeof raw === "number") {
-        return legacyPatchId(raw);
-      }
-      throw new Error(`invalid patch time: raw='${raw}'`);
-    };
-
-    const time = normalizePatchId(x.get("time"));
-    const wall: number = x.get("wall") ?? decodePatchId(time).timeMs;
-    const user_id: number = x.get("user_id");
-    let parents: PatchId[] = (x.get("parents")?.toJS() ?? []).map(
-      normalizePatchId,
-    );
-    let size: number;
-    const is_snapshot = x.get("is_snapshot");
-    if (is_snapshot) {
-      size = x.get("snapshot")?.length ?? 0;
-    } else {
-      if (patch == null) {
-        /* Do **NOT** use misc.from_json, since we definitely
-         do not want to unpack ISO timestamps as Date,
-         since patch just contains the raw patches from
-         user editing.  This was done for a while, which
-         led to horrific bugs in some edge cases...
-         See https://github.com/sagemathinc/cocalc/issues/1771
-      */
-        if (x.has("patch")) {
-          const p: string = x.get("patch");
-          patch = JSON.parse(p);
-          size = p.length;
-        } else {
-          patch = [];
-          size = 2;
-        }
-      } else {
-        const p = x.get("patch");
-        size = p?.length ?? size0 ?? JSON.stringify(patch).length;
-      }
-    }
-
-    const obj: Patch = {
-      time,
-      wall,
-      user_id,
-      patch,
-      size,
-      is_snapshot,
-      parents,
-      version: x.get("version"),
-      file: x.get("file"),
-    };
-    if (x.has("meta")) {
-      const m = x.get("meta");
-      obj.meta = Map.isMap(m) ? m.toJS() : m;
-    }
-    const hash = x.get("hash");
-    if (typeof hash === "string") {
-      obj.hash = hash;
-    }
-    const mergeParent = x.get("merge_parent");
-    const mergePatch = x.get("merge_patch");
-    if (mergeParent != null && typeof mergePatch === "string") {
-      // A JSON string, like patch (see above).
-      obj.merge_parent = normalizePatchId(mergeParent);
-      obj.merge_patch = JSON.parse(mergePatch);
-    }
-    if (x.get("inexact") === true) {
-      obj.inexact = true;
-    }
-    if (is_snapshot) {
-      obj.snapshot = x.get("snapshot"); // this is a string
-      obj.seq_info = x.get("seq_info")?.toJS();
-      if (obj.snapshot == null || obj.seq_info == null) {
-        console.warn("WARNING: message = ", x.toJS());
-        throw Error(
-          `message with is_snapshot true must also set snapshot and seq_info fields -- time=${time}`,
-        );
-      }
-    }
-    return obj;
-  };
+  }): Patch => patchFromRecord(opts);
 
   /* Return all patches with time such that
             time0 <= time <= time1;
      If time0 undefined then sets time0 equal to time of last_snapshot.
      If time1 undefined treated as +oo.
   */
-  private toPatchflowEnvelope = (p: Patch): PatchEnvelope => {
-    return {
-      time: p.time,
-      wall: p.wall,
-      patch: p.patch,
-      parents: p.parents,
-      userId: p.user_id,
-      size: p.size,
-      version: p.version,
-      isSnapshot: p.is_snapshot,
-      snapshot: p.snapshot,
-      seqInfo: p.seq_info,
-      file: p.file,
-      meta: p.meta,
-      hash: p.hash,
-      mergeParent: p.merge_parent,
-      mergePatch: p.merge_patch,
-      ...(p.inexact ? { inexact: true } : {}),
-    };
-  };
+  private toPatchflowEnvelope = (p: Patch): PatchEnvelope =>
+    toPatchflowEnvelope(p);
 
   private patchFromEnvelope = (env: PatchEnvelope): Patch => {
     return {
@@ -2870,57 +2757,8 @@ export class SyncDoc extends EventEmitter {
     };
   };
 
-  private buildPatchflowCodec = (): DocCodec => {
-    return {
-      fromString: (text: string) => this._from_str(text),
-      toString: (doc: Document) =>
-        (doc as any).to_str ? (doc as any).to_str() : doc.toString(),
-      applyPatch: (doc: Document, patch: unknown) => {
-        // console.log("applyPatch", patch);
-        return ((doc as any).apply_patch ?? doc.applyPatch).call(doc, patch);
-      },
-      applyPatchBatch: (doc: Document, patches: unknown[]) => {
-        const applyBatch =
-          (doc as any).apply_patch_batch ?? (doc as any).applyPatchBatch;
-        if (typeof applyBatch === "function") {
-          return applyBatch.call(doc, patches);
-        }
-        return (patches as unknown[]).reduce<Document>(
-          (current, patch) =>
-            ((current as any).apply_patch ?? current.applyPatch).call(
-              current,
-              patch,
-            ),
-          doc,
-        );
-      },
-      makePatch: (a: Document, b: Document) =>
-        ((a as any).make_patch ?? a.makePatch).call(a, b),
-      // Exact values for text: every patch applies to the value of its own
-      // parents and concurrent heads merge three-way from their common
-      // ancestor, instead of fuzzy-applying concurrent patches to each other's
-      // text (which could delete or duplicate the wrong text).
-      ...(this.doctype.type === "string"
-        ? {
-            merge3: stringMerge3<Document>(this._from_str, (doc) =>
-              doc.to_str(),
-            ),
-          }
-        : this.doctype.type === "db" &&
-            this.doctype.opts?.primary_keys?.length > 0
-          ? {
-              merge3: dbMerge3<Document>(
-                this._from_str,
-                (doc) => doc.to_str(),
-                {
-                  primaryKeys: this.doctype.opts?.primary_keys,
-                  stringCols: this.doctype.opts?.string_cols ?? [],
-                },
-              ),
-            }
-          : {}),
-    };
-  };
+  private buildPatchflowCodec = (): DocCodec =>
+    patchflowCodec({ fromStr: this._from_str, doctype: this.doctype });
 
   private async createCursorPresenceAdapter(): Promise<
     PatchflowPresenceAdapter | undefined

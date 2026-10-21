@@ -2,6 +2,7 @@ import {
   BOARD_HISTORY_LIMITS,
   BoardAppendCheck,
   BoardHistoryCheck,
+  depthOver,
   type HistoryVerdict,
   parseBoardRecord,
 } from "./board-history";
@@ -785,5 +786,92 @@ describe("the open check and the append check agree (codex round 6)", () => {
     expect(check([patch("A", [], { merge_patch: "[" })])).toMatchObject({
       ok: true,
     });
+  });
+});
+
+describe("G1's record depth contract (32, as the recovery scan)", () => {
+  const R = (records: any[]) =>
+    records.map((value) => ({
+      value,
+      digest: JSON.stringify(value),
+      bytes: JSON.stringify(value).length,
+    }));
+  // A record whose meta nests so that the record is `depth` deep (the
+  // record's own map is 1).
+  const deepMeta = (depth: number) => {
+    let meta: any = 1;
+    for (let i = 0; i < depth - 1; i++) meta = { m: meta };
+    return meta;
+  };
+
+  test("a record exactly 32 deep opens and appends; 33 is refused by both", () => {
+    expect(depthOver(patch("t0", [], { meta: deepMeta(32) }), 32)).toBe(false);
+    expect(depthOver(patch("t0", [], { meta: deepMeta(33) }), 32)).toBe(true);
+    const at32 = [patch("t0"), patch("t1", ["t0"], { meta: deepMeta(32) })];
+    expect(check(at32)).toMatchObject({ ok: true });
+    const c = BoardAppendCheck.fromRecords(R(at32), 0);
+    expect(c.check(R([patch("t2", ["t1"], { meta: deepMeta(32) })])).head).toBe(
+      "t2",
+    );
+    const at33 = patch("t2", ["t1"], { meta: deepMeta(33) });
+    expect(() => c.check(R([at33]))).toThrow(/nested over 32 deep/);
+    // On open: quarantined (invalid), never opened.
+    expect(check([...at32, at33])).toMatchObject({
+      ok: false,
+      reason: "invalid",
+    });
+  });
+
+  test("SyncDoc's own records, with every field they carry, fit", () => {
+    const patchRecord = {
+      string_id: "s".repeat(40),
+      time: "lz3k1v4c_a1b2c3",
+      wall: 1_700_000_000_000,
+      user_id: 1,
+      patch: JSON.stringify([
+        [
+          ["x", 1, 2],
+          ["y", { a: [1, { b: 2 }] }],
+        ],
+        0,
+      ]),
+      parents: ["lz3k1v4b_a1b2c3"],
+      version: 7,
+      size: 100,
+      file: true,
+      meta: { source: "file", nested: { a: { b: { c: [1, [2, [3]]] } } } },
+      hash: "h".repeat(32),
+      merge_parent: "lz3k1v4a_a1b2c3",
+      merge_patch: JSON.stringify([[1, 2]]),
+      inexact: true,
+      is_snapshot: false,
+    };
+    const snapshotRecord = {
+      size: 2,
+      string_id: "s".repeat(40),
+      time: "lz3k1v4c_a1b2c3",
+      wall: 1_700_000_000_000,
+      is_snapshot: true,
+      snapshot: "{}",
+      user_id: 1,
+      seq_info: { seq: 12, prev_seq: 3 },
+      hash: "h".repeat(32),
+      __checkpoint: {
+        name: "latest-snapshot",
+        seq: 12,
+        data: { patchId: "lz3k1v4c_a1b2c3" },
+      },
+    };
+    for (const r of [patchRecord, snapshotRecord]) {
+      expect(depthOver(r, 32)).toBe(false);
+      expect(parseBoardRecord(r)).not.toHaveProperty("invalid");
+    }
+  });
+
+  test("depthOver is iterative: a value 100,000 deep is measured without overflow", () => {
+    let x: any = 1;
+    for (let i = 0; i < 100_000; i++) x = [x];
+    expect(depthOver(x, 32)).toBe(true);
+    expect(depthOver(x, 100_000)).toBe(false);
   });
 });

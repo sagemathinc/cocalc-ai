@@ -58,6 +58,11 @@ export const BOARD_HISTORY_LIMITS = {
   parents: 16,
   // A record's meta, as JSON.
   metaChars: 4096,
+  // How deep a record may nest (a scalar is 0, a record's own map 1, so its
+  // meta's top level is 2): the recovery child's msgpack scan has the same
+  // bound (conat/board-recovery), so every record G1 admits is one recovery
+  // can read.
+  recordDepth: 32,
   // The chain after the cut (snapshots come every 300 patches, the last
   // interval excepted).
   suffixRecords: 1_000,
@@ -116,6 +121,25 @@ function validId(x: unknown, limits: BoardHistoryLimits): x is string {
   );
 }
 
+// Whether value nests over max containers deep (arrays and objects; a
+// top-level container is depth 1). Iterative, so a deep value can't overflow
+// the stack, and it stops as soon as the bound is passed.
+export function depthOver(value: unknown, max: number): boolean {
+  const stack: [unknown, number][] = [[value, 0]];
+  while (stack.length > 0) {
+    const [x, depth] = stack.pop()!;
+    if (x == null || typeof x !== "object") continue;
+    if (ArrayBuffer.isView(x)) continue;
+    if (depth + 1 > max) return true;
+    for (const child of Array.isArray(x) ? x : Object.values(x)) {
+      if (child != null && typeof child === "object") {
+        stack.push([child, depth + 1]);
+      }
+    }
+  }
+  return false;
+}
+
 function parsesAsJson(text: string): boolean {
   try {
     JSON.parse(text);
@@ -159,6 +183,9 @@ export function parseBoardRecord(
     return { invalid: "a record that is not an object" };
   }
   const r = value as { [key: string]: unknown };
+  if (depthOver(value, limits.recordDepth)) {
+    return { invalid: `a record nested over ${limits.recordDepth} deep` };
+  }
   if (!validId(r.time, limits)) {
     return { invalid: "a record without a valid time" };
   }
