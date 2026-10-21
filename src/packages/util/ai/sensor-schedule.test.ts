@@ -243,4 +243,21 @@ describe("monthly and quarterly schedules", () => {
       ).toISOString(),
     ).toBe("2027-07-31T15:30:00.000Z");
   });
+
+  it("a time skipped by the spring-forward gap runs just after it, never early or a month late", () => {
+    // Mar 14 2027: Seattle's clocks go from 02:00 PST to 03:00 PDT.
+    const schedule = monthly({ dates: [14], times: ["02:30"] });
+    // Set before that day: it runs at 03:30 PDT (10:30 UTC), not 01:30.
+    expect(
+      new Date(
+        nextSensorRunAt(schedule, Date.parse("2027-03-01T00:00:00Z"))!,
+      ).toISOString(),
+    ).toBe("2027-03-14T10:30:00.000Z");
+    // Recomputed that morning after 01:30 PST (09:30 UTC): still that day.
+    expect(
+      new Date(
+        nextSensorRunAt(schedule, Date.parse("2027-03-14T09:45:00Z"))!,
+      ).toISOString(),
+    ).toBe("2027-03-14T10:30:00.000Z");
+  });
 });

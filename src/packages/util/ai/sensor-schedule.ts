@@ -291,6 +291,19 @@ function zonedEpochMs(
     candidate +=
       target - Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
   }
+  // A wall time that does not exist (skipped when clocks spring forward:
+  // 02:30 on such a day) never settles. It runs just after the gap, as
+  // calendars do (02:30 becomes 03:30), never before the time asked for.
+  const p = zonedParts(new Date(candidate), timeZone);
+  const shown = Date.UTC(
+    p.year,
+    p.month - 1,
+    p.day,
+    p.hour,
+    p.minute,
+    p.second,
+  );
+  if (shown < target) candidate += target - shown;
   return candidate;
 }
 
