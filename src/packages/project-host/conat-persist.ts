@@ -15,6 +15,7 @@ import getLogger from "@cocalc/backend/logger";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
+import { initPersistFenceService } from "@cocalc/conat/persist/fence";
 import {
   connect as connectToConat,
   type Client as ConatClient,
@@ -168,6 +169,9 @@ export async function startStandaloneProjectHostConatPersist({
   // The board write service (conat/persist/board-policy.ts): the host's board
   // managers write board streams only through it.
   boardPersistServer: ConatSocketServer;
+  // Lets the host's main process fence a project's streams, e.g., while it
+  // restores the project's files (conat/persist/fence.ts).
+  fenceService: { close: () => void };
   maintenance?: PersistMaintenanceCoordinator;
   port: number;
 }> {
@@ -216,6 +220,7 @@ export async function startStandaloneProjectHostConatPersist({
     service: BOARD_WRITE_SERVICE,
     maintenance: maintenanceHooks,
   });
+  const fenceService = initPersistFenceService({ client });
   maintenance?.start();
 
   let persistReady = false;
@@ -304,6 +309,7 @@ export async function startStandaloneProjectHostConatPersist({
     maintenance,
     persistServer,
     boardPersistServer,
+    fenceService,
     port: bindPort,
   };
 }

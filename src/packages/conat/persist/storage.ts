@@ -986,6 +986,10 @@ export class PersistentStream extends EventEmitter {
   // sees a different instance knows to start over rather than resume from
   // its last seq.  Undefined for disk-backed streams, whose seqs persist.
   readonly instance?: string;
+  // A disk-backed stream opened after its project's files were replaced
+  // under a fence (fence.ts) reports this as its instance instead, so that
+  // clients start over rather than resume from seqs of the old files.
+  replacedInstance?: string;
   private readonly options: StorageOptions;
   private readonly db: Database;
   private readonly dbPath?: string;
@@ -1350,6 +1354,9 @@ export class PersistentStream extends EventEmitter {
   };
 
   isClosing = (): boolean => this.closing;
+
+  // The local path of the database (without .db); undefined once closed.
+  localPath = (): string | undefined => this.options?.path;
 
   close = () => {
     const path = this.options?.path;
@@ -3623,6 +3630,19 @@ export function getPersistentStreamSqliteDiagnostics() {
   }
   result.duration_ms = Date.now() - started;
   return result;
+}
+
+// The local paths (without .db) of the disk-backed streams open in this
+// process.
+export function openDiskStreamPaths(): string[] {
+  const paths: string[] = [];
+  for (const [stream, { kind }] of openStreams) {
+    const path = stream.localPath();
+    if (kind === "disk" && path != null) {
+      paths.push(path);
+    }
+  }
+  return paths;
 }
 
 export function pstream(

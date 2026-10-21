@@ -90,6 +90,7 @@ import {
   PersistStreamReleaseQueue,
   type PersistStreamReleaseQueueDiagnostics,
 } from "./release-queue";
+import { projectOfStoragePath, registerProjectSocket } from "./project-fence";
 
 const logger = getLogger("persist:server");
 
@@ -130,6 +131,17 @@ export function getPersistStreamReleaseQueueDiagnostics(): PersistStreamReleaseQ
 
 export async function drainPersistStreamReleaseQueue(): Promise<void> {
   await streamReleaseQueue.drain();
+}
+
+// Releases now the streams waiting for release whose local path match
+// selects (fence.ts).
+export async function releaseQueuedStreams(
+  match: (path: string) => boolean,
+): Promise<void> {
+  await streamReleaseQueue.releaseMatching((stream) => {
+    const path = (stream as PersistentStream).localPath?.();
+    return path != null && match(path);
+  });
 }
 
 export function classifyPersistStorageErrorCode(
@@ -250,6 +262,8 @@ export function server({
     let initializing: Promise<void> | undefined;
     let lastInitAttemptAt = 0;
     let closed = false;
+    // a fence of the stream's project closes this socket (project-fence.ts)
+    let unregisterFromProject: (() => void) | undefined;
 
     // Open the stream for this socket. A failure is remembered so requests can
     // report it, but it is not permanent: storage errors such as a full project
@@ -361,6 +375,14 @@ export function server({
             // Never the client's options for a board stream.
             storage = boardAccess.storage as StorageOptions;
           }
+          const project_id = storage?.ephemeral
+            ? undefined
+            : projectOfStoragePath(storage?.path);
+          if (project_id != null && unregisterFromProject == null) {
+            unregisterFromProject = registerProjectSocket(project_id, () =>
+              socket.close(),
+            );
+          }
         } catch (err) {
           policyRefused = true;
           error = `${err}`;
@@ -380,6 +402,8 @@ export function server({
     socket.on("closed", () => {
       log("socket closed", id, socket.subject);
       closed = true;
+      unregisterFromProject?.();
+      unregisterFromProject = undefined;
       stopChangefeed?.();
       stopChangefeed = undefined;
       for (const abort of replays) abort.abort();
@@ -805,7 +829,9 @@ export async function replay({
       effective_start_seq: !sentReplayInfo ? effective_start_seq : undefined,
       oldest_retained_seq: !sentReplayInfo ? oldest_retained_seq : undefined,
       newest_retained_seq: !sentReplayInfo ? newest_retained_seq : undefined,
-      instance: !sentReplayInfo ? stream.instance : undefined,
+      instance: !sentReplayInfo
+        ? (stream.instance ?? stream.replacedInstance)
+        : undefined,
     };
     // Only these fixed envelope fields are enumerated. Mirror JSON's omission
     // of undefined values, then validate before the unconfirmed publication so
