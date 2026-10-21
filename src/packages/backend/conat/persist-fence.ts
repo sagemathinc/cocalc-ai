@@ -238,12 +238,20 @@ export function fileFenceStore(
         const project_id = name.match(/^(.+)\.json$/)?.[1];
         if (project_id == null || !isValidUUID(project_id)) continue;
         const record = readJson(join(dir, name));
-        if (record == null) continue;
+        // (gone since it was listed)
+        if (record === undefined) continue;
+        const pgid = record?.holder?.pgid;
         if (
-          record.project_id !== project_id ||
+          record?.project_id !== project_id ||
           typeof record.token != "string" ||
+          !record.token ||
+          record.token.length > 128 ||
+          // as a fence service accepts holders (conat/persist/fence.ts)
           !Number.isSafeInteger(record.holder?.pid) ||
-          typeof record.holder?.start != "string" ||
+          record.holder.pid <= 0 ||
+          typeof record.holder.start != "string" ||
+          record.holder.start.length > 64 ||
+          (pgid != null && (!Number.isSafeInteger(pgid) || pgid <= 0)) ||
           !Number.isFinite(record.since)
         ) {
           // kept for an operator: it is a fence that can't be honored
@@ -251,14 +259,13 @@ export function fileFenceStore(
             `persist fence store: ${join(dir, name)} is malformed`,
           );
         }
-        const pgid = record.holder.pgid;
         records.push({
           project_id,
           token: record.token,
           holder: {
             pid: record.holder.pid,
             start: record.holder.start,
-            ...(Number.isSafeInteger(pgid) ? { pgid } : {}),
+            ...(pgid != null ? { pgid } : {}),
           },
           since: record.since,
         });
