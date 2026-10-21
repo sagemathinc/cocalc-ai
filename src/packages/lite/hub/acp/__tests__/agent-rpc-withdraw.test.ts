@@ -345,3 +345,44 @@ describe("the sender takes back its message", () => {
     expect(listDueAgentRpcReports(Date.now() + 3_600_000)).toHaveLength(0);
   });
 });
+
+describe("a withdrawal that loses the race to its resumed turn", () => {
+  it("is rejected once that turn started, which then runs as usual", async () => {
+    const attempt = randomUUID();
+    const parent = job(attempt);
+    set(parent.op_id, {
+      state: "error",
+      started_at: parent.created_at + 1,
+      finished_at: parent.created_at + 2,
+      recovery_code: "cocalc-hold",
+    });
+    // Another process's worker queues the continuation and claims it just
+    // after the withdrawal looked at the chain.
+    const turn = require("../agent-rpc-turn");
+    const real = turn.agentRpcWithdrawable;
+    let next: any;
+    const spy = jest
+      .spyOn(turn, "agentRpcWithdrawable")
+      .mockImplementationOnce((...args: any[]) => {
+        const found = real(...args);
+        next = job(attempt);
+        set(next.op_id, {
+          created_at: parent.created_at + 3,
+          recovery_parent_op_id: parent.op_id,
+          state: "running",
+          started_at: Date.now(),
+        });
+        return found;
+      });
+    try {
+      expect(await withdraw(attempt)).toMatchObject({
+        outcome: "rejected",
+        reason: "Its turn resumed just now, so it was not withdrawn.",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(getAcpJobByOpId(next.op_id)?.state).toBe("running");
+    expect(getAcpJobByOpId(parent.op_id)?.outcome_json ?? null).toBeNull();
+  });
+});

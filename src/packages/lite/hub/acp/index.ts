@@ -9486,16 +9486,26 @@ export async function withdrawAgentMessageTurn(
         };
       return await withdrawAgentMessageTurn(source, attempt, accountId, true);
     }
-    // Queued just before the intent was cleared: withdrawn with it.
+    // Queued just before the intent was cleared: withdrawn with it, unless
+    // it already started (then it runs, and reports how it ends).
     const next = continuationOf(job);
-    if (next?.state === "queued") {
-      cancelQueuedAcpJobReportingChange({
-        project_id: next.project_id,
-        path: next.path,
-        user_message_id: next.user_message_id,
-        account_id: next.account_id ?? accountId,
-        thread_id: next.thread_id,
-      });
+    if (next) {
+      const canceled =
+        next.state === "queued" &&
+        cancelQueuedAcpJobReportingChange({
+          project_id: next.project_id,
+          path: next.path,
+          user_message_id: next.user_message_id,
+          account_id: next.account_id ?? accountId,
+          thread_id: next.thread_id,
+        }).canceled;
+      if (!canceled)
+        return {
+          ...rpcOutcome(attempt, "rejected", {
+            reason: "Its turn resumed just now, so it was not withdrawn.",
+          }),
+          ...turnOf(source, attempt, accountId),
+        };
       recordAcpJobOutcome(next.op_id, {
         version: 1,
         state: "canceled",
