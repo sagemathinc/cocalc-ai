@@ -242,28 +242,17 @@ export async function initPersistFenceService({
   }): boolean => {
     if (!isProjectFencedBy(project_id, token)) return false;
     const instance = replaced ? randomId() : undefined;
+    // Both durably first, so a failure (thrown to the holder, who tries
+    // again) leaves the fence held, and a restart never brings back a fence
+    // that was released.
     if (instance != null) {
       store?.saveInstance(project_id, instance);
     }
-    const record = held.get(project_id);
-    if (record?.token === token) {
-      forget(record);
+    store?.remove(project_id, token);
+    if (held.get(project_id)?.token === token) {
+      held.delete(project_id);
     }
     return unfenceProject({ project_id, token, replaced, instance });
-  };
-
-  const forget = (record: PersistFenceRecord) => {
-    if (held.get(record.project_id)?.token === record.token) {
-      held.delete(record.project_id);
-    }
-    try {
-      store?.remove(record.project_id, record.token);
-    } catch (err) {
-      logger.warn("unable to remove a persist fence from its store", {
-        project_id: record.project_id,
-        err: `${err}`,
-      });
-    }
   };
 
   for (const [project_id, instance] of Object.entries(

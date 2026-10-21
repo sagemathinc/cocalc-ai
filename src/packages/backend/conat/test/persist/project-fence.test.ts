@@ -556,3 +556,38 @@ describe("nothing based on the replaced history reaches the restored one", () =>
     persist.close();
   });
 });
+
+describe("a release that can't be recorded leaves the fence held", () => {
+  it("and the holder's release is retried until it is", async () => {
+    const project_id = uuid();
+    const dir = join(syncFiles.local, `fences-remove-${project_id}`);
+    const store = fileFenceStore(dir);
+    let failing = true;
+    const service = await initPersistFenceService({
+      client: connect(),
+      holderAlive: isFenceHolderAlive,
+      store: {
+        ...store,
+        remove: (id: string, token: string) => {
+          if (failing) throw new Error("disk full");
+          store.remove(id, token);
+        },
+      },
+    });
+    try {
+      await withPersistFence(
+        { client: connect(), project_id, holder: currentFenceHolder() },
+        async () => {},
+      );
+      // not released: still held, and still recorded
+      expect(isProjectFenced(project_id)).toBe(true);
+      expect(store.load().map((r) => r.project_id)).toEqual([project_id]);
+      failing = false;
+      // the holder's release, retried in the background
+      await wait({ timeout: 10000, until: () => !isProjectFenced(project_id) });
+      expect(store.load()).toEqual([]);
+    } finally {
+      service.close();
+    }
+  });
+});
