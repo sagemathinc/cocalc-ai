@@ -56,6 +56,7 @@ describe("commercial receivables action capabilities", () => {
         "reconcilePreview",
         "reconcileStripeQuote",
         "recordManualPayment",
+        "recordMembershipFulfillment",
         "revise",
         "resolveProviderOperation",
         "retryStripeEvent",

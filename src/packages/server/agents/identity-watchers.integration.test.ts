@@ -27,7 +27,7 @@ import {
   notifyIdentityWatchers,
   watchIdentity,
 } from "./identity-watchers";
-import { reportRuntime } from "./api";
+import { reportRuntime, reportStatus } from "./api";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -183,5 +183,163 @@ describeDb("agent identity watchers", () => {
     await expect(
       reportRuntime({ ...report, runtime: { kind: "bogus" } as any }),
     ).rejects.toThrow("invalid agent runtime");
+  });
+
+  test("the host's status report reaches watchers, only when it changes, never a credential", async () => {
+    await watchIdentity({
+      account_id: alice,
+      project_id,
+      agent_id,
+      watching: true,
+    });
+    const status = {
+      version: 1 as const,
+      running: 0,
+      queued: 1,
+      unavailable: { reason: "limit" as const, until: Date.now() + 3_600_000 },
+      // In the past, so the refresh below (6 hours later) is too.
+      at: Date.now() - 7 * 60 * 60_000,
+    };
+    const report = {
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+      // A credential id smuggled in is dropped, never stored.
+      status: { ...status, credential_id: randomUUID() } as any,
+    };
+    await expect(reportStatus(report)).resolves.toEqual({ registered: true });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(1);
+    expect(withPersonalHome).toHaveBeenCalledWith(alice, {
+      action: "identityChanged",
+      options: {
+        endpoint: { project_id, agent_id },
+        snapshot: expect.objectContaining({ status }),
+      },
+    });
+    const stored = (
+      await getPool().query(
+        "SELECT turn_status FROM agent_identities WHERE agent_id=$1",
+        [agent_id],
+      )
+    ).rows[0].turn_status;
+    expect(stored).toEqual(status);
+    // The same status computed later: no write, no notification.
+    await reportStatus({
+      ...report,
+      status: { ...status, at: status.at + 5 },
+    });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(1);
+    // The host's refresh, hours later: stored and passed on, so it never
+    // outlives its TTL while still true.
+    const refreshed = { ...status, at: status.at + 6 * 60 * 60_000 };
+    await reportStatus({ ...report, status: refreshed });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(2);
+    expect(
+      (
+        await getPool().query(
+          "SELECT turn_status FROM agent_identities WHERE agent_id=$1",
+          [agent_id],
+        )
+      ).rows[0].turn_status,
+    ).toEqual(refreshed);
+    // A conversation that isn't a registered agent.
+    await expect(
+      reportStatus({ ...report, thread_id: "not-an-agent" }),
+    ).resolves.toEqual({ registered: false });
+    await expect(
+      reportStatus({ ...report, status: { version: 1, running: -1 } as any }),
+    ).rejects.toThrow("invalid agent status");
+  });
+
+  test("each watcher sees only its own account's limit or sign-in", async () => {
+    for (const account_id of [alice, bob])
+      await watchIdentity({ account_id, project_id, agent_id, watching: true });
+    const at = Date.now() - 1_000;
+    await reportStatus({
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+      status: {
+        version: 1,
+        running: 0,
+        queued: 0,
+        by_account: { [alice]: { reason: "sign-in" } },
+        at,
+      },
+    });
+    await settle();
+    const snapshotFor = (account: string) =>
+      (withPersonalHome.mock.calls as any[]).find(
+        ([who]) => who === account,
+      )?.[1].options.snapshot;
+    expect(snapshotFor(alice).status).toEqual({
+      version: 1,
+      running: 0,
+      queued: 0,
+      unavailable: { reason: "sign-in" },
+      at,
+    });
+    // Bob's credentials may work: no warning, and no one else's account.
+    expect(snapshotFor(bob).status).toEqual({
+      version: 1,
+      running: 0,
+      queued: 0,
+      at,
+    });
+    expect(JSON.stringify(withPersonalHome.mock.calls)).not.toMatch(
+      /by_account/,
+    );
+  });
+
+  test("an older report never replaces a newer one, and no host clock outruns the hub's", async () => {
+    const report = {
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+    };
+    const stored = async () =>
+      (
+        await getPool().query(
+          "SELECT turn_status FROM agent_identities WHERE agent_id=$1",
+          [agent_id],
+        )
+      ).rows[0].turn_status;
+    const busy = { version: 1 as const, running: 1, queued: 0, at: Date.now() };
+    await reportStatus({ ...report, status: busy });
+    expect(await stored()).toEqual(busy);
+    // A retried earlier report that lands last: refused.
+    await reportStatus({
+      ...report,
+      status: { version: 1, running: 0, queued: 0, at: busy.at - 10_000 },
+    });
+    expect(await stored()).toEqual(busy);
+    // A host whose clock is a day ahead: stored as of the hub's now...
+    const before = Date.now();
+    await reportStatus({
+      ...report,
+      status: {
+        version: 1,
+        running: 0,
+        queued: 2,
+        at: before + 24 * 60 * 60_000,
+      },
+    });
+    const ahead = await stored();
+    expect(ahead.queued).toBe(2);
+    expect(ahead.at).toBeLessThanOrEqual(Date.now());
+    // ...so a correct report right after still replaces it.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const idle = { version: 1 as const, running: 0, queued: 0, at: Date.now() };
+    await reportStatus({ ...report, status: idle });
+    expect(await stored()).toEqual(idle);
   });
 });

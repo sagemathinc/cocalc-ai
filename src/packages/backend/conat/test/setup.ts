@@ -10,6 +10,7 @@ import { setConatClient } from "@cocalc/conat/client";
 import { closeConatClientForTests } from "@cocalc/conat/client";
 import { Client as ConatClientClass } from "@cocalc/conat/core/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -53,6 +54,9 @@ export async function initConatServer(
 export let tempDir;
 export let server: any = null;
 export let persistServer: any = null;
+// The board write service (conat/persist/board-policy.ts), as a project host
+// runs it beside the persist server.
+export let boardPersistServer: any = null;
 let cleanedUp = false;
 let cleaningUp: Promise<void> | null = null;
 
@@ -132,8 +136,13 @@ export async function restartServer() {
 
 export async function restartPersistServer() {
   await persistServer.close();
+  await boardPersistServer?.close();
   client = connect();
   persistServer = createPersistServer({ client });
+  boardPersistServer = createPersistServer({
+    client,
+    service: BOARD_WRITE_SERVICE,
+  });
 }
 
 // one pre-made client
@@ -160,6 +169,10 @@ export async function before(
   setConatServer(server.address());
   client = connect();
   persistServer = createPersistServer({ client });
+  boardPersistServer = createPersistServer({
+    client,
+    service: BOARD_WRITE_SERVICE,
+  });
   setConatClient({
     conat: connect,
     getLogger,
@@ -284,6 +297,9 @@ export async function after() {
     try {
       await persistServer?.close();
     } catch {}
+    try {
+      await boardPersistServer?.close();
+    } catch {}
     for (const cn of clients.splice(0, clients.length)) {
       try {
         await cn.close();
@@ -314,6 +330,7 @@ export async function after() {
     } catch {}
     defaultCluster.splice(0, defaultCluster.length);
     persistServer = null;
+    boardPersistServer = null;
     server = null;
     client = null;
     cleanedUp = true;

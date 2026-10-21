@@ -590,6 +590,121 @@ describe("inspecting a sent message's turn across bays", () => {
   });
 });
 
+describe("an agent's status across bays", () => {
+  // The agent's project (and the host reporting its status) on the seed;
+  // the account that named it homed on the attached bay. The host's report
+  // reaches that account's name book over the fabric, as that account's
+  // own view: its own sign-in block, and never another account's.
+  let tess;
+  let project;
+  const agent = randomUUID();
+  const host_id = randomUUID();
+  const other = randomUUID();
+
+  before(async () => {
+    const owner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "uma",
+    });
+    owner.client = await client(owner);
+    tess = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "tess",
+    });
+    tess.client = await client(tess);
+    project = await createProject(owner.client, "agent-status");
+    await invite(owner, tess, project);
+    await eventually(() => listed(tess.client, project), {
+      what: "the project in tess's list",
+    });
+    assert.equal(await owningBay(project), SEED);
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const pool = getPool();
+       await pool.query(
+         "INSERT INTO project_hosts (id, name, status, bay_id, metadata, created, updated) VALUES ($1, 'status host', 'running', $2, '{}', NOW(), NOW())",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(SEED)}]);
+       await pool.query("UPDATE projects SET host_id=$1 WHERE project_id=$2",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(project)}]);
+       await pool.query(
+         "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES($1,$2,'/home/user/s.chat','status','claude-1',$3)",
+         [${JSON.stringify(agent)}, ${JSON.stringify(project)}, ${JSON.stringify(tess.account_id)}]);
+       await pool.query(
+         "INSERT INTO agent_identity_watchers(agent_id,account_id,project_id) VALUES($1,$2,$3)",
+         [${JSON.stringify(agent)}, ${JSON.stringify(tess.account_id)}, ${JSON.stringify(project)}]);`,
+    );
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `await require("@cocalc/database/pool").default().query(
+         "INSERT INTO agent_personal_names(account_id,name,project_id,agent_id,metadata) VALUES($1,'statusbot',$2,$3,$4)",
+         [${JSON.stringify(tess.account_id)}, ${JSON.stringify(project)}, ${JSON.stringify(agent)},
+          { path: "/home/user/s.chat", thread_id: "status" }]);`,
+    );
+  });
+
+  it("reaches the watcher's home bay as its own view only", async () => {
+    const at = Date.now();
+    assert.deepEqual(
+      await runInBay(
+        cluster,
+        SEED,
+        // reportStatus notifies watchers without waiting; this snippet's
+        // process exits when it returns, so it waits for that same push.
+        `const result = await server("agents/api.js").reportStatus({
+           host_id: ${JSON.stringify(host_id)},
+           account_id: ${JSON.stringify(tess.account_id)},
+           project_id: ${JSON.stringify(project)},
+           path: "/home/user/s.chat",
+           thread_id: "status",
+           status: {
+             version: 1,
+             running: 0,
+             queued: 0,
+             by_account: {
+               ${JSON.stringify(tess.account_id)}: { reason: "sign-in" },
+               ${JSON.stringify(other)}: { reason: "limit" },
+             },
+             at: ${at},
+           },
+         });
+         await server("agents/identity-watchers.js").notifyIdentityWatchers(${JSON.stringify(agent)});
+         return result;`,
+      ),
+      { registered: true },
+    );
+    const db = await connectBayDatabase(cluster, ATTACHED);
+    try {
+      const status = await eventually(
+        async () =>
+          (
+            await db.query(
+              "SELECT metadata->'status' AS status FROM agent_personal_names WHERE account_id=$1 AND agent_id=$2",
+              [tess.account_id, agent],
+            )
+          ).rows[0]?.status ?? undefined,
+        {
+          timeoutMs: 60_000,
+          intervalMs: 1_000,
+          what: "the status at tess's home",
+        },
+      );
+      assert.deepEqual(status, {
+        version: 1,
+        running: 0,
+        queued: 0,
+        unavailable: { reason: "sign-in" },
+        at,
+      });
+      assert.doesNotMatch(JSON.stringify(status), new RegExp(other));
+    } finally {
+      await db.end();
+    }
+  });
+});
+
 describe("agent memory on the account's home bay", () => {
   // The seed handles a memory request for bob, whose home is the attached
   // bay: it must run there, over the real fabric, with real encryption.
@@ -2689,5 +2804,112 @@ describe("managed egress notices", () => {
        return rows[0].n;`,
     );
     assert.equal(emails, 1, `${emails} email outbox rows for one notice`);
+  });
+});
+
+describe("membership-seat order fulfillment across bays", () => {
+  // Commercial orders live on the seed; membership packages are account-home
+  // state. Recording fulfillment on the seed for a customer homed on the
+  // attached bay must read the packages from that bay.
+  async function makeAdmin(account) {
+    for (const bay of [SEED, ATTACHED]) {
+      await runInBay(
+        cluster,
+        bay,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(
+           "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+           [${JSON.stringify(account.account_id)}]);`,
+      );
+    }
+  }
+
+  async function recordOnSeed({ admin, customer }) {
+    const serviceEnds = new Date(Date.now() + 100 * 86_400_000).toISOString();
+    const order = await runInBay(
+      cluster,
+      SEED,
+      `const store = server("commercial-orders/store.js");
+       const actor = ${JSON.stringify(admin.account_id)};
+       const created = await store.createCommercialOrder({
+         account_id: actor,
+         reason: "multibay membership order",
+         source: "cli",
+         idempotency_key: "multibay-membership-" + ${JSON.stringify(randomUUID())},
+         organization_name: "Multibay Membership University",
+         customer_account_id: ${JSON.stringify(customer.account_id)},
+         collection_mode: "manual_invoice",
+         agreed_subtotal: "100",
+         agreed_total: "100",
+         service_ends_at: ${JSON.stringify(serviceEnds)},
+         next_action: "Approve agreement",
+         next_action_due_at: new Date(Date.now() + 86400000).toISOString(),
+         items: [{ description: "Student seats", quantity: "1", unit_amount: "100",
+                   subtotal: "100", product_kind: "membership_package" }],
+         contacts: [{ role: "billing", name_snapshot: "AP", email_snapshot: "ap@multibay.edu" }],
+       });
+       const approved = await store.approveCommercialOrder({
+         account_id: actor, id: created.id, expected_version: created.version,
+         reason: "approve multibay membership order" });
+       return { id: approved.id, order_number: approved.order_number, version: approved.version };`,
+    );
+    const package_id = randomUUID();
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO membership_packages (id, owner_account_id, kind, membership_class, seat_count, starts_at, expires_at, metadata, created, updated) VALUES ($1::uuid, $2::uuid, 'team', 'student', 3, NOW() - interval '1 day', $3::timestamp + interval '3 days', $4::jsonb, NOW(), NOW())",
+         [${JSON.stringify(package_id)}, ${JSON.stringify(customer.account_id)}, ${JSON.stringify(serviceEnds)},
+          JSON.stringify({ commercial_order_number: ${JSON.stringify(order.order_number)} })]);`,
+    );
+    // The package exists only on the customer's home bay.
+    assert.equal(
+      await runInBay(
+        cluster,
+        SEED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT count(*)::int AS n FROM membership_packages WHERE id=$1::uuid",
+           [${JSON.stringify(package_id)}]);
+         return rows[0].n;`,
+      ),
+      0,
+    );
+
+    const recorded = await runInBay(
+      cluster,
+      SEED,
+      `const { recordCommercialMembershipFulfillment } = server("commercial-orders/fulfillment/membership.js");
+       const result = await recordCommercialMembershipFulfillment({
+         id: ${JSON.stringify(order.id)},
+         account_id: ${JSON.stringify(admin.account_id)},
+         expected_version: ${order.version},
+         reason: "record multibay membership fulfillment",
+         source: "cli",
+         idempotency_key: "multibay-record-" + ${JSON.stringify(randomUUID())},
+         membership_package_ids: [${JSON.stringify(package_id)}],
+       });
+       return { fulfillment_state: result.fulfillment_state };`,
+    );
+    assert.equal(recorded.fulfillment_state, "provisioned");
+  }
+
+  it("records fulfillment on the seed from packages on the customer's home bay", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "mira",
+    });
+    await makeAdmin(admin);
+    await recordOnSeed({ admin, customer: bob });
+  });
+
+  it("reads the home bay when the acting admin is the customer, homed on the attached bay", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "nadia",
+    });
+    await makeAdmin(admin);
+    await recordOnSeed({ admin, customer: admin });
   });
 });

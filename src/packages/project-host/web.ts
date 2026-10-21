@@ -295,6 +295,7 @@ export function resolveExamSessionForRequest(
       sessionToken: createProjectHostBrowserSessionToken({
         account_id: session.account_id,
         restricted_exp_s,
+        auth_iat_s: legacy.iat_s,
       }),
       max_age_seconds,
     }),

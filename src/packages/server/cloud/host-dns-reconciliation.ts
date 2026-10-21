@@ -10,6 +10,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { enqueueCloudVmWork, enqueueCloudVmWorkOnce } from "./db";
 import { ensureHostDns, inspectHostDns } from "./dns";
+import { syncHostContentDns } from "./host-content-dns";
 import { getProviderContext } from "./provider-context";
 
 const logger = getLogger("server:cloud:host-dns-reconciliation");
@@ -530,6 +531,14 @@ export async function reconcileHostDns(host_id: string): Promise<{
       `runtime public IP changed while verifying Cloudflare DNS for ${host_id}`,
     );
   }
+  // The host's content origins follow its verified address (best effort).
+  await syncHostContentDns({
+    id: host_id,
+    metadata: {
+      ...(current.metadata ?? {}),
+      runtime: { ...(current.metadata?.runtime ?? {}), public_ip: publicIp },
+    },
+  });
   logger.info("verified project-host DNS desired state", {
     host_id,
     hostname: dns.name,

@@ -390,10 +390,13 @@ describe("browser-session-only account security routes", () => {
       req,
       account_id: "acct-1",
     });
+    // With this browser's session, which stays signed in while every other
+    // session ends.
     expect(mockSetPassword).toHaveBeenCalledWith(
       "acct-1",
       "old-password",
       "new-password",
+      "remember-me-hash",
     );
   });
 

@@ -21,13 +21,25 @@ import { syncFiles } from "@cocalc/backend/data";
 import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-containing-directory-exists";
 import { statSync, copyFileSync } from "node:fs";
 import type { PersistMaintenanceHooks } from "@cocalc/conat/persist/maintenance/types";
+import {
+  assertSafePersistDatabasePath,
+  projectRootForPersistPath,
+} from "./persist-path-safety";
+
+const zstdDecompressAsync = promisify(zstdDecompress);
 
 initContext({
   sqlite,
   compress: zstdCompressSync,
-  decompress: zstdDecompressSync,
+  // stored data is not trusted: always limit the output
+  decompress: (data: Buffer, maxOutputLength?: number) =>
+    zstdDecompressSync(data, maxOutputLength ? { maxOutputLength } : {}),
   // runs in the libuv threadpool
-  decompressAsync: promisify(zstdDecompress),
+  decompressAsync: (data: Buffer, maxOutputLength?: number) =>
+    zstdDecompressAsync(data, maxOutputLength ? { maxOutputLength } : {}),
+  assertSafeDatabasePath: (path: string) => assertSafePersistDatabasePath(path),
+  isProjectOwnedDatabasePath: (path: string) =>
+    projectRootForPersistPath(path) != null,
   syncFiles,
   ensureContainingDirectoryExists,
   statSync,
