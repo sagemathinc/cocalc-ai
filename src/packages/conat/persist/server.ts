@@ -454,8 +454,10 @@ export function server({
             headers: request.headers,
             msgID: request.msgID,
             checkpoint: request.checkpoint,
+            // A board's reused msgID must be the same record (board-append).
+            strictMsgID: append != null,
           });
-          if (append != null) commitAppend(stream, append);
+          if (append != null) commitAppend(stream, append, [stored]);
           mesg.respondSync(stored);
         } else if (request.cmd == "setMany") {
           const results = stream.setMany(
@@ -471,12 +473,13 @@ export function server({
                 encoding: messageData.encoding,
               }),
             ),
-            // A board's chain is stored whole or not at all.
-            { allOrNothing: append != null },
+            // A board's chain is stored whole or not at all, and a reused
+            // msgID must be the same record.
+            { allOrNothing: append != null, strictMsgID: append != null },
           );
           if (append != null) {
             if (results.some((r) => "error" in r)) forgetAppendHead(stream);
-            else commitAppend(stream, append);
+            else commitAppend(stream, append, results as { seq: number }[]);
           }
           mesg.respondSync(results);
         } else if (request.cmd == "delete") {
@@ -851,11 +854,14 @@ export async function replay({
         }
         break;
       }
-      const oversized = plan.find((row) => row.size > sizeLimit);
+      // (A row's `size` is its page weight; `record`, its own bytes.)
+      const recordOf = (row: { size: number; record?: number }) =>
+        row.record ?? row.size;
+      const oversized = plan.find((row) => recordOf(row) > sizeLimit);
       if (oversized != null) {
         // refuse before reading or decompressing it
         throw persistMessageTooLargeError({
-          size: oversized.size,
+          size: recordOf(oversized),
           limit: sizeLimit,
           seq: oversized.seq,
         });
@@ -867,7 +873,9 @@ export async function replay({
         (total, row) => total + Math.max(row.size, REPLAY_MESSAGE_CHARGE_BYTES),
         0,
       );
-      const heavy = plan.some((row) => row.size >= ASYNC_DECOMPRESS_MIN_BYTES);
+      const heavy = plan.some(
+        (row) => recordOf(row) >= ASYNC_DECOMPRESS_MIN_BYTES,
+      );
       let release: () => void;
       try {
         release = await replayAdmission.acquire(

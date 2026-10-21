@@ -531,6 +531,9 @@ export class BoardAppendCheck {
     head?: string;
     added: [string, string[]][];
     digests: [string, string][];
+    // For each record, whether it adds to the history (else it is the
+    // stored record again).
+    fresh: boolean[];
   } {
     if (this.broken != null) {
       throw new ConatError(
@@ -543,6 +546,7 @@ export class BoardAppendCheck {
     const newDigests = new Map<string, string>();
     const parentsOf = (t: string) => added.get(t) ?? this.patches.get(t);
     const digestOf = (id: string) => newDigests.get(id) ?? this.digests.get(id);
+    const fresh: boolean[] = [];
     for (const { value, digest, key } of records) {
       if (key != null) {
         throw new ConatError(
@@ -561,7 +565,10 @@ export class BoardAppendCheck {
       if (stored != null) {
         // The same record again changes nothing; any other record at its
         // time is refused.
-        if (stored === digest) continue;
+        if (stored === digest) {
+          fresh.push(false);
+          continue;
+        }
         throw new ConatError(
           r.snapshot
             ? `a different snapshot at ${r.time}, which this board's history already has`
@@ -578,6 +585,7 @@ export class BoardAppendCheck {
           );
         }
         newDigests.set(id, digest);
+        fresh.push(true);
         continue;
       }
       if (known != null) {
@@ -606,9 +614,10 @@ export class BoardAppendCheck {
       }
       added.set(r.time, parents);
       newDigests.set(id, digest);
+      fresh.push(true);
       head = r.time;
     }
-    return { head, added: [...added], digests: [...newDigests] };
+    return { head, added: [...added], digests: [...newDigests], fresh };
   }
 
   commit(next: ReturnType<BoardAppendCheck["check"]>, seq: number): void {

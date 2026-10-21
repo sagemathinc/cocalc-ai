@@ -62,7 +62,14 @@ const logger = getLogger("sync:dstream");
 // The codes the board write service refuses a whole request with, before
 // storing anything: its fence (conat/persist/board-write-fence.ts) and its
 // append rule ("branch", conat/persist/board-append.ts).
-const FENCE_REFUSALS = new Set(["instance", "ttl", "lock", "branch"]);
+const FENCE_REFUSALS = new Set([
+  "instance",
+  "ttl",
+  "lock",
+  "branch",
+  // A board record reusing a stored record's msgID (persist/storage.ts).
+  "msgid-conflict",
+]);
 
 export interface DStreamOptions {
   // what it's called by us

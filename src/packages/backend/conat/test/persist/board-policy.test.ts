@@ -626,6 +626,97 @@ describe("the write service keeps a board's history one chain (G1)", () => {
     w.close();
   });
 
+  describe("astra CORR-ABB-1: a msgID is the same record, or refused", () => {
+    const setId = (w: ReturnType<typeof hub>, r: object, msgID: string) =>
+      w.set({ messageData: messageData(r), msgID, timeout: 10_000 });
+
+    // What a new server process reads: the whole chain, and its head the
+    // one the service had cached (it takes the next patch after it).
+    async function reopened(project_id: string, path: string, head: number) {
+      await setup.restartPersistServer();
+      const all = await stored(project_id, path);
+      const w = hub(project_id, path);
+      await set(w, rec(head + 1, head));
+      w.close();
+      return all;
+    }
+
+    test("astra's sequence: B reusing A's msgID is refused, nothing is stored, the head stays A, and C after B is refused", async () => {
+      const project_id = uuid();
+      const path = "/home/user/msgid.board.json";
+      const w = hub(project_id, path);
+      const r = await readerStream(project_id, path);
+      const changes: unknown[] = [];
+      r.on("change", (x) => changes.push(x));
+      await setId(w, rec(1), "same");
+      await waitFor(() => changes.length === 1);
+      // B with A's msgID: refused (it would have been dropped as a
+      // duplicate while the head moved to B).
+      await expect(setId(w, rec(2, 1), "same")).rejects.toMatchObject({
+        code: "msgid-conflict",
+      });
+      // So C after B is refused too: the head is still A.
+      await expect(setId(w, rec(3, 2), "fresh-c")).rejects.toMatchObject({
+        code: "branch",
+      });
+      expect(await stored(project_id, path)).toEqual([rec(1)]);
+      // No change was emitted for a record that wasn't stored.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(changes).toHaveLength(1);
+      // B with its own msgID goes on.
+      await setId(w, rec(2, 1), "fresh-b");
+      await waitFor(() => changes.length === 2);
+      r.close();
+      w.close();
+      // Reopened: complete, and its head the cached one (t2).
+      expect(await reopened(project_id, path, 2)).toEqual([rec(1), rec(2, 1)]);
+    });
+
+    test("the same record again under its msgID is a no-op: nothing stored, nothing emitted, the head unchanged", async () => {
+      const project_id = uuid();
+      const path = "/home/user/msgid-retry.board.json";
+      const w = hub(project_id, path);
+      const r = await readerStream(project_id, path);
+      const changes: unknown[] = [];
+      r.on("change", (x) => changes.push(x));
+      const first = await setId(w, rec(1), "a");
+      await waitFor(() => changes.length === 1);
+      // The retry: the same seq back, and nothing new.
+      expect(await setId(w, rec(1), "a")).toMatchObject({ seq: first.seq });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(changes).toHaveLength(1);
+      expect(await stored(project_id, path)).toEqual([rec(1)]);
+      // The head is still t1.
+      await set(w, rec(2, 1));
+      r.close();
+      w.close();
+      expect(await reopened(project_id, path, 2)).toEqual([rec(1), rec(2, 1)]);
+    });
+
+    test("in a batch: a reused msgID with another record refuses the whole batch", async () => {
+      const project_id = uuid();
+      const path = "/home/user/msgid-batch.board.json";
+      const w = hub(project_id, path);
+      await setId(w, rec(1), "a");
+      // Refused in storage, all or nothing: every result is the refusal.
+      const results = await w.setMany(
+        [
+          { messageData: messageData(rec(2, 1)), msgID: "b" },
+          { messageData: messageData(rec(3, 2)), msgID: "a" },
+        ],
+        { timeout: 10_000 },
+      );
+      expect(results).toEqual([
+        expect.objectContaining({ code: "msgid-conflict" }),
+        expect.objectContaining({ code: "msgid-conflict" }),
+      ]);
+      expect(await stored(project_id, path)).toEqual([rec(1)]);
+      await set(w, rec(2, 1));
+      w.close();
+      expect(await reopened(project_id, path, 2)).toEqual([rec(1), rec(2, 1)]);
+    });
+  });
+
   test("a new server process reads the head from the stream", async () => {
     const project_id = uuid();
     const path = "/home/user/restart.board.json";

@@ -147,12 +147,24 @@ export function appendHead(stream: AppendStream): string | undefined {
   return checkFor(stream).currentHead;
 }
 
-// After a successful store: the new head, at the stream's newest seq.
+// After a successful store: the new head, at the stream's newest seq, but
+// only if the store wrote every record the check took as new (each got a
+// seq the graph wasn't read at yet). Otherwise (a record deduplicated, say)
+// the graph is read from the stream again before the next append, so the
+// cache never holds a record the stream doesn't.
 export function commitAppend(
   stream: AppendStream,
   { check, next }: ReturnType<typeof appendCheck>,
+  results: { seq: number }[],
 ): void {
-  check.commit(next, newestSeq(stream));
+  const written = next.fresh.every(
+    (fresh, i) => !fresh || (results[i]?.seq ?? -Infinity) > check.atSeq,
+  );
+  if (written && results.length === next.fresh.length) {
+    check.commit(next, newestSeq(stream));
+  } else {
+    checks.delete(stream);
+  }
 }
 
 // After anything else that changes the stream (a delete, a reset): the head

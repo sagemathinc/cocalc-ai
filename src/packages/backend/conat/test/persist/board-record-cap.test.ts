@@ -18,6 +18,7 @@ import { boardRecordCap } from "@cocalc/conat/persist/board-record-cap";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { BOARD_HISTORY_LIMITS } from "@cocalc/conat/persist/board-history";
 import { createZstdCompress } from "node:zlib";
+import { randomBytes } from "node:crypto";
 
 beforeAll(before);
 afterAll(after);
@@ -140,26 +141,26 @@ describe("a replay page's budget counts the bytes stored, not the size column (a
       size: 1,
       stored: 4 * MiB,
     }));
-    let pulled = 0;
+    let fetched = 0;
     const db = s.db;
     s.db = {
       prepare: (sql: string) => ({
         all: () => (sql.includes("length(raw) AS stored") ? rows : []),
-        *iterate() {
-          for (const r of rows) {
-            pulled++;
-            yield {
-              ...r,
-              key: null,
-              time: 0,
-              compress: 0,
-              encoding: 0,
-              raw: Buffer.alloc(1),
-              headers: null,
-            };
-          }
+        get: (seq: number) => {
+          fetched++;
+          return {
+            ...rows[seq - 1],
+            key: null,
+            time: 0,
+            compress: 0,
+            encoding: 0,
+            raw: Buffer.alloc(1),
+            headers: null,
+          };
         },
       }),
+      exec: () => {},
+      isTransaction: false,
     };
     try {
       const budget = 8_000_000;
@@ -170,12 +171,15 @@ describe("a replay page's budget counts the bytes stored, not the size column (a
       });
       // At most budget / 4 MiB rows (and always one).
       expect(plan.length).toBe(Math.max(1, Math.floor(budget / (4 * MiB))));
-      expect(plan.reduce((t: number, r: any) => t + r.size, 0)).toBe(4 * MiB);
-      // Reading the whole range stops at the budget too: one row returned,
-      // and only the next one looked at.
+      // Each weighs what it stores plus what it claims to inflate to.
+      expect(plan.reduce((t: number, r: any) => t + r.size, 0)).toBe(
+        4 * MiB + 1,
+      );
+      // Reading the whole range stops at the budget too: only its metadata
+      // is read for the rest, and one row's data is fetched.
       const read = s.readPage(0, 1000, budget);
       expect(read).toHaveLength(1);
-      expect(pulled).toBe(2);
+      expect(fetched).toBe(1);
     } finally {
       s.db = db;
     }
@@ -232,10 +236,171 @@ test("a record at the cap is read; a response holds what fits and is sent before
   const r = reader(project_id, path);
   const pages = (await readAll(r)).filter((p) => p.length > 0);
   r.close();
+  // (A record weighs its stored bytes plus its size; these are constant
+  // bytes, which compress to almost nothing, so two still fit a page.)
   expect(pages).toEqual([
     [3 * MiB, 3 * MiB],
     [3 * MiB, 3 * MiB],
     [3 * MiB],
     [CAP],
   ]);
+});
+
+describe("a page holds at most what it was charged (daybreak2, round 3)", () => {
+  test("compressed rows: each page's stored plus inflated bytes stay within its 8 MB charge plus one record", async () => {
+    const project_id = uuid();
+    const path = "/home/user/weights.board.json";
+    const s: any = await direct(project_id, path);
+    // Ten 1 MiB records that stay about 1 MiB compressed (random bytes).
+    for (let i = 0; i < 10; i++) {
+      s.set({ encoding: 0, raw: randomBytes(MiB) });
+    }
+    const rows = s.sqlite(
+      "SELECT seq, compress, size, length(raw) AS stored FROM messages ORDER BY seq",
+    );
+    expect(rows.some((r: any) => r.compress !== 0)).toBe(true);
+    const r = reader(project_id, path);
+    const pages = (await readAll(r)).filter((p) => p.length > 0);
+    r.close();
+    expect(pages.flat()).toHaveLength(10);
+    // What each page held at its peak: the stored buffers read, and the
+    // inflated messages made from them.
+    let i = 0;
+    for (const page of pages) {
+      const held = page.reduce(
+        (t, inflated) => t + Number(rows[i++].stored) + inflated,
+        0,
+      );
+      expect(held).toBeLessThanOrEqual(8_000_000 + 2 * (MiB + 4096));
+    }
+    expect(pages.length).toBeGreaterThan(2);
+  });
+});
+
+describe("an over-cap blob is never read, whatever changed since its size was checked (daybreak2 blocker)", () => {
+  // Grow seq 2 to 64 MiB (in SQLite: never a 64 MiB buffer here).
+  const grow = (s: any) =>
+    s.sqlite(
+      "UPDATE messages SET raw = zeroblob(?), compress = 0 WHERE seq = ?",
+      [64 * MiB, 2],
+    );
+
+  // Watch every row any statement returns while the test runs: none may
+  // carry a blob over the cap, because its data must never be read at all.
+  // Optionally grow seq 2 just before the first statement that reads data
+  // is prepared (a row changing between its size check and its read).
+  function watch(s: any, { growBeforeData = false } = {}) {
+    const db = s.db;
+    const prepare = db.prepare.bind(db);
+    const blobs: number[] = [];
+    let grown = false;
+    const seen = (row: any) => {
+      if (row?.raw != null) blobs.push(row.raw.length);
+      return row;
+    };
+    db.prepare = (sql: string) => {
+      if (
+        growBeforeData &&
+        !grown &&
+        sql.startsWith("SELECT seq, key, time, compress, encoding, raw")
+      ) {
+        grown = true;
+        prepare(
+          "UPDATE messages SET raw = zeroblob(?), compress = 0 WHERE seq = ?",
+        ).run(64 * MiB, 2);
+      }
+      const stmt = prepare(sql);
+      return {
+        get: (...args: any[]) => seen(stmt.get(...args)),
+        all: (...args: any[]) => stmt.all(...args).map(seen),
+        *iterate(...args: any[]) {
+          for (const row of stmt.iterate(...args)) yield seen(row);
+        },
+        run: (...args: any[]) => stmt.run(...args),
+      };
+    };
+    return {
+      grown: () => grown,
+      biggest: () => Math.max(0, ...blobs),
+      restore: () => {
+        db.prepare = prepare;
+      },
+    };
+  }
+
+  async function three(name: string) {
+    const s: any = await direct(uuid(), `/home/user/${name}.board.json`);
+    for (let i = 0; i < 3; i++)
+      s.set({ encoding: 0, raw: Buffer.alloc(1000, i) });
+    return s;
+  }
+
+  test("readPage: a row grown over the cap after its page was planned is refused by its metadata, its blob unread", async () => {
+    const s = await three("grown");
+    const plan = s.planPage({
+      after_seq: 0,
+      maxRows: 1000,
+      maxBytes: 8_000_000,
+    });
+    expect(plan).toHaveLength(3);
+    grow(s);
+    const w = watch(s);
+    try {
+      expect(() =>
+        s.readPage(
+          0,
+          3,
+          plan.reduce((t: number, r: any) => t + r.size, 0),
+        ),
+      ).toThrow(expect.objectContaining({ code: 413 }));
+      expect(w.biggest()).toBeLessThanOrEqual(CAP);
+    } finally {
+      w.restore();
+    }
+  });
+
+  test("readPage: a row grown between its metadata and its data is refused by the guard, its blob unread", async () => {
+    const s = await three("racing");
+    const w = watch(s, { growBeforeData: true });
+    try {
+      expect(() => s.readPage(0, 3, Infinity)).toThrow(
+        expect.objectContaining({ code: 413 }),
+      );
+      expect(w.grown()).toBe(true);
+      expect(w.biggest()).toBeLessThanOrEqual(CAP);
+    } finally {
+      w.restore();
+    }
+  });
+
+  test("getAll: a row grown between its size check and the data query is refused, its blob unread", async () => {
+    const s = await three("getall");
+    const w = watch(s, { growBeforeData: true });
+    try {
+      const read: number[] = [];
+      expect(() => {
+        for (const m of s.getAll()) read.push(m.seq);
+      }).toThrow(expect.objectContaining({ code: 413 }));
+      expect(w.grown()).toBe(true);
+      // The rows within the cap were read; the grown one never was.
+      expect(read).toEqual([1, 3]);
+      expect(w.biggest()).toBeLessThanOrEqual(CAP);
+    } finally {
+      w.restore();
+    }
+  });
+
+  test("get: a row grown between its size check and its read is refused, its blob unread", async () => {
+    const s = await three("get");
+    const w = watch(s, { growBeforeData: true });
+    try {
+      expect(() => s.get({ seq: 2, key: undefined })).toThrow(
+        expect.objectContaining({ code: 413 }),
+      );
+      expect(w.grown()).toBe(true);
+      expect(w.biggest()).toBeLessThanOrEqual(CAP);
+    } finally {
+      w.restore();
+    }
+  });
 });

@@ -316,10 +316,28 @@ export const ASYNC_DECOMPRESS_MIN_BYTES = 1_000_000;
 // to are each checked against the cap, the last by a decompressor that stops
 // at it. The size column alone isn't trusted: a restored database can say
 // anything there.
-// What a stored message counts as in a replay page: the larger of its size
-// column and the bytes stored.
+// The larger of a stored message's size column and the bytes stored: what
+// it is checked against the record cap and the message size limit by.
 export function recordBytes(row: { size: number; stored?: number }): number {
   return Math.max(Number(row.size) || 0, Number(row.stored) || 0);
+}
+
+// What a stored message weighs in a replay page, as a bound on the memory
+// the page holds: its stored bytes plus its uncompressed size (readPage keeps
+// the stored buffers while the replay inflates each one, so at its peak a
+// page holds about both). For an uncompressed message the two are one
+// buffer, so this counts it twice: conservative.
+export function pageBytes(row: { size: number; stored?: number }): number {
+  return (Number(row.size) || 0) + (Number(row.stored) || 0);
+}
+
+// The SQL guard that a row's stored bytes are within the record cap, so a
+// select that reads raw can never read an over-cap blob, even if the row
+// changed since its metadata was checked.
+function capGuard(cap: number | undefined): { sql: string; params: number[] } {
+  return cap == null
+    ? { sql: "", params: [] }
+    : { sql: " AND length(raw) <= ?", params: [cap] };
 }
 
 export function assertWithinRecordCap(
@@ -1018,6 +1036,7 @@ export class PersistentStream extends EventEmitter {
     msgID,
     checkpoint,
     changes,
+    strictMsgID,
   }: {
     encoding: DataEncoding;
     raw: Buffer;
@@ -1028,6 +1047,7 @@ export class PersistentStream extends EventEmitter {
     msgID?: string;
     checkpoint?: CheckpointUpdate;
     changes: ChangefeedOperation[];
+    strictMsgID?: boolean;
   }): {
     time: number;
     seq: number;
@@ -1040,6 +1060,19 @@ export class PersistentStream extends EventEmitter {
     }
     if (msgID != null && this.msgIDs?.has(msgID)) {
       const existing = this.msgIDs.get(msgID)! as { seq: number; time: number };
+      if (strictMsgID) {
+        // A msgID sent again is the same message only if it is byte for byte
+        // the one stored under it: then nothing is stored and nothing is
+        // emitted. Anything else is refused, never deduplicated into
+        // another record's seq.
+        if (!this.storedIs(existing.seq, encoding, raw)) {
+          throw new ConatError(
+            `a different message with msgID ${msgID}, which is already stored`,
+            { code: "msgid-conflict" },
+          );
+        }
+        return { ...existing };
+      }
       changes.push({
         seq: existing.seq,
         time: existing.time,
@@ -1115,6 +1148,31 @@ export class PersistentStream extends EventEmitter {
     };
   };
 
+  // Whether the message stored at seq is this one, byte for byte (its
+  // encoding and its uncompressed bytes), read within the record cap.
+  private storedIs = (
+    seq: number,
+    encoding: DataEncoding,
+    raw: Buffer,
+  ): boolean => {
+    const meta = this.db
+      .prepare(
+        "SELECT seq, size, length(raw) AS stored FROM messages WHERE seq=?",
+      )
+      .get(seq) as { seq: number; size: number; stored: number } | undefined;
+    if (meta == null) return false;
+    assertWithinRecordCap(meta, this.recordCap);
+    const guard = capGuard(this.recordCap);
+    const row = this.db
+      .prepare(
+        `SELECT seq, compress, encoding, raw FROM messages WHERE seq=?${guard.sql}`,
+      )
+      .get(seq, ...guard.params) as any;
+    if (row == null || row.encoding !== encoding) return false;
+    const stored = handleDecompress(row, this.recordCap);
+    return Buffer.compare(stored, raw) === 0;
+  };
+
   set = ({
     encoding,
     raw,
@@ -1124,6 +1182,7 @@ export class PersistentStream extends EventEmitter {
     previousSeq,
     msgID,
     checkpoint,
+    strictMsgID,
   }: {
     encoding: DataEncoding;
     raw: Buffer;
@@ -1136,6 +1195,9 @@ export class PersistentStream extends EventEmitter {
     // due to not getting a response back from the server.
     msgID?: string;
     checkpoint?: CheckpointUpdate;
+    // A reused msgID is a duplicate only if the message is byte for byte the
+    // stored one, else refused (the board write service).
+    strictMsgID?: boolean;
   }): { seq: number; time: number } => {
     const changes: ChangefeedOperation[] = [];
     const result = this.runTransaction(() =>
@@ -1149,6 +1211,7 @@ export class PersistentStream extends EventEmitter {
         msgID,
         checkpoint,
         changes,
+        strictMsgID,
       }),
     );
     for (const change of changes) {
@@ -1176,7 +1239,11 @@ export class PersistentStream extends EventEmitter {
     }>,
     // All of them or none: if one fails, nothing is stored, and every
     // result is that failure (board streams: a chain must not lose a link).
-    { allOrNothing = false }: { allOrNothing?: boolean } = {},
+    // strictMsgID: as for set.
+    {
+      allOrNothing = false,
+      strictMsgID = false,
+    }: { allOrNothing?: boolean; strictMsgID?: boolean } = {},
   ): Array<{ seq: number; time: number } | { error: string; code?: any }> => {
     const changes: ChangefeedOperation[] = [];
     const msgIds: Array<{ msgID: string; time: number; seq: number }> = [];
@@ -1187,7 +1254,11 @@ export class PersistentStream extends EventEmitter {
       results = this.runTransaction(() =>
         operations.map((operation) => {
           try {
-            const result = this.setInternal({ ...operation, changes });
+            const result = this.setInternal({
+              ...operation,
+              changes,
+              strictMsgID,
+            });
             if (operation.msgID !== undefined) {
               msgIds.push({
                 msgID: operation.msgID,
@@ -1287,11 +1358,17 @@ export class PersistentStream extends EventEmitter {
       },
       this.recordCap,
     );
+    // Read only if it is still within the cap (it may have changed since).
+    const guard = capGuard(this.recordCap);
     const x = this.db
       .prepare(
-        `SELECT seq, key, time, compress, encoding, raw, headers${ttl} FROM messages WHERE seq=?`,
+        `SELECT seq, key, time, compress, encoding, raw, headers${ttl} FROM messages WHERE seq=?${guard.sql}`,
       )
-      .get(meta.seq);
+      .get(meta.seq, ...guard.params);
+    if (x == null && this.recordCap != null) {
+      // Grown over the cap (or gone) since its size was checked.
+      return this.get({ seq: Number(meta.seq), key: undefined });
+    }
     return dbToMessage(x as any, this.recordCap);
   };
 
@@ -1320,11 +1397,10 @@ export class PersistentStream extends EventEmitter {
 
   // Plan one page of a replay from message metadata alone (cheap; no message
   // data is read): the messages after after_seq through end_seq, ending once
-  // their bytes reach maxBytes but always including at least one. A message
-  // counts as the larger of its size column (its uncompressed bytes, which
-  // bound what a capped stream inflates it to) and the bytes actually
-  // stored, so a size that understates what is stored never shrinks a page's
-  // charge.
+  // their weight reaches maxBytes but always including at least one. A
+  // message weighs its stored bytes plus its size column (pageBytes): the
+  // stored buffer and, inflated, at most its size on a capped stream. Each
+  // returned row's `size` is that weight.
   planPage = ({
     after_seq,
     end_seq,
@@ -1335,7 +1411,7 @@ export class PersistentStream extends EventEmitter {
     end_seq?: number;
     maxRows: number;
     maxBytes: number;
-  }): { seq: number; size: number }[] => {
+  }): { seq: number; size: number; record: number }[] => {
     const where = "seq>?" + (end_seq != null ? " AND seq<=?" : "");
     const params = end_seq != null ? [after_seq, end_seq] : [after_seq];
     const sizes = this.db
@@ -1347,50 +1423,81 @@ export class PersistentStream extends EventEmitter {
       size: number;
       stored: number;
     }[];
-    const page: { seq: number; size: number }[] = [];
+    const page: { seq: number; size: number; record: number }[] = [];
     let bytes = 0;
     for (const row of sizes) {
       // Over the stream's record cap: refused before anything is read.
       assertWithinRecordCap(row, this.recordCap);
-      const size = recordBytes(row);
+      const size = pageBytes(row);
       bytes += size;
       if (bytes > maxBytes && page.length > 0) {
         break;
       }
-      page.push({ seq: Number(row.seq), size });
+      page.push({ seq: Number(row.seq), size, record: recordBytes(row) });
     }
     return page;
   };
 
-  // Read the messages with after_seq < seq <= last_seq, one row at a time,
-  // stopping once their bytes (as planPage counts them) would pass maxBytes,
-  // but always reading at least one: so a page holds at most what it was
-  // planned and charged for, even if the rows changed since it was planned.
-  // The caller continues after the last row returned. Each row is checked
-  // against the record cap as it is read. The iterator is closed before
-  // returning, so a caller can yield between pages without holding it open.
+  // Read the messages with after_seq < seq <= last_seq, stopping once their
+  // weight (as planPage counts it) would pass maxBytes, but always reading
+  // at least one: so a page holds at most what it was planned and charged
+  // for, even if the rows changed since it was planned. The caller
+  // continues after the last row returned. In one read transaction, each
+  // row's metadata is checked (the record cap, the weight) before its data
+  // is selected, and the data is selected only while still within the cap,
+  // so an over-cap blob is never read, whatever changed in between.
   readPage = (
     after_seq: number,
     last_seq: number,
     maxBytes = Infinity,
   ): StoredRow[] => {
-    const rows: StoredRow[] = [];
-    let bytes = 0;
-    for (const row of this.db
-      .prepare(
-        `SELECT seq, key, time, compress, encoding, raw, headers, size, length(raw) AS stored FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
-      )
-      .iterate(after_seq, last_seq) as IterableIterator<
-      StoredRow & { stored: number }
-    >) {
-      assertWithinRecordCap(row, this.recordCap);
-      bytes += recordBytes(row);
-      if (bytes > maxBytes && rows.length > 0) break;
-      const { stored, ...stored_row } = row;
-      void stored;
-      rows.push(stored_row as StoredRow);
+    const guard = capGuard(this.recordCap);
+    return this.readTransaction(() => {
+      const metas = this.db
+        .prepare(
+          "SELECT seq, size, length(raw) AS stored FROM messages WHERE seq>? AND seq<=? ORDER BY seq",
+        )
+        .all(after_seq, last_seq) as {
+        seq: number;
+        size: number;
+        stored: number;
+      }[];
+      const fetch = this.db.prepare(
+        `SELECT seq, key, time, compress, encoding, raw, headers, size FROM messages WHERE seq=?${guard.sql}`,
+      );
+      const rows: StoredRow[] = [];
+      let bytes = 0;
+      for (const meta of metas) {
+        assertWithinRecordCap(meta, this.recordCap);
+        bytes += pageBytes(meta);
+        if (bytes > maxBytes && rows.length > 0) break;
+        const row = fetch.get(meta.seq, ...guard.params) as
+          | StoredRow
+          | undefined;
+        if (row == null) {
+          // (Only if the transaction's snapshot were not one: refused.)
+          throw persistMessageTooLargeError({
+            size: (this.recordCap ?? 0) + 1,
+            limit: this.recordCap ?? 0,
+            seq: Number(meta.seq),
+          });
+        }
+        rows.push(row);
+      }
+      return rows;
+    });
+  };
+
+  // Run fn in one read transaction (one snapshot of the database), or in
+  // the transaction already open.
+  private readTransaction = <T>(fn: () => T): T => {
+    if (this.db.isTransaction) return fn();
+    this.db.exec("BEGIN DEFERRED");
+    try {
+      return fn();
+    } finally {
+      this.db.exec("COMMIT");
     }
-    return rows;
   };
 
   *getAll({
@@ -1412,7 +1519,11 @@ export class PersistentStream extends EventEmitter {
       where.push("seq<=?");
       v.push(end_seq);
     }
-    // With a record cap, rows over it are refused before their data is read.
+    // With a record cap, rows over it are refused before their data is read;
+    // and the data is read only while still within the cap, so a row that
+    // grew since (and so is skipped by the guard) is refused once the
+    // iteration is done, its data never read.
+    const expected: number[] = [];
     if (this.recordCap != null) {
       for (const row of this.db
         .prepare(
@@ -1420,12 +1531,31 @@ export class PersistentStream extends EventEmitter {
         )
         .iterate(...v) as Iterable<any>) {
         assertWithinRecordCap(row, this.recordCap);
+        expected.push(Number(row.seq));
       }
     }
-    query = `SELECT seq, key, time, compress, encoding, raw, headers FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`;
+    const guard = capGuard(this.recordCap);
+    const conditions = [...where, ...(guard.sql ? ["length(raw) <= ?"] : [])];
+    query = `SELECT seq, key, time, compress, encoding, raw, headers FROM messages ${conditions.length == 0 ? "" : " where " + conditions.join(" AND ")} ORDER BY seq`;
     stmt = this.db.prepare(query);
-    for (const row of stmt.iterate(...v)) {
+    const skipped: number[] = [];
+    let k = 0;
+    for (const row of stmt.iterate(...v, ...guard.params) as Iterable<any>) {
+      while (k < expected.length && expected[k] < Number(row.seq)) {
+        skipped.push(expected[k++]);
+      }
+      if (k < expected.length && expected[k] === Number(row.seq)) k++;
       yield dbToMessage(row, this.recordCap)!;
+    }
+    skipped.push(...expected.slice(k));
+    for (const seq of skipped) {
+      // Gone (deleted meanwhile) is fine; grown over the cap is refused.
+      const meta = this.db
+        .prepare(
+          "SELECT seq, size, length(raw) AS stored FROM messages WHERE seq=?",
+        )
+        .get(seq) as any;
+      if (meta != null) assertWithinRecordCap(meta, this.recordCap);
     }
   }
 
