@@ -36,8 +36,13 @@ import {
   restoredHistoryCandidates,
   snapshotWithHistory,
   syncPersistVolumeQuota,
+  btrfsOps,
   type PersistVolumeOps,
 } from "./persist-volume";
+import {
+  projectQuotaGroup,
+  projectQuotaGroupsPermitted,
+} from "./project-quota-group";
 import type { CapturedSnapshotData } from "@cocalc/file-server/btrfs/snapshot-preparer";
 
 // whether a persist fence is held (persist-fence.ts), as the code under test
@@ -64,6 +69,8 @@ jest.mock("@cocalc/file-server/btrfs/util", () => {
   const copy = (src: string, dest: string) =>
     fs.cp(src, dest, { recursive: true, verbatimSymlinks: true });
   return {
+    refusedByStorageWrapper: (err: unknown) =>
+      /\bSECURITY_DENY\b/.test(`${(err as any)?.message ?? err}`),
     btrfs: jest.fn(async ({ args }: { args: string[] }) => {
       const [, op, ...rest] = args;
       if (op === "snapshot") {
@@ -92,6 +99,11 @@ jest.mock("@cocalc/file-server/btrfs/util", () => {
     ),
   };
 });
+jest.mock("@cocalc/file-server/btrfs/quota-group", () => ({
+  ...jest.requireActual("@cocalc/file-server/btrfs/quota-group"),
+  addToQuotaGroup: jest.fn(),
+  destroyQuotaGroup: jest.fn(),
+}));
 jest.mock("@cocalc/file-server/btrfs/subvolume", () => ({
   isBtrfsSubvolume: jest.fn(async () => true),
 }));
@@ -133,7 +145,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 // the joins fakeOps recorded, with staged restore volumes named alike
 const joins = (ops: { joined: string[] }) =>
   ops.joined.map((x) =>
-    x.replace(/\/\.persist-import\/restore-[^/]+$/, "/staged"),
+    x.replace(/\/\.persist-import\/restore-[^/ ]+/, "/staged"),
   );
 
 const GiB = 1024 ** 3;
@@ -151,8 +163,10 @@ function fakeOps(): PersistVolumeOps & {
     calls,
     quotas,
     joined,
-    joinQuotaGroup: async (project_id, path) => {
-      joined.push(`${project_id}:${path}`);
+    joinQuotaGroup: async (project_id, path, opts) => {
+      joined.push(
+        `${project_id}:${path}${opts?.required ? " (required)" : ""}`,
+      );
     },
     getQuota: async (path) => quotas.get(path) ?? 0,
     setQuota: async (path, bytes) => {
@@ -695,8 +709,8 @@ describe("in the project-host", () => {
     // what was staged (the history, and its copy), then the history put in
     // place, count against the project's quota
     expect(joins(ops)).toEqual([
-      `${PROJECT}:${mount}/staged`,
-      `${PROJECT}:${mount}/staged`,
+      `${PROJECT}:${mount}/staged (required)`,
+      `${PROJECT}:${mount}/staged (required)`,
       `${PROJECT}:${root}`,
     ]);
     expect(read(join(root, "a.db"))).toBe("live");
@@ -916,7 +930,7 @@ describe("in the project-host", () => {
     expect(mergedWhileFenced).toBe(true);
     // the merge counts against the project's quota before it is used
     expect(joins(ops)).toEqual([
-      `${PROJECT}:${mount}/staged`,
+      `${PROJECT}:${mount}/staged (required)`,
       `${PROJECT}:${root}`,
     ]);
     expect(read(join(root, "a.db"))).toBe("backup");
@@ -1260,9 +1274,11 @@ describe("in the project-host", () => {
     const ops = fakeOps();
     const order: string[] = [];
     const joinQuotaGroup = ops.joinQuotaGroup;
-    ops.joinQuotaGroup = async (project_id, path) => {
-      order.push(`join ${basename(path).split("-")[0]}`);
-      await joinQuotaGroup(project_id, path);
+    ops.joinQuotaGroup = async (project_id, path, opts) => {
+      order.push(
+        `join ${basename(path).split("-")[0]}${opts?.required ? " (required)" : ""}`,
+      );
+      await joinQuotaGroup(project_id, path, opts);
     };
     await restoreBackupWithHistory({
       project_id: PROJECT,
@@ -1292,8 +1308,8 @@ describe("in the project-host", () => {
       "download",
       "room",
       // the downloaded history, the merge, then the new volume (again)
-      "join restore",
-      "join restore",
+      "join restore (required)",
+      "join restore (required)",
       "restore files",
       "join project",
       "room released",
@@ -1327,6 +1343,64 @@ describe("in the project-host", () => {
     expect(restored).toBe(false);
     expect(read(join(root, "a.db"))).toBe("live");
     expect(leftovers()).toEqual([]);
+  });
+
+  // (leaves project-quota-group.ts refusing groups for an hour: the other
+  // tests use fakeOps)
+  it("never skips those joins while the host's root helper was refusing groups", async () => {
+    const { addToQuotaGroup, destroyQuotaGroup } = jest.requireMock(
+      "@cocalc/file-server/btrfs/quota-group",
+    );
+    const deny = async () => {
+      throw new Error(
+        "SECURITY_DENY code=relative-path-not-allowed detail=1/1",
+      );
+    };
+    // the check when the file server starts is refused: no groups for an hour
+    (destroyQuotaGroup as jest.Mock).mockImplementationOnce(deny);
+    expect(await projectQuotaGroupsPermitted(mount)).toBe(false);
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    // the joins as the file server makes them
+    const ops = { ...fakeOps(), joinQuotaGroup: btrfsOps.joinQuotaGroup };
+    let restored = false;
+    const restore = async () =>
+      await restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        listDirectory: backup.listDirectory,
+        restoreInto: backup.restoreInto,
+        restoreFiles: async () => {
+          restored = true;
+        },
+        env,
+        ops,
+      });
+    // still refused: nothing restored, nothing left
+    (addToQuotaGroup as jest.Mock).mockImplementation(deny);
+    await expect(restore()).rejects.toThrow("SECURITY_DENY");
+    expect(restored).toBe(false);
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(leftovers()).toEqual([]);
+    // the helper updated within the hour: what it stages is in the group
+    (addToQuotaGroup as jest.Mock).mockReset();
+    expect(await restore()).toBe(true);
+    expect(restored).toBe(true);
+    expect(read(join(root, "a.db"))).toBe("backup");
+    expect(
+      (addToQuotaGroup as jest.Mock).mock.calls.map(([opts]) => [
+        opts.group,
+        basename(opts.path).split("-")[0],
+      ]),
+    ).toEqual([
+      // the downloaded history, then the merge; the new volume's own join
+      // waits for the hour (its quota audit adds it)
+      [projectQuotaGroup(PROJECT), "restore"],
+      [projectQuotaGroup(PROJECT), "restore"],
+    ]);
   });
 
   it("restores no files when the history can't be merged", async () => {
