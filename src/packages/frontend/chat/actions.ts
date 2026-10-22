@@ -2498,8 +2498,15 @@ export class ChatActions extends Actions<ChatState> {
    * exceptions say nothing more; archives stay.
    */
   clearReaderReadExceptions = (threadKey: string): void => {
+    // Before the read state opens the saved exceptions are not known yet:
+    // queue the clear anyway (it applies to what the store holds).
     const state = this.getReaderState(threadKey);
-    if (!state.u?.length && !Object.keys(state.r ?? {}).length) return;
+    if (
+      this.isProjectReadStateReady() &&
+      !state.u?.length &&
+      !Object.keys(state.r ?? {}).length
+    )
+      return;
     this.updateReaderState(threadKey, (current) => ({
       state: current.a ? { a: current.a } : {},
     }));
