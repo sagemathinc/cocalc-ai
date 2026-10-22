@@ -44,11 +44,17 @@ export interface DedicatedHostBillingEnforcementMetadata {
   drain_completed_at?: string;
   final_backup_status?: "unknown" | "running" | "succeeded" | "failed";
   final_backup_completed_at?: string;
+  final_backup_failed_at?: string;
+  // Set when a rescue drain (start, final backups, drain) was requested for a
+  // host stopped without confirmed final backups.
+  rescue_requested_at?: string;
   stopped_at?: string;
   grace_until?: string;
   deprovision_after?: string;
   deprovision_reminder_sent_at?: string;
   deprovision_requested_at?: string;
+  // Why the disk was deleted without a confirmed final backup, if it was.
+  deprovision_reason?: string;
   deprovisioned_at?: string;
   recovery_actions?: DedicatedHostBillingRecoveryAction[];
   hourly_cost_usd?: MoneyValue;

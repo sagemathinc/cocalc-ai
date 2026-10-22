@@ -1995,6 +1995,44 @@ function billingEnforcementDrainFailureAdminAlert({
   };
 }
 
+// A billing-blocked host whose projects have no confirmed final backup is
+// started once, without a billing session, so the drain below can back up and
+// move its projects before its disk is deleted (spend-maintenance.ts).
+async function startBillingBlockedHostForRescue({
+  account_id,
+  host_id,
+  helpers,
+}: {
+  account_id: string;
+  host_id: string;
+  helpers?: {
+    shouldCancel?: () => Promise<boolean>;
+    progressStep?: (
+      step: string,
+      message: string,
+      detail?: any,
+      progress?: number,
+    ) => Promise<void>;
+  };
+}): Promise<void> {
+  await helpers?.progressStep?.(
+    "starting",
+    "starting billing-blocked host to take final backups",
+    { host_id },
+    5,
+  );
+  const startedAt = Date.now();
+  await startHostInternal({ account_id, id: host_id, billing_rescue: true });
+  await waitForHostStatus({
+    host_id,
+    desired: ["running"],
+    failOn: ["error", "off", "deprovisioned"],
+    shouldCancel: helpers?.shouldCancel,
+    onUpdate: async () => {},
+  });
+  await waitForHostHeartbeat({ host_id, since: startedAt });
+}
+
 async function runHostAction(
   kind: HostOpKind,
   host_id: string,
@@ -2038,6 +2076,13 @@ async function runHostAction(
       return { cloudWorkId };
     }
     case "host-drain":
+      if (input?.billing_rescue === true) {
+        await startBillingBlockedHostForRescue({
+          account_id,
+          host_id,
+          helpers,
+        });
+      }
       const drain = await drainHostInternal({
         account_id,
         id: host_id,

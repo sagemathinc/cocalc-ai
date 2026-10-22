@@ -69,6 +69,12 @@ const RUNNING_BILLING_STATUSES = new Set([
 const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const DEPROVISION_REMINDER_LEAD_MS = 24 * 3600_000;
+// A billing-blocked host whose projects have no confirmed final backup gets one
+// rescue drain after its grace period. If that fails, its disk is deleted
+// anyway this long after the host stopped, and at least
+// BILLING_RESCUE_REVIEW_MS after the failure, so an operator can step in.
+const BILLING_RESCUE_FALLBACK_MS = 30 * 24 * 3600_000;
+const BILLING_RESCUE_REVIEW_MS = 7 * 24 * 3600_000;
 
 let started = false;
 
@@ -823,9 +829,12 @@ async function updateHostStatusAndBillingMetadata({
 async function requestHostDrainForBilling({
   row,
   enforcement,
+  rescue = false,
 }: {
   row: CandidateHostRow;
   enforcement: DedicatedHostBillingEnforcementMetadata;
+  // Start the stopped host first (see startBillingBlockedHostForRescue).
+  rescue?: boolean;
 }): Promise<void> {
   const metadata = { ...(row.metadata ?? {}) };
   const owner = `${metadata?.owner ?? ""}`.trim();
@@ -871,6 +880,7 @@ async function requestHostDrainForBilling({
       force: false,
       managed_egress_override: "admin-host-drain",
       billing_enforcement: true,
+      ...(rescue ? { billing_rescue: true } : {}),
     },
     dedupe_key: `${HOST_DRAIN_LRO_KIND}:billing:${row.id}`,
     status: "queued",
@@ -890,8 +900,11 @@ async function requestHostDrainForBilling({
 
 async function requestHostDeprovisionForBilling({
   row,
+  reason,
 }: {
   row: CandidateHostRow;
+  // Recorded when the disk is deleted without a confirmed final backup.
+  reason?: string;
 }): Promise<void> {
   const metadata = { ...(row.metadata ?? {}) };
   const owner = `${metadata?.owner ?? ""}`.trim();
@@ -909,6 +922,7 @@ async function requestHostDeprovisionForBilling({
         state: "deprovision_pending",
         deprovision_requested_at:
           enforcement?.deprovision_requested_at ?? nowIso,
+        ...(reason ? { deprovision_reason: reason } : {}),
       },
     },
     last_action: "deprovision",
@@ -1058,11 +1072,13 @@ async function maybeProgressInactiveEnforcement({
     }
     return true;
   }
-  if (
-    enforcement?.state !== "stopped_billing_blocked" ||
-    enforcement.final_backup_status !== "succeeded" ||
-    !enforcement.deprovision_after
-  ) {
+  if (enforcement?.state !== "stopped_billing_blocked") {
+    return false;
+  }
+  if (enforcement.final_backup_status !== "succeeded") {
+    return await maybeRescueUnbackedBillingBlockedHost({ row, enforcement });
+  }
+  if (!enforcement.deprovision_after) {
     return false;
   }
   if (await maybeSendDeprovisionReminder({ row })) {
@@ -1073,6 +1089,61 @@ async function maybeProgressInactiveEnforcement({
     return false;
   }
   await requestHostDeprovisionForBilling({ row });
+  return true;
+}
+
+// A billing-blocked host keeps its disk while a project on it has no confirmed
+// final backup; without this it would keep the disk, and bill for it, forever.
+// After the grace period, request one rescue: start the host without a billing
+// session, drain it (each move takes a final backup) and stop it; the normal
+// deprovision then follows. If the rescue fails, delete the disk anyway once
+// BILLING_RESCUE_FALLBACK_MS have passed since the stop, and at least
+// BILLING_RESCUE_REVIEW_MS since the failure (its admin alert); projects then
+// restore from their last backup.
+async function maybeRescueUnbackedBillingBlockedHost({
+  row,
+  enforcement,
+  now = Date.now(),
+}: {
+  row: CandidateHostRow;
+  enforcement: DedicatedHostBillingEnforcementMetadata;
+  now?: number;
+}): Promise<boolean> {
+  const stoppedAt = Date.parse(`${enforcement.stopped_at ?? ""}`);
+  const graceEnd = enforcement.deprovision_after
+    ? Date.parse(enforcement.deprovision_after)
+    : stoppedAt + DEDICATED_HOST_BILLING_DISK_GRACE_HOURS * 3600_000;
+  if (!Number.isFinite(graceEnd) || graceEnd > now) {
+    return false;
+  }
+  if (!enforcement.rescue_requested_at) {
+    await requestHostDrainForBilling({
+      row,
+      enforcement: {
+        ...enforcement,
+        state: "draining",
+        rescue_requested_at: new Date(now).toISOString(),
+      },
+      rescue: true,
+    });
+    return true;
+  }
+  const failedAt = Date.parse(
+    `${enforcement.final_backup_failed_at ?? enforcement.rescue_requested_at}`,
+  );
+  if (
+    !Number.isFinite(stoppedAt) ||
+    !Number.isFinite(failedAt) ||
+    now < stoppedAt + BILLING_RESCUE_FALLBACK_MS ||
+    now < failedAt + BILLING_RESCUE_REVIEW_MS
+  ) {
+    return false;
+  }
+  await requestHostDeprovisionForBilling({
+    row,
+    reason:
+      "final backup unavailable: the rescue drain failed and the retention period ended",
+  });
   return true;
 }
 
@@ -1194,7 +1265,9 @@ async function runPass(): Promise<void> {
   const getSnapshot = async (
     account_id: string,
     funding_mode_override?:
-      "account-prepaid" | "account-postpaid" | "site-funded",
+      | "account-prepaid"
+      | "account-postpaid"
+      | "site-funded",
   ) => {
     const cacheKey = `${account_id}:${funding_mode_override ?? ""}`;
     const cached = snapshotCache.get(cacheKey);

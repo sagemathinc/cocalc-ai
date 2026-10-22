@@ -1094,6 +1094,205 @@ describe("dedicated host spend maintenance", () => {
     );
   });
 
+  function blockedHostRow(enforcement: Record<string, any>) {
+    return {
+      id: "host-1",
+      name: "GPU Host",
+      region: "us-central1",
+      status: "off",
+      metadata: {
+        owner: "acc-1",
+        desired_state: "stopped",
+        machine: {
+          cloud: "gcp",
+          machine_type: "n1-standard-4",
+        },
+        billing: {
+          funding_mode: "account-prepaid",
+          enforcement: {
+            state: "stopped_billing_blocked",
+            reason: "prepaid balance is exhausted",
+            ...enforcement,
+          },
+        },
+      },
+    };
+  }
+
+  it("requests one rescue drain for a blocked host without a confirmed final backup after grace", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            blockedHostRow({
+              final_backup_status: "unknown",
+              stopped_at: "2026-01-01T00:00:00.000Z",
+              deprovision_after: "2026-01-04T00:00:00.000Z",
+            }),
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET status=$2")
+      ) {
+        expect(params?.[0]).toBe("host-1");
+        expect(params?.[1]).toBe("draining");
+        expect(params?.[2].billing.enforcement).toMatchObject({
+          state: "draining",
+          final_backup_status: "unknown",
+          rescue_requested_at: expect.any(String),
+        });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(createLroMock).toHaveBeenCalledTimes(1);
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-drain",
+        scope_id: "host-1",
+        input: expect.objectContaining({
+          id: "host-1",
+          account_id: "acc-1",
+          allow_offline: false,
+          billing_enforcement: true,
+          billing_rescue: true,
+        }),
+      }),
+    );
+  });
+
+  it("waits after a failed rescue before deleting the disk", async () => {
+    const now = Date.now();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            blockedHostRow({
+              final_backup_status: "failed",
+              // Stopped long ago, but the rescue failed only yesterday.
+              stopped_at: new Date(now - 60 * 24 * 3600_000).toISOString(),
+              deprovision_after: new Date(now - 3600_000).toISOString(),
+              rescue_requested_at: new Date(now - 25 * 3600_000).toISOString(),
+              final_backup_failed_at: new Date(
+                now - 24 * 3600_000,
+              ).toISOString(),
+            }),
+          ],
+        };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes the disk of a host whose rescue failed once the retention period ends", async () => {
+    const now = Date.now();
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            blockedHostRow({
+              final_backup_status: "failed",
+              stopped_at: new Date(now - 31 * 24 * 3600_000).toISOString(),
+              deprovision_after: new Date(now - 3600_000).toISOString(),
+              rescue_requested_at: new Date(
+                now - 9 * 24 * 3600_000,
+              ).toISOString(),
+              final_backup_failed_at: new Date(
+                now - 8 * 24 * 3600_000,
+              ).toISOString(),
+            }),
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=(")
+      ) {
+        expect(params?.[1].billing.enforcement).toMatchObject({
+          state: "deprovision_pending",
+          deprovision_reason: expect.stringContaining("rescue drain failed"),
+        });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-deprovision",
+        scope_id: "host-1",
+        input: expect.objectContaining({
+          skip_backups: true,
+          billing_enforcement: true,
+        }),
+      }),
+    );
+  });
+
+  it("does not rescue a blocked host before its grace period ends", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            blockedHostRow({
+              final_backup_status: "unknown",
+              stopped_at: new Date().toISOString(),
+              deprovision_after: new Date(Date.now() + 3600_000).toISOString(),
+            }),
+          ],
+        };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
   it("does not queue a deprovision when a relocation took the host after it was read", async () => {
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("pg_try_advisory_lock")) {

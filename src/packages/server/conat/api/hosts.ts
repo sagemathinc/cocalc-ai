@@ -6639,15 +6639,18 @@ export async function startHost({
 export async function startHostInternal({
   account_id,
   id,
+  billing_rescue,
   onWorkQueued,
 }: {
   account_id?: string;
   id: string;
+  billing_rescue?: boolean;
   onWorkQueued?: (workId: string) => void;
 }): Promise<Host> {
   return await startHostInternalHelper({
     account_id,
     id,
+    billing_rescue,
     onWorkQueued,
     loadHostForStartStop,
     markHostActionPending,
