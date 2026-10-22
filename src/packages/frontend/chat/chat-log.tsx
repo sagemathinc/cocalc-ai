@@ -57,6 +57,7 @@ import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import type { ThreadIndexEntry } from "./message-cache";
 import { getMessageAtDate, newest_content } from "./utils";
+import { journalScroll, journalScrollWrites } from "./scroll-journal";
 import {
   CHAT_IMAGE_BOX_HEIGHT,
   estimateMessageRowHeight,
@@ -842,6 +843,7 @@ export function ChatLog({
       scrollToBottomRef?.current?.(true);
     } else {
       keepBottomAnchoredRef.current = false;
+      journalScroll("jump", { kind: "scroll-to-index" });
       virtuosoRef.current?.scrollToIndex({
         index: rowLookupRef.current.forMessageIndex(scrollToIndex),
         behavior: INSTANT_SCROLL_BEHAVIOR,
@@ -874,6 +876,7 @@ export function ChatLog({
       return;
     }
     keepBottomAnchoredRef.current = false;
+    journalScroll("jump", { kind: "scroll-to-date" });
     virtuosoRef.current?.scrollToIndex({
       index: rowLookupRef.current.forMessageIndex(index),
       behavior: INSTANT_SCROLL_BEHAVIOR,
@@ -888,6 +891,7 @@ export function ChatLog({
     if (index < 0) return;
     keepBottomAnchoredRef.current = false;
     if (USE_VIRTUOSO) {
+      journalScroll("jump", { kind: "search-jump" });
       virtuosoRef.current?.scrollToIndex({
         index: rowLookupRef.current.forMessageIndex(index),
         align: "center",
@@ -924,6 +928,7 @@ export function ChatLog({
   useEffect(() => {
     if (scrollToBottomRef == null) return;
     scrollToBottomRef.current = (force?: boolean) => {
+      journalScroll("to-bottom", { force, manual: manualScrollRef.current });
       // Sending changes follow intent even while an overlay temporarily blocks
       // physical scrolling. Do not lose that intent with the overlay's closure.
       if (force) {
@@ -947,6 +952,7 @@ export function ChatLog({
         if (!canAutoScrollRef.current) return;
         if (manualScrollRef.current) return;
         if (!keepBottomAnchoredRef.current) return;
+        journalScroll("to-bottom-retry");
         doScroll();
       };
 
@@ -1477,6 +1483,7 @@ export function MessageList({
   };
 
   const markManualScrollAway = () => {
+    journalScroll("manual-away");
     if (keepBottomAnchoredRef) {
       keepBottomAnchoredRef.current = false;
     }
@@ -1487,6 +1494,7 @@ export function MessageList({
   };
 
   const markUserScrollIntent = () => {
+    journalScroll("input");
     clearAnchorRestoreTimers();
     // Foreground/layout retries predate this input. They must not reload a
     // cached bottom anchor and erase the user's newer manual-scroll intent.
@@ -1566,6 +1574,7 @@ export function MessageList({
       event.target ?? null,
     );
     if (!editableTarget && event.deltaY !== 0) {
+      journalScroll("wheel", { dy: event.deltaY });
       markUserScrollIntent();
       if (event.deltaY == null || event.deltaY < 0) markManualScrollAway();
     }
@@ -1620,6 +1629,7 @@ export function MessageList({
   };
 
   const resumeBottomFollowing = useCallback(() => {
+    journalScroll("resume-bottom");
     // Explicit sends/newest requests supersede cached reading positions,
     // including delayed offset restoration already scheduled for them.
     clearAnchorRestoreTimers();
@@ -1681,6 +1691,7 @@ export function MessageList({
 
       clearAnchorRestoreTimers();
       suppressAnchorCaptureUntilRef.current = Date.now() + 1200;
+      journalScroll("anchor-restore", { atBottom: anchor.atBottom });
 
       // An anchor whose message is not among the rows (e.g., archived, or
       // from another thread) opens at the newest messages, like a fresh open.
@@ -1740,6 +1751,7 @@ export function MessageList({
       for (const delayMs of [0, 16, 75, 200, 500, 1000]) {
         const timer = setTimeout(() => {
           if (anchorRestoreTokenRef.current !== token) return;
+          journalScroll("anchor-retry", { delayMs });
           restoreChatViewportAnchorOffset({
             anchor,
             scroller: scrollerRef.current,
@@ -2022,9 +2034,14 @@ export function MessageList({
     lastMessageRow,
   };
 
+  const undoScrollWritesRef = useRef<(() => void) | undefined>(undefined);
   const handleVirtuosoScrollerRef = useCallback(
     (node: HTMLElement | Window | null) => {
+      undoScrollWritesRef.current?.();
+      undoScrollWritesRef.current = undefined;
       scrollerRef.current = node instanceof HTMLElement ? node : null;
+      if (scrollerRef.current)
+        undoScrollWritesRef.current = journalScrollWrites(scrollerRef.current);
     },
     [],
   );
@@ -2034,6 +2051,20 @@ export function MessageList({
     const key =
       data == null ? undefined : allRowKeysRef.current[parseInt(data)];
     if (key != null) {
+      const before = virtuosoHeightsRef.current[key];
+      if (before != null && before !== height) {
+        // Above the screen, the list moves the reader to compensate.
+        const scroller = scrollerRef.current;
+        journalScroll("resize", {
+          index: data,
+          from: before,
+          to: height,
+          above:
+            scroller != null &&
+            element.getBoundingClientRect().top <
+              scroller.getBoundingClientRect().top,
+        });
+      }
       virtuosoHeightsRef.current[key] = height;
       // Opening this chat again starts from real heights.
       rememberRowHeight(cacheIdRef.current, key, height);
@@ -2171,6 +2202,7 @@ export function MessageList({
       markManualScrollAway();
       scheduleAnchorCapture();
     }
+    journalScroll("at-bottom", { atBottom });
     setAtBottom(atBottom);
   }, []);
   const handleVirtuosoAtTopStateChange = useCallback((atTop: boolean) => {
@@ -2178,6 +2210,11 @@ export function MessageList({
   }, []);
   const handleVirtuosoScroll = useCallback(() => {
     const scroller = scrollerRef.current;
+    if (scroller != null)
+      journalScroll("scroll", {
+        top: Math.round(scroller.scrollTop),
+        height: scroller.scrollHeight,
+      });
     if (scroller != null && isVisibleRef.current) {
       visibleScrollTopRef.current = {
         cacheId: cacheIdRef.current,
@@ -2219,6 +2256,7 @@ export function MessageList({
     if (index < 0) return;
     pendingActivityScrollRef.current = undefined;
     markManualScrollAway();
+    journalScroll("jump", { kind: "activity-jump" });
     listVirtuosoRef.current?.scrollToIndex({
       index,
       align: "start",
@@ -2240,6 +2278,7 @@ export function MessageList({
     if (appliedAttentionJumpRef.current === jump) return;
     appliedAttentionJumpRef.current = jump;
     if (useVirtuoso) {
+      journalScroll("jump", { kind: "activity-jump-2" });
       listVirtuosoRef.current?.scrollToIndex({
         index: rowCountRef.current,
         align: "center",
@@ -2301,6 +2340,7 @@ export function MessageList({
         if (manualScrollRef?.current) return;
         if (!keepBottomAnchoredRef.current) return;
         if (anyOverlayOpen) return;
+        journalScroll("layout-restore");
         scrollToBottomRef.current?.(true);
       });
     };
