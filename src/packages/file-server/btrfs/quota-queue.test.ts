@@ -130,6 +130,163 @@ describe("btrfs simple-quota queue", () => {
     });
   });
 
+  it("puts a quota group's members in it and sets its limit", async () => {
+    process.env.COCALC_BTRFS_QUOTA_MODE = "simple";
+    const readFileMock = jest.fn(async (path: string) => {
+      if (path.endsWith("/enabled")) return "1\n";
+      if (path.endsWith("/mode")) return "simple\n";
+      throw new Error(`unexpected readFile path: ${path}`);
+    });
+    const btrfsMock = jest.fn(async ({ args }: { args: string[] }) => {
+      const command = args.join(" ");
+      if (command === "filesystem show /mnt/test") {
+        return {
+          exit_code: 0,
+          stdout: "Label: none  uuid: 11111111-2222-4333-8444-555555555555\n",
+          stderr: "",
+        };
+      }
+      // already made, and the home already in it: fine
+      if (command === "qgroup create 1/42 /mnt/test") {
+        throw new Error("ERROR: unable to create quota group: File exists");
+      }
+      if (
+        command ===
+        "qgroup assign --no-rescan /mnt/test/project-1 1/42 /mnt/test"
+      ) {
+        throw new Error("ERROR: unable to assign quota group: File exists");
+      }
+      if (command === "qgroup limit 110M 1/42 /mnt/test") {
+        return { exit_code: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected btrfs args: ${command}`);
+    });
+    jest.doMock("./util", () => ({
+      btrfs: (opts: { args: string[] }) => btrfsMock(opts),
+    }));
+    jest.doMock("node:fs/promises", () => ({
+      readFile: (path: string) => readFileMock(path),
+    }));
+    jest.doMock("@cocalc/backend/misc/async-utils-node", () => ({
+      // the persist volume doesn't exist (yet)
+      exists: async (path: string) => path === "/mnt/test/project-1",
+    }));
+
+    const { queueSyncQuotaGroup, getBtrfsQuotaQueueStatus } =
+      await import("./quota-queue");
+    await queueSyncQuotaGroup({
+      mount: "/mnt/test",
+      group: "1/42",
+      members: ["/mnt/test/project-1", "/mnt/test/project-1-persist"],
+      size: "110M",
+      wait: true,
+    });
+
+    expect(
+      btrfsMock.mock.calls
+        .map(([{ args }]) => args.join(" "))
+        .filter((command) => command.startsWith("qgroup")),
+    ).toEqual([
+      "qgroup create 1/42 /mnt/test",
+      "qgroup assign --no-rescan /mnt/test/project-1 1/42 /mnt/test",
+      "qgroup limit 110M 1/42 /mnt/test",
+    ]);
+    expect(getBtrfsQuotaQueueStatus("/mnt/test")?.failed_count).toBe(0);
+  });
+
+  it("fails a command the host's root helper refuses at once", async () => {
+    process.env.COCALC_BTRFS_QUOTA_MODE = "simple";
+    const btrfsMock = jest.fn(async ({ args }: { args: string[] }) => {
+      if (args.join(" ") === "filesystem show /mnt/test") {
+        return {
+          exit_code: 0,
+          stdout: "Label: none  uuid: 11111111-2222-4333-8444-555555555555\n",
+          stderr: "",
+        };
+      }
+      throw new Error(
+        "command 'sudo' exited with nonzero code 2 -- stderr='SECURITY_DENY code=relative-path-not-allowed detail=1/42'",
+      );
+    });
+    jest.doMock("./util", () => ({
+      refusedByStorageWrapper: (err: unknown) =>
+        /SECURITY_DENY/.test(`${(err as any)?.message ?? err}`),
+      btrfs: (opts: { args: string[] }) => btrfsMock(opts),
+    }));
+    jest.doMock("node:fs/promises", () => ({
+      readFile: async (path: string) =>
+        path.endsWith("/enabled") ? "1\n" : "simple\n",
+    }));
+    jest.doMock("@cocalc/backend/misc/async-utils-node", () => ({
+      exists: async () => true,
+    }));
+    const { queueSyncQuotaGroup } = await import("./quota-queue");
+    await expect(
+      queueSyncQuotaGroup({
+        mount: "/mnt/test",
+        group: "1/42",
+        members: ["/mnt/test/project-1"],
+        size: "110M",
+        wait: true,
+      }),
+    ).rejects.toThrow(/failed after 1 attempts: .*SECURITY_DENY/);
+  });
+
+  it("hands deferred background work back to its caller at once", async () => {
+    process.env.COCALC_BTRFS_QUOTA_MODE = "simple";
+    const btrfsMock = jest.fn(async ({ args }: { args: string[] }) => {
+      if (args.join(" ") === "filesystem show /mnt/test") {
+        return {
+          exit_code: 0,
+          stdout: "Label: none  uuid: 11111111-2222-4333-8444-555555555555\n",
+          stderr: "",
+        };
+      }
+      throw new Error(`unexpected btrfs args: ${args.join(" ")}`);
+    });
+    jest.doMock("./util", () => ({
+      refusedByStorageWrapper: () => false,
+      btrfs: (opts: { args: string[] }) => btrfsMock(opts),
+    }));
+    jest.doMock("node:fs/promises", () => ({
+      readFile: async (path: string) =>
+        path.endsWith("/enabled") ? "1\n" : "simple\n",
+    }));
+    jest.doMock("@cocalc/backend/misc/async-utils-node", () => ({
+      exists: async () => true,
+    }));
+    const {
+      BtrfsMutationDeferredError,
+      configureBtrfsBackgroundMutationGuard,
+    } = await import("./operation-cache");
+    const { queueSyncQuotaGroup, getBtrfsQuotaQueueStatus } =
+      await import("./quota-queue");
+    configureBtrfsBackgroundMutationGuard(() => "io_pressure_recovery");
+    try {
+      const started = Date.now();
+      const result = queueSyncQuotaGroup({
+        mount: "/mnt/test",
+        group: "1/42",
+        members: ["/mnt/test/project-1"],
+        size: "110M",
+        priority: "scheduled",
+        wait: true,
+      });
+      await expect(result).rejects.toBeInstanceOf(BtrfsMutationDeferredError);
+      // not retried (that took ~30 s), and not a failure
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(getBtrfsQuotaQueueStatus("/mnt/test")).toMatchObject({
+        queued_count: 0,
+        failed_count: 0,
+      });
+      expect(
+        btrfsMock.mock.calls.filter(([{ args }]) => args[0] === "qgroup"),
+      ).toEqual([]);
+    } finally {
+      configureBtrfsBackgroundMutationGuard(undefined);
+    }
+  });
+
   it("treats the old qgroup mode env as simple quotas", async () => {
     process.env.COCALC_BTRFS_QUOTA_MODE = "qgroup";
     const { btrfsQuotaMode } = await import("./config");

@@ -44,6 +44,10 @@ export interface AcpChatContext {
      * message it was never sent.
      */
     report_capability?: string;
+    /** The sender asked to be told if the turn ends without replying to it.
+     * Not in the signed binding: it only adds a report about this message,
+     * which report_capability already authorizes. */
+    report_no_reply?: true;
   };
   // A turn a delivery report started (another agent's turn on this agent's
   // message failed). Rechecked at execution; never itself reported.
@@ -235,7 +239,9 @@ export type AcpControlResponse = {
 };
 
 export type AcpAttentionSourceKind =
-  "codex_sync_question" | "codex_async_question" | "cocalc_action";
+  | "codex_sync_question"
+  | "codex_async_question"
+  | "cocalc_action";
 
 export type AcpAttentionKind =
   | "question"
@@ -499,6 +505,8 @@ export type AcpStreamEvent =
         signal?: string;
       };
       output?: string;
+      /** exit: the command was refused, so it never ran. */
+      declined?: boolean;
     }
   | ({ type: "peerMessage" } & Omit<
       AgentMessageRuntimeEvent,
@@ -534,6 +542,8 @@ export type AcpStreamPayload =
       error: string;
       code?: string;
       retryable?: boolean;
+      /** What the failure was, when the agent knows (turn-outcome.ts). */
+      failure?: import("./turn-outcome").TurnFailure;
     };
 
 export type AcpStreamMessage = AcpStreamPayload & {

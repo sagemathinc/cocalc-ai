@@ -19,6 +19,21 @@ const FULL_SUITE_FILES = new Set([
   "src/workspaces.py",
 ]);
 
+// The two-bay cluster test runs hubs: the server package and everything it
+// depends on (util, conat, database, backend, ...), plus these packages, which
+// the hub loads but the server does not. A change that affects none of them
+// (e.g. frontend-only, which reaches the hub only through its static assets)
+// skips it.
+const MULTIBAY_DIRECT_PACKAGES = new Set(["hub", "http-api", "launchpad"]);
+
+export function needsMultibay({ runFull, affectedPackages, directPackages }) {
+  return (
+    runFull ||
+    affectedPackages.includes("server") ||
+    directPackages.some((name) => MULTIBAY_DIRECT_PACKAGES.has(name))
+  );
+}
+
 export function discoverWorkspaces(dir = PACKAGES_DIR) {
   const workspaces = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -149,6 +164,9 @@ export function createPlan({
   if (rest.length) {
     lanes.push({ lane: "rest", packages: rest.join(",") });
   }
+  const runMultibay =
+    lanes.length > 0 &&
+    needsMultibay({ runFull, affectedPackages, directPackages: direct });
   return {
     mode: runFull ? "full" : "affected",
     base,
@@ -158,6 +176,7 @@ export function createPlan({
     depcheckPackages,
     lanes,
     hasTests: lanes.length > 0,
+    runMultibay,
   };
 }
 
@@ -175,12 +194,21 @@ function run(command, args, cwd) {
   return result.stdout.trim();
 }
 
-function changedFilesSince(base) {
+// Deleted paths count: removing code from a package changes that package.
+// Without rename detection a move lists both its old and new path, so the
+// package it left counts as changed too.
+export function changedFilesSince(base, cwd = REPO_ROOT) {
   if (!base) return [];
   return run(
     "git",
-    ["diff", "--name-only", "--diff-filter=ACMR", `${base}...HEAD`],
-    REPO_ROOT,
+    [
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "--diff-filter=ACDMT",
+      `${base}...HEAD`,
+    ],
+    cwd,
   )
     .split("\n")
     .filter(Boolean);
@@ -216,6 +244,7 @@ function writeGithubOutput(plan) {
   const lines = [
     `matrix=${JSON.stringify({ include: plan.lanes })}`,
     `has_tests=${plan.hasTests}`,
+    `run_multibay=${plan.runMultibay}`,
     `mode=${plan.mode}`,
     `depcheck_packages=${plan.depcheckPackages.join(",")}`,
   ];

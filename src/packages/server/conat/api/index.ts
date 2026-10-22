@@ -210,6 +210,11 @@ async function serve() {
   await syncAccountSecurityStateOnce({ maxPages: 1000 });
   startAccountSecurityStateSyncLoop();
   const cn = await conat({ noCache: true });
+  // Idle and lifetime limits for this bay's sign-in sessions (one process at
+  // a time does the work; see session-expiry.ts).
+  const { startSessionMaintenance } =
+    await import("@cocalc/server/auth/session-expiry");
+  const stopSessionMaintenance = startSessionMaintenance();
   let stopAgentMessaging = async () => {};
   try {
     const { startAgentMessaging } =
@@ -237,6 +242,7 @@ async function serve() {
       }),
     );
   } finally {
+    stopSessionMaintenance();
     await stopAgentMessaging();
     for (const { subscription } of subscriptions) {
       subscription.close();

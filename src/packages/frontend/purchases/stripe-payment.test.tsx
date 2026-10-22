@@ -22,6 +22,7 @@ import {
 } from "./api";
 
 let mockStripeEnabled = false;
+let mockAddressCountry = "US";
 let mockAppearance = "light";
 jest.mock("@cocalc/frontend/appearance/use-appearance", () => ({
   useAppearance: () => ({ resolved: mockAppearance }),
@@ -62,6 +63,21 @@ jest.mock("antd", () => {
     ),
     Card: Box,
     Divider: () => <hr />,
+    Input: ({ id, value, onChange, placeholder, ...rest }: any) => (
+      <input
+        id={id}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        aria-describedby={rest["aria-describedby"]}
+      />
+    ),
+    Tag: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+    Typography: {
+      Text: ({ children, id }: { children?: ReactNode; id?: string }) => (
+        <span id={id}>{children}</span>
+      ),
+    },
     Modal: Box,
     Progress: ({ percent }: { percent?: number }) => (
       <div>progress {percent}</div>
@@ -115,7 +131,7 @@ jest.mock("@stripe/react-stripe-js", () => ({
               value: {
                 address: {
                   city: "San Francisco",
-                  country: "US",
+                  country: mockAddressCountry,
                   line1: "1 Main St",
                   postal_code: "94105",
                   state: "CA",
@@ -195,6 +211,7 @@ describe("StripePayment", () => {
     mockAppearance = "light";
     mockStripeEnabled = false;
     mockEmailVerificationRequired = false;
+    mockAddressCountry = "US";
     jest.mocked(createPaymentIntent).mockReset();
     jest.mocked(createSetupIntent).mockReset();
     jest
@@ -620,6 +637,104 @@ describe("StripePayment", () => {
     expect(createSetupIntent).not.toHaveBeenCalled();
     expect(getCustomerSession).not.toHaveBeenCalled();
   });
+
+  it("asks an EU customer for a labelled VAT number and saves it with the address", async () => {
+    mockStripeEnabled = true;
+    mockAddressCountry = "DE";
+    jest.mocked(getStripeCustomer).mockResolvedValue({
+      address: { country: "DE" },
+      name: "Uni",
+      vat_id: { value: "DE1", type: "eu_vat", status: "pending" },
+    });
+    const onFinished = jest.fn();
+    render(
+      <BillingSetupModal
+        onCancel={jest.fn()}
+        onFinished={onFinished}
+        requirePaymentMethod={false}
+      />,
+    );
+    const input = (await screen.findByLabelText(
+      "VAT number",
+    )) as HTMLInputElement;
+    expect(input.value).toBe("DE1");
+    expect(input.getAttribute("aria-describedby")).toBe(
+      "billing-vat-number-help",
+    );
+    fireEvent.change(input, { target: { value: "DE 123456789" } });
+    fireEvent.click(await screen.findByText("Save Address"));
+    await waitFor(() => {
+      expect(setStripeCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({ vat_id: "DE 123456789" }),
+      );
+    });
+  });
+
+  it("does not show or send a VAT number for a US address", async () => {
+    mockStripeEnabled = true;
+    jest.mocked(getStripeCustomer).mockResolvedValue({
+      address: { country: "US" },
+      name: "Ada",
+    });
+    render(
+      <BillingSetupModal
+        onCancel={jest.fn()}
+        onFinished={jest.fn()}
+        requirePaymentMethod={false}
+      />,
+    );
+    fireEvent.click(await screen.findByText("Save Address"));
+    await waitFor(() => {
+      expect(setStripeCustomer).toHaveBeenCalled();
+    });
+    expect(screen.queryByLabelText("VAT number")).toBeNull();
+    expect(jest.mocked(setStripeCustomer).mock.calls[0][0]).not.toHaveProperty(
+      "vat_id",
+    );
+  });
+
+  it.each([
+    ["billing_address_required", "Please enter your billing name and address"],
+    ["business_tax_id_required", "CoCalc sells only to organizations"],
+  ])(
+    "shows the billing details form when checkout says %s, then retries",
+    async (code, text) => {
+      mockStripeEnabled = true;
+      jest.mocked(getPaymentMethods).mockResolvedValue({ data: [] } as any);
+      const err: any = new Error(text);
+      err.code = code;
+      jest
+        .mocked(getCheckoutSession)
+        .mockRejectedValueOnce(err)
+        .mockResolvedValueOnce({
+          clientSecret: "cs_test_secret",
+          sessionId: "cs_test",
+        } as any);
+      render(
+        <StripePayment
+          description="Membership change"
+          lineItems={[{ description: "Pro membership, annual", amount: 1440 }]}
+          purpose="membership-change"
+        />,
+      );
+      fireEvent.click(await screen.findByText("Choose Payment Method"));
+      await waitFor(() => {
+        expect(screen.getByText("Stripe address element")).toBeTruthy();
+      });
+      expect(screen.getAllByText(new RegExp(text)).length).toBeGreaterThan(0);
+      expect(getCheckoutSession).toHaveBeenCalledTimes(1);
+      fireEvent.click(await screen.findByText("Save Address"));
+      // The checkout reload is debounced.
+      await waitFor(
+        () => {
+          expect(screen.getByText("Stripe embedded checkout")).toBeTruthy();
+        },
+        { timeout: 10_000 },
+      );
+      expect(getCheckoutSession).toHaveBeenCalledTimes(2);
+    },
+    20_000,
+  );
 
   it("does not mount Stripe setup when Stripe billing is unavailable", async () => {
     mockStripeEnabled = false;

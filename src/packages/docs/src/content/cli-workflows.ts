@@ -407,11 +407,21 @@ cocalc sensor watch ci --repo sagemathinc/cocalc-ai --pr 992
 cocalc sensor watch file --path build.log --match 'BUILD DONE'
 cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check that PR 992 merged"
 cocalc sensor watch exit -- make test
+cocalc sensor watch agent worker --until failed
 ~~~
+
+\`watch ci\` uses the agent's GitHub connector, and is refused when the agent
+does not have it. Then watch the checks with the project's own \`gh\` login:
+\`cocalc sensor watch exit -- gh pr checks 992 --repo sagemathinc/cocalc-ai --watch\`.
 
 \`watch exit\` starts the command in a project terminal, which keeps running
 after the turn ends, and the wake brings its exit code and the end of its
 output.
+
+\`watch agent\` wakes a manager agent when a peer in its Agent Networks
+finishes a turn, whoever started it: \`--until ended\` (any turn, the
+default), \`failed\` (a turn ends without completing) or \`idle\` (a turn ends
+and nothing is running or waiting).
 
 Watchers are CoCalc's own one-shot checks, so they need no approval. The agent
 ends its turn and gets exactly one turn when it happens, or when the watcher

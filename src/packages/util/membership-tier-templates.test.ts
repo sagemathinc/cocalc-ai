@@ -353,6 +353,16 @@ describe("CoCalc Star free tier", () => {
     expect(TIER_TEMPLATES.free.features).not.toHaveProperty("project_network");
   });
 
+  it("keeps Sagebrush sync off for free accounts on Star", () => {
+    expect(STAR_FREE_TIER_TEMPLATE.usage_limits.sagebrush_sync_enabled).toBe(
+      false,
+    );
+    expect(
+      membershipTierTemplates("star").free.usage_limits.sagebrush_sync_enabled,
+    ).toBe(false);
+    expect(TIER_TEMPLATES.admin.usage_limits.sagebrush_sync_enabled).toBe(true);
+  });
+
   it("is the free template only on Star", () => {
     expect(membershipTierTemplates("star").free).toBe(STAR_FREE_TIER_TEMPLATE);
     expect(membershipTierTemplates("star").admin).toBe(TIER_TEMPLATES.admin);

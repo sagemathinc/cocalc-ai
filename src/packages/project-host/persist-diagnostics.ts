@@ -9,6 +9,7 @@ import {
   getPersistentStreamSqliteDiagnostics,
 } from "@cocalc/conat/persist/storage";
 import type { PersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/release-queue";
+import type { PersistFenceDiagnostic } from "@cocalc/conat/persist/fence";
 import { performance } from "node:perf_hooks";
 import {
   getHeapCodeStatistics,
@@ -40,12 +41,15 @@ export function isLoopbackRemoteAddress(address?: string): boolean {
 
 export function collectProjectHostPersistDiagnostics({
   includePersistenceDetail = false,
+  fences,
   maintenance,
   ready = true,
   serverId,
   streamReleases,
 }: {
   includePersistenceDetail?: boolean;
+  // the projects whose streams are fenced (conat/persist/fence.ts)
+  fences?: PersistFenceDiagnostic[];
   maintenance?: {
     enabled: boolean;
     dryRun: boolean;
@@ -94,6 +98,7 @@ export function collectProjectHostPersistDiagnostics({
         local_open_streams: persistence.open_total,
         local_streams: persistence,
         ...(streamReleases ? { deferred_releases: streamReleases } : {}),
+        ...(fences ? { fences } : {}),
         ...(maintenance
           ? {
               maintenance: {

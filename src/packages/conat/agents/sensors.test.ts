@@ -6,6 +6,8 @@ import {
   combineSensorWakes,
   parseSensorWake,
   SENSOR_LIMITS,
+  SENSOR_WATCH_AGENT_UNTIL,
+  type SensorWatchAgentUntil,
   sensorExitPaths,
   reminderText,
   scheduledPromptText,
@@ -291,12 +293,23 @@ describe("watchers", () => {
     });
   });
 
+  it("a reminder may be months ahead: deadlines are", () => {
+    const spec = validateSensorWatch(
+      { type: "at", at: "2027-07-31T15:00:00Z", note: "WA annual report" },
+      { now },
+    );
+    expect(spec.watch).toMatchObject({ at: "2027-07-31T15:00:00.000Z" });
+    // It gives up only after its own time, not a day after it was set.
+    expect(spec.expires_at).toBe("2027-07-31T16:00:00.000Z");
+  });
+
   it("refuses bad watchers", () => {
     for (const watch of [
       { type: "ci", repo: "no-slash", pr: 1 },
       { type: "ci", repo: "a/b", pr: 0 },
       { type: "at", at: "2026-10-09T00:00:00Z", note: "past" },
-      { type: "at", at: "2026-12-01T00:00:00Z", note: "too far" },
+      // More than 400 days ahead.
+      { type: "at", at: "2027-11-20T00:00:00Z", note: "too far" },
       { type: "cron", expr: "* * * * *" },
       { type: "file", path: "x", extra: 1 },
     ])
@@ -379,23 +392,109 @@ describe("watchers", () => {
 
   it("the CI watcher's script waits for pending checks and reports failures", () => {
     const dir = mkdtempSync(join(tmpdir(), "watch-ci-"));
-    const gh = join(dir, "gh");
+    // A fake `gh api --paginate PATH --jq JQ`: one JSON value per line, as
+    // the real one prints them (the image's gh has no `pr checks --json`).
+    writeFileSync(
+      join(dir, "gh"),
+      `#!/usr/bin/env python3
+import json, os, sys
+if sys.argv[1:3] != ["api", "--paginate"] or sys.argv[4] != "--jq":
+    sys.exit(2)
+path = sys.argv[3]
+data = json.load(open(os.environ["FAKE_GH"]))
+if path == "repos/a/b/pulls/7":
+    rows = [{"sha": "abc"}]
+elif path == "repos/a/b/commits/abc/check-runs?filter=latest&per_page=100":
+    rows = data["runs"]
+elif path == "repos/a/b/commits/abc/status":
+    rows = data["statuses"]
+else:
+    print("HTTP 404: Not Found", file=sys.stderr)
+    sys.exit(1)
+for row in rows:
+    print(json.dumps(row))
+`,
+      { mode: 0o755 },
+    );
     const script = sensorWatchScript({ type: "ci", repo: "a/b", pr: 7 })!;
-    const run = (json: string) => {
-      writeFileSync(gh, `#!/bin/sh\necho '${json}'\n`, { mode: 0o755 });
+    const run = (data: { runs: object[]; statuses?: object[] }) => {
+      writeFileSync(
+        join(dir, "data.json"),
+        JSON.stringify({ statuses: [], ...data }),
+      );
       return execFileSync("python3", ["-c", script], {
         encoding: "utf8",
-        env: { PATH: `${dir}:/usr/bin:/bin` },
+        env: {
+          PATH: `${dir}:/usr/bin:/bin`,
+          FAKE_GH: join(dir, "data.json"),
+        },
       });
     };
-    expect(run('[{"name":"build","bucket":"pending"}]')).toBe("");
+    const done = (name: string, conclusion: string) => ({
+      name,
+      status: "completed",
+      conclusion,
+    });
+    // Nothing reported yet, or something still running: keep waiting.
+    expect(run({ runs: [] })).toBe("");
+    expect(
+      run({
+        runs: [
+          done("build", "success"),
+          { name: "test", status: "in_progress", conclusion: null },
+        ],
+      }),
+    ).toBe("");
+    expect(
+      run({
+        runs: [done("build", "success")],
+        statuses: [{ context: "deploy", state: "pending" }],
+      }),
+    ).toBe("");
+    // Not known to be finished (as in gh pr checks): keep waiting.
+    expect(run({ runs: [done("build", "stale")] })).toBe("");
     expect(
       parseSensorWake(
-        run(
-          '[{"name":"build","bucket":"pass"},{"name":"test","bucket":"fail"}]',
-        ),
+        run({
+          runs: [done("build", "skipped"), done("lint", "neutral")],
+          statuses: [{ context: "deploy", state: "success" }],
+        }),
+      )?.summary,
+    ).toBe("CI finished on a/b#7: all 3 checks passed");
+    // Same-named checks of different workflows are different checks (GitHub
+    // already gives only the latest attempt of each).
+    expect(
+      parseSensorWake(
+        run({ runs: [done("test", "failure"), done("test", "success")] }),
       )?.summary,
     ).toBe("CI finished on a/b#7: 1 of 2 checks failed: test");
+    expect(
+      parseSensorWake(
+        run({
+          runs: [
+            done("build", "success"),
+            done("test", "timed_out"),
+            done("lint", "cancelled"),
+          ],
+          statuses: [{ context: "deploy", state: "error" }],
+        }),
+      )?.summary,
+    ).toBe("CI finished on a/b#7: 3 of 4 checks failed: test, lint, deploy");
+    // A GitHub error is a failed run (its log shows why), never a wake.
+    expect(() =>
+      execFileSync(
+        "python3",
+        ["-c", sensorWatchScript({ type: "ci", repo: "a/c", pr: 7 })!],
+        {
+          encoding: "utf8",
+          stdio: "pipe",
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            FAKE_GH: join(dir, "data.json"),
+          },
+        },
+      ),
+    ).toThrow(/HTTP 404/);
   });
 });
 
@@ -523,5 +622,300 @@ describe("prompt texts", () => {
     ).toBe(
       "[Reminder] You set this reminder for 2026-10-16T15:00:00.000Z (sensor s2): Check CI",
     );
+  });
+});
+
+describe("watching the turn an agent's message started", () => {
+  const attempt_id = "55555555-5555-4555-8555-555555555555";
+  const agent_network_id = "88888888-8888-4888-8888-888888888888";
+  const target = {
+    project_id: "11111111-1111-4111-8111-111111111111",
+    agent_id: "22222222-2222-4222-8222-222222222222",
+  };
+
+  it("needs the message's attempt, network and target", () => {
+    const spec = validateSensorWatch({
+      type: "agent-turn",
+      attempt_id,
+      agent_network_id,
+      target,
+      name: "@reviewer",
+    });
+    expect(spec.title).toBe("Turn of my message to @reviewer");
+    expect(spec.watch).toEqual({
+      type: "agent-turn",
+      attempt_id,
+      agent_network_id,
+      target,
+      name: "reviewer",
+    });
+    for (const bad of [
+      { type: "agent-turn", attempt_id, agent_network_id },
+      { type: "agent-turn", attempt_id: "x", agent_network_id, target },
+      {
+        type: "agent-turn",
+        attempt_id,
+        agent_network_id,
+        target: { ...target, extra: 1 },
+      },
+      { type: "agent-turn", attempt_id, agent_network_id, target, other: 1 },
+    ])
+      expect(() => validateSensorWatch(bad)).toThrow();
+  });
+
+  it("its script waits for the turn to end, then wakes once with what happened", () => {
+    const dir = mkdtempSync(join(tmpdir(), "watch-turn-"));
+    // A fake `cocalc --json agent rpc inspect ...`, checking its arguments.
+    writeFileSync(
+      join(dir, "cocalc"),
+      `#!/usr/bin/env python3
+import json, os, sys
+want = ["--json", "agent", "rpc", "inspect", "${attempt_id}", "--agent-network", "${agent_network_id}", "--to-agent", "${target.agent_id}", "--target-project", "${target.project_id}"]
+if sys.argv[1:] != want:
+    print("bad arguments %s" % sys.argv[1:], file=sys.stderr)
+    sys.exit(2)
+data = json.load(open(os.environ["FAKE_INSPECT"]))
+if data.get("fail"):
+    print("hub unreachable", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps({"ok": True, "command": "agent rpc inspect", "data": data}))
+`,
+      { mode: 0o755 },
+    );
+    const script = sensorWatchScript({
+      type: "agent-turn",
+      attempt_id,
+      agent_network_id,
+      target,
+      name: "reviewer",
+    })!;
+    const run = (data: object) => {
+      writeFileSync(join(dir, "data.json"), JSON.stringify(data));
+      return execFileSync("python3", ["-c", script], {
+        encoding: "utf8",
+        env: {
+          PATH: `${dir}:/usr/bin:/bin`,
+          FAKE_INSPECT: join(dir, "data.json"),
+        },
+      });
+    };
+    // Queued or running: keep waiting.
+    for (const state of ["queued", "running"])
+      expect(
+        run({
+          outcome: "accepted",
+          turn: { state, queued_at: 1 },
+          summary: "Queued since …",
+        }),
+      ).toBe("");
+    // An older host that keeps no record of the turn: keep waiting.
+    expect(run({ outcome: "accepted", summary: "Admitted; …" })).toBe("");
+    const ended = parseSensorWake(
+      run({
+        outcome: "accepted",
+        turn: { state: "ended", queued_at: 1, outcome: { state: "completed" } },
+        summary: "Ended: it completed.",
+      }),
+    );
+    expect(ended?.summary).toBe(
+      "Your message to @reviewer: Ended: it completed.",
+    );
+    expect(ended?.data).toMatchObject({ attempt_id, turn: { state: "ended" } });
+    // Not delivered: there will never be a turn.
+    expect(
+      parseSensorWake(
+        run({ outcome: "rejected", summary: "Not delivered: paused." }),
+      )?.summary,
+    ).toBe("Your message to @reviewer: Not delivered: paused.");
+    // A failed inspect is a failed run, not a wake.
+    expect(() => run({ fail: true })).toThrow(/hub unreachable/);
+  });
+});
+
+describe("watching another agent's turns", () => {
+  const target = {
+    project_id: "11111111-1111-4111-8111-111111111111",
+    agent_id: "22222222-2222-4222-8222-222222222222",
+  };
+  const now = 1_800_000_000_000;
+
+  it("validates the target and until, and defaults to any turn from now on", () => {
+    const spec = validateSensorWatch(
+      { type: "agent", target, name: "@worker" },
+      { now },
+    );
+    expect(spec.title).toBe("@worker finishes a turn");
+    expect(spec.watch).toEqual({
+      type: "agent",
+      target,
+      until: "ended",
+      since: now,
+      name: "worker",
+    });
+    expect(
+      validateSensorWatch({ type: "agent", target, until: "failed", since: 5 })
+        .watch,
+    ).toMatchObject({ until: "failed", since: 5 });
+    expect(
+      validateSensorWatch({ type: "agent", target, until: "idle", name: "w" })
+        .title,
+    ).toBe("@w is idle");
+    for (const bad of [
+      { type: "agent" },
+      { type: "agent", target: { ...target, extra: 1 } },
+      { type: "agent", target: { project_id: "x", agent_id: target.agent_id } },
+      { type: "agent", target, until: "soon" },
+      { type: "agent", target, since: -1 },
+      { type: "agent", target, other: 1 },
+    ])
+      expect(() => validateSensorWatch(bad, { now })).toThrow();
+  });
+
+  it("its script wakes once a turn ending after `since` matches until", () => {
+    const dir = mkdtempSync(join(tmpdir(), "watch-agent-"));
+    // A fake `cocalc --json agent rpc destinations`.
+    writeFileSync(
+      join(dir, "cocalc"),
+      `#!/usr/bin/env python3
+import json, os, sys
+if sys.argv[1:] != ["--json", "agent", "rpc", "destinations"]:
+    print("bad arguments %s" % sys.argv[1:], file=sys.stderr)
+    sys.exit(2)
+data = json.load(open(os.environ["FAKE_DESTINATIONS"]))
+if data.get("fail"):
+    print("hub unreachable", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps({"ok": True, "command": "agent rpc destinations", "data": data}))
+`,
+      { mode: 0o755 },
+    );
+    const other = {
+      member: {
+        kind: "registered",
+        endpoint: {
+          ...target,
+          agent_id: "33333333-3333-4333-8333-333333333333",
+        },
+        status: {
+          running: 0,
+          queued: 0,
+          last: { state: "failed", at: 900 },
+          at: 900,
+        },
+      },
+    };
+    const run = (until: SensorWatchAgentUntil, status?: object) => {
+      writeFileSync(
+        join(dir, "data.json"),
+        JSON.stringify({
+          peers: [
+            other,
+            { member: { kind: "registered", endpoint: target, status } },
+          ],
+        }),
+      );
+      return execFileSync(
+        "python3",
+        [
+          "-c",
+          sensorWatchScript({
+            type: "agent",
+            target,
+            until,
+            since: 100,
+            name: "worker",
+          })!,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            FAKE_DESTINATIONS: join(dir, "data.json"),
+          },
+        },
+      );
+    };
+    const status = (state: string, at: number, running = 0, queued = 0) => ({
+      version: 1,
+      running,
+      queued,
+      last: { state, at, ...(state === "failed" ? { kind: "limit" } : {}) },
+      at,
+    });
+    // No status, or only the turn seen when it was set: keep waiting.
+    for (const until of SENSOR_WATCH_AGENT_UNTIL) {
+      expect(run(until)).toBe("");
+      expect(run(until, status("failed", 100, 1))).toBe("");
+    }
+    // ended: any later turn, even with more running.
+    expect(
+      parseSensorWake(run("ended", status("completed", 200, 1, 2)))?.summary,
+    ).toBe("A turn of @worker completed; 1 running, 2 waiting");
+    // failed: not a completed one.
+    expect(run("failed", status("completed", 200))).toBe("");
+    const failed = parseSensorWake(run("failed", status("failed", 200)));
+    expect(failed?.summary).toBe("A turn of @worker failed (limit)");
+    expect(failed?.data).toMatchObject({
+      agent: "worker",
+      target,
+      last: { state: "failed", kind: "limit", at: 200 },
+    });
+    expect(
+      parseSensorWake(run("failed", status("never-started", 200)))?.summary,
+    ).toBe("A turn of @worker never started");
+    // idle: only once nothing is running or waiting.
+    expect(run("idle", status("completed", 200, 1))).toBe("");
+    expect(run("idle", status("completed", 200, 0, 1))).toBe("");
+    expect(
+      parseSensorWake(run("idle", status("completed", 200)))?.summary,
+    ).toBe("A turn of @worker completed; it is idle now");
+    // A failed lookup, or the agent gone from the networks, is a failed run.
+    writeFileSync(join(dir, "data.json"), JSON.stringify({ fail: true }));
+    expect(() =>
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          sensorWatchScript({
+            type: "agent",
+            target,
+            until: "ended",
+            since: 0,
+          })!,
+        ],
+        {
+          encoding: "utf8",
+          stdio: "pipe",
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            FAKE_DESTINATIONS: join(dir, "data.json"),
+          },
+        },
+      ),
+    ).toThrow(/hub unreachable/);
+    writeFileSync(join(dir, "data.json"), JSON.stringify({ peers: [other] }));
+    expect(() =>
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          sensorWatchScript({
+            type: "agent",
+            target,
+            until: "ended",
+            since: 0,
+            name: "worker",
+          })!,
+        ],
+        {
+          encoding: "utf8",
+          stdio: "pipe",
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            FAKE_DESTINATIONS: join(dir, "data.json"),
+          },
+        },
+      ),
+    ).toThrow(/@worker is no longer in any of your Agent Networks/);
   });
 });

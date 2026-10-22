@@ -50,6 +50,7 @@ import { NavTab } from "./nav-tab";
 import VersionWarning from "./version-warning";
 import { lite } from "@cocalc/frontend/lite";
 import { ImpersonationBanner } from "./impersonation-banner";
+import { SessionLifetimeBanner } from "./session-lifetime-banner";
 import { useVisibleViewportBottom } from "./visible-viewport";
 import { ScratchpadSessionControls } from "./scratchpad-session-controls";
 import { recordSignedInAppBootstrapReady } from "./bootstrap-ux-latency";
@@ -420,6 +421,7 @@ export const Page: React.FC = () => {
         <Alert banner showIcon type="error" title={configurationLoadError} />
       )}
       <ImpersonationBanner />
+      <SessionLifetimeBanner />
       {!workspaceShell && topBar}
       {fullscreen && !isAuthView && render_fullscreen()}
       {examMode && !isAuthView && (

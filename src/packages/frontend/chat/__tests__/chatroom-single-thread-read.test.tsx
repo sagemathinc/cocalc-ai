@@ -162,6 +162,7 @@ describe("ChatPanel selected thread read tracking", () => {
   function renderPanel() {
     const actions = {
       markThreadRead: jest.fn(),
+      clearReaderReadExceptions: jest.fn(),
       scrollToIndex: jest.fn(),
       getCodexConfig: jest.fn(),
       getThreadMetadata: jest.fn(() => currentThreadMetadata),
@@ -315,5 +316,37 @@ describe("ChatPanel selected thread read tracking", () => {
     expect(actions.markThreadRead).toHaveBeenCalledTimes(2);
     expect(actions.markThreadRead).toHaveBeenNthCalledWith(1, "thread-1", 2);
     expect(actions.markThreadRead).toHaveBeenNthCalledWith(2, "thread-1", 2);
+  });
+
+  it("reading the whole thread in the log clears the reader's read exceptions", () => {
+    const { actions } = renderPanel();
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 2);
+    expect(actions.clearReaderReadExceptions).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("a panel reused for a chat in reader mode never marks its thread read", () => {
+    localStorage.clear();
+    const { actions, rerender } = renderPanel();
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
+    // Another chat, which the person reads in the reader.
+    localStorage.setItem(
+      "cocalc-chat-reader-mode",
+      JSON.stringify({ "project-1:chat/other.chat": true }),
+    );
+    currentThread = { ...currentThread, key: "thread-9", messageCount: 5 };
+    currentThreads = [currentThread];
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/other.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
+    expect(actions.markThreadRead).not.toHaveBeenCalledWith("thread-9", 5);
   });
 });

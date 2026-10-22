@@ -67,6 +67,11 @@ import {
 } from "@cocalc/server/inter-bay/bay-credentials";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import { sweepBayCredentialConnections } from "./bay-credential-sweep";
+import {
+  liveRememberMeHashes,
+  onSignedOutSessionSweepRequest,
+  sweepSignedOutSessionConnections,
+} from "./sign-in-session-sweep";
 
 const logger = getLogger("conat-server");
 const BAY_CREDENTIAL_SWEEP_MS = 5_000;
@@ -91,6 +96,45 @@ function startBayCredentialRevocationSweep(server: ConatServer): void {
   }, BAY_CREDENTIAL_SWEEP_MS);
   timer.unref?.();
   server.once("closed", () => clearInterval(timer));
+}
+
+const SIGNED_OUT_SESSION_SWEEP_MS = 10_000;
+
+// Every hub conat server: sockets of signed-out sessions are closed (see
+// sign-in-session-sweep.ts), right away when the sign-out happened in this
+// process, else within SIGNED_OUT_SESSION_SWEEP_MS.
+function startSignedOutSessionSweep(server: ConatServer): void {
+  let running = false;
+  // A sign-out while a sweep runs gets a sweep of its own right after.
+  let again = false;
+  const sweep = async () => {
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
+    try {
+      do {
+        again = false;
+        await sweepSignedOutSessionConnections({
+          connections: Object.entries(server.getStatsSnapshot()).map(
+            ([id, stats]) => [id, stats.user],
+          ),
+          liveSessionHashes: liveRememberMeHashes,
+          disconnect: (ids) => server.disconnectSockets(ids),
+        });
+      } while (again);
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(sweep, SIGNED_OUT_SESSION_SWEEP_MS);
+  timer.unref?.();
+  const stopRequests = onSignedOutSessionSweepRequest(() => void sweep());
+  server.once("closed", () => {
+    clearInterval(timer);
+    stopRequests();
+  });
 }
 
 async function checkPortAvailable(port: number): Promise<void> {
@@ -237,6 +281,7 @@ export async function init(
     opts.forgetClusterNodeInterval = 4 * SCAN_INTERVAL;
     const server = createConatServer(opts);
     startBayCredentialRevocationSweep(server);
+    startSignedOutSessionSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,
@@ -265,6 +310,7 @@ export async function init(
       port: standalonePort,
     });
     startBayCredentialRevocationSweep(server);
+    startSignedOutSessionSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,
@@ -282,6 +328,7 @@ export async function init(
       id: "node",
     });
     startBayCredentialRevocationSweep(server);
+    startSignedOutSessionSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,

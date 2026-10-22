@@ -152,7 +152,8 @@ Authorization: Basic BASE64("sagebrush:" + client_secret)
 Success:
 
 ```
-200 {"tier": "<tier id>", "storage_bytes": <integer>, "max_file_bytes": <integer>, "private_links": <boolean>}
+200 {"tier": "<tier id>", "storage_bytes": <integer>, "max_file_bytes": <integer>, "private_links": <boolean>,
+     "sync": {"enabled": <boolean>, "version_bytes": <integer>, "read_bytes_per_day": <integer>, "retention_days": <integer>}}
 ```
 
 - `tier` is the CoCalc membership tier id, for example `free` or `pro`. It is
@@ -160,6 +161,14 @@ Success:
 - `404 {"error": "no_account"}`: the account does not exist, was deleted or is
   banned. Treat it as no upload rights.
 - `401 {"error": "invalid_client"}` as for the token endpoint.
+- `sync` is always present, for Sagebrush's backup and sync of the workspace. A
+  plan without sync says `"enabled": false`; Sagebrush reads a missing or
+  malformed `sync` block as CoCalc not answering, never as "sync off".
+  - `storage_bytes` is one budget for sharing and sync together.
+  - `version_bytes` bounds the old versions kept of one synced document.
+  - `read_bytes_per_day` bounds the synced files the account's own devices download in a day.
+  - `retention_days` is how long synced data is kept, read-only, after the
+    membership stops including sync, before it is deleted.
 
 The Worker caches an answer for at most 10 minutes. On a 5xx or a timeout it
 keeps its cached value, or with nothing cached it refuses uploads for now; it
@@ -169,14 +178,22 @@ new uploads are blocked and nothing is deleted.
 The numbers are membership tier usage limits, editable in Admin → Membership
 tiers:
 
-| Usage limit                | Meaning                                            |
-| -------------------------- | -------------------------------------------------- |
-| `sagebrush_storage_bytes`  | total bytes of shared Sagebrush data               |
-| `sagebrush_max_file_bytes` | largest single uploaded file                       |
-| `sagebrush_private_links`  | whether the user may create unlisted/private links |
+| Usage limit                         | Meaning                                             |
+| ----------------------------------- | --------------------------------------------------- |
+| `sagebrush_storage_bytes`           | total bytes of shared Sagebrush data                |
+| `sagebrush_max_file_bytes`          | largest single uploaded file                        |
+| `sagebrush_private_links`           | whether the user may create unlisted/private links  |
+| `sagebrush_sync_enabled`            | whether the plan includes Sagebrush sync (free: no) |
+| `sagebrush_sync_version_bytes`      | bytes of old versions kept per synced document      |
+| `sagebrush_sync_read_bytes_per_day` | bytes of synced files downloaded per day            |
+| `sagebrush_sync_retention_days`     | days synced data is kept read-only after sync ends  |
 
 A tier that leaves a field blank inherits the built-in template value for that
-tier.
+tier. A tier with no template inherits the free tier's, so sync is off for it.
+
+To turn sync on for one account, for example a test account, assign it a tier
+that includes sync with an admin-assigned membership (with an expiry and a
+note); every other account keeps its own tier.
 
 ## 3. Deletion
 

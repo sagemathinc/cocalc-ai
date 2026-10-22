@@ -440,6 +440,64 @@ its result; the `graph` layout places the notes along the edges.
 }
 ```
 
+To keep a calendar of deadlines or reminders the user can see (taxes,
+renewals, a release schedule), write `foo.cal.json` and publish it with
+`--source`. The card shows an agenda: overdue items first, then the next 60
+days; a title opens its details, and "Download .ics" adds it to Google, Apple
+or Outlook calendars. Keep the file current (mark items `done`) and publish
+again with `--update` to keep the same card. Times are local to `timezone`:
+`"2026-11-03T08:30"`, or a date `"2026-12-01"` with `"all_day": true`.
+
+```json
+{
+  "format": "cocalc-calendar",
+  "version": 1,
+  "id": "tax-calendar",
+  "title": "Tax calendar",
+  "timezone": "America/Los_Angeles",
+  "default_view": "agenda",
+  "categories": { "tax": { "label": "Tax filing", "color": "#d9480f" } },
+  "events": [
+    {
+      "id": "q4-return",
+      "title": "File the Q4 return",
+      "start": "2027-01-04",
+      "all_day": true,
+      "due": "2027-01-31",
+      "category": "tax",
+      "status": "pending",
+      "details": "Markdown, shown when the item is opened.",
+      "links": [{ "label": "Portal", "url": "https://example.com" }]
+    },
+    {
+      "id": "quarterly",
+      "title": "Quarterly filing",
+      "start": "2027-01-06",
+      "all_day": true,
+      "recurrence": { "freq": "monthly", "interval": 3 },
+      "due_offset_days": 25
+    }
+  ]
+}
+```
+
+`status` is `scheduled`, `pending`, `done` or `cancelled`. A recurring
+event's deadline is `due_offset_days` (days after each occurrence), not `due`. An item with a
+`due` (or `due_offset_days`) is overdue once that day has ended, until it is
+marked `done` or `cancelled`; a one-off `pending` item without one, once its
+time has passed. A recurring `pending` event needs `due_offset_days`. `recurrence` takes `freq`
+(`daily`, `weekly`, `monthly`, `yearly`), `interval`, `bymonthday`,
+`bymonth`, `byweekday` (`"MO"`...), `until` and `count`. A day after the
+28th falls on the last day of shorter months (the 31st is Feb 28); a rule
+may name at most one such day, and not together with `byweekday`.
+`bymonthday` is for monthly and yearly rules; a yearly rule without
+`bymonth` picks its days in its start's month. These rules are iCalendar's,
+so the .ics shows the same dates as the card. Links must be
+http(s). Keep the calendar's `id` and each event's `id` unchanged: they name
+the events in calendar apps that imported the .ics. The card names anything it cannot read and still shows the rest. A
+calendar is for people to see; to be woken at a time, also set a watcher
+(`cocalc sensor watch at`).
+
 JSON contains `title`, `markdown`, and optionally one of `file`, `actions`,
 `github_pr`, `commit`, plus optional `theme`. No message/operation/artifact IDs
 are needed for creation. Chat/thread/date default to current runtime context;
@@ -600,14 +658,26 @@ or sleeping, and whenever the user wants you to watch for something over time.
 
 **Waiting for something? Set a watcher and end your turn.** Watchers are
 CoCalc's own one-shot checks: no approval needed, and you get exactly one turn
-when it happens (or when it gives up, after 24 hours by default):
+when it happens, or when it gives up (after 24 hours by default, or when its
+check keeps failing, with the reason):
 
 ```bash
 cocalc sensor watch ci --repo owner/name --pr 123      # PR checks finished
 cocalc sensor watch file --path build.log --match 'BUILD DONE'
 cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123 merged"
 cocalc sensor watch exit -- make test   # runs it in a project terminal
+cocalc sensor watch agent worker --until failed   # a peer's turn fails
 ```
+
+`watch agent` wakes you when a peer in your Agent Networks finishes a turn,
+whoever started it: `--until ended` (any turn, the default), `failed` (a turn
+ends without completing) or `idle` (a turn ends and nothing is running or
+waiting). It reads the status peers see, checked every few minutes, so a turn
+that fails and is followed by a completed one within that time can be missed.
+
+`watch ci` needs this agent's GitHub connector and is refused without it.
+Without it, watch the checks with the project's own `gh` login instead:
+`cocalc sensor watch exit -- gh pr checks 123 --repo owner/name --watch`.
 
 Once it has fired (or given up), a watcher's status is `done`: it never runs
 again, and is removed a day later.

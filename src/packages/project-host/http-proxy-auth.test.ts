@@ -56,7 +56,10 @@ import {
   verifyProjectHostHttpSessionToken,
 } from "./http-proxy-auth";
 import { EventEmitter } from "node:events";
-import { createProjectHostBrowserSessionToken } from "./browser-session";
+import {
+  createProjectHostBrowserSessionToken,
+  resolveProjectHostBrowserSessionFromCookieHeader,
+} from "./browser-session";
 import {
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
   PROJECT_HOST_API_KEY_HTTP_HEADER,
@@ -340,6 +343,51 @@ describe("project-host HTTP session cookie", () => {
     expect(cookies.join("\n")).toContain(`Path=/${project_id}`);
   });
 
+  it("re-issued cookies keep the original credential's iat, so a later cutoff still applies", async () => {
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const now_s = Math.floor(Date.now() / 1000);
+    const origin_s = now_s - 3600;
+    const request = (cookie: string) =>
+      ({
+        headers: {
+          cookie,
+          "sec-fetch-site": "none",
+          "x-forwarded-proto": "https",
+        },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/`,
+      }) as any;
+    const res = createResponse();
+    // A session from an hour ago uses the host before it learns the cutoff.
+    await auth.authorizeHttpRequest(
+      request(
+        `cocalc_project_host_session=${encodeURIComponent(
+          createProjectHostBrowserSessionToken({ account_id, auth_iat_s: origin_s }),
+        )}`,
+      ),
+      res,
+      project_id,
+    );
+    const setCookie = res.headers.get("Set-Cookie");
+    const fresh = (Array.isArray(setCookie) ? setCookie : [setCookie])
+      .map((c) => `${c}`.split(";")[0])
+      .filter((c) => /^cocalc_project_host_(http_)?session=[^;]+$/.test(c));
+    expect(fresh.length).toBe(2);
+    // Both re-issued cookies still say an hour ago...
+    expect(
+      resolveProjectHostBrowserSessionFromCookieHeader(fresh.join("; "))?.iat_s,
+    ).toBe(origin_s);
+    // ...so once the host has the cutoff (half an hour ago), they're refused.
+    getAccountRevokedBeforeMsMock.mockReturnValue((now_s - 1800) * 1000);
+    for (const cookie of fresh) {
+      await expect(
+        auth.authorizeHttpRequest(request(cookie), createResponse(), project_id),
+      ).rejects.toThrow("session revoked");
+    }
+  });
+
   it("does not widen a bounded browser session when minting HTTP cookies", async () => {
     jest.useFakeTimers();
     try {
@@ -409,6 +457,44 @@ describe("project-host HTTP session cookie", () => {
       ).toHaveLength(2);
     } finally {
       jest.useRealTimers();
+    }
+  });
+
+  it("cookies minted from a bearer request count from the bearer's iat", async () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: account_id,
+      act: "account",
+      iat: now_s - 3600,
+      exp: now_s + 600,
+    });
+    mockGetProject.mockReturnValue({ users: { [account_id]: "owner" } });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const res = createResponse();
+    await auth.authorizeHttpRequest(
+      {
+        headers: { authorization: "Bearer token", "x-forwarded-proto": "https" },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/`,
+      } as any,
+      res,
+      project_id,
+    );
+    const setCookie = res.headers.get("Set-Cookie");
+    const fresh = (Array.isArray(setCookie) ? setCookie : [setCookie])
+      .map((c) => `${c}`.split(";")[0])
+      .filter((c) => /^cocalc_project_host_(http_)?session=[^;]+$/.test(c));
+    expect(fresh).toHaveLength(2);
+    for (const cookie of fresh) {
+      const name = cookie.split("=")[0];
+      const token = decodeURIComponent(cookie.slice(name.length + 1));
+      const session =
+        name === "cocalc_project_host_session"
+          ? resolveProjectHostBrowserSessionFromCookieHeader(cookie)
+          : verifyProjectHostHttpSessionToken(token);
+      expect(session?.iat_s).toBe(now_s - 3600);
     }
   });
 
@@ -649,6 +735,39 @@ describe("project-host HTTP session cookie", () => {
     );
     expect(res.end).not.toHaveBeenCalled();
     expect(req.url).toBe(`/${project_id}/files/home/user/a.pdf?x=1`);
+  });
+
+  it("redirects a file opened as a page to the URL without the bearer query token", async () => {
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id,
+      now_ms: Date.now(),
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "x-forwarded-proto": "https",
+      },
+      method: "GET",
+      socket: {},
+      url: `/${project_id}/files/home/user/a.png?${PROJECT_HOST_HTTP_AUTH_QUERY_PARAM}=secret&x=1`,
+    } as any;
+    const res = createResponse();
+    res.end = jest.fn();
+    res.statusCode = 200;
+
+    await auth.authorizeHttpRequest(req, res, project_id);
+
+    expect(res.statusCode).toBe(302);
+    expect(res.setHeader).toHaveBeenCalledWith(
+      "Location",
+      `/${project_id}/files/home/user/a.png?x=1`,
+    );
   });
 
   it("authorizes websocket upgrades from the shared browser session cookie", async () => {

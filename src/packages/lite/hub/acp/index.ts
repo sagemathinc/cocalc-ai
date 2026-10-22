@@ -1,6 +1,15 @@
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
+import {
+  chainToolRan,
+  toolRanOf,
+  parseTurnOutcome,
+  turnFailureOf,
+  turnOutcomeOf,
+  type TurnFailure,
+  type TurnOutcome,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import path from "node:path";
 import { hubApi } from "../api";
 import { installLiteCodexSpawner } from "../codex-runtime";
@@ -11,6 +20,21 @@ import {
   drainAgentRpcReports,
   noteAgentMessageTurnFailed,
 } from "./agent-rpc-report";
+import {
+  deleteAgentRpcReportByOpId,
+  restoreAgentRpcReport,
+  takeAgentRpcReportByOpId,
+} from "../sqlite/agent-rpc-reports";
+import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-reports";
+import { toolUseTracker } from "./tool-use";
+import { sweepAgentStatus } from "./agent-status-report";
+import {
+  rpcOutcome,
+  type AgentRpcAttempt,
+  type AgentRpcOutcome,
+  type AgentRpcSource,
+} from "@cocalc/conat/agents/rpc";
+import { agentRpcTurnState, agentRpcWithdrawable } from "./agent-rpc-turn";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
@@ -151,6 +175,7 @@ import {
   AcpAdmissionDeniedError,
 } from "./admission";
 import {
+  buildAgentLimitNoticeOptions,
   buildCodexTurnNoticeOptions,
   publishCodexTurnNotice,
 } from "./codex-turn-notice";
@@ -190,10 +215,11 @@ import {
   acpJobHasLiveFenceResume,
   ACP_PROJECT_RESUME_FENCE_REASON,
   ACP_PROJECT_RUNTIME_LOST_FENCE_REASON,
-  cancelQueuedAcpJob,
   cancelQueuedAcpJobForControl,
   claimNextQueuedAcpJobForThread,
-  clearAcpJobRecoveryIntent,
+  clearAcpJobRecoveryIntentIf,
+  listAcpJobsWithIntent,
+  markAcpJobRecoveryIntent,
   clearQueuedAcpJobWorkerAffinity,
   countQueuedAcpJobsForThread,
   countRunningAcpJobsForWorker,
@@ -210,6 +236,9 @@ import {
   listQueuedAcpJobThreadKeys,
   listQueuedAcpJobs,
   listAcpJobsByRecoveryParent,
+  listHeldAcpJobs,
+  releaseHeldAcpJob,
+  setQueuedAcpJobRequest,
   listAcpJobsWithFenceIntent,
   listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobsForThread,
@@ -225,6 +254,8 @@ import {
   stopAcpFenceResumesForThread,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
+  recordAcpJobOutcome,
+  cancelQueuedAcpJobReportingChange,
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
 import {
@@ -246,8 +277,9 @@ import { agentUserTimeContext } from "./user-locale";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
+  resolveHumanAgentMentions,
   resolveHumanTurnMentions,
-  resolveHumanTurnArtifactMentions,
+  humanTurnArtifacts,
 } from "./turn-mentions";
 import { augmentPromptWithAgentMentions } from "@cocalc/util/agent-mentions";
 import {
@@ -701,6 +733,37 @@ const ACP_MODEL_CAPACITY_RECOVERY_DELAY_MS = envNumber(
   "COCALC_ACP_MODEL_CAPACITY_RECOVERY_DELAY_MS",
   15 * 60_000,
 );
+// A turn that hit a usage limit is held, then resumes when the limit resets
+// (I4): with a margin after the reset the provider gave, or after this long
+// when it gave none. Held again if it is still limited, a few times at most.
+const ACP_LIMIT_HOLD_UNKNOWN_RESET_MS = envNumber(
+  "COCALC_ACP_LIMIT_HOLD_UNKNOWN_RESET_MS",
+  60 * 60_000,
+);
+const ACP_LIMIT_HOLD_MARGIN_MS = 60_000;
+// The durable intent a held turn's failed job carries until its continuation
+// is queued (or the hold declined), so a worker that dies in between leaves
+// the hold for recoverPendingFailureRecoveryIntents to finish.
+const ACP_HOLD_INTENT = "cocalc-hold";
+/** A withdrawn message whose chat still shows it queued. */
+const ACP_WITHDRAWN_PROJECTION_INTENT = "cocalc-withdrawn-projection";
+/** A held agent message resumes at least this long before its report
+ * capability expires, so its final report can still be sent. */
+const HOLD_REPORT_MARGIN_MS = 60 * 60_000;
+const ACP_LIMIT_HOLD_MAX_RETRIES = 4;
+const LIMIT_HOLD_NOTICE =
+  "**Conversation paused because a usage limit was reached.**";
+// A turn whose sign-in failed is held until the account signs in again (the
+// host asks the hub when the credential was last updated, about once a
+// minute), until a day after it was first held; then it is over (I4c).
+const ACP_SIGNIN_HOLD_MS = envNumber(
+  "COCALC_ACP_SIGNIN_HOLD_MS",
+  24 * 60 * 60_000,
+);
+const ACP_SIGNIN_HOLD_MAX = 20;
+const SIGNIN_HOLD_REASON = "sign-in hold";
+const SIGNIN_HOLD_NOTICE =
+  "**Conversation paused because the subscription's sign-in needs renewing.** Sign in again and it resumes on its own.";
 const ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS = envNumber(
   "COCALC_ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS",
   5 * 60_000,
@@ -2218,6 +2281,56 @@ function compactLivePreviewBatch(
   return compacted;
 }
 
+type StashedLimitNotice = {
+  client: ConatClient;
+  project_id: string;
+  paused: Parameters<typeof publishCodexTurnNotice>[0]["notice"];
+  ended: Parameters<typeof publishCodexTurnNotice>[0]["notice"];
+  timer?: ReturnType<typeof setTimeout>;
+};
+/** A limit notice waits here until the hold is decided. */
+const stashedLimitNotices = new Map<string, StashedLimitNotice>();
+/** Never decided by then (its worker died): dropped, never guessed. */
+const LIMIT_NOTICE_FORGET_MS = 6 * 60 * 60_000;
+
+function stashLimitNotice(message_id: string, notice: StashedLimitNotice) {
+  const previous = stashedLimitNotices.get(message_id);
+  if (previous?.timer) clearTimeout(previous.timer);
+  // Decided only by the hold itself (paused, or not held); a hold may take
+  // a while, so this timer only forgets a stash nothing will claim.
+  notice.timer = setTimeout(
+    () => stashedLimitNotices.delete(message_id),
+    LIMIT_NOTICE_FORGET_MS,
+  );
+  notice.timer.unref?.();
+  stashedLimitNotices.set(message_id, notice);
+}
+
+/**
+ * Publish the limit notice for this turn once its hold is decided: the
+ * shared "paused" notice only if a continuation was queued, else the turn's
+ * ordinary error notice (it will not resume on its own).
+ */
+async function publishLimitNoticeAfterHold(
+  message_id: string | undefined,
+  held: boolean,
+): Promise<void> {
+  if (!message_id) return;
+  const stashed = stashedLimitNotices.get(message_id);
+  if (!stashed) return;
+  stashedLimitNotices.delete(message_id);
+  if (stashed.timer) clearTimeout(stashed.timer);
+  try {
+    await publishCodexTurnNotice({
+      client: stashed.client,
+      project_id: stashed.project_id,
+      notice: held ? stashed.paused : stashed.ended,
+    });
+  } catch (err) {
+    logger.warn("failed to publish an agent limit notice", { err });
+  }
+}
+
 export class ChatStreamWriter {
   assertSteerPrincipal(accountId: string): void {
     assertSameTurnPrincipal(this.approverAccountId, accountId);
@@ -2251,6 +2364,8 @@ export class ChatStreamWriter {
   private lastCommittedInterrupted = false;
   private lastCommittedGenerating: boolean | undefined;
   private lastErrorText: string | null = null;
+  // The typed failure the error carried, if any (turn-outcome.ts).
+  private lastFailure: TurnFailure | undefined;
   private threadId: string | null = null;
   private seq = 0;
   private finished = false;
@@ -2862,22 +2977,49 @@ export class ChatStreamWriter {
       const threadLabel =
         this.recordField<string>(threadConfig, "name") ?? undefined;
       const messageDateMs = Date.parse(`${this.metadata.message_date ?? ""}`);
-      const notice = buildCodexTurnNoticeOptions({
-        account_id: this.approverAccountId,
-        source_project_id: this.metadata.project_id,
-        source_path: this.metadata.path,
-        source_fragment_id: Number.isFinite(messageDateMs)
-          ? `chat=${Math.floor(messageDateMs)}`
-          : undefined,
-        thread_id: threadId,
-        thread_label: threadLabel,
-        stable_source_id:
-          `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
-          undefined,
-        terminal_state: "error",
-        error_text: this.lastErrorText,
-        agent_label: this.agentLabel,
-      });
+      const failure = this.lastFailure;
+      const errorNotice = () =>
+        buildCodexTurnNoticeOptions({
+          account_id: this.approverAccountId,
+          source_project_id: this.metadata.project_id,
+          source_path: this.metadata.path,
+          source_fragment_id: Number.isFinite(messageDateMs)
+            ? `chat=${Math.floor(messageDateMs)}`
+            : undefined,
+          thread_id: threadId,
+          thread_label: threadLabel,
+          stable_source_id:
+            `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
+            undefined,
+          terminal_state: "error",
+          error_text: this.lastErrorText,
+          agent_label: this.agentLabel,
+        });
+      // A usage limit pauses the turn, if it can be held: one shared notice
+      // for every agent it paused, published once the hold is queued (see
+      // publishLimitNoticeAfterHold); otherwise this turn's error notice.
+      if (failure?.kind === "limit" && this.metadata.message_id) {
+        stashLimitNotice(`${this.metadata.message_id}`, {
+          client: this.client,
+          project_id: this.metadata.project_id,
+          paused: buildAgentLimitNoticeOptions({
+            account_id: this.approverAccountId,
+            source_project_id: this.metadata.project_id,
+            source_path: this.metadata.path,
+            source_fragment_id: Number.isFinite(messageDateMs)
+              ? `chat=${Math.floor(messageDateMs)}`
+              : undefined,
+            thread_id: threadId,
+            thread_label: threadLabel,
+            failure,
+            agent_label: this.agentLabel,
+          }),
+          ended: errorNotice(),
+        });
+        this.completionNoticePublished = true;
+        return;
+      }
+      const notice = errorNotice();
       await publishCodexTurnNotice({
         client: this.client,
         project_id: this.metadata.project_id,
@@ -3486,6 +3628,7 @@ export class ChatStreamWriter {
         errorContent,
       );
       this.lastErrorText = stripKnownAcpErrorNoise(payload.error);
+      this.lastFailure = payload.failure;
       this.finished = true;
       this.finishedBy = "error";
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
@@ -4135,9 +4278,12 @@ export class ChatStreamWriter {
       try {
         await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
-        if (!(
-          this.syncdbError != null && isProjectAcpStorageError(this.syncdbError)
-        )) {
+        if (
+          !(
+            this.syncdbError != null &&
+            isProjectAcpStorageError(this.syncdbError)
+          )
+        ) {
           await this.syncdb!.save();
         }
       } catch (err) {
@@ -7033,6 +7179,15 @@ function startAcpTerminalRecoveryPoller(client: ConatClient): void {
         } catch (err) {
           logger.warn("ACP project fence follow-up poll failed", err);
         }
+        // Here too, not only in the worker (which exits once idle, perhaps
+        // before a withdrawn message's chat could be updated).
+        try {
+          await retryWithdrawnProjections(100, (job) =>
+            projectWithdrawnMessage(job, client),
+          );
+        } catch (err) {
+          logger.warn("withdrawn messages' chat retry poll failed", err);
+        }
       } while (acpTerminalRecoveryPollAgain);
     } finally {
       acpTerminalRecoveryPollInFlight = false;
@@ -7318,7 +7473,8 @@ function initializeAcpRuntime(client: ConatClient): void {
 
 let acpSessionPublisherConfigured = false;
 let acpSessionPublisherOverride:
-  ((row: AcpSessionRow) => void | Promise<void>) | undefined;
+  | ((row: AcpSessionRow) => void | Promise<void>)
+  | undefined;
 
 export function setAcpSessionPublisherOverride(
   publisher: ((row: AcpSessionRow) => void | Promise<void>) | undefined,
@@ -7385,7 +7541,8 @@ export async function runDetachedAcpQueueWorker(
   let workerStopReason: string | undefined;
   let workerHeartbeatTimer: NodeJS.Timeout | undefined;
   let workerControlService:
-    Awaited<ReturnType<typeof initAcpDaemonControlService>> | undefined;
+    | Awaited<ReturnType<typeof initAcpDaemonControlService>>
+    | undefined;
   let workerFatalError: unknown;
   let workerHeartbeatFailureCount = 0;
   const markWorkerFatalError = ({
@@ -8037,6 +8194,7 @@ type AcpExecutionResult = {
   error?: string;
   recoveryCode?: CodexAcpRecoveryErrorCode;
   recoveryDetail?: string;
+  outcome: TurnOutcome;
 };
 
 function paymentSourceFromAuthSource({
@@ -8121,10 +8279,10 @@ async function executeAcpRequest({
   const mentionReferences = harness
     ? []
     : await resolveHumanTurnMentions(request, hubApi.agent);
-  const artifactReferences = await resolveHumanTurnArtifactMentions(
-    request,
-    hubApi.artifactCatalog,
-  );
+  // A project-host's agent worker has no artifact catalog: its chips are
+  // named to the agent instead of bound (never a failed turn).
+  const { references: artifactReferences, note: artifactNote } =
+    await humanTurnArtifacts(request, hubApi.artifactCatalog);
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -8250,7 +8408,16 @@ async function executeAcpRequest({
 
     let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
     let recoveryDetail: string | undefined;
+    // What the turn did and how it failed, for its outcome.
+    const toolUse = toolUseTracker();
+    let streamedFailure: TurnFailure | undefined;
+    let streamedCode: string | undefined;
     const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
+      toolUse.observe(payload);
+      if (payload?.type === "error") {
+        streamedFailure ??= payload.failure;
+        streamedCode ??= payload.code;
+      }
       if (harness) return;
       if (payload?.type !== "error") return;
       const directive = failureRecoveryDirective(payload.code, payload.error);
@@ -8331,7 +8498,9 @@ async function executeAcpRequest({
             artifactReferences.length
               ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
               : augmentPromptWithAgentMentions(prompt, mentionReferences),
-            humanTurnComputerNote(request),
+            [humanTurnComputerNote(request), artifactNote]
+              .filter(Boolean)
+              .join("\n\n"),
           ),
           local_images: harness ? undefined : local_images,
           image_attachments: harness ? image_attachments : undefined,
@@ -8371,10 +8540,12 @@ async function executeAcpRequest({
               recoveryDetail = killed.detail;
             }
           }
+          const failure = turnFailureOf(err);
           try {
             await wrappedStream({
               type: "error",
               error: terminalFallbackError,
+              ...(failure ? { failure } : {}),
             });
           } catch (streamErr) {
             logger.warn("evaluate: failed to stream error", streamErr);
@@ -8435,6 +8606,13 @@ async function executeAcpRequest({
       error: terminalError,
       recoveryCode,
       recoveryDetail,
+      outcome: turnOutcomeOf({
+        terminalState,
+        failure: streamedFailure,
+        code: recoveryCode ?? streamedCode,
+        error: terminalError,
+        toolRan: toolUse.ran,
+      }),
     };
   } finally {
     await cleanup();
@@ -8595,7 +8773,7 @@ async function persistQueuedUserMessageProjection({
   path,
   thread_id,
   user_message_id,
-  queued,
+  queued: requestedQueued,
   readyTimeoutMs,
 }: {
   client: ConatClient;
@@ -8606,12 +8784,18 @@ async function persistQueuedUserMessageProjection({
   queued: boolean;
   readyTimeoutMs?: number;
 }): Promise<"queued" | "running" | null> {
-  return await withChatSyncDB({
+  const projected = await withChatSyncDB({
     client,
     project_id,
     path,
     readyTimeoutMs,
     fn: async (syncdb) => {
+      // Decided as it is written, not when it was asked for: a message
+      // withdrawn meanwhile is never shown as queued again by a late write
+      // (e.g. its admission's) landing after the withdrawal's own.
+      const queued =
+        requestedQueued &&
+        getAcpJob({ project_id, path, user_message_id })?.state !== "canceled";
       const versionCountBefore = syncdbVersionCount(syncdb);
       const waitingInLine =
         threadHasRunningState(syncdb, thread_id) ||
@@ -8698,6 +8882,25 @@ async function persistQueuedUserMessageProjection({
       return projectedMessageState;
     },
   });
+  // Checked again once saved: a withdrawal (in another process) may have
+  // canceled it and written its own projection while this one was being
+  // written, so that this one landed last. Its cancel is recorded before
+  // its projection, so it is seen here, and corrected.
+  if (
+    requestedQueued &&
+    projected !== null &&
+    getAcpJob({ project_id, path, user_message_id })?.state === "canceled"
+  )
+    return await persistQueuedUserMessageProjection({
+      client,
+      project_id,
+      path,
+      thread_id,
+      user_message_id,
+      queued: false,
+      readyTimeoutMs,
+    });
+  return projected;
 }
 
 async function persistAcpGuidanceDeliveryProjection({
@@ -9290,6 +9493,8 @@ async function enqueueFailureRecoveryContinuation({
     delayMs: directive.delayMs,
     maxRetries: directive.maxRetries,
     recoveryGuidance: directive.recoveryGuidance,
+    // Not after the sender withdrew it (that clears the intent).
+    requireParentFenceIntent: directive.code,
   });
   if (resumed) {
     logger.warn("queued ACP failure recovery continuation", {
@@ -9305,6 +9510,663 @@ async function enqueueFailureRecoveryContinuation({
   return resumed;
 }
 
+/** How long a turn that ended this way is held before it resumes, if it is
+ * held at all: a turn that hit a usage limit. */
+function limitHoldDelayMs(
+  outcome: TurnOutcome | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (outcome?.state !== "failed" || outcome.failure.kind !== "limit") return;
+  const resets_at = outcome.failure.resets_at;
+  return resets_at
+    ? Math.max(
+        ACP_LIMIT_HOLD_MARGIN_MS,
+        resets_at - now + ACP_LIMIT_HOLD_MARGIN_MS,
+      )
+    : ACP_LIMIT_HOLD_UNKNOWN_RESET_MS;
+}
+
+/**
+ * Hold a turn that hit a usage limit: a continuation that runs after the
+ * limit resets, and tells the agent what happened, so it checks the state of
+ * things and carries on (it may have run tools before it stopped). Like any
+ * continuation, a newer message in the conversation comes first instead.
+ */
+async function enqueueLimitHold({
+  client,
+  job,
+  outcome,
+}: {
+  client: ConatClient;
+  job: AcpJobRow;
+  outcome: TurnOutcome;
+}): Promise<AcpJobRow | undefined> {
+  // From when the turn ended, as the continuation is scheduled: a hold
+  // recovered after a restart still resumes after the reset, not early.
+  const base = job.finished_at ?? Date.now();
+  let delayMs = limitHoldDelayMs(outcome, base);
+  if (delayMs == null) return undefined;
+  const failed = decodeAcpJobRequest(job);
+  // Another agent's message: resume while its report can still be sent
+  // (its capability expires a week after the message). If the limit has
+  // not reset by then, the turn ends there and the sender hears so.
+  const reportable = agentRpcReportCapabilityExpiresAt(
+    failed.chat?.agent_rpc_execution?.report_capability,
+  );
+  if (reportable != null) {
+    delayMs = Math.min(delayMs, reportable - HOLD_REPORT_MARGIN_MS - base);
+    if (delayMs < 60_000) return undefined;
+  }
+  // A delivery report starts one turn (the hub records it).
+  if (failed.chat?.agent_rpc_report) return undefined;
+  if (Math.floor(Number(job.recovery_count ?? 0)) >= ACP_LIMIT_HOLD_MAX_RETRIES)
+    return undefined;
+  const ranTools = toolRanOf(outcome) === true;
+  const held = await enqueueRecoveryContinuationForJob({
+    client,
+    job,
+    interruptedNotice: LIMIT_HOLD_NOTICE,
+    recoveryReason: "usage limit hold",
+    delayMs,
+    maxRetries: ACP_LIMIT_HOLD_MAX_RETRIES,
+    // Not after the sender withdrew it (that clears the intent).
+    requireParentFenceIntent: ACP_HOLD_INTENT,
+    recoveryGuidance: [
+      "The previous attempt stopped because a usage limit was reached; CoCalc held this turn until the limit reset.",
+      ranTools
+        ? "It had already run tools before it stopped: check the current state of what it was doing before you continue, and do not repeat completed steps."
+        : "It had not run any tools before it stopped.",
+    ].join(" "),
+  });
+  if (held)
+    logger.info("held ACP turn until its usage limit resets", {
+      failed_op_id: job.op_id,
+      held_op_id: held.op_id,
+      available_at: held.available_at ?? null,
+      recovery_count: held.recovery_count,
+    });
+  return held;
+}
+
+/** When this job's chain was first held for its sign-in, if it was. */
+function signInHoldStart(job: AcpJobRow): number | undefined {
+  let start: number | undefined;
+  let row: AcpJobRow | undefined = job;
+  for (let hops = 0; row && hops < 50; hops++) {
+    if (row.recovery_reason === SIGNIN_HOLD_REASON) start = row.created_at;
+    row = row.recovery_parent_op_id
+      ? getAcpJobByOpId(row.recovery_parent_op_id)
+      : undefined;
+  }
+  return start;
+}
+
+/**
+ * Hold a turn whose sign-in failed until the account signs in again (I4c):
+ * a continuation due when the day since it was first held ends, released
+ * early by releaseRenewedSignInHolds. A released turn that fails the same
+ * way (the update was not a new sign-in) is held again, never past that day.
+ */
+async function enqueueSignInHold({
+  client,
+  job,
+  outcome,
+  now = Date.now(),
+  credentialUpdatedAt = defaultCredentialUpdatedAt,
+}: {
+  client: ConatClient;
+  job: AcpJobRow;
+  outcome: TurnOutcome;
+  now?: number;
+  credentialUpdatedAt?: CredentialUpdatedAt;
+}): Promise<AcpJobRow | undefined> {
+  if (outcome.state !== "failed" || outcome.failure.kind !== "sign-in")
+    return undefined;
+  const failed = decodeAcpJobRequest(job);
+  if (failed.chat?.agent_rpc_report) return undefined;
+  // Only a subscription's sign-in can be renewed (and seen renewed): an
+  // invalid API key ends the turn as an ordinary failure.
+  if (!signInRenewable(failed, outcome)) return undefined;
+  const count = Math.floor(Number(job.recovery_count ?? 0));
+  if (count >= ACP_SIGNIN_HOLD_MAX) return undefined;
+  const base = job.finished_at ?? now;
+  // The day since it was first held, and for another agent's message no
+  // later than its report can still be sent (as for limit holds).
+  const reportable = agentRpcReportCapabilityExpiresAt(
+    failed.chat?.agent_rpc_execution?.report_capability,
+  );
+  const deadline = Math.min(
+    (signInHoldStart(job) ?? now) + ACP_SIGNIN_HOLD_MS,
+    reportable != null ? reportable - HOLD_REPORT_MARGIN_MS : Infinity,
+  );
+  // From when the turn ended, as the continuation is scheduled.
+  const delayMs = deadline - base;
+  if (delayMs < 60_000) return undefined;
+  const ranTools = toolRanOf(outcome) === true;
+  const held = await enqueueRecoveryContinuationForJob({
+    client,
+    job,
+    interruptedNotice: SIGNIN_HOLD_NOTICE,
+    recoveryReason: SIGNIN_HOLD_REASON,
+    delayMs,
+    maxRetries: ACP_SIGNIN_HOLD_MAX,
+    // Not after the sender withdrew it (that clears the intent).
+    requireParentFenceIntent: ACP_HOLD_INTENT,
+    recoveryGuidance: [
+      "The previous attempt stopped because the subscription's sign-in needed renewing; CoCalc held this turn until it was signed in again.",
+      ranTools
+        ? "It had already run tools before it stopped: check the current state of what it was doing before you continue, and do not repeat completed steps."
+        : "It had not run any tools before it stopped.",
+    ].join(" "),
+  });
+  if (held) {
+    logger.info("held ACP turn until its sign-in is renewed", {
+      failed_op_id: job.op_id,
+      held_op_id: held.op_id,
+      available_at: held.available_at ?? null,
+    });
+    await takeSignInHoldBaseline(held, credentialUpdatedAt);
+  }
+  return held;
+}
+
+const API_KEY_PAYMENT_SOURCES = [
+  "project-api-key",
+  "account-api-key",
+  "site-api-key",
+];
+
+/** Whether this sign-in failure is a subscription's, which signing in again
+ * renews: a Claude subscription credential, or a Codex turn whose failure
+ * names its subscription credential (never an API key). */
+function signInRenewable(
+  request: AcpJobRequest,
+  outcome: TurnOutcome,
+): boolean {
+  const failure = outcome.state === "failed" ? outcome.failure : undefined;
+  if (failure?.kind !== "sign-in") return false;
+  const harness = request.harness_credential as
+    | { mode?: string; credentialId?: string }
+    | undefined;
+  if (request.runtime !== undefined)
+    return harness?.mode === "account-subscription" && !!harness.credentialId;
+  const source = `${(request.config as { paymentSource?: string } | undefined)?.paymentSource ?? ""}`;
+  return !!failure.credential_id && !API_KEY_PAYMENT_SOURCES.includes(source);
+}
+
+/** The credential a held sign-in turn waits for, and its provider. */
+function heldSignInCredential(
+  job: AcpJobRow,
+): { credential_id: string; provider: string } | undefined {
+  const request = decodeAcpJobRequest(job);
+  const harness = request.harness_credential as
+    | { provider?: string; credentialId?: string }
+    | undefined;
+  if (harness?.credentialId && harness.provider)
+    return { credential_id: harness.credentialId, provider: harness.provider };
+  // A Codex turn: the failed attempt names its subscription.
+  let row: AcpJobRow | undefined = job;
+  for (let hops = 0; row && hops < 50; hops++) {
+    const outcome = parseTurnOutcome(row.outcome_json);
+    if (
+      outcome?.state === "failed" &&
+      outcome.failure.kind === "sign-in" &&
+      outcome.failure.credential_id
+    )
+      return {
+        credential_id: outcome.failure.credential_id,
+        provider: request.runtime ? "anthropic" : "openai",
+      };
+    row = row.recovery_parent_op_id
+      ? getAcpJobByOpId(row.recovery_parent_op_id)
+      : undefined;
+  }
+  return undefined;
+}
+
+type CredentialUpdatedAt = (opts: {
+  account_id: string;
+  project_id: string;
+  credential_id: string;
+  provider: string;
+}) => Promise<{
+  updated_at?: number;
+  revoked?: boolean;
+  newest_updated_at?: number;
+  newest_credential_id?: string;
+}>;
+
+/**
+ * The credential a released turn should run with: the one it was held for,
+ * unless signing in made a newer one of the same kind (or revoked it), in
+ * which case that newer one, by id.
+ */
+function replacementCredentialId(
+  held: string,
+  answer: Awaited<ReturnType<CredentialUpdatedAt>>,
+): string | undefined {
+  const replacement = answer.newest_credential_id;
+  if (!replacement || replacement === held) return undefined;
+  return answer.revoked ||
+    (answer.newest_updated_at ?? 0) > (answer.updated_at ?? 0)
+    ? replacement
+    : undefined;
+}
+
+/** Pin this queued job to another credential of the same kind (false if
+ * it was pinned to the old one and could not be changed). */
+function repinHeldCredential(
+  job: AcpJobRow,
+  from: string,
+  to: string,
+): boolean {
+  const request = decodeAcpJobRequest(job) as AcpJobRequest & {
+    harness_credential?: { credentialId?: string };
+    config?: { credentialId?: string };
+  };
+  let changed = false;
+  if (request.harness_credential?.credentialId === from) {
+    request.harness_credential = {
+      ...request.harness_credential,
+      credentialId: to,
+    };
+    changed = true;
+  }
+  if (request.config?.credentialId === from) {
+    request.config = { ...request.config, credentialId: to };
+    changed = true;
+  }
+  // Nothing pinned to it: the turn takes the account's current credential.
+  return !changed || setQueuedAcpJobRequest(job.op_id, request);
+}
+
+/** Slack for clock skew between this host and the account's home bay. */
+const SIGNIN_HOLD_SKEW_MS = 2 * 60_000;
+
+/**
+ * The newest credential update each held sign-in turn has seen, by op_id,
+ * taken when it was held. Timestamps come from the home bay's clock, so
+ * comparing an answer with the baseline never mixes clocks; only a turn
+ * without one (e.g. after a restart) compares with its hold start.
+ */
+const signInHoldBaselines = new Map<string, number>();
+
+const defaultCredentialUpdatedAt: CredentialUpdatedAt = (opts) =>
+  hubApi.agent.credentialUpdatedAt(opts);
+
+/** The newest sign-in this answer shows, if it shows any. */
+function signInSeen(answer: {
+  updated_at?: number;
+  revoked?: boolean;
+  newest_updated_at?: number;
+}): number | undefined {
+  if (answer.updated_at == null && answer.newest_updated_at == null)
+    return undefined;
+  const own = !answer.revoked ? (answer.updated_at ?? 0) : 0;
+  return Math.max(own, answer.newest_updated_at ?? 0);
+}
+
+/**
+ * Record what the home bay shows when a turn is held, so that any update
+ * after it (even a sign-in seconds later) releases the turn, and any
+ * update the failing attempt made itself (a token refresh) does not.
+ */
+async function takeSignInHoldBaseline(
+  held: AcpJobRow,
+  credentialUpdatedAt: CredentialUpdatedAt,
+): Promise<void> {
+  const credential = heldSignInCredential(held);
+  if (!credential || !held.account_id) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const answer = await Promise.race([
+      credentialUpdatedAt({
+        account_id: held.account_id,
+        project_id: held.project_id,
+        ...credential,
+      }),
+      new Promise<{}>((resolve) => {
+        timer = setTimeout(() => resolve({}), 10_000);
+      }),
+    ]);
+    const seen = signInSeen(answer);
+    if (seen != null && !signInHoldBaselines.has(held.op_id))
+      signInHoldBaselines.set(held.op_id, seen);
+  } catch {
+    // No baseline: releaseRenewedSignInHolds falls back to the hold time.
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Release every held sign-in turn whose account signed in again since it
+ * was first held: its credential, or a newer one of the same kind, was
+ * updated (not just revoked). An unanswered lookup changes nothing.
+ */
+async function releaseRenewedSignInHolds(
+  credentialUpdatedAt: CredentialUpdatedAt = defaultCredentialUpdatedAt,
+  now = Date.now(),
+): Promise<number> {
+  // One lookup per account and credential per pass.
+  const asked = new Map<string, ReturnType<CredentialUpdatedAt>>();
+  let released = 0;
+  const held = listHeldAcpJobs(SIGNIN_HOLD_REASON, now);
+  const heldIds = new Set(held.map((job) => job.op_id));
+  for (const op_id of signInHoldBaselines.keys())
+    if (!heldIds.has(op_id)) signInHoldBaselines.delete(op_id);
+  for (const job of held) {
+    const credential = heldSignInCredential(job);
+    if (!credential || !job.account_id) continue;
+    const start = signInHoldStart(job) ?? job.created_at;
+    const key = JSON.stringify([
+      job.account_id,
+      job.project_id,
+      credential.credential_id,
+    ]);
+    if (!asked.has(key))
+      asked.set(
+        key,
+        credentialUpdatedAt({
+          account_id: job.account_id,
+          project_id: job.project_id,
+          ...credential,
+        }).catch(() => ({})),
+      );
+    const answer = await asked.get(key)!;
+    const seen = signInSeen(answer);
+    if (seen == null) continue;
+    const baseline = signInHoldBaselines.get(job.op_id);
+    if (baseline == null) {
+      // No baseline from the hold (its lookup failed, or this host
+      // restarted): only an update clearly before the hold becomes one.
+      // One near or after it releases; if that was not a sign-in, the turn
+      // fails the same way and is held again, with a baseline.
+      if (seen <= start - SIGNIN_HOLD_SKEW_MS) {
+        signInHoldBaselines.set(job.op_id, seen);
+        continue;
+      }
+    } else if (seen <= baseline) continue;
+    signInHoldBaselines.delete(job.op_id);
+    // Signed in as a new credential: the turn runs with it, not the old one.
+    const replacement = replacementCredentialId(
+      credential.credential_id,
+      answer,
+    );
+    if (
+      replacement &&
+      !repinHeldCredential(job, credential.credential_id, replacement)
+    )
+      logger.warn("held sign-in turn not repinned to its new credential", {
+        op_id: job.op_id,
+      });
+    if (releaseHeldAcpJob(job.op_id, now)) released += 1;
+  }
+  if (released > 0) scheduleNextDelayedAcpQueueWake();
+  return released;
+}
+
+/** How a turn that ended this way is held, if it is (I4). */
+function holdFor(outcome: TurnOutcome | undefined) {
+  if (limitHoldDelayMs(outcome) != null) return enqueueLimitHold;
+  if (outcome?.state === "failed" && outcome.failure.kind === "sign-in")
+    return enqueueSignInHold;
+  return undefined;
+}
+
+/**
+ * The sender takes back its message (I2-E): its turn's job is canceled if it
+ * has not started, and that is all. No delivery report: the sender asked.
+ */
+export async function withdrawAgentMessageTurn(
+  source: AgentRpcSource,
+  attempt: AgentRpcAttempt,
+  accountId: string,
+  retried = false,
+): Promise<AgentRpcOutcome> {
+  const found = agentRpcWithdrawable(source, attempt, accountId);
+  if (!found)
+    return rpcOutcome(attempt, "unknown", {
+      reason: "The recipient's host has no record of this message's turn",
+    });
+  if ("reason" in found)
+    return {
+      ...rpcOutcome(attempt, "rejected", { reason: found.reason }),
+      ...turnOf(source, attempt, accountId),
+    };
+  const { job, jobs, intent } = found;
+  // Its "held until ..." report, taken back first: after an accepted
+  // withdrawal it would be untrue (and the sender asked for none). If it is
+  // being sent this moment, the withdrawal waits for that (tried again).
+  const held = takeHeldReport(jobs);
+  if (held === "in-flight")
+    return {
+      ...rpcOutcome(attempt, "rejected", {
+        reason:
+          "Its turn's hold was being reported just now; try withdrawing again.",
+      }),
+      ...turnOf(source, attempt, accountId),
+    };
+  // Not withdrawn after all: the report goes out as it would have.
+  const keepHeld = () => {
+    if (!held) return;
+    // Only while its held turn still waits: one that started or ended
+    // meanwhile reports for itself.
+    const chain = jobs.map((row) => row.op_id);
+    const next = continuationOf(jobs[jobs.length - 1] ?? job);
+    restoreAgentRpcReport(held, next ? [...chain, next.op_id] : chain);
+  };
+  // A stopped turn waiting to be resumed: clearing its intent (only if
+  // still set) means the worker or recovery poll never queues it again.
+  // If it was queued meanwhile, that continuation is what is withdrawn.
+  if (intent) {
+    if (!clearAcpJobRecoveryIntentIf(job.op_id, intent)) {
+      keepHeld();
+      if (retried)
+        return {
+          ...rpcOutcome(attempt, "rejected", {
+            reason: "Its turn changed just now, so it was not withdrawn.",
+          }),
+          ...turnOf(source, attempt, accountId),
+        };
+      return await withdrawAgentMessageTurn(source, attempt, accountId, true);
+    }
+    // Queued just before the intent was cleared: withdrawn with it, unless
+    // it already started (then it runs, and reports how it ends).
+    const next = continuationOf(job);
+    if (next) {
+      const canceled =
+        next.state === "queued" &&
+        cancelQueuedAcpJobReportingChange({
+          project_id: next.project_id,
+          path: next.path,
+          user_message_id: next.user_message_id,
+          account_id: next.account_id ?? accountId,
+          thread_id: next.thread_id,
+        }).canceled;
+      if (!canceled) {
+        keepHeld();
+        return {
+          ...rpcOutcome(attempt, "rejected", {
+            reason: "Its turn resumed just now, so it was not withdrawn.",
+          }),
+          ...turnOf(source, attempt, accountId),
+        };
+      }
+      recordAcpJobOutcome(next.op_id, {
+        version: 1,
+        state: "canceled",
+        by: "sender",
+      });
+      // Its chat row was projected as queued (perhaps still being written):
+      // the recovery poll re-projects it once more, after this try.
+      markAcpJobRecoveryIntent(next.op_id, ACP_WITHDRAWN_PROJECTION_INTENT);
+      await projectWithdrawnMessage(next).catch((err) =>
+        logger.warn("withdrawn continuation's chat not updated yet", {
+          op_id: next.op_id,
+          err: `${err}`,
+        }),
+      );
+    }
+    recordAcpJobOutcome(job.op_id, {
+      version: 1,
+      state: "canceled",
+      by: "sender",
+      ...(() => {
+        const tool_ran = chainToolRan(
+          jobs.map((row) => toolRanOf(parseTurnOutcome(row.outcome_json))),
+        );
+        return tool_ran !== undefined ? { tool_ran } : {};
+      })(),
+    });
+    return {
+      ...rpcOutcome(attempt, "accepted", {
+        reason: "Withdrawn: its turn will not resume",
+      }),
+      ...turnOf(source, attempt, accountId),
+    };
+  }
+  // A continuation whose parent still holds its hold intent (queued, but
+  // the worker or poll has not claimed it yet): clear that first, so they
+  // report nothing after this withdrawal.
+  if (job.recovery_parent_op_id)
+    clearAcpJobRecoveryIntentIf(job.recovery_parent_op_id, ACP_HOLD_INTENT);
+  const { canceled } = cancelQueuedAcpJobReportingChange({
+    project_id: job.project_id,
+    path: job.path,
+    user_message_id: job.user_message_id,
+    account_id: job.account_id ?? accountId,
+    thread_id: job.thread_id,
+  });
+  if (!canceled) {
+    keepHeld();
+    return {
+      ...rpcOutcome(attempt, "rejected", {
+        reason: "Its turn started or ended just now, so it was not withdrawn.",
+      }),
+      ...turnOf(source, attempt, accountId),
+    };
+  }
+  // A continuation that never ran still belongs to a turn that may have.
+  const tool_ran = chainToolRan(
+    jobs.map((row) =>
+      row === job ? false : toolRanOf(parseTurnOutcome(row.outcome_json)),
+    ),
+  );
+  recordAcpJobOutcome(job.op_id, {
+    version: 1,
+    state: "canceled",
+    by: "sender",
+    ...(tool_ran !== undefined ? { tool_ran } : {}),
+  });
+  // Recorded first, even if the projection below succeeds: the send that
+  // queued it may still be writing its "queued" projection, which would land
+  // after ours. The recovery poll projects it once more, then clears this.
+  markAcpJobRecoveryIntent(job.op_id, ACP_WITHDRAWN_PROJECTION_INTENT);
+  try {
+    await projectWithdrawnMessage(job);
+  } catch (err) {
+    // Withdrawn regardless; the recovery poll updates the chat later.
+    logger.warn("withdrawn message's chat not updated yet", {
+      op_id: job.op_id,
+      err: `${err}`,
+    });
+  }
+  return {
+    ...rpcOutcome(attempt, "accepted", {
+      reason: "Withdrawn: its turn will not run",
+    }),
+    ...turnOf(source, attempt, accountId),
+  };
+}
+
+/** The chain's "held until ..." report, taken out of the outbox if it is
+ * still waiting to be sent (see takeAgentRpcReportByOpId). */
+function takeHeldReport(
+  jobs: AcpJobRow[],
+): ReturnType<typeof takeAgentRpcReportByOpId> {
+  const root = jobs[0]?.op_id;
+  return root ? takeAgentRpcReportByOpId(`${root}:held`) : undefined;
+}
+
+/** The chat stops showing a withdrawn message as queued. */
+async function projectWithdrawnMessage(
+  job: AcpJobRow,
+  client: ConatClient | null | undefined = conatClient,
+): Promise<void> {
+  if (!client) throw new Error("conat client unavailable");
+  await persistQueuedUserMessageProjection({
+    client,
+    project_id: job.project_id,
+    path: job.path,
+    thread_id: job.thread_id,
+    user_message_id: job.user_message_id,
+    queued: false,
+  });
+}
+
+/** Retry the chat updates of withdrawn messages that failed. */
+async function retryWithdrawnProjections(
+  limit = 100,
+  project: (job: AcpJobRow) => Promise<void> = projectWithdrawnMessage,
+): Promise<number> {
+  let done = 0;
+  for (const job of listAcpJobsWithIntent(
+    "canceled",
+    ACP_WITHDRAWN_PROJECTION_INTENT,
+    limit,
+  )) {
+    try {
+      await project(job);
+      if (
+        clearAcpJobRecoveryIntentIf(job.op_id, ACP_WITHDRAWN_PROJECTION_INTENT)
+      )
+        done += 1;
+    } catch (err) {
+      logger.debug("withdrawn message's chat still not updated", {
+        op_id: job.op_id,
+        err: `${err}`,
+      });
+    }
+  }
+  return done;
+}
+
+function turnOf(
+  source: AgentRpcSource,
+  attempt: AgentRpcAttempt,
+  accountId: string,
+) {
+  const turn = agentRpcTurnState(source, attempt, accountId);
+  return turn ? { turn } : {};
+}
+
+/** This job still holds its hold intent (no withdrawal cleared it). */
+function holdIntentStillSet(job: AcpJobRow): boolean {
+  return getAcpJobByOpId(job.op_id)?.recovery_code === ACP_HOLD_INTENT;
+}
+
+/** Clear the hold intent after its held report was queued; if a
+ * withdrawal cleared it first, take that report back (false). */
+function claimHoldIntentAfterReport(job: AcpJobRow): boolean {
+  if (clearAcpJobRecoveryIntentIf(job.op_id, ACP_HOLD_INTENT)) return true;
+  let root = job;
+  for (let hops = 0; root.recovery_parent_op_id && hops < 20; hops++) {
+    const parent = getAcpJobByOpId(root.recovery_parent_op_id);
+    if (!parent) break;
+    root = parent;
+  }
+  deleteAgentRpcReportByOpId(`${root.op_id}:held`);
+  return false;
+}
+
+/** The continuation queued for this job, if one was. */
+function continuationOf(job: AcpJobRow): AcpJobRow | undefined {
+  return listAcpJobsByRecoveryParent({
+    recovery_parent_op_id: job.op_id,
+  })[0];
+}
+
 async function recoverPendingFailureRecoveryIntents({
   client,
   limit = 100,
@@ -9314,6 +10176,55 @@ async function recoverPendingFailureRecoveryIntents({
 }): Promise<number> {
   let recovered = 0;
   for (const job of listAcpJobsWithRecoveryIntent(limit)) {
+    if (job.recovery_code === ACP_HOLD_INTENT) {
+      // A hold whose worker died before its continuation was queued.
+      try {
+        const outcome = parseTurnOutcome(job.outcome_json);
+        const hold = holdFor(outcome);
+        // Its worker may also have died after queueing the continuation,
+        // before clearing the intent: then that continuation is the hold.
+        const held =
+          (outcome && hold
+            ? await hold({ client, job, outcome })
+            : undefined) ?? continuationOf(job);
+        const request = decodeAcpJobRequest(job);
+        // Withdrawn meanwhile (the sender cleared the intent): no report,
+        // and its limit notice, if this process still has it, says it ended.
+        if (!holdIntentStillSet(job)) {
+          void publishLimitNoticeAfterHold(request.chat?.message_id, false);
+          continue;
+        }
+        if (held?.available_at != null && held.available_at > Date.now())
+          reportFailedAgentMessageTurn(
+            job,
+            request,
+            job.error ?? undefined,
+            outcome,
+            { resume_at: held.available_at },
+          );
+        // Resuming now (the reset passed while the host was down): the
+        // continuation reports how it ends.
+        else if (!held)
+          reportFailedAgentMessageTurn(job, request, job.error ?? undefined);
+        // Its limit notice, if this process still has it (a live hold that
+        // failed, recovered here).
+        void publishLimitNoticeAfterHold(
+          request.chat?.message_id,
+          held?.available_at != null,
+        );
+        // Last, once its report is durable (a failed write throws, and the
+        // next poll tries again; the outbox keeps it to one report). A
+        // withdrawal that won meanwhile takes the report back.
+        if (!claimHoldIntentAfterReport(job)) continue;
+        recovered += 1;
+      } catch (err) {
+        logger.warn("failed recovering a persisted ACP hold", {
+          op_id: job.op_id,
+          err,
+        });
+      }
+      continue;
+    }
     try {
       const resumed = await enqueueFailureRecoveryContinuation({
         client,
@@ -9321,10 +10232,13 @@ async function recoverPendingFailureRecoveryIntents({
         recoveryCode: job.recovery_code as CodexAcpRecoveryErrorCode,
         recoveryDetail: job.recovery_detail ?? undefined,
       });
-      clearAcpJobRecoveryIntent(job.op_id);
+      // Withdrawn meanwhile (the sender cleared the intent): no report.
+      if (!clearAcpJobRecoveryIntentIf(job.op_id, `${job.recovery_code}`))
+        continue;
       recovered += 1;
-      // Declined: the turn is over after all.
-      if (!resumed)
+      // Declined: the turn is over after all (unless a continuation was
+      // queued before the worker died, and resumes it).
+      if (!resumed && !continuationOf(job))
         reportFailedAgentMessageTurn(
           job,
           decodeAcpJobRequest(job),
@@ -9337,6 +10251,11 @@ async function recoverPendingFailureRecoveryIntents({
         err,
       });
     }
+  }
+  try {
+    recovered += await retryWithdrawnProjections(limit);
+  } catch (err) {
+    logger.warn("failed retrying withdrawn messages' chats", { err });
   }
   return recovered;
 }
@@ -9513,16 +10432,30 @@ async function wakeAcpQueueForFencedWork(): Promise<void> {
   }
 }
 
-function reportFencedAgentMessage(job: AcpJobRow, detail: string): void {
-  // A resumed turn reports through the turn it continues, never twice.
-  if (`${job.recovery_parent_op_id ?? ""}`.trim()) return;
-  // A message that never ran still has a reply cut-off: when it was sent.
+function reportFencedAgentMessage(
+  job: AcpJobRow,
+  detail: string,
+  outcome: TurnOutcome,
+): void {
+  recordAcpJobOutcome(job.op_id, outcome);
+  // A resumed turn reports for its whole chain (once: see
+  // reportFailedAgentMessageTurn). A message that never ran still has a
+  // reply cut-off: when it was sent.
   reportFailedAgentMessageTurn(
     { ...job, started_at: job.started_at ?? job.created_at },
     decodeAcpJobRequest(job),
     detail,
+    outcome,
   );
 }
+
+/** A cut-off turn that a restart could not resume. Whether it ran tools is
+ * not known here. */
+const RESTART_NOT_RESUMED_OUTCOME: TurnOutcome = {
+  version: 1,
+  state: "failed",
+  failure: { kind: "host-lost" },
+};
 
 // Why a cut-off turn must not resume, or undefined if it may.  These reasons
 // do not change while it waits; newer messages winning can (see below).
@@ -9696,6 +10629,9 @@ async function resumeFencedAcpJob(
         reportFencedAgentMessage(
           job,
           "The recipient's project restarted while it worked on your message, and that turn could not be resumed.",
+          superseded
+            ? { version: 1, state: "canceled", by: "superseded" }
+            : RESTART_NOT_RESUMED_OUTCOME,
         );
       }
       return;
@@ -9756,6 +10692,7 @@ async function resumeFencedAcpJob(
     reportFencedAgentMessage(
       job,
       "The recipient's project restarted while it worked on your message, and that turn could not be resumed.",
+      RESTART_NOT_RESUMED_OUTCOME,
     );
   }
   if (claimed && continued) {
@@ -9854,6 +10791,13 @@ async function processAcpFenceIntent(
           ran
             ? "The recipient's project was stopped while it worked on your message; that turn did not finish."
             : "The recipient's project was stopped before your message ran; it was not run.",
+          ran
+            ? {
+                version: 1,
+                state: "failed",
+                failure: { kind: "project-stopped" },
+              }
+            : { version: 1, state: "never-started", reason: "project-stopped" },
         );
       }
       return;
@@ -10016,22 +10960,36 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   const path = `${job.path}`.trim();
   const thread_id = `${job.thread_id}`.trim();
   const user_message_id = `${job.user_message_id}`.trim();
-  if (!project_id || !path || !thread_id || !user_message_id) {
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "error",
-      error: "queued acp job missing required thread identity",
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+  // Ended before anything ran: an agent that sent it is told so.
+  const endWithoutRunning = (
+    state: "error" | "canceled",
+    error: string,
+  ): void => {
+    const outcome = turnOutcomeOf({
+      terminalState: "error",
+      error,
+      toolRan: false,
     });
+    // A fence (project stop) may have taken the job meanwhile: it reports.
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
+      op_id: job.op_id,
+      state,
+      error,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+      outcome,
+    });
+    if (ended) reportFailedAgentMessageTurn(job, request, error, outcome);
+  };
+  if (!project_id || !path || !thread_id || !user_message_id) {
+    endWithoutRunning(
+      "error",
+      "queued acp job missing required thread identity",
+    );
     return;
   }
   if (!conatClient) {
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "error",
-      error: "conat client must be initialized",
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
+    endWithoutRunning("error", "conat client must be initialized");
     return;
   }
   let latestQueuedMessageContent: string | undefined;
@@ -10070,12 +11028,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         !request.chat?.agent_rpc_report)
     )
       await writeQueuedJobFailureToChat({ request, error: `${err}` });
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "canceled",
-      error: `${err}`,
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
+    endWithoutRunning("canceled", `${err}`);
     return;
   }
 
@@ -10120,18 +11073,80 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     // Record progress now so the host watchdog cannot mistake that gap for a
     // stall.
     noteDetachedWorkerExecutionSettled(job.op_id);
-    setAcpJobState({
+    // A fence (project stop) or cancel may have ended the job while the turn
+    // unwound: then it, not this worker, resumes or reports the turn.
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state: result.terminalState,
       error: result.terminalState === "error" ? result.error : undefined,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
       recovery_code:
-        result.terminalState === "error" ? result.recoveryCode : undefined,
+        result.terminalState === "error"
+          ? (result.recoveryCode ??
+            (holdFor(result.outcome) ? ACP_HOLD_INTENT : undefined))
+          : undefined,
       recovery_detail:
         result.terminalState === "error" ? result.recoveryDetail : undefined,
+      outcome: result.outcome,
     });
     let resumed: AcpJobRow | undefined;
     let recoveryPending = false;
+    // The sender withdrew it while its hold or recovery was being queued.
+    let withdrawn = false;
+    if (!ended) {
+      logger.info("queued acp job was ended by another path while it ran", {
+        op_id: job.op_id,
+        state: getAcpJobByOpId(job.op_id)?.state,
+      });
+      return;
+    }
+    const hold = holdFor(result.outcome);
+    if (result.terminalState === "error" && !result.recoveryCode && hold) {
+      try {
+        resumed = await hold({
+          client: conatClient,
+          job: getAcpJobByOpId(job.op_id) ?? job,
+          outcome: result.outcome,
+        });
+        // The recovery poll may have queued this hold first (then
+        // enqueueLimitHold finds that continuation and declines): it is
+        // still held.
+        resumed = resumed ?? continuationOf(getAcpJobByOpId(job.op_id) ?? job);
+        // Already cleared means the sender withdrew the message meanwhile:
+        // then nothing is reported (the withdrawal cancels any continuation).
+        if (!holdIntentStillSet(job)) withdrawn = true;
+        else {
+          // The agent that sent the message hears it is paused, and until
+          // when.
+          if (resumed?.available_at)
+            reportFailedAgentMessageTurn(
+              job,
+              refreshedRequest,
+              result.error,
+              result.outcome,
+              { resume_at: resumed.available_at },
+            );
+          // Queued (or declined), and its held report durable: the intent
+          // has done its job (cleared last, so a crash before here is
+          // recovered).
+          if (!claimHoldIntentAfterReport(job)) withdrawn = true;
+        }
+        // The limit notice, held back until the hold was decided: held only
+        // if it was not withdrawn meanwhile.
+        void publishLimitNoticeAfterHold(
+          refreshedRequest.chat?.message_id,
+          !withdrawn && resumed?.available_at != null,
+        );
+      } catch (err) {
+        // The persisted intent stays: the recovery poll holds it later.
+        recoveryPending = true;
+        logger.warn("failed to hold an ACP turn for its usage limit", {
+          op_id: job.op_id,
+          err,
+        });
+      }
+    }
     if (result.terminalState === "error" && result.recoveryCode) {
       try {
         resumed = await enqueueFailureRecoveryContinuation({
@@ -10140,7 +11155,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
           recoveryCode: result.recoveryCode,
           recoveryDetail: result.recoveryDetail,
         });
-        clearAcpJobRecoveryIntent(job.op_id);
+        if (!clearAcpJobRecoveryIntentIf(job.op_id, result.recoveryCode))
+          withdrawn = true;
       } catch (err) {
         // The persisted intent stays: the recovery poll decides later.
         recoveryPending = true;
@@ -10153,11 +11169,38 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     }
     // A turn that is (or may still be) retried is not over; the others are
     // reported to the agent whose message started them.
-    if (result.terminalState === "error" && !resumed && !recoveryPending)
-      reportFailedAgentMessageTurn(job, refreshedRequest, result.error);
+    // Stopped by a person counts too: the sender would otherwise wait.
+    // A completed turn too, when the sender asked to hear of no reply.
+    if (
+      (result.terminalState !== "completed" ||
+        refreshedRequest.chat?.agent_rpc_execution?.report_no_reply === true) &&
+      !resumed &&
+      !recoveryPending &&
+      !withdrawn
+    )
+      reportFailedAgentMessageTurn(
+        job,
+        refreshedRequest,
+        result.error,
+        result.outcome,
+      );
+    // A limit notice still waiting (the turn was not held, e.g. a recovery
+    // code took over): it ended. One still being held is decided by the
+    // recovery poll instead.
+    if (!recoveryPending)
+      void publishLimitNoticeAfterHold(
+        refreshedRequest.chat?.message_id,
+        !withdrawn && resumed?.available_at != null,
+      );
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
     const message = `This agent turn could not run: ${(err as Error)?.message ?? err}`;
+    // Whether anything ran before it threw is not known here.
+    const outcome = turnOutcomeOf({
+      terminalState: "error",
+      failure: turnFailureOf(err),
+      error: message,
+    });
     logger.warn("queued acp job execution failed", {
       op_id: job.op_id,
       err,
@@ -10166,37 +11209,68 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       request,
       error: message,
     });
-    setAcpJobState({
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state: "error",
       error: message,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+      outcome,
     });
-    reportFailedAgentMessageTurn(job, request, message);
+    if (ended) reportFailedAgentMessageTurn(job, request, message, outcome);
   }
 }
 
-/** Tell the agent whose message started this failed turn (best effort). */
+function reportSupersededRecovery(job: AcpJobRow): void {
+  // It never ran; its chain's earlier attempts say whether tools ran.
+  const outcome: TurnOutcome = {
+    version: 1,
+    state: "canceled",
+    by: "superseded",
+    tool_ran: false,
+  };
+  recordAcpJobOutcome(job.op_id, outcome);
+  reportFailedAgentMessageTurn(
+    job,
+    decodeAcpJobRequest(job),
+    undefined,
+    outcome,
+  );
+}
+
+/** Tell the agent whose message started this turn how it ended without a
+ * reply: an error, a cancel, a stop (best effort). */
 function reportFailedAgentMessageTurn(
   job: AcpJobRow,
   request: AcpRequest,
   error?: string,
+  outcome: TurnOutcome | undefined = parseTurnOutcome(job.outcome_json),
+  /** Held, not over: tell the sender when it resumes (I4). */
+  held?: { resume_at: number },
 ): void {
   // A recovery continuation carries the same message: the turn began when
-  // the first of them started, and a reply from any of them counts.
+  // the first of them started, a reply from any of them counts, any of them
+  // may have run tools, and the chain is reported once (as its first job).
   let started = job.started_at;
+  let root = job.op_id;
+  const toolRan = [toolRanOf(outcome)];
   let parent = job.recovery_parent_op_id;
   for (let hops = 0; parent && hops < 20; hops++) {
     const row = getAcpJobByOpId(parent);
     if (!row) break;
+    root = row.op_id;
     if (row.started_at != null) started = row.started_at;
+    toolRan.push(toolRanOf(parseTurnOutcome(row.outcome_json)));
     parent = row.recovery_parent_op_id;
   }
   const report = noteAgentMessageTurnFailed({
-    op_id: job.op_id,
+    op_id: root,
     request,
-    error: `${error ?? ""}`.trim() || "The turn ended with an error.",
+    error: `${error ?? ""}`.trim() || undefined,
+    outcome,
+    tool_ran: chainToolRan(toolRan) ?? null,
     turn_started_at: started,
+    ...(held ? { held } : {}),
   });
   if (report)
     void drainAgentRpcReports(hubApi.agent).catch((err) =>
@@ -10568,7 +11642,8 @@ async function trySteerCandidateIds({
   // Harness agents (Claude) take pasted images as content blocks, exactly as
   // for a new turn; prepared once, only if a harness agent is asked.
   let harnessRequest:
-    Promise<Awaited<ReturnType<typeof materializeBlobs>>> | undefined;
+    | Promise<Awaited<ReturnType<typeof materializeBlobs>>>
+    | undefined;
   try {
     for (const id of ids) {
       // Cached writer/lease aliases can outlive an ACP reset. Only the current
@@ -11057,6 +12132,9 @@ async function enqueueChatAcpTurn({
       ),
     },
   );
+  // Turns cut off and waiting to resume that this message replaces: an agent
+  // that sent one of them is told it will not continue.
+  for (const superseded of canceled) reportSupersededRecovery(superseded);
   if (projectId && chatPath && threadId && canceled.length) {
     await clearSupersededRecoveryProjections({
       client: conatClient,
@@ -11868,6 +12946,33 @@ async function handleAcpAttentionRequest(
       const answers = Object.fromEntries(
         Object.entries(normalized).map(([id, value]) => [id, value.answers]),
       );
+      // @agents in what the person wrote (not the agent's own option labels)
+      // are checked as in their own message: each must name an available
+      // agent, checked under this account. A retry of a stored response is
+      // not checked again: it was accepted, and nothing new is stored.
+      const custom = current.questions.flatMap((question) => {
+        const labels = new Set(
+          (question.options ?? []).map(({ label }) => label),
+        );
+        return (answers[question.id] ?? []).filter(
+          (answer) => !labels.has(answer),
+        );
+      });
+      if (!request.decline && !current.response_id && custom.length > 0) {
+        try {
+          await resolveHumanAgentMentions(
+            custom.join("\n"),
+            { account_id: request.account_id, project_id: request.project_id },
+            hubApi.agent,
+          );
+        } catch (err) {
+          return {
+            ok: false,
+            state: current.state,
+            error: `${(err as Error)?.message ?? err}. Your answer was not sent.`,
+          };
+        }
+      }
       const submitted = submitAcpAttentionResponse({
         codex_credential_id: request.codex_credential_id,
         attention_id: request.attention_id,
@@ -11977,6 +13082,15 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
   let ticks = 0;
   codexActionReconcileTimer = setInterval(() => {
     void reconcilePendingCodexActions(client);
+    // Held sign-in turns whose account signed in again (about once a minute).
+    if (ticks % 6 === 3)
+      void releaseRenewedSignInHolds().catch((err) =>
+        logger.debug("sign-in hold release failed", { err: `${err}` }),
+      );
+    // What each agent here is doing, for its peers and lists.
+    void sweepAgentStatus().catch((err) =>
+      logger.debug("agent status sweep failed", { err: `${err}` }),
+    );
     // Delivery reports the hub could not take yet (about once a minute).
     if (++ticks % 6 === 0)
       void drainAgentRpcReports(hubApi.agent).catch((err) =>
@@ -12341,15 +13455,33 @@ async function handleAcpControlRequestNow(
     };
   }
   if (request.action === "cancel") {
-    const row = cancelQueuedAcpJob({
-      project_id,
-      path,
-      user_message_id,
-      account_id: request.account_id,
-      thread_id,
-    });
+    const { job: row, canceled: canceledNow } =
+      cancelQueuedAcpJobReportingChange({
+        project_id,
+        path,
+        user_message_id,
+        account_id: request.account_id,
+        thread_id,
+      });
     if (!row || row.state !== "canceled") {
       return { ok: false, state: row?.state ?? "missing" };
+    }
+    // An agent that sent it is told it will not run, if this canceled it
+    // (not an earlier cancel, or a fence that reports on its own). First:
+    // the chat update below can fail, and a retried cancel changes nothing.
+    if (canceledNow) {
+      // A message a restart held may have run already.
+      const canceled: TurnOutcome =
+        row.started_at != null
+          ? { version: 1, state: "canceled", by: "person" }
+          : { version: 1, state: "never-started", reason: "canceled" };
+      recordAcpJobOutcome(row.op_id, canceled);
+      reportFailedAgentMessageTurn(
+        { ...row, started_at: row.started_at ?? row.created_at },
+        decodeAcpJobRequest(row),
+        undefined,
+        canceled,
+      );
     }
     await persistQueuedUserMessageProjection({
       client: conatClient,
@@ -12524,7 +13656,8 @@ async function handleAcpControlRequestNow(
     }
     const currentRequest = decodeAcpJobRequest(current);
     let fundingRecovery:
-      Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"] | undefined;
+      | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
+      | undefined;
     if (request.action === "resend_with_payment") {
       const payment = request.payment_recovery!;
       if (
@@ -13286,6 +14419,11 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  publishLimitNoticeAfterHold,
+  signInRenewable,
+  releaseRenewedSignInHolds,
+  signInHoldStart,
+  retryWithdrawnProjections,
   harnessKilledFailure,
   loadAgentMemoryContext,
   handleAcpAttentionRequest,
@@ -13294,6 +14432,8 @@ export const acpTestInternals = {
   executeAcpRequest,
   handleInterruptRequest,
   processPendingAcpInterruptsOnce,
+  reportSupersededRecovery,
+  reportFailedAgentMessageTurn,
   registerInterruptAgentForTests: (
     key: string,
     projectId: string,

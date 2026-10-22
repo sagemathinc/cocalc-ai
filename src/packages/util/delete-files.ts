@@ -6,6 +6,7 @@
 import { path_split } from "./misc";
 import { hidden_meta_file } from "@cocalc/util/misc";
 import { JUPYTER_SYNCDB_EXTENSIONS } from "@cocalc/util/jupyter/names";
+import { BOARD_SYNCDB_EXTENSION } from "@cocalc/util/board/names";
 
 // NOTE: there are also .term files in subframes with history that doesn't get
 // deleted.  That's an edge case.
@@ -22,6 +23,7 @@ export function deleted_file_variations(path: string): string[] {
     "sage-chat",
     "sage-jupyter",
     JUPYTER_SYNCDB_EXTENSIONS,
+    BOARD_SYNCDB_EXTENSION,
     "time-travel",
     "sage-history",
     "syncdb",
@@ -50,6 +52,7 @@ export function move_file_variations(
     "sage-chat",
     "sage-jupyter",
     JUPYTER_SYNCDB_EXTENSIONS,
+    BOARD_SYNCDB_EXTENSION,
     "time-travel",
     "sage-history",
   ]) {

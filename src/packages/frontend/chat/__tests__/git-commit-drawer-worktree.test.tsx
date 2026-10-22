@@ -16,6 +16,7 @@ import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
 import { loadReviewRecord } from "../git-review-store";
 import { parseGitShowOutput } from "../git-commit/git-output";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { GitReadError } from "@cocalc/frontend/git/read-service";
 
 const mockOpenFile = jest.fn().mockResolvedValue(undefined);
 const mockDiffMount = jest.fn();
@@ -46,6 +47,7 @@ jest.mock("@cocalc/frontend/git/project-read-service", () => ({
     resolveCommit: jest.fn(),
     pinCommit: jest.fn(),
     history: jest.fn(),
+    invalidateDiscovery: jest.fn(),
   },
 }));
 jest.mock("@cocalc/frontend/git/commit-worktree", () => ({
@@ -440,4 +442,101 @@ test("uncommitted changes still load from the selected working copy", async () =
     ),
   );
   expect(readTargetDiff).not.toHaveBeenCalled();
+});
+
+test("a commit this clone lacks says so, and Fetch from origin loads it", async () => {
+  jest
+    .mocked(projectGitReader.pinCommit)
+    .mockRejectedValueOnce(
+      new GitReadError(
+        "missing",
+        `Commit ${commit} isn't in this clone (/repo). Fetch it from origin, or open it from a clone that has it.`,
+      ),
+    );
+  render(<GitCommitDrawer {...props} />);
+  expect(
+    await screen.findByText(/isn't in this clone \(\/repo\)/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Git diff" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Fetch from origin" }));
+  await waitFor(() =>
+    expect(webapp_client.project_client.exec).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "git",
+        args: ["fetch", "--no-tags", "origin", commit],
+      }),
+    ),
+  );
+  expect(projectGitReader.invalidateDiscovery).toHaveBeenCalledWith("project");
+  // Fetched: the review loads.
+  expect(
+    await screen.findByRole("region", { name: "Git diff" }),
+  ).toBeInTheDocument();
+});
+
+test("a failed fetch says why and offers to try again", async () => {
+  jest
+    .mocked(projectGitReader.pinCommit)
+    .mockRejectedValue(
+      new GitReadError(
+        "missing",
+        `Commit ${commit} isn't in this clone (/repo).`,
+      ),
+    );
+  // Only the fetch fails; the drawer's other Git reads succeed.
+  jest
+    .mocked(webapp_client.project_client.exec)
+    .mockImplementation(async (opts: any) =>
+      opts.args?.[0] === "fetch"
+        ? ({
+            exit_code: 128,
+            stderr: "fatal: remote error: upload-pack: not our ref\n",
+          } as any)
+        : ({ exit_code: 0, stdout: "" } as any),
+    );
+  render(<GitCommitDrawer {...props} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Fetch from origin" }),
+  );
+  expect(
+    await screen.findByText(
+      /Fetching .* from origin failed: fatal: remote error/,
+    ),
+  ).toBeInTheDocument();
+  // Still offered, to try again (once the attempt has finished).
+  expect(
+    await screen.findByRole("button", { name: "Fetch from origin" }),
+  ).toBeInTheDocument();
+});
+
+test("a fetch that ends after another commit was opened changes nothing", async () => {
+  jest
+    .mocked(projectGitReader.pinCommit)
+    .mockRejectedValueOnce(
+      new GitReadError(
+        "missing",
+        `Commit ${commit} isn't in this clone (/repo).`,
+      ),
+    );
+  const fetch = deferred<any>();
+  const exec = jest.mocked(webapp_client.project_client.exec);
+  const ordinary = exec.getMockImplementation();
+  exec.mockImplementation(async (opts: any) =>
+    opts.args?.[0] === "fetch" ? fetch.promise : ordinary?.(opts),
+  );
+  const { rerender } = render(<GitCommitDrawer {...props} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Fetch from origin" }),
+  );
+  // Another commit, which this clone has, while the fetch runs.
+  rerender(<GitCommitDrawer {...props} commitHash={"b".repeat(40)} />);
+  expect(
+    await screen.findByRole("region", { name: "Git diff" }),
+  ).toBeInTheDocument();
+  await act(async () => {
+    fetch.resolve({ exit_code: 128, stderr: "fatal: not our ref\n" });
+  });
+  expect(screen.queryByText(/from origin failed/)).toBeNull();
+  expect(screen.getByRole("region", { name: "Git diff" })).toBeInTheDocument();
+  expect(projectGitReader.invalidateDiscovery).not.toHaveBeenCalled();
 });

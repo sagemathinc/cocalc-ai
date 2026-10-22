@@ -129,16 +129,36 @@ function browserSessionSameSite(req: IncomingMessage): "Lax" | "None" {
   return "Lax";
 }
 
+// A host session cookie is re-issued on use (sliding expiry), so its own iat
+// is always recent. It carries the iat of the credential it came from (the
+// hub-issued bearer, or the cookie it replaces) as auth_iat, and every
+// revocation cutoff is checked against that: an old session that uses a host
+// before the host has synced a cutoff can't launder itself into a new one.
+export function originIssuedAt(auth_iat_s: unknown, now_s: number): number {
+  const v = Number(auth_iat_s);
+  return Number.isSafeInteger(v) && v > 0 && v <= now_s ? v : now_s;
+}
+
+// Cookies from before auth_iat existed count from their own iat.
+export function issuedAtOfOrigin(auth_iat: unknown, iat: number): number {
+  const v = Number(auth_iat);
+  return Number.isSafeInteger(v) && v > 0 && v <= iat ? v : iat;
+}
+
 export function createProjectHostBrowserSessionToken({
   account_id,
   now_ms = Date.now(),
   ttl_seconds = BROWSER_SESSION_TTL_SECONDS,
   restricted_exp_s,
+  auth_iat_s,
 }: {
   account_id: string;
   now_ms?: number;
   ttl_seconds?: number;
   restricted_exp_s?: number;
+  // When the credential this one was made from was issued: revocation
+  // cutoffs compare against it, so re-issuing a cookie never renews it.
+  auth_iat_s?: number;
 }): string {
   const now_s = Math.floor(now_ms / 1000);
   const requestedTtl =
@@ -155,6 +175,7 @@ export function createProjectHostBrowserSessionToken({
     v: BROWSER_SESSION_TOKEN_VERSION,
     account_id,
     iat: now_s,
+    auth_iat: originIssuedAt(auth_iat_s, now_s),
     exp,
     ...(restricted_exp_s == null ? {} : { restricted_exp_s: exp }),
     nonce: randomBytes(12).toString("hex"),
@@ -213,7 +234,7 @@ export function verifyProjectHostBrowserSessionToken(
   if (exp < Math.floor(now_ms / 1000)) return;
   return {
     account_id,
-    iat_s: iat,
+    iat_s: issuedAtOfOrigin(payload?.auth_iat, iat),
     exp_s: exp,
     ...(explicitRestrictedExp == null
       ? {}
@@ -387,6 +408,7 @@ export function issueProjectHostBrowserSessionFromBearer({
       req,
       sessionToken: createProjectHostBrowserSessionToken({
         account_id: claims.sub,
+        auth_iat_s: claims.iat,
         ...(claims.browser_session_exp_s == null
           ? {}
           : { restricted_exp_s: claims.browser_session_exp_s }),

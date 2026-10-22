@@ -103,6 +103,43 @@ describe("project-host Conat auth", () => {
     expect(mockGetProject).not.toHaveBeenCalled();
   });
 
+  it("tells the revocation check whether a bearer is an agent's (a password change leaves agents alone)", async () => {
+    mockGetAccountRevokedBeforeMs.mockImplementation(
+      (_id: string, opts?: { auth_actor?: string }) =>
+        opts?.auth_actor === "agent" ? undefined : 5_000_000,
+    );
+    const { getUser } = createProjectHostConatAuth({ host_id });
+    const connect = async () =>
+      await getUser(
+        {
+          handshake: { auth: { bearer: "token" }, headers: {} },
+        } as any,
+        undefined as any,
+      );
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+    });
+    await expect(connect()).rejects.toThrow("session revoked");
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      auth_actor: "agent",
+      project_id,
+      sid: "agent-session-1",
+      jti: "agent-credential-1",
+      sub: account_id,
+      iat: 1000,
+    });
+    await expect(connect()).resolves.toMatchObject({
+      account_id,
+      auth_actor: "agent",
+    });
+    expect(mockGetAccountRevokedBeforeMs).toHaveBeenLastCalledWith(account_id, {
+      auth_actor: "agent",
+    });
+  });
+
   it("keeps a scoped key in its viewer service instead of account permissions", async () => {
     const expires = Math.floor(Date.now() / 1000) + 20;
     const binding = {
@@ -968,6 +1005,30 @@ describe("project-host Conat auth", () => {
         subject: `fs.project-${project_id}`,
       }),
     ).resolves.toBe(true);
+  });
+
+  it("allows only hub principals to use the persist fence service", async () => {
+    mockGetRow.mockReturnValue({
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    const { isAllowed } = createProjectHostConatAuth({ host_id });
+    for (const subject of [
+      "persist-control.fence",
+      "persist-control",
+      `persist-control.project-${project_id}`,
+    ]) {
+      for (const type of ["pub", "sub"] as const) {
+        await expect(
+          isAllowed({ user: { hub_id: "hub" }, type, subject }),
+        ).resolves.toBe(true);
+        await expect(
+          isAllowed({ user: { account_id }, type, subject }),
+        ).resolves.toBe(false);
+        await expect(
+          isAllowed({ user: { project_id }, type, subject }),
+        ).resolves.toBe(false);
+      }
+    }
   });
 
   it("does not cache negative collaborator decisions across user syncs", async () => {

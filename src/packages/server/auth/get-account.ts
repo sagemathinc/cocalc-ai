@@ -12,6 +12,7 @@ import {
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
 import { trunc } from "@cocalc/util/misc";
+import { touchSession } from "@cocalc/server/auth/session-expiry";
 
 const logger = getLogger("server:get-account");
 
@@ -97,5 +98,7 @@ export async function getAccountIdFromRememberMe(
     return;
   }
   logger.debug("remember_me cookie valid -- sign in as ", account_id);
+  // Using a session keeps it from going idle (rate-limited inside).
+  void touchSession({ hash, account_id });
   return account_id;
 }

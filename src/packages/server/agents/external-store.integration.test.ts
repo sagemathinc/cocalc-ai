@@ -120,6 +120,52 @@ describeDb("network-bound external agents", () => {
     );
   });
 
+  test("enrollment status checks the secret before saying an installation is inactive", async () => {
+    const { options } = enrollment();
+    await store.enroll(account, "human-session", options);
+    expect(
+      await store.enrollmentStatus(
+        account,
+        options.installation_id,
+        options.secret_hash,
+      ),
+    ).toMatchObject({ installation_id: options.installation_id });
+    await store.revoke(account, options.installation_id);
+    await expect(
+      store.enrollmentStatus(account, options.installation_id, "b".repeat(64)),
+    ).rejects.toThrow("external_approval_conflict");
+    await expect(
+      store.enrollmentStatus(
+        account,
+        options.installation_id,
+        options.secret_hash,
+      ),
+    ).rejects.toThrow("external_credential_inactive");
+
+    // Revoked by an account-wide sign-out: still only for the matching secret.
+    const second = enrollment();
+    await store.enroll(account, "human-session", second.options);
+    // As accountSecurity does: only a credential issued before the revocation
+    // is refused; the account itself is not disabled.
+    security.mockImplementation(async (_account, issued_at) => {
+      if (issued_at) throw new Error("external_credential_revoked");
+    });
+    await expect(
+      store.enrollmentStatus(
+        account,
+        second.options.installation_id,
+        "b".repeat(64),
+      ),
+    ).rejects.toThrow("external_approval_conflict");
+    await expect(
+      store.enrollmentStatus(
+        account,
+        second.options.installation_id,
+        second.options.secret_hash,
+      ),
+    ).rejects.toThrow("external_credential_revoked");
+  });
+
   test("bounded inbox is network-bound, idempotent, and acknowledged", async () => {
     const { options } = enrollment();
     const installation = await store.enroll(account, "human-session", options);

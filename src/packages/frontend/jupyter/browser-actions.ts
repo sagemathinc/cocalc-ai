@@ -11,6 +11,7 @@ import * as awaiting from "awaiting";
 import { fromJS, Map, Set as iSet } from "immutable";
 import { debounce, isEqual } from "lodash";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { attachHistoryResetHandlers } from "./history-reset-handlers";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
@@ -238,6 +239,21 @@ export class JupyterActions extends JupyterActions0 {
   private saveIpynbRequested: boolean = false;
   private optimisticFastOpenToken: number = 0;
   private optimisticFastOpenApplied: boolean = false;
+  // Settles once the open has chosen between the stored (RTC) notebook and
+  // the .ipynb file and applied it (or the editor closed): until then an
+  // empty notebook may just not have been loaded yet. A failing load from
+  // disk is retried and keeps it pending, since a later successful load
+  // replaces every cell.
+  private resolveInitialSource: () => void = () => {};
+  private initialSourceSettled: Promise<void> = new Promise((resolve) => {
+    this.resolveInitialSource = resolve;
+  });
+  private settleInitialSource = (): void => {
+    this.resolveInitialSource();
+    if (!this.isClosed() && !this.store?.get("initial_source_settled")) {
+      this.setState({ initial_source_settled: true });
+    }
+  };
   private openInitStartedAt?: number;
   private openInitMarks: Record<string, number> = {};
   private openInitSummaryLogged = false;
@@ -1616,6 +1632,14 @@ export class JupyterActions extends JupyterActions0 {
     this.syncdb.on("has-uncommitted-changes", this.set_save_status);
     this.syncdb.on("disconnected", this.handleSyncdbDisconnected);
     this.syncdb.on("open-phase", this.handleSyncdbOpenPhase);
+    // a reset or unloadable edit history (bounded history plan H1b-3)
+    attachHistoryResetHandlers({
+      project_id: this.project_id,
+      path: this.path,
+      syncdb: this.syncdb,
+      redux: this.redux,
+      isClosed: () => this.is_closed(),
+    });
 
     // Also maintain read_only state.
     this.syncdb.on("metadata-change", this.sync_read_only);
@@ -1671,7 +1695,9 @@ export class JupyterActions extends JupyterActions0 {
       // Start watch/bootstrap decision before local user heartbeat writes a
       // metadata-only patch, which would otherwise make RTC appear spuriously
       // "newer than disk" at open time.
-      this.watchIpynb(rtcLastChangedMsAtReady);
+      this.watchIpynb(rtcLastChangedMsAtReady).finally(
+        this.settleInitialSource,
+      );
       void this.ensureLiveRunSubscription();
 
       this.set_runtime_user_state({ id: 0, time: Date.now() });
@@ -1916,6 +1942,7 @@ export class JupyterActions extends JupyterActions0 {
       this.exportStartup?.abort();
       this.exportStartup = undefined;
       this.recordJupyterOpenIncomplete("editor_closed");
+      this.settleInitialSource();
       this.unsubscribeAppearance?.();
       this.unsubscribeAppearance = undefined;
       this.reconnectResource?.close();
@@ -2608,9 +2635,10 @@ export class JupyterActions extends JupyterActions0 {
     });
   }
 
-  /* Wait until the syncdb is ready *and* there is at
-     least one cell in the notebook. For a brand new blank
-     notebook, the backend will create a blank cell.
+  /* Wait until the syncdb is ready, the initial load from the .ipynb file (if
+     any) is done, and the cells are in the store. An empty notebook is ready
+     with no cells: none is created until the user starts editing (see
+     createFirstCell).
 
      If the current state is "closed" there is no way
      it'll ever be ready, so we throw an Error.
@@ -2623,9 +2651,14 @@ export class JupyterActions extends JupyterActions0 {
       case "closed":
         throw Error("syncdb is closed so will never be ready");
     }
-    // Wait until there is at least one cell.  The backend is
-    // responsible for ensuring there is at least one cell.
-    while ((this.store.get("cell_list")?.size ?? 0) <= 0) {
+    await this.initialSourceSettled;
+    if (this.isClosed()) {
+      throw Error("jupyter actions closed so will never be ready");
+    }
+    while (
+      (this.store.get("cell_list")?.size ?? 0) <= 0 &&
+      this.syncdb.get_one({ type: "cell" }) != null
+    ) {
       // wait for a change event:
       await once(this.store, "change");
     }
@@ -3154,6 +3187,14 @@ export class JupyterActions extends JupyterActions0 {
     return exportToHTML({ ...(await this.toExportInput()), passive });
   };
 
+  // The print popup has the app's origin, so every printout, trusted or
+  // not, is written through the passive-document boundary (CSP, no
+  // navigation, no frames): nothing in a notebook ever runs there.  Trust
+  // only decides how outputs are rendered (toHTML).
+  writePrintDocument = (popup: Window, html: string): void => {
+    writePassiveHtmlDocument(popup, html, { css: PRINT_CSS });
+  };
+
   nbconvertToHtml = async (
     format: "cocalc-html" | "cocalc-pdf" = "cocalc-pdf",
   ) => {
@@ -3181,14 +3222,7 @@ export class JupyterActions extends JupyterActions0 {
       }
       const popup = printWindow!;
       if (popup.closed) throw Error("Print window was closed. Please retry.");
-      if (passive) {
-        // Untrusted: the popup has the app's origin, so write it through the
-        // passive-document boundary (CSP, no navigation, no frames).
-        writePassiveHtmlDocument(popup, html, { css: PRINT_CSS });
-      } else {
-        popup.document.open();
-        popup.document.write(html);
-      }
+      this.writePrintDocument(popup, html);
       let printing: Promise<void> | undefined;
       const print = () => {
         return (printing ??= (async () => {
@@ -4892,7 +4926,10 @@ export class JupyterActions extends JupyterActions0 {
     this.noteOpenInitPhase("watch_start");
     this.runDebug("watch.start");
     const done = () => this.isClosed();
-    if (done()) return;
+    if (done()) {
+      this.settleInitialSource();
+      return;
+    }
     const hasRtcCells = this.syncdb.get_one({ type: "cell" }) != null;
     const rtcLastChangedMs =
       typeof rtcLastChangedMsAtReady === "number" &&
@@ -4986,14 +5023,12 @@ export class JupyterActions extends JupyterActions0 {
       });
       this.maybeLogFirstVisibleCell("rtc");
     }
+    this.settleInitialSource();
     if (done()) return;
     // if no kernel, let use select one:
     this.initKernel();
-    // now that we've loaded from disk if necessary we can
-    // ensure there is a cell.  This causes trust if it happens.
-    this.syncdb.on("change", () => {
-      this.ensureThereIsACell();
-    });
+    // An empty notebook stays empty (no cell is stored) until the user starts
+    // editing; see createFirstCell.
 
     const fs = this.syncdb.fs;
 

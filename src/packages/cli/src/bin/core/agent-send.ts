@@ -6,6 +6,7 @@
 // One message to one network peer, sent with this runtime's agent identity.
 // Shared by `cocalc agent send` and `cocalc project chat send --to/--rpc`.
 
+import { agentRpcTurnSummary } from "@cocalc/conat/agents/rpc-turn";
 import { randomUUID } from "node:crypto";
 import type { AgentSelf } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
@@ -44,6 +45,8 @@ export interface AgentSendOptions {
   attemptId?: string;
   externalAgent?: string;
   api?: string;
+  /** Be told if the recipient's turn ends without replying. */
+  reportNoReply?: boolean;
 }
 
 export interface AgentSendResult {
@@ -122,8 +125,26 @@ export async function sendAgentMessage(
     agent_network_id = networks[0].agent_network_id;
     agent_network_title = networks[0].title;
   }
+  if (opts.reportNoReply) {
+    // Only a turn the message starts on its own can be reported (the hub
+    // signs reports for queued delivery, between project agents).
+    const why =
+      opts.externalAgent || isExternalAgentSource(target)
+        ? "external network members never get turn reports"
+        : deliveryMode !== "queued"
+          ? `Agent Network "${agent_network_title}" delivers ${deliveryMode ?? "live"}, into the recipient's running turn, so no report can arrive`
+          : undefined;
+    if (why)
+      throw new Error(
+        `--report-no-reply is not possible here: ${why}; no message was sent`,
+      );
+  }
+  // Before waiting: a shell or tool that times out still has what it needs
+  // to learn what happened, without sending again.
   process.stderr.write(
-    `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
+    isExternalAgentSource(target)
+      ? `Sending (attempt ${attempt_id}).\n`
+      : `Sending (attempt ${attempt_id}). If this is cut off, check without resending: cocalc agent rpc inspect ${attempt_id} --agent-network ${agent_network_id} --to-agent ${target.agent_id} --target-project ${target.project_id}${opts.externalAgent ? ` --external-agent ${JSON.stringify(opts.externalAgent)}` : ""}\n`,
   );
   const result = (outcome: AgentRpcOutcome): AgentSendResult => ({
     outcome,
@@ -183,6 +204,7 @@ export async function sendAgentMessage(
   }
   const outcome = (await send({
     ...request,
+    ...(opts.reportNoReply ? { report_no_reply: true as const } : {}),
     action: "send",
     ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
   })) as AgentRpcOutcome;
@@ -251,5 +273,30 @@ export function agentSendSummary(result: AgentSendResult): string {
   const inspect = isExternalAgentSource(target)
     ? ""
     : ` Check without resending: agent rpc inspect ${outcome.attempt_id} --agent-network ${outcome.agent_network_id} --to-agent ${target.agent_id} --target-project ${target.project_id}${profile}.`;
-  return `Delivery to ${who} via ${network} is unconfirmed: ${why}. It may still run, so do not resend automatically.${inspect} A deliberate retry needs a new --attempt-id.`;
+  return `UNCONFIRMED: delivery to ${who} via ${network} is not known (${why}). It may still run, so do not resend automatically.${inspect} A deliberate retry needs a new --attempt-id.`;
+}
+
+/** One plain sentence for `agent rpc inspect`: where the turn is, if known. */
+/** One line for `agent rpc withdraw`. */
+export function agentRpcWithdrawSummary(outcome: AgentRpcOutcome): string {
+  if (outcome.outcome === "accepted")
+    // A turn held after it started (e.g. at a usage limit) may already
+    // have acted: only its continuation is stopped.
+    return outcome.turn?.started_at != null
+      ? `Withdrawn: it will not resume, and you will get no report about it. Its earlier attempt had already started${outcome.turn.tool_ran === false ? " (it ran no tools)" : " and may have run tools"}: check what it did before sending it again.`
+      : "Withdrawn: the recipient will not run it, and you will get no report about it.";
+  if (outcome.outcome === "rejected")
+    return `Not withdrawn: ${outcome.reason ?? "it can no longer be withdrawn"}${outcome.turn ? ` ${agentRpcTurnSummary(outcome.turn)}` : ""}`;
+  return `Unknown: ${outcome.reason ?? "no answer"}. Check with agent rpc inspect.`;
+}
+
+export function agentRpcInspectSummary(outcome: AgentRpcOutcome): string {
+  if (outcome.turn) return agentRpcTurnSummary(outcome.turn);
+  const why = outcome.reason ?? outcome.code ?? "no reason given";
+  if (outcome.outcome === "accepted")
+    return outcome.operation?.disposition === "steered"
+      ? "Admitted into the recipient's running turn; it has no turn of its own to report."
+      : "Admitted; the recipient's host has no record of its turn (an older host, or a message added to a running turn).";
+  if (outcome.outcome === "rejected") return `Not delivered: ${why}.`;
+  return `Unknown: ${why}. Nothing shows it was admitted; it may still run, so do not resend automatically.`;
 }

@@ -50,6 +50,21 @@ function removeTree(path?: string) {
   rmSync(path, { recursive: true, force: true });
 }
 
+// The snapshots users see, which get the project's edit history
+// (persist-volume.ts)
+const projectSnapshots: { project_id: string; source: string; dest: string }[] =
+  [];
+function projectSnapshot(opts: {
+  project_id: string;
+  source: string;
+  dest: string;
+}) {
+  projectSnapshots.push(opts);
+  snapshotTree(opts.source, opts.dest);
+  mkdirSync(join(opts.dest, ".cocalc-persist"));
+  writeFileSync(join(opts.dest, ".cocalc-persist", "a.db"), "history");
+}
+
 function mode(path: string): number {
   return lstatSync(path).mode & 0o7777;
 }
@@ -64,8 +79,7 @@ describe("legacy project restore with restrictive archive modes", () => {
     getOrEnsureVolume: async () => undefined,
     projectMountpoint: () => home,
     createWritableSnapshot: async (source, dest) => snapshotTree(source, dest),
-    createReadonlySnapshot: async (source, dest) => snapshotTree(source, dest),
-    setSubvolumeReadonly: async () => {},
+    createProjectSnapshot: async (opts) => projectSnapshot(opts),
     deleteSubvolumeTree: async (path) => removeTree(path),
     invalidateProjectFsServer: () => {},
     touchProjectLastEdited: () => {},
@@ -129,6 +143,7 @@ describe("legacy project restore with restrictive archive modes", () => {
     removeTree(home);
     mkdirSync(join(home, ".snapshots"), { recursive: true });
     warnings.length = 0;
+    projectSnapshots.length = 0;
   });
 
   function expectRestored(root: string) {
@@ -144,12 +159,23 @@ describe("legacy project restore with restrictive archive modes", () => {
   }
 
   it("restores the whole archive", async () => {
+    const project_id = "00000000-0000-4000-8000-000000000021";
     const result = await handlers.restoreProjectArchive({
-      project_id: "00000000-0000-4000-8000-000000000021",
+      project_id,
       download: { url } as any,
     });
     expect(result.missing_archive_file_count).toBe(0);
     expectRestored(home);
+    // the safety snapshot has the history, which stays out of the home
+    expect(projectSnapshots).toEqual([
+      expect.objectContaining({ project_id, source: home }),
+    ]);
+    const [safety] = readdirSync(join(home, ".snapshots"));
+    expect(safety).toMatch(/^before-legacy-restore-/);
+    expect(
+      existsSync(join(home, ".snapshots", safety, ".cocalc-persist")),
+    ).toBe(true);
+    expect(existsSync(join(home, ".cocalc-persist"))).toBe(false);
     expect(warnings).toEqual([
       expect.objectContaining({
         message: "legacy project archive restore granted owner access",
@@ -159,18 +185,39 @@ describe("legacy project restore with restrictive archive modes", () => {
   });
 
   it("prepares and applies a remediation snapshot", async () => {
+    const project_id = "00000000-0000-4000-8000-000000000026";
     const prepared = await handlers.prepareLegacyProjectArchiveRemediation({
-      project_id: "00000000-0000-4000-8000-000000000026",
+      project_id,
       download: { url } as any,
     });
     expectRestored(join(home, prepared.snapshot_path));
     // The temporary extraction tree must be removable after prepare.
     const tmpRoot = join(tmp, "data", "tmp", "legacy-project-restore");
     expect(existsSync(tmpRoot) ? readdirSync(tmpRoot) : []).toEqual([]);
+    // only the final snapshot is left, with the history
+    expect(readdirSync(join(home, ".snapshots"))).toEqual([
+      "final-cocalc-com-archive",
+    ]);
+    expect(
+      existsSync(join(home, prepared.snapshot_path, ".cocalc-persist")),
+    ).toBe(true);
     await handlers.applyLegacyProjectArchiveRemediation({
-      project_id: "00000000-0000-4000-8000-000000000026",
+      project_id,
       safety_snapshot_name: "before-test-apply",
     });
     expectRestored(home);
+    expect(projectSnapshots).toEqual([
+      expect.objectContaining({
+        project_id,
+        dest: join(home, prepared.snapshot_path),
+      }),
+      {
+        project_id,
+        source: home,
+        dest: join(home, ".snapshots", "before-test-apply"),
+      },
+    ]);
+    // the history in the final snapshot is never applied to the home
+    expect(existsSync(join(home, ".cocalc-persist"))).toBe(false);
   });
 });

@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { businessTaxIdStatus } from "@cocalc/util/stripe/business-tax-id";
+import { recordBusinessTaxIdRefusal } from "./business-tax-id-gate";
 import type { Request, Response } from "express";
 
 import getLogger from "@cocalc/backend/logger";
@@ -298,7 +300,48 @@ async function retrievePaymentIntentWithObjectLockRetry(stripe, id: string) {
   }
 }
 
+// The VAT gate runs before a checkout session is created; this catches a
+// session that still completed for an EU or UK billing address without a VAT
+// ID (e.g. the address was changed inside Checkout). The payment is credited
+// as usual, and the case is flagged for admins and accounting.
+export function checkoutSessionMissingVatId(session): string | undefined {
+  const details = session?.customer_details ?? {};
+  const country = `${details.address?.country ?? ""}`.toUpperCase();
+  const status = businessTaxIdStatus({
+    address: { country },
+    tax_ids: (details.tax_ids ?? []).map((id) => ({
+      type: id?.type,
+      value: id?.value,
+      // Checkout does not report verification here; any ID counts.
+      verification: { status: "pending" },
+    })),
+  });
+  return status.required && !status.ok ? country : undefined;
+}
+
 async function processStripeWebhookCheckoutSession(session) {
+  const missingVatCountry = checkoutSessionMissingVatId(session);
+  if (missingVatCountry) {
+    const account_id = `${session?.metadata?.account_id ?? session?.client_reference_id ?? ""}`;
+    logger.error("EU/UK checkout completed without a VAT ID", {
+      account_id,
+      country: missingVatCountry,
+      checkout_session_id: session?.id,
+    });
+    if (account_id) {
+      await recordBusinessTaxIdRefusal({
+        account_id,
+        country: missingVatCountry,
+        path: "checkout-completed",
+        reason: "completed-no-vat",
+        // In cents (Stripe units).
+        amount:
+          session?.metadata?.total_excluding_tax_usd == null
+            ? null
+            : Number(session.metadata.total_excluding_tax_usd) / 100,
+      });
+    }
+  }
   const paymentIntentId = stripeId(session?.payment_intent);
   if (!paymentIntentId) {
     return {

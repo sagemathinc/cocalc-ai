@@ -120,30 +120,39 @@ export async function runPersistMaintenanceWorker({
       let stdout = "";
       let stderr = "";
       let settled = false;
+      let timedOut = false;
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         fn();
       };
+      // Settled only once the child has exited: until then it may still have
+      // the databases open (the coordinator holds its claim on them until
+      // this settles, conat/persist/fence.ts claimPersistFile).
       const timer = setTimeout(() => {
+        timedOut = true;
         child.kill("SIGKILL");
-        finish(() =>
-          reject(
-            new Error(
-              `SQLite maintenance worker timed out after ${timeoutMs}ms`,
-            ),
-          ),
-        );
       }, timeoutMs);
       timer.unref?.();
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk) => (stdout += chunk));
       child.stderr.on("data", (chunk) => (stderr += chunk));
-      child.on("error", (err) => finish(() => reject(err)));
+      child.on("error", (err) => {
+        // a child that never started; one that did settles when it exits
+        if (child.pid == null) finish(() => reject(err));
+      });
       child.on("exit", (code, signal) => {
         finish(() => {
+          if (timedOut) {
+            reject(
+              new Error(
+                `SQLite maintenance worker timed out after ${timeoutMs}ms`,
+              ),
+            );
+            return;
+          }
           if (code !== 0) {
             reject(
               new Error(

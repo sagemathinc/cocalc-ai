@@ -571,7 +571,6 @@ export interface PostgreSQLMethods extends EventEmitter {
     email_address?: string;
     cb?: CB;
   }): void;
-  delete_remember_me(opts: { hash: string; cb?: CB }): void;
 
   passport_exists(opts: PassportExistsOpts): Promise<string | undefined>;
 

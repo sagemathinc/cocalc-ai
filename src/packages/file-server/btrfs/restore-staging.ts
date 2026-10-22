@@ -5,6 +5,7 @@ import { join, dirname, relative, resolve, sep } from "node:path";
 import { readdir, rm, stat, writeFile } from "node:fs/promises";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
+import { forgetSubvolumePaths } from "@cocalc/file-server/btrfs/operation-cache";
 import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -276,8 +277,25 @@ export async function finalizeRestoreStaging(
   if (homeExists) {
     await ensureHomeSubvolume(home);
     const oldPath = `${home}.restore_old.${Date.now()}`;
-    await sudo({ command: "mv", args: [home, oldPath] });
-    await sudo({ command: "mv", args: [stagingPath, home] });
+    try {
+      await sudo({ command: "mv", args: [home, oldPath] });
+      try {
+        await sudo({ command: "mv", args: [stagingPath, home] });
+      } catch (err) {
+        // put the home back: never leave the project without one
+        try {
+          await sudo({ command: "mv", args: [oldPath, home] });
+        } catch (rollbackErr) {
+          throw new Error(
+            `restore staging swap and rollback failed; the home may remain at ${oldPath}: ${err}; ${rollbackErr}`,
+          );
+        }
+        throw err;
+      }
+    } finally {
+      // another subvolume at the home's path (qgroup-scan.ts)
+      forgetSubvolumePaths(home, oldPath, stagingPath);
+    }
     await deleteSubvolumeTree({
       path: oldPath,
       mountRoot: dirname(home),
@@ -290,7 +308,11 @@ export async function finalizeRestoreStaging(
       });
     });
   } else {
-    await sudo({ command: "mv", args: [stagingPath, home] });
+    try {
+      await sudo({ command: "mv", args: [stagingPath, home] });
+    } finally {
+      forgetSubvolumePaths(home, stagingPath);
+    }
   }
 }
 

@@ -401,6 +401,74 @@ test("a queued message carries the hub's capability to report its failed turn", 
   expect(submitAgentRpc.mock.calls[1][0].report_capability).toBeUndefined();
 });
 
+test("asking to hear of no reply is refused where no report could arrive", async () => {
+  let hostVersion = 3;
+  query.mockImplementation((async (sql: string) =>
+    /agent_rpc_report/.test(sql)
+      ? {
+          rows: [
+            {
+              version: `${hostVersion}`,
+              for_build: "b1",
+              build: "b1",
+            },
+          ],
+        }
+      : { rows: [{ host_id: host, state: "running" }] }) as any);
+  const submit = () =>
+    agentRpcControl.submit({
+      account_id: account,
+      project_id: targetProject,
+      route: { bay_id: "target-bay", epoch: 1 },
+      source,
+      run_id: runId,
+      request: {
+        version: 3,
+        attempt_id: randomUUID(),
+        agent_network_id: network,
+        target,
+        body: "hello",
+        report_no_reply: true,
+      },
+    });
+  process.env.COCALC_CLUSTER_SHARED_SECRET = "test-cluster-secret";
+  try {
+    // Queued, to a host that knows completed reports: sent.
+    await expect(submit()).resolves.toMatchObject({ outcome: "accepted" });
+    expect(submitAgentRpc).toHaveBeenCalledTimes(1);
+    // The network became live since the sender looked: refused, unsent.
+    checkNetwork.mockResolvedValueOnce({
+      ...networkAuthorization(),
+      delivery_mode: "live",
+    });
+    await expect(submit()).resolves.toMatchObject({
+      outcome: "rejected",
+      chat_effect: "none",
+      reason: expect.stringMatching(/delivers live.*no message was sent/),
+    });
+    // Without a secret to sign the report with: refused, unsent.
+    const secret = process.env.COCALC_CLUSTER_SHARED_SECRET;
+    delete process.env.COCALC_CLUSTER_SHARED_SECRET;
+    await expect(submit()).resolves.toMatchObject({
+      outcome: "rejected",
+      reason: expect.stringMatching(/cannot sign the report/),
+    });
+    process.env.COCALC_CLUSTER_SHARED_SECRET = secret ?? "test-cluster-secret";
+    // A recipient host from before completed reports: refused too.
+    hostVersion = 2;
+    await expect(submit()).resolves.toMatchObject({
+      outcome: "rejected",
+      reason: expect.stringMatching(/project host is too old/),
+    });
+    expect(submitAgentRpc).toHaveBeenCalledTimes(1);
+  } finally {
+    delete process.env.COCALC_CLUSTER_SHARED_SECRET;
+    query.mockImplementation((async () => ({
+      rows: [{ host_id: host, state: "running" }],
+    })) as any);
+  }
+});
+
 test("broadcast snapshot skips redundant pre-submit network materialization", async () => {
   await expect(
     agentRpcControl.submit({

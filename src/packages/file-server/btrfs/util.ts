@@ -133,6 +133,12 @@ export async function sudo(
   return wrapped;
 }
 
+// Whether the host's root helper (STORAGE_WRAPPER) refused a command by
+// its policy: trying it again never helps.
+export function refusedByStorageWrapper(err: unknown): boolean {
+  return /\bSECURITY_DENY\b/.test(`${(err as any)?.message ?? err}`);
+}
+
 export async function btrfs(
   opts: Partial<ExecuteCodeOptions & { desc?: string }>,
 ) {

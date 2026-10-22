@@ -74,6 +74,11 @@ import {
   movePostedMessageToAgent,
 } from "./post-to-agent";
 import ContextualReply from "./contextual-reply";
+import {
+  presentedMessageMarkdown,
+  rpcSourceAttribution,
+  sensorWakeLabel,
+} from "./message-presentation";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
 import { agentMessageDirectory } from "./activity-path-context";
@@ -168,13 +173,6 @@ import {
   requestChatReadAloud,
 } from "./codex-final-response-copy";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
-import {
-  agentMessageFence,
-  agentMessageWaitingDelivery,
-  sensorWakePresentation,
-  stripAgentRpcPrompt,
-} from "./agent-message-presentation";
-import { sensorWakeFence } from "@cocalc/frontend/editors/slate/elements/sensor-wake";
 import {
   TurnActivityTimeline,
   type TurnTimelineContext,
@@ -430,84 +428,6 @@ export function getFocusMessageButtonStyle(): CSSProperties {
   return {
     color: UI_COLORS.muted,
     fontSize: "12px",
-  };
-}
-
-/**
- * The sensor a wake message says it came from. Chat rows are editable, so
- * this only labels the message; it never replaces the stored sender.
- */
-function sensorWakeLabel(
-  message: ChatMessageTyped,
-): { title: string; sensor_id: string } | undefined {
-  const raw = field<any>(message, "sensor_wake");
-  const sensor = typeof raw?.toJS === "function" ? raw.toJS() : raw;
-  if (typeof sensor?.sensor_id !== "string" || !sensor.sensor_id) return;
-  return {
-    sensor_id: sensor.sensor_id,
-    title:
-      typeof sensor.title === "string" && sensor.title.trim()
-        ? sensor.title.trim().slice(0, 100)
-        : "sensor",
-  };
-}
-
-function rpcSourceAttribution(
-  message: ChatMessageTyped,
-  // This message has not been delivered to its recipient's turn yet.
-  waiting = false,
-):
-  | {
-      label: string;
-      source_label: string;
-      source_agent_id: string;
-      source_project_id?: string;
-      direction: "incoming" | "report";
-      agent_network_id?: string;
-      attempt_id?: string;
-      delivery?: "queued" | "queued-fallback";
-    }
-  | undefined {
-  const raw = field<any>(message, "agent_rpc");
-  const rpc = typeof raw?.toJS === "function" ? raw.toJS() : raw;
-  const source = rpc?.source;
-  const agentId = `${source?.agent_id ?? ""}`.trim();
-  if (!agentId) return;
-  // A delivery report is CoCalc's, about the source agent.
-  const report = !!rpc.delivery_report;
-  const evidence = {
-    direction: report ? ("report" as const) : ("incoming" as const),
-    source_label:
-      typeof rpc.source_label === "string" && rpc.source_label.trim()
-        ? rpc.source_label.trim()
-        : source.kind === "external"
-          ? `External agent ${agentId.slice(0, 8)}`
-          : `Agent ${agentId.slice(0, 8)}`,
-    source_agent_id: agentId,
-    source_project_id:
-      typeof source.project_id === "string" ? source.project_id : undefined,
-    agent_network_id:
-      typeof rpc.agent_network_id === "string"
-        ? rpc.agent_network_id
-        : undefined,
-    attempt_id: typeof rpc.attempt_id === "string" ? rpc.attempt_id : undefined,
-    // Say why it has not started instead of looking delivered and ignored.
-    ...(() => {
-      const delivery = report
-        ? undefined
-        : agentMessageWaitingDelivery(rpc, waiting);
-      return delivery ? { delivery } : {};
-    })(),
-  };
-  if (source.kind === "external") {
-    return {
-      ...evidence,
-      label: "External agent message",
-    };
-  }
-  return {
-    ...evidence,
-    label: report ? "Delivery report" : "Agent message",
   };
 }
 
@@ -1065,20 +985,7 @@ export default function Message({
           lite,
           acpState === "error",
         );
-    const rawRpc = field<any>(message, "agent_rpc");
-    const rpc = typeof rawRpc?.toJS === "function" ? rawRpc.toJS() : rawRpc;
-    const value = rpcAttribution
-      ? stripAgentRpcPrompt(formattedValue, rpc)
-      : formattedValue;
-    if (rpcAttribution) return agentMessageFence(value, rpcAttribution);
-    // A turn a sensor started: one compact line that expands to the prompt.
-    const sensor = sensorWakeLabel(message);
-    const sensorWake = sensor
-      ? sensorWakePresentation(value, sensor.title)
-      : undefined;
-    return sensorWake
-      ? sensorWakeFence({ ...sensorWake, sensor_id: sensor!.sensor_id, value })
-      : value;
+    return presentedMessageMarkdown(message, formattedValue, rpcAttribution);
   }, [
     is_viewers_message,
     renderedMessageValue,

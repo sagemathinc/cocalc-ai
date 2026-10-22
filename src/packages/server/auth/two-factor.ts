@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
 import { v4 as uuid } from "uuid";
 
 import passwordHash, {
@@ -31,7 +32,6 @@ import {
   getCurrentAuthSession,
   requireFreshAuth,
   resolveFreshAuthDurationMs,
-  revokeOtherAuthSessions,
   setCurrentSessionFreshAuth,
   type AuthPrimaryMethod,
   type AuthSessionFactorLevel,
@@ -46,10 +46,7 @@ import {
   normalizeRecoveryCode,
   verifyTotpCode,
 } from "@cocalc/server/auth/totp";
-import {
-  deleteOtherRememberMe,
-  getRememberMeHash,
-} from "@cocalc/server/auth/remember-me";
+import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import {
   FACTOR_TYPE_PASSKEY,
   hasActivePasskey,
@@ -929,8 +926,9 @@ export async function confirmTwoFactorSetup({
     },
   });
   if (currentHash) {
-    await deleteOtherRememberMe(accountId, currentHash);
-    await revokeOtherAuthSessions({
+    // Other sessions are signed out, on the hub and on project hosts, and
+    // their content-origin links go too.
+    await endOtherSessionsOrExplain({
       account_id: accountId,
       keep_session_hash: currentHash,
     });

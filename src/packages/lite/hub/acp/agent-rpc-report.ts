@@ -12,10 +12,12 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
+import type { TurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { agentRpcSourceKey } from "@cocalc/conat/agents/rpc";
 import {
   agentRpcReportDetail,
+  agentRpcReportKindOf,
   agentRpcReportText,
   classifyAgentTurnError,
   type AgentRpcReportDelivery,
@@ -28,6 +30,8 @@ import getLogger from "@cocalc/backend/logger";
 import { getAcpJob } from "../sqlite/acp-jobs";
 import {
   deleteAgentRpcReport,
+  claimAgentRpcReport,
+  deleteAgentRpcReportByOpId,
   enqueueAgentRpcReport,
   listDueAgentRpcReports,
   retryAgentRpcReport,
@@ -39,15 +43,23 @@ const errorText = (err: unknown) =>
   `${err instanceof Error ? err.message : err}`.slice(0, 500);
 
 /**
- * The recipient's side: a turn ended in an error. If another agent's queued
- * message started it, queue a report for that agent. A turn a report started
- * has no agent_rpc_execution, so reports never cause reports.
+ * The recipient's side: a turn ended without success (an error, a cancel, a
+ * stop...). If another agent's queued message started it, queue a report for
+ * that agent. A turn a report started has no agent_rpc_execution, so reports
+ * never cause reports.
  */
 export function noteAgentMessageTurnFailed(opts: {
   op_id: string;
   request: Pick<AcpRequest, "chat">;
-  error: string;
+  error?: string;
+  /** How the turn ended, when the host knows (turn-outcome.ts). */
+  outcome?: TurnOutcome;
+  /** Whether tools ran, over the whole recovery chain when the caller knows
+   * it (null: not known); otherwise taken from the outcome. */
+  tool_ran?: boolean | null;
   turn_started_at?: number | null;
+  /** The turn is held, not over: resumes at this time (a usage limit). */
+  held?: { resume_at: number };
   now?: number;
 }): AgentRpcTurnFailureReport | undefined {
   const authorization = opts.request.chat?.agent_rpc_execution;
@@ -62,31 +74,66 @@ export function noteAgentMessageTurnFailed(opts: {
     return;
   const turn_started_at = Number(opts.turn_started_at ?? 0);
   if (!Number.isSafeInteger(turn_started_at) || turn_started_at <= 0) return;
-  const detail = agentRpcReportDetail(opts.error);
+  const outcome = opts.outcome;
+  const kind =
+    outcome?.state === "completed"
+      ? // Only when the sender asked; a reply makes its host skip it.
+        authorization.report_no_reply === true
+        ? ("completed" as const)
+        : undefined
+      : outcome
+        ? agentRpcReportKindOf(outcome)
+        : classifyAgentTurnError(opts.error ?? "");
+  // A turn that succeeded is not reported.
+  if (!kind) return;
+  const detail = agentRpcReportDetail(opts.error ?? "");
+  const failure = outcome?.state === "failed" ? outcome.failure : undefined;
+  // A held turn announces when it is scheduled to resume (after the reset,
+  // with a margin), not the provider's raw reset time.
+  const resets_at =
+    opts.held?.resume_at ??
+    (failure?.kind === "limit" ? failure.resets_at : undefined);
+  const tool_ran =
+    opts.tool_ran !== undefined
+      ? (opts.tool_ran ?? undefined)
+      : outcome?.state === "failed" || outcome?.state === "canceled"
+        ? outcome.tool_ran
+        : outcome?.state === "never-started"
+          ? false
+          : undefined;
   const report: AgentRpcTurnFailureReport = {
     version: 1,
     report_id: randomUUID(),
     attempt_id: authorization.attempt_id,
     authorization: { ...authorization },
     turn_started_at,
-    kind: classifyAgentTurnError(opts.error),
+    kind,
     ...(detail ? { detail } : {}),
+    ...(resets_at ? { resets_at } : {}),
+    ...(tool_ran !== undefined ? { tool_ran } : {}),
+    ...(opts.held ? { phase: "held" as const } : {}),
   };
   try {
     if (
       !enqueueAgentRpcReport({
-        op_id: opts.op_id,
+        // A held report and the final one are each sent once.
+        op_id: opts.held ? `${opts.op_id}:held` : opts.op_id,
         account_id: authorization.principal_account_id,
         report,
         now: opts.now,
       })
     )
       return;
+    // The final word supersedes a held report still waiting to be sent.
+    if (!opts.held) deleteAgentRpcReportByOpId(`${opts.op_id}:held`);
   } catch (err) {
     logger.warn("could not queue a delivery report", {
       op_id: opts.op_id,
       err: errorText(err),
     });
+    // A held report's hold intent stays until this is durable: the caller
+    // keeps it, and the recovery poll tries again.
+    if (opts.held) throw err;
     return;
   }
   return report;
@@ -105,6 +152,9 @@ export function drainAgentRpcReports(
   draining ??= (async () => {
     try {
       for (const row of listDueAgentRpcReports(now)) {
+        // Claimed first: a withdrawal may have taken it back since it was
+        // listed (and then never sees it go out after it was accepted).
+        if (!claimAgentRpcReport(row.report_id, now)) continue;
         try {
           const result = await api.reportRpcTurnFailure({
             account_id: row.account_id,
@@ -178,7 +228,17 @@ export async function deliverAgentRpcReport(
         if (row.event !== "chat" || row.thread_id !== delivery.thread_id)
           continue;
         const rpc = row.agent_rpc;
-        if (rpc?.delivery_report?.attempt_id === report.attempt_id) {
+        // A held report that arrives after the final one is out of date.
+        if (
+          report.phase === "held" &&
+          rpc?.delivery_report?.attempt_id === report.attempt_id &&
+          (rpc.delivery_report.phase ?? "final") === "final"
+        )
+          return { skipped: "duplicate" };
+        if (
+          rpc?.delivery_report?.attempt_id === report.attempt_id &&
+          (rpc.delivery_report.phase ?? "final") === (report.phase ?? "final")
+        ) {
           // A report whose admission was never confirmed (it failed, or
           // this process died first) is replaced below, unless its turn was
           // queued after all (the acknowledgement was lost); any other is
@@ -233,6 +293,7 @@ export async function deliverAgentRpcReport(
         report_id: report.report_id,
         attempt_id: report.attempt_id,
         kind: report.kind,
+        ...(report.phase ? { phase: report.phase } : {}),
       },
     };
     if (unadmitted)

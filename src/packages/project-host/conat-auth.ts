@@ -19,6 +19,7 @@ import {
   getCoCalcUserType,
   isAccountAllowed as isAccountSubjectAllowed,
   isFileServerManagementSubject,
+  isPersistControlSubject,
   isProjectAllowed as isProjectSubjectAllowed,
   isProjectCollaboratorGroup,
   type CoCalcUser,
@@ -194,6 +195,7 @@ function userFromBearerToken({
     isAccountSessionRevoked({
       account_id: claims.sub,
       issued_at_s: claims.iat,
+      auth_actor: claims.auth_actor,
     })
   ) {
     throw new Error("session revoked");
@@ -307,11 +309,14 @@ function getAccountIssuedAtSeconds(user: any): number {
 export function isAccountSessionRevoked({
   account_id,
   issued_at_s,
+  auth_actor,
 }: {
   account_id: string;
   issued_at_s: number;
+  // "agent": an agent's own credential, which a password change leaves alone.
+  auth_actor?: string;
 }): boolean {
-  const revokedBeforeMs = getAccountRevokedBeforeMs(account_id);
+  const revokedBeforeMs = getAccountRevokedBeforeMs(account_id, { auth_actor });
   if (revokedBeforeMs == null) {
     return false;
   }
@@ -460,6 +465,9 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       // Local internal services authenticate using the system account.
       return true;
     }
+    if (isPersistControlSubject(subject)) {
+      return false;
+    }
     if (user.auth_api_key) {
       const binding = user.auth_api_key;
       const project = getProject(binding.project_id);
@@ -538,6 +546,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       isAccountSessionRevoked({
         account_id: userId,
         issued_at_s: getAccountIssuedAtSeconds(user),
+        auth_actor: user?.auth_actor,
       })
     ) {
       return false;

@@ -42,6 +42,8 @@ export interface NamedAgent {
   runtime?: AgentRuntimeSummary;
   /** How this account pays for the agent's current conversation. */
   payment?: AgentPaymentSelectionRecord[];
+  /** What it is doing, as its project host last reported. */
+  status?: import("./agent-status").AgentTurnStatus;
 }
 
 /**
@@ -55,6 +57,7 @@ export interface NamedAgentSnapshot {
   appearance?: AgentAppearance | null;
   runtime?: AgentRuntimeSummary | null;
   available: boolean;
+  status?: import("./agent-status").AgentTurnStatus | null;
 }
 
 export interface PersonalMessagingControls {
@@ -92,6 +95,8 @@ export interface RegisteredAgentNetworkMember {
   name?: string;
   project_title?: string;
   thread_title?: string;
+  /** What it is doing, as its project host last reported. */
+  status?: import("./agent-status").AgentTurnStatus;
   available: boolean;
   added_at: string;
   removed_at?: string | null;

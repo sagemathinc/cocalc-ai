@@ -131,7 +131,12 @@ async function updateParentProgress({
           : 100,
       detail: progress_summary,
     },
-  });
+  }).catch((err) =>
+    logger.warn("failed to publish course collect progress", {
+      op_id: op.op_id,
+      err: `${err}`,
+    }),
+  );
   return updated;
 }
 

@@ -105,6 +105,7 @@ export type SiteSettingsKeys =
   | "i18n"
   | "dns"
   | "public_viewer_dns"
+  | "project_content_dns"
   | "datastore"
   | "versions"
   | "version_min_browser"
@@ -200,6 +201,8 @@ export type SiteSettingsKeys =
   | "project_rootfs_default_image_gpu"
   | "project_rootfs_prepull_images"
   | "samesite_remember_me"
+  | "session_idle_timeout_days"
+  | "session_max_lifetime_days"
   | "browser_raw_exec_policy";
 
 type Mapping = { [key: string]: string | number | boolean };
@@ -322,6 +325,35 @@ export const only_nonneg_int = (val) =>
   ((v) => only_ints(v) && v >= 0)(to_int(val));
 export const only_pos_int = (val) =>
   ((v) => only_ints(v) && v > 0)(to_int(val));
+
+// Sign-in sessions: browsers keep a cookie at most 400 days, so a session
+// limit must stay well below that.
+export const SESSION_LIMIT_MAX_DAYS = 365;
+export const only_session_days = (val) =>
+  /^\s*\d+\s*$/.test(`${val ?? ""}`) &&
+  only_pos_int(val) &&
+  to_int(val) <= SESSION_LIMIT_MAX_DAYS;
+
+// Why these session settings cannot be saved together, if they cannot.
+export function sessionLimitSettingsError(settings: {
+  session_idle_timeout_days?: string;
+  session_max_lifetime_days?: string;
+}): string | undefined {
+  const idle = settings.session_idle_timeout_days ?? "";
+  const max = settings.session_max_lifetime_days ?? "";
+  for (const [label, value] of [
+    ["idle timeout", idle],
+    ["maximum lifetime", max],
+  ]) {
+    if (!only_session_days(value)) {
+      return `The sign-in session ${label} must be a whole number of days from 1 to ${SESSION_LIMIT_MAX_DAYS}.`;
+    }
+  }
+  if (to_int(idle) > to_int(max)) {
+    return "The sign-in session idle timeout must be at most its maximum lifetime.";
+  }
+  return undefined;
+}
 
 const validDomainList = (val: string): boolean =>
   !val.trim() || parseDomainRules(val).length > 0;
@@ -495,6 +527,16 @@ export const site_settings_conf: SiteSettings = {
     group: "Networking",
     subgroup: "Domain",
     order: 11,
+  },
+  project_content_dns: {
+    name: "Project Content Domain",
+    desc: "Separate registrable domain for per-project content origins, e.g. `cocalcusercontent.com`. Project files such as HTML are then served at `<project>.h-<host>.<domain>`, isolated from the app and from other projects, so their relative images, CSS and scripts work without any trust switch. Requires a Cloudflare zone for this domain (Advanced Certificate Manager for the per-host wildcard certificates, SSL mode Full, caching bypassed); each project host gets one wildcard DNS record. It must be a separate registrable domain: a domain equal to or under the site's own is refused (the site's cookies would reach content pages). Leave empty to disable. Hosts pick up a change at their next environment reconcile. Only hosts with direct ingress (proxied A records) get content origins; hosts on Cloudflare tunnels do not.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Cloudflare", "Security"],
+    group: "Networking",
+    subgroup: "Domain",
+    order: 12,
   },
   cloudflare_mode: {
     name: "Cloudflare Integration Mode",
@@ -1936,6 +1978,26 @@ export const site_settings_conf: SiteSettings = {
     default: "strict",
     valid: ["strict", "lax"],
     to_val: (x) => (x === "none" ? "lax" : `${x}`),
+    tags: ["Security"],
+    group: "Access & Identity",
+    subgroup: "Security",
+  },
+  session_idle_timeout_days: {
+    name: "Sign-in session idle timeout (days)",
+    desc: "A browser or CLI sign-in session that is not used for this many days stops working and is deleted. Using a session (loading a page, calling the API, or keeping a browser tab connected) moves this deadline forward, so people are not signed out while they use the site. Must be at most the maximum session lifetime, and at most 365.",
+    default: "14",
+    valid: only_session_days,
+    to_val: to_int,
+    tags: ["Security"],
+    group: "Access & Identity",
+    subgroup: "Security",
+  },
+  session_max_lifetime_days: {
+    name: "Sign-in session maximum lifetime (days)",
+    desc: "However much it is used, a sign-in session ends this many days after sign-in, and the person signs in again. An open browser tab is never cut off; from 3 days before the end it asks for the password or second factor, which starts a new lifetime. Applies to sessions created after a change; existing sessions keep their end date. At most 365.",
+    default: "60",
+    valid: only_session_days,
+    to_val: to_int,
     tags: ["Security"],
     group: "Access & Identity",
     subgroup: "Security",

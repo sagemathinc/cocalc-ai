@@ -144,6 +144,14 @@ function watchText(spec: Extract<SensorSpec, { kind: "watch" }>): string {
   if (w.type === "file")
     return w.match ? `${w.path} contains "${w.match}"` : `${w.path} exists`;
   if (w.type === "exit") return `${w.command} exits`;
+  if (w.type === "agent-turn")
+    return `the turn my message started on ${w.name ? `@${w.name}` : "another agent"} ends`;
+  if (w.type === "agent") {
+    const who = w.name ? `@${w.name}` : "another agent";
+    if (w.until === "failed") return `a turn of ${who} ends without completing`;
+    if (w.until === "idle") return `${who} finishes its turns and is idle`;
+    return `a turn of ${who} ends`;
+  }
   return `${new Date(w.at).toLocaleString()}: ${w.note}`;
 }
 
@@ -545,7 +553,7 @@ function SensorCard({
               aria-expanded={logOpen}
               onClick={() => setLogOpen(!logOpen)}
             >
-              {logOpen ? "Hide run log" : "Run log"}
+              {logOpen ? "Hide log" : "Show log"}
             </Button>
           )}
         </Space>
@@ -578,13 +586,20 @@ function SchedulePromptForm({
 }) {
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [kind, setKind] = useState<"daily" | "interval">("daily");
+  const [kind, setKind] = useState<"daily" | "interval" | "monthly">("daily");
+  const [dates, setDates] = useState("1");
+  const [quarterly, setQuarterly] = useState(false);
   const [times, setTimes] = useState("07:00");
   const [minutes, setMinutes] = useState<number | null>(60);
   const [weekdays, setWeekdays] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const list = (value: string) =>
+    value
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
   const save = async () => {
     setSaving(true);
     setError("");
@@ -599,16 +614,21 @@ function SchedulePromptForm({
           prompt,
           schedule:
             kind === "daily"
-              ? {
-                  kind: "daily",
-                  times: times
-                    .split(",")
-                    .map((t) => t.trim())
-                    .filter(Boolean),
-                  timezone,
-                  ...days,
-                }
-              : { kind: "interval", minutes: minutes ?? 0, timezone, ...days },
+              ? { kind: "daily", times: list(times), timezone, ...days }
+              : kind === "monthly"
+                ? {
+                    kind: "monthly",
+                    dates: list(dates).map(Number),
+                    ...(quarterly ? { months: [1, 4, 7, 10] } : {}),
+                    times: list(times),
+                    timezone,
+                  }
+                : {
+                    kind: "interval",
+                    minutes: minutes ?? 0,
+                    timezone,
+                    ...days,
+                  },
         },
       });
       onDone();
@@ -653,8 +673,24 @@ function SchedulePromptForm({
         >
           <Radio value="daily">Daily at</Radio>
           <Radio value="interval">Every</Radio>
+          <Radio value="monthly">Monthly</Radio>
         </Radio.Group>
-        {kind === "daily" ? (
+        {kind === "monthly" && (
+          <>
+            <label>
+              Days of the month, separated by commas (a day past a month&apos;s
+              end runs on its last day)
+              <Input value={dates} onChange={(e) => setDates(e.target.value)} />
+            </label>
+            <Checkbox
+              checked={quarterly}
+              onChange={(e) => setQuarterly(e.target.checked)}
+            >
+              Quarterly (January, April, July, October)
+            </Checkbox>
+          </>
+        )}
+        {kind === "daily" || kind === "monthly" ? (
           <label>
             Times ({timezone}), separated by commas
             <Input value={times} onChange={(e) => setTimes(e.target.value)} />
@@ -670,12 +706,14 @@ function SchedulePromptForm({
             />
           </label>
         )}
-        <Checkbox
-          checked={weekdays}
-          onChange={(e) => setWeekdays(e.target.checked)}
-        >
-          Weekdays only
-        </Checkbox>
+        {kind !== "monthly" && (
+          <Checkbox
+            checked={weekdays}
+            onChange={(e) => setWeekdays(e.target.checked)}
+          >
+            Weekdays only
+          </Checkbox>
+        )}
         {error && <Alert type="error" title={error} showIcon />}
         <Space>
           <Button
@@ -691,6 +729,19 @@ function SchedulePromptForm({
       </Space>
     </section>
   );
+}
+
+/**
+ * A sensor that will never run again: a watcher that fired, gave up or was
+ * paused (watchers cannot be resumed), or a rejected proposal. A sensor with
+ * a pending proposal is never finished: that awaits the person's review.
+ * Finished ones are removed after a day; until then they stay out of the way.
+ */
+export function sensorFinished(sensor: AgentSensor): boolean {
+  if (sensor.pending_spec != null) return false;
+  if (sensor.status === "done" || sensor.status === "rejected") return true;
+  const spec = sensor.spec as { kind?: string } | null;
+  return sensor.status === "paused" && spec?.kind === "watch";
 }
 
 export function AgentSensorsModal({
@@ -709,6 +760,9 @@ export function AgentSensorsModal({
   refresh: () => Promise<void> | void;
 }) {
   const [creating, setCreating] = useState(false);
+  const [showFinished, setShowFinished] = useState(false);
+  const current = sensors?.filter((sensor) => !sensorFinished(sensor));
+  const finished = sensors?.filter((sensor) => sensorFinished(sensor)) ?? [];
   return (
     <Modal
       open={open}
@@ -754,7 +808,12 @@ export function AgentSensorsModal({
           description={`@${agent.name} has no sensors yet. Schedule a prompt, or ask it to watch for something.`}
         />
       )}
-      {sensors?.map((sensor) => (
+      {sensors && sensors.length > 0 && current?.length === 0 && (
+        <p style={{ color: UI_COLORS.secondary }}>
+          Nothing is watching or scheduled for @{agent.name} right now.
+        </p>
+      )}
+      {current?.map((sensor) => (
         <SensorCard
           key={sensor.sensor_id}
           agent={agent}
@@ -762,6 +821,27 @@ export function AgentSensorsModal({
           onChanged={() => void refresh()}
         />
       ))}
+      {finished.length > 0 && (
+        <Button
+          type="link"
+          style={{ paddingInline: 0 }}
+          aria-expanded={showFinished}
+          onClick={() => setShowFinished((value) => !value)}
+        >
+          {showFinished
+            ? "Hide finished"
+            : `Show ${finished.length} finished (fired, given up or rejected)`}
+        </Button>
+      )}
+      {showFinished &&
+        finished.map((sensor) => (
+          <SensorCard
+            key={sensor.sensor_id}
+            agent={agent}
+            sensor={sensor}
+            onChanged={() => void refresh()}
+          />
+        ))}
     </Modal>
   );
 }

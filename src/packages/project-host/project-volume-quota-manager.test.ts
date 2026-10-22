@@ -110,6 +110,72 @@ describe("project volume quota manager", () => {
     );
   });
 
+  it("checks a quota applied incompletely again soon", async () => {
+    const { ledger, manager, applyRaw } = await setup();
+    ledger.acceptProjectVolumeQuotaDesired({
+      project_id: "project-1",
+      volume_kind: "home",
+      desired_bytes: 100,
+    });
+    // e.g., the project's quota group was not updated (file-server.ts)
+    applyRaw.mockResolvedValueOnce({
+      volume_identity: "volume-1",
+      incomplete: "project quota group not updated",
+    } as any);
+    const before = Date.now();
+    await manager.applyEffectiveQuota({
+      project_id: "project-1",
+      volume_kind: "home",
+      operation_class: "scheduled_quota_audit",
+      priority: "scheduled",
+    });
+    const row = ledger.getProjectVolumeQuota("project-1", "home")!;
+    expect(row.state).toBe("pending");
+    expect(row.last_error).toBe("project quota group not updated");
+    expect(row.next_audit_at).toBeGreaterThanOrEqual(before + 5 * 60_000);
+    // then completely
+    await manager.applyEffectiveQuota({
+      project_id: "project-1",
+      volume_kind: "home",
+      operation_class: "scheduled_quota_audit",
+      priority: "scheduled",
+    });
+    expect(ledger.getProjectVolumeQuota("project-1", "home")?.state).toBe(
+      "applied",
+    );
+  });
+
+  it("fails a temporary raise that is applied incompletely", async () => {
+    const { ledger, overrides, manager, applyRaw } = await setup();
+    ledger.acceptProjectVolumeQuotaDesired({
+      project_id: "project-1",
+      volume_kind: "home",
+      desired_bytes: 100,
+    });
+    applyRaw.mockResolvedValueOnce({
+      volume_identity: "volume-1",
+      incomplete: "project quota group not updated",
+    } as any);
+    await expect(
+      manager.beginTemporaryOverride({
+        project_id: "project-1",
+        kind: "legacy_project_archive_restore",
+        minimum_bytes: 150,
+      }),
+    ).rejects.toThrow(
+      "temporary quota override not fully applied: project quota group not updated",
+    );
+    // kept, to be applied again or released, like a raise that failed
+    const [override] = overrides.listActiveProjectVolumeQuotaOverrides(
+      "project-1",
+      "home",
+    );
+    expect(override?.last_error).toMatch(/not fully applied/);
+    expect(ledger.getProjectVolumeQuota("project-1", "home")?.state).toBe(
+      "failed",
+    );
+  });
+
   it("keeps the largest overlapping claim until it is released", async () => {
     const { manager, applyRaw, currentSize } = await setup();
     const first = await manager.beginTemporaryOverride({

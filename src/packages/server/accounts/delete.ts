@@ -2,8 +2,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import getPool from "@cocalc/database/pool";
 import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
-import { revokeAllAuthSessions } from "@cocalc/server/auth/auth-sessions";
-import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
+import { endAllSignInSessions } from "@cocalc/server/auth/auth-sessions";
 import { deleteBlobsForAccountDeletion } from "@cocalc/server/membership/blob-limits";
 import { cleanupSiteLicenseAccessForAccountDeletion } from "@cocalc/server/membership/account-deletion";
 import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
@@ -16,13 +15,28 @@ import {
   getOAuthPurgeTargets,
   queueOAuthClientPurges,
 } from "@cocalc/server/auth/oauth/purge";
+import type { AccountDeletionInitiator } from "@cocalc/conat/inter-bay/api";
+import {
+  ensureAccountAdminAuditLogSchema,
+  recordAccountAdminAuditEventInTransaction,
+} from "./admin-audit";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
+import { CLEAR_DELETED_ACCOUNT_FIELDS_SQL } from "./deleted-account-retention";
 import {
   dropOnHosts,
   revokeComputersForAccount,
 } from "@cocalc/server/computers/computers";
 
-export default async function deleteAccount(account_id: string): Promise<void> {
+export interface AccountDeletionContext {
+  initiator: AccountDeletionInitiator;
+  // the account that asked for the deletion: the account itself or an admin
+  actor_account_id?: string | null;
+}
+
+export default async function deleteAccount(
+  account_id: string,
+  context: AccountDeletionContext = { initiator: "system" },
+): Promise<void> {
   if (!isValidUUID(account_id)) {
     throw Error(`invalid account_id=${account_id}`);
   }
@@ -36,11 +50,10 @@ export default async function deleteAccount(account_id: string): Promise<void> {
   // Cancel any subscriptions
   await cancelStripeEverything(account_id);
 
-  // Invalidate all sign ins (without this user can delete account, but could still be signed in).
-  await deleteAllRememberMe(account_id);
-  // Do this before marking the account deleted; account-scoped write fences
-  // intentionally stop resolving deleted accounts.
-  await revokeAllAuthSessions(account_id);
+  // Invalidate all sign ins (without this user can delete account, but could
+  // still be signed in). Do this before marking the account deleted;
+  // account-scoped write fences intentionally stop resolving deleted accounts.
+  await endAllSignInSessions(account_id);
   // Revoke host-level persistent sessions/tokens issued before this delete.
   await recordAccountRevocation(account_id, revokedBeforeMs, { banned: true });
 
@@ -60,7 +73,7 @@ export default async function deleteAccount(account_id: string): Promise<void> {
 
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.
-  await markAccountDeleted(account_id);
+  await markAccountDeleted(account_id, context);
   await deleteClusterAccountDirectoryEntry(account_id);
 }
 
@@ -70,15 +83,17 @@ for use by another account, etc. The actual account entry remains in the
 database, since it may be referred to by many other things (projects, logs,
 etc.). However, the deleted field is set to true, so the account is excluded
 from user search and it is not possible to sign in to this account.
-We also save the email address from before deleting the account, since
-that would be very useful in case a user requests to undelete an account,
-or in case of bad users.
 
-TODO: Obviously, at some point we should permanently delete all PII from
-any deleted accounts, e.g., delete the email_address_before_delete field.
+The personal data, credentials and per-user settings in the row are cleared
+(DELETED_ACCOUNT_CLEARED_FIELDS in @cocalc/util/db-schema/deleted-account-fields). The former email address is kept for a limited time
+to help with recovery requests and abuse, then removed by the retention loop in
+deleted-account-retention.ts. An audit row records who started the deletion.
 */
 
-export async function markAccountDeleted(account_id: string): Promise<void> {
+export async function markAccountDeleted(
+  account_id: string,
+  context: AccountDeletionContext = { initiator: "system" },
+): Promise<void> {
   const client_ids = await getOAuthPurgeTargets();
   const pool = getPool();
   const { rows } = await pool.query(
@@ -89,6 +104,7 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
     throw Error(`no account with account_id=${account_id}`);
   }
   const email_address_before_delete = rows[0].email_address ?? "";
+  await ensureAccountAdminAuditLogSchema();
   let revoked: Awaited<ReturnType<typeof revokeComputersForAccount>> = [];
   await withAccountRehomeWriteFence({
     account_id,
@@ -97,10 +113,24 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
       // Before deleted=true, in the same transaction: every computer of the
       // account is revoked (its host drops it; its connector stops).
       revoked = await revokeComputersForAccount(db, account_id);
+      // A retry after a partly failed deletion must keep the former email and
+      // the original deletion time; the email is already cleared by then.
       await db.query(
-        "UPDATE accounts SET deleted=true, email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL WHERE account_id=$2::UUID",
+        `UPDATE accounts SET
+           email_address_before_delete = CASE WHEN deleted IS TRUE THEN email_address_before_delete ELSE $1::TEXT END,
+           deleted_at = CASE WHEN deleted IS TRUE THEN deleted_at ELSE NOW() END,
+           deleted=true, email_address=NULL, passports=NULL,
+           ${CLEAR_DELETED_ACCOUNT_FIELDS_SQL}
+         WHERE account_id=$2::UUID`,
         [email_address_before_delete, account_id],
       );
+      await recordAccountAdminAuditEventInTransaction({
+        client: db,
+        account_id,
+        action: "account-deletion",
+        actor_account_id: context.actor_account_id ?? null,
+        metadata: { initiator: context.initiator },
+      });
       // In the same transaction, so a deleted account always has its purge
       // requests queued, and a failed deletion queues none.
       await queueOAuthClientPurges({ db, account_id, client_ids });

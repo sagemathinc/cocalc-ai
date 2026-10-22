@@ -10,6 +10,34 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 export type MembershipClass = string;
 export type MembershipPackageKind = "course" | "team" | "site";
 
+export type AdminCreditAttributionSource =
+  | "audit-log"
+  | "notes"
+  | "attached"
+  | "missing";
+
+// Who created an admin balance adjustment, and why
+// (server/purchases/admin-credit-attribution.ts).
+export interface AdminCreditAttribution {
+  purchase_id: number;
+  time: string;
+  account_id: string;
+  // Positive for a credit, negative for a debit.
+  amount: number;
+  description: string | null;
+  created_by: string | null;
+  reason: string | null;
+  source: AdminCreditAttributionSource;
+  attached_by?: string | null;
+  attached_at?: string | null;
+}
+
+export interface AdminCreditAttributionAttachResult {
+  committed: boolean;
+  before: AdminCreditAttribution;
+  after: AdminCreditAttribution;
+}
+
 export interface AdminMembershipPackagePurchaseResult {
   package_id: string;
   purchase_id: number;
@@ -46,6 +74,10 @@ export interface MembershipUsageLimits {
   max_backups_per_project?: number;
   egress_5h_bytes?: number;
   egress_7d_bytes?: number;
+  // Account control traffic (browser control-plane conat), a separate pool;
+  // unset means the site default (COCALC_CONTROL_PLANE_EGRESS_*_BYTES).
+  control_plane_egress_5h_bytes?: number;
+  control_plane_egress_7d_bytes?: number;
   cpu_5h_seconds?: number;
   cpu_7d_seconds?: number;
   egress_policy?: MembershipEgressPolicy;
@@ -93,6 +125,10 @@ export interface MembershipUsageLimits {
   sagebrush_storage_bytes?: number;
   sagebrush_max_file_bytes?: number;
   sagebrush_private_links?: boolean;
+  sagebrush_sync_enabled?: boolean;
+  sagebrush_sync_version_bytes?: number;
+  sagebrush_sync_read_bytes_per_day?: number;
+  sagebrush_sync_retention_days?: number;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}
@@ -147,6 +183,8 @@ export interface AccountUsageLimitOverrides {
   max_backups_per_project?: NumericLimitRule;
   egress_5h_bytes?: NumericLimitRule;
   egress_7d_bytes?: NumericLimitRule;
+  control_plane_egress_5h_bytes?: NumericLimitRule;
+  control_plane_egress_7d_bytes?: NumericLimitRule;
   cpu_5h_seconds?: NumericLimitRule;
   cpu_7d_seconds?: NumericLimitRule;
   egress_policy?: EnumOverride<MembershipEgressPolicy>;
@@ -1109,6 +1147,12 @@ export interface MembershipUsageStatus {
   managed_egress_categories_5h_bytes?: Record<string, number>;
   managed_egress_categories_7d_bytes?: Record<string, number>;
   managed_egress_recent_events?: ManagedEgressEventSummary[];
+  // Browser control traffic (control-plane-conat): a separate rolling pool
+  // with its own limits; reaching a limit blocks new browser sessions.
+  managed_control_plane_egress_5h_bytes?: number;
+  managed_control_plane_egress_7d_bytes?: number;
+  managed_control_plane_egress_5h_limit_bytes?: number;
+  managed_control_plane_egress_7d_limit_bytes?: number;
   managed_cpu_5h_seconds?: number;
   managed_cpu_7d_seconds?: number;
   managed_cpu_5h_remaining_seconds?: number;
@@ -1825,6 +1869,22 @@ export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
     expires_at?: Date | string | null;
     metadata?: Record<string, unknown> | null;
   }) => Promise<SiteLicenseOverview>;
+  adminListCreditAttribution: (opts?: {
+    account_id?: string;
+    since?: string;
+    until?: string;
+    missing_only?: boolean;
+    limit?: number;
+  }) => Promise<AdminCreditAttribution[]>;
+  adminAttachCreditAttribution: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    purchase_id?: number;
+    attributed_admin_account_id?: string;
+    reason?: string;
+    commit?: boolean;
+  }) => Promise<AdminCreditAttributionAttachResult>;
   adminCreateMembershipPackagePurchase: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -2085,6 +2145,8 @@ export const purchases = {
   getClaimableMembershipPackages: authFirstRequireAccount,
   claimMembershipPackageSeat: authFirstRequireAccount,
   adminProvisionSiteLicense: authFirstRequireAccount,
+  adminListCreditAttribution: authFirstRequireAccountWithBoundSession,
+  adminAttachCreditAttribution: authFirstRequireAccountWithBoundSession,
   adminCreateMembershipPackagePurchase: authFirstRequireAccountWithBoundSession,
   listSiteLicenseOverviews: authFirstRequireAccount,
   getSiteLicenseOverview: authFirstRequireAccount,

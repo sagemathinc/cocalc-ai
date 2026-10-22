@@ -570,6 +570,147 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("a usage limit that could not be held gets its error notice, not 'paused'", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: { ...baseMetadata },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    await writer.handle({
+      type: "error",
+      error: "Claude could not run this request.",
+      failure: { kind: "limit", scope: "credential" },
+    });
+    await writer.handle(null);
+    await flush(writer);
+    // E.g. a delivery report's turn, or one at its retry limit.
+    await acpTestInternals.publishLimitNoticeAfterHold(
+      baseMetadata.message_id,
+      false,
+    );
+    await waitForCondition(() => callHubMock.mock.calls.length > 0);
+    const notice = (
+      callHubMock.mock.calls.find(
+        ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
+      )![0] as any
+    ).args[0];
+    expect(notice.paused).toBeUndefined();
+    expect(notice.title).not.toMatch(/paused/);
+    writer.dispose?.(true);
+  });
+
+  it("a slow hold is never decided by the clock", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const timers: { fn: () => void; ms: number }[] = [];
+    const real = global.setTimeout;
+    const spy = jest.spyOn(global, "setTimeout").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+      ...rest: any[]
+    ) => {
+      timers.push({ fn, ms: Number(ms ?? 0) });
+      return real(fn, ms, ...rest);
+    }) as any);
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: { ...baseMetadata, message_id: "msg-slow" },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    try {
+      await writer.waitUntilReady();
+      await writer.handle({
+        type: "error",
+        error: "Claude could not run this request.",
+        failure: { kind: "limit", scope: "credential" },
+      });
+      await writer.handle(null);
+      await flush(writer);
+    } finally {
+      spy.mockRestore();
+    }
+    // The stash's only timer is hours long, and it forgets: it publishes
+    // nothing (no "ended" notice for a hold that is still being queued).
+    const forget = timers.filter(({ ms }) => ms >= 60 * 60_000);
+    expect(forget.length).toBeGreaterThan(0);
+    callHubMock.mockClear();
+    for (const { fn } of forget) fn();
+    await new Promise((resolve) => real(resolve, 10));
+    expect(
+      callHubMock.mock.calls.filter(
+        ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
+      ),
+    ).toHaveLength(0);
+    writer.dispose?.(true);
+  });
+
+  it("a usage limit gets the shared paused notice, not a turn error", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: { ...baseMetadata },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    const resets_at = Date.parse("2026-10-21T08:00:00Z");
+    await writer.handle({
+      type: "error",
+      error: "Claude could not run this request.",
+      failure: {
+        kind: "limit",
+        scope: "credential",
+        credential_id: "11111111-1111-4111-8111-111111111111",
+        resets_at,
+      },
+    });
+    await writer.handle(null);
+    await flush(writer);
+    // Nothing yet: it waits until the turn's hold is decided.
+    expect(
+      callHubMock.mock.calls.filter(
+        ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
+      ),
+    ).toHaveLength(0);
+    await acpTestInternals.publishLimitNoticeAfterHold(
+      baseMetadata.message_id,
+      true,
+    );
+    await waitForCondition(() => callHubMock.mock.calls.length > 0);
+    const call = callHubMock.mock.calls.find(
+      ([opts]: any) => opts.name === "notifications.createCodexTurnNotice",
+    )![0] as any;
+    const notice = call.args[0];
+    expect(notice.title).toMatch(/agents paused: usage limit reached$/);
+    expect(notice.severity).toBe("info");
+    expect(notice.body_markdown).toMatch(/paused, not lost/);
+    expect(notice.body_markdown).toMatch(/2026-10-21 08:00 UTC/);
+    // Paused, not finished: notifications must say so.
+    expect(notice.paused).toBe(true);
+    expect(notice.group_key).toBe(
+      `usage-limit:credential:11111111-1111-4111-8111-111111111111:${Math.round(resets_at / 3_600_000)}`,
+    );
+    writer.dispose?.(true);
+  });
+
   it("can disable completion notification creation without changing history", async () => {
     process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS = "0";
     const { syncdb } = makeFakeSyncDB();
@@ -4617,6 +4758,92 @@ describe("queued ACP user message projection", () => {
         thread_id: "thread-1",
       })?.active_message_id,
     ).toBe("user-queued-2");
+  });
+
+  it("never shows a message withdrawn meanwhile as queued again", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        state: "running",
+      },
+    ]);
+    syncdb.set({
+      event: "chat",
+      date: "2026-03-19T20:20:00.000Z",
+      sender_id: "user",
+      message_id: "user-withdrawn-1",
+      thread_id: "thread-1",
+      history: [{ content: "withdrawn followup" }],
+    });
+    // Its admission's "queued" write arrives after the sender withdrew it.
+    const jobs = require("../../sqlite/acp-jobs");
+    const spy = jest
+      .spyOn(jobs, "getAcpJob")
+      .mockReturnValue({ state: "canceled" } as any);
+    try {
+      await acpTestInternals.persistQueuedUserMessageProjection({
+        client: makeFakeClient() as any,
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        user_message_id: "user-withdrawn-1",
+        queued: true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      syncdb.get_one({ event: "chat", message_id: "user-withdrawn-1" })
+        ?.acp_state ?? null,
+    ).toBeNull();
+  });
+
+  it("corrects a queued write that a withdrawal overtook while it was written", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        state: "running",
+      },
+    ]);
+    syncdb.set({
+      event: "chat",
+      date: "2026-03-19T20:20:00.000Z",
+      sender_id: "user",
+      message_id: "user-withdrawn-2",
+      thread_id: "thread-1",
+      history: [{ content: "withdrawn while written" }],
+    });
+    // Still queued when this write starts; withdrawn (in another process)
+    // before it is saved.
+    const jobs = require("../../sqlite/acp-jobs");
+    const spy = jest
+      .spyOn(jobs, "getAcpJob")
+      .mockReturnValueOnce({ state: "queued" } as any)
+      .mockReturnValue({ state: "canceled" } as any);
+    try {
+      await acpTestInternals.persistQueuedUserMessageProjection({
+        client: makeFakeClient() as any,
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        user_message_id: "user-withdrawn-2",
+        queued: true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      syncdb.get_one({ event: "chat", message_id: "user-withdrawn-2" })
+        ?.acp_state ?? null,
+    ).toBeNull();
   });
 
   it("does not mark an idle submitted message as queued", async () => {
