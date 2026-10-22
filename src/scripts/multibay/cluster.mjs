@@ -274,9 +274,8 @@ export class MultibayCluster {
   }
 
   async stop({ keep = !!process.env.MULTIBAY_KEEP } = {}) {
-    for (const id of [...this.bayIds].reverse()) {
-      await this.stopBay(id);
-    }
+    // Tearing the whole cluster down: no bay needs another to exit first.
+    await Promise.all(this.bayIds.map((id) => this.stopBay(id)));
     if (!keep) rmSync(this.dir, { recursive: true, force: true });
   }
 }

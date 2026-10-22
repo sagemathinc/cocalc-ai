@@ -8,6 +8,8 @@ const logger = getLogger("server:conat:persist");
 
 const children = new Map<string, ChildProcess>();
 let shuttingDown = false;
+// How long a terminating hub waits for its persist children to exit.
+const CHILD_EXIT_GRACE_MS = 10_000;
 let lifecycleHandlersInstalled = false;
 
 export function getForkedPersistServerCount(): number {
@@ -22,11 +24,25 @@ function installLifecycleHandlers() {
 
   process.once("exit", close);
   ["SIGTERM", "SIGQUIT"].forEach((sig) => {
-    process.once(sig, () => {
+    process.once(sig, async () => {
       shuttingDown = true;
+      const exited = [...children.values()].map(
+        (child) =>
+          new Promise<void>((resolve) => {
+            if (child.exitCode != null || child.signalCode != null) resolve();
+            else child.once("exit", () => resolve());
+          }),
+      );
       for (const child of children.values()) {
         child.kill(sig as NodeJS.Signals);
       }
+      // Let the children close their sqlite files, then die of the same
+      // signal: with a handler installed, Node no longer exits on it.
+      await Promise.race([
+        Promise.all(exited),
+        new Promise((resolve) => setTimeout(resolve, CHILD_EXIT_GRACE_MS)),
+      ]);
+      process.kill(process.pid, sig as NodeJS.Signals);
     });
   });
 }

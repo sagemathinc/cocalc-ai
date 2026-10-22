@@ -651,7 +651,10 @@ describe("inspecting a sent message's turn across bays", () => {
     );
   });
 
-  /** A stand-in for the recipient's project host, until `lifetimeMs`. */
+  /**
+   * A stand-in for the recipient's project host. It serves until the test
+   * writes a `stop` row (see stopFakeHost), or at most `lifetimeMs`.
+   */
   function fakeHost(lifetimeMs = 100_000) {
     return runInBay(
       cluster,
@@ -706,11 +709,35 @@ describe("inspecting a sent message's turn across bays", () => {
        });
        await new Promise((resolve) => setTimeout(resolve, 2_000));
        await note("ready", true);
-       await new Promise((resolve) => setTimeout(resolve, ${lifetimeMs}));
+       const deadline = Date.now() + ${lifetimeMs};
+       while (Date.now() < deadline) {
+         const { rows } = await getPool().query("SELECT 1 FROM multibay_fake_host WHERE key='stop'");
+         if (rows.length > 0) break;
+         await new Promise((resolve) => setTimeout(resolve, 200));
+       }
        service.close();
        return "served";`,
       { timeoutMs: lifetimeMs + 60_000 },
     );
+  }
+
+  /**
+   * Clear a previous fake host's signals, then start a new one. Its promise
+   * is wrapped: an async function would otherwise wait for the host to exit.
+   */
+  async function startFakeHost(db) {
+    await db.query(
+      "DELETE FROM multibay_fake_host WHERE key IN ('ready', 'stop')",
+    );
+    return { exited: fakeHost() };
+  }
+
+  /** Tell the fake host to stop, then wait for it to exit. */
+  async function stopFakeHost(db, host) {
+    await db.query(
+      "INSERT INTO multibay_fake_host(key,value) VALUES('stop','true') ON CONFLICT (key) DO NOTHING",
+    );
+    await host.exited;
   }
 
   async function inspectFromSeed(attempt_id, run_id = run, action = "inspect") {
@@ -739,8 +766,8 @@ describe("inspecting a sent message's turn across bays", () => {
   }
 
   it("returns the recipient host's turn, checked, and only for the right turn", async () => {
-    const host = fakeHost();
     const db = await connectBayDatabase(cluster, ATTACHED);
+    const host = await startFakeHost(db);
     try {
       await eventually(
         async () =>
@@ -784,14 +811,13 @@ describe("inspecting a sent message's turn across bays", () => {
         0,
       );
     } finally {
+      await stopFakeHost(db, host);
       await db.end();
-      await host;
     }
   });
   it("withdraws through the recipient's bay and host, and only the right turn", async () => {
     const db = await connectBayDatabase(cluster, ATTACHED);
-    await db.query("DELETE FROM multibay_fake_host WHERE key='ready'");
-    const host = fakeHost(30_000);
+    const host = await startFakeHost(db);
     try {
       await eventually(
         async () =>
@@ -831,8 +857,8 @@ describe("inspecting a sent message's turn across bays", () => {
         0,
       );
     } finally {
+      await stopFakeHost(db, host);
       await db.end();
-      await host;
     }
   });
 });
