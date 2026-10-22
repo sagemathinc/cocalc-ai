@@ -294,6 +294,31 @@ describe("the project's quota group", () => {
   });
 });
 
+describe("usage for a start with a lower quota", () => {
+  it("is counted against the requested quota, not the current limits", async () => {
+    existing.add(HISTORY);
+    // the quota was 50 GiB (home and group limits still say so), and the
+    // project starts with 10 GiB: 3 GiB of files and 8 GiB of history fill
+    // 10 GiB + its 1 GiB of room for history
+    filesystem({
+      home: { own: 3 * GiB, limit: 50 * GiB },
+      history: { own: 8 * GiB },
+      groupLimit: 55 * GiB,
+    });
+    const usage = await projectQuotaWithHistory({
+      project_id: PROJECT,
+      home: HOME,
+      history: HISTORY,
+      quota: { size: 50 * GiB, used: 3 * GiB },
+      forQuota: 10 * GiB,
+      env: {},
+    });
+    // full: the start check refuses it (not 6 GiB, with the old 5 GiB room)
+    expect(usage.used).toBe(10 * GiB);
+    expect(usage.history_reserve).toBe(GiB);
+  });
+});
+
 describe("a copied project's group", () => {
   it("gets the limit for the copied home's quota at once", async () => {
     existing.add(HISTORY);

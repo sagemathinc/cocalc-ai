@@ -2356,9 +2356,12 @@ async function getQuota({
 
 // The project's disk quota and usage: its files and edit history together
 // (project-quota-group.ts).
+// `forQuota`: count usage against that quota, not the home's limit as it is
+// (a start with a new quota, checked before it is applied).
 export async function projectHomeQuota(
   project_id: string,
   vol: { path: string; quota: { get: () => Promise<SubvolumeQuotaInfo> } },
+  { forQuota }: { forQuota?: number } = {},
 ): Promise<SubvolumeQuotaInfo & ProjectQuotaBreakdown> {
   const quota = await vol.quota.get();
   try {
@@ -2367,6 +2370,7 @@ export async function projectHomeQuota(
       home: vol.path,
       history: persistVolumePath(project_id),
       quota,
+      forQuota,
     });
   } catch (err) {
     logger.warn("unable to read a project's quota group", {

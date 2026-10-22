@@ -390,15 +390,20 @@ export async function projectQuotaWithHistory<
   home,
   history,
   quota,
+  forQuota,
   env = process.env,
 }: {
   project_id: string;
   home: string;
   history?: string;
   quota: T;
+  // the quota to count usage against, if not the home's limit as it is
+  // (e.g., a start with a lower quota, checked before it is applied)
+  forQuota?: number;
   env?: NodeJS.ProcessEnv;
 }): Promise<T & ProjectQuotaBreakdown> {
   if (btrfsQuotasDisabled() || !(quota.size > 0)) return quota;
+  const size = forQuota != null && forQuota > 0 ? forQuota : quota.size;
   const group = await readProjectQuotaGroup({ project_id, path: home });
   if (!group?.member || group.limit == null) return quota;
   let history_used = 0;
@@ -411,7 +416,7 @@ export async function projectQuotaWithHistory<
   // quota yet, e.g., its update deferred): never less usage than it is
   const reserve = Math.max(
     0,
-    Math.min(group.limit - quota.size, historyReserve(quota.size, env)),
+    Math.min(group.limit - size, historyReserve(size, env)),
   );
   return {
     ...quota,

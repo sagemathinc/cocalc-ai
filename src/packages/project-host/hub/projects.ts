@@ -1376,7 +1376,10 @@ async function assertStartDiskQuotaAllowed({
       const quota = resetVolume
         ? { used: 0, size: 0 }
         : volume_kind === "home"
-          ? await projectHomeQuota(project_id, vol)
+          ? // (counted against the quota it is about to get)
+            await projectHomeQuota(project_id, vol, {
+              forQuota: targetDiskBytes,
+            })
           : await vol.quota.get();
       if (
         isProjectDiskQuotaStartBlocked({
