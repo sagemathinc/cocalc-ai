@@ -1467,6 +1467,10 @@ export function registerMembershipCommand(
       "--domain <domain...>",
       "replace pool-specific allowed domains; repeat or pass comma-separated values",
     )
+    .option(
+      "--expires-at <iso>",
+      "pool expiry time; active seats' memberships follow the new expiry",
+    )
     .action(
       async (
         packageId: string,
@@ -1476,6 +1480,7 @@ export function registerMembershipCommand(
           poolName?: string;
           seatCount?: string;
           domain?: string[];
+          expiresAt?: string;
         },
         command: Command,
       ) => {
@@ -1499,7 +1504,8 @@ export function registerMembershipCommand(
               opts.requiresApproval === undefined &&
               opts.poolName === undefined &&
               opts.seatCount === undefined &&
-              allowed_domains === undefined
+              allowed_domains === undefined &&
+              opts.expiresAt === undefined
             ) {
               throw new Error("at least one pool update option is required");
             }
@@ -1524,6 +1530,10 @@ export function registerMembershipCommand(
                     ? undefined
                     : parsePositiveInteger(opts.seatCount, "--seat-count"),
                 allowed_domains,
+                expires_at:
+                  opts.expiresAt === undefined
+                    ? undefined
+                    : parseIsoDate(opts.expiresAt, "--expires-at"),
               }),
               toIso,
             );
