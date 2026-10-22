@@ -112,23 +112,26 @@ trust:
    agents cannot wake the project. Only the project owner can change this.
    Then make sure the project is still stopped, and stop it again if someone
    started it in the meantime.
-4. With the project stopped, check the files that run code. You can open and
+4. Now revoke, at their source, every credential the collaborator could read:
+   passwords, API keys, tokens, certificates, SSH private keys (remove the
+   matching public key wherever it is authorized), and
+   [project secrets](/docs/projects/project-secrets). For example, revoke a key
+   with the service that issued it. Do this before checking files, because
+   they may already have copied a credential. A running project sees a changed
+   secret right away, so add replacements only to a project you trust, as
+   explained below.
+5. In **Settings -> Publish**, unpublish any folder, file or project share you
+   did not expect: anyone with the link can still open it.
+6. With the project stopped, check the files that run code. You can open and
    edit files without starting the project. In the file explorer, choose
    **Show hidden files**, then open these files and remove anything you did not
    expect: \`~/.local/share/cocalc/startup.sh\` (which runs every time the
    project starts), \`~/.ssh/authorized_keys\` (delete any key you do not
    recognize), and the shell startup files \`~/.bashrc\`, \`~/.bash_profile\`,
    \`~/.profile\`, and any others your shells read, such as \`~/.zshrc\`.
-5. Review any other scripts or scheduled jobs the project runs, and remove
+7. Review any other scripts or scheduled jobs the project runs, and remove
    anything you did not expect.
-6. Revoke, at their source, every credential the collaborator could read:
-   passwords, API keys, tokens, certificates, SSH private keys (remove the
-   matching public key wherever it is authorized), and
-   [project secrets](/docs/projects/project-secrets). For example, revoke a key
-   with the service that issued it. A running project sees a changed secret
-   right away, so add replacements only to a project you trust, as explained
-   below.
-7. When you are done, start the project, check the running processes in a
+8. When you are done, start the project, check the running processes in a
    terminal with \`ps aux\`, and set **Automatic starts** back to **Allowed** if
    you want.
 
