@@ -13,6 +13,8 @@ import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 import {
   buildTriageGroups,
+  create,
+  planCreate,
   extractSupportBlobDocuments,
   extractSupportImages,
   getImage,
@@ -82,6 +84,16 @@ jest.mock("./dangerous-session-auth", () => ({
   requireDangerousSessionAuth: jest.fn(),
 }));
 
+const mockOutreachConfig = jest.fn();
+jest.mock("@cocalc/server/crm/outreach/store", () => ({
+  loadOutreachConfiguration: () => mockOutreachConfig(),
+}));
+const mockClusterAccount = jest.fn();
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  getClusterAccountById: (id: string) => mockClusterAccount(id),
+}));
+const suppressionRows: Array<{ reason: string }> = [];
+
 const mockCentralLog = jest.mocked(centralLog);
 const mockGetPool = jest.mocked(getPool);
 const mockSiteURL = jest.mocked(siteURL);
@@ -144,6 +156,9 @@ const poolQuery = jest.fn(async (sql: string, params: any[] = []) => {
       });
     }
     return { rows: [] };
+  }
+  if (sql.includes("FROM crm_contact_suppressions")) {
+    return { rows: suppressionRows };
   }
   throw new Error(`unexpected test SQL: ${sql}`);
 });
@@ -1366,6 +1381,234 @@ describe("admin support API", () => {
     );
     expect(thrown?.message).not.toContain("alice@example.com");
     expect(thrown?.message).not.toContain("super-secret-token");
+  });
+
+  describe("new outgoing tickets", () => {
+    const ACCOUNT = "22222222-2222-4222-8222-222222222222";
+    const ADMIN = "11111111-1111-4111-8111-111111111111";
+    const base = {
+      account_id: ADMIN,
+      session_hash: "fresh-session",
+      requester_account_id: ACCOUNT,
+      subject: "Your CoCalc dedicated host",
+      public_reply: "Hello,\n\nWe removed the host. You won't be charged.",
+      reason: "William approved the note",
+    };
+    const created = ticket({
+      id: 777,
+      status: "pending",
+      subject: base.subject,
+      external_id: "cocalc-support-create:support-create-key-1",
+    });
+
+    beforeEach(() => {
+      suppressionRows.length = 0;
+      mockOutreachConfig.mockResolvedValue({
+        submitter_id: "4001",
+        group_id: "5002",
+        form_id: "6003",
+        support_address: "help@cocalc.ai",
+      });
+      mockClusterAccount.mockResolvedValue({
+        account_id: ACCOUNT,
+        email_address: "Lee@Korea.ac.kr",
+        first_name: "Lee",
+        last_name: "Kim",
+      });
+    });
+
+    function zendesk(overrides: Record<string, unknown> = {}) {
+      const tickets = {
+        create: jest.fn(async () => ({ result: created, response: {} })),
+        show: jest.fn(async () => ({ result: created, response: {} })),
+        get: jest.fn(async () => ({
+          result: [
+            {
+              id: 901,
+              author_id: 4001,
+              public: true,
+              created_at: created.updated_at,
+              plain_body: base.public_reply,
+              body: base.public_reply,
+              attachments: [],
+            },
+          ],
+          response: {},
+        })),
+        ...overrides,
+      };
+      const search = { get: jest.fn(async () => ({ result: [] })) };
+      mockGetZendeskClient.mockResolvedValue({ tickets, search } as any);
+      return { tickets, search };
+    }
+
+    it("plans a ticket to an account's email without touching Zendesk", async () => {
+      const { tickets } = zendesk();
+      const plan = await planCreate(base);
+      expect(plan).toMatchObject({
+        operation: "create",
+        commit: false,
+        requester: {
+          email: "lee@korea.ac.kr",
+          name: "Lee Kim",
+          account_id: ACCOUNT,
+        },
+        ticket: {
+          subject: base.subject,
+          status: "pending",
+          tags: ["cocalc_support_outgoing"],
+        },
+        warnings: [],
+      });
+      expect(plan.payload_hash).toMatch(/^[a-f0-9]{64}$/);
+      expect(tickets.create).not.toHaveBeenCalled();
+    });
+
+    it("opens the ticket from the shared support identity once, and replays a retry", async () => {
+      const { tickets } = zendesk();
+      const plan = await planCreate(base);
+      const request = {
+        ...base,
+        payload_hash: plan.payload_hash,
+        idempotency_key: "support-create-key-1",
+      };
+      const first = await create(request);
+      const replay = await create(request);
+
+      expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith(
+        expect.objectContaining({
+          account_id: ADMIN,
+          session_hash: "fresh-session",
+        }),
+      );
+      expect(tickets.create).toHaveBeenCalledTimes(1);
+      expect(tickets.create).toHaveBeenCalledWith({
+        ticket: expect.objectContaining({
+          external_id: "cocalc-support-create:support-create-key-1",
+          requester: { email: "lee@korea.ac.kr", name: "Lee Kim" },
+          submitter_id: 4001,
+          recipient: "help@cocalc.ai",
+          group_id: 5002,
+          ticket_form_id: 6003,
+          subject: base.subject,
+          status: "pending",
+          tags: ["cocalc_support_outgoing"],
+          comment: { body: base.public_reply, public: true },
+        }),
+      });
+      expect(first).toMatchObject({
+        commit: true,
+        idempotent_replay: false,
+        comment: { id: 901, public: true },
+        ticket: { id: 777, status: "pending" },
+      });
+      expect(replay).toMatchObject({
+        idempotent_replay: true,
+        ticket: { id: 777 },
+      });
+    });
+
+    it("refuses a commit that no longer matches the reviewed plan", async () => {
+      const { tickets } = zendesk();
+      const plan = await planCreate(base);
+      await expect(
+        create({
+          ...base,
+          subject: "A different subject",
+          payload_hash: plan.payload_hash,
+          idempotency_key: "support-create-key-2",
+        }),
+      ).rejects.toThrow("no longer matches the reviewed plan");
+      expect(tickets.create).not.toHaveBeenCalled();
+    });
+
+    it("finds the ticket an unconfirmed attempt created instead of opening a second one", async () => {
+      const { tickets, search } = zendesk({
+        create: jest.fn(async () => {
+          throw new Error("socket hang up after the request was sent");
+        }),
+      });
+      const plan = await planCreate(base);
+      const request = {
+        ...base,
+        payload_hash: plan.payload_hash,
+        idempotency_key: "support-create-key-1",
+      };
+      await expect(create(request)).rejects.toThrow("socket hang up");
+      expect(mutationRows.get("support-create-key-1")?.status).toBe(
+        "indeterminate",
+      );
+      search.get.mockResolvedValue({ result: [created] });
+      const recovered = await create(request);
+      expect(tickets.create).toHaveBeenCalledTimes(1);
+      expect(search.get).toHaveBeenCalledWith([
+        "search",
+        expect.objectContaining({
+          query:
+            "type:ticket external_id:cocalc-support-create:support-create-key-1",
+        }),
+      ]);
+      expect(recovered).toMatchObject({ recovered: true, ticket: { id: 777 } });
+    });
+
+    it("refuses suppressed addresses and warns about outreach opt-outs", async () => {
+      zendesk();
+      suppressionRows.push({ reason: "hard_bounce" });
+      await expect(planCreate(base)).rejects.toThrow("is suppressed");
+      suppressionRows.length = 0;
+      suppressionRows.push({ reason: "opt_out" });
+      const plan = await planCreate(base);
+      expect(plan.warnings).toEqual([
+        expect.stringContaining("opted out of customer outreach"),
+      ]);
+    });
+
+    it("validates the requester, subject, body and configuration", async () => {
+      zendesk();
+      await expect(
+        planCreate({ ...base, requester_email: "x@example.edu" }),
+      ).rejects.toThrow("exactly one of");
+      await expect(
+        planCreate({
+          ...base,
+          requester_account_id: undefined,
+          requester_email: "not an email",
+        }),
+      ).rejects.toThrow("invalid requester email");
+      await expect(planCreate({ ...base, subject: " " })).rejects.toThrow(
+        "a subject is required",
+      );
+      await expect(planCreate({ ...base, public_reply: "" })).rejects.toThrow(
+        "message body",
+      );
+      mockOutreachConfig.mockResolvedValue({
+        submitter_id: "",
+        group_id: "5002",
+        support_address: "help@cocalc.ai",
+      });
+      await expect(planCreate(base)).rejects.toThrow(
+        "crm_outreach_zendesk_submitter_id is not configured",
+      );
+    });
+
+    it("requires an admin, and fresh auth to commit", async () => {
+      const { tickets } = zendesk();
+      mockIsAdmin.mockResolvedValue(false);
+      await expect(planCreate(base)).rejects.toThrow();
+      mockIsAdmin.mockResolvedValue(true);
+      const plan = await planCreate(base);
+      mockRequireDangerousSessionAuth.mockRejectedValueOnce(
+        new Error("fresh auth is required"),
+      );
+      await expect(
+        create({
+          ...base,
+          payload_hash: plan.payload_hash,
+          idempotency_key: "support-create-key-3",
+        }),
+      ).rejects.toThrow("fresh auth is required");
+      expect(tickets.create).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects non-admin callers before reading Zendesk", async () => {
