@@ -68,6 +68,8 @@ export interface DedicatedHostBillingEnforcementMetadata {
   // Set when a rescue drain (start, final backups, drain) was requested for a
   // host stopped without confirmed final backups.
   rescue_requested_at?: string;
+  // Last time a failed billing stop of a still-running host was retried.
+  stop_retry_requested_at?: string;
   stopped_at?: string;
   grace_until?: string;
   deprovision_after?: string;

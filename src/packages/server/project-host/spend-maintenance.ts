@@ -70,6 +70,7 @@ const RUNNING_BILLING_STATUSES = new Set([
 const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const DEPROVISION_REMINDER_LEAD_MS = 24 * 3600_000;
+const BILLING_STOP_RETRY_MS = 30 * 60_000;
 
 let started = false;
 
@@ -511,6 +512,74 @@ async function requestHostStopForExceededLane({
     provider,
     reason,
   });
+}
+
+// A host billing enforcement stopped is still running (its stop failed, or it
+// is in error): request the provider stop again, at most every
+// BILLING_STOP_RETRY_MS, without restarting its enforcement clock.
+async function retryBillingEnforcementStop({
+  row,
+  provider,
+  enforcement,
+  now = Date.now(),
+}: {
+  row: CandidateHostRow;
+  provider: string;
+  enforcement: DedicatedHostBillingEnforcementMetadata;
+  now?: number;
+}): Promise<void> {
+  const last = Date.parse(`${enforcement.stop_retry_requested_at ?? ""}`);
+  if (Number.isFinite(last) && now - last < BILLING_STOP_RETRY_MS) {
+    return;
+  }
+  const nowIso = new Date(now).toISOString();
+  const metadata = {
+    ...(row.metadata ?? {}),
+    desired_state: "stopped",
+    billing: {
+      ...(row.metadata?.billing ?? {}),
+      enforcement: { ...enforcement, stop_retry_requested_at: nowIso },
+    },
+    last_action: "stop",
+    last_action_status: "pending",
+    last_action_error: null,
+    last_action_at: nowIso,
+  };
+  const stopIntent = await writeHostBillingChanges({
+    row,
+    metadata,
+    status: { status: "stopping", clear_last_seen: true },
+  });
+  if (!stopIntent.written) {
+    return;
+  }
+  await enqueueCloudVmWork({
+    vm_id: row.id,
+    action: "stop",
+    payload: { provider, intent_generation: stopIntent.generation },
+  });
+  logger.warn("retrying the stop of a billing-blocked dedicated host", {
+    host_id: row.id,
+    status: row.status,
+  });
+  try {
+    await adminAlert({
+      subject: `Billing-blocked dedicated host still running: ${row.id}`,
+      body: [
+        `Host ID: ${row.id}`,
+        `Host name: ${row.name}`,
+        `Status: ${row.status}`,
+        "Billing enforcement stopped this host, but it is still running or in error. The stop was requested again; it is retried every 30 minutes, and the host is not billed to its owner meanwhile.",
+      ].join("\n"),
+      dedupMinutes: 24 * 60,
+      dedupBySubject: true,
+    });
+  } catch (err) {
+    logger.error("failed to send billing stop retry alert", {
+      host_id: row.id,
+      err: `${err}`,
+    });
+  }
 }
 
 async function requestHostStopForOwnerSpendLimit({
@@ -1353,8 +1422,12 @@ async function runPass(): Promise<void> {
     if (enforcement?.state === "stopped_billing_blocked") {
       // Billing enforcement stopped this host after a drain or a rescue drain.
       // Do not reprice it as running while its provider stop is pending, or if
-      // that stop failed (the drain's admin alert reports it); a rescue run is
-      // site-paid. Stopped pricing resumes once the host is off.
+      // that stop failed; a rescue run is site-paid. A failed stop is retried
+      // here, and once the host is off stopped pricing and the deprovision
+      // fallback resume.
+      if (status !== "stopping") {
+        await retryBillingEnforcementStop({ row, provider, enforcement });
+      }
       deleteSnapshotCacheForAccount(owner);
       continue;
     }

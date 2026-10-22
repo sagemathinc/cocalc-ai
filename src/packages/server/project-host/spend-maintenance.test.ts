@@ -1353,6 +1353,96 @@ describe("dedicated host spend maintenance", () => {
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
+  it("re-requests the stop of a billing-blocked host that is still running, without repricing it", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              ...blockedHostRow({
+                final_backup_status: "failed",
+                stopped_at: "2026-01-01T00:00:00.000Z",
+                deprovision_after: "2026-01-04T00:00:00.000Z",
+                rescue_requested_at: "2026-01-05T00:00:00.000Z",
+                final_backup_failed_at: "2026-01-05T01:00:00.000Z",
+              }),
+              status: "error",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET status=$2")
+      ) {
+        expect(params?.[1]).toBe("stopping");
+        // The enforcement clock is untouched; only the retry is recorded.
+        expect(params?.[3].billing.enforcement).toMatchObject({
+          state: "stopped_billing_blocked",
+          stopped_at: "2026-01-01T00:00:00.000Z",
+          final_backup_failed_at: "2026-01-05T01:00:00.000Z",
+          stop_retry_requested_at: expect.any(String),
+        });
+        return { rows: [{ desired_state_generation: 3 }], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith(
+      expect.objectContaining({ vm_id: "host-1", action: "stop" }),
+    );
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("waits between stop retries of a billing-blocked host", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              ...blockedHostRow({
+                final_backup_status: "succeeded",
+                stopped_at: new Date().toISOString(),
+                stop_retry_requested_at: new Date(
+                  Date.now() - 5 * 60_000,
+                ).toISOString(),
+              }),
+              status: "running",
+            },
+          ],
+        };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).not.toHaveBeenCalled();
+  });
+
   it("does not rescue a blocked host before its grace period ends", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("pg_try_advisory_lock")) {
