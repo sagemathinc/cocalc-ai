@@ -39,3 +39,10 @@ test("it keeps the newest entries only", () => {
   expect(all).toHaveLength(3000);
   expect(all[all.length - 1].top).toBe(3099);
 });
+
+test("an element with its own fixed scrollTop is left alone", () => {
+  const element = document.createElement("div");
+  Object.defineProperty(element, "scrollTop", { value: 7, writable: true });
+  expect(() => journalScrollWrites(element)()).not.toThrow();
+  expect(element.scrollTop).toBe(7);
+});

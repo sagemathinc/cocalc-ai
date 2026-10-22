@@ -51,8 +51,13 @@ export function journalScrollWrites(element: HTMLElement): () => void {
     descriptor = Object.getOwnPropertyDescriptor(p, "scrollTop");
   const scrollTo = element.scrollTo;
   const scrollBy = element.scrollBy;
-  if (descriptor?.get && descriptor.set) {
+  const own = Object.getOwnPropertyDescriptor(element, "scrollTop");
+  // Never in the way: an element that already defines its own (e.g., a
+  // test's) keeps it unrecorded.
+  let patchedScrollTop = false;
+  if (descriptor?.get && descriptor.set && (own == null || own.configurable)) {
     const { get, set } = descriptor;
+    patchedScrollTop = true;
     Object.defineProperty(element, "scrollTop", {
       configurable: true,
       get() {
@@ -93,7 +98,7 @@ export function journalScrollWrites(element: HTMLElement): () => void {
     } as typeof element.scrollBy;
   }
   return () => {
-    delete (element as any).scrollTop;
+    if (patchedScrollTop) delete (element as any).scrollTop;
     element.scrollTo = scrollTo;
     element.scrollBy = scrollBy;
   };
