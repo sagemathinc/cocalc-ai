@@ -8,6 +8,7 @@ import { ensureProjectHostMetricsSamplesSchema } from "@cocalc/database/postgres
 import { uuid } from "@cocalc/util/misc";
 import { hasUsageSubscription } from "./stripe-usage-based-subscription";
 import {
+  balancesAreLocal,
   billingExposureHealthDetails,
   billingExposureHealthLevel,
   billingExposureHealthSummary,
@@ -107,6 +108,43 @@ describe("billing exposure levels", () => {
     expect(billingExposureHealthLevel(health)).toBe("healthy");
     expect(billingExposureHealthDetails(health)).toEqual([
       "Post-paid accounts (collected later) below -$20.00, expected between collections: 1 account, $900.00; p -$900.00",
+    ]);
+  });
+});
+
+describe("where balances are checked", () => {
+  it("checks balances on every bay without central billing", () => {
+    expect(
+      balancesAreLocal({
+        central_billing: false,
+        bay_id: "bay-1",
+        seed_bay_id: "bay-0",
+      }),
+    ).toBe(true);
+  });
+
+  it("checks balances only on the seed bay with central billing", () => {
+    expect(
+      balancesAreLocal({
+        central_billing: true,
+        bay_id: "bay-0",
+        seed_bay_id: "bay-0",
+      }),
+    ).toBe(true);
+    expect(
+      balancesAreLocal({
+        central_billing: true,
+        bay_id: "bay-1",
+        seed_bay_id: "bay-0",
+      }),
+    ).toBe(false);
+  });
+
+  it("says where balances are checked when not here", () => {
+    const health = { ...clean, balances_checked_on_bay: "bay-0" };
+    expect(billingExposureHealthLevel(health)).toBe("healthy");
+    expect(billingExposureHealthDetails(health)).toEqual([
+      "Account balances are checked by admin health on the billing seed bay bay-0.",
     ]);
   });
 });

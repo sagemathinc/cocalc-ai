@@ -23,6 +23,7 @@ healthy otherwise.
 
 import getPool from "@cocalc/database/pool";
 import { ensureProjectHostMetricsSamplesSchema } from "@cocalc/database/postgres/project-host-metrics";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { billingAccountsTable } from "./billing-account";
 import { COST_OR_METERED_COST } from "./get-balance";
 
@@ -70,6 +71,10 @@ export interface BillingExposureIdleHost {
 }
 
 export interface BillingExposureHealth {
+  // Set when this bay does not hold the authoritative purchases (central
+  // billing on an attached bay): balances are then checked on this seed bay
+  // and the balance fields here are empty.
+  balances_checked_on_bay?: string;
   negative: BillingExposureNegativeBalances;
   postpaid_negative: BillingExposureNegativeBalances;
   open_metered: BillingExposureOpenMetered;
@@ -140,6 +145,11 @@ export function billingExposureHealthDetails(
   health: BillingExposureHealth,
 ): string[] {
   const details: string[] = [];
+  if (health.balances_checked_on_bay) {
+    details.push(
+      `Account balances are checked by admin health on the billing seed bay ${health.balances_checked_on_bay}.`,
+    );
+  }
   const accounts = (worst: BillingExposureAccount[]) =>
     worst.map(({ account_id, balance }) => `${account_id} ${usd(balance)}`);
   if (health.negative.count > 0) {
@@ -381,6 +391,34 @@ async function getIdleHosts(
   }));
 }
 
+// With central billing, purchases and billing accounts are authoritative only
+// on the seed bay; elsewhere each bay has its own.
+export function balancesAreLocal({
+  central_billing,
+  bay_id,
+  seed_bay_id,
+}: {
+  central_billing: boolean;
+  bay_id: string;
+  seed_bay_id: string;
+}): boolean {
+  return !central_billing || bay_id === seed_bay_id;
+}
+
+const NO_BALANCE_EXPOSURE: Pick<
+  BillingExposureHealth,
+  "negative" | "postpaid_negative" | "open_metered"
+> = {
+  negative: { count: 0, total_usd: 0, worst: [] },
+  postpaid_negative: { count: 0, total_usd: 0, worst: [] },
+  open_metered: {
+    count: 0,
+    cost_per_hour_usd: 0,
+    oldest_period_start: null,
+    account_ids: [],
+  },
+};
+
 // Host checks cover only hosts this bay is responsible for: a rehomed host's
 // row stays behind in the source bay's database.
 export async function getBillingExposureHealth({
@@ -397,7 +435,15 @@ export async function getBillingExposureHealth({
     await client.query(
       `SET LOCAL statement_timeout = '${BILLING_EXPOSURE_STATEMENT_TIMEOUT_MS}ms'`,
     );
-    const balances = await getBalanceExposure(client);
+    const seed_bay_id = getConfiguredClusterSeedBayId();
+    const local = balancesAreLocal({
+      central_billing: billingAccountsTable() === "billing_accounts",
+      bay_id,
+      seed_bay_id,
+    });
+    const balances = local
+      ? await getBalanceExposure(client)
+      : { ...NO_BALANCE_EXPOSURE, balances_checked_on_bay: seed_bay_id };
     const stuck_hosts = await getStuckHosts(client, bay_id, Date.now());
     const idle_hosts = await getIdleHosts(client, bay_id);
     await client.query("COMMIT");
