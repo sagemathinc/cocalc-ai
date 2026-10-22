@@ -3995,6 +3995,11 @@ async function backupProjectToExternalRepository({
               ],
             });
             await captured?.addTo(snapshotPath);
+            // The snapshot holds the history now, so the upload (up to
+            // PROJECT_RUSTIC_TIMEOUT_MS) doesn't need the persist lock, which
+            // holds off snapshots, restores and copies of the project.
+            await captured?.release();
+            captured = undefined;
             const backup = await projectRusticBackup({
               src: snapshotPath,
               repoProfile: profilePath,
