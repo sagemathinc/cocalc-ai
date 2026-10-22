@@ -13,6 +13,8 @@ import { Command } from "commander";
 import {
   applyPersistStorageInChunks,
   PERSIST_STORAGE_APPLY_TIMEOUT_MS,
+  retentionPolicyApplies,
+  type PersistRetentionPolicy,
   type PersistStorageAction,
   type PersistStorageList,
   type PersistStreamInfo,
@@ -103,25 +105,38 @@ export function trimActions({
 }): PersistStorageAction[] {
   const actions: PersistStorageAction[] = [];
   for (const s of selected) {
-    if (s.kind === "edit-history") {
-      if (archived) actions.push({ op: "trim", name: s.name, archived: true });
-    } else if (before != null) {
-      actions.push({ op: "trim", name: s.name, before });
+    for (const policy of policiesFor({ before, archived })) {
+      if (retentionPolicyApplies(policy, s.kind)) {
+        actions.push({ op: "trim", name: s.name, policy });
+      }
     }
   }
   if (actions.length === 0) {
     throw new Error(
       before != null
-        ? "nothing to trim: --older-than applies to logs, not to edit histories (use --archived for those)"
+        ? "nothing to trim: --older-than applies to agent and project logs (use --archived for edit histories)"
         : "nothing to trim: --archived applies to edit histories",
     );
   }
   return actions;
 }
 
-// What `cleanup` does: deletes the streams of documents that no longer exist,
-// and trims entries of logs (agent logs, the project's own) older than
-// `before`.
+// The retention policies the CLI's flags ask for.
+function policiesFor({
+  before,
+  archived,
+}: {
+  before?: number;
+  archived?: boolean;
+}): PersistRetentionPolicy[] {
+  const policies: PersistRetentionPolicy[] = [];
+  if (before != null) policies.push({ kind: "since", since: before });
+  if (archived) policies.push({ kind: "without-archived" });
+  return policies;
+}
+
+// What `cleanup` does: deletes the streams of documents that no longer exist
+// (if they still don't when it runs), and trims those the policies apply to.
 export function cleanupActions({
   streams,
   deletedDocuments,
@@ -136,14 +151,13 @@ export function cleanupActions({
   const actions: PersistStorageAction[] = [];
   for (const s of streams) {
     if (deletedDocuments && s.document_exists === false) {
-      actions.push({ op: "delete", name: s.name });
-    } else if (
-      before != null &&
-      (s.kind === "agent-log" || s.kind === "project")
-    ) {
-      actions.push({ op: "trim", name: s.name, before });
-    } else if (archived && s.kind === "edit-history") {
-      actions.push({ op: "trim", name: s.name, archived: true });
+      actions.push({ op: "delete", name: s.name, ifDocumentMissing: true });
+      continue;
+    }
+    for (const policy of policiesFor({ before, archived })) {
+      if (retentionPolicyApplies(policy, s.kind)) {
+        actions.push({ op: "trim", name: s.name, policy });
+      }
     }
   }
   return actions;
@@ -210,6 +224,7 @@ export function registerProjectEditHistoryCommands(
       freed: humanSize(result.freed),
       freed_bytes: result.freed,
       failed: result.results.filter((r) => !r.ok).length,
+      skipped: result.results.filter((r) => r.skipped).length,
       results: result.results,
     };
   };
@@ -313,7 +328,10 @@ export function registerProjectEditHistoryCommands(
     )
     .option("-w, --project <project>", "project id or name")
     .option("--kind <kind>", "with document paths: only this kind")
-    .option("--older-than <duration>", "drop entries older than this, e.g. 30d")
+    .option(
+      "--older-than <duration>",
+      "drop agent and project log entries older than this, e.g. 30d",
+    )
     .option("--archived", "drop the archived history of edit histories")
     .option("--dry-run", "only show what would be trimmed")
     .action(
@@ -358,7 +376,7 @@ export function registerProjectEditHistoryCommands(
     .option("-w, --project <project>", "project id or name")
     .option(
       "--deleted-documents",
-      "delete the history of documents that no longer exist",
+      "delete the history of documents that no longer exist (if they still don't when it runs)",
     )
     .option(
       "--older-than <duration>",

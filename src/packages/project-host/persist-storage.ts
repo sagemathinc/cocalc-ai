@@ -29,6 +29,8 @@ import { pstream } from "@cocalc/backend/conat/persist";
 import { projectPersistTemplates } from "@cocalc/backend/conat/persist-volume-template";
 import {
   MAX_PERSIST_STORAGE_ACTIONS,
+  RETENTION_POLICY_KINDS,
+  retentionPolicyApplies,
   type PersistStorageAction,
   type PersistStorageActionResult,
   type PersistStorageApplyResult,
@@ -368,6 +370,66 @@ function lastSeqBefore(path: string, before: number): number | undefined {
   }
 }
 
+// Keeps only what the action's policy keeps of the stream at `path` (closed
+// and fenced); the number of entries removed.
+async function trim(
+  ctx: Context,
+  path: string,
+  action: Extract<PersistStorageAction, { op: "trim" }>,
+  env: NodeJS.ProcessEnv,
+): Promise<number> {
+  const { policy } = action;
+  const { kind } = classify(action.name);
+  if (policy == null || RETENTION_POLICY_KINDS[policy.kind] == null) {
+    throw new Error(`trim: unknown policy: ${(policy as any)?.kind}`);
+  }
+  if (!retentionPolicyApplies(policy, kind)) {
+    throw new Error(
+      `trim: "${policy.kind}" applies to ${RETENTION_POLICY_KINDS[policy.kind].join(" and ")} streams, not ${kind}`,
+    );
+  }
+  if (policy.kind == "since" && !Number.isFinite(policy.since)) {
+    throw new Error("trim: since must be a time in ms");
+  }
+  const cutoff =
+    policy.kind == "since" ? lastSeqBefore(path, policy.since) : undefined;
+  const archive = streamCopy(
+    "COCALC_SYNC_ARCHIVE",
+    ctx.project_id,
+    action.name,
+    env,
+  );
+  const backup = streamCopy(
+    "COCALC_SYNC_BACKUP",
+    ctx.project_id,
+    action.name,
+    env,
+  );
+  // (closing writes the trimmed stream to its copies)
+  const stream = pstream({
+    path,
+    ...(archive ? { archive } : {}),
+    ...(backup ? { backup } : {}),
+    noCache: true,
+  });
+  let removed = 0;
+  try {
+    if (cutoff != null) {
+      removed += stream.delete({ last_seq: cutoff }).seqs.length;
+    }
+    if (policy.kind == "without-archived") {
+      for (let i = 0; i < MAX_ARCHIVE_PURGE_STEPS; i++) {
+        const step = stream.purgeArchivedHistory();
+        removed += step.records;
+        if (step.done) break;
+      }
+    }
+  } finally {
+    stream.close();
+  }
+  return removed;
+}
+
 async function apply(
   ctx: Context,
   action: PersistStorageAction,
@@ -383,6 +445,21 @@ async function apply(
     const path = await streamPath(ctx.root, action?.name);
     const before = await sizeOnDisk(path);
     if (action.op == "delete") {
+      if (action.ifDocumentMissing) {
+        // checked again now, with the project's streams fenced: listed as
+        // gone, it may have been created again since
+        const { document } = classify(action.name);
+        const exists =
+          document == null ? undefined : await existsInHome(ctx.home, document);
+        if (exists !== false) {
+          result.ok = true;
+          result.skipped =
+            exists === true
+              ? "its document exists again"
+              : "whether its document exists can't be told";
+          return result;
+        }
+      }
       await removeDatabase(path);
       await removeEmptyParents(ctx.root, path);
       for (const kind of [
@@ -393,60 +470,8 @@ async function apply(
         if (copy) await removeDatabase(copy);
       }
     } else if (action.op == "trim") {
-      const { kind } = classify(action.name);
-      if (action.before != null) {
-        if (!Number.isFinite(action.before)) {
-          throw new Error("trim: before must be a time in ms");
-        }
-        if (kind == "edit-history") {
-          // a document's history starts at a snapshot (TimeTravel): purge or
-          // drop the archived history instead
-          throw new Error(
-            "trim: an edit history can't be cut by time; delete it, or trim its archived history",
-          );
-        }
-      }
-      if (action.before == null && !action.archived) {
-        throw new Error("trim: say what to remove (before, or archived)");
-      }
-      const cutoff =
-        action.before == null ? undefined : lastSeqBefore(path, action.before);
-      const archive = streamCopy(
-        "COCALC_SYNC_ARCHIVE",
-        ctx.project_id,
-        action.name,
-        env,
-      );
-      const backup = streamCopy(
-        "COCALC_SYNC_BACKUP",
-        ctx.project_id,
-        action.name,
-        env,
-      );
-      // (closing writes the trimmed stream to its copies)
-      const stream = pstream({
-        path,
-        ...(archive ? { archive } : {}),
-        ...(backup ? { backup } : {}),
-        noCache: true,
-      });
-      let removed = 0;
-      try {
-        if (cutoff != null) {
-          removed += stream.delete({ last_seq: cutoff }).seqs.length;
-        }
-        if (action.archived && kind == "edit-history") {
-          for (let i = 0; i < MAX_ARCHIVE_PURGE_STEPS; i++) {
-            const step = stream.purgeArchivedHistory();
-            removed += step.records;
-            if (step.done) break;
-          }
-        }
-      } finally {
-        stream.close();
-      }
+      result.removed = await trim(ctx, path, action, env);
       compact(path);
-      result.removed = removed;
     } else {
       throw new Error(`unknown operation: ${(action as any)?.op}`);
     }

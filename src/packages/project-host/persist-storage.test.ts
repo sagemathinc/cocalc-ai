@@ -271,7 +271,7 @@ describe("applyPersistStorage", () => {
         {
           op: "trim",
           name: "acp-log/home/user/x.chat",
-          before: Date.now() - 30 * DAY,
+          policy: { kind: "since", since: Date.now() - 30 * DAY },
         },
       ],
       env,
@@ -279,6 +279,94 @@ describe("applyPersistStorage", () => {
     expect(results[0]).toMatchObject({ ok: true, removed: 30 });
     expect(count(path)).toBe(10);
     expect(freed).toBeGreaterThan(20 * 16384);
+  });
+
+  it("trims by time only the logs, on the host too", async () => {
+    await makeStream("patchflow/home/user/a.md", { n: 5, old: 5 });
+    await makeStream("jupyter/home/user/n.ipynb", { n: 5, old: 5 });
+    await makeStream("other/x", { n: 5, old: 5 });
+    const { results } = await applyPersistStorage({
+      project_id: PROJECT,
+      actions: [
+        "patchflow/home/user/a.md",
+        "jupyter/home/user/n.ipynb",
+        "other/x",
+      ].map((name) => ({
+        op: "trim" as const,
+        name,
+        policy: { kind: "since" as const, since: Date.now() },
+      })),
+      env,
+    });
+    expect(results.map((r) => r.ok)).toEqual([false, false, false]);
+    expect(results[0].error).toMatch(
+      /"since" applies to agent-log and project streams, not edit-history/,
+    );
+    for (const name of [
+      "patchflow/home/user/a.md",
+      "jupyter/home/user/n.ipynb",
+      "other/x",
+    ]) {
+      expect(count(join(root, name))).toBe(5);
+    }
+    const unknown = await applyPersistStorage({
+      project_id: PROJECT,
+      actions: [
+        {
+          op: "trim",
+          name: "patchflow/home/user/a.md",
+          policy: { kind: "tiered" } as any,
+        },
+        { op: "trim", name: "patchflow/home/user/a.md" } as any,
+      ],
+      env,
+    });
+    expect(unknown.results.map((r) => r.error)).toEqual([
+      expect.stringMatching(/unknown policy: tiered/),
+      expect.stringMatching(/unknown policy/),
+    ]);
+  });
+
+  it("deletes a deleted document's history only if it is still gone", async () => {
+    const gone = await makeStream("patchflow/home/user/gone.md");
+    const back = await makeStream("patchflow/home/user/back.md");
+    const linked = await makeStream("patchflow/home/user/link/x.md");
+    await mkdir(join(mount, "outside"));
+    await symlink(join(mount, "outside"), join(home, "link"));
+    const { withProjectPersistFenced } = require("./persist-fence");
+    (withProjectPersistFenced as jest.Mock).mockImplementationOnce(
+      async (_opts, fn) => {
+        // made again after the list, before the fence was held
+        await writeFile(join(home, "back.md"), "again");
+        return await fn();
+      },
+    );
+    const { results } = await applyPersistStorage({
+      project_id: PROJECT,
+      actions: [gone, back, linked].map((path) => ({
+        op: "delete" as const,
+        name: path.slice(root.length + 1),
+        ifDocumentMissing: true,
+      })),
+      env,
+    });
+    expect(results).toEqual([
+      expect.objectContaining({ ok: true }),
+      expect.objectContaining({
+        ok: true,
+        freed: 0,
+        skipped: "its document exists again",
+      }),
+      expect.objectContaining({
+        ok: true,
+        freed: 0,
+        skipped: "whether its document exists can't be told",
+      }),
+    ]);
+    expect(results[0].skipped).toBeUndefined();
+    expect(existsSync(`${gone}.db`)).toBe(false);
+    expect(existsSync(`${back}.db`)).toBe(true);
+    expect(existsSync(`${linked}.db`)).toBe(true);
   });
 
   it("drops a document's archived history, never cuts its history by time", async () => {
@@ -297,18 +385,26 @@ describe("applyPersistStorage", () => {
     const refused = await applyPersistStorage({
       project_id: PROJECT,
       actions: [
-        { op: "trim", name: "patchflow/home/user/a.md", before: Date.now() },
+        {
+          op: "trim",
+          name: "patchflow/home/user/a.md",
+          policy: { kind: "since", since: Date.now() },
+        },
       ],
       env,
     });
     expect(refused.results[0]).toMatchObject({
       ok: false,
-      error: expect.stringMatching(/can't be cut by time/),
+      error: expect.stringMatching(/applies to agent-log and project streams/),
     });
     const { results } = await applyPersistStorage({
       project_id: PROJECT,
       actions: [
-        { op: "trim", name: "patchflow/home/user/a.md", archived: true },
+        {
+          op: "trim",
+          name: "patchflow/home/user/a.md",
+          policy: { kind: "without-archived" },
+        },
       ],
       env,
     });

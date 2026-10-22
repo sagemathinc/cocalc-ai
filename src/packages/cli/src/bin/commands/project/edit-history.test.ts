@@ -39,7 +39,17 @@ const streams = [
     document_exists: true,
   }),
   stream({ name: "project-log", kind: "project" }),
+  stream({
+    name: "jupyter/home/user/n.ipynb",
+    kind: "notebook",
+    document: "/home/user/n.ipynb",
+    document_exists: true,
+  }),
+  stream({ name: "other/x", kind: "other" }),
 ];
+
+const since = { kind: "since", since: 1000 } as const;
+const withoutArchived = { kind: "without-archived" } as const;
 
 test("selectStreams takes stream names, or every stream of a document", () => {
   assert.deepEqual(
@@ -70,34 +80,48 @@ test("cleanupActions deletes the history of deleted documents and trims old logs
   assert.deepEqual(
     cleanupActions({ streams, deletedDocuments: true, before: 1000 }),
     [
-      { op: "delete", name: "patchflow/home/user/gone.md" },
-      { op: "trim", name: "acp-log/home/user/a.chat", before: 1000 },
-      { op: "trim", name: "project-log", before: 1000 },
+      // only if it is still gone when it runs
+      {
+        op: "delete",
+        name: "patchflow/home/user/gone.md",
+        ifDocumentMissing: true,
+      },
+      // by time: only logs, never a notebook or another stream
+      { op: "trim", name: "acp-log/home/user/a.chat", policy: since },
+      { op: "trim", name: "project-log", policy: since },
     ],
   );
 });
 
 test("cleanupActions drops archived history of every document", () => {
   assert.deepEqual(cleanupActions({ streams, archived: true }), [
-    { op: "trim", name: "patchflow/home/user/a.md", archived: true },
-    { op: "trim", name: "patchflow/home/user/gone.md", archived: true },
-    { op: "trim", name: "patchflow/home/user/a.chat", archived: true },
+    { op: "trim", name: "patchflow/home/user/a.md", policy: withoutArchived },
+    {
+      op: "trim",
+      name: "patchflow/home/user/gone.md",
+      policy: withoutArchived,
+    },
+    { op: "trim", name: "patchflow/home/user/a.chat", policy: withoutArchived },
   ]);
 });
 
 test("trimActions applies each flag only where it means something", () => {
   const chat = selectStreams({ streams, targets: ["/home/user/a.chat"] });
   assert.deepEqual(trimActions({ selected: chat, before: 1000 }), [
-    { op: "trim", name: "acp-log/home/user/a.chat", before: 1000 },
+    { op: "trim", name: "acp-log/home/user/a.chat", policy: since },
   ]);
   assert.deepEqual(trimActions({ selected: chat, archived: true }), [
-    { op: "trim", name: "patchflow/home/user/a.chat", archived: true },
+    { op: "trim", name: "patchflow/home/user/a.chat", policy: withoutArchived },
   ]);
   assert.deepEqual(
     trimActions({ selected: chat, before: 1000, archived: true }),
     [
-      { op: "trim", name: "acp-log/home/user/a.chat", before: 1000 },
-      { op: "trim", name: "patchflow/home/user/a.chat", archived: true },
+      { op: "trim", name: "acp-log/home/user/a.chat", policy: since },
+      {
+        op: "trim",
+        name: "patchflow/home/user/a.chat",
+        policy: withoutArchived,
+      },
     ],
   );
 });
@@ -106,8 +130,15 @@ test("trimActions refuses when nothing selected can be trimmed that way", () => 
   const md = selectStreams({ streams, targets: ["/home/user/a.md"] });
   assert.throws(
     () => trimActions({ selected: md, before: 1000 }),
-    /--older-than applies to logs/,
+    /--older-than applies to agent and project logs/,
   );
+  for (const target of ["/home/user/n.ipynb", "other/x"]) {
+    const selected = selectStreams({ streams, targets: [target] });
+    assert.throws(
+      () => trimActions({ selected, before: 1000 }),
+      /--older-than applies to agent and project logs/,
+    );
+  }
   const log = selectStreams({ streams, targets: ["project-log"] });
   assert.throws(
     () => trimActions({ selected: log, archived: true }),

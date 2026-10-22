@@ -20,6 +20,7 @@ import {
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
 import { assertCollab } from "./util";
+import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
 import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
 
 const ACTION = "delete or trim edit history and logs";
@@ -31,26 +32,32 @@ function validActions(actions: unknown): PersistStorageAction[] {
   if (actions.length > MAX_PERSIST_STORAGE_ACTIONS) {
     throw new Error(`at most ${MAX_PERSIST_STORAGE_ACTIONS} actions at once`);
   }
-  return actions.map((action) => {
+  return actions.map((action): PersistStorageAction => {
     const { op, name } = action ?? {};
     if (typeof name !== "string" || !name) {
       throw new Error("each action needs the name of a stream");
     }
-    if (op === "delete") return { op, name };
-    if (op === "trim") {
-      const { before, archived } = action;
-      if (before != null && !Number.isFinite(before)) {
-        throw new Error("trim: before must be a time in ms");
-      }
-      if (archived != null && typeof archived !== "boolean") {
-        throw new Error("trim: archived must be a boolean");
-      }
+    if (op === "delete") {
       return {
         op,
         name,
-        ...(before != null ? { before } : {}),
-        ...(archived ? { archived } : {}),
+        ...(action.ifDocumentMissing === true
+          ? { ifDocumentMissing: true }
+          : {}),
       };
+    }
+    if (op === "trim") {
+      const policy = action.policy;
+      if (policy?.kind === "since") {
+        if (!Number.isFinite(policy.since)) {
+          throw new Error("trim: since must be a time in ms");
+        }
+        return { op, name, policy: { kind: "since", since: policy.since } };
+      }
+      if (policy?.kind === "without-archived") {
+        return { op, name, policy: { kind: "without-archived" } };
+      }
+      throw new Error(`trim: unknown policy: ${policy?.kind}`);
     }
     throw new Error(`unknown operation: ${op}`);
   });
@@ -68,15 +75,6 @@ export async function listProjectPersistStorage({
   timeout?: number;
 }): Promise<PersistStorageList> {
   await assertCollab({ account_id, project_id });
-  const client = await getProjectFileServerClient({
-    project_id,
-    account_id,
-    timeout,
-  });
-  const list = await client.persistStorageList({
-    project_id,
-    ...(limit != null ? { limit } : {}),
-  });
   let can_manage = false;
   try {
     await assertCanPerformDestructiveStorageAction({
@@ -86,6 +84,25 @@ export async function listProjectPersistStorage({
     });
     can_manage = true;
   } catch {}
+  if (isWorkspaceProjectRuntime()) {
+    // a trusted workspace keeps its history with its files
+    return {
+      supported: false,
+      streams: [],
+      total: { count: 0, bytes: 0 },
+      by_kind: {},
+      can_manage,
+    };
+  }
+  const client = await getProjectFileServerClient({
+    project_id,
+    account_id,
+    timeout,
+  });
+  const list = await client.persistStorageList({
+    project_id,
+    ...(limit != null ? { limit } : {}),
+  });
   return { ...list, can_manage };
 }
 
@@ -116,6 +133,11 @@ export async function applyProjectPersistStorage({
     action: ACTION,
   });
   if (valid.length === 0) return { results: [], freed: 0 };
+  if (isWorkspaceProjectRuntime()) {
+    throw new Error(
+      "a trusted workspace keeps its edit history with its files; manage it there",
+    );
+  }
   const client = await getProjectFileServerClient({
     project_id,
     account_id,

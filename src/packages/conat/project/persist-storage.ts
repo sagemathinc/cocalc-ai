@@ -58,12 +58,43 @@ export interface PersistStorageList {
   can_manage?: boolean;
 }
 
+// What to keep of a stream when trimming it.  TimeTravel is revision control
+// for some documents and disaster recovery for others (a chat's newest version
+// already holds nearly all of it), so there are several; each applies to some
+// kinds of streams (RETENTION_POLICY_KINDS).  Compactions of an edit history
+// that keep its whole span at a lower resolution (uniform, tiered, latest
+// only; patchflow) are to come as more kinds.
+export type PersistRetentionPolicy =
+  // entries written at or after `since` (ms): logs
+  | { kind: "since"; since: number }
+  // a document's edit history without its archived history (kept by earlier
+  // resets of it, H1b)
+  | { kind: "without-archived" };
+
+export type PersistRetentionPolicyKind = PersistRetentionPolicy["kind"];
+
+export const RETENTION_POLICY_KINDS: Record<
+  PersistRetentionPolicyKind,
+  readonly PersistStreamKind[]
+> = {
+  since: ["agent-log", "project"],
+  "without-archived": ["edit-history"],
+};
+
+export function retentionPolicyApplies(
+  policy: Pick<PersistRetentionPolicy, "kind">,
+  kind: PersistStreamKind,
+): boolean {
+  return RETENTION_POLICY_KINDS[policy.kind]?.includes(kind) ?? false;
+}
+
 export type PersistStorageAction =
-  // the whole stream, e.g., the history of a deleted document
-  | { op: "delete"; name: string }
-  // keep what's recent: entries written before `before` (ms) and, for edit
-  // history, the archived history (H1b) are removed
-  | { op: "trim"; name: string; before?: number; archived?: boolean };
+  // the whole stream; with ifDocumentMissing, only if its document still
+  // doesn't exist when it is deleted (e.g., the history of a deleted file,
+  // which may have been created again since it was listed)
+  | { op: "delete"; name: string; ifDocumentMissing?: boolean }
+  // keep only what `policy` keeps
+  | { op: "trim"; name: string; policy: PersistRetentionPolicy };
 
 export interface PersistStorageActionResult {
   name: string;
@@ -73,6 +104,8 @@ export interface PersistStorageActionResult {
   freed: number;
   // entries removed (trim)
   removed?: number;
+  // left as it was, and why (e.g., its document exists again)
+  skipped?: string;
   error?: string;
 }
 

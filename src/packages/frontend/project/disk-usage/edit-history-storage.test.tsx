@@ -108,7 +108,7 @@ describe("EditHistoryStorage", () => {
           {
             op: "trim",
             name: "acp-log/home/user/a.chat",
-            before: expect.any(Number),
+            policy: { kind: "since", since: expect.any(Number) },
           },
         ],
         // compacting a large log takes a while
@@ -120,19 +120,56 @@ describe("EditHistoryStorage", () => {
 
   it("cleans up the history of deleted files and old logs", async () => {
     listProjectPersistStorage.mockResolvedValue(listing(true));
+    applyProjectPersistStorage.mockResolvedValue({
+      freed: 5 * MiB,
+      results: [
+        {
+          name: "patchflow/home/user/gone.md",
+          op: "delete",
+          ok: true,
+          freed: 0,
+          skipped: "its document exists again",
+        },
+        {
+          name: "acp-log/home/user/a.chat",
+          op: "trim",
+          ok: true,
+          freed: 5 * MiB,
+        },
+      ],
+    });
     render(<EditHistoryStorage project_id={PROJECT} />);
     await screen.findByText("/home/user/a.chat");
     fireEvent.click(screen.getByText("Clean up…"));
     fireEvent.click(await screen.findByRole("button", { name: "Clean up" }));
     await waitFor(() => expect(applyProjectPersistStorage).toHaveBeenCalled());
     expect(applyProjectPersistStorage.mock.calls[0][0].actions).toEqual([
-      { op: "delete", name: "patchflow/home/user/gone.md" },
+      // only if it is still gone when it runs
+      {
+        op: "delete",
+        name: "patchflow/home/user/gone.md",
+        ifDocumentMissing: true,
+      },
       {
         op: "trim",
         name: "acp-log/home/user/a.chat",
-        before: expect.any(Number),
+        policy: { kind: "since", since: expect.any(Number) },
       },
     ]);
+    expect(
+      await screen.findByText(
+        /Kept 1: patchflow\/home\/user\/gone.md \(its document exists again\)/,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("offers the trim that applies to each kind of stream", async () => {
+    listProjectPersistStorage.mockResolvedValue(listing(true));
+    render(<EditHistoryStorage project_id={PROJECT} />);
+    await screen.findByText("/home/user/a.chat");
+    // the edit histories: their archived history, never by time
+    expect(screen.getAllByText("Drop archived history")).toHaveLength(2);
+    expect(screen.getAllByText("Keep last 30 days")).toHaveLength(1);
   });
 
   it("lets only those who may manage it delete or trim", async () => {

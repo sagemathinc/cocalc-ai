@@ -32,6 +32,8 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   applyPersistStorageInChunks,
   PERSIST_STORAGE_APPLY_TIMEOUT_MS,
+  retentionPolicyApplies,
+  type PersistRetentionPolicy,
   type PersistStorageAction,
   type PersistStorageList,
   type PersistStreamInfo,
@@ -65,17 +67,29 @@ const KIND_LOSS: Record<PersistStreamKind, string> = {
   other: "its data",
 };
 
+// The retention policy a row's Trim applies, and its label; undefined if none
+// applies to the stream's kind.
+function trimPolicy(
+  stream: PersistStreamInfo,
+): { policy: PersistRetentionPolicy; label: string } | undefined {
+  const options: { policy: PersistRetentionPolicy; label: string }[] = [
+    {
+      policy: { kind: "since", since: Date.now() - LOG_DAYS * DAY },
+      label: `Keep last ${LOG_DAYS} days`,
+    },
+    { policy: { kind: "without-archived" }, label: "Drop archived history" },
+  ];
+  return options.find(({ policy }) =>
+    retentionPolicyApplies(policy, stream.kind),
+  );
+}
+
 function canTrim(stream: PersistStreamInfo): string | undefined {
-  if (stream.kind === "edit-history") return "Drop archived history";
-  if (stream.kind === "agent-log" || stream.kind === "project") {
-    return `Keep last ${LOG_DAYS} days`;
-  }
+  return trimPolicy(stream)?.label;
 }
 
 function trimAction(stream: PersistStreamInfo): PersistStorageAction {
-  return stream.kind === "edit-history"
-    ? { op: "trim", name: stream.name, archived: true }
-    : { op: "trim", name: stream.name, before: Date.now() - LOG_DAYS * DAY };
+  return { op: "trim", name: stream.name, policy: trimPolicy(stream)!.policy };
 }
 
 export default function EditHistoryStorage({
@@ -139,8 +153,15 @@ export default function EditHistoryStorage({
               ),
           );
           const failed = result.results.filter((r) => !r.ok);
+          const kept = result.results.filter((r) => r.ok && r.skipped);
           setNotice(
             `Freed ${human_readable_size(result.freed)}.` +
+              (kept.length
+                ? ` Kept ${kept.length}: ${kept
+                    .slice(0, 3)
+                    .map((r) => `${r.name} (${r.skipped})`)
+                    .join("; ")}.`
+                : "") +
               (failed.length
                 ? ` ${failed.length} failed: ${failed
                     .slice(0, 3)
@@ -185,11 +206,13 @@ export default function EditHistoryStorage({
     const deleted = streams.filter((s) => s.document_exists === false);
     const logs = streams.filter(
       (s) =>
-        (s.kind === "agent-log" || s.kind === "project") &&
+        retentionPolicyApplies({ kind: "since" }, s.kind) &&
         s.document_exists !== false,
     );
     const archived = streams.filter(
-      (s) => s.kind === "edit-history" && s.document_exists !== false,
+      (s) =>
+        retentionPolicyApplies({ kind: "without-archived" }, s.kind) &&
+        s.document_exists !== false,
     );
     const sum = (x: PersistStreamInfo[]) =>
       x.reduce((total, s) => total + s.bytes, 0);
@@ -205,8 +228,10 @@ export default function EditHistoryStorage({
   const runCleanup = async () => {
     const actions: PersistStorageAction[] = [];
     if (cleanup.deleted) {
-      for (const s of plan.deleted)
-        actions.push({ op: "delete", name: s.name });
+      // (only if they are still gone when it runs)
+      for (const s of plan.deleted) {
+        actions.push({ op: "delete", name: s.name, ifDocumentMissing: true });
+      }
     }
     if (cleanup.logs) {
       for (const s of plan.logs) actions.push(trimAction(s));
