@@ -93,6 +93,15 @@ jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountById: (id: string) => mockClusterAccount(id),
 }));
 const suppressionRows: Array<{ reason: string }> = [];
+let suppressionError: Error | undefined;
+const mockBayOpsCrm = jest.fn();
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  getInterBayBridge: () => ({
+    bayOps: (bay: string) => ({
+      crm: (opts: any) => mockBayOpsCrm(bay, opts),
+    }),
+  }),
+}));
 
 const mockCentralLog = jest.mocked(centralLog);
 const mockGetPool = jest.mocked(getPool);
@@ -158,6 +167,7 @@ const poolQuery = jest.fn(async (sql: string, params: any[] = []) => {
     return { rows: [] };
   }
   if (sql.includes("FROM crm_contact_suppressions")) {
+    if (suppressionError) throw suppressionError;
     return { rows: suppressionRows };
   }
   throw new Error(`unexpected test SQL: ${sql}`);
@@ -1403,6 +1413,8 @@ describe("admin support API", () => {
 
     beforeEach(() => {
       suppressionRows.length = 0;
+      suppressionError = undefined;
+      mockBayId.mockReturnValue("bay-0");
       mockOutreachConfig.mockResolvedValue({
         submitter_id: "4001",
         group_id: "5002",
@@ -1561,6 +1573,109 @@ describe("admin support API", () => {
       expect(plan.warnings).toEqual([
         expect.stringContaining("opted out of customer outreach"),
       ]);
+    });
+
+    it("refuses to plan or send when suppressions cannot be read", async () => {
+      zendesk();
+      suppressionError = new Error("relation does not exist");
+      await expect(planCreate(base)).rejects.toThrow("relation does not exist");
+    });
+
+    it("checks suppressions on the CRM person, email and organization too", async () => {
+      zendesk();
+      await planCreate(base);
+      const sql = poolQuery.mock.calls
+        .map(([q]) => `${q}`)
+        .find((q) => q.includes("FROM crm_contact_suppressions"))!;
+      expect(sql).toContain("crm_person_emails");
+      expect(sql).toContain("scope='person'");
+      expect(sql).toContain("scope='organization'");
+      expect(sql).toContain("person_email_id");
+    });
+
+    it("forces a new review when an opt-out appears after planning", async () => {
+      const { tickets } = zendesk();
+      const plan = await planCreate(base);
+      suppressionRows.push({ reason: "opt_out" });
+      await expect(
+        create({
+          ...base,
+          payload_hash: plan.payload_hash,
+          idempotency_key: "support-create-key-4",
+        }),
+      ).rejects.toThrow("no longer matches the reviewed plan");
+      expect(tickets.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses to recover when several tickets share the external id", async () => {
+      const { search } = zendesk({
+        create: jest.fn(async () => {
+          throw new Error("socket hang up");
+        }),
+      });
+      const plan = await planCreate(base);
+      const request = {
+        ...base,
+        payload_hash: plan.payload_hash,
+        idempotency_key: "support-create-key-1",
+      };
+      await expect(create(request)).rejects.toThrow("socket hang up");
+      search.get.mockResolvedValue({
+        result: [created, { ...created, id: 778 }],
+      });
+      await expect(create(request)).rejects.toThrow("multiple Zendesk tickets");
+    });
+
+    it("records a missing Zendesk configuration as rejected, not as possibly sent", async () => {
+      mockGetZendeskClient.mockRejectedValue(
+        new Error(
+          "Support not available -- admin must configure the Zendesk token",
+        ),
+      );
+      const plan = await planCreate(base);
+      await expect(
+        create({
+          ...base,
+          payload_hash: plan.payload_hash,
+          idempotency_key: "support-create-key-5",
+        }),
+      ).rejects.toThrow("must configure the Zendesk token");
+      expect(mutationRows.get("support-create-key-5")?.status).toBe("rejected");
+    });
+
+    it("checks auth on the receiving bay, then runs the workflow on the seed", async () => {
+      const { tickets } = zendesk();
+      mockBayId.mockReturnValue("bay-1");
+      mockBayOpsCrm.mockResolvedValue({ operation: "create", commit: false });
+      await planCreate(base);
+      await create({
+        ...base,
+        payload_hash: "h",
+        idempotency_key: "support-create-key-6",
+      });
+      expect(mockRequireDangerousSessionAuth).toHaveBeenCalledTimes(1);
+      expect(mockBayOpsCrm).toHaveBeenNthCalledWith(1, "bay-0", {
+        action: "supportPlanCreate",
+        actor_account_id: ADMIN,
+        payload: expect.not.objectContaining({
+          session_hash: expect.anything(),
+        }),
+      });
+      expect(mockBayOpsCrm).toHaveBeenNthCalledWith(2, "bay-0", {
+        action: "supportCreate",
+        actor_account_id: ADMIN,
+        payload: expect.objectContaining({
+          idempotency_key: "support-create-key-6",
+          payload_hash: "h",
+        }),
+      });
+      expect(mockBayOpsCrm.mock.calls[1][1].payload).not.toHaveProperty(
+        "session_hash",
+      );
+      // Nothing touched the local ledger or Zendesk.
+      expect(mutationRows.size).toBe(0);
+      expect(tickets.create).not.toHaveBeenCalled();
+      expect(mockOutreachConfig).not.toHaveBeenCalled();
     });
 
     it("validates the requester, subject, body and configuration", async () => {

@@ -68,6 +68,9 @@ export function crmActionCapabilities(
   action: string,
   request: Record<string, unknown> = {},
 ): CrmCapability[] {
+  // Outgoing support tickets (admin support create) only use the CRM seed
+  // channel; they do not depend on the CRM feature flags.
+  if (action === "supportPlanCreate" || action === "supportCreate") return [];
   if (action === "exportData") return ["visible", "export"];
   if (action === "backfill") return ["visible", "backfill"];
   if (action === "getCustomerMetrics") return ["visible", "metrics"];

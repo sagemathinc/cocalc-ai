@@ -3447,23 +3447,31 @@ async function resolveRequester(opts: AdminSupportCreatePlanRequest): Promise<{
   };
 }
 
+// Every active suppression that applies to this address: the email and its
+// domain, and any CRM person, person email or organization it belongs to (the
+// same scopes outreach honors). A read failure is an error, never "no
+// suppressions".
 async function suppressionsFor(email: string): Promise<string[]> {
   const domain = email.split("@")[1];
-  try {
-    const { rows } = await getPool().query(
-      `SELECT reason FROM crm_contact_suppressions
-        WHERE active
-          AND ((scope='email' AND normalized_scope_value=$1)
-            OR (scope='domain' AND normalized_scope_value=$2))`,
-      [email, domain],
-    );
-    return rows.map((row) => `${row.reason}`);
-  } catch (error) {
-    // The CRM tables exist wherever outreach is configured; without them
-    // there is nothing to check.
-    logger.warn("could not read contact suppressions", { error });
-    return [];
-  }
+  const { rows } = await getPool().query(
+    `WITH emails AS (
+       SELECT id, person_id FROM crm_person_emails WHERE normalized_email=$1
+     ), orgs AS (
+       SELECT organization_id FROM crm_organization_people
+        WHERE person_id IN (SELECT person_id FROM emails)
+     )
+     SELECT DISTINCT reason FROM crm_contact_suppressions
+      WHERE active AND (
+        (scope='email' AND normalized_scope_value=$1)
+        OR (scope='domain' AND normalized_scope_value=$2)
+        OR (scope='person' AND person_id IN (SELECT person_id FROM emails))
+        OR (scope='organization'
+            AND organization_id IN (SELECT organization_id FROM orgs))
+        OR person_email_id IN (SELECT id FROM emails))
+      ORDER BY reason`,
+    [email, domain],
+  );
+  return rows.map((row) => `${row.reason}`);
 }
 
 function createPayloadHash(plan: {
@@ -3472,6 +3480,8 @@ function createPayloadHash(plan: {
   body: string;
   status: string;
   tags: string[];
+  // What the operator was warned about; a new warning forces a new review.
+  warnings: string[];
 }): string {
   return payloadHash({
     operation: "create",
@@ -3482,6 +3492,7 @@ function createPayloadHash(plan: {
     body_sha256: sha256(plan.body),
     status: plan.status,
     tags: plan.tags,
+    warnings: plan.warnings,
   });
 }
 
@@ -3519,16 +3530,48 @@ async function buildCreatePlan(opts: AdminSupportCreatePlanRequest): Promise<{
         `${requester.email} opted out of customer outreach; send only a necessary support or account message`,
       ]
     : [];
-  const plan = { requester, subject, body, status, tags };
-  return { ...plan, warnings, hash: createPayloadHash(plan) };
+  const plan = { requester, subject, body, status, tags, warnings };
+  return { ...plan, hash: createPayloadHash(plan) };
+}
+
+// Suppressions, site settings and the mutation ledger are seed-global, so the
+// whole workflow runs on the seed: the receiving bay checks admin (and fresh
+// auth for commits), then forwards over the CRM seed channel.
+async function onSeed<T>(
+  action: "supportPlanCreate" | "supportCreate",
+  accountId: string,
+  payload: Record<string, unknown>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const seed = getConfiguredClusterSeedBayId();
+  if (getConfiguredBayId() === seed) return await run();
+  const { getInterBayBridge } = await import("@cocalc/server/inter-bay/bridge");
+  const forwarded = { ...payload };
+  delete forwarded.account_id;
+  delete forwarded.browser_id;
+  delete forwarded.session_hash;
+  return (await getInterBayBridge()
+    .bayOps(seed, { timeout_ms: 120_000 })
+    .crm({ action, actor_account_id: accountId, payload: forwarded })) as T;
 }
 
 export async function planCreate(
   opts: AdminSupportCreatePlanRequest & AuthOpts,
 ): Promise<AdminSupportCreatePlanResponse> {
+  const accountId = await requireAdmin(opts);
+  requiredReason(opts.reason);
+  return await onSeed("supportPlanCreate", accountId, opts as any, () =>
+    planCreateOnSeed(opts, accountId),
+  );
+}
+
+// Seed side of planCreate; the caller has checked that accountId is an admin.
+export async function planCreateOnSeed(
+  opts: AdminSupportCreatePlanRequest,
+  accountId: string,
+): Promise<AdminSupportCreatePlanResponse> {
   const started = Date.now();
   const auditId = uuid();
-  const accountId = await requireAdmin(opts);
   const reason = requiredReason(opts.reason);
   try {
     // Fail early when outgoing tickets are not configured.
@@ -3585,15 +3628,32 @@ async function findCreatedTicket(
     () => searchTickets(`type:ticket external_id:${externalId}`),
     "Zendesk outgoing ticket lookup",
   );
-  return found.find((ticket) => ticket.external_id === externalId);
+  const exact = found.filter((ticket) => ticket.external_id === externalId);
+  if (exact.length > 1) {
+    throw new Error(
+      `multiple Zendesk tickets use external_id ${externalId}; resolve them in Zendesk`,
+    );
+  }
+  return exact[0];
 }
 
 export async function create(
   opts: AdminSupportCreateRequest & AuthOpts,
 ): Promise<AdminSupportCreateResponse> {
+  const accountId = await requireFreshAdmin(opts);
+  requiredReason(opts.reason);
+  return await onSeed("supportCreate", accountId, opts as any, () =>
+    createOnSeed(opts, accountId),
+  );
+}
+
+// Seed side of create; the caller has checked admin and fresh auth.
+export async function createOnSeed(
+  opts: AdminSupportCreateRequest,
+  accountId: string,
+): Promise<AdminSupportCreateResponse> {
   const started = Date.now();
   const auditId = uuid();
-  const accountId = await requireFreshAdmin(opts);
   const reason = requiredReason(opts.reason);
   const idempotencyKey = normalizedIdempotencyKey(opts.idempotency_key);
   const approvedHash = `${opts.payload_hash ?? ""}`.trim();
@@ -3728,9 +3788,10 @@ export async function create(
     };
     if (config.form_id) ticketPayload.ticket_form_id = config.form_id;
 
+    // A missing Zendesk configuration fails here, before anything is sent.
+    const client = await getZendeskClient();
     await setMutationStatus({ idempotencyKey, status: "remote_started" });
     remoteStarted = true;
-    const client = await getZendeskClient();
     const response = (await withTimeout(
       client.tickets.create({ ticket: ticketPayload } as CreateOrUpdateTicket),
       "Zendesk outgoing ticket creation",
