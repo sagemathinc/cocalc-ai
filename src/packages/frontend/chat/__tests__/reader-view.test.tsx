@@ -356,3 +356,12 @@ test("an agent message is shown as the log shows it: its From card", async () =>
     /```agent-message .*direction=incoming/,
   );
 });
+
+test("a read-only chat offers no replies from a selection, as in the log", async () => {
+  setup(thread, 4, { projectId: "project-1", path: "a.chat", readOnly: true });
+  await user().click(screen.getByText(/first question/));
+  for (const el of within(screen.getByRole("article")).getAllByTestId(
+    "contextual-reply",
+  ))
+    expect(el).toHaveAttribute("data-disabled", "true");
+});

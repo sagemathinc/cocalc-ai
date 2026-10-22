@@ -120,6 +120,7 @@ export function ChatReaderView({
   readStateVersion,
   projectId,
   path,
+  readOnly,
   fontSize,
   narrow,
   autoFocus,
@@ -133,6 +134,8 @@ export function ChatReaderView({
   readStateVersion?: number;
   projectId?: string;
   path?: string;
+  /** A read-only chat: no Reply or Quote, as in the log. */
+  readOnly?: boolean;
   fontSize?: number;
   /** Show the list or the open item, not both side by side. */
   narrow?: boolean;
@@ -594,7 +597,7 @@ export function ChatReaderView({
               actions={actions}
               projectId={projectId ?? ""}
               path={path ?? ""}
-              disabled={!projectId || !path || !value.trim()}
+              disabled={readOnly || !projectId || !path || !value.trim()}
               source={{
                 kind: "message",
                 id: readerMessageId(message),

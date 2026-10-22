@@ -3100,6 +3100,7 @@ export function ChatRoomThreadPanel({
             autoFocus={readerAutoFocus}
             projectId={project_id}
             path={path}
+            readOnly={readOnly}
           />
         ) : (
           <ChatLog
