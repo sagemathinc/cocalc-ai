@@ -81,8 +81,19 @@ export interface BillingExposureHealth {
   negative: BillingExposureNegativeBalances;
   postpaid_negative: BillingExposureNegativeBalances;
   open_metered: BillingExposureOpenMetered;
+  // At most HOSTS_LIMIT of each; the counts are the totals.
   stuck_hosts: BillingExposureStuckHost[];
   idle_hosts: BillingExposureIdleHost[];
+  stuck_hosts_count?: number;
+  idle_hosts_count?: number;
+}
+
+function stuckCount(health: BillingExposureHealth): number {
+  return health.stuck_hosts_count ?? health.stuck_hosts.length;
+}
+
+function idleCount(health: BillingExposureHealth): number {
+  return health.idle_hosts_count ?? health.idle_hosts.length;
 }
 
 export type BillingExposureHealthLevel = "healthy" | "warning" | "critical";
@@ -91,7 +102,7 @@ export function billingExposureHealthLevel(
   health: BillingExposureHealth,
 ): BillingExposureHealthLevel {
   if (
-    health.stuck_hosts.length > 0 ||
+    stuckCount(health) > 0 ||
     health.negative.total_usd > EXPOSURE_CRITICAL_USD
   ) {
     return "critical";
@@ -99,7 +110,7 @@ export function billingExposureHealthLevel(
   if (
     health.negative.count > 0 ||
     health.open_metered.count > 0 ||
-    health.idle_hosts.length > 0
+    idleCount(health) > 0
   ) {
     return "warning";
   }
@@ -128,14 +139,14 @@ export function billingExposureHealthSummary(
       `${plural(health.open_metered.count, "open metered purchase")} with a negative owner balance (${usd(health.open_metered.cost_per_hour_usd)}/hour)`,
     );
   }
-  if (health.stuck_hosts.length > 0) {
+  if (stuckCount(health) > 0) {
     parts.push(
-      `${plural(health.stuck_hosts.length, "billing-blocked host")} past deprovision without a successful final backup`,
+      `${plural(stuckCount(health), "billing-blocked host")} past deprovision without a successful final backup`,
     );
   }
-  if (health.idle_hosts.length > 0) {
+  if (idleCount(health) > 0) {
     parts.push(
-      `${plural(health.idle_hosts.length, "running dedicated host")} with no running project for ${IDLE_HOST_DAYS} days`,
+      `${plural(idleCount(health), "running dedicated host")} with no running project for ${IDLE_HOST_DAYS} days`,
     );
   }
   if (health.balances_checked_on_bay) {
@@ -354,8 +365,7 @@ async function getStuckHosts(
       deprovision_after: toIso(row.deprovision_after)!,
       final_backup_status: row.final_backup_status ?? null,
     }))
-    .sort((a, b) => a.deprovision_after.localeCompare(b.deprovision_after))
-    .slice(0, HOSTS_LIMIT);
+    .sort((a, b) => a.deprovision_after.localeCompare(b.deprovision_after));
 }
 
 async function getIdleHosts(
@@ -376,7 +386,9 @@ async function getIdleHosts(
                 BOOL_OR(collected_at >= NOW() - make_interval(hours => $2::int))
                   AS reported_recently
            FROM project_host_metrics_samples
+          -- Only samples that report a project count are evidence either way.
           WHERE host_id = h.id
+            AND running_project_count IS NOT NULL
        ) s ON TRUE
       WHERE h.deleted IS NULL
         AND COALESCE(NULLIF(BTRIM(h.bay_id), ''), $3) = $3
@@ -395,7 +407,6 @@ async function getIdleHosts(
   // maintenance decides; few running dedicated hosts are idle, so filter here.
   return rows
     .filter((row) => isBillableDedicatedHostCloud(row.cloud))
-    .slice(0, HOSTS_LIMIT)
     .map((row) => ({
       host_id: `${row.id}`,
       name: row.name ?? null,
@@ -458,10 +469,16 @@ export async function getBillingExposureHealth({
     const balances = local
       ? await getBalanceExposure(client)
       : { ...NO_BALANCE_EXPOSURE, balances_checked_on_bay: seed_bay_id };
-    const stuck_hosts = await getStuckHosts(client, bay_id, Date.now());
-    const idle_hosts = await getIdleHosts(client, bay_id);
+    const stuck = await getStuckHosts(client, bay_id, Date.now());
+    const idle = await getIdleHosts(client, bay_id);
     await client.query("COMMIT");
-    return { ...balances, stuck_hosts, idle_hosts };
+    return {
+      ...balances,
+      stuck_hosts: stuck.slice(0, HOSTS_LIMIT),
+      idle_hosts: idle.slice(0, HOSTS_LIMIT),
+      stuck_hosts_count: stuck.length,
+      idle_hosts_count: idle.length,
+    };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     throw err;

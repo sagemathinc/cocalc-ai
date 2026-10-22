@@ -96,6 +96,19 @@ describe("billing exposure levels", () => {
     ).toBe("warning");
   });
 
+  it("counts hosts beyond the listed ones", () => {
+    const health = {
+      ...clean,
+      stuck_hosts: [],
+      stuck_hosts_count: 25,
+      idle_hosts_count: 30,
+    };
+    expect(billingExposureHealthLevel(health)).toBe("critical");
+    expect(billingExposureHealthSummary(health)).toBe(
+      "25 billing-blocked hosts past deprovision without a successful final backup; 30 running dedicated hosts with no running project for 3 days.",
+    );
+  });
+
   it("never raises the level for post-paid accounts alone", () => {
     const health = {
       ...clean,
@@ -185,6 +198,7 @@ describe("getBillingExposureHealth", () => {
   const staleHost = uuid();
   const pooledHost = uuid();
   const selfHostedHost = uuid();
+  const uncountedHost = uuid();
   const siteHost = uuid();
   const rehomedStuckHost = uuid();
   const rehomedIdleHost = uuid();
@@ -246,7 +260,7 @@ describe("getBillingExposureHealth", () => {
     );
   }
 
-  async function samples(host_id: string, points: [number, number][]) {
+  async function samples(host_id: string, points: [number, number | null][]) {
     for (const [agoMs, running] of points) {
       await getPool().query(
         `INSERT INTO project_host_metrics_samples
@@ -411,6 +425,12 @@ describe("getBillingExposureHealth", () => {
       [3 * DAY - HOUR, 0],
       [2 * DAY, 0],
     ]);
+    // Samples without a project count say nothing about idleness.
+    await host(uncountedHost, "uncounted", {});
+    await samples(uncountedHost, [
+      [3 * DAY - HOUR, null],
+      [HOUR, null],
+    ]);
     // Customer-owned machines cost the site nothing.
     await host(selfHostedHost, "self-hosted", {
       metadata: { machine: { cloud: "self-host" } },
@@ -513,6 +533,8 @@ describe("getBillingExposureHealth", () => {
       [idleHost, legacyIdleHost].sort(),
     );
     expect(health.idle_hosts[0].last_busy_at).toBeNull();
+    expect(health.stuck_hosts_count).toBe(2);
+    expect(health.idle_hosts_count).toBe(2);
 
     expect(billingExposureHealthLevel(health)).toBe("critical");
     expect(billingExposureHealthSummary(health)).toBe(
