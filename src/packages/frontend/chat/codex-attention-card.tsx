@@ -407,7 +407,7 @@ function RuntimeCodexAttentionCard({
         restoreReceiptFocus.current = document.activeElement === focusedControl;
         updateDraft((current) => ({
           ...current,
-          submitted: { answers: decline ? {} : answers, declined: decline },
+          submitted: { answers: decline ? {} : submitted, declined: decline },
         }));
         takeActionResult(result.record);
       }

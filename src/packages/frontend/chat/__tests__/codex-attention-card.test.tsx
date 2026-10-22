@@ -1048,6 +1048,10 @@ describe("Codex question attention", () => {
         }),
       ),
     );
+    // The card shows what was sent, not the draft before it rendered.
+    expect(
+      await screen.findByRole("region", { name: "Response for Region" }),
+    ).toHaveTextContent("EU");
     view.unmount();
   });
 
