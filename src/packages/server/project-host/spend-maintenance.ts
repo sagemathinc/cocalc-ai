@@ -1432,18 +1432,19 @@ async function runPass(): Promise<void> {
     if (enforcement?.state === "stopped_billing_blocked") {
       // Billing enforcement stopped this host after a drain or a rescue drain.
       // Do not reprice it as running while its provider stop is pending, or if
-      // that stop failed; a rescue run is site-paid. If the stop failed, the
-      // deprovision deadlines still apply (deprovisioning deletes the VM too);
-      // until one is due, the stop is retried. A rescue is requested only once
-      // the host is off: a failed stop leaves status "error" whether or not
-      // the VM still runs, and starting a running VM restarts it or fails on
-      // some providers, which would lose the only rescue attempt.
+      // that stop failed; a rescue run is site-paid. The deprovision deadlines
+      // still apply, also to a stop that never finishes (deprovisioning
+      // deletes the VM too); until one is due, a failed stop is retried. A
+      // rescue is requested only once the host is off: a failed stop leaves
+      // status "error" whether or not the VM still runs, and starting a
+      // running VM restarts it or fails on some providers, which would lose
+      // the only rescue attempt.
       if (
-        status !== "stopping" &&
         !(await maybeProgressInactiveEnforcement({
           row,
           allowRescueRequest: false,
-        }))
+        })) &&
+        status !== "stopping"
       ) {
         await retryBillingEnforcementStop({ row, provider, enforcement });
       }

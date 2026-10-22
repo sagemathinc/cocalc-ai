@@ -1465,59 +1465,65 @@ describe("dedicated host spend maintenance", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("deletes the disk of a host whose stop keeps failing once the rescue fallback is due", async () => {
-    const now = Date.now();
-    queryMock = jest.fn(async (sql: string, params?: any[]) => {
-      if (sql.includes("pg_try_advisory_lock")) {
-        return { rows: [{ locked: true }] };
-      }
-      if (sql.includes("FROM project_hosts")) {
-        return {
-          rows: [
-            {
-              ...blockedHostRow({
-                final_backup_status: "failed",
-                stopped_at: new Date(now - 31 * 24 * 3600_000).toISOString(),
-                deprovision_after: new Date(now - 3600_000).toISOString(),
-                rescue_requested_at: new Date(
-                  now - 9 * 24 * 3600_000,
-                ).toISOString(),
-                final_backup_failed_at: new Date(
-                  now - 8 * 24 * 3600_000,
-                ).toISOString(),
-              }),
-              status: "error",
-            },
-          ],
-        };
-      }
-      if (
-        sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=(")
-      ) {
-        expect(params?.[1].billing.enforcement).toMatchObject({
-          state: "deprovision_pending",
-        });
-        return { rows: [], rowCount: 1 };
-      }
-      if (sql.includes("pg_advisory_unlock")) {
-        return { rows: [] };
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
+  it.each(["error", "stopping"])(
+    "deletes the disk of a host whose stop never completes (%s) once the rescue fallback is due",
+    async (status) => {
+      const now = Date.now();
+      queryMock = jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("pg_try_advisory_lock")) {
+          return { rows: [{ locked: true }] };
+        }
+        if (sql.includes("FROM project_hosts")) {
+          return {
+            rows: [
+              {
+                ...blockedHostRow({
+                  final_backup_status: "failed",
+                  stopped_at: new Date(now - 31 * 24 * 3600_000).toISOString(),
+                  deprovision_after: new Date(now - 3600_000).toISOString(),
+                  rescue_requested_at: new Date(
+                    now - 9 * 24 * 3600_000,
+                  ).toISOString(),
+                  final_backup_failed_at: new Date(
+                    now - 8 * 24 * 3600_000,
+                  ).toISOString(),
+                }),
+                status,
+              },
+            ],
+          };
+        }
+        if (
+          sql.includes("UPDATE project_hosts") &&
+          sql.includes("SET metadata=(")
+        ) {
+          expect(params?.[1].billing.enforcement).toMatchObject({
+            state: "deprovision_pending",
+          });
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes("pg_advisory_unlock")) {
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
 
-    const { runDedicatedHostSpendMaintenancePass } =
-      await import("./spend-maintenance");
-    await runDedicatedHostSpendMaintenancePass();
+      const { runDedicatedHostSpendMaintenancePass } =
+        await import("./spend-maintenance");
+      await runDedicatedHostSpendMaintenancePass();
 
-    expect(createLroMock).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "host-deprovision", scope_id: "host-1" }),
-    );
-    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
-    expect(
-      reconcileDedicatedHostPurchaseSessionForAccountMock,
-    ).not.toHaveBeenCalled();
-  });
+      expect(createLroMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "host-deprovision",
+          scope_id: "host-1",
+        }),
+      );
+      expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+      expect(
+        reconcileDedicatedHostPurchaseSessionForAccountMock,
+      ).not.toHaveBeenCalled();
+    },
+  );
 
   it("waits between stop retries of a billing-blocked host", async () => {
     queryMock = jest.fn(async (sql: string) => {
