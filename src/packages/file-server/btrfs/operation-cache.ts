@@ -27,8 +27,9 @@ type CacheEntry<T> = {
 
 const subvolumeShowCache = new Map<string, CacheEntry<BtrfsOutput>>();
 const subvolumeShowInflight = new Map<string, Promise<BtrfsOutput>>();
-// bumped when a key is invalidated: a read under way then is never stored
-const subvolumeShowGenerations = new Map<string, number>();
+// the read under way for each key, while it is: one invalidated (no longer
+// here when it completes) is never stored
+const subvolumeShowReads = new Map<string, object>();
 const DEFAULT_MUTATION_LOCK_WAIT_MS = 2 * 60_000;
 
 type MutationLockHolder = {
@@ -114,14 +115,14 @@ async function cached<T>({
   key,
   ttlMs,
   run,
-  generations,
+  reads,
 }: {
   cache: Map<string, CacheEntry<T>>;
   inflight: Map<string, Promise<T>>;
   key: string;
   ttlMs: number;
   run: () => Promise<T>;
-  generations?: Map<string, number>;
+  reads?: Map<string, object>;
 }): Promise<T> {
   const now = Date.now();
   const cached = cache.get(key);
@@ -132,10 +133,11 @@ async function cached<T>({
   if (pending) {
     return await pending;
   }
-  const generation = generations?.get(key) ?? 0;
+  const read = {};
+  reads?.set(key, read);
   const promise = (async () => {
     const value = await run();
-    if (ttlMs > 0 && (generations?.get(key) ?? 0) === generation) {
+    if (ttlMs > 0 && (reads == null || reads.get(key) === read)) {
       cache.set(key, { value, expires: Date.now() + ttlMs });
     }
     return value;
@@ -146,6 +148,9 @@ async function cached<T>({
   } finally {
     if (inflight.get(key) === promise) {
       inflight.delete(key);
+    }
+    if (reads?.get(key) === read) {
+      reads.delete(key);
     }
   }
 }
@@ -176,7 +181,7 @@ export async function cachedBtrfsSubvolumeShow(
     inflight: subvolumeShowInflight,
     key: `${errOnExit ? "strict" : "lenient"}:${path}`,
     ttlMs: subvolumeShowCacheMs(),
-    generations: subvolumeShowGenerations,
+    reads: subvolumeShowReads,
     run: async () =>
       await btrfs({
         args: ["subvolume", "show", path],
@@ -193,10 +198,7 @@ export function invalidateBtrfsSubvolumeShow(path: string): void {
   for (const key of [`strict:${path}`, `lenient:${path}`]) {
     subvolumeShowCache.delete(key);
     subvolumeShowInflight.delete(key);
-    subvolumeShowGenerations.set(
-      key,
-      (subvolumeShowGenerations.get(key) ?? 0) + 1,
-    );
+    subvolumeShowReads.delete(key);
   }
 }
 
@@ -421,7 +423,7 @@ export function clearBtrfsOperationCachesForTest(): void {
   resetQgroupScansForTest();
   subvolumeShowCache.clear();
   subvolumeShowInflight.clear();
-  subvolumeShowGenerations.clear();
+  subvolumeShowReads.clear();
   for (const state of mutationLocks.values()) {
     for (const waiter of state.waiters) {
       clearTimeout(waiter.timeout);
@@ -429,4 +431,9 @@ export function clearBtrfsOperationCachesForTest(): void {
   }
   mutationLocks.clear();
   backgroundMutationGuard = undefined;
+}
+
+// how many reads are being tracked (they are only while under way)
+export function subvolumeShowReadsForTest(): number {
+  return subvolumeShowReads.size;
 }

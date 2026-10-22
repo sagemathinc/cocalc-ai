@@ -271,5 +271,11 @@ describe("a subvolume id being read when its path is swapped", () => {
     expect((await cachedBtrfsSubvolumeShow(path)).stdout).toMatch(
       /Subvolume ID:\s*400/,
     );
+    // and nothing is kept about reads once they are done, however many
+    // paths were invalidated (e.g., snapshots made and deleted)
+    const { subvolumeShowReadsForTest } = await import("./operation-cache");
+    for (let i = 0; i < 100; i++)
+      forgetSubvolumePaths(`${path}/.snapshots/${i}`);
+    expect(subvolumeShowReadsForTest()).toBe(0);
   });
 });
