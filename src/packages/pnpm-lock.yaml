@@ -81,7 +81,7 @@ overrides:
   '@grpc/grpc-js@>=1.14.0 <1.14.5': ^1.14.5
   esbuild@>=0.17.0 <0.28.1: '>=0.28.1'
   form-data@>=4.0.0 <4.0.6: '>=4.0.6'
-  markdown-it@<14.3.1: ^14.3.1
+  markdown-it@<14.3.3: ^14.3.3
   tar@>=7.0.0 <7.5.21: ^7.5.21
   body-parser@>=2.0.0 <2.3.0: ^2.3.0
   image-size@<=2.0.2: npm:image-size-next@1.2.2
@@ -485,8 +485,8 @@ importers:
         specifier: workspace:*
         version: link:../util
       markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.2
+        specifier: ^14.3.3
+        version: 14.3.3
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0
@@ -755,8 +755,8 @@ importers:
   docs:
     dependencies:
       markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.2
+        specifier: ^14.3.3
+        version: 14.3.3
     devDependencies:
       '@types/markdown-it':
         specifier: 12.2.3
@@ -846,8 +846,8 @@ importers:
         specifier: ^0.19.0
         version: 0.19.0
       markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.2
+        specifier: ^14.3.3
+        version: 14.3.3
       prismjs:
         specifier: ^1.30.0
         version: 1.30.0
@@ -1249,8 +1249,8 @@ importers:
         specifier: ^7.18.3
         version: 7.18.3
       markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.2
+        specifier: ^14.3.3
+        version: 14.3.3
       markdown-it-emoji:
         specifier: ^2.0.2
         version: 2.0.2
@@ -1496,8 +1496,8 @@ importers:
         specifier: ^7.18.3
         version: 7.18.3
       markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.2
+        specifier: ^14.3.3
+        version: 14.3.3
       ms:
         specifier: 2.1.2
         version: 2.1.2
@@ -1779,8 +1779,8 @@ importers:
         specifier: ^8.0.2
         version: 8.0.2
       markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.2
+        specifier: ^14.3.3
+        version: 14.3.3
       path-browserify:
         specifier: ^1.0.1
         version: 1.0.1
@@ -2248,8 +2248,8 @@ importers:
         specifier: ^7.18.3
         version: 7.18.3
       markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.2
+        specifier: ^14.3.3
+        version: 14.3.3
       mediabunny:
         specifier: 1.55.7
         version: 1.55.7
@@ -2642,8 +2642,8 @@ importers:
         specifier: ^7.18.3
         version: 7.18.3
       markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.2
+        specifier: ^14.3.3
+        version: 14.3.3
       markdown-it-emoji:
         specifier: ^2.0.2
         version: 2.0.2
@@ -9497,8 +9497,8 @@ packages:
   markdown-it-front-matter@0.2.4:
     resolution: {integrity: sha512-25GUs0yjS2hLl8zAemVndeEzThB1p42yxuDEKbd4JlL3jiz+jsm6e56Ya8B0VREOkNxLYB4TTwaoPJ3ElMmW+w==}
 
-  markdown-it@14.3.2:
-    resolution: {integrity: sha512-sHHjZ5fJKlgrG4qns2YwVcdNep35h5fERrfkD2YNsb9UFk0UIHarbiTaHKVMlPuWAoiilyK8Fv/jAm11slsY7Q==}
+  markdown-it@14.3.3:
+    resolution: {integrity: sha512-L//tDAkjTjJCU6pBUSBTgs3Kg4InVaZuUZog/b6V12UKhcDQ7S78877ibbCanRExwPuYP1CZD7Gd2dxSy1GXRg==}
     hasBin: true
 
   marked@16.4.2:
@@ -20332,7 +20332,7 @@ snapshots:
 
   markdown-it-front-matter@0.2.4: {}
 
-  markdown-it@14.3.2:
+  markdown-it@14.3.3:
     dependencies:
       argparse: 2.0.1
       entities: 4.5.0
