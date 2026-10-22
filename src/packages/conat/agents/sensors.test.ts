@@ -6,6 +6,8 @@ import {
   combineSensorWakes,
   parseSensorWake,
   SENSOR_LIMITS,
+  SENSOR_WATCH_AGENT_UNTIL,
+  type SensorWatchAgentUntil,
   sensorExitPaths,
   reminderText,
   scheduledPromptText,
@@ -727,5 +729,193 @@ print(json.dumps({"ok": True, "command": "agent rpc inspect", "data": data}))
     ).toBe("Your message to @reviewer: Not delivered: paused.");
     // A failed inspect is a failed run, not a wake.
     expect(() => run({ fail: true })).toThrow(/hub unreachable/);
+  });
+});
+
+describe("watching another agent's turns", () => {
+  const target = {
+    project_id: "11111111-1111-4111-8111-111111111111",
+    agent_id: "22222222-2222-4222-8222-222222222222",
+  };
+  const now = 1_800_000_000_000;
+
+  it("validates the target and until, and defaults to any turn from now on", () => {
+    const spec = validateSensorWatch(
+      { type: "agent", target, name: "@worker" },
+      { now },
+    );
+    expect(spec.title).toBe("@worker finishes a turn");
+    expect(spec.watch).toEqual({
+      type: "agent",
+      target,
+      until: "ended",
+      since: now,
+      name: "worker",
+    });
+    expect(
+      validateSensorWatch({ type: "agent", target, until: "failed", since: 5 })
+        .watch,
+    ).toMatchObject({ until: "failed", since: 5 });
+    expect(
+      validateSensorWatch({ type: "agent", target, until: "idle", name: "w" })
+        .title,
+    ).toBe("@w is idle");
+    for (const bad of [
+      { type: "agent" },
+      { type: "agent", target: { ...target, extra: 1 } },
+      { type: "agent", target: { project_id: "x", agent_id: target.agent_id } },
+      { type: "agent", target, until: "soon" },
+      { type: "agent", target, since: -1 },
+      { type: "agent", target, other: 1 },
+    ])
+      expect(() => validateSensorWatch(bad, { now })).toThrow();
+  });
+
+  it("its script wakes once a turn ending after `since` matches until", () => {
+    const dir = mkdtempSync(join(tmpdir(), "watch-agent-"));
+    // A fake `cocalc --json agent rpc destinations`.
+    writeFileSync(
+      join(dir, "cocalc"),
+      `#!/usr/bin/env python3
+import json, os, sys
+if sys.argv[1:] != ["--json", "agent", "rpc", "destinations"]:
+    print("bad arguments %s" % sys.argv[1:], file=sys.stderr)
+    sys.exit(2)
+data = json.load(open(os.environ["FAKE_DESTINATIONS"]))
+if data.get("fail"):
+    print("hub unreachable", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps({"ok": True, "command": "agent rpc destinations", "data": data}))
+`,
+      { mode: 0o755 },
+    );
+    const other = {
+      member: {
+        kind: "registered",
+        endpoint: {
+          ...target,
+          agent_id: "33333333-3333-4333-8333-333333333333",
+        },
+        status: {
+          running: 0,
+          queued: 0,
+          last: { state: "failed", at: 900 },
+          at: 900,
+        },
+      },
+    };
+    const run = (until: SensorWatchAgentUntil, status?: object) => {
+      writeFileSync(
+        join(dir, "data.json"),
+        JSON.stringify({
+          peers: [
+            other,
+            { member: { kind: "registered", endpoint: target, status } },
+          ],
+        }),
+      );
+      return execFileSync(
+        "python3",
+        [
+          "-c",
+          sensorWatchScript({
+            type: "agent",
+            target,
+            until,
+            since: 100,
+            name: "worker",
+          })!,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            FAKE_DESTINATIONS: join(dir, "data.json"),
+          },
+        },
+      );
+    };
+    const status = (state: string, at: number, running = 0, queued = 0) => ({
+      version: 1,
+      running,
+      queued,
+      last: { state, at, ...(state === "failed" ? { kind: "limit" } : {}) },
+      at,
+    });
+    // No status, or only the turn seen when it was set: keep waiting.
+    for (const until of SENSOR_WATCH_AGENT_UNTIL) {
+      expect(run(until)).toBe("");
+      expect(run(until, status("failed", 100, 1))).toBe("");
+    }
+    // ended: any later turn, even with more running.
+    expect(
+      parseSensorWake(run("ended", status("completed", 200, 1, 2)))?.summary,
+    ).toBe("A turn of @worker completed; 1 running, 2 waiting");
+    // failed: not a completed one.
+    expect(run("failed", status("completed", 200))).toBe("");
+    const failed = parseSensorWake(run("failed", status("failed", 200)));
+    expect(failed?.summary).toBe("A turn of @worker failed (limit)");
+    expect(failed?.data).toMatchObject({
+      agent: "worker",
+      target,
+      last: { state: "failed", kind: "limit", at: 200 },
+    });
+    expect(
+      parseSensorWake(run("failed", status("never-started", 200)))?.summary,
+    ).toBe("A turn of @worker never started");
+    // idle: only once nothing is running or waiting.
+    expect(run("idle", status("completed", 200, 1))).toBe("");
+    expect(run("idle", status("completed", 200, 0, 1))).toBe("");
+    expect(
+      parseSensorWake(run("idle", status("completed", 200)))?.summary,
+    ).toBe("A turn of @worker completed; it is idle now");
+    // A failed lookup, or the agent gone from the networks, is a failed run.
+    writeFileSync(join(dir, "data.json"), JSON.stringify({ fail: true }));
+    expect(() =>
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          sensorWatchScript({
+            type: "agent",
+            target,
+            until: "ended",
+            since: 0,
+          })!,
+        ],
+        {
+          encoding: "utf8",
+          stdio: "pipe",
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            FAKE_DESTINATIONS: join(dir, "data.json"),
+          },
+        },
+      ),
+    ).toThrow(/hub unreachable/);
+    writeFileSync(join(dir, "data.json"), JSON.stringify({ peers: [other] }));
+    expect(() =>
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          sensorWatchScript({
+            type: "agent",
+            target,
+            until: "ended",
+            since: 0,
+            name: "worker",
+          })!,
+        ],
+        {
+          encoding: "utf8",
+          stdio: "pipe",
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            FAKE_DESTINATIONS: join(dir, "data.json"),
+          },
+        },
+      ),
+    ).toThrow(/@worker is no longer in any of your Agent Networks/);
   });
 });
