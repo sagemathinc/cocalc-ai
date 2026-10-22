@@ -58,6 +58,13 @@ import { useChatEmbeddingOptions } from "./embedding-options";
 import type { ThreadIndexEntry } from "./message-cache";
 import { getMessageAtDate, newest_content } from "./utils";
 import {
+  CHAT_IMAGE_BOX_HEIGHT,
+  estimateMessageRowHeight,
+  rememberedRowHeight,
+  rememberRowHeight,
+} from "./row-height-estimates";
+import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
+import {
   dateValue,
   field,
   historyArray,
@@ -632,7 +639,7 @@ const NEWEST_MESSAGES_BUTTON_STYLE: CSSProperties = {
 // Chat messages can contain rich static render trees. Keep a modest offscreen
 // buffer for smooth scrolling without mounting a huge history window.
 const CHAT_VIRTUOSO_INCREASE_VIEWPORT_BY = {
-  top: 1200,
+  top: 2400,
   bottom: 1600,
 } as const;
 
@@ -2028,6 +2035,8 @@ export function MessageList({
       data == null ? undefined : allRowKeysRef.current[parseInt(data)];
     if (key != null) {
       virtuosoHeightsRef.current[key] = height;
+      // Opening this chat again starts from real heights.
+      rememberRowHeight(cacheIdRef.current, key, height);
     }
     return height;
   }, []);
@@ -2039,6 +2048,36 @@ export function MessageList({
   // the reader's selection and re-measure its whole activity. Mounted rows get
   // new render functions through `data`, and guidance through context.
   const turnRowInset = narrow ? NARROW_TURN_ROW_INSET : TURN_ROW_INSET;
+  // Heights for rows not drawn yet: measured ones as measured (also from an
+  // earlier visit to this chat), others estimated from their Markdown. The
+  // list uses them when it mounts, so its first guesses are close.
+  const heightEstimates = useMemo(
+    () => [
+      ...listRows.map((listRow) => {
+        const remembered = rememberedRowHeight(cacheId, listRow.key);
+        if (remembered != null) return remembered;
+        if (listRow.kind !== "message") return 48;
+        const message = getMessageAtDate({
+          messages,
+          date: parseFloat(sortedDates[listRow.messageIndex]),
+        });
+        return estimateMessageRowHeight(
+          message ? newest_content(message) : undefined,
+        );
+      }),
+      // The end row (attention cards).
+      40,
+    ],
+    // Only read when the list mounts: recomputing as rows change is enough.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cacheId, listRows.length],
+  );
+  // Images in the log keep one height loaded or not.
+  const parentFileContext = useFileContext();
+  const logFileContext = useMemo(
+    () => ({ ...parentFileContext, imageBoxHeight: CHAT_IMAGE_BOX_HEIGHT }),
+    [parentFileContext],
+  );
   const virtuosoData: ChatVirtualRow[] = [
     ...listRows.map((listRow) => ({
       key: listRow.key,
@@ -2420,38 +2459,44 @@ export function MessageList({
     >
       <TurnActivityStoreContext.Provider value={turnActivityStore}>
         {feeds}
-        <StatefulVirtuoso
-          style={CHAT_VIRTUOSO_STYLE}
-          ref={listVirtuosoRef}
-          scrollerRef={handleVirtuosoScrollerRef}
-          totalCount={virtuosoData.length}
-          data={virtuosoData}
-          context={virtuosoCallbackStateRef.current}
-          cacheId={cacheId}
-          persistState={false}
-          increaseViewportBy={CHAT_VIRTUOSO_INCREASE_VIEWPORT_BY}
-          initialTopMostItemIndex={initialIndex}
-          atTopThreshold={240}
-          // Sub-pixel re-measurement and streaming output jitter around the
-          // default 4px; a little slack keeps "at bottom" stable.
-          atBottomThreshold={24}
-          itemSize={measureVirtuosoItem}
-          itemContent={renderVirtuosoItem}
-          computeItemKey={computeVirtuosoItemKey}
-          rangeChanged={
-            manualScrollRef ? handleVirtuosoRangeChanged : undefined
-          }
-          atBottomStateChange={
-            manualScrollRef ? handleVirtuosoAtBottomStateChange : undefined
-          }
-          atTopStateChange={
-            onAtTopStateChange ? handleVirtuosoAtTopStateChange : undefined
-          }
-          onScroll={handleVirtuosoScroll}
-          followOutput={
-            isVisible && !manualScroll && atBottom && !anyOverlayOpen
-          }
-        />
+        <FileContext.Provider value={logFileContext}>
+          <StatefulVirtuoso
+            style={CHAT_VIRTUOSO_STYLE}
+            ref={listVirtuosoRef}
+            scrollerRef={handleVirtuosoScrollerRef}
+            totalCount={virtuosoData.length}
+            data={virtuosoData}
+            context={virtuosoCallbackStateRef.current}
+            cacheId={cacheId}
+            persistState={false}
+            increaseViewportBy={CHAT_VIRTUOSO_INCREASE_VIEWPORT_BY}
+            initialTopMostItemIndex={initialIndex}
+            atTopThreshold={240}
+            // Sub-pixel re-measurement and streaming output jitter around the
+            // default 4px; a little slack keeps "at bottom" stable.
+            atBottomThreshold={24}
+            itemSize={measureVirtuosoItem}
+            heightEstimates={heightEstimates}
+            // Correct a row's size in the frame it changes, not the next one:
+            // no frame drawn at the old size.
+            skipAnimationFrameInResizeObserver
+            itemContent={renderVirtuosoItem}
+            computeItemKey={computeVirtuosoItemKey}
+            rangeChanged={
+              manualScrollRef ? handleVirtuosoRangeChanged : undefined
+            }
+            atBottomStateChange={
+              manualScrollRef ? handleVirtuosoAtBottomStateChange : undefined
+            }
+            atTopStateChange={
+              onAtTopStateChange ? handleVirtuosoAtTopStateChange : undefined
+            }
+            onScroll={handleVirtuosoScroll}
+            followOutput={
+              isVisible && !manualScroll && atBottom && !anyOverlayOpen
+            }
+          />
+        </FileContext.Provider>
       </TurnActivityStoreContext.Provider>
       {showNewestMessagesButton ? (
         <Button

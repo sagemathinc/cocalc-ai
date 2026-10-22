@@ -3,6 +3,7 @@
 import { render, screen } from "@testing-library/react";
 import StaticMarkdown from "../static-markdown";
 import { imageMaxWidth } from "../elements/image";
+import { FileContext } from "@cocalc/frontend/lib/file-context";
 
 describe("StaticMarkdown images", () => {
   it("caps generated image markdown without shrinking ordinary images", () => {
@@ -31,5 +32,29 @@ describe("StaticMarkdown images", () => {
       "100%",
     );
     expect(imageMaxWidth({ alt: "Ordinary image" })).toBe("100%");
+  });
+
+  it("with an image box height, unsized images keep one height loaded or not", () => {
+    render(
+      <FileContext.Provider value={{ imageBoxHeight: 320 }}>
+        <StaticMarkdown
+          value={[
+            "![Screenshot](/blobs/shot.png?uuid=shot)",
+            '<img src="/blobs/sized.png?uuid=sized" width="200" alt="Sized" />',
+          ].join("\n\n")}
+        />
+      </FileContext.Provider>,
+    );
+    const shot = screen.getByAltText("Screenshot");
+    expect(shot.style.height).toBe("320px");
+    expect(shot.style.objectFit).toBe("scale-down");
+    // An image with a size of its own keeps it.
+    const sized = screen.getByAltText("Sized");
+    expect(sized.style.height).not.toBe("320px");
+  });
+
+  it("without one, images are as before", () => {
+    render(<StaticMarkdown value="![Screenshot](/blobs/shot.png?uuid=shot)" />);
+    expect(screen.getByAltText("Screenshot").style.height).toBe("");
   });
 });
