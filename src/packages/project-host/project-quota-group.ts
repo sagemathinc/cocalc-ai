@@ -404,32 +404,41 @@ export async function projectQuotaWithHistory<
 }): Promise<T & ProjectQuotaBreakdown> {
   if (btrfsQuotasDisabled() || !(quota.size > 0)) return quota;
   const size = forQuota != null && forQuota > 0 ? forQuota : quota.size;
-  const group = await readProjectQuotaGroup({ project_id, path: home });
-  if (!group?.member || group.limit == null) return quota;
-  let history_used = 0;
-  // the files and history together: the group's, plus the history volume's
-  // own if it isn't in the group (e.g., its join failed, until the audit
-  // repairs it), so it is never left out
-  let total = group.total;
-  if (history != null && (await exists(history))) {
+  // The home and history volume (if any), and the group through either: a
+  // volume whose join failed (until the audit repairs it) is outside it, so
+  // its own usage is added to the group's, never left out.
+  const groupId = projectQuotaGroup(project_id);
+  const volume = async (path: string) => {
     const found = await lookupQgroup({
-      mount: dirname(history),
-      getSubvolumeId: async () => await subvolumeIdOf(history),
+      mount: dirname(path),
+      getSubvolumeId: async () => await subvolumeIdOf(path),
     });
-    if (found != null) {
-      history_used = found.row.referenced;
-      const member = found.parents.some(
-        (r) => r.qgroupid === projectQuotaGroup(project_id),
-      );
-      if (!member) total += history_used;
-    }
+    if (found == null) return;
+    return {
+      own: found.row.referenced,
+      group: found.parents.find((r) => r.qgroupid === groupId),
+    };
+  };
+  const homeVolume = await volume(home);
+  const historyVolume =
+    history != null && (await exists(history))
+      ? await volume(history)
+      : undefined;
+  const group = homeVolume?.group ?? historyVolume?.group;
+  if (group == null || group.max_referenced === "none") return quota;
+  const groupLimit = group.max_referenced;
+  const history_used = historyVolume?.own ?? 0;
+  let total = group.referenced;
+  if (homeVolume != null && homeVolume.group == null) total += homeVolume.own;
+  if (historyVolume != null && historyVolume.group == null) {
+    total += historyVolume.own;
   }
   // R: what the group's limit leaves beyond the quota, but never more than
   // the configured reserve (the group's limit may not have followed a lower
   // quota yet, e.g., its update deferred): never less usage than it is
   const reserve = Math.max(
     0,
-    Math.min(group.limit - size, historyReserve(size, env)),
+    Math.min(groupLimit - size, historyReserve(size, env)),
   );
   return {
     ...quota,
