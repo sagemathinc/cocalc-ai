@@ -416,6 +416,31 @@ export function prevSeqForMoreHistoryFromHistory(
   return oldest?.prevSeq ?? 0;
 }
 
+// A snapshot record of a patch before the loaded range (seq_info.seq <
+// firstLoadedSeq). Each snapshot record is written about one interval after
+// its patch, so it usually lands just after the next snapshot's patch: the
+// range loaded from the latest snapshot holds the previous snapshot's record
+// without its patch. Taken as a patch, it is a head with no exact value, so
+// the client loaded more history; a step back to the previous snapshot then
+// held the next older record, and so on, until a prod agent chat replayed
+// its whole history (43,623 versions) on every open. Its patch is an
+// ancestor of the loaded snapshot's patch, so it says nothing the loaded
+// snapshot does not. Once more history loads its patch, it is used again.
+// (A restarted history's seed has seq 0: it is the start, with no patch.)
+export function isSnapshotRecordBeforeLoadedRange(
+  patch: { is_snapshot?: boolean; seq_info?: { seq?: number } | null },
+  firstLoadedSeq: number | undefined,
+): boolean {
+  const seq = patch.seq_info?.seq;
+  return (
+    !!patch.is_snapshot &&
+    typeof seq === "number" &&
+    seq > 0 &&
+    typeof firstLoadedSeq === "number" &&
+    seq < firstLoadedSeq
+  );
+}
+
 // Whether the loaded patches are the whole history. Loading starts at the
 // latest snapshot: at the stream position of the patch it is of
 // (seq_info.seq), so there is older history unless that is the start of the
@@ -3939,6 +3964,7 @@ export class SyncDoc extends EventEmitter {
       return [];
     }
     const envs: PatchEnvelope[] = [];
+    const firstLoadedSeq = this.firstLoadedSeq();
     for (const key of keys ?? []) {
       let x = this.patches_table.get(key);
       if (x == null) {
@@ -3948,7 +3974,7 @@ export class SyncDoc extends EventEmitter {
         x = fromJS(x);
       }
       const p = this.processPatch({ x });
-      if (p != null) {
+      if (p != null && !isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)) {
         envs.push(this.toPatchflowEnvelope(p));
       }
     }
@@ -4035,10 +4061,14 @@ export class SyncDoc extends EventEmitter {
       m = fromJS(m);
     }
     const v: Patch[] = [];
+    const firstLoadedSeq = this.firstLoadedSeq();
     m.forEach((x, _) => {
       try {
         const p = this.processPatch({ x });
-        if (p != null) {
+        if (
+          p != null &&
+          !isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)
+        ) {
           return v.push(p);
         }
       } catch (err) {
@@ -4047,6 +4077,17 @@ export class SyncDoc extends EventEmitter {
     });
     v.sort(patch_cmp);
     return v;
+  };
+
+  // Stream position of the oldest loaded message (loading more history moves
+  // it back before the older messages are processed).
+  private firstLoadedSeq = (): number | undefined => {
+    try {
+      const seq = this.dstream()?.seq?.(0);
+      return typeof seq === "number" ? seq : undefined;
+    } catch {
+      return undefined;
+    }
   };
 
   private patchesHaveFullHistory = (patches: Patch[]): boolean => {

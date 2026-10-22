@@ -5,6 +5,7 @@
 
 import { legacyPatchId } from "patchflow";
 import {
+  isSnapshotRecordBeforeLoadedRange,
   patchesHaveFullHistoryFromPatches,
   prevSeqForMoreHistoryFromHistory,
 } from "../sync-doc";
@@ -145,5 +146,36 @@ describe("prevSeqForMoreHistoryFromHistory with where the loaded history starts"
 
   it("keeps the old rule when the loaded start is unknown", () => {
     expect(prevSeqForMoreHistoryFromHistory(history)).toBe(301);
+  });
+});
+
+describe("isSnapshotRecordBeforeLoadedRange", () => {
+  it("is a snapshot record of a patch before the loaded range", () => {
+    // the sagebrush chat: loaded from 43137, record of 42836 at 43138
+    expect(
+      isSnapshotRecordBeforeLoadedRange(
+        { is_snapshot: true, seq_info: { seq: 42836 } },
+        43137,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the loaded snapshot, patches, seeds and records without a seq", () => {
+    const keep = [
+      { is_snapshot: true, seq_info: { seq: 43137 } },
+      { is_snapshot: false, seq_info: { seq: 1 } },
+      { is_snapshot: true, seq_info: { seq: 0 } },
+      { is_snapshot: true },
+      { is_snapshot: true, seq_info: null },
+    ];
+    for (const patch of keep) {
+      expect(isSnapshotRecordBeforeLoadedRange(patch, 43137)).toBe(false);
+    }
+    expect(
+      isSnapshotRecordBeforeLoadedRange(
+        { is_snapshot: true, seq_info: { seq: 42836 } },
+        undefined,
+      ),
+    ).toBe(false);
   });
 });
