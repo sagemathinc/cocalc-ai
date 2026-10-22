@@ -944,7 +944,16 @@ async function requestHostDrainForBilling({
       force: false,
       managed_egress_override: "admin-host-drain",
       billing_enforcement: true,
-      ...(rescue ? { billing_rescue: true } : {}),
+      // The status is "draining" by the time the worker runs, and a draining
+      // host's heartbeats are dropped, so record whether the VM was running.
+      ...(rescue
+        ? {
+            billing_rescue: true,
+            billing_rescue_source_status: `${row.status ?? ""}`
+              .trim()
+              .toLowerCase(),
+          }
+        : {}),
     },
     dedupe_key: `${HOST_DRAIN_LRO_KIND}:billing:${row.id}`,
     status: "queued",

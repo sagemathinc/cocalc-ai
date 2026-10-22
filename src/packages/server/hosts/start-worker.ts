@@ -2052,30 +2052,22 @@ function billingEnforcementDrainFailureAdminAlert({
 // started once, without a billing session, so the drain below can back up and
 // move its projects before its disk is deleted (spend-maintenance.ts).
 //
-// The rescue request sets the host's status to "draining", so whether its VM
-// is still up (a billing stop that failed) shows only in its heartbeat: a stop
-// clears last_seen, and only a live host agent sets it again. Such a host is
-// drained as it is; starting a running VM fails on some providers (and
-// restarts it on others), which would fail the only rescue attempt.
-const BILLING_RESCUE_ALIVE_MS = 2 * 60_000;
-
-function billingRescueHostIsAlive(
-  row: { status?: string; last_seen?: string | Date } | undefined,
-  now = Date.now(),
-): boolean {
-  if (`${row?.status ?? ""}` === "running") return true;
-  const lastSeen = parseTimestampMs(row?.last_seen);
-  return lastSeen != null && now - lastSeen < BILLING_RESCUE_ALIVE_MS;
-}
-
+// A host whose billing stop failed may still be running. The rescue request
+// has set its status to "draining" (and a draining host's heartbeats are
+// dropped), so it records the status the host had: a running source is
+// drained as it is, like a normal billing drain. Starting a running VM fails
+// on some providers and restarts it on others. Any other source (off, error)
+// is started; starting is also how a host in error is recovered.
 async function startBillingBlockedHostForRescue({
   account_id,
   host_id,
+  source_status,
   helpers,
   deps = {},
 }: {
   account_id: string;
   host_id: string;
+  source_status?: string;
   helpers?: {
     shouldCancel?: () => Promise<boolean>;
     progressStep?: (
@@ -2086,42 +2078,40 @@ async function startBillingBlockedHostForRescue({
     ) => Promise<void>;
   };
   deps?: {
-    loadStatus?: typeof loadHostStatus;
     startHost?: typeof startHostInternal;
     waitStatus?: typeof waitForHostStatus;
     waitHeartbeat?: typeof waitForHostHeartbeat;
   };
 }): Promise<void> {
   const {
-    loadStatus = loadHostStatus,
     startHost = startHostInternal,
     waitStatus = waitForHostStatus,
     waitHeartbeat = waitForHostHeartbeat,
   } = deps;
-  const startedAt = Date.now();
-  if (billingRescueHostIsAlive(await loadStatus(host_id), startedAt)) {
+  if (source_status === "running") {
     await helpers?.progressStep?.(
       "starting",
       "billing-blocked host is still running; draining it to take final backups",
       { host_id },
       5,
     );
-  } else {
-    await helpers?.progressStep?.(
-      "starting",
-      "starting billing-blocked host to take final backups",
-      { host_id },
-      5,
-    );
-    await startHost({ account_id, id: host_id, billing_rescue: true });
-    await waitStatus({
-      host_id,
-      desired: ["running"],
-      failOn: ["error", "off", "deprovisioned"],
-      shouldCancel: helpers?.shouldCancel,
-      onUpdate: async () => {},
-    });
+    return;
   }
+  await helpers?.progressStep?.(
+    "starting",
+    "starting billing-blocked host to take final backups",
+    { host_id, source_status },
+    5,
+  );
+  const startedAt = Date.now();
+  await startHost({ account_id, id: host_id, billing_rescue: true });
+  await waitStatus({
+    host_id,
+    desired: ["running"],
+    failOn: ["error", "off", "deprovisioned"],
+    shouldCancel: helpers?.shouldCancel,
+    onUpdate: async () => {},
+  });
   await waitHeartbeat({
     host_id,
     since: startedAt,
@@ -2177,6 +2167,7 @@ async function runHostAction(
         await startBillingBlockedHostForRescue({
           account_id,
           host_id,
+          source_status: input?.billing_rescue_source_status,
           helpers,
         });
       }
@@ -3510,7 +3501,6 @@ export const __test__ = {
   redundantProjectHostRollbackReason,
   waitForHostStatus,
   waitForHostHeartbeat,
-  billingRescueHostIsAlive,
   startBillingBlockedHostForRescue,
   billingEnforcementDrainCompleteMetadata,
   billingEnforcementDrainFailedMetadata,
