@@ -14,7 +14,8 @@ admin health reports four read-only signals:
    past deprovision_after whose final backup has not succeeded, so their disk
    can neither be deleted nor billed;
 4. running owner-funded dedicated hosts (tier NULL) that ran no project for
-   IDLE_HOST_DAYS, according to project_host_metrics_samples.
+   IDLE_HOST_DAYS, according to project_host_metrics_samples, on a billable
+   cloud (not self-host or local).
 
 Levels: critical for any stuck host (3) or when the non-post-paid negative
 balance total exceeds EXPOSURE_CRITICAL_USD; warning for any of 1, 2 or 4;
@@ -24,6 +25,7 @@ healthy otherwise.
 import getPool from "@cocalc/database/pool";
 import { ensureProjectHostMetricsSamplesSchema } from "@cocalc/database/postgres/project-host-metrics";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { isBillableDedicatedHostCloud } from "@cocalc/server/project-host/admission";
 import { billingAccountsTable } from "./billing-account";
 import { COST_OR_METERED_COST } from "./get-balance";
 
@@ -361,7 +363,8 @@ async function getIdleHosts(
   bay_id: string,
 ): Promise<BillingExposureIdleHost[]> {
   const { rows } = await db.query(
-    `SELECT h.id, h.name, h.metadata->>'owner' AS owner, s.last_busy_at
+    `SELECT h.id, h.name, h.metadata->>'owner' AS owner,
+            h.metadata#>>'{machine,cloud}' AS cloud, s.last_busy_at
        FROM project_hosts h
        JOIN LATERAL (
          SELECT MAX(collected_at) FILTER (WHERE running_project_count > 0)
@@ -376,7 +379,7 @@ async function getIdleHosts(
           WHERE host_id = h.id
        ) s ON TRUE
       WHERE h.deleted IS NULL
-        AND COALESCE(NULLIF(BTRIM(h.bay_id), ''), $4) = $4
+        AND COALESCE(NULLIF(BTRIM(h.bay_id), ''), $3) = $3
         AND h.status = 'running'
         AND h.tier IS NULL
         AND h.metadata->>'owner' IS NOT NULL
@@ -385,21 +388,20 @@ async function getIdleHosts(
         AND s.reported_recently
         AND (s.last_busy_at IS NULL
              OR s.last_busy_at < NOW() - make_interval(days => $1::int))
-      ORDER BY s.last_busy_at NULLS FIRST, h.id
-      LIMIT $3`,
-    [
-      IDLE_HOST_DAYS,
-      IDLE_HOST_WINDOW_START_TOLERANCE_HOURS,
-      HOSTS_LIMIT,
-      bay_id,
-    ],
+      ORDER BY s.last_busy_at NULLS FIRST, h.id`,
+    [IDLE_HOST_DAYS, IDLE_HOST_WINDOW_START_TOLERANCE_HOURS, bay_id],
   );
-  return rows.map((row) => ({
-    host_id: `${row.id}`,
-    name: row.name ?? null,
-    owner: row.owner ?? null,
-    last_busy_at: toIso(row.last_busy_at),
-  }));
+  // Self-hosted and local machines cost the site nothing, exactly as spend
+  // maintenance decides; few running dedicated hosts are idle, so filter here.
+  return rows
+    .filter((row) => isBillableDedicatedHostCloud(row.cloud))
+    .slice(0, HOSTS_LIMIT)
+    .map((row) => ({
+      host_id: `${row.id}`,
+      name: row.name ?? null,
+      owner: row.owner ?? null,
+      last_busy_at: toIso(row.last_busy_at),
+    }));
 }
 
 // With central billing, purchases and billing accounts are authoritative only

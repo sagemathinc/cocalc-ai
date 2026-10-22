@@ -184,6 +184,7 @@ describe("getBillingExposureHealth", () => {
   const restartedHost = uuid();
   const staleHost = uuid();
   const pooledHost = uuid();
+  const selfHostedHost = uuid();
   const siteHost = uuid();
   const rehomedStuckHost = uuid();
   const rehomedIdleHost = uuid();
@@ -235,7 +236,11 @@ describe("getBillingExposureHealth", () => {
         name,
         status,
         tier,
-        JSON.stringify({ owner: prepaid, ...metadata }),
+        JSON.stringify({
+          owner: prepaid,
+          machine: { cloud: "gcp" },
+          ...metadata,
+        }),
         bay_id,
       ],
     );
@@ -405,6 +410,14 @@ describe("getBillingExposureHealth", () => {
     await samples(staleHost, [
       [3 * DAY - HOUR, 0],
       [2 * DAY, 0],
+    ]);
+    // Customer-owned machines cost the site nothing.
+    await host(selfHostedHost, "self-hosted", {
+      metadata: { machine: { cloud: "self-host" } },
+    });
+    await samples(selfHostedHost, [
+      [3 * DAY - HOUR, 0],
+      [HOUR, 0],
     ]);
     await samples(pooledHost, [
       [3 * DAY - HOUR, 0],

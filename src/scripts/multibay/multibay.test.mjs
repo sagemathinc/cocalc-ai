@@ -3682,8 +3682,9 @@ describe("billing exposure in admin health across bays", () => {
        const { getBillingExposureHealth } = server(
          "purchases/billing-exposure-health.js");
        return await getBillingExposureHealth({ bay_id: getConfiguredBayId() });`,
-      // Its own process: it switches on billing-authority mode.
-      { fresh: true },
+      // Its own process: it switches on billing-authority mode. Loading the
+      // server modules in a fresh process is slow on a busy runner.
+      { fresh: true, timeoutMs: 120_000 },
     );
 
   async function insertStuckHost(bayId, { id, host_bay_id }) {
