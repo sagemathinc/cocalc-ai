@@ -15,7 +15,13 @@
 // reply brings an item back.
 
 import type { ChatReaderStateEntry } from "@cocalc/conat/project/read-state";
-import { dateValue, field, isAcpAssistantMessage } from "./access";
+import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
+import {
+  dateValue,
+  field,
+  historyArray,
+  isAcpAssistantMessage,
+} from "./access";
 import type { ChatMessageTyped } from "./types";
 
 export interface ReaderItem {
@@ -51,13 +57,27 @@ export function readerMessageId(message: ChatMessageTyped): string {
   return date ? `date-${date.valueOf()}` : "";
 }
 
+/**
+ * A reply of the thread's agent: ACP metadata, or written by a language
+ * model (e.g. a failure reply the frontend writes, or older model messages),
+ * as the log tells them apart.
+ */
+export function isAgentReply(message: ChatMessageTyped): boolean {
+  if (isAcpAssistantMessage(message)) return true;
+  const sender = field<string>(message, "sender_id");
+  if (typeof sender === "string" && isLanguageModelService(sender)) return true;
+  // The entry the log calls the first: its author wrote the message.
+  const author = historyArray(message)[0]?.author_id;
+  return typeof author === "string" && isLanguageModelService(author);
+}
+
 export function readerItems(messages: ChatMessageTyped[]): ReaderItem[] {
   const items: ReaderItem[] = [];
   messages.forEach((message, index) => {
     const id = readerMessageId(message);
     if (!id) return;
     const last = items[items.length - 1];
-    if (last && isAcpAssistantMessage(message)) {
+    if (last && isAgentReply(message)) {
       last.messages.push(message);
       last.lastId = id;
       last.lastIndex = index;
