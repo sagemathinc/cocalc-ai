@@ -118,7 +118,17 @@ import { isProjectHostDevGcpReverseTunnelEnabled } from "./master-conat-server";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
 import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-node";
-import { getAccountContentRevokedBeforeMs } from "./sqlite/account-revocations";
+import {
+  getAccountContentRevokedBeforeMs,
+  getAccountRevokedBeforeMs,
+} from "./sqlite/account-revocations";
+import { consumeAppCapability } from "./sqlite/app-capability-replay";
+import {
+  createAppOriginHandler,
+  looksLikeAppHostname,
+  rewriteUpstreamResponseCookies,
+} from "./content-app-origin";
+import { conatPassword } from "@cocalc/backend/data";
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import {
   contentViewSiteOrigin,
@@ -151,6 +161,8 @@ import {
 import {
   createProjectHostHttpProxyAuth,
   getProjectHostHttpAuthContext,
+  isAppOriginRequest,
+  setAppOriginRequestAuth,
 } from "./http-proxy-auth";
 import { isValidUUID } from "@cocalc/util/misc";
 import { main as runAcpWorkerMain } from "./acp-worker";
@@ -423,11 +435,23 @@ export async function main(
         next: NextFunction,
       ) => Promise<void>)
     | undefined;
+  // Project app origins (content-app-origin.ts): app hostnames under the
+  // content domain.
+  let appOrigin: ReturnType<typeof createAppOriginHandler> | undefined;
   // Content-shaped hostnames are claimed even when no content domain is
   // configured, so they fail closed rather than reach the host's routes.
   app.use((req, res, next) => {
     if (!isContentRequestHost(req.headers.host, contentDomain)) {
       return next();
+    }
+    if (contentDomain && looksLikeAppHostname(req.headers.host)) {
+      if (!appOrigin) {
+        res.statusCode = 503;
+        res.end();
+        return;
+      }
+      void appOrigin.handleRequest(req, res).catch(() => res.destroy());
+      return;
     }
     if (!handleContentRequest) {
       res.statusCode = contentDomain ? 503 : 404;
@@ -453,7 +477,17 @@ export async function main(
   });
   app.use(express.json());
   const { httpServer } = await startHttpListener(app, port, host, tls);
-  installContentHostnameUpgradeGuard(httpServer, contentDomain);
+  installContentHostnameUpgradeGuard(httpServer, contentDomain, () => {
+    const origin = appOrigin;
+    if (!origin) return;
+    return async (req) => {
+      const auth = await origin.authorizeUpgrade(req);
+      if (!auth) return false;
+      delete req.headers[PRIVATE_APP_HOST_HEADER];
+      setAppOriginRequestAuth(req, auth);
+      return true;
+    };
+  });
   app.get("/healthz", (_req, res) =>
     res.json({
       ok: true,
@@ -1109,7 +1143,19 @@ export async function main(
     httpServers: [httpServer],
     app,
     rewriteRequest: maybeRewriteAppHostnameRequest,
-    rewriteResponse: rewritePrivateAppHostnameResponseLocation,
+    rewriteResponse: (proxyRes, req) => {
+      // App origins: the user's server's cookies stay host-only, and can't
+      // set the app session (also guarded on the response itself).
+      if (isAppOriginRequest(req)) {
+        rewriteUpstreamResponseCookies(proxyRes.headers);
+      }
+      rewritePrivateAppHostnameResponseLocation(proxyRes, req);
+    },
+    rewriteUpgradeResponse: (proxyRes, req) => {
+      if (isAppOriginRequest(req)) {
+        rewriteUpstreamResponseCookies(proxyRes.headers);
+      }
+    },
     assertForwardAllowed: (req) => {
       const expires = getProjectHostHttpAuthContext(req)?.scoped_api_key_exp_s;
       if (expires != null && Date.now() >= expires * 1000) {
@@ -1424,6 +1470,51 @@ export async function main(
       return { handled: true, target: { host: "127.0.0.1", port: http_port } };
     },
   });
+  if (contentDomain) {
+    appOrigin = createAppOriginHandler({
+      domain: contentDomain,
+      host_id: hostId,
+      getPublicKey: getProjectHostAuthPublicKey,
+      getSecret: () => conatPassword,
+      approvedOrigins: approvedBrowserOrigins,
+      // The site's own URL (an app page's Referer is the app).
+      siteOrigin: () =>
+        contentViewSiteOrigin({
+          req: { headers: {} },
+          approvedOrigins: approvedBrowserOrigins(),
+          siteUrl: process.env.COCALC_SITE_URL,
+        }),
+      isCollaborator: hasProjectContentReadAccess,
+      currentEpoch: projectContentEpoch,
+      observeEpoch: observeProjectContentEpoch,
+      // Sign-in sessions end with any of the account's cutoffs.
+      accountRevokedBeforeMs: (account_id) => {
+        const cutoffs = [
+          getAccountRevokedBeforeMs(account_id),
+          getAccountContentRevokedBeforeMs(account_id),
+        ].filter((ms): ms is number => ms != null);
+        return cutoffs.length ? Math.max(...cutoffs) : undefined;
+      },
+      consumeCapability: consumeAppCapability,
+      matchApp: async ({ project_id, url }) =>
+        await matchAppRequest({ project_id, url }),
+      proxy: async (req, res, auth) => {
+        delete req.headers[PRIVATE_APP_HOST_HEADER];
+        setAppOriginRequestAuth(req, auth);
+        await projectProxyHandlers.handleRequest(req, res, () => {
+          if (!res.headersSent) {
+            res.statusCode = 404;
+            res.end("not found\n");
+          }
+        });
+      },
+      onError: ({ project_id, err }) =>
+        logger.debug("app origin request failed", {
+          project_id,
+          err: `${err}`,
+        }),
+    });
+  }
   handlePrivateAppHttpRequest = async (req, res, next) => {
     await maybeRewritePrivateHostnameRequest(req);
     if (!req.headers[PRIVATE_APP_HOST_HEADER]) {

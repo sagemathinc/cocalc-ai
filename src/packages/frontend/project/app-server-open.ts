@@ -10,6 +10,23 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SHARED_BROWSER_APP_ID } from "@cocalc/util/shared-browser";
 import { withProjectHostBase } from "./host-url";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+
+// A same-origin link that opens a project app: the hub's /app-open sends
+// it to the app's own origin, or (on sites without app origins) to its old
+// path.  path is the app's path in the project (/<project_id>/...).
+export function appOpenURL(
+  project_id: string,
+  path: string,
+  app_id?: string,
+): string | undefined {
+  if (!path.startsWith(`/${project_id}/`)) return;
+  const base = appBasePath === "/" ? "" : appBasePath.replace(/\/+$/, "");
+  const query = app_id
+    ? `${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(app_id)}`
+    : "";
+  return `${base}/app-open${path}${query}`;
+}
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
@@ -52,19 +69,24 @@ export function buildPrivateHostnameOpenUrl({
   return privateUrl.toString();
 }
 
+interface ProjectAppOpenOptions {
+  getSpec?: (id: string) => Promise<AppSpec>;
+  privateHostname?: ProjectAppPrivateHostnameRecord;
+  project_id: string;
+  spec?: AppSpec;
+  status: ManagedAppStatus;
+  // Only the path within the project (/<project_id>/...), not a URL.
+  localPathOnly?: boolean;
+}
+
 export async function getProjectAppOpenUrl({
   getSpec,
   privateHostname,
   project_id,
   spec,
   status,
-}: {
-  getSpec?: (id: string) => Promise<AppSpec>;
-  privateHostname?: ProjectAppPrivateHostnameRecord;
-  project_id: string;
-  spec?: AppSpec;
-  status: ManagedAppStatus;
-}): Promise<string | undefined> {
+  localPathOnly,
+}: ProjectAppOpenOptions): Promise<string | undefined> {
   let resolvedSpec = spec;
   const resolveSpec = async (): Promise<void> => {
     if (resolvedSpec || !getSpec) return;
@@ -115,6 +137,7 @@ export async function getProjectAppOpenUrl({
       ? (serviceLocal ?? basePathLocal)
       : (serviceLocal ?? basePathLocal);
   if (!preferredLocal) return;
+  if (localPathOnly) return preferredLocal;
   const local =
     withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
   return await webapp_client.conat_client.addProjectHostAuthToUrl({
@@ -168,7 +191,49 @@ export async function openProjectAppStatus(opts: {
       );
     return;
   }
+  if (!opts.privateHostname?.url) {
+    // Reserve the tab while the click still has user activation (browsers
+    // block popups opened after an await), then send it where it goes.
+    const tab = window.open("", "_blank");
+    if (tab != null) {
+      tab.opener = null;
+      try {
+        // Not noreferrer: the app origin accepts the link only from this
+        // site (the Referer is just the site's origin).
+        const url =
+          (await getProjectAppOriginUrl(opts)) ??
+          (await getProjectAppOpenUrl(opts));
+        if (url) tab.location.href = url;
+        else tab.close();
+      } catch (err) {
+        tab.close();
+        throw err;
+      }
+      return;
+    }
+  }
   const url = await getProjectAppOpenUrl(opts);
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+// A single-use link that opens the app on its own origin, when the site has
+// a content domain (trust-free step 6); undefined to open it as before.
+async function getProjectAppOriginUrl(
+  opts: ProjectAppOpenOptions,
+): Promise<string | undefined> {
+  const path = await getProjectAppOpenUrl({ ...opts, localPathOnly: true });
+  if (!path?.startsWith(`/${opts.project_id}/`)) return;
+  try {
+    const result =
+      await webapp_client.conat_client.hub.hosts.issueProjectAppUrl({
+        project_id: opts.project_id,
+        path,
+        app_id: opts.status.id,
+      });
+    return "url" in result ? result.url : undefined;
+  } catch (err) {
+    console.warn("opening the app on its own origin failed", err);
+    return;
+  }
 }

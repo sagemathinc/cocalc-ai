@@ -5,6 +5,10 @@
 
 import { generateKeyPairSync } from "node:crypto";
 import { verifyProjectContentCapability } from "@cocalc/conat/auth/project-content-capability";
+import {
+  projectAppKey,
+  verifyProjectAppCapability,
+} from "@cocalc/conat/auth/project-app-capability";
 
 const queryMock = jest.fn();
 const settingsMock = jest.fn();
@@ -39,7 +43,9 @@ jest.mock("@cocalc/backend/data", () => ({
 import {
   contentDirForFile,
   encodeContentFilePath,
+  issueProjectAppUrlLocal,
   issueProjectContentUrlLocal,
+  normalizeProjectAppPath,
   revokeProjectContentLinksLocal,
 } from "./project-content-url";
 
@@ -336,4 +342,131 @@ describe("encodeContentFilePath", () => {
       expect(() => encodeContentFilePath(path)).toThrow("invalid path");
     },
   );
+});
+
+describe("normalizeProjectAppPath", () => {
+  it("keeps an app path and its query", () => {
+    expect(normalizeProjectAppPath(PROJECT, `/${PROJECT}/port/8000/a%20b/?x=1&y=/z`)).toBe(
+      `/${PROJECT}/port/8000/a%20b/?x=1&y=/z`,
+    );
+  });
+
+  it("refuses paths that could name something else", () => {
+    for (const path of [
+      "/other/port/8000/",
+      `//${PROJECT}/port/8000/`,
+      `/${PROJECT}/port/8000//x`,
+      `/${PROJECT}/port/8000/../files/a`,
+      `/${PROJECT}/port/8000/./x`,
+      `/${PROJECT}/port/8000/a%2fb`,
+      `/${PROJECT}/port/8000/a%5Cb`,
+      `/${PROJECT}/port/8000/a%00`,
+      `/${PROJECT}/port/8000/a\\b`,
+      `/${PROJECT}/port/8000/#x`,
+      `/${PROJECT}/port/8000/a\nb`,
+      `/${PROJECT}/port/8000/?a=\u007f`,
+      `/${PROJECT}/files/a.html`,
+      `/${PROJECT}/upload`,
+      `/${PROJECT}/port/8000/${"x".repeat(9000)}`,
+      undefined,
+    ]) {
+      expect(() => normalizeProjectAppPath(PROJECT, path)).toThrow("invalid app path");
+    }
+  });
+});
+
+describe("issueProjectAppUrlLocal", () => {
+  function issueApp(opts: Partial<Parameters<typeof issueProjectAppUrlLocal>[0]> = {}) {
+    return issueProjectAppUrlLocal({
+      account_id: ACCOUNT,
+      project_id: PROJECT,
+      path: `/${PROJECT}/port/8000/a/?x=1`,
+      now_ms: NOW,
+      ...opts,
+    });
+  }
+
+  it("returns a single-use link for this app's own origin", async () => {
+    const result = await issueApp();
+    if (!("url" in result)) throw new Error(`unavailable: ${result.unavailable}`);
+    const url = new URL(result.url);
+    expect(url.hostname).toBe(
+      `ap8000-22222222222242228222222222222222.h-33333333333343338333333333333333.${DOMAIN}`,
+    );
+    const match = url.pathname.match(/^\/_a\/([^/]+)$/);
+    expect(url.searchParams.get("next")).toBe(`/${PROJECT}/port/8000/a/?x=1`);
+    const claims = verifyProjectAppCapability({
+      token: match![1],
+      project_id: PROJECT,
+      key: "p8000",
+      host_id: HOST,
+      public_key: PUBLIC_KEY,
+      now_ms: NOW,
+    });
+    expect(claims).toMatchObject({ sub: ACCOUNT, scope: "app", key: "p8000", epoch: 0 });
+    expect(result.expires_at).toBe(NOW + 120 * 1000);
+    // Not valid for another app of the project.
+    expect(() =>
+      verifyProjectAppCapability({
+        token: match![1],
+        project_id: PROJECT,
+        key: "p8001",
+        host_id: HOST,
+        public_key: PUBLIC_KEY,
+        now_ms: NOW,
+      }),
+    ).toThrow();
+  });
+
+  it("/proxy/<n> shares the origin of /port/<n>; servers and apps get a hashed key", async () => {
+    const proxy = await issueApp({ path: `/${PROJECT}/proxy/8000/` });
+    if (!("url" in proxy)) throw new Error("unavailable");
+    expect(new URL(proxy.url).hostname.startsWith("ap8000-")).toBe(true);
+    const server = await issueApp({ path: `/${PROJECT}/server/jupyterlab/` });
+    if (!("url" in server)) throw new Error("unavailable");
+    expect(new URL(server.url).hostname.startsWith(
+      `a${projectAppKey({ kind: "server", name: "jupyterlab" })}-`,
+    )).toBe(true);
+    const app = await issueApp({ path: `/${PROJECT}/myapp/`, app_id: "myapp" });
+    if (!("url" in app)) throw new Error("unavailable");
+    expect(new URL(app.url).hostname.startsWith(
+      `a${projectAppKey({ kind: "app", id: "myapp" })}-`,
+    )).toBe(true);
+  });
+
+  it("refuses a path that is no app route", async () => {
+    await expect(issueApp({ path: `/${PROJECT}/myapp/` })).rejects.toThrow(
+      "not an app route",
+    );
+    await expect(issueApp({ path: `/${PROJECT}/files/a.html` })).rejects.toThrow(
+      "invalid app path",
+    );
+  });
+
+  it("is off without a content domain and refuses non-collaborators", async () => {
+    settingsMock.mockResolvedValue({ dns: "cocalc.example" });
+    expect(await issueApp()).toEqual({ unavailable: "off" });
+    settingsMock.mockResolvedValue({
+      dns: "cocalc.example",
+      project_content_dns: DOMAIN,
+    });
+    projectRows = [{ host_id: HOST, bay_id: "bay-0", group: null }];
+    const result = await issueApp();
+    expect("url" in result).toBe(false);
+  });
+
+  it("bounds the session by a restricted browser session", async () => {
+    const result = await issueApp({ browser_session_exp_s: NOW / 1000 + 600 });
+    if (!("url" in result)) throw new Error("unavailable");
+    const token = new URL(result.url).pathname.split("/")[2];
+    const claims = verifyProjectAppCapability({
+      token,
+      project_id: PROJECT,
+      key: "p8000",
+      host_id: HOST,
+      public_key: PUBLIC_KEY,
+      now_ms: NOW,
+    });
+    expect(claims.bse).toBe(NOW / 1000 + 600);
+  });
 });
