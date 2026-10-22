@@ -116,7 +116,6 @@ export function ChatReaderView({
   fontSize,
   narrow,
   autoFocus,
-  onShowInChat,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -132,7 +131,6 @@ export function ChatReaderView({
   narrow?: boolean;
   /** Move the keyboard focus into the list when it appears. */
   autoFocus?: boolean;
-  onShowInChat?: (date: Date) => void;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   const items = useMemo(() => readerItems(messages), [messages]);
@@ -198,6 +196,9 @@ export function ChatReaderView({
   const open = (index: number | undefined) => {
     if (index == null) return;
     setSelectedId(visible[index]?.id);
+    // What had the focus may go (the list when narrow, or the pane's button
+    // with its item): keep the keys working.
+    focusKeys();
     listRef.current
       ?.querySelector(`[data-reader-item="${visible[index]?.id}"]`)
       ?.scrollIntoView?.({ block: "nearest" });
@@ -479,18 +480,6 @@ export function ChatReaderView({
         <Button size="small" onClick={() => markUnread(selected)}>
           Mark unread
         </Button>
-        {onShowInChat ? (
-          <Button
-            size="small"
-            type="link"
-            onClick={() => {
-              const date = dateValue(selected.messages[0]);
-              if (date) onShowInChat(date);
-            }}
-          >
-            Show in chat
-          </Button>
-        ) : null}
       </Space>
       {selected.messages.map((message) => {
         const date = dateValue(message);

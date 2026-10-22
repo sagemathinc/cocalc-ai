@@ -93,7 +93,11 @@ import {
   openProjectReadState,
   type ProjectReadStateStore,
 } from "@cocalc/conat/project/read-state";
-import type { ReaderChange, ReaderState } from "./reader-model";
+import {
+  readerItems,
+  type ReaderChange,
+  type ReaderState,
+} from "./reader-model";
 import {
   field,
   historyArray,
@@ -2468,6 +2472,25 @@ export class ChatActions extends Actions<ChatState> {
       return parsedCfg;
     }
     return 0;
+  };
+
+  /**
+   * Reader items marked unread again at or before the watermark: messages
+   * minus the watermark does not count them, so unread totals add them.
+   */
+  getReaderUnreadBeforeWatermark = (
+    threadKey: string,
+    accountId: string,
+  ): number => {
+    const threadId = this.normalizeThreadId(threadKey);
+    if (!threadId) return 0;
+    const unread = this.getReaderState(threadId).u;
+    if (!unread?.length) return 0;
+    const watermark = this.getThreadReadCount(threadId, accountId) - 1;
+    const ids = new Set(unread);
+    return readerItems(this.getMessagesInThread(threadId) ?? []).filter(
+      (item) => ids.has(item.id) && item.lastIndex <= watermark,
+    ).length;
   };
 
   /** The reader view's state for a thread: {} until there is any. */

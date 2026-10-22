@@ -811,10 +811,6 @@ export function ChatRoomThreadPanel({
   const showReader = readerMode && !!selectedThreadId;
   // Only when the person turns it on, never when a chat opens in the reader.
   const [readerAutoFocus, setReaderAutoFocus] = useState(false);
-  // "Show in chat": the message the log shows when it appears; another
-  // thread forgets it.
-  const [readerJumpDate, setReaderJumpDate] = useState<string>();
-  useEffect(() => setReaderJumpDate(undefined), [selectedThreadId]);
   const readerMessages = useMemo(
     () =>
       showReader && selectedThreadId
@@ -3104,12 +3100,6 @@ export function ChatRoomThreadPanel({
             autoFocus={readerAutoFocus}
             projectId={project_id}
             path={path}
-            onShowInChat={(date) => {
-              // The log jumps to it when it mounts, as for a search match.
-              setReaderJumpDate(`${date.valueOf()}`);
-              setThreadSearchJumpToken((n) => n + 1);
-              onReaderModeChange?.(false);
-            }}
           />
         ) : (
           <ChatLog
@@ -3128,10 +3118,8 @@ export function ChatRoomThreadPanel({
             selectedThread={selectedThreadForLog}
             scrollToIndex={scrollToIndex}
             scrollToDate={scrollToDate}
-            selectedDate={
-              activeSearchMatchDate ?? readerJumpDate ?? fragmentId ?? undefined
-            }
-            searchJumpDate={activeSearchMatchDate ?? readerJumpDate}
+            selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
+            searchJumpDate={activeSearchMatchDate}
             searchJumpToken={threadSearchJumpToken}
             searchQuery={threadSearchHighlightQuery}
             onAtTopStateChange={setThreadNearTop}

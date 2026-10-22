@@ -2163,6 +2163,24 @@ describe("reader state", () => {
   });
 });
 
+describe("unread totals and the reader", () => {
+  it("count items marked unread again at or before the watermark", () => {
+    const actions = makeActions();
+    const messages = ["p1", "p2", "p3"].map((id) => ({
+      message_id: id,
+      sender_id: "u",
+    }));
+    actions.getMessagesInThread = jest.fn(() => messages);
+    // Read in order through p2; p1 and p3 marked unread.
+    actions.getThreadReadCount = jest.fn(() => 2);
+    actions.getReaderState = jest.fn(() => ({ u: ["p1", "p3"] }));
+    // p3 is past the watermark, so already counted: only p1 is added.
+    expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(1);
+    actions.getReaderState = jest.fn(() => ({}));
+    expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(0);
+  });
+});
+
 describe("reader state and the watermark", () => {
   it("a queued open moves the watermark over what the stored state had read", async () => {
     const actions = makeActions();

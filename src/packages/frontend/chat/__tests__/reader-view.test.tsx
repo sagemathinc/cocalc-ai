@@ -246,3 +246,30 @@ test("the reading pane has the log's selection actions and a copy button", async
       .map((el) => el.getAttribute("data-source")),
   ).toEqual(["p1", "a1"]);
 });
+
+test("narrow: keys keep working as items open, though the list goes", async () => {
+  setup(thread, 4, { narrow: true });
+  const keys = user();
+  // Back on the list, which has the focus.
+  await keys.click(screen.getByText(/first question/));
+  await keys.click(screen.getByRole("button", { name: "All messages" }));
+  expect(document.activeElement).toBe(screen.getByRole("listbox"));
+  // Opening an item replaces the list.
+  await keys.keyboard("j");
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(document.activeElement).toBe(screen.getByLabelText("Reader"));
+  await keys.keyboard("j");
+  expect(screen.getByRole("article")).toHaveTextContent("second question");
+});
+
+test("Newer and Older keep the keys working, though the pane is replaced", async () => {
+  setup(thread, 4);
+  const keys = user();
+  await keys.click(screen.getByText(/second question/));
+  await keys.click(screen.getByRole("button", { name: "Older" }));
+  expect(screen.getByRole("article")).toHaveTextContent("first question");
+  expect(document.activeElement).toBe(screen.getByRole("listbox"));
+  await keys.keyboard("k");
+  expect(screen.getByRole("article")).toHaveTextContent("second question");
+});
