@@ -310,17 +310,21 @@ describe("snapshot usage", () => {
       "2026-10-21T00:00:00.000Z",
       "2026-10-22T00:00:00.000Z",
     ];
-    btrfsMock.mockResolvedValue({
-      stdout: [
-        "Qgroupid Referenced Exclusive Max referenced Parent Child Path",
-        "-------- ---------- --------- -------------- ------ ----- ----",
-        "0/300 1000 900 5000 - - project-1",
-        ...names.map(
-          (name, i) =>
-            `0/${400 + i} ${100 + i} ${10 + i} none - - project-1/${SNAPSHOTS}/${name}`,
-        ),
-      ].join("\n"),
-      stderr: "",
+    const scan = [
+      "Qgroupid Referenced Exclusive Max referenced Parent Child Path",
+      "-------- ---------- --------- -------------- ------ ----- ----",
+      "0/300 1000 900 5000 - - project-1",
+      ...names.map(
+        (name, i) =>
+          `0/${400 + i} ${100 + i} ${10 + i} none - - project-1/${SNAPSHOTS}/${name}`,
+      ),
+    ].join("\n");
+    btrfsMock.mockImplementation(async ({ args }: { args: string[] }) => {
+      if (args[0] === "subvolume" && args[1] === "show") {
+        const i = names.findIndex((name) => args[2].endsWith(`/${name}`));
+        return { stdout: `Subvolume ID:\t${400 + i}\n`, stderr: "" };
+      }
+      return { stdout: scan, stderr: "" };
     });
     const snapshots = new SubvolumeSnapshots(
       createSubvolumeWithSnapshots(names) as any,
@@ -335,10 +339,16 @@ describe("snapshot usage", () => {
         quota: 0,
       })),
     );
-    expect(btrfsMock).toHaveBeenCalledTimes(1);
-    expect(btrfsMock).toHaveBeenCalledWith({
-      verbose: false,
-      args: ["qgroup", "show", "-prc", "--raw", "/mnt/test"],
-    });
+    // (one read of the quotas, by each snapshot's id)
+    expect(
+      btrfsMock.mock.calls.filter(([opts]) => opts.args[0] === "qgroup"),
+    ).toEqual([
+      [
+        {
+          verbose: false,
+          args: ["qgroup", "show", "-prc", "--raw", "/mnt/test"],
+        },
+      ],
+    ]);
   });
 });

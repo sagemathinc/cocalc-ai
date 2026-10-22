@@ -323,7 +323,7 @@ async function setSubvolumeLimitNow({
     args: ["qgroup", "limit", `${size}`, path, mount],
     verbose: false,
   });
-  noteQgroupLimit({ mount, path, size });
+  await noteQgroupLimit({ mount, path, size });
 }
 
 async function executeRow(row: QueueRow): Promise<void> {
