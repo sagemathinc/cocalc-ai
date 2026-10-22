@@ -17,7 +17,23 @@ export async function resolveHumanTurnMentions(
 ) {
   // Never bind history, model-authored content, or an old turn's map.
   if (request.chat?.agent_message) return [];
-  const text = request.chat?.user_message_content ?? "";
+  return await resolveHumanAgentMentions(
+    request.chat?.user_message_content ?? "",
+    {
+      account_id: request.account_id,
+      project_id: request.chat?.project_id ?? request.project_id!,
+    },
+    api,
+  );
+}
+
+/** The agent references a person wrote (a message, or an answer to an
+ * agent's question), each checked under that person. */
+export async function resolveHumanAgentMentions(
+  text: string,
+  { account_id, project_id }: { account_id?: string; project_id: string },
+  api: Pick<AgentApi, "getMentionIdentity">,
+) {
   const references = Object.values(
     agentMentionReferenceMap(extractAgentMentions(text)),
   );
@@ -27,8 +43,8 @@ export async function resolveHumanTurnMentions(
     // Validate copied references under the submitting human, not the naming
     // account embedded in the markup. Exact owner routing starts no target.
     const identity = await api.getMentionIdentity({
-      account_id: request.account_id,
-      project_id: request.chat?.project_id ?? request.project_id!,
+      account_id,
+      project_id,
       target: reference.target,
     });
     if (
