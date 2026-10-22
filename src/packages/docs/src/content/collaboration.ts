@@ -103,10 +103,10 @@ trust:
 
 1. Stop the project right away. Removing someone does not end an SSH session
    or a program they already started, and stopping the project ends both.
-2. In **Settings -> People**, remove any collaborator you do not recognize: the
-   person you removed may have invited another account of their own. Under
-   **Collaborator Management**, consider turning off **Allow other users to
-   manage collaborators**, so only the owner can add people.
+2. In **Settings -> People**, remove any collaborator or viewer you do not
+   recognize: the person you removed may have invited another account of their
+   own. Under **Collaborator Management**, consider turning off **Allow other
+   users to manage collaborators**, so only the owner can add people.
 3. Keep the project stopped while you check it. In **Settings -> Runtime**, set
    **Automatic starts** to **Blocked**, so SSH, terminals, Jupyter, apps and
    agents cannot wake the project. Only the project owner can change this.
@@ -136,10 +136,10 @@ trust:
    you want.
 
 These steps catch the usual ways access is left behind, but they cannot prove a
-project is clean: code can be hidden in any file the project runs later. If you
-need that certainty, create a new project, copy in only the files you need after
-reviewing them, and add the replacement credentials there instead of in the old
-project.
+project is clean: code can be hidden in any file the project runs later,
+including system files changed with \`sudo\`. If you need that certainty, create
+a new project, copy in only the files you need after reviewing them, and add the
+replacement credentials there instead of in the old project.
 
 Keep the paths to the report, saved results, and next steps in the
 [research handoff](/docs/projects/research-handoff). For coauthors editing
