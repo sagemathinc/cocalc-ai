@@ -103,15 +103,17 @@ trust:
 
 1. Stop the project right away. Removing someone does not end an SSH session
    or a program they already started, and stopping the project ends both.
-2. Keep it stopped while you check it. In **Settings -> Runtime**, set
-   **Automatic starts** to **Blocked**, so SSH, terminals, Jupyter, apps and
-   agents cannot wake the project. Only the project owner can change this.
-3. In **Settings -> People**, remove any collaborator you do not recognize: the
+2. In **Settings -> People**, remove any collaborator you do not recognize: the
    person you removed may have invited another account of their own. Under
    **Collaborator Management**, consider turning off **Allow other users to
    manage collaborators**, so only the owner can add people.
-4. With the project still stopped, check the files that run code. You can open
-   and edit files without starting the project. In the file explorer, choose
+3. Keep the project stopped while you check it. In **Settings -> Runtime**, set
+   **Automatic starts** to **Blocked**, so SSH, terminals, Jupyter, apps and
+   agents cannot wake the project. Only the project owner can change this.
+   Then make sure the project is still stopped, and stop it again if someone
+   started it in the meantime.
+4. With the project stopped, check the files that run code. You can open and
+   edit files without starting the project. In the file explorer, choose
    **Show hidden files**, then open these files and remove anything you did not
    expect: \`~/.local/share/cocalc/startup.sh\` (which runs every time the
    project starts), \`~/.ssh/authorized_keys\` (delete any key you do not
