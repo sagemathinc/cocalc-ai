@@ -4670,13 +4670,26 @@ export class SyncDoc extends EventEmitter {
 
   private patchflowPrevSeqForMoreHistory = (): number | undefined => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;
-    const history = this.patchflowSession.history({ includeSnapshots: true });
-    let firstLoadedSeq: number | undefined;
+    const history: Parameters<typeof prevSeqForMoreHistoryFromHistory>[0] = [
+      ...this.patchflowSession.history({ includeSnapshots: true }),
+    ];
+    // Also every snapshot message in the loaded stream: patchflow does not
+    // see a record ignored before its patch was loaded (see
+    // isSnapshotRecordBeforeLoadedRange), and once its patch loads, the patch
+    // takes its table key, so the record that leads one snapshot further
+    // back would otherwise be missing.
     try {
-      const seq = this.dstream()?.seq?.(0);
-      firstLoadedSeq = typeof seq === "number" ? seq : undefined;
+      for (const mesg of this.dstream()?.getAll?.() ?? []) {
+        if (mesg?.is_snapshot && mesg.seq_info != null) {
+          history.push({
+            time: mesg.time,
+            isSnapshot: true,
+            seqInfo: mesg.seq_info,
+          });
+        }
+      }
     } catch {}
-    return prevSeqForMoreHistoryFromHistory(history, firstLoadedSeq);
+    return prevSeqForMoreHistoryFromHistory(history, this.firstLoadedSeq());
   };
 
   private patchflowSnapshotCandidate = (

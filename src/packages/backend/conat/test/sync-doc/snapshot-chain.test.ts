@@ -84,11 +84,19 @@ describe("opening a document whose snapshot records each follow the next snapsho
     expect(s3.versions().length).toBeLessThan(total);
     expect(s3.to_str()).toBe(expected);
 
-    // Loading more history still steps back one snapshot at a time, and the
-    // older snapshot records are used again once their patches load.
-    expect(await s3.loadMoreHistory()).toBe(true);
-    expect(s3.hasFullHistory()).toBe(false);
-    expect(s3.to_str()).toBe(expected);
+    // Loading more history still steps back one snapshot at a time, also
+    // past a snapshot whose record was ignored until its patch loaded.
+    const counts = [s3.versions().length];
+    for (let step = 0; step < 3; step++) {
+      expect(await s3.loadMoreHistory()).toBe(true);
+      expect(s3.hasFullHistory()).toBe(false);
+      expect(s3.to_str()).toBe(expected);
+      counts.push(s3.versions().length);
+    }
+    for (let i = 1; i < counts.length; i++) {
+      expect(counts[i] - counts[i - 1]).toBeGreaterThan(0);
+      expect(counts[i] - counts[i - 1]).toBeLessThanOrEqual(interval + 1);
+    }
     await s3.loadMoreHistory({ all: true });
     expect(s3.hasFullHistory()).toBe(true);
     expect(s3.versions().length).toBe(total);
