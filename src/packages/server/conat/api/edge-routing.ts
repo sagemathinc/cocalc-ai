@@ -405,8 +405,20 @@ async function runForwardedHubApiCall(
       source_bay_id,
       call_id: _call_id,
       budget_ms: _budget_ms,
+      system,
       ...rest
     } = call;
+    if (system) {
+      // Allow-listed internal actions only; the action checks that this bay
+      // owns the host.
+      const { runSystemHostActionHere } = await import("./system-host-actions");
+      return {
+        ok: true,
+        result:
+          (await runSystemHostActionHere(rest.name, rest.args?.[0] ?? {})) ??
+          null,
+      };
+    }
     const route = getHubApiRoute(rest.name);
     // Only routed methods cross bays this way.
     if (route == null) {

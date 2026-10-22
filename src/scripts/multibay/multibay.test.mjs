@@ -651,7 +651,10 @@ describe("inspecting a sent message's turn across bays", () => {
     );
   });
 
-  /** A stand-in for the recipient's project host, until `lifetimeMs`. */
+  /**
+   * A stand-in for the recipient's project host. It serves until the test
+   * writes a `stop` row (see stopFakeHost), or at most `lifetimeMs`.
+   */
   function fakeHost(lifetimeMs = 100_000) {
     return runInBay(
       cluster,
@@ -706,11 +709,36 @@ describe("inspecting a sent message's turn across bays", () => {
        });
        await new Promise((resolve) => setTimeout(resolve, 2_000));
        await note("ready", true);
-       await new Promise((resolve) => setTimeout(resolve, ${lifetimeMs}));
+       const deadline = Date.now() + ${lifetimeMs};
+       while (Date.now() < deadline) {
+         const { rows } = await getPool().query("SELECT 1 FROM multibay_fake_host WHERE key='stop'");
+         if (rows.length > 0) break;
+         await new Promise((resolve) => setTimeout(resolve, 200));
+       }
        service.close();
        return "served";`,
-      { timeoutMs: lifetimeMs + 60_000 },
+      // Its own process: it serves for a while.
+      { timeoutMs: lifetimeMs + 60_000, fresh: true },
     );
+  }
+
+  /**
+   * Clear a previous fake host's signals, then start a new one. Its promise
+   * is wrapped: an async function would otherwise wait for the host to exit.
+   */
+  async function startFakeHost(db) {
+    await db.query(
+      "DELETE FROM multibay_fake_host WHERE key IN ('ready', 'stop')",
+    );
+    return { exited: fakeHost() };
+  }
+
+  /** Tell the fake host to stop, then wait for it to exit. */
+  async function stopFakeHost(db, host) {
+    await db.query(
+      "INSERT INTO multibay_fake_host(key,value) VALUES('stop','true') ON CONFLICT (key) DO NOTHING",
+    );
+    await host.exited;
   }
 
   async function inspectFromSeed(attempt_id, run_id = run, action = "inspect") {
@@ -739,8 +767,8 @@ describe("inspecting a sent message's turn across bays", () => {
   }
 
   it("returns the recipient host's turn, checked, and only for the right turn", async () => {
-    const host = fakeHost();
     const db = await connectBayDatabase(cluster, ATTACHED);
+    const host = await startFakeHost(db);
     try {
       await eventually(
         async () =>
@@ -784,14 +812,17 @@ describe("inspecting a sent message's turn across bays", () => {
         0,
       );
     } finally {
-      await db.end();
-      await host;
+      try {
+        await stopFakeHost(db, host);
+      } finally {
+        // Even if the fake host failed: an open client keeps the run alive.
+        await db.end();
+      }
     }
   });
   it("withdraws through the recipient's bay and host, and only the right turn", async () => {
     const db = await connectBayDatabase(cluster, ATTACHED);
-    await db.query("DELETE FROM multibay_fake_host WHERE key='ready'");
-    const host = fakeHost(30_000);
+    const host = await startFakeHost(db);
     try {
       await eventually(
         async () =>
@@ -831,8 +862,12 @@ describe("inspecting a sent message's turn across bays", () => {
         0,
       );
     } finally {
-      await db.end();
-      await host;
+      try {
+        await stopFakeHost(db, host);
+      } finally {
+        // Even if the fake host failed: an open client keeps the run alive.
+        await db.end();
+      }
     }
   });
 });
@@ -1882,6 +1917,43 @@ describe("host reads across bays", () => {
        return rows[0].n;`,
     );
     assert.equal(queuedOn, 1, "the operation is recorded on the host's bay");
+  });
+
+  it("stops a host as the system, from another bay, with no session", async () => {
+    // Trusted server code (quarantine) stops hosts with no user session: the
+    // seed sends the allow-listed system action to the host's bay.
+    const forwarded = async () =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.stopHost' AND source_bay_id=$1 AND finished IS NOT NULL",
+           [${JSON.stringify(SEED)}]);
+         return rows[0].n;`,
+      );
+    const before = await forwarded();
+    const op = await runInBay(
+      cluster,
+      SEED,
+      `const { runHostActionAsSystem } = server("conat/api/system-host-actions.js");
+       return await runHostActionAsSystem("hosts.stopHost", {
+         account_id: ${JSON.stringify(alice.account_id)},
+         id: ${JSON.stringify(host_id)},
+       });`,
+    );
+    assert.ok(op?.op_id, "a stop operation was queued");
+    assert.equal(await forwarded(), before + 1);
+    const queuedOn = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT kind FROM long_running_operations WHERE op_id=$1",
+         [${JSON.stringify(op.op_id)}]);
+       return rows[0]?.kind ?? null;`,
+    );
+    assert.equal(queuedOn, "host-stop");
   });
 });
 
@@ -3504,6 +3576,8 @@ describe("admin credit attribution across bays", () => {
          missing: missing.map((row) => row.purchase_id),
          after: attached.after,
        };`,
+      // Its own process: it switches on billing-authority mode.
+      { fresh: true },
     );
     assert.ok(result.missing.includes(result.purchase_id));
     assert.equal(result.after.source, "attached");
