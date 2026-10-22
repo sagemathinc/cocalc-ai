@@ -273,6 +273,11 @@ jobs:
           fi
           ./workspaces.py test "${test_args[@]}"
 
+      # Warnings only: flags a slow new test file on the PR that adds it.
+      - name: Slowest test files
+        if: always()
+        run: node src/scripts/ci-test-timings.mjs src/.cache/test-reports --title="Slowest test files (${{ matrix.lane }})"
+
       - name: Upload test attempts and timings
         if: always()
         uses: actions/upload-artifact@v6
