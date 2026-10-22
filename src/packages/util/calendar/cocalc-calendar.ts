@@ -347,7 +347,11 @@ function parseEvent(
     bad("due_offset_days", "must be a whole number of days, 0 to 366");
   if (e.status != null && !STATUSES.includes(e.status))
     bad("status", `must be one of ${STATUSES.join(", ")}`);
-  if (e.category != null && !categories[e.category])
+  // Own keys only: "constructor" or "toString" is not a category.
+  const known = (key: unknown) =>
+    typeof key === "string" &&
+    Object.prototype.hasOwnProperty.call(categories, key);
+  if (e.category != null && !known(e.category))
     bad("category", `"${e.category}" is not one of the categories`);
   if (
     e.details != null &&
@@ -413,7 +417,7 @@ function parseEvent(
       ? { due_offset_days: e.due_offset_days }
       : {}),
     ...(recurrence ? { recurrence } : {}),
-    ...(e.category && categories[e.category] ? { category: e.category } : {}),
+    ...(known(e.category) ? { category: e.category } : {}),
     ...(STATUSES.includes(e.status) ? { status: e.status } : {}),
     ...(typeof e.owner === "string" && e.owner.length <= 200
       ? { owner: e.owner }
@@ -1164,7 +1168,15 @@ export function calendarAgenda(
   for (const o of occurrences) {
     if (isOverdue(o, nowMs)) {
       if ((o.due ?? o.end ?? o.start) >= historyStart) overdue.push(o);
-    } else if ((o.end ?? o.start + 1) > nowMs) {
+    } else if (
+      // Still to come or running, or not yet due: a pending item stays in
+      // view until its deadline, not just its start.
+      (o.end ?? o.start + 1) > nowMs ||
+      (o.due != null &&
+        o.due >= nowMs &&
+        o.event.status !== "done" &&
+        o.event.status !== "cancelled")
+    ) {
       const list = byDate.get(o.date) ?? [];
       list.push(o);
       byDate.set(o.date, list);

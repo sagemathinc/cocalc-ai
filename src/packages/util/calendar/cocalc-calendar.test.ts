@@ -520,6 +520,53 @@ describe("the agenda", () => {
     ).toEqual([]);
   });
 
+  it("an item stays in view until its deadline, not just its start", () => {
+    const cal = calendarOf({
+      ...ACCOUNTING,
+      events: [
+        {
+          id: "jan",
+          title: "January task",
+          start: "2027-01-01",
+          all_day: true,
+          due: "2027-01-31",
+          status: "pending",
+        },
+      ],
+    });
+    // Jan 10: started, not yet due.
+    const agenda = calendarAgenda(cal, Date.parse("2027-01-10T19:00:00Z"));
+    expect(agenda.overdue).toEqual([]);
+    expect(agenda.days.map((d) => d.date)).toEqual(["2027-01-01"]);
+    // Done: gone.
+    const done = calendarOf({
+      ...ACCOUNTING,
+      events: [{ ...cal.events[0], status: "done" }],
+    });
+    expect(
+      calendarAgenda(done, Date.parse("2027-01-10T19:00:00Z")).days,
+    ).toEqual([]);
+  });
+
+  it("only the calendar's own categories count", () => {
+    const parsed = parseCalendar(
+      text({
+        ...ACCOUNTING,
+        events: [
+          {
+            id: "c",
+            title: "C",
+            start: "2027-01-01",
+            all_day: true,
+            category: "constructor",
+          },
+        ],
+      }),
+    );
+    expect(parsed.problems.map((p) => p.path)).toEqual(["events[0].category"]);
+    expect(parsed.calendar!.events[0].category).toBeUndefined();
+  });
+
   it("a past item that is done, or not due, is not shown again", () => {
     const done = calendarOf({
       ...ACCOUNTING,
