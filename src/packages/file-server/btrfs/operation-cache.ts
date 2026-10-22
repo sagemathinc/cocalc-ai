@@ -6,6 +6,7 @@ import {
   withBtrfsMutationContext,
 } from "./mutation-context";
 import { btrfs } from "./util";
+import { invalidateQgroupScan, resetQgroupScansForTest } from "./qgroup-scan";
 
 export {
   type BtrfsMutationContext,
@@ -24,10 +25,11 @@ type CacheEntry<T> = {
   value: T;
 };
 
-const qgroupShowCache = new Map<string, CacheEntry<BtrfsOutput>>();
-const qgroupShowInflight = new Map<string, Promise<BtrfsOutput>>();
 const subvolumeShowCache = new Map<string, CacheEntry<BtrfsOutput>>();
 const subvolumeShowInflight = new Map<string, Promise<BtrfsOutput>>();
+// the read under way for each key, while it is: one invalidated (no longer
+// here when it completes) is never stored
+const subvolumeShowReads = new Map<string, object>();
 const DEFAULT_MUTATION_LOCK_WAIT_MS = 2 * 60_000;
 
 type MutationLockHolder = {
@@ -96,10 +98,6 @@ function envDurationMs(name: string, fallback: number): number {
   return fallback;
 }
 
-function qgroupShowCacheMs(): number {
-  return envDurationMs("COCALC_BTRFS_QGROUP_SHOW_CACHE_MS", 2_000);
-}
-
 function subvolumeShowCacheMs(): number {
   return envDurationMs("COCALC_BTRFS_SUBVOLUME_SHOW_CACHE_MS", 1_000);
 }
@@ -117,12 +115,14 @@ async function cached<T>({
   key,
   ttlMs,
   run,
+  reads,
 }: {
   cache: Map<string, CacheEntry<T>>;
   inflight: Map<string, Promise<T>>;
   key: string;
   ttlMs: number;
   run: () => Promise<T>;
+  reads?: Map<string, object>;
 }): Promise<T> {
   const now = Date.now();
   const cached = cache.get(key);
@@ -133,9 +133,11 @@ async function cached<T>({
   if (pending) {
     return await pending;
   }
+  const read = {};
+  reads?.set(key, read);
   const promise = (async () => {
     const value = await run();
-    if (ttlMs > 0) {
+    if (ttlMs > 0 && (reads == null || reads.get(key) === read)) {
       cache.set(key, { value, expires: Date.now() + ttlMs });
     }
     return value;
@@ -147,32 +149,25 @@ async function cached<T>({
     if (inflight.get(key) === promise) {
       inflight.delete(key);
     }
+    if (reads?.get(key) === read) {
+      reads.delete(key);
+    }
   }
 }
 
-export async function cachedBtrfsQgroupShowRawForPath(
-  path: string,
-): Promise<BtrfsOutput> {
-  return await cached({
-    cache: qgroupShowCache,
-    inflight: qgroupShowInflight,
-    key: path,
-    ttlMs: qgroupShowCacheMs(),
-    run: async () =>
-      await btrfs({
-        verbose: false,
-        // -f restricts output to qgroups affecting this subvolume. Without it,
-        // qgroup show enumerates every qgroup on the filesystem.
-        args: ["qgroup", "show", "-prcf", "--raw", path],
-      }),
-  });
+// Quota numbers are read once per filesystem and shared (qgroup-scan.ts);
+// this drops what was read of the filesystem with `pathOrMount`.
+export function invalidateBtrfsQgroupShowRaw(pathOrMount: string): void {
+  invalidateQgroupScan(pathOrMount);
 }
 
-export function invalidateBtrfsQgroupShowRaw(pathOrMount: string): void {
-  for (const key of qgroupShowCache.keys()) {
-    if (key === pathOrMount || key.startsWith(`${pathOrMount}/`)) {
-      qgroupShowCache.delete(key);
-    }
+// The subvolumes at `paths` were replaced or moved (e.g., a restore swapped a
+// home): what was read about them, and of their filesystem's quotas, no
+// longer holds.
+export function forgetSubvolumePaths(...paths: string[]): void {
+  for (const path of paths) {
+    invalidateBtrfsSubvolumeShow(path);
+    invalidateQgroupScan(path);
   }
 }
 
@@ -186,6 +181,7 @@ export async function cachedBtrfsSubvolumeShow(
     inflight: subvolumeShowInflight,
     key: `${errOnExit ? "strict" : "lenient"}:${path}`,
     ttlMs: subvolumeShowCacheMs(),
+    reads: subvolumeShowReads,
     run: async () =>
       await btrfs({
         args: ["subvolume", "show", path],
@@ -195,9 +191,15 @@ export async function cachedBtrfsSubvolumeShow(
   });
 }
 
+// What was read about the subvolume at `path` no longer holds (e.g., another
+// one is there now): dropped, and so is a read under way, which is never
+// stored nor given to anyone asking from now on.
 export function invalidateBtrfsSubvolumeShow(path: string): void {
-  subvolumeShowCache.delete(`strict:${path}`);
-  subvolumeShowCache.delete(`lenient:${path}`);
+  for (const key of [`strict:${path}`, `lenient:${path}`]) {
+    subvolumeShowCache.delete(key);
+    subvolumeShowInflight.delete(key);
+    subvolumeShowReads.delete(key);
+  }
 }
 
 export async function withBtrfsMutationLock<T>({
@@ -418,10 +420,10 @@ export function getBtrfsMutationLockStatus(): BtrfsMutationLockStatus[] {
 }
 
 export function clearBtrfsOperationCachesForTest(): void {
-  qgroupShowCache.clear();
-  qgroupShowInflight.clear();
+  resetQgroupScansForTest();
   subvolumeShowCache.clear();
   subvolumeShowInflight.clear();
+  subvolumeShowReads.clear();
   for (const state of mutationLocks.values()) {
     for (const waiter of state.waiters) {
       clearTimeout(waiter.timeout);
@@ -429,4 +431,9 @@ export function clearBtrfsOperationCachesForTest(): void {
   }
   mutationLocks.clear();
   backgroundMutationGuard = undefined;
+}
+
+// how many reads are being tracked (they are only while under way)
+export function subvolumeShowReadsForTest(): number {
+  return subvolumeShowReads.size;
 }

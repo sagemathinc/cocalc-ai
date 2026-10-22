@@ -4658,64 +4658,24 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     expect(status.observation_error).toBeUndefined();
   });
 
-  it("routes runtime deployment status to the authoritative remote bay", async () => {
+  it("refuses runtime deployment status for a host owned by another bay", async () => {
     resolveHostBayMock = jest.fn(async () => ({
       bay_id: "bay-1",
       epoch: 2,
     }));
-    hostConnectionGetHostRuntimeDeploymentStatusMock.mockResolvedValueOnce({
-      effective: [
-        {
-          scope_type: "host",
-          scope_id: HOST_ID,
-          host_id: HOST_ID,
-          target_type: "artifact",
-          target: "project-host",
-          desired_version: "ph-remote",
-          requested_by: ACCOUNT_ID,
-          requested_at: "2026-04-15T00:00:00.000Z",
-          updated_at: "2026-04-15T00:00:00.000Z",
-        },
-      ],
-      observed_targets: [],
-      observed_components: [],
-      observed_artifacts: [],
-      rollback_targets: [],
-    });
-    queryMock = jest.fn(async (sql: string) => {
-      if (sql.includes("FROM project_hosts")) {
-        return {
-          rows: [
-            {
-              id: HOST_ID,
-              status: "running",
-              metadata: { owner: ACCOUNT_ID },
-            },
-          ],
-        };
-      }
-      throw new Error(`unexpected local query: ${sql}`);
-    });
-
     const { getHostRuntimeDeploymentStatus } = await import("./hosts");
-    const status = await getHostRuntimeDeploymentStatus({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
-
+    // Routed to the host's bay (the fleet worker calls it through
+    // hosts-routed): refused on any other.
+    await expect(
+      getHostRuntimeDeploymentStatus({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({ code: 409 });
     expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
     expect(
       hostConnectionGetHostRuntimeDeploymentStatusMock,
-    ).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
-    expect(status.effective).toEqual([
-      expect.objectContaining({
-        target: "project-host",
-        desired_version: "ph-remote",
-      }),
-    ]);
+    ).not.toHaveBeenCalled();
   });
 
   it("refuses host-scoped runtime deployment listing on a bay that does not own the host (it is routed)", async () => {
@@ -4992,39 +4952,32 @@ describe("hosts.authoritative remote host actions", () => {
     });
   });
 
-  it("routes fleet-rollout host actions to the authoritative remote bay", async () => {
-    // Still forwarded: the fleet-rollout worker calls these directly for
-    // hosts on any bay (step 3b).
+  it("refuses fleet-rollout host actions for a host owned by another bay", async () => {
+    // Routed to the host's bay; the fleet worker calls them through
+    // hosts-routed.
     const { upgradeHostSoftware, rolloutHostManagedComponents } =
       await import("./hosts");
-    await upgradeHostSoftware({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-      targets: [{ artifact: "project-host", version: "ph-remote" }],
-      base_url: "https://artifacts.example.test",
-      align_runtime_stack: true,
-    });
-    await rolloutHostManagedComponents({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-      components: ["project-host"],
-      reason: "test rollout",
-    });
-    expect(hostConnectionUpgradeHostSoftwareMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-      targets: [{ artifact: "project-host", version: "ph-remote" }],
-      base_url: "https://artifacts.example.test",
-      align_runtime_stack: true,
-    });
-    expect(hostConnectionRolloutHostManagedComponentsMock).toHaveBeenCalledWith(
-      {
+    await expect(
+      upgradeHostSoftware({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        targets: [{ artifact: "project-host", version: "ph-remote" }],
+        base_url: "https://artifacts.example.test",
+        align_runtime_stack: true,
+      }),
+    ).rejects.toMatchObject({ code: 409 });
+    await expect(
+      rolloutHostManagedComponents({
         account_id: ACCOUNT_ID,
         id: HOST_ID,
         components: ["project-host"],
         reason: "test rollout",
-      },
-    );
+      }),
+    ).rejects.toMatchObject({ code: 409 });
+    expect(hostConnectionUpgradeHostSoftwareMock).not.toHaveBeenCalled();
+    expect(
+      hostConnectionRolloutHostManagedComponentsMock,
+    ).not.toHaveBeenCalled();
   });
 
   it("refuses host lifecycle actions for a host owned by another bay", async () => {

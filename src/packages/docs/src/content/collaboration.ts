@@ -91,6 +91,56 @@ access. For an invitation that has not been accepted, open **Pending
 Invitations** and use **Revoke**. These controls depend on your permission to
 manage collaborators; the project owner can help when they are unavailable.
 
+## After removing a collaborator
+
+A collaborator has full access to the project, much like a user sharing a
+Linux account on a server: they can run code, add SSH keys, and set up
+programs that start with the project. Removing them, or deleting their
+account, ends their CoCalc access, but it does not undo anything they set up
+inside the project. The remaining collaborators are responsible for checking
+the project, just as on any shared server. If you remove someone you no longer
+trust:
+
+1. Stop the project right away. Removing someone does not end an SSH session
+   or a program they already started, and stopping the project ends both.
+2. In **Settings -> People**, remove any collaborator or viewer you do not
+   recognize: the person you removed may have invited another account of their
+   own. Under **Collaborator Management**, consider turning off **Allow other
+   users to manage collaborators**, so only the owner can add people.
+3. Keep the project stopped while you check it. In **Settings -> Runtime**, set
+   **Automatic starts** to **Blocked**, so SSH, terminals, Jupyter, apps and
+   agents cannot wake the project. Only the project owner can change this.
+   Then make sure the project is still stopped, and stop it again if someone
+   started it in the meantime.
+4. Now revoke, at their source, every credential the collaborator could read:
+   passwords, API keys, tokens, certificates, SSH private keys (remove the
+   matching public key wherever it is authorized), and
+   [project secrets](/docs/projects/project-secrets). For example, revoke a key
+   with the service that issued it. Do this before checking files, because
+   they may already have copied a credential. A running project sees a changed
+   secret right away, so add replacements only to a project you trust, as
+   explained below.
+5. In **Settings -> Publish**, unpublish any folder, file or project share you
+   did not expect: anyone with the link can still open it.
+6. With the project stopped, check the files that run code. You can open and
+   edit files without starting the project. In the file explorer, choose
+   **Show hidden files**, then open these files and remove anything you did not
+   expect: \`~/.local/share/cocalc/startup.sh\` (which runs every time the
+   project starts), \`~/.ssh/authorized_keys\` (delete any key you do not
+   recognize), and the shell startup files \`~/.bashrc\`, \`~/.bash_profile\`,
+   \`~/.profile\`, and any others your shells read, such as \`~/.zshrc\`.
+7. Review any other scripts or scheduled jobs the project runs, and remove
+   anything you did not expect.
+8. When you are done, start the project, check the running processes in a
+   terminal with \`ps aux\`, and set **Automatic starts** back to **Allowed** if
+   you want.
+
+These steps catch the usual ways access is left behind, but they cannot prove a
+project is clean: code can be hidden in any file the project runs later,
+including system files changed with \`sudo\`. If you need that certainty, create
+a new project, copy in only the files you need after reviewing them, and add the
+replacement credentials there instead of in the old project.
+
 Keep the paths to the report, saved results, and next steps in the
 [research handoff](/docs/projects/research-handoff). For coauthors editing
 together, use [chat](/docs/collaboration/chat) beside the relevant files to
