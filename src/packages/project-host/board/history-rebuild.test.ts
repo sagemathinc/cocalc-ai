@@ -34,6 +34,7 @@ import { dstream } from "@cocalc/conat/sync/dstream";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import type { BoardOpenResult } from "@cocalc/conat/files/fs";
+import { setResetAdmissionHook } from "@cocalc/conat/persist/storage";
 import { boardSyncdbPath } from "@cocalc/util/board/names";
 import {
   BOARD_FILE_RESET_REASON,
@@ -808,6 +809,49 @@ test("a board-file marker at the failed open's epoch is not a recovery: the host
   expect(second.recovered!.history_epoch).toBeGreaterThan(E1);
   expect(calls.resetHistory).toHaveLength(1);
   expect(calls.resetHistory[0].options.ifInitEpoch).toBe(E1);
+});
+
+// H1c §3.4, end to end: the persist server refuses the rebuild's reset as
+// "trash-pending" (an earlier reset's trash still being removed; here the
+// volume admission hook declines, the same refusal), through the retries and
+// the deadline, to the board's result; Retry succeeds once it admits
+describe("trash-pending: an earlier reset's trash still being removed", () => {
+  afterEach(() => setResetAdmissionHook(undefined));
+
+  test("the board says so, with Open as text, Download, Retry and the docs; Retry then rebuilds", async () => {
+    REBUILD_LIMITS.deadlineMs = 2000;
+    const b = await unloadableBoard();
+    await serveFileReads(b.project_id);
+    const bytes = await b.read();
+    let asked = 0;
+    setResetAdmissionHook(() => {
+      asked += 1;
+      return false;
+    });
+    const result = await openBoard(opts(b));
+    expect(result).toMatchObject({
+      state: "history-unloadable",
+      cause: "trash-pending",
+      actions: ["open-as-text", "download", "retry"],
+      docs: HISTORY_UNLOADABLE_DOCS,
+    });
+    // retried within the deadline, then given up
+    expect(asked).toBeGreaterThan(0);
+    // the ways out work meanwhile
+    expect((await download(b.project_id, result.path)).equals(bytes)).toBe(
+      true,
+    );
+    expect(await openAsText(b.project_id, result.path)).toBe(bytes.toString());
+    expectUntouched(b.state, await historyState(b.project_id, b.path));
+    await until(() => !runInProgress(boardSyncdbPath(b.path)));
+    // the trash is gone: Retry rebuilds
+    setResetAdmissionHook(undefined);
+    const retry = await openBoard(opts(b));
+    expect(retry).toMatchObject({
+      state: "ok",
+      recovered: { reason: BOARD_FILE_RESET_REASON },
+    });
+  });
 });
 
 describe("reset-unknown: a reset sent without an answer in time", () => {

@@ -103,7 +103,9 @@ function titleOf(result: BoardOpenResult): string {
     default:
       return result.cause == "reset-unknown"
         ? "The board's history may already have been rebuilt"
-        : "The board's edit history can't be loaded";
+        : result.cause == "trash-pending"
+          ? "The board's history is still being cleaned up"
+          : "The board's edit history can't be loaded";
   }
 }
 

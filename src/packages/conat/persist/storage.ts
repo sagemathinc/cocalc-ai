@@ -413,6 +413,206 @@ export const RESET_TRASH_SCHEMA = {
         )`,
 } as const;
 
+// Bounded reset work (bounded history plan H1c r4).
+//
+// A stream's live record and byte counts are kept in stream_counts, updated
+// with every write.  A stream from before H1c is counted in bounded steps; an
+// open probes at most COUNT_PROBE_RECORDS rows once, and until the count is
+// complete, count() is exactly COUNT_PROBE_RECORDS + 1 ("more than that").
+export const COUNT_PROBE_RECORDS = 10_000;
+// a reset lists the deleted seqs only for a history this small; otherwise
+// only `through` (DeleteOperation)
+export const RESET_DELETE_LIST_MAX = 10_000;
+// (tests may lower it)
+function resetDeleteListMax(env: NodeJS.ProcessEnv = process.env): number {
+  const value = Number(env.COCALC_PERSIST_RESET_DELETE_LIST_MAX);
+  return Number.isSafeInteger(value) && value >= 0
+    ? value
+    : RESET_DELETE_LIST_MAX;
+}
+// a reset first runs this many trash steps of its own, before deciding
+const RESET_SYNC_TRASH_STEPS = 4;
+// every trash item is charged at least this, so none is free
+const TRASH_MIN_RECORDS = 1;
+const TRASH_MIN_BYTES = 4096;
+// what deleting one msg id or cut costs a step's byte budget
+const TRASH_ID_ROW_BYTES = 64;
+
+// One budget for one step, passed by reference to every helper of the step:
+// none starts with a fresh limit.  A helper takes a row only if both the
+// records and bytes left cover it, except the first row of a step that has
+// taken nothing yet (so a step always progresses): a step therefore removes
+// at most maxTrimRecords rows and maxTrimBytes + one message's bytes.
+export interface TrimBudget {
+  records: number;
+  bytes: number;
+  used: boolean;
+}
+
+function newTrimBudget(limits: HistoryLimits): TrimBudget {
+  return {
+    records: limits.maxTrimRecords,
+    bytes: limits.maxTrimBytes,
+    used: false,
+  };
+}
+
+// may this budget take one more row of size bytes?  Takes it if so.
+function takeRow(budget: TrimBudget, size: number): boolean {
+  if (budget.records <= 0) return false;
+  if (budget.used && size > budget.bytes) return false;
+  budget.records -= 1;
+  budget.bytes -= size;
+  budget.used = true;
+  return true;
+}
+
+function budgetLeft(budget: TrimBudget): boolean {
+  return budget.records > 0 && (budget.bytes > 0 || !budget.used);
+}
+
+// ONE scheduler for the whole process: the streams with trash or counting
+// left (deduplicated), one timer, at most TRASH_STEPS_PER_TICK steps a tick,
+// round-robin.  Streams whose reset was just refused for pending trash share
+// up to TRASH_FOREGROUND_STEPS of them first.  Each step is one synchronous
+// transaction, checked against the stream's identity, closing state and
+// generation before it runs; close bumps the generation, so nothing selected
+// for an old (closed or replaced) stream ever runs.
+const TRASH_TICK_MS = 1000;
+const TRASH_STEPS_PER_TICK = 8;
+const TRASH_FOREGROUND_STEPS = 4;
+const TRASH_BLOCKED_MS = 60_000;
+
+interface TrashWorker {
+  trashGeneration: number;
+  isClosing: () => boolean;
+  runTrashStep: () => boolean;
+}
+
+const trashQueue = new Map<TrashWorker, number>();
+const trashBlocked = new Map<TrashWorker, number>();
+let trashTimer: ReturnType<typeof setTimeout> | undefined;
+let trashRound = 0;
+
+function registerTrashWork(worker: TrashWorker, blocked = false) {
+  trashQueue.set(worker, worker.trashGeneration);
+  if (blocked) trashBlocked.set(worker, Date.now() + TRASH_BLOCKED_MS);
+  if (trashTimer == null) {
+    trashTimer = setTimeout(trashTick, TRASH_TICK_MS);
+    trashTimer.unref?.();
+  }
+}
+
+function unregisterTrashWork(worker: TrashWorker) {
+  trashQueue.delete(worker);
+  trashBlocked.delete(worker);
+}
+
+function rotate<T>(list: T[], by: number): T[] {
+  if (list.length == 0) return list;
+  const k = by % list.length;
+  return [...list.slice(k), ...list.slice(0, k)];
+}
+
+function trashTick() {
+  trashTimer = undefined;
+  const now = Date.now();
+  trashRound += 1;
+  for (const [worker, until] of trashBlocked) {
+    if (until <= now) trashBlocked.delete(worker);
+  }
+  const all = [...trashQueue.keys()];
+  const blocked = rotate(
+    all.filter((w) => trashBlocked.has(w)),
+    trashRound,
+  );
+  // the foreground share: TRASH_FOREGROUND_STEPS slots, round-robin among
+  // the blocked streams, so a lone blocked stream gets all of them and each
+  // of b gets about TRASH_FOREGROUND_STEPS / b (LIMIT-H1C-IMPL-2)
+  const picked: TrashWorker[] = [];
+  for (let i = 0; blocked.length > 0 && i < TRASH_FOREGROUND_STEPS; i++) {
+    picked.push(blocked[i % blocked.length]);
+  }
+  // then one step each for the others, round-robin
+  for (const w of rotate(all, trashRound)) {
+    if (picked.length >= TRASH_STEPS_PER_TICK) break;
+    if (!picked.includes(w)) picked.push(w);
+  }
+  for (const worker of picked) {
+    const generation = trashQueue.get(worker);
+    if (
+      generation == null ||
+      generation !== worker.trashGeneration ||
+      worker.isClosing()
+    ) {
+      unregisterTrashWork(worker);
+      continue;
+    }
+    let done: boolean;
+    try {
+      done = worker.runTrashStep();
+    } catch (err) {
+      // e.g. SQLITE_BUSY: the stream keeps its place, and tries next tick
+      logger.debug("trash step failed", { err: `${err}` });
+      done = false;
+    }
+    if (done) unregisterTrashWork(worker);
+  }
+  if (trashQueue.size > 0 && trashTimer == null) {
+    trashTimer = setTimeout(trashTick, TRASH_TICK_MS);
+    trashTimer.unref?.();
+  }
+}
+
+// The project-volume reservation (bounded history plan H1c §6; PENDING
+// WILLIAM'S DECISION, proposed to be owned by #1246): called before a reset
+// commits, with the most new bytes it can add (its seed, plus a bound on the
+// WAL for the transaction) and the stream's pending trash.  Returning false
+// refuses the reset as "trash-pending" (nothing changes; retry later).  No
+// hook: every reset is admitted by the volume (H1c does not claim the volume
+// bound itself).
+export type ResetAdmissionHook = (info: {
+  path: string;
+  newBytes: number;
+  trash: { items: number; records: number; bytes: number };
+}) => boolean;
+let resetAdmissionHook: ResetAdmissionHook | undefined;
+export function setResetAdmissionHook(hook?: ResetAdmissionHook): void {
+  resetAdmissionHook = hook;
+}
+// the WAL a reset's transaction can add beyond its seed: schema rows, the
+// ledger and epoch rows, and pages touched by its bounded steps
+const RESET_WAL_BOUND_BYTES = 8 * 1024 * 1024;
+
+// thrown inside a reset's transaction to roll it back as "trash-pending"
+class TrashPendingAbort extends Error {}
+
+// for tests
+export function trashSchedulerState(): {
+  timers: number;
+  queued: number;
+  blocked: number;
+} {
+  return {
+    timers: trashTimer == null ? 0 : 1,
+    queued: trashQueue.size,
+    blocked: trashBlocked.size,
+  };
+}
+export function registerTrashWorkForTests(
+  worker: TrashWorker,
+  blocked = false,
+): void {
+  registerTrashWork(worker, blocked);
+}
+export function unregisterTrashWorkForTests(worker: TrashWorker): void {
+  unregisterTrashWork(worker);
+}
+export function runTrashTickForTests(): void {
+  if (trashTimer != null) clearTimeout(trashTimer);
+  trashTick();
+}
+
 // The schema objects this server creates, keyed by name.  Opening a file with
 // anything else (triggers, views, other indexes or tables, or a changed
 // definition) is refused: such objects run code on every write or change
@@ -690,15 +890,20 @@ export type ResetHistoryRefusal =
   | "seed-invalid"
   // another reset of this stream is in progress on the persist server (see
   // the reset slot in server.ts); nothing was done, try again later
-  | "busy";
+  | "busy"
+  // an earlier reset's trash is still being removed (bounded history plan
+  // H1c §3.3); nothing was done, and each retry removes some of it
+  | "trash-pending";
 
 export interface ResetHistoryResult {
   // false if a condition did not hold; see refused
   reset: boolean;
   // the history epoch now in effect
   history_epoch: number;
-  // number of messages deleted or archived
+  // number of messages deleted or archived (exactly COUNT_PROBE_RECORDS + 1,
+  // meaning more than that, while the stream is still being counted)
   count: number;
+  countExact?: boolean;
   // name of the table the old messages were archived in
   archive?: string;
   refused?: ResetHistoryRefusal;
@@ -900,6 +1105,11 @@ export interface DeleteOperation {
   op: "delete";
   // sequence numbers of deleted messages
   seqs: number[];
+  // A history reset: every message with seq <= through is deleted.  Then
+  // seqs is listed only for a small history (at most RESET_DELETE_LIST_MAX
+  // messages), for clients that don't know through (bounded history plan
+  // H1c §2).
+  through?: number;
 }
 
 export interface MetadataOperation {
@@ -1325,10 +1535,377 @@ export class PersistentStream extends EventEmitter {
         this.db.prepare(sql).run();
       }
     }
+    for (const sql of Object.values(RESET_TRASH_SCHEMA)) {
+      this.db.prepare(sql).run();
+    }
 
     this.conf = this.config();
     this.ensureCurrentEpoch();
-    this.runTransaction(() => this.trimArchivedHistory(historyLimits()));
+    this.runTransaction(() => this.ensureCounts());
+    if (!this.runTrashStep()) registerTrashWork(this);
+  };
+
+  // ---------------------------------------------------------------------
+  // Live counts (H1c §1)
+
+  private countsRow = (): {
+    records: number;
+    bytes: number;
+    initialized: number;
+    init_cursor: number | null;
+    init_records: number;
+    init_bytes: number;
+    counted_through_seq: number | null;
+    trash_items: number;
+    trash_records: number;
+    trash_bytes: number;
+    trash_unknown_items: number;
+  } => this.db.prepare("SELECT * FROM stream_counts WHERE id=1").get() as any;
+
+  // On open: the row, once per stream lifetime with one bounded probe; and a
+  // count left stale by an older server's writes (a rollback window: it
+  // inserted past counted_through_seq) is counted again, in steps.
+  private ensureCounts = (): void => {
+    const newest = this.nextSeq() - 1;
+    const row = this.db
+      .prepare(
+        "SELECT initialized, counted_through_seq FROM stream_counts WHERE id=1",
+      )
+      .get() as
+      | { initialized: number; counted_through_seq: number | null }
+      | undefined;
+    if (row == null) {
+      const probe = this.db
+        .prepare(
+          "SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS b FROM (SELECT size FROM messages ORDER BY seq LIMIT ?)",
+        )
+        .get(COUNT_PROBE_RECORDS + 1) as { n: number; b: number };
+      if (probe.n <= COUNT_PROBE_RECORDS) {
+        this.db
+          .prepare(
+            "INSERT INTO stream_counts(id, records, bytes, initialized, counted_through_seq) VALUES (1, ?, ?, 1, ?)",
+          )
+          .run(probe.n, probe.b, newest);
+      } else {
+        this.db
+          .prepare(
+            "INSERT INTO stream_counts(id, initialized, init_cursor) VALUES (1, 0, 0)",
+          )
+          .run();
+      }
+      return;
+    }
+    if (row.initialized === 1 && row.counted_through_seq !== newest) {
+      logger.debug(
+        "stream counts are stale (written by another server); counting again",
+        {
+          path: this.dbPath,
+        },
+      );
+      this.db
+        .prepare(
+          "UPDATE stream_counts SET initialized=0, init_cursor=0, init_records=0, init_bytes=0 WHERE id=1",
+        )
+        .run();
+    }
+  };
+
+  // a live message was written (insertMessage)
+  private countAdded = (seq: number, size: number): void => {
+    this.db
+      .prepare(
+        "UPDATE stream_counts SET records=records+1, bytes=bytes+?, counted_through_seq=? WHERE id=1 AND initialized=1",
+      )
+      .run(size, seq);
+  };
+
+  // live messages were deleted: while counting, only those at or below the
+  // cursor were counted already.  Never below 0.
+  private countRemoved = (rows: { seq: number; size?: number }[]): void => {
+    if (rows.length == 0) return;
+    const c = this.db
+      .prepare("SELECT initialized, init_cursor FROM stream_counts WHERE id=1")
+      .get() as { initialized: number; init_cursor: number | null } | undefined;
+    if (c == null) return;
+    let n = 0;
+    let b = 0;
+    for (const row of rows) {
+      if (c.initialized !== 1 && !(row.seq <= (c.init_cursor ?? 0))) continue;
+      n += 1;
+      b += Number(row.size ?? 0);
+    }
+    if (n == 0) return;
+    if (c.initialized === 1) {
+      this.db
+        .prepare(
+          "UPDATE stream_counts SET records=MAX(0, records-?), bytes=MAX(0, bytes-?) WHERE id=1",
+        )
+        .run(n, b);
+    } else {
+      this.db
+        .prepare(
+          "UPDATE stream_counts SET init_records=MAX(0, init_records-?), init_bytes=MAX(0, init_bytes-?) WHERE id=1",
+        )
+        .run(n, b);
+    }
+  };
+
+  // the number of live messages: exact once counted, else exactly
+  // COUNT_PROBE_RECORDS + 1 (more than that)
+  liveCount = (): number => {
+    const c = this.countsRow();
+    return c?.initialized === 1 ? Number(c.records) : COUNT_PROBE_RECORDS + 1;
+  };
+  liveCountExact = (): boolean => this.countsRow()?.initialized === 1;
+  // their bytes: exact once counted, else what is counted so far
+  liveBytes = (): number => {
+    const c = this.countsRow();
+    return c?.initialized === 1 ? Number(c.bytes) : Number(c?.init_bytes ?? 0);
+  };
+
+  // one bounded part of counting a stream from before H1c
+  private stepCount = (budget: TrimBudget): boolean => {
+    const c = this.countsRow();
+    if (c == null || c.initialized === 1) return true;
+    const cursor = Number(c.init_cursor ?? 0);
+    let last = cursor;
+    let n = 0;
+    let b = 0;
+    let more = false;
+    for (const row of this.db
+      .prepare(
+        "SELECT seq, size FROM messages WHERE seq > ? ORDER BY seq LIMIT ?",
+      )
+      .iterate(
+        cursor,
+        Math.max(1, Math.min(budget.records, 10_000) + 1),
+      ) as Iterable<{
+      seq: number;
+      size: number;
+    }>) {
+      // counting reads only the row's size, not its data
+      if (!takeRow(budget, TRASH_ID_ROW_BYTES)) {
+        more = true;
+        break;
+      }
+      last = Number(row.seq);
+      n += 1;
+      b += Number(row.size);
+    }
+    if (!more && n > 0 && !budgetLeft(budget)) {
+      // the budget ended exactly here: whether rows remain is for next time
+      more =
+        this.db
+          .prepare("SELECT 1 FROM messages WHERE seq > ? LIMIT 1")
+          .get(last) != null;
+    }
+    if (more) {
+      this.db
+        .prepare(
+          "UPDATE stream_counts SET init_cursor=?, init_records=init_records+?, init_bytes=init_bytes+? WHERE id=1",
+        )
+        .run(last, n, b);
+      return false;
+    }
+    this.db
+      .prepare(
+        "UPDATE stream_counts SET records=init_records+?, bytes=init_bytes+?, initialized=1, init_cursor=NULL, init_records=0, init_bytes=0, counted_through_seq=? WHERE id=1",
+      )
+      .run(n, b, this.nextSeq() - 1);
+    return true;
+  };
+
+  // ---------------------------------------------------------------------
+  // Trash (H1c §3, §4)
+
+  trashGeneration = 0;
+
+  // pending trash, from the stored running totals (never re-summed)
+  private trashTotals = () => {
+    const c = this.countsRow();
+    return {
+      items: Number(c?.trash_items ?? 0),
+      records: Number(c?.trash_records ?? 0),
+      bytes: Number(c?.trash_bytes ?? 0),
+      unknown: Number(c?.trash_unknown_items ?? 0),
+    };
+  };
+
+  // Record a trash item and charge it (at least the minimum).  An unknown
+  // item counts as at least the cap until it is gone.
+  private addTrash = (item: {
+    kind: "messages" | "ids" | "cuts";
+    target?: string;
+    lo?: number;
+    hi?: number;
+    epoch_id?: number;
+    records: number;
+    bytes: number;
+    exact: boolean;
+  }): void => {
+    const records = Math.max(TRASH_MIN_RECORDS, item.records);
+    const bytes = Math.max(TRASH_MIN_BYTES, item.bytes);
+    this.db
+      .prepare(
+        "INSERT INTO history_trash(kind, target, lo, hi, cursor, epoch_id, records, bytes, exact, time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        item.kind,
+        item.target ?? null,
+        item.lo ?? null,
+        item.hi ?? null,
+        item.lo ?? null,
+        item.epoch_id ?? null,
+        records,
+        bytes,
+        item.exact ? 1 : 0,
+        Date.now(),
+      );
+    this.db
+      .prepare(
+        "UPDATE stream_counts SET trash_items=trash_items+1, trash_records=trash_records+?, trash_bytes=trash_bytes+?, trash_unknown_items=trash_unknown_items+? WHERE id=1",
+      )
+      .run(records, bytes, item.exact ? 0 : 1);
+  };
+
+  // An item is gone: subtract exactly what it was charged (its synthetic
+  // minimum included), never below 0, and credit what was removed to its
+  // epoch's dropped counts if that row still exists.
+  private finishTrash = (item: {
+    id: number;
+    records: number;
+    bytes: number;
+    exact: number;
+    epoch_id: number | null;
+    removed_records: number;
+    removed_bytes: number;
+    kind: string;
+  }): void => {
+    this.db.prepare("DELETE FROM history_trash WHERE id=?").run(item.id);
+    this.db
+      .prepare(
+        "UPDATE stream_counts SET trash_items=MAX(0, trash_items-1), trash_records=MAX(0, trash_records-?), trash_bytes=MAX(0, trash_bytes-?), trash_unknown_items=MAX(0, trash_unknown_items-?) WHERE id=1",
+      )
+      .run(item.records, item.bytes, item.exact ? 0 : 1);
+  };
+
+  // delete up to the budget's rows of [cursor, hi] from table (message_ids or
+  // history_cuts: seq is the primary key); true when none are left
+  private trimRange = (
+    table: "message_ids" | "history_cuts",
+    item: {
+      id: number;
+      cursor: number | null;
+      lo: number | null;
+      hi: number | null;
+    },
+    budget: TrimBudget,
+  ): { done: boolean; removed: number } => {
+    const lo = Number(item.cursor ?? item.lo ?? 0);
+    const hi = Number(item.hi ?? 0);
+    let removed = 0;
+    while (budgetLeft(budget)) {
+      const rows = this.db
+        .prepare(
+          `SELECT seq FROM ${table} WHERE seq >= ? AND seq <= ? ORDER BY seq LIMIT ?`,
+        )
+        .all(lo, hi, Math.max(1, Math.min(budget.records, 1000))) as {
+        seq: number;
+      }[];
+      if (rows.length == 0) return { done: true, removed };
+      let last: number | undefined;
+      for (const row of rows) {
+        if (!takeRow(budget, TRASH_ID_ROW_BYTES)) break;
+        last = Number(row.seq);
+      }
+      if (last == null) break;
+      const n = Number(
+        this.db
+          .prepare(`DELETE FROM ${table} WHERE seq >= ? AND seq <= ?`)
+          .run(lo, last).changes,
+      );
+      removed += n;
+      this.db
+        .prepare(
+          "UPDATE history_trash SET cursor=?, removed_records=removed_records+? WHERE id=?",
+        )
+        .run(last + 1, n, item.id);
+      item.cursor = last + 1;
+      if (last >= hi) return { done: true, removed };
+      return { done: false, removed };
+    }
+    return { done: false, removed };
+  };
+
+  // One step: counting, the archives (trimArchivedHistory), then the
+  // ledger's items, oldest first, all within ONE budget.  Done when nothing
+  // of any kind is left.
+  private stepTrash = (budget: TrimBudget): boolean => {
+    const limits = historyLimits();
+    let done = this.stepCount(budget);
+    if (!budgetLeft(budget)) return false;
+    const trimmed = this.trimArchivedHistory(limits, budget);
+    if (!trimmed.done) done = false;
+    for (const item of this.db
+      .prepare(
+        "SELECT id, kind, target, lo, hi, cursor, epoch_id, records, bytes, exact, removed_records, removed_bytes FROM history_trash ORDER BY id",
+      )
+      .all() as any[]) {
+      if (item.kind === "messages") {
+        // a renamed messages table, or an archive's unindexed remainder:
+        // trimArchivedHistory removes it; it is gone once its table is, or,
+        // for an archive still kept, once nothing older than its first
+        // segment is left
+        const table = archiveTableName(item.target);
+        const exists =
+          table != null &&
+          this.db
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            )
+            .get(table) != null;
+        let gone = !exists;
+        if (exists) {
+          const kept = this.db
+            .prepare(
+              "SELECT (SELECT MIN(first_seq) FROM history_segments AS s WHERE s.epoch_id = e.id) AS lo FROM history_epochs AS e WHERE e.archive=?",
+            )
+            .get(table) as { lo: number | null } | undefined;
+          gone =
+            kept?.lo != null &&
+            this.db
+              .prepare(`SELECT 1 FROM "${table}" WHERE seq < ? LIMIT 1`)
+              .get(kept.lo) == null;
+        }
+        if (gone) {
+          this.finishTrash(item);
+        } else {
+          done = false;
+        }
+        continue;
+      }
+      if (!budgetLeft(budget)) {
+        done = false;
+        break;
+      }
+      const table = item.kind === "ids" ? "message_ids" : "history_cuts";
+      const { done: itemDone } = this.trimRange(table, item, budget);
+      if (itemDone) {
+        this.finishTrash(item);
+      } else {
+        done = false;
+      }
+    }
+    return done;
+  };
+
+  // one step in its own transaction; true when nothing is left
+  runTrashStep = (): boolean => {
+    if (this.closing) return true;
+    const done = this.runTransaction(() =>
+      this.stepTrash(newTrimBudget(historyLimits())),
+    );
+    return done;
   };
 
   // The history epoch in effect: the fence's, or the metadata's if higher.
@@ -1522,6 +2099,10 @@ export class PersistentStream extends EventEmitter {
       return;
     }
     this.closing = true;
+    // the restore fence and every close: nothing of this stream's trash work
+    // runs after this, even if already selected for a tick (H1c §5)
+    this.trashGeneration += 1;
+    unregisterTrashWork(this);
     logger.debug("close ", path);
     this.throttledBackup?.cancel?.();
     try {
@@ -1628,6 +2209,17 @@ export class PersistentStream extends EventEmitter {
     }
   });
 
+  // a reset's transaction; true if it was rolled back as "trash-pending"
+  private runResetTransaction = (fn: () => void): boolean => {
+    try {
+      this.runTransaction(fn);
+      return false;
+    } catch (err) {
+      if (err instanceof TrashPendingAbort) return true;
+      throw err;
+    }
+  };
+
   private runTransaction = <T>(fn: () => T): T => {
     this.db.exec("BEGIN");
     try {
@@ -1722,8 +2314,9 @@ export class PersistentStream extends EventEmitter {
 
     if (key !== undefined) {
       const replaced = this.db
-        .prepare("DELETE FROM messages WHERE key = ? RETURNING seq")
-        .all(key) as { seq: number }[];
+        .prepare("DELETE FROM messages WHERE key = ? RETURNING seq, size")
+        .all(key) as { seq: number; size: number }[];
+      this.countRemoved(replaced);
       this.forgetSeqs(replaced.map(({ seq }) => seq));
     }
     const { time, seq } = this.insertMessage({
@@ -1786,6 +2379,7 @@ export class PersistentStream extends EventEmitter {
         ttl ?? null,
       );
     const seq = Number((row as any).seq);
+    this.countAdded(seq, messageSize({ serializedHeaders, raw, key }));
     this.db
       .prepare("UPDATE history_epochs SET info_json=? WHERE last_seq IS NULL")
       .run(ledgerInfo(seq));
@@ -2090,37 +2684,41 @@ export class PersistentStream extends EventEmitter {
     let seqs: number[] = [];
     if (all) {
       this.runTransaction(() => {
-        seqs = this.db
-          .prepare("SELECT seq FROM messages")
-          .all()
-          .map((row: any) => row.seq);
-        this.db.prepare("DELETE FROM messages").run();
+        const rows = this.db
+          .prepare("DELETE FROM messages RETURNING seq, size")
+          .all() as { seq: number; size: number }[];
+        seqs = rows.map((row) => row.seq);
+        this.countRemoved(rows);
         this.db.prepare("DELETE FROM stream_checkpoints").run();
         this.forgetSeqs(seqs);
       });
     } else if (last_seq) {
       this.runTransaction(() => {
-        seqs = this.db
-          .prepare("SELECT seq FROM messages WHERE seq<=?")
-          .all(last_seq)
-          .map((row: any) => row.seq);
-        this.db.prepare("DELETE FROM messages WHERE seq<=?").run(last_seq);
+        const rows = this.db
+          .prepare("DELETE FROM messages WHERE seq<=? RETURNING seq, size")
+          .all(last_seq) as { seq: number; size: number }[];
+        seqs = rows.map((row) => row.seq);
+        this.countRemoved(rows);
         this.deleteCheckpointsInSeqs(seqs);
       });
     } else if (seq) {
       this.runTransaction(() => {
-        seqs = this.db
-          .prepare("SELECT seq FROM messages WHERE seq=?")
-          .all(seq)
-          .map((row: any) => row.seq);
-        this.db.prepare("DELETE FROM messages WHERE seq=?").run(seq);
+        const rows = this.db
+          .prepare("DELETE FROM messages WHERE seq=? RETURNING seq, size")
+          .all(seq) as { seq: number; size: number }[];
+        seqs = rows.map((row) => row.seq);
+        this.countRemoved(rows);
         this.deleteCheckpointsInSeqs(seqs);
       });
     } else if (seqs0) {
-      const statement = this.db.prepare("DELETE FROM messages WHERE seq=?");
+      const statement = this.db.prepare(
+        "DELETE FROM messages WHERE seq=? RETURNING seq, size",
+      );
       this.runTransaction(() => {
         for (const s of seqs0) {
-          statement.run(s);
+          this.countRemoved(
+            statement.all(s) as { seq: number; size: number }[],
+          );
         }
         this.deleteCheckpointsInSeqs(seqs0);
       });
@@ -2180,11 +2778,20 @@ export class PersistentStream extends EventEmitter {
       });
     }
     const limits = historyLimits();
+    // an earlier reset's trash, removed first in bounded steps of their own
+    // (H1c §3.3): every retry of a refused reset makes progress
+    for (let i = 0; i < RESET_SYNC_TRASH_STEPS; i++) {
+      if (this.trashTotals().items == 0 && this.liveCountExact()) break;
+      if (this.runTrashStep()) break;
+    }
     let result: ResetHistoryResult | undefined;
     let metadata: JSONValue | undefined;
     let seqs: number[] = [];
+    let through: number | undefined;
+    let trashPending = false;
     let seedChange = undefined as SetOperation | undefined;
-    this.runTransaction(() => {
+    let epochBefore = 0;
+    const aborted = this.runResetTransaction(() => {
       if (opId != null) {
         const done = this.db
           .prepare("SELECT result_json FROM history_ops WHERE op_id=?")
@@ -2203,6 +2810,7 @@ export class PersistentStream extends EventEmitter {
         ? currentRecord.settings
         : {};
       const currentEpoch = Math.max(epochOf(currentSettings), epochOf(fence));
+      epochBefore = currentEpoch;
       const refuse = (refused: ResetHistoryRefusal) => {
         result = {
           reset: false,
@@ -2229,7 +2837,7 @@ export class PersistentStream extends EventEmitter {
       const newest = this.seq();
       if (
         ifRevision != null &&
-        (ifRevision.seq !== newest || ifRevision.count !== this.length)
+        (ifRevision.seq !== newest || ifRevision.count !== this.liveCount())
       ) {
         refuse("moved");
         return;
@@ -2271,6 +2879,60 @@ export class PersistentStream extends EventEmitter {
         }
       }
 
+      // H1c §3: what this reset will leave as trash, and whether it may
+      const lastSeqNow = this.nextSeq() - 1;
+      const countExact = this.liveCountExact();
+      const liveCount = this.liveCount();
+      const liveBytes = this.liveBytes();
+      const prospective = this.prospectiveTrash({
+        archive: !!archive,
+        lastSeq: lastSeqNow,
+        countExact,
+        liveCount,
+        liveBytes,
+        limits,
+      });
+      const pending = this.trashTotals();
+      if (
+        resetAdmissionHook != null &&
+        !resetAdmissionHook({
+          path: this.dbPath ?? "",
+          newBytes:
+            (seed != null ? Number(seed.raw?.length ?? 0) : 0) +
+            RESET_WAL_BOUND_BYTES,
+          trash: {
+            items: pending.items,
+            records: pending.records,
+            bytes: pending.bytes,
+          },
+        })
+      ) {
+        trashPending = true;
+        refuse("trash-pending");
+        return;
+      }
+      if (pending.items > 0) {
+        const add = prospective.reduce(
+          (a, t) => ({
+            records: a.records + Math.max(TRASH_MIN_RECORDS, t.records),
+            bytes: a.bytes + Math.max(TRASH_MIN_BYTES, t.bytes),
+            unknown: a.unknown + (t.exact ? 0 : 1),
+          }),
+          { records: 0, bytes: 0, unknown: 0 },
+        );
+        if (
+          pending.unknown > 0 ||
+          add.unknown > 0 ||
+          pending.items + prospective.length > limits.maxTrashItems ||
+          pending.records + add.records > limits.maxTrashRecords ||
+          pending.bytes + add.bytes > limits.maxTrashBytes
+        ) {
+          trashPending = true;
+          refuse("trash-pending");
+          return;
+        }
+      }
+
       // before the new epoch is published: are the closing epoch's ids
       // complete?
       this.verifyIdLedger({ epoch: true });
@@ -2295,11 +2957,16 @@ export class PersistentStream extends EventEmitter {
         `,
         )
         .run(JSON.stringify(metadata));
-      // seq is the rowid, so this does not read the (possibly huge) messages
+      // the delete notification lists seqs only for a small history; every
+      // client also gets `through` (H1c §2).  seq is the rowid: this reads at
+      // most RESET_DELETE_LIST_MAX + 1 index entries, no message.
+      const listMax = resetDeleteListMax();
       seqs = this.db
-        .prepare("SELECT seq FROM messages")
-        .all()
+        .prepare("SELECT seq FROM messages ORDER BY seq LIMIT ?")
+        .all(listMax + 1)
         .map((row: any) => row.seq);
+      if (seqs.length > listMax) seqs = [];
+      through = lastSeqNow;
 
       // close the current epoch: its messages, and what the seed covers
       const lastSeq = this.nextSeq() - 1;
@@ -2337,9 +3004,9 @@ export class PersistentStream extends EventEmitter {
             .prepare("SELECT seq FROM sqlite_sequence WHERE name='messages'")
             .get() as { seq?: number } | undefined
         )?.seq;
+        // the renamed table keeps its indexes (dropping them is O(index
+        // pages)); the new table's get the next generation's names (H1c)
         this.db.exec(`ALTER TABLE messages RENAME TO "${archiveTable}"`);
-        this.db.exec("DROP INDEX IF EXISTS idx_messages_key");
-        this.db.exec("DROP INDEX IF EXISTS idx_messages_time");
         this.createMessagesTable();
         if (last != null) {
           this.db
@@ -2351,12 +3018,31 @@ export class PersistentStream extends EventEmitter {
         this.db
           .prepare("UPDATE history_epochs SET archive=? WHERE id=?")
           .run(archiveTable, closing.id);
-        const { segments, dropped } = this.segmentArchive(
+        const { segments, dropped, scanned } = this.segmentArchive(
           closing.id,
           archiveTable,
           limits,
         );
+        // what segmentArchive did not scan is the archive's unindexed
+        // remainder: trash, charged now (H1c §3.1 (e), LIMIT-H1C-IMPL-1,
+        // CORR-H1C-1), from the live counts, so nothing is measured
+        const remainder = {
+          records: Math.max(0, liveCount - scanned.records),
+          bytes: Math.max(0, liveBytes - scanned.bytes),
+        };
+        if (remainder.records > 0 || !countExact) {
+          this.addTrash({
+            kind: "messages",
+            target: archiveTable,
+            epoch_id: closing.id,
+            records: remainder.records,
+            bytes: remainder.bytes,
+            exact: countExact,
+          });
+        }
         if (segments == 0) {
+          // nothing kept: the table is the remainder alone (or empty)
+          this.releaseArchiveTable(archiveTable);
           archiveTable = undefined;
         }
         const quota = this.enforceArchiveQuota(limits);
@@ -2370,22 +3056,67 @@ export class PersistentStream extends EventEmitter {
           },
         };
       } else {
-        const bytes = this.totalSize();
-        this.db.prepare("DELETE FROM messages").run();
-        this.dropArchivedHistory(limits);
+        // H1c §3: the live history is moved aside in O(1), unreadable at
+        // once (no API reads an unindexed archive table), and removed in
+        // bounded steps; its ids are trash by range
+        const trashTable = this.unusedArchiveTableName();
+        const last = (
+          this.db
+            .prepare("SELECT seq FROM sqlite_sequence WHERE name='messages'")
+            .get() as { seq?: number } | undefined
+        )?.seq;
+        this.db.exec(`ALTER TABLE messages RENAME TO "${trashTable}"`);
+        this.createMessagesTable();
+        if (last != null) {
+          this.db
+            .prepare(
+              "INSERT INTO sqlite_sequence(name, seq) VALUES('messages', ?)",
+            )
+            .run(last);
+        }
+        for (const t of prospective) {
+          if (t.kind === "messages") t.target = trashTable;
+        }
+        this.dropArchivedHistory(limits, {
+          records: 0,
+          bytes: 0,
+          used: true,
+        });
         this.db
           .prepare(
             "UPDATE history_epochs SET dropped_records=?, dropped_bytes=? WHERE id=?",
           )
-          .run(seqs.length, bytes, closing.id);
-        // purged: nothing is evidence of what was accepted any more
-        this.db.prepare("DELETE FROM message_ids").run();
+          .run(liveCount, liveBytes, closing.id);
+        // purged: nothing is evidence of absence any more
         this.db.prepare("UPDATE history_epochs SET ids_complete=0").run();
       }
       this.db.prepare("DELETE FROM stream_checkpoints").run();
-      this.db.prepare("DELETE FROM history_cuts WHERE seq<=?").run(lastSeq);
       this.expireArchivedIds(limits);
       this.pruneEpochRows();
+      for (const t of prospective) {
+        this.addTrash({ ...t, epoch_id: closing.id });
+      }
+      // Admission again, on what this reset actually added (the archive's
+      // remainder and the tables it released are known only now): the same
+      // rule as above, so the first reset is always admitted, and a later one
+      // that does not fit rolls back, changing nothing (CORR-H1C-1)
+      if (pending.items > 0) {
+        const after = this.trashTotals();
+        if (
+          after.unknown > 0 ||
+          after.items > limits.maxTrashItems ||
+          after.records > limits.maxTrashRecords ||
+          after.bytes > limits.maxTrashBytes
+        ) {
+          throw new TrashPendingAbort();
+        }
+      }
+      // the new history's counts start now, exact
+      this.db
+        .prepare(
+          "UPDATE stream_counts SET records=0, bytes=0, initialized=1, init_cursor=NULL, init_records=0, init_bytes=0, counted_through_seq=? WHERE id=1",
+        )
+        .run(lastSeq);
 
       // the new epoch, starting with its seed
       const { lastInsertRowid: epochId } = this.db
@@ -2435,7 +3166,8 @@ export class PersistentStream extends EventEmitter {
       result = {
         reset: true,
         history_epoch,
-        count: seqs.length,
+        count: liveCount,
+        ...(countExact ? {} : { countExact: false }),
         ...(archiveTable != null ? { archive: archiveTable } : {}),
         ...(seedSeq != null ? { seedSeq, coveredSeq } : {}),
         ...(archived ?? {}),
@@ -2453,9 +3185,25 @@ export class PersistentStream extends EventEmitter {
           .run();
       }
     });
+    if (aborted) {
+      // rolled back: nothing changed
+      trashPending = true;
+      seedChange = undefined;
+      result = {
+        reset: false,
+        history_epoch: epochBefore,
+        count: 0,
+        refused: "trash-pending",
+      };
+    }
+    if (trashPending) {
+      // its stream drains in the foreground share (H1c §5)
+      registerTrashWork(this, true);
+    }
     if (!result!.reset || result!.repeated) {
       return result!;
     }
+    registerTrashWork(this);
     this.msgIDs.clear();
     if (seedChange?.msgID != null) {
       this.msgIDs.set(seedChange.msgID, {
@@ -2468,7 +3216,7 @@ export class PersistentStream extends EventEmitter {
     // metadata first: open copies of the document close on the new epoch
     // rather than react to their history disappearing
     this.emit("change", { op: "metadata", metadata });
-    this.emit("change", { op: "delete", seqs });
+    this.emit("change", { op: "delete", seqs, through });
     this.emit("change", {
       op: "checkpoints",
       checkpoints: this.getCheckpoints(),
@@ -2496,7 +3244,13 @@ export class PersistentStream extends EventEmitter {
     epochId: number,
     table: string,
     limits: HistoryLimits,
-  ): { segments: number; dropped: { records: number; bytes: number } } => {
+  ): {
+    segments: number;
+    dropped: { records: number; bytes: number };
+    // the newest stretch scanned (and kept or removed); the rest of the
+    // table, older, is left to trimArchivedHistory
+    scanned: { records: number; bytes: number };
+  } => {
     const epoch = this.db
       .prepare("SELECT starts_empty FROM history_epochs WHERE id=?")
       .get(epochId) as { starts_empty: number };
@@ -2522,7 +3276,11 @@ export class PersistentStream extends EventEmitter {
     }
     if (tailStart == null) {
       // nothing can be kept: the whole table is left to trimArchivedHistory
-      return { segments: 0, dropped: { records: 0, bytes: 0 } };
+      return {
+        segments: 0,
+        dropped: { records: 0, bytes: 0 },
+        scanned: { records: 0, bytes: 0 },
+      };
     }
     const { first } = this.db
       .prepare(`SELECT MIN(seq) AS first FROM "${table}"`)
@@ -2718,7 +3476,11 @@ export class PersistentStream extends EventEmitter {
         dropped.bytes,
         epochId,
       );
-    return { segments, dropped };
+    return {
+      segments,
+      dropped,
+      scanned: { records: tailRecords, bytes: tailBytes },
+    };
   };
 
   // Archived history per stream is bounded in bytes (with a conservative
@@ -2759,9 +3521,13 @@ export class PersistentStream extends EventEmitter {
       ),
     };
     const unregister = (epochId: number) => {
+      const { archive } = this.db
+        .prepare("SELECT archive FROM history_epochs WHERE id=?")
+        .get(epochId) as { archive: string | null };
       this.db
         .prepare("UPDATE history_epochs SET archive=NULL WHERE id=?")
         .run(epochId);
+      if (archive != null) this.releaseArchiveTable(archive);
       usage.tables -= 1;
       usage.bytes -= ARCHIVE_TABLE_OVERHEAD_BYTES;
     };
@@ -2844,18 +3610,18 @@ export class PersistentStream extends EventEmitter {
   // before the archive bounds reaches them in bounded steps.
   private trimArchivedHistory = (
     limits: HistoryLimits,
+    // the step's one budget (H1c §5); by default a budget of its own
+    budget: TrimBudget = newTrimBudget(limits),
   ): { records: number; bytes: number; done: boolean } => {
     const trimmed = { records: 0, bytes: 0 };
-    let records = limits.maxTrimRecords;
-    let bytes = limits.maxTrimBytes;
     // delete the oldest rows below `below`; true if none are left
     const trim = (table: string, below: number): boolean => {
-      while (records > 0 && bytes > 0) {
+      while (budgetLeft(budget)) {
         const page = this.db
           .prepare(
             `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM "${table}" WHERE seq < ? ORDER BY seq LIMIT ?`,
           )
-          .all(below, Math.min(records, 1000)) as {
+          .all(below, Math.max(1, Math.min(budget.records, 1000))) as {
           seq: number;
           size: number;
         }[];
@@ -2863,16 +3629,15 @@ export class PersistentStream extends EventEmitter {
         let last: number | undefined;
         for (const row of page) {
           const size = Number(row.size);
-          if (last != null && size > bytes) break;
+          if (!takeRow(budget, size)) break;
           last = Number(row.seq);
-          records -= 1;
-          bytes -= size;
           trimmed.records += 1;
           trimmed.bytes += size;
         }
+        if (last == null) break;
         this.db
           .prepare(`DELETE FROM "${table}" WHERE seq <= ? AND seq < ?`)
-          .run(last!, below);
+          .run(last, below);
       }
       return (
         this.db
@@ -2894,7 +3659,7 @@ export class PersistentStream extends EventEmitter {
     const unindexed = this.db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'messages_archived_%' AND name NOT IN (SELECT archive FROM history_epochs WHERE archive IS NOT NULL) ORDER BY name LIMIT 8",
     );
-    while (records > 0 && bytes > 0) {
+    while (budgetLeft(budget)) {
       const names = (unindexed.all() as { name: string }[])
         .map(({ name }) => archiveTableName(name))
         .filter((name): name is string => name != null);
@@ -2909,6 +3674,43 @@ export class PersistentStream extends EventEmitter {
     return { ...trimmed, done: false };
   };
 
+  // An archive table no epoch refers to any more (its segments, if any, are
+  // already deleted) is trash (H1c §3.1 (e), LIMIT-H1C-IMPL-1): covered by
+  // its own item if it has one (its unindexed remainder, charged when it was
+  // archived); else dropped now if empty (O(1)); else -- a table from before
+  // H1c -- an item of unknown size.
+  private releaseArchiveTable = (name: string): void => {
+    const table = archiveTableName(name);
+    if (table == null) return;
+    if (
+      this.db
+        .prepare(
+          "SELECT 1 FROM history_trash WHERE kind='messages' AND target=? LIMIT 1",
+        )
+        .get(table) != null
+    ) {
+      return;
+    }
+    if (
+      this.db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+        .get(table) == null
+    ) {
+      return;
+    }
+    if (this.db.prepare(`SELECT 1 FROM "${table}" LIMIT 1`).get() == null) {
+      this.db.exec(`DROP TABLE "${table}"`);
+      return;
+    }
+    this.addTrash({
+      kind: "messages",
+      target: table,
+      records: 0,
+      bytes: 0,
+      exact: false,
+    });
+  };
+
   // Drop all archived history: the segments of indexed archives (each
   // within an open's envelope, at most maxArchiveSegments), then a bounded
   // amount of archived history without an index (trimArchivedHistory); done
@@ -2916,6 +3718,9 @@ export class PersistentStream extends EventEmitter {
   // are kept: they are still evidence of what was accepted.
   private dropArchivedHistory = (
     limits: HistoryLimits,
+    // the trim's budget; a purge passes none, so its transaction deletes no
+    // archived row beyond the segments (H1c §3)
+    budget: TrimBudget = newTrimBudget(limits),
   ): { records: number; bytes: number; done: boolean } => {
     const { records, bytes } = this.db
       .prepare(
@@ -2934,12 +3739,18 @@ export class PersistentStream extends EventEmitter {
         .run(s.first_seq, s.last_seq);
     }
     this.db.prepare("DELETE FROM history_segments").run();
+    const released = (
+      this.db
+        .prepare("SELECT archive FROM history_epochs WHERE archive IS NOT NULL")
+        .all() as { archive: string }[]
+    ).map(({ archive }) => archive);
     this.db
       .prepare(
         "UPDATE history_epochs SET archive=NULL, dropped_records=dropped_records+kept_records, dropped_bytes=dropped_bytes+kept_bytes, kept_records=0, kept_bytes=0 WHERE archive IS NOT NULL",
       )
       .run();
-    const trimmed = this.trimArchivedHistory(limits);
+    for (const table of released) this.releaseArchiveTable(table);
+    const trimmed = this.trimArchivedHistory(limits, budget);
     return {
       records: Number(records ?? 0) + trimmed.records,
       bytes: Number(bytes ?? 0) + trimmed.bytes,
@@ -2958,10 +3769,8 @@ export class PersistentStream extends EventEmitter {
       first_seq: number;
       last_seq: number;
     }[];
-    for (const { id, first_seq, last_seq } of old) {
-      this.db
-        .prepare("DELETE FROM message_ids WHERE seq BETWEEN ? AND ?")
-        .run(first_seq, last_seq);
+    // their ids are removed as trash, by range (prospectiveTrash)
+    for (const { id } of old) {
       this.db
         .prepare("UPDATE history_epochs SET ids_complete=0 WHERE id=?")
         .run(id);
@@ -2979,13 +3788,135 @@ export class PersistentStream extends EventEmitter {
       first_seq: number;
       last_seq: number;
     }[];
-    for (const { id, first_seq, last_seq } of old) {
-      this.db
-        .prepare("DELETE FROM message_ids WHERE seq BETWEEN ? AND ?")
-        .run(first_seq, last_seq);
+    // their ids are removed as trash, by range (prospectiveTrash)
+    for (const { id } of old) {
       this.db.prepare("DELETE FROM history_segments WHERE epoch_id=?").run(id);
       this.db.prepare("DELETE FROM history_epochs WHERE id=?").run(id);
     }
+  };
+
+  // What a reset will leave as trash (H1c §3.1, §4), each charged from stored
+  // counts or a bounded count (at most maxTrashRecords + 1 rows read; more
+  // is "unknown", charged as the cap):
+  //  - a purge: the live messages table (renamed), and every msg id;
+  //  - an archive: the msg ids of the epochs that expire with this one;
+  //  - both: the cuts of the closing epoch.
+  private prospectiveTrash = ({
+    archive,
+    lastSeq,
+    countExact,
+    liveCount,
+    liveBytes,
+    limits,
+  }: {
+    archive: boolean;
+    lastSeq: number;
+    countExact: boolean;
+    liveCount: number;
+    liveBytes: number;
+    limits: HistoryLimits;
+  }): {
+    kind: "messages" | "ids" | "cuts";
+    target?: string;
+    lo?: number;
+    hi?: number;
+    records: number;
+    bytes: number;
+    exact: boolean;
+  }[] => {
+    const items: ReturnType<typeof this.prospectiveTrash> = [];
+    if (!archive) {
+      items.push({
+        kind: "messages",
+        records: countExact ? liveCount : limits.maxTrashRecords,
+        bytes: countExact ? liveBytes : limits.maxTrashBytes,
+        exact: countExact,
+      });
+    }
+    const probe = (
+      table: "message_ids" | "history_cuts",
+      lo: number,
+      hi: number,
+    ) =>
+      Number(
+        (
+          this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${table} WHERE seq >= ? AND seq <= ? LIMIT ?)`,
+            )
+            .get(lo, hi, limits.maxTrashRecords + 1) as { n: number }
+        ).n,
+      );
+    const range = (
+      kind: "ids" | "cuts",
+      table: "message_ids" | "history_cuts",
+      lo: number,
+      hi: number,
+    ) => {
+      if (hi < lo) return;
+      const n = probe(table, lo, hi);
+      if (n == 0) return;
+      const exact = n <= limits.maxTrashRecords;
+      items.push({
+        kind,
+        lo,
+        hi,
+        records: exact ? n : limits.maxTrashRecords,
+        bytes: (exact ? n : limits.maxTrashRecords) * TRASH_ID_ROW_BYTES,
+        exact,
+      });
+    };
+    if (!archive) {
+      range("ids", "message_ids", 0, lastSeq);
+    } else {
+      // after this reset the closing epoch is the newest closed one; the
+      // closed epochs past the newest maxArchivedIdEpochs expire, and with
+      // them the rows past MAX_HISTORY_EPOCH_ROWS: the oldest, a prefix of
+      // the seq space
+      const keep = Math.max(0, limits.maxArchivedIdEpochs - 1);
+      const expiring = this.db
+        .prepare(
+          "SELECT MIN(first_seq) AS lo, MAX(last_seq) AS hi FROM (SELECT first_seq, last_seq FROM history_epochs WHERE last_seq IS NOT NULL ORDER BY id DESC LIMIT -1 OFFSET ?)",
+        )
+        .get(keep) as { lo: number | null; hi: number | null };
+      if (limits.maxArchivedIdEpochs == 0) {
+        const open = this.db
+          .prepare(
+            "SELECT first_seq FROM history_epochs WHERE last_seq IS NULL",
+          )
+          .get() as { first_seq: number } | undefined;
+        range(
+          "ids",
+          "message_ids",
+          Math.min(
+            Number(expiring.lo ?? open?.first_seq ?? 0),
+            Number(open?.first_seq ?? 0),
+          ),
+          lastSeq,
+        );
+      } else if (expiring.lo != null && expiring.hi != null) {
+        range("ids", "message_ids", Number(expiring.lo), Number(expiring.hi));
+      }
+      const pruned = this.db
+        .prepare(
+          "SELECT MIN(first_seq) AS lo, MAX(last_seq) AS hi FROM (SELECT first_seq, last_seq FROM history_epochs WHERE last_seq IS NOT NULL AND archive IS NULL ORDER BY id DESC LIMIT -1 OFFSET ?)",
+        )
+        .get(Math.max(0, MAX_HISTORY_EPOCH_ROWS - 1)) as {
+        lo: number | null;
+        hi: number | null;
+      };
+      if (
+        pruned.lo != null &&
+        pruned.hi != null &&
+        (expiring.lo == null ||
+          Number(pruned.lo) < Number(expiring.lo) ||
+          Number(pruned.hi) > Number(expiring.hi))
+      ) {
+        range("ids", "message_ids", Number(pruned.lo), Number(pruned.hi));
+      }
+    }
+    range("cuts", "history_cuts", 0, lastSeq);
+    return items;
   };
 
   // Which of these msg ids did the server accept, and are they in the current
@@ -3152,6 +4083,8 @@ export class PersistentStream extends EventEmitter {
     const dropped = this.runTransaction(() =>
       this.dropArchivedHistory(historyLimits()),
     );
+    // the tables it released are removed in bounded steps (H1c §5)
+    registerTrashWork(this);
     this.throttledBackup();
     return dropped;
   };
@@ -3201,10 +4134,13 @@ export class PersistentStream extends EventEmitter {
     );
   };
 
+  // From the stored counts (H1c §1): O(1).  While a stream from before H1c is
+  // still being counted, count is exactly COUNT_PROBE_RECORDS + 1 and bytes is
+  // what is counted so far.
   inventory = (): PartialInventory => {
     return {
-      bytes: this.totalSize(),
-      count: this.length,
+      bytes: this.liveBytes(),
+      count: this.liveCount(),
       limits: this.getConfig(),
       seq: this.seq(),
     };
@@ -3503,6 +4439,7 @@ export class PersistentStream extends EventEmitter {
   };
 
   private emitDelete = (rows, deferredChanges?: ChangefeedOperation[]) => {
+    this.countRemoved(rows);
     if (rows.length > 0) {
       const seqs = rows.map((row: { seq: number }) => row.seq);
       this.deleteCheckpointsInSeqs(seqs);
@@ -3560,7 +4497,7 @@ export class PersistentStream extends EventEmitter {
           // delete earliest messages to make room
           const rows = this.db
             .prepare(
-              `DELETE FROM messages WHERE seq IN (SELECT seq FROM messages ORDER BY seq ASC LIMIT ?) RETURNING seq`,
+              `DELETE FROM messages WHERE seq IN (SELECT seq FROM messages ORDER BY seq ASC LIMIT ?) RETURNING seq, size`,
             )
             .all(length - this.conf.max_msgs);
           this.emitDelete(rows, deferredChanges);
@@ -3571,7 +4508,7 @@ export class PersistentStream extends EventEmitter {
     if (this.conf.max_age > 0) {
       const rows = this.db
         .prepare(
-          `DELETE FROM messages WHERE seq IN (SELECT seq FROM messages WHERE time <= ?) RETURNING seq`,
+          `DELETE FROM messages WHERE seq IN (SELECT seq FROM messages WHERE time <= ?) RETURNING seq, size`,
         )
         .all((Date.now() - this.conf.max_age) / 1000);
       this.emitDelete(rows, deferredChanges);
@@ -3587,8 +4524,8 @@ export class PersistentStream extends EventEmitter {
           // new message exceeds total, so this is the same as adding in the new message,
           // then deleting everything.
           const rows = this.db
-            .prepare("DELETE FROM messages RETURNING seq")
-            .all() as { seq: number }[];
+            .prepare("DELETE FROM messages RETURNING seq, size")
+            .all() as { seq: number; size: number }[];
           this.db.prepare("DELETE FROM stream_checkpoints").run();
           this.emitDelete(rows, deferredChanges);
         }
@@ -3621,7 +4558,9 @@ export class PersistentStream extends EventEmitter {
               }
             } else {
               const rows = this.db
-                .prepare(`DELETE FROM messages WHERE seq <= ? RETURNING seq`)
+                .prepare(
+                  `DELETE FROM messages WHERE seq <= ? RETURNING seq, size`,
+                )
                 .all(lastSeqToDelete);
               this.emitDelete(rows, deferredChanges);
             }
@@ -3633,7 +4572,7 @@ export class PersistentStream extends EventEmitter {
     if (this.conf.allow_msg_ttl) {
       const rows = this.db
         .prepare(
-          `DELETE FROM messages WHERE ttl IS NOT null AND time + ttl/1000 < ? RETURNING seq`,
+          `DELETE FROM messages WHERE ttl IS NOT null AND time + ttl/1000 < ? RETURNING seq, size`,
         )
         .all(Date.now() / 1000);
       this.emitDelete(rows, deferredChanges);

@@ -25,7 +25,10 @@ export type BoardHistoryCause =
   | "deadline"
   | "failed"
   // a reset was sent, and whether it applied is not known yet
-  | "reset-unknown";
+  | "reset-unknown"
+  // an earlier reset's trash is still being removed (bounded history plan
+  // H1c §3.4): the board's content stays reachable meanwhile
+  | "trash-pending";
 
 // What the user can do.  Links to the board's own path, never content:
 // - "open-as-text": open the .board.json in the JSON (text) editor;
@@ -52,6 +55,7 @@ export function boardHistoryActions(
     case "deadline":
     case "failed":
     case "reset-unknown":
+    case "trash-pending":
       return ["open-as-text", "download", "retry"];
   }
 }
