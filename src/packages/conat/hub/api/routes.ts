@@ -167,6 +167,10 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.removeSelfHostConnector": hostFromOpts,
   "hosts.setHostDeletionProtection": hostFromOpts,
   "hosts.relocateHost": hostFromOpts,
+  // Fleet rollout calls these for hosts on any bay (as the rollout's account).
+  "hosts.upgradeHostSoftware": hostFromOpts,
+  "hosts.rolloutHostManagedComponents": hostFromOpts,
+  "hosts.getHostRuntimeDeploymentStatus": hostFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,

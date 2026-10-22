@@ -22,7 +22,9 @@ import {
   recoveryDelayExceeds,
 } from "@cocalc/util/consts/project-recovery";
 import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
-import { isAccountNotFoundError } from "@cocalc/server/bay-directory";
+// Not "@cocalc/server/bay-directory": it loads the inter-bay bridge and host
+// APIs, which this module (and its tests, which reload it per test) never use.
+import { isAccountNotFoundError } from "@cocalc/server/bay-directory-errors";
 import {
   storageFundingAccountId,
   storageServiceClassFromMembership,

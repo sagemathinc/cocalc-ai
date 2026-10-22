@@ -12,11 +12,12 @@ import { getProjectHostStoragePressureWindows } from "@cocalc/database/postgres/
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { LaunchHealthLevel } from "@cocalc/conat/hub/api/system";
 import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
+// The hosts may be on any bay: these run on each host's own bay.
 import {
   getHostRuntimeDeploymentStatus,
   rolloutHostManagedComponents,
   upgradeHostSoftware,
-} from "@cocalc/server/conat/api/hosts";
+} from "@cocalc/server/conat/api/hosts-routed";
 import { computeHostOperationalAvailability } from "@cocalc/server/conat/api/hosts-normalization";
 import {
   hostOverridesEveryRolloutTarget,
