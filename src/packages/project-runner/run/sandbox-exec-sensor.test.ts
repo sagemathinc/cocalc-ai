@@ -174,6 +174,37 @@ describe("sandboxExec for sensors", () => {
     expect(rm[1]).toEqual(["rm", "--force", "--time", "0", name]);
   });
 
+  it("removes a run's container when it is killed for printing too much", async () => {
+    execFileMock.mockImplementation((_c, args, _o, callback) => {
+      if ((args as string[])[0] === "rm") callback(undefined, "", "");
+      // What execFile reports when maxBuffer is exceeded: no signal.
+      else
+        callback(
+          Object.assign(new Error("stdout maxBuffer length exceeded"), {
+            code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+          }),
+          "x".repeat(1024),
+          "",
+        );
+    });
+    await sandboxExec({
+      project_id: PROJECT,
+      script: "",
+      useEphemeral: true,
+      argv: ["/usr/bin/yes"],
+      maxOutputBytes: 1024,
+    });
+    const [run, rm] = execFileMock.mock.calls;
+    const runArgs = run[1] as string[];
+    expect(rm?.[1]).toEqual([
+      "rm",
+      "--force",
+      "--time",
+      "0",
+      runArgs[runArgs.indexOf("--name") + 1],
+    ]);
+  });
+
   it("leaves a run that ended by itself to --rm", async () => {
     await sandboxExec({
       project_id: PROJECT,

@@ -172,6 +172,9 @@ export async function sandboxExec({
     }
   };
 
+  // The podman client was killed (at its deadline, or for printing more
+  // than maxBuffer): its container may live on, and --rm never runs.
+  let clientKilled = false;
   const runPodman = async (
     args: string[],
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>,
@@ -209,6 +212,12 @@ export async function sandboxExec({
           clearTimeout(deadline);
           signal?.removeEventListener("abort", stop);
           if (error) {
+            if (
+              error.killed ||
+              error.signal === "SIGKILL" ||
+              error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+            )
+              clientKilled = true;
             resolve({
               stdout: stdout ?? "",
               stderr: stderr ?? error?.message ?? "",
@@ -378,10 +387,7 @@ export async function sandboxExec({
     // With Podman cgroups disabled, exec processes inherit the caller's
     // cgroup. Admit both run and exec launchers so no project command escapes.
     const result = await runPodman(args, projectPoolPodmanLauncher(project_id));
-    // Killed at its deadline, the podman client is gone but the container
-    // can live on, and --rm never runs: remove it.
-    if (containerName && result.signal === "SIGKILL")
-      await removeContainer(containerName);
+    if (containerName && clientKilled) await removeContainer(containerName);
     return result;
   } finally {
     if (rootfs) {
