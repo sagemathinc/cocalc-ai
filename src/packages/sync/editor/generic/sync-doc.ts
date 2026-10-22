@@ -4061,6 +4061,11 @@ export class SyncDoc extends EventEmitter {
     const firstLoadedSeq = this.firstLoadedSeq();
     let context: ReturnType<typeof this.snapshotRecordContext> | undefined;
     const contextFor = (p: Patch): SnapshotRecordContext => {
+      // the scan below only for a snapshot record before the loaded range,
+      // not for every ordinary patch
+      if (!p.is_snapshot || !isBeforeLoadedRange(p, firstLoadedSeq)) {
+        return {};
+      }
       context ??= this.snapshotRecordContext(firstLoadedSeq);
       return {
         start: context.start,
@@ -4192,6 +4197,11 @@ export class SyncDoc extends EventEmitter {
     const firstLoadedSeq = this.firstLoadedSeq();
     let context: ReturnType<typeof this.snapshotRecordContext> | undefined;
     const contextFor = (p: Patch): SnapshotRecordContext => {
+      // the scan below only for a snapshot record before the loaded range,
+      // not for every ordinary patch
+      if (!p.is_snapshot || !isBeforeLoadedRange(p, firstLoadedSeq)) {
+        return {};
+      }
       context ??= this.snapshotRecordContext(firstLoadedSeq);
       return {
         start: context.start,
