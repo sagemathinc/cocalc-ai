@@ -91,6 +91,8 @@ export function readerSender(message: ChatMessageTyped, userMap: any): string {
   return sender ? getUserName(userMap, sender) : "Unknown";
 }
 
+const optionId = (id: string) => `chat-reader-item-${id}`;
+
 function snippet(message: ChatMessageTyped): string {
   return `${newest_content(message) ?? ""}`
     .replace(/[#*_`>[\]]/g, "")
@@ -107,6 +109,7 @@ export function ChatReaderView({
   readStateVersion,
   fontSize,
   narrow,
+  autoFocus,
   onShowInChat,
 }: {
   actions: ChatActions;
@@ -119,6 +122,8 @@ export function ChatReaderView({
   fontSize?: number;
   /** Show the list or the open item, not both side by side. */
   narrow?: boolean;
+  /** Move the keyboard focus into the list when it appears. */
+  autoFocus?: boolean;
   onShowInChat?: (date: Date) => void;
 }) {
   const userMap = useTypedRedux("users", "user_map");
@@ -192,9 +197,11 @@ export function ChatReaderView({
     const handled = (() => {
       switch (event.key) {
         case "j":
+        case "ArrowDown":
           open(findItem(visible, selectedIndex, 1));
           return true;
         case "k":
+        case "ArrowUp":
           open(
             findItem(
               visible,
@@ -230,14 +237,30 @@ export function ChatReaderView({
 
   // New items wait behind a button instead of moving the list.
   const listRef = useRef<HTMLDivElement>(null);
-  const [seenCount, setSeenCount] = useState(visible.length);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Narrow, the open item replaces the list: the whole reader takes the keys.
+  const focusKeys = () =>
+    (narrow ? rootRef : listRef).current?.focus({ preventScroll: true });
   useEffect(() => {
+    if (autoFocus) focusKeys();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [seenCount, setSeenCount] = useState(visible.length);
+  // Another thread, or archived shown or hidden: nothing there is new.
+  const context = `${threadId}\0${showArchived}`;
+  const contextRef = useRef(context);
+  useEffect(() => {
+    if (contextRef.current !== context) {
+      contextRef.current = context;
+      setSeenCount(visible.length);
+      return;
+    }
     const list = listRef.current;
     if (list && list.scrollHeight - list.scrollTop - list.clientHeight < 8)
       setSeenCount(visible.length);
     else if (visible.length < seenCount) setSeenCount(visible.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible.length]);
+  }, [visible.length, context]);
   const newCount = Math.max(0, visible.length - seenCount);
   const onListScroll = () => {
     const list = listRef.current;
@@ -261,6 +284,8 @@ export function ChatReaderView({
         ref={listRef}
         role="listbox"
         aria-label="Messages"
+        tabIndex={0}
+        aria-activedescendant={selected ? optionId(selected.id) : undefined}
         onScroll={onListScroll}
         style={{ overflowY: "auto", flex: 1, minHeight: 0 }}
       >
@@ -281,9 +306,14 @@ export function ChatReaderView({
             <div
               key={item.id}
               data-reader-item={item.id}
+              id={optionId(item.id)}
               role="option"
               aria-selected={item.id === selectedId}
-              onClick={() => setSelectedId(item.id)}
+              onClick={() => {
+                setSelectedId(item.id);
+                // The keys work from here on.
+                focusKeys();
+              }}
               style={{
                 padding: "8px 12px",
                 cursor: "pointer",
@@ -454,7 +484,8 @@ export function ChatReaderView({
 
   return (
     <div
-      tabIndex={0}
+      ref={rootRef}
+      tabIndex={-1}
       onKeyDown={onKeyDown}
       aria-label="Reader"
       style={{

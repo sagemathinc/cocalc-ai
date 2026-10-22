@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { ChatReaderView } from "../reader-view";
 import type { ReaderState } from "../reader-model";
@@ -35,7 +36,7 @@ const agent = (id: string, text: string, ms: number) =>
     history: [{ content: text, author_id: "codex" }],
   }) as any;
 
-function setup(initial: any[], readCount = 0) {
+function setup(initial: any[], readCount = 0, props: object = {}) {
   let state: ReaderState = {};
   let count = readCount;
   const actions: any = {
@@ -64,6 +65,7 @@ function setup(initial: any[], readCount = 0) {
         messages={messages}
         accountId="acct"
         readStateVersion={version}
+        {...props}
       />
     );
   }
@@ -79,8 +81,8 @@ function setup(initial: any[], readCount = 0) {
 const options = () => screen.getAllByRole("option");
 const isUnread = (option: HTMLElement) =>
   within(option).queryByLabelText("unread") != null;
-const press = (key: string) =>
-  fireEvent.keyDown(screen.getByLabelText("Reader"), { key });
+// Real keystrokes: they reach the reader only where the focus is.
+const user = () => userEvent.setup();
 
 const thread = [
   person("p1", "first question", 1),
@@ -89,34 +91,60 @@ const thread = [
   person("p3", "third question", 4),
 ];
 
-test("items are unread past the watermark; opening one reads it", () => {
+test("items are unread past the watermark; opening one reads it", async () => {
   const { count } = setup(thread, 2);
+  const keys = user();
   expect(options().map(isUnread)).toEqual([false, true, true]);
   expect(screen.getByText("2 unread")).toBeInTheDocument();
   // An item shows its replies in the reading pane.
-  fireEvent.click(screen.getByText(/first question/));
+  await keys.click(screen.getByText(/first question/));
   expect(screen.getByRole("article")).toHaveTextContent("first answer");
+  // Clicking an item leaves the focus where the keys work.
+  expect(document.activeElement).toBe(screen.getByRole("listbox"));
   // j opens the next one: read, and the watermark moves over it.
-  press("j");
+  await keys.keyboard("j");
   expect(screen.getByRole("article")).toHaveTextContent("second question");
   expect(count()).toBe(3);
   expect(options().map(isUnread)).toEqual([false, false, true]);
 });
 
-test("u jumps to the next unread; m marks unread; y archives", () => {
-  const { state, count } = setup(thread, 0);
-  press("u");
+test("u jumps to the next unread; m marks unread; y archives", async () => {
+  // Turned on by the person: the keys work at once.
+  const { state, count } = setup(thread, 0, { autoFocus: true });
+  expect(document.activeElement).toBe(screen.getByRole("listbox"));
+  const keys = user();
+  await keys.keyboard("u");
   expect(screen.getByRole("article")).toHaveTextContent("first question");
   expect(count()).toBe(2);
-  press("m");
+  await keys.keyboard("m");
   expect(state().u).toEqual(["p1"]);
   expect(isUnread(options()[0])).toBe(true);
-  press("y");
+  await keys.keyboard("y");
   // Archived: gone from the list, and the next item opens.
   expect(options()).toHaveLength(2);
   expect(screen.getByRole("article")).toHaveTextContent("second question");
   fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
   expect(options()).toHaveLength(3);
+});
+
+test("without the focus, keys do nothing", async () => {
+  const { count } = setup(thread, 0);
+  await user().keyboard("j");
+  expect(screen.queryByRole("article")).toBeNull();
+  expect(count()).toBe(0);
+});
+
+test("showing archived items is not new items", () => {
+  setup(thread, 4);
+  const list = screen.getByRole("listbox");
+  Object.defineProperty(list, "scrollHeight", { value: 1000 });
+  Object.defineProperty(list, "clientHeight", { value: 100 });
+  fireEvent.click(screen.getByText(/third question/));
+  fireEvent.keyDown(list, { key: "y" });
+  expect(options()).toHaveLength(2);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
+  expect(options()).toHaveLength(3);
+  expect(screen.queryByRole("button", { name: /new/ })).toBeNull();
 });
 
 test("new items wait behind a button; mark all read", () => {
@@ -126,11 +154,7 @@ test("new items wait behind a button; mark all read", () => {
   const list = screen.getByRole("listbox");
   Object.defineProperty(list, "scrollHeight", { value: 1000 });
   Object.defineProperty(list, "clientHeight", { value: 100 });
-  setMessages([
-    ...thread,
-    person("p4", "fourth", 5),
-    person("p5", "fifth", 6),
-  ]);
+  setMessages([...thread, person("p4", "fourth", 5), person("p5", "fifth", 6)]);
   expect(screen.getByRole("button", { name: "2 new" })).toBeInTheDocument();
   expect(screen.getByText("2 unread")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));

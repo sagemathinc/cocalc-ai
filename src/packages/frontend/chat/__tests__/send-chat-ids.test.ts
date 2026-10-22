@@ -2,6 +2,7 @@
 
 import { CHAT_THREAD_META_ROW_DATE, threadConfigRecordKey } from "@cocalc/chat";
 import { from_str } from "@cocalc/sync/editor/immer-db/doc";
+import * as readStateModule from "@cocalc/conat/project/read-state";
 import { ChatActions } from "../actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -2096,6 +2097,50 @@ describe("deleteMessage rewiring", () => {
           row?.event === "chat-thread-state" && row?.thread_id === threadId,
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("reader state", () => {
+  it("is kept until the read-state store opens, then saved", async () => {
+    const actions = makeActions();
+    let resolveClient!: (client: unknown) => void;
+    (webapp_client.conat_client as any).projectConat = jest.fn(
+      () => new Promise((resolve) => (resolveClient = resolve)),
+    );
+    const store: any = {
+      set: jest.fn(),
+      get: jest.fn(() => undefined),
+      onChange: () => () => {},
+      markChatThreadRead: jest.fn(),
+      isClosed: () => false,
+      close: jest.fn(),
+    };
+    const open = jest
+      .spyOn(readStateModule, "openProjectReadState")
+      .mockResolvedValue(store);
+    try {
+      const state = { u: ["m1"], a: { m2: "m3" } };
+      expect(actions.setReaderState("thread-1", state)).toBe(true);
+      // Not open yet: nothing saved, but the reader sees it.
+      expect(store.set).not.toHaveBeenCalled();
+      expect(actions.getReaderState("thread-1")).toEqual(state);
+      resolveClient({});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(open).toHaveBeenCalled();
+      expect(store.set).toHaveBeenCalledWith(
+        "chat-reader:thread-1:x.chat",
+        expect.objectContaining({ kind: "chat-reader", ...state }),
+      );
+      // Saved: now read from the store.
+      store.get.mockReturnValue({
+        kind: "chat-reader",
+        t: new Date(),
+        u: ["x"],
+      });
+      expect(actions.getReaderState("thread-1")).toEqual({ u: ["x"] });
+    } finally {
+      open.mockRestore();
+    }
   });
 });
 

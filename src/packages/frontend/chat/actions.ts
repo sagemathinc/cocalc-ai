@@ -550,6 +550,8 @@ export class ChatActions extends Actions<ChatState> {
   private projectReadStateInit?: Promise<ProjectReadStateStore | undefined>;
   private projectReadStateCleanup?: () => void;
   private codexAttentionOpenToken = 0;
+  // Reader state written before the read-state store opened; saved then.
+  private pendingReaderStates = new Map<string, ReaderState>();
   private pendingThreadReads: Map<
     string,
     { count: number; messageId: string; at: Date }
@@ -757,12 +759,21 @@ export class ChatActions extends Actions<ChatState> {
     this.projectReadStateKey = undefined;
     this.projectReadStateInit = undefined;
     this.pendingThreadReads.clear();
+    this.pendingReaderStates.clear();
   };
 
   private flushPendingThreadReads = (
     store: ProjectReadStateStore,
     path: string,
   ): void => {
+    for (const [threadId, state] of this.pendingReaderStates) {
+      store.set(chatReaderStateKey(path, threadId), {
+        kind: "chat-reader",
+        t: new Date(),
+        ...state,
+      });
+    }
+    this.pendingReaderStates.clear();
     if (this.pendingThreadReads.size === 0) {
       return;
     }
@@ -2453,6 +2464,8 @@ export class ChatActions extends Actions<ChatState> {
     const threadId = this.normalizeThreadId(threadKey);
     const path = this.store?.get("path");
     if (!threadId || !path) return {};
+    const pending = this.pendingReaderStates.get(threadId);
+    if (pending) return pending;
     const entry = this.ensureProjectReadState()?.get(
       chatReaderStateKey(path, threadId),
     );
@@ -2461,12 +2474,18 @@ export class ChatActions extends Actions<ChatState> {
     return state;
   };
 
-  /** False when the read state is not open yet (nothing is saved). */
+  /** Saved once the read state opens, if it is not open yet. */
   setReaderState = (threadKey: string, state: ReaderState): boolean => {
     const threadId = this.normalizeThreadId(threadKey);
     const path = this.store?.get("path");
+    if (!threadId || !path) return false;
+    // Opening it first: a new store starts with no pending writes.
     const store = this.ensureProjectReadState();
-    if (!threadId || !path || store == null) return false;
+    if (store == null) {
+      this.pendingReaderStates.set(threadId, state);
+      this.touchReadStateVersion();
+      return true;
+    }
     store.set(chatReaderStateKey(path, threadId), {
       kind: "chat-reader",
       t: new Date(),
