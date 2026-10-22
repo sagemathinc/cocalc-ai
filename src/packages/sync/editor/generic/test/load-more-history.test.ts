@@ -5,6 +5,8 @@
 
 import { legacyPatchId } from "patchflow";
 import {
+  isSnapshotRecordBeforeLoadedRange,
+  loadedStartSnapshotFromMessages,
   patchesHaveFullHistoryFromPatches,
   prevSeqForMoreHistoryFromHistory,
 } from "../sync-doc";
@@ -145,5 +147,117 @@ describe("prevSeqForMoreHistoryFromHistory with where the loaded history starts"
 
   it("keeps the old rule when the loaded start is unknown", () => {
     expect(prevSeqForMoreHistoryFromHistory(history)).toBe(301);
+  });
+});
+
+describe("isSnapshotRecordBeforeLoadedRange", () => {
+  const record = (time: string, seq: number) => ({
+    time,
+    is_snapshot: true,
+    seq_info: { seq },
+  });
+  // the sagebrush chat: opened at 43137, record of 42836 at 43138
+  const opened = { openStartSeq: 43137 };
+
+  it("ignores a record its loaded snapshot's writer proved to be an ancestor", () => {
+    const start = { ancestors: new Set(["t42836"]) };
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t42836", 42836), 43137, {
+        ...opened,
+        start,
+        recordSeq: 43138,
+      }),
+    ).toBe(true);
+    // not proved: maybe a concurrent head nothing loaded builds on
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t42900", 42900), 43137, {
+        ...opened,
+        start,
+        recordSeq: 43139,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not ignore an unproved record in the range opened (legacy)", () => {
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t42836", 42836), 43137, {
+        ...opened,
+        start: {},
+        recordSeq: 43138,
+      }),
+    ).toBe(false);
+  });
+
+  it("ignores a record stored before the position opened at, until its patch loads", () => {
+    // after a step back to 42836: the record of 42535 at 42843
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t42535", 42535), 42836, {
+        ...opened,
+        start: {},
+        recordSeq: 42843,
+      }),
+    ).toBe(true);
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t42535", 42535), 42535, {
+        ...opened,
+        start: {},
+        recordSeq: 42843,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the loaded snapshot, patches, seeds and records without a seq", () => {
+    const context = {
+      ...opened,
+      start: { ancestors: new Set(["t1"]) },
+      recordSeq: 1,
+    };
+    const keep = [
+      { time: "t1", is_snapshot: true, seq_info: { seq: 43137 } },
+      { time: "t1", is_snapshot: false, seq_info: { seq: 1 } },
+      { time: "t1", is_snapshot: true, seq_info: { seq: 0 } },
+      { time: "t1", is_snapshot: true },
+      { time: "t1", is_snapshot: true, seq_info: null },
+    ];
+    for (const patch of keep) {
+      expect(isSnapshotRecordBeforeLoadedRange(patch, 43137, context)).toBe(
+        false,
+      );
+    }
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t1", 2), undefined, context),
+    ).toBe(false);
+  });
+});
+
+describe("loadedStartSnapshotFromMessages", () => {
+  const snap = (time: string, seq_info: any) => ({
+    time,
+    is_snapshot: true,
+    seq_info,
+  });
+
+  it("follows the ancestors of listed snapshots whose records are loaded", () => {
+    const start = loadedStartSnapshotFromMessages(
+      [
+        { time: "p", parents: [] },
+        snap("b", { seq: 20, prev_seq: 10, snapshot_ancestors: ["a"] }),
+        snap("c", { seq: 30, prev_seq: 20, snapshot_ancestors: ["b"] }),
+      ],
+      30,
+    );
+    expect([...(start?.ancestors ?? [])].sort()).toEqual(["a", "b"]);
+  });
+
+  it("is legacy without a list, and undefined without the start snapshot", () => {
+    expect(
+      loadedStartSnapshotFromMessages(
+        [snap("c", { seq: 30, prev_seq: 20 })],
+        30,
+      ),
+    ).toEqual({});
+    expect(
+      loadedStartSnapshotFromMessages([snap("c", { seq: 30 })], 31),
+    ).toBeUndefined();
   });
 });

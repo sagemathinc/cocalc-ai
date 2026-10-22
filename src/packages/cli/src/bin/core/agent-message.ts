@@ -79,7 +79,10 @@ export function sendIdentityMessage(
   apiUrl?: string,
 ): Promise<AgentRpcBroadcastOutcome>;
 export function sendIdentityMessage(
-  request: Extract<AgentRpcRequest, { action: "send" | "inspect" }>,
+  request: Extract<
+    AgentRpcRequest,
+    { action: "send" | "inspect" | "withdraw" }
+  >,
   apiUrl?: string,
 ): Promise<AgentRpcOutcome>;
 export function sendIdentityMessage(
@@ -153,6 +156,7 @@ export async function sendIdentityMessage(
       "version" in request &&
       (request.action === "send" ||
         request.action === "inspect" ||
+        request.action === "withdraw" ||
         request.action === "cancel-attachments")
     )
       validateAgentRpcOutcome(response.data.result, request);
@@ -164,6 +168,11 @@ export async function sendIdentityMessage(
         chat_effect: "none",
         reason:
           "Attachment preparation was not acknowledged; no file payload or message was sent. Project startup may still finish.",
+      });
+    if ("version" in request && request.action === "withdraw")
+      return rpcOutcome(request, "unknown", {
+        reason:
+          "No authoritative response; inspect to see whether it was withdrawn",
       });
     if (
       "version" in request &&

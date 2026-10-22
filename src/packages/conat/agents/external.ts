@@ -145,6 +145,24 @@ export function validateExternalAgentLabel(label: string): void {
     );
 }
 
+/**
+ * The @name peers use for an external agent: its label's leading name, in
+ * the form registered agent names take ("ops0 on alpha.cocalc.ai (ops
+ * project)" is @ops0). Labels are free text, so it may not be unique, and a
+ * label without such a name has none.
+ */
+export function externalAgentHandle(label: string): string | undefined {
+  const lead = `${label ?? ""}`.trim().split(/\s|\(/)[0] ?? "";
+  const handle = lead
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(handle)
+    ? handle
+    : undefined;
+}
+
 export function validateExternalAgentApproval(options: {
   installation_id: string;
   agent_id?: string;

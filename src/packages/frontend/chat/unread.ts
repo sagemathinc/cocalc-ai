@@ -55,7 +55,10 @@ export function listUnreadChatThreads(opts: {
       0,
       actions.getThreadReadCount?.(entry.key, accountId) ?? 0,
     );
-    const unreadCount = Math.max(entry.messageCount - readCount, 0);
+    // Plus what the reader marked unread again before the watermark.
+    const unreadCount =
+      Math.max(entry.messageCount - readCount, 0) +
+      (actions.getReaderUnreadBeforeWatermark?.(entry.key, accountId) ?? 0);
     if (unreadCount > 0) {
       unread.push({
         key: entry.key,

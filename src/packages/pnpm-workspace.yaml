@@ -15,7 +15,7 @@ packages:
 # retry-request is overridden because an older Google API dependency pulled in
 # a broken version after the request dependency disappeared upstream.
 overrides:
-  "follow-redirects@<1.16.0": "^1.16.0"
+  "follow-redirects@<1.16.1": "^1.16.1"
   "es5-ext@<0.10.63": "^0.10.63"
   "undici@<5.28.3": "^5.28.4"
   "undici@>=7.0.0 <7.29.1": "~7.29.1"
@@ -91,7 +91,7 @@ overrides:
   "@grpc/grpc-js@>=1.14.0 <1.14.5": "^1.14.5"
   "esbuild@>=0.17.0 <0.28.1": ">=0.28.1"
   "form-data@>=4.0.0 <4.0.6": ">=4.0.6"
-  "markdown-it@<14.3.1": "^14.3.1"
+  "markdown-it@<14.3.3": "^14.3.3"
   "tar@>=7.0.0 <7.5.21": "^7.5.21"
   "body-parser@>=2.0.0 <2.3.0": "^2.3.0"
   # Upstream image-size is archived; this audited fork fixes CVE-2025-71329
@@ -128,9 +128,12 @@ patchedDependencies:
 
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
+  # Maintainer-approved CoCalc-owned release, validated via upstream CI and npm provenance.
+  - "http-proxy-3@2.0.2"
   # Maintainer-approved exact-version exception; review in .agents/git-review-modernization.md.
   - "@pierre/diffs@1.4.1"
   # CoCalc-owned upstream package; fresh releases are reviewed here before use.
+  - "@sagemathinc/sagebrush-board"
   - "@cocalc/openat2@0.2.0"
   - "@cocalc/openat2-linux-arm64-gnu@0.2.0"
   - "@cocalc/openat2-linux-x64-gnu@0.2.0"

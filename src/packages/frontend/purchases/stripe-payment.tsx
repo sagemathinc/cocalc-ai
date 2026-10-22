@@ -60,6 +60,30 @@ import {
 } from "@cocalc/frontend/app/verify-email-banner";
 import { LineItemsTable, moneyToString } from "./line-items";
 import { AddressButton, StripeAddressElement } from "./address";
+import {
+  BILLING_ADDRESS_REQUIRED_MESSAGE,
+  BUSINESS_TAX_ID_REQUIRED_MESSAGE,
+  requiresBusinessTaxId,
+} from "@cocalc/util/stripe/business-tax-id";
+
+// Whether a checkout error asks for billing details the user can enter here.
+function billingDetailsNeededFor(err): "address" | "vat" | null {
+  const code = `${err?.code ?? ""}`;
+  const message = `${err?.message ?? err ?? ""}`;
+  if (
+    code == "billing_address_required" ||
+    message.includes(BILLING_ADDRESS_REQUIRED_MESSAGE)
+  ) {
+    return "address";
+  }
+  if (
+    code == "business_tax_id_required" ||
+    message.includes(BUSINESS_TAX_ID_REQUIRED_MESSAGE)
+  ) {
+    return "vat";
+  }
+  return null;
+}
 import CancelPaymentIntent from "./cancel-payment-intent";
 import { uuid } from "@cocalc/util/misc";
 
@@ -171,6 +195,9 @@ function StripePaymentInner({
     null,
   );
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
+  // Cloudflare's country for this browser: tell EU and UK visitors about the
+  // VAT number requirement before they reach payment.
+  const visitorCountry = useTypedRedux("customize", "country");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const safeLineItems = lineItems ?? [];
 
@@ -236,6 +263,17 @@ function StripePaymentInner({
       ) : (
         <LineItemsTable lineItems={displayedLineItems} />
       )}
+      {stripeEnabled &&
+        totalStripe > 0 &&
+        requiresBusinessTaxId(visitorCountry) && (
+          <Alert
+            showIcon
+            type="info"
+            style={{ margin: "10px 0" }}
+            title={BUSINESS_TAX_ID_REQUIRED_MESSAGE}
+            description="Add the VAT number under Name and Address before paying."
+          />
+        )}
       <div>
         <div style={{ textAlign: "center" }}>
           <Space>
@@ -376,6 +414,11 @@ function StripeCheckout({
   >(null);
   const checkoutInstanceId = useRef(uuid()).current;
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  // The server asked for a billing address (customers in or near the EU and
+  // UK) or an EU/UK VAT number before checkout.
+  const [billingDetailsNeeded, setBillingDetailsNeeded] = useState<
+    "address" | "vat" | null
+  >(null);
 
   const updateSecret = useCallback(
     debounce(
@@ -404,6 +447,13 @@ function StripeCheckout({
               break;
             } catch (err) {
               console.warn("issue getting stripe checkout session", err);
+              const needed = billingDetailsNeededFor(err);
+              if (needed != null) {
+                setBillingDetailsNeeded(needed);
+                setLoading(false);
+                setProgressPhase(null);
+                return;
+              }
               if (i >= attempts - 1) {
                 throw err;
               } else {
@@ -432,6 +482,34 @@ function StripeCheckout({
   useEffect(() => {
     updateSecret({ lineItems, description, purpose });
   }, [lineItems, description, purpose]);
+
+  if (billingDetailsNeeded != null) {
+    return (
+      <Space vertical size="middle" style={{ width: "100%", ...style }}>
+        <Alert
+          showIcon
+          type="info"
+          title={
+            billingDetailsNeeded == "vat"
+              ? BUSINESS_TAX_ID_REQUIRED_MESSAGE
+              : BILLING_ADDRESS_REQUIRED_MESSAGE
+          }
+          description={
+            billingDetailsNeeded == "vat"
+              ? "Add your organization's VAT number below, then continue to payment."
+              : "CoCalc uses this for receipts, invoices and tax. Customers in the EU and the UK also need their organization's VAT number."
+          }
+        />
+        <StripeAddressElement
+          showCancel={false}
+          onFinished={() => {
+            setBillingDetailsNeeded(null);
+            updateSecret({ lineItems, description, purpose });
+          }}
+        />
+      </Space>
+    );
+  }
 
   if (error) {
     return (

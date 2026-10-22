@@ -165,6 +165,78 @@ describe("filesystem explicit routing", () => {
     server.close();
   });
 
+  it("routes boards through the writable filesystem service", async () => {
+    const { fsServer } = await import("./fs");
+    const filesystem = {} as any;
+    const open = jest.fn(async ({ path }) => ({
+      path,
+      syncdbPath: "s",
+      state: "ok" as const,
+    }));
+    const save = jest.fn(async ({ path }) => ({
+      path,
+      syncdbPath: "s",
+      state: "ok" as const,
+    }));
+    const onMutation = jest.fn();
+    let handlers: any;
+    const client = {
+      service: jest.fn(async (_subject, svc) => {
+        handlers = svc;
+        return { close: jest.fn() };
+      }),
+    } as any;
+    const subject = "fs-test.project-00000000-0000-4000-8000-000000000000";
+    const server = await fsServer({
+      service: "fs-test",
+      client,
+      fs: async () => filesystem,
+      onMutation,
+      jupyter: testJupyter,
+      board: { open, save },
+    });
+    await expect(
+      handlers.boardOpen.call({ subject }, "a.board.json"),
+    ).resolves.toMatchObject({ state: "ok" });
+    await handlers.boardSave.call({ subject }, "a.board.json");
+    expect(open).toHaveBeenCalledWith({
+      subject,
+      path: "a.board.json",
+      fs: filesystem,
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(onMutation).toHaveBeenCalledWith({
+      subject,
+      op: "boardSave",
+      path: "a.board.json",
+    });
+    server.close();
+  });
+
+  it("refuses boards where no board host is configured", async () => {
+    const { fsServer } = await import("./fs");
+    let handlers: any;
+    const client = {
+      service: jest.fn(async (_subject, svc) => {
+        handlers = svc;
+        return { close: jest.fn() };
+      }),
+    } as any;
+    const server = await fsServer({
+      service: "fs-test",
+      client,
+      fs: async () => ({}) as any,
+      jupyter: testJupyter,
+    });
+    await expect(
+      handlers.boardOpen.call(
+        { subject: "fs-test.project-00000000-0000-4000-8000-000000000000" },
+        "a.board.json",
+      ),
+    ).rejects.toMatchObject({ code: "ENOSYS" });
+    server.close();
+  });
+
   it("does not expose Jupyter conversion on read-only filesystem services", async () => {
     const { fsReadOnlyServer } = await import("./fs");
     let handlers: any;
@@ -182,6 +254,8 @@ describe("filesystem explicit routing", () => {
 
     expect(handlers.jupyterImportIpynb).toBeUndefined();
     expect(handlers.jupyterSaveIpynb).toBeUndefined();
+    expect(handlers.boardOpen).toBeUndefined();
+    expect(handlers.boardSave).toBeUndefined();
     expect(handlers.reserveWrite).toBeUndefined();
     expect(handlers.writeFileWithReceipt).toBeUndefined();
     expect(handlers.writeReceiptStatus).toBeUndefined();

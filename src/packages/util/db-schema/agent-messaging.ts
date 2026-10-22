@@ -178,6 +178,11 @@ Table({
       pg_type: "JSONB",
       desc: "Runtime kind ({kind: codex | claude-code | acp, name?}), recorded at registration from the thread's configuration and confirmed by the project host when it admits a turn.",
     },
+    turn_status: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "What the agent is doing as its project host last reported (busy, waiting, unavailable until a limit resets), so the agent's peers and lists see it. Never names a credential.",
+    },
   },
 });
 

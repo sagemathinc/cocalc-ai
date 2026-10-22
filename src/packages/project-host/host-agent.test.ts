@@ -194,6 +194,48 @@ describe("project-host host-agent local rollback", () => {
     });
   });
 
+  it("never rolls back past persist volumes, and doesn't try again every pass", async () => {
+    const { PersistLayoutDowngradeError } =
+      await import("./persist-layout-guard");
+    const dataDir = mkdtemp("cocalc-host-agent-");
+    fs.writeFileSync(
+      statePath(dataDir),
+      JSON.stringify({
+        project_host: {
+          last_known_good_version: "ph-v1",
+          pending_rollout: {
+            target_version: "ph-v2",
+            previous_version: "ph-v1",
+            started_at: "2026-04-15T00:00:00.000Z",
+            deadline_at: "2026-04-15T00:00:01.000Z",
+          },
+        },
+      }),
+    );
+    inspectProjectHostRuntimeMock.mockReturnValue({
+      dataDir,
+      currentVersion: "ph-v2",
+      runningPid: undefined,
+      runningVersion: undefined,
+      healthy: false,
+    });
+    activateInstalledProjectHostVersionMock.mockRejectedValue(
+      new PersistLayoutDowngradeError("refusing project-host ph-v1"),
+    );
+
+    for (let pass = 0; pass < 3; pass++) {
+      await reconcileProjectHostRollback({ index: 0, timeoutMs: 60_000 });
+    }
+
+    expect(activateInstalledProjectHostVersionMock).toHaveBeenCalledTimes(1);
+    expect(restartProjectHostMock).not.toHaveBeenCalled();
+    const state = JSON.parse(fs.readFileSync(statePath(dataDir), "utf8"));
+    expect(state.project_host.last_automatic_rollback).toBeUndefined();
+    expect(state.project_host.pending_rollout).toMatchObject({
+      target_version: "ph-v2",
+    });
+  });
+
   it("normalizes a requested rollback into a rolled-back terminal rollout record on the next healthy pass", async () => {
     const dataDir = mkdtemp("cocalc-host-agent-");
     fs.writeFileSync(

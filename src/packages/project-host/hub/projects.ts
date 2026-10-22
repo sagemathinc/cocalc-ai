@@ -80,6 +80,7 @@ import {
   resolveProjectContainerPath,
   ensureProjectVolumeIdentity,
   reconcileManagedProjectVolumeQuota,
+  projectHomeQuota,
 } from "../file-server";
 import { currentProjectVolumeLifecycleGeneration } from "../project-volume-lifecycle";
 import {
@@ -1285,7 +1286,7 @@ async function assertStartDiskQuotaAllowed({
       logger,
       getQuota: async (id) => {
         const vol = await getOrEnsureProjectHomeVolume(id);
-        return await vol.quota.get();
+        return await projectHomeQuota(id, vol);
       },
     });
     return {
@@ -1372,7 +1373,14 @@ async function assertStartDiskQuotaAllowed({
       // A freshly recreated scratch subvolume is empty and has no limit. A
       // physical qgroup read here adds no safety, but can block for seconds
       // while Btrfs quota accounting catches up after I/O pressure.
-      const quota = resetVolume ? { used: 0, size: 0 } : await vol.quota.get();
+      const quota = resetVolume
+        ? { used: 0, size: 0 }
+        : volume_kind === "home"
+          ? // (counted against the quota it is about to get)
+            await projectHomeQuota(project_id, vol, {
+              forQuota: targetDiskBytes,
+            })
+          : await vol.quota.get();
       if (
         isProjectDiskQuotaStartBlocked({
           used: quota.used,
@@ -3856,12 +3864,14 @@ export async function updateProjectUsers({
   users,
   runtime_lifecycle_revision,
   users_revision,
+  content_epoch,
 }: {
   project_id: string;
   users?: any;
   runtime_lifecycle_revision?: number;
   /** Only the newest collaborator list is kept (sqlite/projects.ts). */
   users_revision?: number;
+  content_epoch?: number;
 }) {
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
@@ -3869,7 +3879,12 @@ export async function updateProjectUsers({
   const apply = () => {
     // Store collaborator map in the generic sqlite row mirror used by conat auth.
     // This is separate from the concrete projects SQL table schema.
-    upsertProject({ project_id, users, users_revision });
+    upsertProject({
+      project_id,
+      users,
+      users_revision,
+      ...(content_epoch == null ? {} : { content_epoch }),
+    });
     clearProjectHostConatAuthCaches();
   };
   // A versioned update is not queued behind start and stop: a start that hangs

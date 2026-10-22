@@ -120,6 +120,13 @@ export async function listConfiguredBaysAuthoritative(): Promise<BayInfo[]> {
   return await listAuthoritativeClusterBayInfos();
 }
 
+import {
+  AccountNotFoundError,
+  isAccountNotFoundError,
+} from "@cocalc/server/bay-directory-errors";
+
+export { AccountNotFoundError, isAccountNotFoundError };
+
 async function getAccountRow(account_id: string): Promise<{
   account_id: string;
   email_address?: string | null;
@@ -137,7 +144,7 @@ async function getAccountRow(account_id: string): Promise<{
     if (local?.account_id) {
       return local;
     }
-    throw new Error(`account '${account_id}' not found`);
+    throw new AccountNotFoundError(account_id);
   }
   // An account homed here is served from this bay's own row (it is the
   // source of truth), so attached bays do not depend on the seed for it.
@@ -169,7 +176,7 @@ async function getAccountRow(account_id: string): Promise<{
   }
   const local = await getLocalAccountRow(account_id);
   if (!local?.account_id) {
-    throw new Error(`account '${account_id}' not found`);
+    throw new AccountNotFoundError(account_id);
   }
   return local;
 }

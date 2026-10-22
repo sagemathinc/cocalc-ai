@@ -25,6 +25,10 @@ import { join } from "path";
 import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import {
+  captureSnapshotData,
+  type CapturedSnapshotData,
+} from "./snapshot-preparer";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { ConatError } from "@cocalc/conat/core/client";
@@ -94,6 +98,20 @@ function isRepositoryCapacityError(error: unknown): boolean {
     /InsufficientStorage|QuotaExceeded|storage (?:quota|limit) exceeded|no space left on device/i.test(
       message,
     )
+  );
+}
+
+// A free host-only path for a temporary snapshot of `subvolume`; a leftover
+// is removed like a stale temporary backup snapshot.
+export function tempSnapshotStagingPath(subvolume: {
+  name: string;
+  filesystem: { opts: { mount: string } };
+}): string {
+  return join(
+    subvolume.filesystem.opts.mount,
+    RUSTIC_BACKUP_STAGING_DIR,
+    subvolume.name,
+    makeTempRusticSnapshotName(),
   );
 }
 
@@ -247,6 +265,41 @@ export class SubvolumeRustic {
     const stagingRoot = this.backupStagingRoot();
     await sudo({ command: "mkdir", args: ["-p", stagingRoot] });
     const snapshotPath = join(stagingRoot, name);
+    // e.g., a project's edit history, captured before the snapshot is taken
+    // (snapshot-preparer.ts)
+    const capture = async () =>
+      await captureSnapshotData({
+        subvolume: this.subvolume.name,
+        stagingPath: join(stagingRoot, makeTempRusticSnapshotName()),
+      });
+    let captured = await capture();
+    try {
+      const created = await this.createTempBackupSnapshotWith({
+        snapshotPath,
+        captured,
+      });
+      if (captured != null) return created;
+      // There was nothing to add, but there may be now (e.g., the history
+      // just moved out of the home): then take the snapshot again with it.
+      captured = await capture();
+      if (captured == null) return created;
+      await this.deleteTempBackupSnapshot(snapshotPath, { mandatory: true });
+      return await this.createTempBackupSnapshotWith({
+        snapshotPath,
+        captured,
+      });
+    } finally {
+      await captured?.release();
+    }
+  }
+
+  private async createTempBackupSnapshotWith({
+    snapshotPath,
+    captured,
+  }: {
+    snapshotPath: string;
+    captured?: CapturedSnapshotData;
+  }): Promise<{ snapshotPath: string; generation: number }> {
     await withBtrfsMutationLock({
       mount: this.subvolume.filesystem.opts.mount,
       operation: "rustic-backup-snapshot-create",
@@ -255,7 +308,8 @@ export class SubvolumeRustic {
           args: [
             "subvolume",
             "snapshot",
-            "-r",
+            // writable until the captured data is added
+            ...(captured ? [] : ["-r"]),
             this.subvolume.path,
             snapshotPath,
           ],
@@ -279,6 +333,15 @@ export class SubvolumeRustic {
         throw new Error(
           `unable to read temporary backup snapshot generation: ${snapshotPath}`,
         );
+      }
+      if (captured) {
+        // The generation above is that of the home when it was snapshotted,
+        // which callers compare with the home's; adding the data must not
+        // change it.
+        await captured.addTo(snapshotPath);
+        await btrfs({
+          args: ["property", "set", "-ts", snapshotPath, "ro", "true"],
+        });
       }
       return { snapshotPath, generation: snapshotGeneration };
     } catch (err) {
@@ -403,8 +466,8 @@ export class SubvolumeRustic {
       logger.debug(
         `backup: created ${tempSnapshot} at ${snapshotPath} to get a consistent backup`,
       );
-      // Backup the snapshot path directly (no bind mounts). The project tree
-      // already includes persistent metadata under ~/.local/share/cocalc/persist.
+      // Backup the snapshot path directly (no bind mounts). For a project,
+      // the preparer put its edit history under .local/share/cocalc/persist.
       logger.debug(`backup: backing up ${tempSnapshot} using rustic`);
       const backupFs = this.backupSnapshotFs(snapshotPath);
       const backupResult = await wrapUpload(async () => {

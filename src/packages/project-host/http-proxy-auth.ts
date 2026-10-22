@@ -23,6 +23,8 @@ import {
   buildProjectHostBrowserSessionCookie,
   clearProjectHostBrowserSessionCookie,
   createProjectHostBrowserSessionToken,
+  issuedAtOfOrigin,
+  originIssuedAt,
   restrictedBrowserSessionTtlSeconds,
   resolveProjectHostBrowserSessionFromCookieHeader,
 } from "./browser-session";
@@ -169,11 +171,15 @@ export function createProjectHostHttpSessionToken({
   now_ms = Date.now(),
   ttl_seconds = HTTP_SESSION_TTL_SECONDS,
   restricted_exp_s,
+  auth_iat_s,
 }: {
   account_id: string;
   now_ms?: number;
   ttl_seconds?: number;
   restricted_exp_s?: number;
+  // When the credential this one was made from was issued: revocation
+  // cutoffs compare against it, so re-issuing a cookie never renews it.
+  auth_iat_s?: number;
 }): string {
   const now_s = Math.floor(now_ms / 1000);
   const requestedTtl =
@@ -190,6 +196,7 @@ export function createProjectHostHttpSessionToken({
     v: HTTP_SESSION_TOKEN_VERSION,
     account_id,
     iat: now_s,
+    auth_iat: originIssuedAt(auth_iat_s, now_s),
     exp,
     ...(restricted_exp_s == null ? {} : { restricted_exp_s: exp }),
     nonce: randomBytes(12).toString("hex"),
@@ -247,7 +254,7 @@ export function verifyProjectHostHttpSessionToken(
   if (exp < Math.floor(now_ms / 1000)) return;
   return {
     account_id,
-    iat_s: iat,
+    iat_s: issuedAtOfOrigin(payload?.auth_iat, iat),
     exp_s: exp,
     ...(restrictedExp == null ? {} : { restricted_exp_s: restrictedExp }),
   };
@@ -606,7 +613,9 @@ export function createProjectHostHttpProxyAuth({
     res: ServerResponse,
     account_id: string,
     project_id: string,
-    restricted_exp_s?: number,
+    restricted_exp_s: number | undefined,
+    // The originating credential's iat (see originIssuedAt).
+    auth_iat_s: number,
   ) => {
     const now_ms = Date.now();
     let restrictedTtl: number | undefined;
@@ -621,6 +630,7 @@ export function createProjectHostHttpProxyAuth({
     const sessionToken = createProjectHostHttpSessionToken({
       account_id,
       now_ms,
+      auth_iat_s,
       ...(restricted_exp_s == null ? {} : { restricted_exp_s }),
     });
     appendSetCookie(
@@ -646,6 +656,7 @@ export function createProjectHostHttpProxyAuth({
         sessionToken: createProjectHostBrowserSessionToken({
           account_id,
           now_ms,
+          auth_iat_s,
           ...(restricted_exp_s == null ? {} : { restricted_exp_s }),
         }),
         ...(restrictedTtl == null ? {} : { max_age_seconds: restrictedTtl }),
@@ -740,7 +751,12 @@ export function createProjectHostHttpProxyAuth({
       const isProjectFileRequest =
         classifyProjectRoute(req, project_id) === "file";
       const isExplicitDownload = url.searchParams.has("download");
-      if (isProjectFileRequest && !isExplicitDownload) {
+      // A file opened as a page (a new tab): the session cookie was just set
+      // first-party, so drop the token from the address bar and history.
+      // Embedded previews keep loading without a redirect.
+      const isTopLevelPage =
+        `${req.headers["sec-fetch-dest"] ?? ""}`.toLowerCase() === "document";
+      if (isProjectFileRequest && !isExplicitDownload && !isTopLevelPage) {
         stripQueryToken(req);
         return false;
       }
@@ -859,6 +875,7 @@ export function createProjectHostHttpProxyAuth({
         accountFromBrowserSession.account_id,
         project_id,
         accountFromBrowserSession.restricted_exp_s,
+        accountFromBrowserSession.iat_s,
       );
       setAuthContext(req, {
         account_id: accountFromBrowserSession.account_id,
@@ -929,7 +946,14 @@ export function createProjectHostHttpProxyAuth({
     if (source === "header") {
       delete req.headers.authorization;
     }
-    setSessionCookie(req, res, account_id, project_id, restricted_exp_s);
+    setSessionCookie(
+      req,
+      res,
+      account_id,
+      project_id,
+      restricted_exp_s,
+      claims.iat,
+    );
     if (cleanQueryTokenOrRedirect(req, res, project_id)) {
       return;
     }

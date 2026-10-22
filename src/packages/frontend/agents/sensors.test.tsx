@@ -357,6 +357,51 @@ test("a person schedules a prompt for the agent", async () => {
   });
 });
 
+test("a person schedules a quarterly prompt", async () => {
+  mockApi.createScheduledPrompt.mockResolvedValue({});
+  const refresh = jest.fn();
+  render(
+    <AgentSensorsModal
+      agent={agent}
+      open
+      onClose={() => {}}
+      sensors={[]}
+      error=""
+      refresh={refresh}
+    />,
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Schedule a prompt" }),
+  );
+  const form = screen.getByRole("region", { name: "Schedule a prompt" });
+  await userEvent.type(within(form).getByLabelText("Title"), "L&I report");
+  await userEvent.type(
+    within(form).getByLabelText("Prompt"),
+    "File the quarterly report.",
+  );
+  await userEvent.click(within(form).getByRole("radio", { name: "Monthly" }));
+  // Weekdays do not apply to days of the month.
+  expect(within(form).queryByLabelText("Weekdays only")).toBeNull();
+  const dates = within(form).getByLabelText(/Days of the month/);
+  await userEvent.clear(dates);
+  await userEvent.type(dates, "31");
+  await userEvent.click(within(form).getByLabelText(/Quarterly/));
+  const times = within(form).getByLabelText(/Times/);
+  await userEvent.clear(times);
+  await userEvent.type(times, "08:30");
+  await userEvent.click(within(form).getByRole("button", { name: "Schedule" }));
+  await waitFor(() => expect(refresh).toHaveBeenCalled());
+  expect(
+    mockApi.createScheduledPrompt.mock.lastCall?.[0].spec.schedule,
+  ).toEqual({
+    kind: "monthly",
+    dates: [31],
+    months: [1, 4, 7, 10],
+    times: ["08:30"],
+    timezone: expect.any(String),
+  });
+});
+
 test("a watcher shows what it waits for, and is done once it fired", () => {
   render(
     <AgentSensorsModal

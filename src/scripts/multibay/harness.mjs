@@ -81,7 +81,8 @@ export class AccountClient {
       auth_session_hash: this.client.info?.user?.auth_session_hash ?? null,
       name,
       args,
-      timeout: 30_000,
+      // As the hub API clients do: a call may ask for a longer timeout.
+      timeout: args[0]?.timeout ?? 30_000,
     });
   }
 
@@ -99,17 +100,33 @@ function parseEnvFile(text) {
   return out;
 }
 
+const serverRequire = createRequire(
+  path.join(SRC, "packages/server/package.json"),
+);
+
 /**
- * Run a CommonJS snippet with the server package in a bay's environment
- * (its database and its fabric credential). The snippet's async result is
- * returned as JSON.
+ * A connection of the test's own to a bay's database, for what a snippet is
+ * too slow to start for: holding a lock for a set time, say. End it.
  */
-export async function runInBay(
-  cluster,
-  bayId,
-  body,
-  { timeoutMs = 60_000 } = {},
-) {
+export async function connectBayDatabase(cluster, bayId) {
+  const { Client } = serverRequire("pg");
+  const env = parseEnvFile(
+    readFileSync(
+      path.join(cluster.postgresDir(bayId), "local-postgres.env"),
+      "utf8",
+    ),
+  );
+  const db = new Client({
+    host: env.PGHOST,
+    user: env.PGUSER,
+    database: env.PGDATABASE,
+    ...(env.PGPORT ? { port: Number(env.PGPORT) } : {}),
+  });
+  await db.connect();
+  return db;
+}
+
+function bayEnv(cluster, bayId) {
   const pg = cluster.postgresDir(bayId);
   const env = {
     ...cluster.env(bayId),
@@ -124,37 +141,192 @@ export async function runInBay(
   // keys from the site master key, not this legacy override, so a snippet
   // must too to read what the hub encrypted.
   delete env.COCALC_SECRET_SETTINGS_KEY_PATH;
-  const marker = "__MULTIBAY_RESULT__";
+  return env;
+}
+
+const MARKER = "__MULTIBAY_RESULT__";
+const SERVER_DIST = path.join(SRC, "packages/server/dist");
+
+/**
+ * Run a CommonJS snippet with the server package in a bay's environment
+ * (its database and its fabric credential). The snippet's async result is
+ * returned as JSON.
+ *
+ * Snippets run in one long-lived worker process per bay, since starting a
+ * process that loads the server package takes about 1.5 s. Pass
+ * `fresh: true` for a process of its own: for a snippet that changes process
+ * or module state (process.env, a patched module), which would otherwise
+ * leak into later snippets, or one that runs long (e.g. a fake host).
+ */
+export async function runInBay(
+  cluster,
+  bayId,
+  body,
+  { timeoutMs = 60_000, fresh = false } = {},
+) {
+  if (fresh) return await runInFreshProcess(cluster, bayId, body, timeoutMs);
+  return await bayWorker(cluster, bayId).run(body, timeoutMs);
+}
+
+async function runInFreshProcess(cluster, bayId, body, timeoutMs) {
   const script = `
-const server = (p) => require(${JSON.stringify(path.join(SRC, "packages/server/dist"))} + "/" + p);
+const server = (p) => require(${JSON.stringify(SERVER_DIST)} + "/" + p);
 (async () => { ${body} })().then(
-  (r) => { console.log(${JSON.stringify(marker)} + JSON.stringify({ ok: true, r: r ?? null })); process.exit(0); },
-  (e) => { console.log(${JSON.stringify(marker)} + JSON.stringify({ ok: false, e: String(e?.stack ?? e) })); process.exit(1); });`;
+  (r) => { console.log(${JSON.stringify(MARKER)} + JSON.stringify({ ok: true, r: r ?? null })); process.exit(0); },
+  (e) => { console.log(${JSON.stringify(MARKER)} + JSON.stringify({ ok: false, e: String(e?.stack ?? e) })); process.exit(1); });`;
   const child = spawn(process.execPath, ["-e", script], {
     cwd: path.join(SRC, "packages/server"),
-    env,
+    env: bayEnv(cluster, bayId),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let out = "";
   let err = "";
   child.stdout.on("data", (d) => (out += d));
   child.stderr.on("data", (d) => (err += d));
+  // An ordinary timer, cleared once the child exits: a pending sleep() would
+  // keep the test process alive for the rest of timeoutMs.
+  let timer;
   const code = await Promise.race([
     new Promise((resolve) => child.once("exit", resolve)),
-    sleep(timeoutMs).then(() => {
-      child.kill("SIGKILL");
-      return "timeout";
+    new Promise((resolve) => {
+      timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        resolve("timeout");
+      }, timeoutMs);
     }),
-  ]);
-  const line = out.split("\n").find((l) => l.startsWith(marker));
+  ]).finally(() => clearTimeout(timer));
+  const line = out.split("\n").find((l) => l.startsWith(MARKER));
   if (!line) {
     throw new Error(
       `runInBay(${bayId}) ${code}: ${err.slice(-2000)} ${out.slice(-1000)}`,
     );
   }
-  const result = JSON.parse(line.slice(marker.length));
+  const result = JSON.parse(line.slice(MARKER.length));
   if (!result.ok) throw new Error(`runInBay(${bayId}): ${result.e}`);
   return result.r;
+}
+
+// One worker per bay of each cluster. It reads {id, body} lines on stdin and
+// answers each with a MARKER line on stdout.
+const WORKER_SOURCE = `
+const readline = require("node:readline");
+const server = (p) => require(${JSON.stringify(SERVER_DIST)} + "/" + p);
+const AsyncFunction = (async () => {}).constructor;
+// A snippet's un-awaited work must not take the worker down with it.
+process.on("unhandledRejection", (err) => console.error("unhandled rejection", err));
+readline.createInterface({ input: process.stdin }).on("line", async (line) => {
+  const { id, body } = JSON.parse(line);
+  let reply;
+  try {
+    const r = await new AsyncFunction("require", "server", body)(require, server);
+    reply = { id, ok: true, r: r ?? null };
+  } catch (e) {
+    reply = { id, ok: false, e: String(e?.stack ?? e) };
+  }
+  let text;
+  try {
+    text = JSON.stringify(reply);
+  } catch (e) {
+    text = JSON.stringify({ id, ok: false, e: "result is not JSON: " + e });
+  }
+  process.stdout.write(${JSON.stringify(MARKER)} + text + "\\n");
+});`;
+
+const workers = new WeakMap(); // cluster -> Map(bayId -> worker)
+
+function bayWorker(cluster, bayId) {
+  let byBay = workers.get(cluster);
+  if (byBay == null) {
+    byBay = new Map();
+    workers.set(cluster, byBay);
+    // A stopped bay's database is gone too: start a new worker after it.
+    cluster.stopHooks.add((id) => {
+      byBay.get(id)?.close();
+      byBay.delete(id);
+    });
+  }
+  let worker = byBay.get(bayId);
+  if (worker == null || worker.dead) {
+    worker = new BayWorker(cluster, bayId);
+    byBay.set(bayId, worker);
+  }
+  return worker;
+}
+
+class BayWorker {
+  constructor(cluster, bayId) {
+    this.bayId = bayId;
+    this.dead = false;
+    this.next = 0;
+    this.pending = new Map();
+    this.err = "";
+    this.child = spawn(process.execPath, ["-e", WORKER_SOURCE], {
+      cwd: path.join(SRC, "packages/server"),
+      env: bayEnv(cluster, bayId),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let buffer = "";
+    this.child.stdout.on("data", (data) => {
+      buffer += data;
+      let i;
+      while ((i = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, i);
+        buffer = buffer.slice(i + 1);
+        const at = line.indexOf(MARKER);
+        if (at < 0) continue; // a snippet's own output
+        const reply = JSON.parse(line.slice(at + MARKER.length));
+        const waiter = this.pending.get(reply.id);
+        this.pending.delete(reply.id);
+        waiter?.(reply);
+      }
+    });
+    this.child.stderr.on("data", (d) => {
+      this.err = (this.err + d).slice(-4000);
+    });
+    this.child.once("exit", (code) => {
+      this.dead = true;
+      for (const waiter of this.pending.values()) {
+        waiter({ ok: false, e: `worker exited (${code}): ${this.err.slice(-2000)}` });
+      }
+      this.pending.clear();
+    });
+    // Idle workers must not keep the test process alive.
+    this.child.unref();
+    for (const stream of [this.child.stdin, this.child.stdout, this.child.stderr]) {
+      stream.unref?.();
+    }
+  }
+
+  async run(body, timeoutMs) {
+    const id = this.next++;
+    const reply = new Promise((resolve) => this.pending.set(id, resolve));
+    this.child.stdin.write(JSON.stringify({ id, body }) + "\n");
+    // While a snippet runs, keep the test process alive for its answer.
+    this.child.ref();
+    let timer;
+    const timedOut = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    try {
+      const result = await Promise.race([reply, timedOut]);
+      if (result == null) {
+        // A stuck snippet: don't let it hold the worker for later calls.
+        this.close();
+        throw new Error(`runInBay(${this.bayId}) timeout: ${this.err.slice(-2000)}`);
+      }
+      if (!result.ok) throw new Error(`runInBay(${this.bayId}): ${result.e}`);
+      return result.r;
+    } finally {
+      clearTimeout(timer);
+      this.pending.delete(id);
+      if (this.pending.size === 0 && !this.dead) this.child.unref();
+    }
+  }
+
+  close() {
+    this.dead = true;
+    this.child.kill("SIGKILL");
+  }
 }
 
 /** Create an account homed on `home_bay_id`, as sign-up on the seed does. */

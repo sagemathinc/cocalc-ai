@@ -18,9 +18,11 @@ const btrfsMock = jest.fn(async (_opts?: any) => ({ stdout: "", stderr: "" }));
 
 jest.mock("./util", () => ({
   btrfs: (opts: any) => btrfsMock(opts),
+  sudo: async () => ({ stdout: "", stderr: "" }),
 }));
 
 import { SubvolumeSnapshots } from "./subvolume-snapshots";
+import { setSnapshotPreparer } from "./snapshot-preparer";
 
 function createSubvolume() {
   return {
@@ -59,6 +61,135 @@ function createSubvolumeWithSnapshots(snapshotNames: string[]) {
     },
   };
 }
+
+describe("SubvolumeSnapshots with a snapshot preparer", () => {
+  let capture: jest.Mock;
+  let addTo: jest.Mock;
+  let order: string[];
+  const steps = () =>
+    btrfsMock.mock.calls.map(([{ args }]) =>
+      args.filter((x: string) => !x.startsWith("/")).join(" "),
+    );
+
+  beforeEach(() => {
+    btrfsMock.mockClear();
+    order = [];
+    btrfsMock.mockImplementation(async ({ args }) => {
+      order.push(args[1]);
+      return { stdout: "", stderr: "" };
+    });
+    addTo = jest.fn(async () => undefined);
+    capture = jest.fn(async () => {
+      order.push("capture");
+      return { addTo, release: async () => order.push("release") };
+    });
+    setSnapshotPreparer({
+      appliesTo: (name) => name === "project-1",
+      capture,
+    });
+  });
+
+  afterEach(() => {
+    setSnapshotPreparer(undefined);
+    btrfsMock.mockImplementation(async () => ({ stdout: "", stderr: "" }));
+  });
+
+  it("completes the snapshot where the project can't reach it, then snapshots it read-only into place", async () => {
+    const calls: string[][] = [];
+    btrfsMock.mockImplementation(async ({ args }) => {
+      calls.push(args);
+      return { stdout: "", stderr: "" };
+    });
+    await new SubvolumeSnapshots(createSubvolume() as any).create("snap1");
+    const final = `/mnt/test/project-1/${SNAPSHOTS}/snap1`;
+    const [snapshot, ro, place, remove] = calls;
+    const staged = snapshot[3];
+    expect(snapshot).toEqual([
+      "subvolume",
+      "snapshot",
+      "/mnt/test/project-1",
+      staged,
+    ]);
+    expect(staged).toMatch(
+      /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/,
+    );
+    expect(addTo).toHaveBeenCalledWith(staged);
+    expect(ro).toEqual(["property", "set", "-ts", staged, "ro", "true"]);
+    // the snapshot appears in the home only now, read-only
+    expect(place).toEqual(["subvolume", "snapshot", "-r", staged, final]);
+    expect(remove).toEqual(["subvolume", "delete", staged]);
+    expect(calls.flat().filter((x) => x === final)).toHaveLength(1);
+    expect(order[0]).toBe("capture");
+    expect(order[order.length - 1]).toBe("release");
+  });
+
+  it("leaves no snapshot when adding fails", async () => {
+    addTo.mockRejectedValue(new Error("no copy"));
+    await expect(
+      new SubvolumeSnapshots(createSubvolume() as any).create("snap1"),
+    ).rejects.toThrow("no copy");
+    expect(steps()).toEqual(["subvolume snapshot", "subvolume delete"]);
+    expect(
+      btrfsMock.mock.calls
+        .flat()
+        .some(({ args }) =>
+          args.includes(`/mnt/test/project-1/${SNAPSHOTS}/snap1`),
+        ),
+    ).toBe(false);
+    expect(order[order.length - 1]).toBe("release");
+  });
+
+  it("takes the snapshot again when there is something to add after all", async () => {
+    const calls: string[][] = [];
+    btrfsMock.mockImplementation(async ({ args }) => {
+      calls.push(args);
+      return { stdout: "", stderr: "" };
+    });
+    // e.g., the history moved out of the home just before the snapshot
+    capture.mockImplementationOnce(async () => {
+      order.push("capture");
+      return undefined;
+    });
+    await new SubvolumeSnapshots(createSubvolume() as any).create("snap1");
+    const final = `/mnt/test/project-1/${SNAPSHOTS}/snap1`;
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(calls[0]).toEqual([
+      "subvolume",
+      "snapshot",
+      "-r",
+      "/mnt/test/project-1",
+      final,
+    ]);
+    expect(calls[1]).toEqual(["subvolume", "delete", final]);
+    const staged = calls[2][3];
+    expect(addTo).toHaveBeenCalledWith(staged);
+    expect(calls[calls.length - 2]).toEqual([
+      "subvolume",
+      "snapshot",
+      "-r",
+      staged,
+      final,
+    ]);
+  });
+
+  it("adds nothing to a snapshot that is only read from and deleted", async () => {
+    await new SubvolumeSnapshots(createSubvolume() as any).create(
+      "path-copy-1",
+      { quotaMode: "skip", includePreparedData: false },
+    );
+    expect(capture).not.toHaveBeenCalled();
+    expect(steps()).toEqual(["subvolume snapshot -r"]);
+  });
+
+  it("snapshots other subvolumes read-only, as before", async () => {
+    await new SubvolumeSnapshots({
+      ...createSubvolume(),
+      name: "project-1-scratch",
+    } as any).create("snap1");
+    expect(capture).not.toHaveBeenCalled();
+    expect(steps()).toEqual(["subvolume snapshot -r"]);
+  });
+});
 
 describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
   beforeEach(() => {
@@ -295,5 +426,60 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
     await expect(
       snapshots.prunePath({ path: ".snapshots/snap1/file.txt" }),
     ).rejects.toThrow("cannot prune the snapshots directory from snapshots");
+  });
+});
+
+describe("snapshot usage", () => {
+  beforeEach(() => {
+    btrfsMock.mockReset();
+    require("./qgroup-scan").resetQgroupScansForTest();
+  });
+
+  it("reads the filesystem's quotas once for all of a project's snapshots", async () => {
+    const names = [
+      "2026-10-20T00:00:00.000Z",
+      "2026-10-21T00:00:00.000Z",
+      "2026-10-22T00:00:00.000Z",
+    ];
+    const scan = [
+      "Qgroupid Referenced Exclusive Max referenced Parent Child Path",
+      "-------- ---------- --------- -------------- ------ ----- ----",
+      "0/300 1000 900 5000 - - project-1",
+      ...names.map(
+        (name, i) =>
+          `0/${400 + i} ${100 + i} ${10 + i} none - - project-1/${SNAPSHOTS}/${name}`,
+      ),
+    ].join("\n");
+    btrfsMock.mockImplementation(async ({ args }: { args: string[] }) => {
+      if (args[0] === "subvolume" && args[1] === "show") {
+        const i = names.findIndex((name) => args[2].endsWith(`/${name}`));
+        return { stdout: `Subvolume ID:\t${400 + i}\n`, stderr: "" };
+      }
+      return { stdout: scan, stderr: "" };
+    });
+    const snapshots = new SubvolumeSnapshots(
+      createSubvolumeWithSnapshots(names) as any,
+    );
+    await expect(
+      Promise.all(names.map(async (name) => await snapshots.usage(name))),
+    ).resolves.toEqual(
+      names.map((name, i) => ({
+        name,
+        used: 100 + i,
+        exclusive: 10 + i,
+        quota: 0,
+      })),
+    );
+    // (one read of the quotas, by each snapshot's id)
+    expect(
+      btrfsMock.mock.calls.filter(([opts]) => opts.args[0] === "qgroup"),
+    ).toEqual([
+      [
+        {
+          verbose: false,
+          args: ["qgroup", "show", "-prc", "--raw", "/mnt/test"],
+        },
+      ],
+    ]);
   });
 });

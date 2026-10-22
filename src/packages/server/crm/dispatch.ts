@@ -90,6 +90,17 @@ export async function dispatchCrmSeedRequest(
     session_hash: undefined,
   } as any;
   switch (request.action) {
+    // New outgoing support tickets use the outreach Zendesk settings and
+    // suppressions, which live on the seed; the receiving bay already checked
+    // admin and, for supportCreate, fresh auth.
+    case "supportPlanCreate":
+    case "supportCreate": {
+      const support = await import("@cocalc/server/conat/api/admin-support");
+      const { account_id: _actor, ...payload } = opts;
+      return request.action === "supportPlanCreate"
+        ? await support.planCreateOnSeed(payload, request.actor_account_id)
+        : await support.createOnSeed(payload, request.actor_account_id);
+    }
     case "listOrganizations":
       return await listOrganizations(opts);
     case "searchOrganizations":

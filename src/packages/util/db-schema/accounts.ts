@@ -198,6 +198,10 @@ Table({
       type: "boolean",
       desc: "True if the account has been deleted.",
     },
+    deleted_at: {
+      type: "timestamp",
+      desc: "When the account was deleted; the former email address is removed a fixed time after this.",
+    },
     org: {
       type: "string",
       prg_type: "VARCHAR(39)",

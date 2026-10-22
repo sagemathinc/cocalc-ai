@@ -41,7 +41,12 @@ import {
   startProjectOnHost,
   stopProjectOnHost,
 } from "@cocalc/server/project-host/control";
-import { DEDICATED_HOST_BILLING_DISK_GRACE_HOURS } from "@cocalc/server/project-host/spend-enforcement";
+import {
+  BILLING_RESCUE_FALLBACK_MS,
+  BILLING_RESCUE_REVIEW_MS,
+  DEDICATED_HOST_BILLING_DISK_GRACE_HOURS,
+  billingRescueDiskDeletionTime,
+} from "@cocalc/server/project-host/spend-enforcement";
 import { getProject } from "@cocalc/server/projects/control/base";
 import { loadProjectRuntimeSponsor } from "@cocalc/server/projects/runtime-sponsor-db";
 import {
@@ -691,15 +696,30 @@ async function waitForHostStatus({
 async function waitForHostHeartbeat({
   host_id,
   since,
+  failOn,
+  shouldCancel,
+  loadStatus = loadHostStatus,
+  delayFn = delay,
 }: {
   host_id: string;
   since: number;
+  failOn?: string[];
+  shouldCancel?: () => Promise<boolean>;
+  loadStatus?: typeof loadHostStatus;
+  delayFn?: (ms: number) => Promise<void>;
 }) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < MAX_WAIT_MS) {
-    const row = await loadHostStatus(host_id);
+    if ((await shouldCancel?.()) === true) {
+      throw new HostOpCanceledError();
+    }
+    const row = await loadStatus(host_id);
     if (!row || row.deleted) {
       throw new Error("host not found");
+    }
+    const status = `${row.status ?? ""}`;
+    if (failOn?.includes(status)) {
+      throw new Error(`host status is ${status} while waiting for heartbeat`);
     }
     const lastSeen = row.last_seen
       ? new Date(row.last_seen as any).getTime()
@@ -707,7 +727,7 @@ async function waitForHostHeartbeat({
     if (lastSeen && lastSeen >= since) {
       return { last_seen: row.last_seen };
     }
-    await delay(POLL_MS);
+    await delayFn(POLL_MS);
   }
   throw new Error("timeout waiting for host heartbeat");
 }
@@ -1844,7 +1864,7 @@ async function markBillingEnforcementDrainFailed({
 }: {
   host_id: string;
   error: unknown;
-}): Promise<"failed" | "succeeded"> {
+}): Promise<{ status: "failed" | "succeeded"; stopped_at?: string }> {
   const { rows } = await getPool().query<{ metadata: any }>(
     "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
     [host_id],
@@ -1854,17 +1874,18 @@ async function markBillingEnforcementDrainFailed({
   }
   const metadata = rows[0].metadata ?? {};
   if (metadata.billing?.enforcement?.final_backup_status === "succeeded") {
-    return "succeeded";
+    return { status: "succeeded" };
   }
+  const next = billingEnforcementDrainFailedMetadata(metadata, error);
   await getPool().query(
     `
       UPDATE project_hosts
       SET metadata=$2, ${BUMP_DESIRED_STATE_GENERATION}, updated=NOW()
       WHERE id=$1 AND deleted IS NULL
     `,
-    [host_id, billingEnforcementDrainFailedMetadata(metadata, error)],
+    [host_id, next],
   );
-  return "failed";
+  return { status: "failed", stopped_at: next.billing.enforcement.stopped_at };
 }
 
 function billingEnforcementDrainCompleteMetadata(
@@ -1959,6 +1980,9 @@ function billingEnforcementDrainFailureAdminAlert({
   error,
   stop_error,
   final_backup_status,
+  rescue = false,
+  stopped_at,
+  now = Date.now(),
 }: {
   host_id: string;
   account_id: string;
@@ -1966,15 +1990,44 @@ function billingEnforcementDrainFailureAdminAlert({
   error: unknown;
   stop_error?: unknown;
   final_backup_status: "failed" | "succeeded" | "unknown";
+  // This was the rescue drain (spend-maintenance.ts), not the first drain.
+  rescue?: boolean;
+  stopped_at?: string;
+  now?: number;
 }) {
   const computeStatus = stop_error
     ? `The compute stop request also failed: ${stop_error}`
     : "The compute stop request succeeded.";
+  const keepData =
+    "To keep its data, restore the owner's funding or move the projects off the host before then.";
+  let failedStatus: string;
+  if (rescue) {
+    const stoppedAt = Date.parse(`${stopped_at ?? ""}`);
+    const deletion = Number.isFinite(stoppedAt)
+      ? new Date(
+          billingRescueDiskDeletionTime({ stoppedAt, failedAt: now }),
+        ).toISOString()
+      : undefined;
+    failedStatus = [
+      "The rescue drain failed. Unmoved project placement and the provider disk were retained for now.",
+      deletion
+        ? `The disk will be deleted automatically on or after ${deletion} (${BILLING_RESCUE_FALLBACK_MS / 86_400_000} days after the host stopped, and at least ${BILLING_RESCUE_REVIEW_MS / 86_400_000} days after this alert); its projects then restore from their last backup, losing newer changes.`
+        : "The host's stop time is unknown, so the disk is kept until an operator decides.",
+      keepData,
+    ].join(" ");
+  } else {
+    failedStatus = [
+      "Unmoved project placement and the provider disk were retained.",
+      `After the ${DEDICATED_HOST_BILLING_DISK_GRACE_HOURS}-hour disk grace period, billing maintenance starts the host once more for a rescue drain (final backups, then moving the projects).`,
+      `If that also fails, the disk is deleted ${BILLING_RESCUE_FALLBACK_MS / 86_400_000} days after the host stopped, and at least ${BILLING_RESCUE_REVIEW_MS / 86_400_000} days after that failure's alert.`,
+      keepData,
+    ].join(" ");
+  }
   const recoveryStatus =
     final_backup_status === "succeeded"
       ? "The project drain and final backups completed. Normal backup-backed disk grace remains in effect."
       : final_backup_status === "failed"
-        ? "Unmoved project placement and the provider disk were retained. Automatic disk deprovisioning is disabled because the final backup failed."
+        ? failedStatus
         : "The final backup state could not be recorded or confirmed. Inspect project placement and the provider disk immediately.";
   return {
     subject: `Dedicated host billing drain failed (${host_id})`,
@@ -1993,6 +2046,61 @@ function billingEnforcementDrainFailureAdminAlert({
     dedupMinutes: 24 * 60,
     dedupBySubject: true,
   };
+}
+
+// A billing-blocked host whose projects have no confirmed final backup is
+// started once, without a billing session, so the drain below can back up and
+// move its projects before its disk is deleted. spend-maintenance.ts requests
+// this only for a host that is off (never for one whose billing stop failed).
+async function startBillingBlockedHostForRescue({
+  account_id,
+  host_id,
+  helpers,
+  deps = {},
+}: {
+  account_id: string;
+  host_id: string;
+  helpers?: {
+    shouldCancel?: () => Promise<boolean>;
+    progressStep?: (
+      step: string,
+      message: string,
+      detail?: any,
+      progress?: number,
+    ) => Promise<void>;
+  };
+  deps?: {
+    startHost?: typeof startHostInternal;
+    waitStatus?: typeof waitForHostStatus;
+    waitHeartbeat?: typeof waitForHostHeartbeat;
+  };
+}): Promise<void> {
+  const {
+    startHost = startHostInternal,
+    waitStatus = waitForHostStatus,
+    waitHeartbeat = waitForHostHeartbeat,
+  } = deps;
+  await helpers?.progressStep?.(
+    "starting",
+    "starting billing-blocked host to take final backups",
+    { host_id },
+    5,
+  );
+  const startedAt = Date.now();
+  await startHost({ account_id, id: host_id, billing_rescue: true });
+  await waitStatus({
+    host_id,
+    desired: ["running"],
+    failOn: ["error", "off", "deprovisioned"],
+    shouldCancel: helpers?.shouldCancel,
+    onUpdate: async () => {},
+  });
+  await waitHeartbeat({
+    host_id,
+    since: startedAt,
+    failOn: ["error", "off", "deprovisioned"],
+    shouldCancel: helpers?.shouldCancel,
+  });
 }
 
 async function runHostAction(
@@ -2038,6 +2146,13 @@ async function runHostAction(
       return { cloudWorkId };
     }
     case "host-drain":
+      if (input?.billing_rescue === true) {
+        await startBillingBlockedHostForRescue({
+          account_id,
+          host_id,
+          helpers,
+        });
+      }
       const drain = await drainHostInternal({
         account_id,
         id: host_id,
@@ -3144,11 +3259,14 @@ async function handleOp(op: LroSummary): Promise<void> {
         (err as { code?: string }).code === "host-op-canceled");
     if (kind === "host-drain" && input?.billing_enforcement === true) {
       let finalBackupStatus: "failed" | "succeeded" | "unknown" = "unknown";
+      let stoppedAt: string | undefined;
       try {
-        finalBackupStatus = await markBillingEnforcementDrainFailed({
+        const marked = await markBillingEnforcementDrainFailed({
           host_id,
           error: err,
         });
+        finalBackupStatus = marked.status;
+        stoppedAt = marked.stopped_at;
       } catch (metadataErr) {
         logger.error(
           "failed to record billing-enforcement drain failure before stopping host",
@@ -3187,6 +3305,8 @@ async function handleOp(op: LroSummary): Promise<void> {
           error: err,
           stop_error: stopError,
           final_backup_status: finalBackupStatus,
+          rescue: input?.billing_rescue === true,
+          stopped_at: stoppedAt,
         }),
       );
     }
@@ -3362,6 +3482,8 @@ export const __test__ = {
   delayedProjectHostConvergenceRolloutComponents,
   redundantProjectHostRollbackReason,
   waitForHostStatus,
+  waitForHostHeartbeat,
+  startBillingBlockedHostForRescue,
   billingEnforcementDrainCompleteMetadata,
   billingEnforcementDrainFailedMetadata,
   billingEnforcementDrainFailureAdminAlert,

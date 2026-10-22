@@ -227,6 +227,17 @@ import {
 } from "@cocalc/server/projects/restore-drill-attestation";
 import { getProjectRecoveryServiceObjectives } from "@cocalc/server/projects/recovery-objectives";
 import {
+  backupPurgeHealthLevel,
+  backupPurgeHealthSummary,
+  getBackupPurgeHealth,
+} from "@cocalc/server/projects/backup-purge-health";
+import {
+  billingExposureHealthDetails,
+  billingExposureHealthLevel,
+  billingExposureHealthSummary,
+  getBillingExposureHealth,
+} from "@cocalc/server/purchases/billing-exposure-health";
+import {
   getProjectRecoveryCustomerWarningScanStatus,
   projectRecoveryCustomerWarningScanProblem,
   type ProjectRecoveryCustomerWarningScanStatus,
@@ -2248,6 +2259,8 @@ export async function getLaunchHealth({
     smokeResult,
     adminAlertsResult,
     intrusionObservationsResult,
+    backupPurgeResult,
+    billingExposureResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2268,6 +2281,8 @@ export async function getLaunchHealth({
     getLatestLaunchSmokeResult(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
     getHostIntrusionObservationSummary(),
+    getBackupPurgeHealth(),
+    getBillingExposureHealth({ bay_id: currentBay.bay_id }),
   ]);
 
   const settings =
@@ -2567,6 +2582,47 @@ export async function getLaunchHealth({
             : "Bay backup is not enabled.",
       details:
         backupsResult.status === "rejected" ? [`${backupsResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "backup-purges",
+      label: "Deleted-project backup purges",
+      level:
+        backupPurgeResult.status === "rejected"
+          ? "critical"
+          : backupPurgeHealthLevel(backupPurgeResult.value),
+      summary:
+        backupPurgeResult.status === "rejected"
+          ? "Unable to read deleted-project backup purge status."
+          : backupPurgeHealthSummary(backupPurgeResult.value),
+      details:
+        backupPurgeResult.status === "rejected"
+          ? [`${backupPurgeResult.reason}`]
+          : [
+              backupPurgeResult.value.oldest_quarantined_at
+                ? `Oldest quarantine: ${backupPurgeResult.value.oldest_quarantined_at}`
+                : "",
+              backupPurgeResult.value.oldest_overdue_due_at
+                ? `Oldest overdue purge was due ${backupPurgeResult.value.oldest_overdue_due_at}`
+                : "",
+            ],
+    }),
+    launchHealthCheck({
+      id: "billing-exposure",
+      label: "Billing exposure",
+      // An unreadable check warns rather than pages: the full purchases scan
+      // can hit its statement timeout on a busy database.
+      level:
+        billingExposureResult.status === "rejected"
+          ? "warning"
+          : billingExposureHealthLevel(billingExposureResult.value),
+      summary:
+        billingExposureResult.status === "rejected"
+          ? "Unable to read billing exposure."
+          : billingExposureHealthSummary(billingExposureResult.value),
+      details:
+        billingExposureResult.status === "rejected"
+          ? [`${billingExposureResult.reason}`]
+          : billingExposureHealthDetails(billingExposureResult.value),
     }),
     launchHealthCheck({
       id: "project-recovery",
@@ -6282,6 +6338,8 @@ export async function deleteAccount({
   return await deleteClusterAccount({
     account_id: targetAccountId,
     only_if_tag: `${only_if_tag ?? ""}`.trim() || undefined,
+    initiator: targetAccountId === account_id ? "self" : "admin",
+    actor_account_id: account_id,
   });
 }
 

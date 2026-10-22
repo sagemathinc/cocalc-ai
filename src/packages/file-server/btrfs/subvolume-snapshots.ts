@@ -1,7 +1,7 @@
 import { type Subvolume } from "./subvolume";
-import { btrfs } from "./util";
+import { btrfs, sudo } from "./util";
 import getLogger from "@cocalc/backend/logger";
-import { join } from "path";
+import { dirname, join } from "path";
 import { realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { type SnapshotCounts, updateRollingSnapshots } from "./snapshots";
@@ -9,8 +9,14 @@ import { ConatError } from "@cocalc/conat/core/client";
 import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { getSubvolumeField, invalidateSubvolumeMetadata } from "./subvolume";
-import { parsePlainQgroupShow } from "./subvolume-quota";
+import { subvolumeMount } from "./subvolume-quota";
+import { lookupQgroup } from "./qgroup-scan";
 import { btrfsQuotasDisabled } from "./config";
+import {
+  captureSnapshotData,
+  type CapturedSnapshotData,
+} from "./snapshot-preparer";
+import { tempSnapshotStagingPath } from "./subvolume-rustic";
 import { assertValidSnapshotName } from "@cocalc/util/snapshot-name";
 import { isISODate } from "@cocalc/util/misc";
 import {
@@ -208,10 +214,14 @@ export class SubvolumeSnapshots {
       limit,
       quotaMode = "sync",
       existingSnapshotNames,
+      includePreparedData = true,
     }: {
       limit?: number;
       quotaMode?: "sync" | "async" | "skip";
       existingSnapshotNames?: string[];
+      // false for a snapshot that is only read from and deleted at once: it
+      // needs no data a restore of it would (snapshot-preparer.ts)
+      includePreparedData?: boolean;
     } = {},
   ) => {
     name ??= new Date().toISOString();
@@ -233,19 +243,47 @@ export class SubvolumeSnapshots {
       }
     }
 
-    const args = ["subvolume", "snapshot", "-r"];
-    const snapshotPath = this.snapshotAbsolutePath(name);
-    args.push(this.subvolume.path, snapshotPath);
-
-    await withBtrfsMutationLock({
-      mount: this.subvolume.filesystem.opts.mount,
-      operation: "snapshot-create",
-      run: async () => {
-        await btrfs({ args });
-        invalidateSubvolumeMetadata(snapshotPath);
-        invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
-      },
-    });
+    // e.g., a project's edit history, captured before the snapshot is taken
+    // (snapshot-preparer.ts)
+    let captured = includePreparedData
+      ? await captureSnapshotData({ subvolume: this.subvolume.name })
+      : undefined;
+    try {
+      const snapshotPath = this.snapshotAbsolutePath(name);
+      if (captured == null) {
+        await withBtrfsMutationLock({
+          mount: this.subvolume.filesystem.opts.mount,
+          operation: "snapshot-create",
+          run: async () => {
+            await btrfs({
+              args: [
+                "subvolume",
+                "snapshot",
+                "-r",
+                this.subvolume.path,
+                snapshotPath,
+              ],
+            });
+            invalidateSubvolumeMetadata(snapshotPath);
+            invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
+          },
+        });
+        // There was nothing to add, but there may be now (e.g., the history
+        // just moved out of the home): then take the snapshot again with it.
+        captured = includePreparedData
+          ? await captureSnapshotData({ subvolume: this.subvolume.name })
+          : undefined;
+        if (captured != null) {
+          await btrfs({ args: ["subvolume", "delete", snapshotPath] });
+          invalidateSubvolumeMetadata(snapshotPath);
+          await this.createWithCaptured({ snapshotPath, captured });
+        }
+      } else {
+        await this.createWithCaptured({ snapshotPath, captured });
+      }
+    } finally {
+      await captured?.release();
+    }
 
     if (quotaMode === "skip") {
       return;
@@ -257,6 +295,52 @@ export class SubvolumeSnapshots {
       snapshot: name,
       quotaMode,
     });
+  };
+
+  // The snapshot is in the home, which the project can write: it must never
+  // be writable there. Complete it in host-only staging, then snapshot that
+  // read-only into place.
+  private createWithCaptured = async ({
+    snapshotPath,
+    captured,
+  }: {
+    snapshotPath: string;
+    captured: CapturedSnapshotData;
+  }): Promise<void> => {
+    const mount = this.subvolume.filesystem.opts.mount;
+    const staged = tempSnapshotStagingPath(this.subvolume);
+    await sudo({ command: "mkdir", args: ["-p", dirname(staged)] });
+    await withBtrfsMutationLock({
+      mount,
+      operation: "snapshot-create",
+      run: async () => {
+        await btrfs({
+          args: ["subvolume", "snapshot", this.subvolume.path, staged],
+        });
+      },
+    });
+    try {
+      await captured.addTo(staged);
+      await btrfs({ args: ["property", "set", "-ts", staged, "ro", "true"] });
+      await withBtrfsMutationLock({
+        mount,
+        operation: "snapshot-create",
+        run: async () => {
+          await btrfs({
+            args: ["subvolume", "snapshot", "-r", staged, snapshotPath],
+          });
+          invalidateSubvolumeMetadata(snapshotPath);
+          invalidateBtrfsQgroupShowRaw(mount);
+        },
+      });
+    } finally {
+      await btrfs({ args: ["subvolume", "delete", staged] }).catch((err) => {
+        logger.warn("unable to delete staged snapshot", {
+          staged,
+          err: `${err}`,
+        });
+      });
+    }
   };
 
   readdir = async (): Promise<string[]> => {
@@ -525,36 +609,24 @@ export class SubvolumeSnapshots {
       return { name, used: 0, quota: 0, exclusive: 0 };
     }
     const snapshotPath = this.snapshotAbsolutePath(name);
-    let row;
-    try {
-      const { stdout } = await btrfs({
-        args: [
-          "--format=json",
-          "qgroup",
-          "show",
-          "-ref",
-          "--raw",
-          snapshotPath,
-        ],
-      });
-      const x = JSON.parse(stdout);
-      row = x["qgroup-show"]?.[0];
-    } catch (err: any) {
-      const stderr =
-        typeof err?.stderr === "string" ? err.stderr : `${err?.message ?? err}`;
-      if (!stderr.includes("unrecognized option '--format=json'")) {
-        throw err;
-      }
-      const { stdout } = await btrfs({
-        args: ["qgroup", "show", "-ref", "--raw", snapshotPath],
-      });
-      row = parsePlainQgroupShow(stdout)[0];
-    }
+    // (one read of the filesystem's quotas for all of them, qgroup-scan.ts)
+    const found = await lookupQgroup({
+      mount: subvolumeMount(this.subvolume),
+      path: snapshotPath,
+      getSubvolumeId: async () =>
+        parseInt(await getSubvolumeField(snapshotPath, "Subvolume ID")),
+    });
+    const row = found?.row;
     if (!row) {
       throw new Error(`no qgroup info for snapshot ${snapshotPath}`);
     }
     const { referenced, max_referenced, exclusive } = row;
-    return { name, used: referenced, quota: max_referenced, exclusive };
+    return {
+      name,
+      used: referenced,
+      quota: max_referenced === "none" ? 0 : max_referenced,
+      exclusive,
+    };
   };
 
   allUsage = async (): Promise<SnapshotUsage[]> => {

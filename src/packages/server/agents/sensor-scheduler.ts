@@ -232,6 +232,10 @@ function logOutput(stdout: string, stderr: string): string {
     .join("\n");
 }
 
+/** `podman run` exits 125, with an "Error: " line, when podman itself fails
+ * (the command never ran). */
+const PODMAN_FAILED = 125;
+
 export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   const db = agentStore();
   const started = new Date();
@@ -252,6 +256,8 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   let missingNow: SensorConnector[] = [];
   // This run is a watcher giving up after its check kept failing.
   let failedOut = false;
+  // The check never ran: the host or its container runtime failed.
+  let runnerFailed = false;
   let deliveryStarted = false;
   try {
     await db.query(
@@ -290,9 +296,15 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     const giveUpAfterFailures = (
       reason: string,
       log: string | null,
+      runner: boolean,
     ): string => {
+      const times = row.consecutive_failures + 1;
       const wake: SensorWake = {
-        summary: `Gave up: "${spec.title}" failed ${row.consecutive_failures + 1} times in a row. Last error: ${reason}`,
+        // Say when the check never ran, so the agent does not read a host
+        // problem as a result of what it watches (a failed CI, say).
+        summary: runner
+          ? `Gave up: "${spec.title}" could not run ${times} times in a row, because of a problem running it (not a result of what it watches). Last error: ${reason}`
+          : `Gave up: "${spec.title}" failed ${times} times in a row. Last error: ${reason}`,
         data: log ? { output: log } : undefined,
       };
       summary = wake.summary;
@@ -443,12 +455,21 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       else {
         if (runError != null) {
           error = runError;
+          runnerFailed = true;
         } else {
           exit_code = result.exit_code;
           output = logOutput(result.stdout, result.stderr);
           if (result.timed_out) {
             outcome = "timeout";
             error = `The script ran longer than ${timeout_seconds} seconds.`;
+          } else if (
+            exit_code === PODMAN_FAILED &&
+            /^Error: /m.test(result.stderr ?? "")
+          ) {
+            // podman's own error (e.g. a container name in use): the script
+            // never started.
+            runnerFailed = true;
+            error = `The sensor's container could not start on the project's host (podman exit ${exit_code}).`;
           } else if (exit_code !== 0) {
             error = `The script exited with code ${exit_code}.`;
           } else {
@@ -468,7 +489,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
             row.consecutive_failures + 1 < SENSOR_LIMITS.maxConsecutiveFailures
           )
             return;
-          prompt = giveUpAfterFailures(error, output);
+          prompt = giveUpAfterFailures(error, output, runnerFailed);
         }
       }
       if (prompt == null) {

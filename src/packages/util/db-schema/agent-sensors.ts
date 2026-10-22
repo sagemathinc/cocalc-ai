@@ -220,7 +220,10 @@ Table({
       "uuid",
       "The sensor run for a wake, the sensor for a watcher.",
     ),
-    kind: required("string", "wake or watch (a watcher was set)."),
+    kind: required(
+      "string",
+      "wake, watch (a watcher was set) or reminder (a `watch at` reminder was set).",
+    ),
     account_id: required(
       "uuid",
       "The account the wake runs as, or that set the watcher.",

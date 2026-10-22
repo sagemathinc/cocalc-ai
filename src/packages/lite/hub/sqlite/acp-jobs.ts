@@ -1,3 +1,4 @@
+import type { TurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
 import type { CodexPaymentSourcePreference } from "@cocalc/util/ai/codex";
 import {
@@ -76,6 +77,8 @@ export interface AcpJobRow {
   recovery_count?: number | null;
   recovery_code?: string | null;
   recovery_detail?: string | null;
+  /** How the turn ended (conat/ai/acp/turn-outcome.ts), as JSON. */
+  outcome_json?: string | null;
   request_json: string;
   error?: string | null;
   created_at: number;
@@ -122,6 +125,7 @@ function init(): void {
       recovery_count INTEGER,
       recovery_code TEXT,
       recovery_detail TEXT,
+      outcome_json TEXT,
       request_json TEXT NOT NULL,
       error TEXT,
       created_at INTEGER NOT NULL,
@@ -169,6 +173,9 @@ function init(): void {
   if (!hasColumn("recovery_detail")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN recovery_detail TEXT`);
   }
+  if (!hasColumn("outcome_json")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN outcome_json TEXT`);
+  }
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_recovery_parent_idx ON ${TABLE}(recovery_parent_op_id, state, created_at)`,
   );
@@ -183,6 +190,10 @@ function init(): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_worker_updated_idx ON ${TABLE}(worker_id, updated_at)`,
+  );
+  // The agent status sweep reads what changed recently, every few seconds.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_jobs_updated_idx ON ${TABLE}(updated_at)`,
   );
   ensureAcpTableMigrated(TABLE);
   installThreadSuccessorFence(TABLE);
@@ -464,6 +475,230 @@ export function getAcpJobByOpId(op_id: string): AcpJobRow | undefined {
   return db.prepare(`SELECT * FROM ${TABLE} WHERE op_id = ?`).get(op_id) as
     | AcpJobRow
     | undefined;
+}
+
+/** Conversations whose jobs changed since `since` (ms), each with the
+ * account of its latest job. */
+export function listAcpThreadsChangedSince(since: number): {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  account_id: string;
+}[] {
+  ensureInit();
+  const rows = getAcpDatabase()
+    .prepare(
+      `SELECT project_id, path, thread_id, account_id FROM ${TABLE}
+       WHERE updated_at > ? ORDER BY updated_at DESC`,
+    )
+    .all(since) as {
+    project_id: string;
+    path: string;
+    thread_id: string;
+    account_id: string;
+  }[];
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = JSON.stringify([row.project_id, row.path, row.thread_id]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Conversations with a job that ended at a sign-in or usage limit, of any
+ * age (a block can outlast every other activity), at most `limit`. */
+export function listAcpThreadsWithBlockingFailure(limit = 10_000): {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  account_id: string;
+}[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT project_id, path, thread_id, account_id FROM ${TABLE}
+       WHERE state = 'error'
+         AND json_extract(outcome_json, '$.failure.kind') IN ('sign-in', 'limit')
+       GROUP BY project_id, path, thread_id
+       LIMIT ?`,
+    )
+    .all(limit) as {
+    project_id: string;
+    path: string;
+    thread_id: string;
+    account_id: string;
+  }[];
+}
+
+/** What a conversation's jobs say now: how many run and wait, and the
+ * latest that ended. */
+export function acpThreadJobSummary({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): {
+  running: number;
+  queued: number;
+  last?: AcpJobRow;
+  /** Each account's latest ended job (limits and sign-ins are per account). */
+  lastByAccount: Record<string, AcpJobRow>;
+  /** Each account's running jobs. */
+  runningByAccount: Record<string, number>;
+} {
+  ensureInit();
+  const db = getAcpDatabase();
+  const counts = db
+    .prepare(
+      `SELECT SUM(state = 'running') AS running, SUM(state = 'queued') AS queued
+       FROM ${TABLE} WHERE project_id = ? AND path = ? AND thread_id = ?`,
+    )
+    .get(project_id, path, thread_id) as {
+    running?: number | null;
+    queued?: number | null;
+  };
+  const last = db
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state IN ('completed', 'error', 'canceled', 'interrupted')
+         AND finished_at IS NOT NULL
+       ORDER BY finished_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(project_id, path, thread_id) as AcpJobRow | undefined;
+  // SQLite returns the row holding MAX(finished_at) for each account.
+  const lastByAccount: Record<string, AcpJobRow> = {};
+  for (const row of db
+    .prepare(
+      `SELECT *, MAX(finished_at) AS latest_finished_at FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state IN ('completed', 'error', 'canceled', 'interrupted')
+         AND finished_at IS NOT NULL AND account_id IS NOT NULL
+       GROUP BY account_id LIMIT 100`,
+    )
+    .all(project_id, path, thread_id) as (AcpJobRow & {
+    latest_finished_at?: number;
+  })[]) {
+    const { latest_finished_at: _l, ...job } = row;
+    lastByAccount[`${job.account_id}`] = job as AcpJobRow;
+  }
+  const runningByAccount: Record<string, number> = {};
+  for (const row of db
+    .prepare(
+      `SELECT account_id, COUNT(*) AS n FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state = 'running' AND account_id IS NOT NULL
+       GROUP BY account_id`,
+    )
+    .all(project_id, path, thread_id) as { account_id: string; n: number }[])
+    runningByAccount[row.account_id] = Number(row.n);
+  return {
+    running: Number(counts?.running ?? 0),
+    queued: Number(counts?.queued ?? 0),
+    ...(last ? { last } : {}),
+    lastByAccount,
+    runningByAccount,
+  };
+}
+
+/**
+ * The jobs of one agent message: the turn it started and that turn's
+ * continuations (each carries the same agent_rpc_execution), oldest first.
+ * The caller checks the sender before telling anyone about them.
+ */
+export function listAcpJobsForAgentRpcAttempt({
+  attempt_id,
+  account_id,
+}: {
+  attempt_id: string;
+  account_id: string;
+}): AcpJobRow[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE account_id = ?
+         AND json_extract(request_json, '$.chat.agent_rpc_execution.attempt_id') = ?
+       ORDER BY created_at ASC, op_id ASC`,
+    )
+    .all(account_id, attempt_id) as AcpJobRow[];
+}
+
+/** Turns queued ahead of this one in its conversation, in the order the
+ * scheduler takes them (only those already due can go first). */
+export function countQueuedAcpJobsAhead(job: AcpJobRow): number {
+  ensureInit();
+  const row = getAcpDatabase()
+    .prepare(
+      `WITH ranked AS (
+         SELECT op_id,
+                ROW_NUMBER() OVER (ORDER BY ${THREAD_QUEUE_ORDER}, rowid ASC)
+                  AS position
+         FROM ${TABLE}
+         WHERE project_id = ? AND path = ? AND thread_id = ?
+           AND state = 'queued'
+           AND (op_id = ? OR available_at IS NULL OR available_at <= ?)
+       )
+       SELECT position - 1 AS n FROM ranked WHERE op_id = ?`,
+    )
+    .get(
+      job.project_id,
+      job.path,
+      job.thread_id,
+      job.op_id,
+      Date.now(),
+      job.op_id,
+    ) as { n?: number } | undefined;
+  return Number(row?.n ?? 0);
+}
+
+/** Turns held for this reason that are not due yet (e.g. "sign-in hold"). */
+export function listHeldAcpJobs(
+  recovery_reason: string,
+  now = Date.now(),
+  limit = 100,
+): AcpJobRow[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE state = 'queued' AND recovery_reason = ? AND available_at > ?
+       ORDER BY available_at ASC LIMIT ?`,
+    )
+    .all(recovery_reason, now, limit) as AcpJobRow[];
+}
+
+/** Replace a queued job's request (e.g. to pin a replacement credential
+ * before a held turn runs). */
+export function setQueuedAcpJobRequest(
+  op_id: string,
+  request: AcpJobRequest,
+  now = Date.now(),
+): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET request_json = ?, updated_at = ?
+       WHERE op_id = ? AND state = 'queued'`,
+    )
+    .run(JSON.stringify(request), now, op_id);
+  return Number(result?.changes ?? 0) === 1;
+}
+
+/** A held turn may run now (it was waiting for available_at). */
+export function releaseHeldAcpJob(op_id: string, now = Date.now()): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET available_at = NULL, updated_at = ?
+       WHERE op_id = ? AND state = 'queued' AND available_at > ?`,
+    )
+    .run(now, op_id, now);
+  return Number(result?.changes ?? 0) === 1;
 }
 
 export function listAcpJobsByRecoveryParent({
@@ -981,6 +1216,9 @@ export function claimNextQueuedAcpJobForThread({
               started_at = ?,
               updated_at = ?,
               error = NULL,
+              -- Each attempt ends with its own outcome, never a resent
+              -- attempt's earlier one.
+              outcome_json = NULL,
               worker_id = ?,
               worker_bundle_version = ?
           WHERE op_id = ?
@@ -1016,6 +1254,8 @@ export function setAcpJobState({
   worker_id,
   recovery_code,
   recovery_detail,
+  outcome,
+  onlyIfRunning = false,
 }: {
   op_id: string;
   state: Exclude<AcpJobState, "queued" | "running">;
@@ -1023,54 +1263,75 @@ export function setAcpJobState({
   worker_id?: string;
   recovery_code?: string;
   recovery_detail?: string;
-}): void {
+  outcome?: TurnOutcome;
+  /** End only a running job: one a fence or cancel already ended stays so. */
+  onlyIfRunning?: boolean;
+}): boolean {
+  const outcome_json = outcome ? JSON.stringify(outcome) : null;
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
   if (`${worker_id ?? ""}`.trim()) {
-    db.prepare(
-      `UPDATE ${TABLE}
+    const { changes } = db
+      .prepare(
+        `UPDATE ${TABLE}
         SET state = ?,
             error = COALESCE(?, error),
             recovery_code = COALESCE(?, recovery_code),
             recovery_detail = COALESCE(?, recovery_detail),
+            outcome_json = COALESCE(?, outcome_json),
             updated_at = ?,
             finished_at = ?
         WHERE op_id = ?
           AND state = 'running'
           AND (worker_id IS NULL OR worker_id = ?)`,
-    ).run(
-      state,
-      error ?? null,
-      recovery_code ?? null,
-      recovery_detail ?? null,
-      now,
-      now,
-      op_id,
-      worker_id,
-    );
+      )
+      .run(
+        state,
+        error ?? null,
+        recovery_code ?? null,
+        recovery_detail ?? null,
+        outcome_json,
+        now,
+        now,
+        op_id,
+        worker_id,
+      );
     mirrorAcpJobSession(getAcpJobByOpId(op_id));
-    return;
+    return changes > 0;
   }
-  db.prepare(
-    `UPDATE ${TABLE}
+  const { changes } = db
+    .prepare(
+      `UPDATE ${TABLE}
       SET state = ?,
           error = COALESCE(?, error),
           recovery_code = COALESCE(?, recovery_code),
           recovery_detail = COALESCE(?, recovery_detail),
+          outcome_json = COALESCE(?, outcome_json),
           updated_at = ?,
           finished_at = ?
-      WHERE op_id = ?`,
-  ).run(
-    state,
-    error ?? null,
-    recovery_code ?? null,
-    recovery_detail ?? null,
-    now,
-    now,
-    op_id,
-  );
+      WHERE op_id = ?${onlyIfRunning ? " AND state = 'running'" : ""}`,
+    )
+    .run(
+      state,
+      error ?? null,
+      recovery_code ?? null,
+      recovery_detail ?? null,
+      outcome_json,
+      now,
+      now,
+      op_id,
+    );
   mirrorAcpJobSession(getAcpJobByOpId(op_id));
+  return changes > 0;
+}
+
+/** How a job ended, for the paths that end it without running it. */
+export function recordAcpJobOutcome(op_id: string, outcome: TurnOutcome): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(`UPDATE ${TABLE} SET outcome_json = ? WHERE op_id = ?`)
+    .run(JSON.stringify(outcome), op_id);
 }
 
 export function listAcpJobsWithRecoveryIntent(limit = 100): AcpJobRow[] {
@@ -1390,6 +1651,54 @@ export function requeueFencedAcpJob(op_id: string): AcpJobRow | undefined {
   return job;
 }
 
+/** Note work still owed for an ended job (e.g. its chat projection),
+ * unless it already has an intent. */
+export function markAcpJobRecoveryIntent(op_id: string, code: string): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET recovery_code = ?, updated_at = ?
+       WHERE op_id = ? AND recovery_code IS NULL`,
+    )
+    .run(code, Date.now(), op_id);
+}
+
+/** Jobs in this state with this intent, oldest first. */
+export function listAcpJobsWithIntent(
+  state: string,
+  code: string,
+  limit = 100,
+): AcpJobRow[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE state = ? AND recovery_code = ?
+       ORDER BY updated_at ASC LIMIT ?`,
+    )
+    .all(state, code, Math.max(1, Math.floor(limit))) as AcpJobRow[];
+}
+
+/** Clear this job's recovery intent if it still is `code` (a withdrawal
+ * racing the worker or recovery poll that would act on it). */
+export function clearAcpJobRecoveryIntentIf(
+  op_id: string,
+  code: string,
+): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET recovery_code = NULL,
+           recovery_detail = NULL,
+           updated_at = ?
+       WHERE op_id = ? AND recovery_code = ?`,
+    )
+    .run(Date.now(), op_id, code);
+  return Number(result?.changes ?? 0) === 1;
+}
+
 export function clearAcpJobRecoveryIntent(op_id: string): void {
   ensureInit();
   getAcpDatabase()
@@ -1539,7 +1848,19 @@ export function reprioritizeAcpJobImmediate({
   return job;
 }
 
-export function cancelQueuedAcpJob({
+export function cancelQueuedAcpJob(
+  owner: {
+    project_id: string;
+    path: string;
+    user_message_id: string;
+  } & AcpJobOwner,
+): AcpJobRow | undefined {
+  return cancelQueuedAcpJobReportingChange(owner).job;
+}
+
+/** Cancel a queued (or restart-held) message; `canceled` is whether this
+ * call canceled it, not an earlier cancel or a fence. */
+export function cancelQueuedAcpJobReportingChange({
   project_id,
   path,
   user_message_id,
@@ -1549,15 +1870,17 @@ export function cancelQueuedAcpJob({
   project_id: string;
   path: string;
   user_message_id: string;
-} & AcpJobOwner): AcpJobRow | undefined {
+} & AcpJobOwner): { job: AcpJobRow | undefined; canceled: boolean } {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
+  let canceled = false;
   db.exec("BEGIN IMMEDIATE");
   try {
     // A message a restart is holding is canceled too: it must not resume.
-    db.prepare(
-      `UPDATE ${TABLE}
+    const released = db
+      .prepare(
+        `UPDATE ${TABLE}
         SET recovery_code = NULL,
             recovery_detail = NULL,
             error = ?,
@@ -1569,23 +1892,25 @@ export function cancelQueuedAcpJob({
           AND thread_id = ?
           AND state = 'canceled'
           AND recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})`,
-    ).run(
-      ACP_FENCED_JOB_CANCELED_ERROR,
-      now,
-      project_id,
-      path,
-      user_message_id,
-      account_id,
-      thread_id,
-      ...ACP_FENCE_LIVE_RESUME_INTENTS,
-    );
-    takeQueuedAcpJob(db, now, {
+      )
+      .run(
+        ACP_FENCED_JOB_CANCELED_ERROR,
+        now,
+        project_id,
+        path,
+        user_message_id,
+        account_id,
+        thread_id,
+        ...ACP_FENCE_LIVE_RESUME_INTENTS,
+      );
+    const taken = takeQueuedAcpJob(db, now, {
       project_id,
       path,
       user_message_id,
       account_id,
       thread_id,
     });
+    canceled = Number(released.changes) > 0 || taken;
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -1599,7 +1924,7 @@ export function cancelQueuedAcpJob({
     thread_id,
   });
   mirrorAcpJobSession(job);
-  return job;
+  return { job, canceled };
 }
 
 function takeQueuedAcpJob(

@@ -10,6 +10,11 @@ import {
 import { readProjectHostActivitySnapshot } from "./health-progress";
 import { getProjectHostProcessTitle } from "./process-role";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
+import { siteFundedCodexProxyPorts } from "./codex/site-funded-proxy-port";
+import {
+  assertBundleKeepsPersistVolumes,
+  projectHostCurrentLink,
+} from "./persist-layout-guard";
 
 type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
 
@@ -619,6 +624,11 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
   env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT =
     env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? String(basePort + 100);
   env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = `http://${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST}:${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT}`;
+  // Derived here from the env files' PORT, as the host egress block derives
+  // it: the project-host child runs with PORT rewritten to the app port.
+  env.COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT = String(
+    siteFundedCodexProxyPorts(env)[0],
+  );
   if (!`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS ?? ""}`.trim()) {
     env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS = "1";
   }
@@ -1243,15 +1253,7 @@ function healthCheckUrl(
 }
 
 function projectHostCurrentLinkPath(env: Record<string, string>): string {
-  const explicit = `${env.COCALC_PROJECT_HOST_CURRENT ?? ""}`.trim();
-  if (explicit) {
-    return explicit;
-  }
-  const bundleRoot = `${env.COCALC_PROJECT_HOST_BUNDLE_ROOT ?? ""}`.trim();
-  if (bundleRoot) {
-    return path.join(bundleRoot, "current");
-  }
-  return "/opt/cocalc/project-host/current";
+  return projectHostCurrentLink(env);
 }
 
 function selectedVersionFromLink(linkPath: string): string | undefined {
@@ -2126,6 +2128,7 @@ function startManagedConatPersist(opts: {
       "managed conat persist requires COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT",
     );
   }
+
   if (fs.existsSync(persistPidPath)) {
     const pid = Number(fs.readFileSync(persistPidPath, "utf8"));
     if (pid && isRunning(pid)) {
@@ -2162,6 +2165,8 @@ function startManagedConatPersist(opts: {
     // best effort
   }
   const root = opts.runtimeRoot ?? projectHostRuntimeRoot(env);
+  // never a bundle from before persist volumes once histories moved into them
+  assertBundleKeepsPersistVolumes(root, { dataDir, env });
   const selectedVersion =
     opts.runtimeVersion ?? selectedProjectHostVersion(env);
   const persistExec = resolveExec(root);
@@ -2587,6 +2592,12 @@ export function startDaemon(index = 0): void {
     routerPidPath,
     routerPort,
   } = resolveEnv(index);
+  // never a bundle from before persist volumes once histories moved into
+  // them, before starting anything
+  assertBundleKeepsPersistVolumes(projectHostRuntimeRoot(env), {
+    dataDir,
+    env,
+  });
   if (managedRouter) {
     ensureManagedConatRouter({
       env,

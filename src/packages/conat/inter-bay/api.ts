@@ -690,9 +690,19 @@ export interface AccountDirectoryTouchRequest {
   account_id: string;
 }
 
+// Who started an account deletion; recorded in the account audit log.
+export type AccountDeletionInitiator =
+  | "self"
+  | "admin"
+  | "ephemeral-expiry"
+  | "system";
+
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
   only_if_tag?: string;
+  initiator?: AccountDeletionInitiator;
+  // the account that asked for the deletion: the account itself or an admin
+  actor_account_id?: string;
 }
 
 export interface AccountDirectoryDeleteResult {
@@ -2588,55 +2598,7 @@ export type HostConnectionMethod =
   | "update-api-relay-usage"
   | "update-api-relay-account-usage"
   | "list"
-  | "list-host-access"
-  | "set-host-access"
-  | "remove-host-access"
-  | "set-host-project-ram-limit"
-  | "set-host-owner-spend-limits"
-  | "set-host-pool-access"
-  | "set-host-deletion-protection"
-  | "get-host-log"
-  | "get-host-availability"
-  | "annotate-host-availability-event"
-  | "get-host-runtime-log"
-  | "get-host-metrics-history"
-  | "get-host-runtime-deployment-status"
-  | "start-host"
-  | "stop-host"
-  | "restart-host"
-  | "backup-host-projects"
-  | "drain-host"
-  | "refresh-host-cloud-state"
-  | "upgrade-host-software"
-  | "reconcile-host-software"
-  | "set-host-public-route-mode"
-  | "relocate-host"
-  | "set-host-maintenance-notice"
-  | "reconcile-host-runtime-deployments"
-  | "rollback-host-runtime-deployments"
-  | "rollout-host-managed-components"
-  | "delete-host"
-  | "force-deprovision-host"
-  | "remove-self-host-connector"
-  | "list-host-rootfs-images"
-  | "pull-host-rootfs-image"
-  | "delete-host-rootfs-image"
-  | "gc-deleted-host-rootfs-images"
-  | "get-host-exam-state"
-  | "set-host-exam-config"
-  | "create-host-exam-run"
-  | "rotate-host-exam-token"
-  | "open-host-exam-run"
-  | "update-host-exam-deadline"
-  | "increase-host-exam-capacity"
-  | "stop-and-erase-host-exam-run"
-  | "list-host-ssh-authorized-keys"
-  | "add-host-ssh-authorized-key"
-  | "remove-host-ssh-authorized-key"
-  | "list-host-runtime-deployments"
   | "list-host-operations"
-  | "set-host-runtime-deployments"
-  | "get-host-managed-component-status"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -3319,150 +3281,6 @@ export interface InterBayHostConnectionApi {
   }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
-  listHostAccess: (
-    opts: Parameters<Hosts["listHostAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostAccess"]>>>;
-  setHostAccess: (
-    opts: Parameters<Hosts["setHostAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostAccess"]>>>;
-  removeHostAccess: (
-    opts: Parameters<Hosts["removeHostAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["removeHostAccess"]>>>;
-  setHostProjectRamLimit: (
-    opts: Parameters<Hosts["setHostProjectRamLimit"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostProjectRamLimit"]>>>;
-  setHostOwnerSpendLimits: (
-    opts: Parameters<Hosts["setHostOwnerSpendLimits"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostOwnerSpendLimits"]>>>;
-  setHostPoolAccess: (
-    opts: Parameters<Hosts["setHostPoolAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostPoolAccess"]>>>;
-  setHostDeletionProtection: (
-    opts: Parameters<Hosts["setHostDeletionProtection"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostDeletionProtection"]>>>;
-  getHostLog: (
-    opts: Parameters<Hosts["getHostLog"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
-  getHostAvailability: (
-    opts: Parameters<Hosts["getHostAvailability"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostAvailability"]>>>;
-  annotateHostAvailabilityEvent: (
-    opts: Parameters<Hosts["annotateHostAvailabilityEvent"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["annotateHostAvailabilityEvent"]>>>;
-  getHostRuntimeLog: (
-    opts: Parameters<Hosts["getHostRuntimeLog"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeLog"]>>>;
-  getHostMetricsHistory: (
-    opts: Parameters<Hosts["getHostMetricsHistory"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostMetricsHistory"]>>>;
-  getHostRuntimeDeploymentStatus: (
-    opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
-  startHost: (
-    opts: Parameters<Hosts["startHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["startHost"]>>>;
-  stopHost: (
-    opts: Parameters<Hosts["stopHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["stopHost"]>>>;
-  restartHost: (
-    opts: Parameters<Hosts["restartHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["restartHost"]>>>;
-  backupHostProjects: (
-    opts: Parameters<Hosts["backupHostProjects"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["backupHostProjects"]>>>;
-  drainHost: (
-    opts: Parameters<Hosts["drainHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["drainHost"]>>>;
-  refreshHostCloudState: (
-    opts: Parameters<Hosts["refreshHostCloudState"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["refreshHostCloudState"]>>>;
-  upgradeHostSoftware: (
-    opts: Parameters<Hosts["upgradeHostSoftware"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["upgradeHostSoftware"]>>>;
-  reconcileHostSoftware: (
-    opts: Parameters<Hosts["reconcileHostSoftware"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostSoftware"]>>>;
-  setHostPublicRouteMode: (
-    opts: Parameters<Hosts["setHostPublicRouteMode"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostPublicRouteMode"]>>>;
-  relocateHost: (
-    opts: Parameters<Hosts["relocateHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["relocateHost"]>>>;
-  setHostMaintenanceNotice: (
-    opts: Parameters<Hosts["setHostMaintenanceNotice"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostMaintenanceNotice"]>>>;
-  reconcileHostRuntimeDeployments: (
-    opts: Parameters<Hosts["reconcileHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostRuntimeDeployments"]>>>;
-  rollbackHostRuntimeDeployments: (
-    opts: Parameters<Hosts["rollbackHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rollbackHostRuntimeDeployments"]>>>;
-  rolloutHostManagedComponents: (
-    opts: Parameters<Hosts["rolloutHostManagedComponents"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rolloutHostManagedComponents"]>>>;
-  deleteHost: (
-    opts: Parameters<Hosts["deleteHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["deleteHost"]>>>;
-  forceDeprovisionHost: (
-    opts: Parameters<Hosts["forceDeprovisionHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["forceDeprovisionHost"]>>>;
-  removeSelfHostConnector: (
-    opts: Parameters<Hosts["removeSelfHostConnector"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["removeSelfHostConnector"]>>>;
-  listHostRootfsImages: (
-    opts: Parameters<Hosts["listHostRootfsImages"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostRootfsImages"]>>>;
-  pullHostRootfsImage: (
-    opts: Parameters<Hosts["pullHostRootfsImage"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["pullHostRootfsImage"]>>>;
-  deleteHostRootfsImage: (
-    opts: Parameters<Hosts["deleteHostRootfsImage"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["deleteHostRootfsImage"]>>>;
-  gcDeletedHostRootfsImages: (
-    opts: Parameters<Hosts["gcDeletedHostRootfsImages"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["gcDeletedHostRootfsImages"]>>>;
-  getHostExamState: (
-    opts: Parameters<Hosts["getHostExamState"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostExamState"]>>>;
-  setHostExamConfig: (
-    opts: Parameters<Hosts["setHostExamConfig"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostExamConfig"]>>>;
-  createHostExamRun: (
-    opts: Parameters<Hosts["createHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["createHostExamRun"]>>>;
-  rotateHostExamToken: (
-    opts: Parameters<Hosts["rotateHostExamToken"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rotateHostExamToken"]>>>;
-  openHostExamRun: (
-    opts: Parameters<Hosts["openHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["openHostExamRun"]>>>;
-  updateHostExamDeadline: (
-    opts: Parameters<Hosts["updateHostExamDeadline"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["updateHostExamDeadline"]>>>;
-  increaseHostExamCapacity: (
-    opts: Parameters<Hosts["increaseHostExamCapacity"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["increaseHostExamCapacity"]>>>;
-  stopAndEraseHostExamRun: (
-    opts: Parameters<Hosts["stopAndEraseHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["stopAndEraseHostExamRun"]>>>;
-  listHostSshAuthorizedKeys: (
-    opts: Parameters<Hosts["listHostSshAuthorizedKeys"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostSshAuthorizedKeys"]>>>;
-  addHostSshAuthorizedKey: (
-    opts: Parameters<Hosts["addHostSshAuthorizedKey"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["addHostSshAuthorizedKey"]>>>;
-  removeHostSshAuthorizedKey: (
-    opts: Parameters<Hosts["removeHostSshAuthorizedKey"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["removeHostSshAuthorizedKey"]>>>;
-  listHostRuntimeDeployments: (
-    opts: Parameters<Hosts["listHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostRuntimeDeployments"]>>>;
-  setHostRuntimeDeployments: (
-    opts: Parameters<Hosts["setHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostRuntimeDeployments"]>>>;
-  getHostManagedComponentStatus: (
-    opts: Parameters<Hosts["getHostManagedComponentStatus"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostManagedComponentStatus"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -3602,109 +3420,7 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "update-api-relay-account-usage",
   },
   { name: "list", method: "list" },
-  { name: "listHostAccess", method: "list-host-access" },
-  { name: "setHostAccess", method: "set-host-access" },
-  { name: "removeHostAccess", method: "remove-host-access" },
-  {
-    name: "setHostProjectRamLimit",
-    method: "set-host-project-ram-limit",
-  },
-  {
-    name: "setHostOwnerSpendLimits",
-    method: "set-host-owner-spend-limits",
-  },
-  { name: "setHostPoolAccess", method: "set-host-pool-access" },
-  {
-    name: "setHostDeletionProtection",
-    method: "set-host-deletion-protection",
-  },
-  { name: "getHostLog", method: "get-host-log" },
-  { name: "getHostAvailability", method: "get-host-availability" },
-  {
-    name: "annotateHostAvailabilityEvent",
-    method: "annotate-host-availability-event",
-  },
-  { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
-  { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
-  {
-    name: "getHostRuntimeDeploymentStatus",
-    method: "get-host-runtime-deployment-status",
-  },
-  { name: "startHost", method: "start-host" },
-  { name: "stopHost", method: "stop-host" },
-  { name: "restartHost", method: "restart-host" },
-  { name: "backupHostProjects", method: "backup-host-projects" },
-  { name: "drainHost", method: "drain-host" },
-  { name: "refreshHostCloudState", method: "refresh-host-cloud-state" },
-  { name: "upgradeHostSoftware", method: "upgrade-host-software" },
-  { name: "reconcileHostSoftware", method: "reconcile-host-software" },
-  { name: "setHostPublicRouteMode", method: "set-host-public-route-mode" },
-  { name: "relocateHost", method: "relocate-host" },
-  {
-    name: "setHostMaintenanceNotice",
-    method: "set-host-maintenance-notice",
-  },
-  {
-    name: "reconcileHostRuntimeDeployments",
-    method: "reconcile-host-runtime-deployments",
-  },
-  {
-    name: "rollbackHostRuntimeDeployments",
-    method: "rollback-host-runtime-deployments",
-  },
-  {
-    name: "rolloutHostManagedComponents",
-    method: "rollout-host-managed-components",
-  },
-  { name: "deleteHost", method: "delete-host" },
-  { name: "forceDeprovisionHost", method: "force-deprovision-host" },
-  { name: "removeSelfHostConnector", method: "remove-self-host-connector" },
-  { name: "listHostRootfsImages", method: "list-host-rootfs-images" },
-  { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
-  { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },
-  {
-    name: "gcDeletedHostRootfsImages",
-    method: "gc-deleted-host-rootfs-images",
-  },
-  { name: "getHostExamState", method: "get-host-exam-state" },
-  { name: "setHostExamConfig", method: "set-host-exam-config" },
-  { name: "createHostExamRun", method: "create-host-exam-run" },
-  { name: "rotateHostExamToken", method: "rotate-host-exam-token" },
-  { name: "openHostExamRun", method: "open-host-exam-run" },
-  {
-    name: "updateHostExamDeadline",
-    method: "update-host-exam-deadline",
-  },
-  {
-    name: "increaseHostExamCapacity",
-    method: "increase-host-exam-capacity",
-  },
-  {
-    name: "stopAndEraseHostExamRun",
-    method: "stop-and-erase-host-exam-run",
-  },
-  {
-    name: "listHostSshAuthorizedKeys",
-    method: "list-host-ssh-authorized-keys",
-  },
-  { name: "addHostSshAuthorizedKey", method: "add-host-ssh-authorized-key" },
-  {
-    name: "removeHostSshAuthorizedKey",
-    method: "remove-host-ssh-authorized-key",
-  },
-  {
-    name: "listHostRuntimeDeployments",
-    method: "list-host-runtime-deployments",
-  },
   { name: "listHostOperations", method: "list-host-operations" },
-  {
-    name: "setHostRuntimeDeployments",
-    method: "set-host-runtime-deployments",
-  },
-  {
-    name: "getHostManagedComponentStatus",
-    method: "get-host-managed-component-status",
-  },
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",

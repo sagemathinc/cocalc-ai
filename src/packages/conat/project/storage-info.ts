@@ -21,8 +21,12 @@ export interface ProjectStorageBreakdown {
 export interface ProjectStorageQuotaSummary {
   key: "project";
   label: string;
+  // (as in ProjectDiskQuota)
   used: number;
   size: number;
+  files_used?: number;
+  history_used?: number;
+  history_reserve?: number;
   qgroupid?: string;
   scope?: "subvolume";
   warning?: string;
@@ -112,8 +116,14 @@ export interface ProjectStorageHistory {
 }
 
 export interface ProjectDiskQuota {
+  // the project's files and edit history together, split as well as btrfs
+  // can tell below
   used: number;
   size: number;
+  files_used?: number;
+  history_used?: number;
+  // what the history may use beyond `size`
+  history_reserve?: number;
   qgroupid?: string;
   scope?: "subvolume";
   warning?: string;

@@ -1816,6 +1816,7 @@ export async function initHostRegistryService() {
           users: any;
           runtime_lifecycle_revision: number;
           users_revision: number;
+          content_epoch: number;
           updated_ms: number;
         }>(
           `
@@ -1824,6 +1825,7 @@ export async function initHostRegistryService() {
               COALESCE(users, '{}'::jsonb) AS users,
               COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
               COALESCE(runtime_authority_revision, 0)::bigint AS users_revision,
+              COALESCE(content_epoch, 0)::bigint AS content_epoch,
               FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS updated_ms
             FROM projects
             WHERE host_id=$1
@@ -1862,6 +1864,7 @@ export async function initHostRegistryService() {
           users: any;
           runtime_lifecycle_revision: number;
           users_revision: number;
+          content_epoch: number;
           updated_ms: number;
         }>(
           `
@@ -1870,6 +1873,7 @@ export async function initHostRegistryService() {
               COALESCE(users, '{}'::jsonb) AS users,
               COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
               COALESCE(runtime_authority_revision, 0)::bigint AS users_revision,
+              COALESCE(content_epoch, 0)::bigint AS content_epoch,
               FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS updated_ms
             FROM projects
             WHERE host_id=$1

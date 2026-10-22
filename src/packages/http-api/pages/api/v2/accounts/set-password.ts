@@ -6,6 +6,7 @@ import setPassword from "@cocalc/server/accounts/set-password";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
+import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
@@ -33,7 +34,12 @@ async function handle(req, res) {
       action: "change the account password",
     });
     await requireFreshAuth({ req, account_id });
-    await setPassword(account_id, currentPassword, newPassword);
+    await setPassword(
+      account_id,
+      currentPassword,
+      newPassword,
+      getRememberMeHash(req),
+    );
     res.json(SuccessStatus);
   } catch (err) {
     res.json({ error: err.message });

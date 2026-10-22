@@ -89,9 +89,15 @@ import {
 } from "./utils";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import {
+  chatReaderStateKey,
   openProjectReadState,
   type ProjectReadStateStore,
 } from "@cocalc/conat/project/read-state";
+import {
+  readerItems,
+  type ReaderChange,
+  type ReaderState,
+} from "./reader-model";
 import {
   field,
   historyArray,
@@ -421,6 +427,17 @@ function showChatNotificationSuccessToast(
   });
 }
 
+function readerStateFrom(
+  store: ProjectReadStateStore,
+  path: string,
+  threadId: string,
+): ReaderState {
+  const entry = store.get(chatReaderStateKey(path, threadId));
+  if (entry?.kind !== "chat-reader") return {};
+  const { kind: _kind, t: _t, ...state } = entry;
+  return state;
+}
+
 export function collectThreadMessages({
   messages,
   threadId,
@@ -548,6 +565,9 @@ export class ChatActions extends Actions<ChatState> {
   private projectReadStateInit?: Promise<ProjectReadStateStore | undefined>;
   private projectReadStateCleanup?: () => void;
   private codexAttentionOpenToken = 0;
+  // Reader changes made before the read-state store opened: applied, in
+  // order, to what it holds once it opens.
+  private pendingReaderUpdates = new Map<string, ReaderChange[]>();
   private pendingThreadReads: Map<
     string,
     { count: number; messageId: string; at: Date }
@@ -755,12 +775,20 @@ export class ChatActions extends Actions<ChatState> {
     this.projectReadStateKey = undefined;
     this.projectReadStateInit = undefined;
     this.pendingThreadReads.clear();
+    this.pendingReaderUpdates.clear();
   };
 
   private flushPendingThreadReads = (
     store: ProjectReadStateStore,
     path: string,
   ): void => {
+    const pendingReader = [...this.pendingReaderUpdates];
+    this.pendingReaderUpdates.clear();
+    for (const [threadId, changes] of pendingReader) {
+      for (const change of changes) {
+        this.applyReaderChange(store, path, threadId, change);
+      }
+    }
     if (this.pendingThreadReads.size === 0) {
       return;
     }
@@ -2444,6 +2472,113 @@ export class ChatActions extends Actions<ChatState> {
       return parsedCfg;
     }
     return 0;
+  };
+
+  /**
+   * Reader items marked unread again at or before the watermark: messages
+   * minus the watermark does not count them, so unread totals add them.
+   */
+  getReaderUnreadBeforeWatermark = (
+    threadKey: string,
+    accountId: string,
+  ): number => {
+    const threadId = this.normalizeThreadId(threadKey);
+    if (!threadId) return 0;
+    const unread = this.getReaderState(threadId).u;
+    if (!unread?.length) return 0;
+    const watermark = this.getThreadReadCount(threadId, accountId) - 1;
+    const ids = new Set(unread);
+    return readerItems(this.getMessagesInThread(threadId) ?? []).filter(
+      (item) => ids.has(item.id) && item.lastIndex <= watermark,
+    ).length;
+  };
+
+  /**
+   * The whole thread was read (in the log): the reader's read and unread
+   * exceptions say nothing more; archives stay.
+   */
+  clearReaderReadExceptions = (threadKey: string): void => {
+    // Before the read state opens the saved exceptions are not known yet:
+    // queue the clear anyway (it applies to what the store holds).
+    const state = this.getReaderState(threadKey);
+    if (
+      this.isProjectReadStateReady() &&
+      !state.u?.length &&
+      !Object.keys(state.r ?? {}).length
+    )
+      return;
+    this.updateReaderState(threadKey, (current) => ({
+      state: current.a ? { a: current.a } : {},
+    }));
+  };
+
+  /** The reader view's state for a thread: {} until there is any. */
+  getReaderState = (threadKey: string): ReaderState => {
+    const threadId = this.normalizeThreadId(threadKey);
+    const path = this.store?.get("path");
+    if (!threadId || !path) return {};
+    const store = this.ensureProjectReadState();
+    // Not open yet: what the queued changes make of nothing, meanwhile.
+    const pending = this.pendingReaderUpdates.get(threadId) ?? [];
+    const watermark = this.readerWatermark(threadId);
+    return pending.reduce(
+      (current, change) => change(current, watermark).state,
+      store ? readerStateFrom(store, path, threadId) : {},
+    );
+  };
+
+  // The index of the last message read in order (-1 for none).
+  private readerWatermark = (threadId: string): number => {
+    const accountStore =
+      this.redux?.getStore?.("account") ?? redux.getStore("account");
+    const account_id = accountStore?.get_account_id?.();
+    return (account_id ? this.getThreadReadCount(threadId, account_id) : 0) - 1;
+  };
+
+  // Both the reader state and the watermark come from this one transition,
+  // on the stored state and the watermark as they are now.
+  private applyReaderChange = (
+    store: ProjectReadStateStore,
+    path: string,
+    threadId: string,
+    change: ReaderChange,
+  ): void => {
+    const watermark = this.readerWatermark(threadId);
+    const next = change(readerStateFrom(store, path, threadId), watermark);
+    // The watermark first: if it cannot move (e.g. a message without an
+    // id), the reader keeps its own record of what was read.
+    const moved =
+      next.watermarkCount == null ||
+      next.watermarkCount <= watermark + 1 ||
+      this.markThreadRead(threadId, next.watermarkCount) !== false;
+    store.set(chatReaderStateKey(path, threadId), {
+      kind: "chat-reader",
+      t: new Date(),
+      ...(moved ? next.state : (next.unmoved ?? next.state)),
+    });
+  };
+
+  /**
+   * Change a thread's reader state. Before the read state opens, the change
+   * waits and is applied to what it holds then, not to a guess.
+   */
+  updateReaderState = (threadKey: string, change: ReaderChange): boolean => {
+    const threadId = this.normalizeThreadId(threadKey);
+    const path = this.store?.get("path");
+    if (!threadId || !path) return false;
+    // Opening it first: a new store starts with no pending changes.
+    const store = this.ensureProjectReadState();
+    if (store == null) {
+      this.pendingReaderUpdates.set(threadId, [
+        ...(this.pendingReaderUpdates.get(threadId) ?? []),
+        change,
+      ]);
+      this.touchReadStateVersion();
+      return true;
+    }
+    this.applyReaderChange(store, path, threadId, change);
+    this.touchReadStateVersion();
+    return true;
   };
 
   isProjectReadStateReady = (): boolean => {
