@@ -1718,6 +1718,47 @@ describe("host reads across bays", () => {
     assert.equal(await forwarded("hosts.removeHostAccess"), removeBefore + 1);
     assert.deepEqual(await bobsRoles(), ["user"]);
   });
+
+  it("sets a host's runtime deployments on the host's bay", async () => {
+    // Host-scoped: routed to the host's bay, which records it, and the
+    // listing (also routed) reads it back there.
+    const forwarded = async () =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.setHostRuntimeDeployments' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+           [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const before = await forwarded();
+    const set = await alice.client.call("hosts.setHostRuntimeDeployments", {
+      scope_type: "host",
+      id: host_id,
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "ph-routed",
+        },
+      ],
+      replace: true,
+    });
+    assert.ok(
+      set.some((d) => d.host_id === host_id && d.desired_version === "ph-routed"),
+    );
+    assert.equal(await forwarded(), before + 1);
+    const listed = await alice.client.call(
+      "hosts.listHostRuntimeDeployments",
+      { scope_type: "host", id: host_id },
+    );
+    assert.ok(
+      listed.some(
+        (d) => d.target === "project-host" && d.desired_version === "ph-routed",
+      ),
+    );
+  });
 });
 
 describe("course reconfiguration across bays", () => {

@@ -83,6 +83,19 @@ describe("hub API routes", () => {
     "hosts.removeHostSshAuthorizedKey",
     "hosts.setHostPublicRouteMode",
     "hosts.setHostMaintenanceNotice",
+    "hosts.pullHostRootfsImage",
+    "hosts.deleteHostRootfsImage",
+    "hosts.gcDeletedHostRootfsImages",
+    "hosts.setHostExamConfig",
+    "hosts.createHostExamRun",
+    "hosts.rotateHostExamToken",
+    "hosts.openHostExamRun",
+    "hosts.updateHostExamDeadline",
+    "hosts.increaseHostExamCapacity",
+    "hosts.stopAndEraseHostExamRun",
+    "hosts.reconcileHostRuntimeDeployments",
+    "hosts.rollbackHostRuntimeDeployments",
+    "hosts.reconcileHostSoftware",
   ];
 
   it.each(HOST_ROUTED)("routes %s by its host id", (name) => {
@@ -90,6 +103,17 @@ describe("hub API routes", () => {
     expect(route?.owner).toBe("host");
     expect(hubApiRouteKey(route!, [{ id: PROJECT }])).toBe(PROJECT);
     expect(hubApiRouteKey(route!, [{ id: "x" }])).toBeUndefined();
+  });
+
+  it("routes a host-scoped deployment change by host, a global one not at all", () => {
+    const route = getHubApiRoute("hosts.setHostRuntimeDeployments")!;
+    expect(route.owner).toBe("host");
+    expect(hubApiRouteKey(route, [{ scope_type: "host", id: PROJECT }])).toBe(
+      PROJECT,
+    );
+    expect(
+      hubApiRouteKey(route, [{ scope_type: "global", id: PROJECT }]),
+    ).toBeUndefined();
   });
 
   it("finds an email invite by id or link token", () => {
