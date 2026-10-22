@@ -848,6 +848,8 @@ describe("in the project-host", () => {
     const { subvolume, snapshotPath } = await backupSnapshot();
     await copyPersistVolumeIntoSnapshot({ subvolume, snapshotPath });
     await writeFile(join(root, "a.db"), "after the snapshot");
+    forgotten.length = 0;
+    let movedBack = 0;
     await expect(
       replaceProjectHome({
         project_id: PROJECT,
@@ -856,10 +858,18 @@ describe("in the project-host", () => {
         env,
         ops: fakeOps(),
         swap: async () => {
+          // (e.g., the promoted history's id read while it is in place)
+          movedBack = forgotten.length;
           throw new Error("swap failed");
         },
       }),
     ).rejects.toThrow("swap failed");
+    // the rollback forgets what was read about each path it moves back, as
+    // the swap did
+    expect(forgotten.slice(movedBack)).toEqual([
+      [root, expect.stringMatching(/\/\.persist-import\//)],
+      [expect.stringMatching(/\/\.persist-import\/replaced-/), root],
+    ]);
     expect(read(join(root, "a.db"))).toBe("after the snapshot");
     expect(await isPersistVolumeReady(root)).toBe(true);
     expect(leftovers()).toEqual([]);

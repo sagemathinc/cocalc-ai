@@ -315,7 +315,12 @@ export const btrfsOps: PersistVolumeOps = {
     await btrfs({ args: ["subvolume", "snapshot", "-r", home, snapshot] });
   },
   deleteVolume: async (path) => {
-    await btrfs({ args: ["subvolume", "delete", path] });
+    try {
+      await btrfs({ args: ["subvolume", "delete", path] });
+    } finally {
+      // (another may be made at the path)
+      forgetSubvolumePaths(path);
+    }
   },
   joinQuotaGroup: async (project_id, path, opts) => {
     await joinProjectQuotaGroup({
@@ -1350,10 +1355,11 @@ export async function replaceProjectHome<T>({
         } catch (err) {
           if (staged != null) {
             // the history goes back with the home
-            await sudo({ command: "mv", args: [volume!, staged.path] });
+            // (moveVolume: what was read about the paths no longer holds)
+            await moveVolume(volume!, staged.path);
             swappedIn = false;
             if (previous != null) {
-              await sudo({ command: "mv", args: [previous, volume!] });
+              await moveVolume(previous, volume!);
               previous = undefined;
             }
           }
@@ -1610,7 +1616,12 @@ async function projectsNamedUnder(
 export async function deletePersistVolume(project_id: string): Promise<void> {
   const path = persistVolumePath(project_id);
   if (path == null || !(await exists(path))) return;
-  await btrfs({ args: ["subvolume", "delete", path] });
+  try {
+    await btrfs({ args: ["subvolume", "delete", path] });
+  } finally {
+    // (another may be made at the path)
+    forgetSubvolumePaths(path);
+  }
 }
 
 // A copy of a project gets a copy of its history. If the source volume is
@@ -1708,7 +1719,7 @@ export async function clonePersistVolume(
       staged,
       limit > 0 ? limit : persistVolumeQuota({ homeQuota: 0 }),
     );
-    await sudo({ command: "mv", args: [staged, dest] });
+    await moveVolume(staged, dest);
   } catch (err) {
     await btrfs({ args: ["subvolume", "delete", staged] }).catch(() => {});
     throw err;
