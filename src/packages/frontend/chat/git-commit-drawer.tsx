@@ -70,7 +70,10 @@ import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
 import { GitDiffFind } from "./git-commit/diff-find-control";
 import { GitHistoryControls } from "./git-commit/history-controls";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
-import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
+import {
+  GitReadError,
+  type RepositoryDiscovery,
+} from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
 import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
@@ -524,6 +527,11 @@ export function GitCommitDrawer({
     request: GitHistoricalFileRequest;
   }>();
   const [error, setError] = useState<string>("");
+  // A commit this clone doesn't have (e.g. merged on GitHub, never fetched):
+  // it can be fetched from origin, then the review reloads.
+  const [missingCommit, setMissingCommit] = useState<string>();
+  const [fetchingCommit, setFetchingCommit] = useState(false);
+  const [commitReload, setCommitReload] = useState(0);
   const [data, setData] = useState<GitShowParsed | undefined>(undefined);
   const [loadedCommit, setLoadedCommit] = useState<string | undefined>(
     undefined,
@@ -2531,6 +2539,31 @@ export function GitCommitDrawer({
     reviewRecord,
   ]);
 
+  const fetchMissingCommit = async () => {
+    if (!projectId || !missingCommit) return;
+    setFetchingCommit(true);
+    try {
+      // By full object id: works for a commit no branch here points to.
+      const result = await runGitCommand({
+        projectId,
+        cwd: diffRepoRoot || diffCwd,
+        args: ["fetch", "--no-tags", "origin", missingCommit],
+      });
+      if (result.exit_code !== 0) {
+        setError(
+          `Fetching ${missingCommit} from origin failed: ${(result.stderr || result.stdout || "git fetch failed").trim()}`,
+        );
+        return;
+      }
+      projectGitReader.invalidateDiscovery(projectId);
+      setCommitReload((n) => n + 1);
+    } catch (err) {
+      setError(`Fetching ${missingCommit} from origin failed: ${err}`);
+    } finally {
+      setFetchingCommit(false);
+    }
+  };
+
   useEffect(() => {
     if (!open) return;
     if (nonRepoError) {
@@ -2569,6 +2602,7 @@ export function GitCommitDrawer({
     loadedDiffRequestRef.current = undefined;
     setLoading(true);
     setError("");
+    setMissingCommit(undefined);
     setData(undefined);
     setLoadedCommit(undefined);
     (async () => {
@@ -2628,8 +2662,12 @@ export function GitCommitDrawer({
         }
       } catch (err) {
         if (cancelled) return;
-        const message = `${err ?? "Unable to load commit."}`;
+        const missing = err instanceof GitReadError && err.kind === "missing";
+        const message = missing
+          ? err.message
+          : `${err ?? "Unable to load commit."}`;
         setError(message);
+        setMissingCommit(missing ? requestedCommit : undefined);
         setData(undefined);
         setLoadedCommit(undefined);
       } finally {
@@ -2646,6 +2684,7 @@ export function GitCommitDrawer({
     diffRepoRoot,
     diffRequestScope,
     commit,
+    commitReload,
     contextLines,
     isHeadSelected,
     nonRepoError,
@@ -3700,6 +3739,18 @@ export function GitCommitDrawer({
             title={error}
             showIcon
             style={{ marginBottom: 12 }}
+            action={
+              missingCommit &&
+              /^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(missingCommit) ? (
+                <Button
+                  size="small"
+                  loading={fetchingCommit}
+                  onClick={() => void fetchMissingCommit()}
+                >
+                  Fetch from origin
+                </Button>
+              ) : undefined
+            }
           />
         ) : null}
         {!showCommitLoading && !error && currentData ? (

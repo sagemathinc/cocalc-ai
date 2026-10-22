@@ -37,3 +37,62 @@ test("summary plus patch cannot bypass the drawer line limit", async () => {
     kind: "incomplete",
   });
 });
+
+const fileSection = (name: string, changed: number) =>
+  [
+    `diff --git a/${name} b/${name}`,
+    "index 1111111..2222222 100644",
+    `--- a/${name}`,
+    `+++ b/${name}`,
+    `@@ -0,0 +1,${changed} @@`,
+    ...Array.from({ length: changed }, (_, i) => `+line ${i}`),
+  ].join("\n");
+
+const entry = (name: string) => ({
+  oldPath: name,
+  newPath: name,
+  oldSource: undefined,
+  newSource: undefined,
+});
+
+test("a comparison too big to show whole keeps every file, the largest ones by header only", async () => {
+  const names = ["a.txt", "b.txt", "huge.txt"];
+  const reader = {
+    changedFiles: jest.fn().mockResolvedValue(names.map(entry)),
+    patch: jest
+      .fn()
+      .mockResolvedValue(
+        [
+          fileSection("a.txt", 9_000),
+          fileSection("b.txt", 9_000),
+          fileSection("huge.txt", 30_000),
+        ].join("\n") + "\n",
+      ),
+    commitSummary: jest.fn().mockResolvedValue("commit x\n\n    message\n"),
+  };
+  const parsed = await readTargetDiff(reader as any, target, 3);
+  // The reader is asked for the whole patch: the budget is per file here.
+  expect(reader.patch).toHaveBeenCalledWith(target, 3, Infinity);
+  expect(parsed.files.map((f) => f.path)).toEqual(names);
+  expect(parsed.linesTruncated).toBe(false);
+  expect(parsed.files[0].omittedLines).toBeUndefined();
+  expect(parsed.files[1].omittedLines).toBeUndefined();
+  // Its section: 5 header lines, 30,000 added lines and the final newline.
+  expect(parsed.files[2].omittedLines).toBe(30_006);
+  // Only its header is kept.
+  expect(parsed.files[2].lines.some((l) => l.startsWith("@@"))).toBe(false);
+  expect(parsed.files[2].lines[0]).toBe("diff --git a/huge.txt b/huge.txt");
+});
+
+test("a comparison that fits is unchanged", async () => {
+  const reader = {
+    changedFiles: jest.fn().mockResolvedValue([entry("a.txt")]),
+    patch: jest.fn().mockResolvedValue(fileSection("a.txt", 3) + "\n"),
+    commitSummary: jest.fn().mockResolvedValue("commit x\n"),
+  };
+  const parsed = await readTargetDiff(reader as any, target, 3);
+  expect(parsed.files[0].omittedLines).toBeUndefined();
+  expect(
+    parsed.files[0].lines.filter((l) => l.startsWith("+line")),
+  ).toHaveLength(3);
+});
