@@ -140,6 +140,9 @@ describe("listPersistStorage", () => {
     });
     expect(two.streams).toHaveLength(2);
     expect(two.total).toEqual(list.total);
+    // which says the list is partial (a cleanup made from it is too)
+    expect(two.truncated).toBe(true);
+    expect(list.truncated).toBeUndefined();
   });
 
   it("never looks through a symlink in the project's home", async () => {
@@ -435,6 +438,33 @@ describe("applyPersistStorage", () => {
     });
     // (else the persist server would copy it back)
     expect(existsSync(`${copy}.db`)).toBe(false);
+  });
+
+  it("keeps the stream when a copy can't be deleted, so deleting it again retries", async () => {
+    const archive = join(mount, "archive");
+    const withCopies = { ...env, COCALC_SYNC_ARCHIVE: archive };
+    const name = "acp-log/home/user/x.chat";
+    await makeStream(name);
+    const copy = join(archive, "projects", PROJECT, name);
+    // (a directory: unlink fails)
+    await mkdir(join(`${copy}.db`, "x"), { recursive: true });
+    const failed = await applyPersistStorage({
+      project_id: PROJECT,
+      actions: [{ op: "delete", name }],
+      env: withCopies,
+    });
+    expect(failed.results[0].ok).toBe(false);
+    expect(existsSync(join(root, `${name}.db`))).toBe(true);
+    await rm(`${copy}.db`, { recursive: true });
+    await writeFile(`${copy}.db`, "copy");
+    const retried = await applyPersistStorage({
+      project_id: PROJECT,
+      actions: [{ op: "delete", name }],
+      env: withCopies,
+    });
+    expect(retried.results[0].ok).toBe(true);
+    expect(existsSync(`${copy}.db`)).toBe(false);
+    expect(existsSync(join(root, `${name}.db`))).toBe(false);
   });
 
   it("refuses when the history is in the home, and too many actions", async () => {

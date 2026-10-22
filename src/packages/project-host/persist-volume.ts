@@ -74,6 +74,7 @@ import {
 import {
   joinProjectQuotaGroup,
   projectQuotaGroupLimit,
+  syncProjectQuotaGroup,
 } from "./project-quota-group";
 
 const logger = getLogger("project-host:persist-volume");
@@ -251,6 +252,14 @@ export interface PersistVolumeOps {
     path: string,
     opts?: { required?: boolean },
   ) => Promise<void>;
+  // the project's quota group holds its home and history, limited for the
+  // home's quota `quota` (project-quota-group.ts syncProjectQuotaGroup)
+  limitQuotaGroup: (
+    project_id: string,
+    home: string,
+    history: string,
+    quota: number,
+  ) => Promise<void>;
 }
 
 export const btrfsOps: PersistVolumeOps = {
@@ -328,6 +337,15 @@ export const btrfsOps: PersistVolumeOps = {
       mount: dirname(path),
       path,
       required: opts?.required,
+    });
+  },
+  limitQuotaGroup: async (project_id, home, history, quota) => {
+    await syncProjectQuotaGroup({
+      project_id,
+      mount: dirname(home),
+      home,
+      history,
+      quota,
     });
   },
 };
@@ -472,6 +490,19 @@ async function prepare({
   }
   const quota = persistVolumeQuota({ homeQuota, env });
   await ops.setQuota(root, quota);
+  if (homeQuota > 0) {
+    // A group just made by the join above has no limit until the project's
+    // next quota change or audit: until then the home and history would each
+    // have their own allowance, together more than the project's quota.
+    await ops
+      .limitQuotaGroup(project_id, home, root, homeQuota)
+      .catch((err) => {
+        logger.warn("unable to limit a project's quota group", {
+          project_id,
+          err: `${err}`,
+        });
+      });
+  }
   await assertNotFrozen();
   await writeReadyMarker(root, { quota, ...imported });
   logger.info("persist volume ready", { project_id, quota, ...imported });
