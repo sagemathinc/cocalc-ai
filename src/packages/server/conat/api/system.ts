@@ -227,6 +227,11 @@ import {
 } from "@cocalc/server/projects/restore-drill-attestation";
 import { getProjectRecoveryServiceObjectives } from "@cocalc/server/projects/recovery-objectives";
 import {
+  backupPurgeHealthLevel,
+  backupPurgeHealthSummary,
+  getBackupPurgeHealth,
+} from "@cocalc/server/projects/backup-purge-health";
+import {
   getProjectRecoveryCustomerWarningScanStatus,
   projectRecoveryCustomerWarningScanProblem,
   type ProjectRecoveryCustomerWarningScanStatus,
@@ -2248,6 +2253,7 @@ export async function getLaunchHealth({
     smokeResult,
     adminAlertsResult,
     intrusionObservationsResult,
+    backupPurgeResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2268,6 +2274,7 @@ export async function getLaunchHealth({
     getLatestLaunchSmokeResult(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
     getHostIntrusionObservationSummary(),
+    getBackupPurgeHealth(),
   ]);
 
   const settings =
@@ -2567,6 +2574,29 @@ export async function getLaunchHealth({
             : "Bay backup is not enabled.",
       details:
         backupsResult.status === "rejected" ? [`${backupsResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "backup-purges",
+      label: "Deleted-project backup purges",
+      level:
+        backupPurgeResult.status === "rejected"
+          ? "critical"
+          : backupPurgeHealthLevel(backupPurgeResult.value),
+      summary:
+        backupPurgeResult.status === "rejected"
+          ? "Unable to read deleted-project backup purge status."
+          : backupPurgeHealthSummary(backupPurgeResult.value),
+      details:
+        backupPurgeResult.status === "rejected"
+          ? [`${backupPurgeResult.reason}`]
+          : [
+              backupPurgeResult.value.oldest_quarantined_at
+                ? `Oldest quarantine: ${backupPurgeResult.value.oldest_quarantined_at}`
+                : "",
+              backupPurgeResult.value.oldest_overdue_due_at
+                ? `Oldest overdue purge was due ${backupPurgeResult.value.oldest_overdue_due_at}`
+                : "",
+            ],
     }),
     launchHealthCheck({
       id: "project-recovery",

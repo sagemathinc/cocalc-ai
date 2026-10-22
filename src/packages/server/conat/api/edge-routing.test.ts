@@ -44,6 +44,15 @@ jest.mock("@cocalc/server/inter-bay/forwarded-calls", () => ({
   ).forwardedCallHash,
   runForwardedCallOnce,
 }));
+const runSystemHostActionHere = jest.fn(async (name: string) => {
+  if (name !== "hosts.stopHost") {
+    throw Object.assign(new Error(`'${name}' is not a system host action`), {
+      code: 403,
+    });
+  }
+  return { op_id: "system-op" };
+});
+jest.mock("./system-host-actions", () => ({ runSystemHostActionHere }));
 jest.mock("@cocalc/server/projects/collaborators", () => ({
   hashProjectCollabInviteToken: async (token: string) => `hash:${token}`,
 }));
@@ -291,6 +300,36 @@ describe("handleForwardedHubApiCall on the owning bay", () => {
     const result = await handleForwardedHubApiCall(forwarded());
     expect(result).toMatchObject({ ok: false, attrs: { code: 409 } });
     expect(forward).not.toHaveBeenCalled();
+    expect(local).not.toHaveBeenCalled();
+  });
+
+  it("runs a system call's allow-listed action, not the hub API pipeline", async () => {
+    const HOST = "55555555-5555-4555-8555-555555555555";
+    const opts = { account_id: ACCOUNT, id: HOST };
+    expect(
+      await handleForwardedHubApiCall({
+        name: "hosts.stopHost",
+        args: [opts],
+        account_id: ACCOUNT,
+        source_bay_id: "bay-1",
+        system: true,
+      }),
+    ).toEqual({ ok: true, result: { op_id: "system-op" } });
+    expect(runSystemHostActionHere).toHaveBeenCalledWith(
+      "hosts.stopHost",
+      opts,
+    );
+    expect(local).not.toHaveBeenCalled();
+    // Anything else is refused, with its code.
+    expect(
+      await handleForwardedHubApiCall({
+        name: "hosts.deleteHost",
+        args: [opts],
+        account_id: ACCOUNT,
+        source_bay_id: "bay-1",
+        system: true,
+      }),
+    ).toMatchObject({ ok: false, attrs: { code: 403 } });
     expect(local).not.toHaveBeenCalled();
   });
 

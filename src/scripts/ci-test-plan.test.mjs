@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
+  changedFilesSince,
   createPlan,
   directlyChangedPackages,
   discoverWorkspaces,
@@ -45,7 +46,7 @@ test("PR merge parents preserve changed-file planning and deeper bases can be fe
 
     git(shallow, "merge-base", "--is-ancestor", base, "HEAD");
     const changedFiles = (cwd, since) =>
-      git(cwd, "diff", "--name-only", "--diff-filter=ACMR", `${since}...HEAD`);
+      changedFilesSince(since, cwd).join("\n");
     assert.equal(changedFiles(shallow, base), changedFiles(origin, base));
     assert.equal(changedFiles(shallow, base), "feature-change");
 
@@ -201,5 +202,105 @@ test("balances database and backend without expanding affected selection", () =>
       { lane: "backend-database", packages: heavy.join(",") },
       { lane: "rest", packages: "cli" },
     ]);
+  }
+});
+
+test("runs the two-bay cluster test only for changes that reach a hub's server side", () => {
+  const plan = (changedFiles, affectedPackages, full = false) =>
+    createPlan({
+      workspaces,
+      changedFiles,
+      affectedPackages,
+      full,
+      base: "base",
+    });
+  assert.equal(plan([], [], true).runMultibay, true);
+  // Frontend-only: reaches hub/launchpad only through static assets.
+  assert.equal(
+    plan(
+      ["src/packages/frontend/app.tsx"],
+      [
+        "frontend",
+        "static",
+        "hub",
+        "launchpad",
+        "lite",
+        "plus",
+        "project-host",
+      ],
+    ).runMultibay,
+    false,
+  );
+  // Anything the server depends on is affected with it.
+  assert.equal(
+    plan(["src/packages/util/misc.ts"], ["util", "server", "frontend"])
+      .runMultibay,
+    true,
+  );
+  assert.equal(
+    plan(["src/packages/server/x.ts"], ["server", "hub"]).runMultibay,
+    true,
+  );
+  // The hub's own code, which the server does not load.
+  assert.equal(
+    plan(["src/packages/hub/servers/app.ts"], ["hub", "launchpad"]).runMultibay,
+    true,
+  );
+  // Shared test infrastructure, including the cluster test itself, is full.
+  assert.equal(
+    plan(["src/scripts/multibay/multibay.test.mjs"], []).runMultibay,
+    true,
+  );
+  // Nothing to test at all.
+  assert.equal(plan(["docs/operations.md"], []).runMultibay, false);
+});
+
+test("deleted and moved files count for the package they left", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ci-plan-deletions-"));
+  try {
+    const git = (...args) =>
+      execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: "pipe" });
+    git("init", "--quiet", "--initial-branch=main");
+    git("config", "user.name", "CI Planner Test");
+    git("config", "user.email", "ci-planner@example.invalid");
+    const files = {
+      "src/packages/hub/gone.ts": "export const gone = 1;\n",
+      "src/packages/hub/moved.ts": "export const moved = 2;\n".repeat(20),
+      "src/packages/util/kept.ts": "export const kept = 3;\n",
+    };
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(join(dir, dirname(path)), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    }
+    git("add", ".");
+    git("commit", "--quiet", "-m", "base");
+    const base = git("rev-parse", "HEAD").trim();
+    git("rm", "--quiet", "src/packages/hub/gone.ts");
+    mkdirSync(join(dir, "src/packages/server"), { recursive: true });
+    git("mv", "src/packages/hub/moved.ts", "src/packages/server/moved.ts");
+    git("commit", "--quiet", "-m", "delete and move out of hub");
+
+    const changed = changedFilesSince(base, dir);
+    assert.deepEqual(changed.sort(), [
+      "src/packages/hub/gone.ts",
+      "src/packages/hub/moved.ts",
+      "src/packages/server/moved.ts",
+    ]);
+    assert.deepEqual(directlyChangedPackages(changed, workspaces), [
+      "hub",
+      "server",
+    ]);
+    // Deleting hub code alone still runs the two-bay cluster test.
+    assert.equal(
+      createPlan({
+        workspaces,
+        changedFiles: ["src/packages/hub/gone.ts"],
+        affectedPackages: ["hub", "launchpad"],
+        base: "base",
+      }).runMultibay,
+      true,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
