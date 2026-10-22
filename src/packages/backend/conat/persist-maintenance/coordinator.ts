@@ -115,6 +115,14 @@ function fsyncDirectory(path: string): void {
   }
 }
 
+// Claims a database for maintenance: undefined if it may not be worked on
+// now, else the function to call once the work is done.  E.g., a fenced
+// project's databases may be replaced meanwhile (conat/persist/fence.ts
+// claimPersistFile).
+export type PersistMaintenanceClaim = (
+  physicalPath: string,
+) => (() => void) | undefined;
+
 interface ActiveRun {
   runId: string;
   physicalPath: string;
@@ -147,11 +155,13 @@ export class PersistMaintenanceCoordinator {
     outputPath?: string;
     timeoutMs: number;
   }) => Promise<PersistMaintenanceWorkerResult>;
+  private readonly claim?: PersistMaintenanceClaim;
 
   constructor({
     expectedWorkerIds,
     config = loadPersistMaintenanceConfig(),
     runWorker = runPersistMaintenanceWorker,
+    claim,
   }: {
     expectedWorkerIds: string[];
     config?: PersistMaintenanceConfig;
@@ -160,6 +170,7 @@ export class PersistMaintenanceCoordinator {
       outputPath?: string;
       timeoutMs: number;
     }) => Promise<PersistMaintenanceWorkerResult>;
+    claim?: PersistMaintenanceClaim;
   }) {
     this.config = config;
     this.catalog = new PersistMaintenanceCatalog(config.catalogPath);
@@ -173,6 +184,7 @@ export class PersistMaintenanceCoordinator {
       config,
     );
     this.runWorker = runWorker;
+    this.claim = claim;
     for (const workerId of expectedWorkerIds) {
       this.expectedWorkers.add(workerId);
     }
@@ -415,6 +427,30 @@ export class PersistMaintenanceCoordinator {
   }
 
   private async inspect(row: PersistMaintenanceDatabaseRow): Promise<void> {
+    await this.claimed(row.physical_path, () => this.inspectClaimed(row));
+  }
+
+  // Runs fn with path claimed (see PersistMaintenanceClaim); skips it if path
+  // can't be claimed now.
+  private async claimed(
+    path: string,
+    fn: () => Promise<void> | void,
+  ): Promise<void> {
+    const release = this.claim == null ? () => {} : this.claim(path);
+    if (release == null) {
+      logger.debug("persist maintenance: skipped a claimed database", { path });
+      return;
+    }
+    try {
+      await fn();
+    } finally {
+      release();
+    }
+  }
+
+  private async inspectClaimed(
+    row: PersistMaintenanceDatabaseRow,
+  ): Promise<void> {
     try {
       const checked = this.safety.assertExistingRegularFile(row.physical_path);
       const result = await this.runWorker({
@@ -482,6 +518,12 @@ export class PersistMaintenanceCoordinator {
   }
 
   private async compact(row: PersistMaintenanceDatabaseRow): Promise<void> {
+    await this.claimed(row.physical_path, () => this.compactClaimed(row));
+  }
+
+  private async compactClaimed(
+    row: PersistMaintenanceDatabaseRow,
+  ): Promise<void> {
     const checked = this.safety.assertExistingRegularFile(row.physical_path);
     const sourceIdentity = fileIdentity(checked.stat);
     if (!sameIdentity(row, sourceIdentity)) {
@@ -715,6 +757,10 @@ export class PersistMaintenanceCoordinator {
 
   private cleanupAbandonedTemporaryFiles(): void {
     for (const run of this.catalog.unfinishedRuns()) {
+      // left for the next start if its database can't be claimed now
+      const release =
+        this.claim == null ? () => {} : this.claim(run.physical_path);
+      if (release == null) continue;
       try {
         this.safety.assertLexicallyAllowed(run.physical_path);
         const outputPath = join(
@@ -790,6 +836,8 @@ export class PersistMaintenanceCoordinator {
           run,
           err,
         });
+      } finally {
+        release();
       }
     }
   }
@@ -835,6 +883,16 @@ export class PersistMaintenanceCoordinator {
     if (!this.trackingCoverage) return;
     const refresh = this.catalog.nextSecondaryRefresh();
     if (!refresh) return;
+    await this.claimed(refresh.source_path, () =>
+      this.retrySecondaryRefreshClaimed(refresh),
+    );
+  }
+
+  private async retrySecondaryRefreshClaimed(
+    refresh: NonNullable<
+      ReturnType<PersistMaintenanceCatalog["nextSecondaryRefresh"]>
+    >,
+  ): Promise<void> {
     const row = this.catalog.getDatabase(refresh.source_path);
     if (!row || row.presence_state !== "present" || row.open_owners > 0) return;
     const checked = this.safety.assertExistingRegularFile(refresh.source_path);
@@ -971,6 +1029,7 @@ export function createPersistMaintenanceCoordinator(options: {
     outputPath?: string;
     timeoutMs: number;
   }) => Promise<PersistMaintenanceWorkerResult>;
+  claim?: PersistMaintenanceClaim;
 }): PersistMaintenanceCoordinator {
   try {
     return new PersistMaintenanceCoordinator(options);

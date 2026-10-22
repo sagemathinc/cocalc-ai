@@ -1320,7 +1320,15 @@ export class CoreStream<T = any> extends EventEmitter {
     if (instance !== undefined) {
       this.persistInstance = instance;
     }
-    if (Object.keys(this.requestedConfig).length > 0) {
+    // A new ephemeral instance starts with defaults, so this stream's
+    // configuration is applied again.  A disk-backed stream resets when its
+    // files were replaced (e.g., restored, conat/persist/fence.ts): they keep
+    // their own configuration, and nothing from before is written to them
+    // (applying a limit could delete restored messages).
+    if (
+      this.storage.ephemeral &&
+      Object.keys(this.requestedConfig).length > 0
+    ) {
       this.configReapplyPending = true;
       this.closeWriteGate();
     }
