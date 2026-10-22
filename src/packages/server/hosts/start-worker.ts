@@ -696,15 +696,30 @@ async function waitForHostStatus({
 async function waitForHostHeartbeat({
   host_id,
   since,
+  failOn,
+  shouldCancel,
+  loadStatus = loadHostStatus,
+  delayFn = delay,
 }: {
   host_id: string;
   since: number;
+  failOn?: string[];
+  shouldCancel?: () => Promise<boolean>;
+  loadStatus?: typeof loadHostStatus;
+  delayFn?: (ms: number) => Promise<void>;
 }) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < MAX_WAIT_MS) {
-    const row = await loadHostStatus(host_id);
+    if ((await shouldCancel?.()) === true) {
+      throw new HostOpCanceledError();
+    }
+    const row = await loadStatus(host_id);
     if (!row || row.deleted) {
       throw new Error("host not found");
+    }
+    const status = `${row.status ?? ""}`;
+    if (failOn?.includes(status)) {
+      throw new Error(`host status is ${status} while waiting for heartbeat`);
     }
     const lastSeen = row.last_seen
       ? new Date(row.last_seen as any).getTime()
@@ -712,7 +727,7 @@ async function waitForHostHeartbeat({
     if (lastSeen && lastSeen >= since) {
       return { last_seen: row.last_seen };
     }
-    await delay(POLL_MS);
+    await delayFn(POLL_MS);
   }
   throw new Error("timeout waiting for host heartbeat");
 }
@@ -2060,7 +2075,12 @@ async function startBillingBlockedHostForRescue({
     5,
   );
   const startedAt = Date.now();
-  await startHostInternal({ account_id, id: host_id, billing_rescue: true });
+  // A host whose billing stop failed may still be running (spend-maintenance.ts
+  // requests the rescue anyway); drain it as it is.
+  const current = await loadHostStatus(host_id);
+  if (`${current?.status ?? ""}` !== "running") {
+    await startHostInternal({ account_id, id: host_id, billing_rescue: true });
+  }
   await waitForHostStatus({
     host_id,
     desired: ["running"],
@@ -2068,7 +2088,12 @@ async function startBillingBlockedHostForRescue({
     shouldCancel: helpers?.shouldCancel,
     onUpdate: async () => {},
   });
-  await waitForHostHeartbeat({ host_id, since: startedAt });
+  await waitForHostHeartbeat({
+    host_id,
+    since: startedAt,
+    failOn: ["error", "off", "deprovisioned"],
+    shouldCancel: helpers?.shouldCancel,
+  });
 }
 
 async function runHostAction(
@@ -3450,6 +3475,7 @@ export const __test__ = {
   delayedProjectHostConvergenceRolloutComponents,
   redundantProjectHostRollbackReason,
   waitForHostStatus,
+  waitForHostHeartbeat,
   billingEnforcementDrainCompleteMetadata,
   billingEnforcementDrainFailedMetadata,
   billingEnforcementDrainFailureAdminAlert,

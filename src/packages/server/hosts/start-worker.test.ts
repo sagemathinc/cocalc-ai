@@ -1016,3 +1016,30 @@ describe("hosts start-worker billing drain completion metadata", () => {
     );
   });
 });
+
+describe("hosts start-worker heartbeat wait", () => {
+  test("cancellation interrupts the heartbeat wait", async () => {
+    let checks = 0;
+    await expect(
+      __test__.waitForHostHeartbeat({
+        host_id: "h",
+        since: Date.now() + 60_000,
+        loadStatus: async () => ({ status: "running", last_seen: new Date() }),
+        shouldCancel: async () => ++checks >= 2,
+        delayFn: async () => {},
+      }),
+    ).rejects.toThrow(/cancel/i);
+  });
+
+  test("a terminal host status ends the heartbeat wait", async () => {
+    await expect(
+      __test__.waitForHostHeartbeat({
+        host_id: "h",
+        since: Date.now() + 60_000,
+        failOn: ["error", "off"],
+        loadStatus: async () => ({ status: "error", last_seen: new Date() }),
+        delayFn: async () => {},
+      }),
+    ).rejects.toThrow("host status is error");
+  });
+});

@@ -1422,10 +1422,13 @@ async function runPass(): Promise<void> {
     if (enforcement?.state === "stopped_billing_blocked") {
       // Billing enforcement stopped this host after a drain or a rescue drain.
       // Do not reprice it as running while its provider stop is pending, or if
-      // that stop failed; a rescue run is site-paid. A failed stop is retried
-      // here, and once the host is off stopped pricing and the deprovision
-      // fallback resume.
-      if (status !== "stopping") {
+      // that stop failed; a rescue run is site-paid. If the stop failed, the
+      // rescue and deprovision deadlines still apply (deprovisioning deletes
+      // the VM too); until one is due, the stop is retried.
+      if (
+        status !== "stopping" &&
+        !(await maybeProgressInactiveEnforcement({ row }))
+      ) {
         await retryBillingEnforcementStop({ row, provider, enforcement });
       }
       deleteSnapshotCacheForAccount(owner);
