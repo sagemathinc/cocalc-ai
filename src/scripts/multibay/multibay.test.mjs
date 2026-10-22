@@ -812,8 +812,12 @@ describe("inspecting a sent message's turn across bays", () => {
         0,
       );
     } finally {
-      await stopFakeHost(db, host);
-      await db.end();
+      try {
+        await stopFakeHost(db, host);
+      } finally {
+        // Even if the fake host failed: an open client keeps the run alive.
+        await db.end();
+      }
     }
   });
   it("withdraws through the recipient's bay and host, and only the right turn", async () => {
@@ -858,8 +862,12 @@ describe("inspecting a sent message's turn across bays", () => {
         0,
       );
     } finally {
-      await stopFakeHost(db, host);
-      await db.end();
+      try {
+        await stopFakeHost(db, host);
+      } finally {
+        // Even if the fake host failed: an open client keeps the run alive.
+        await db.end();
+      }
     }
   });
 });
