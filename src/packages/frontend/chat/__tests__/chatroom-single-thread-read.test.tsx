@@ -349,4 +349,30 @@ describe("ChatPanel selected thread read tracking", () => {
       screen.getByRole("button", { name: "Back to the chat log" }),
     ).toHaveAttribute("aria-pressed", "true");
   });
+
+  it("a panel reused for a chat in reader mode never marks its thread read", () => {
+    localStorage.clear();
+    const { actions, rerender } = renderPanel();
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
+    // Another chat, which the person reads in the reader.
+    localStorage.setItem(
+      "cocalc-chat-reader-mode",
+      JSON.stringify({ "project-1:chat/other.chat": true }),
+    );
+    currentThread = { ...currentThread, key: "thread-9", messageCount: 5 };
+    currentThreads = [currentThread];
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/other.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
+    expect(actions.markThreadRead).not.toHaveBeenCalledWith("thread-9", 5);
+  });
 });

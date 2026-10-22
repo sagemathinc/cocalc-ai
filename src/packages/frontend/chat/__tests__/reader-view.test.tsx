@@ -295,3 +295,14 @@ test("Newer and Older keep the keys working, though the pane is replaced", async
   await keys.keyboard("k");
   expect(screen.getByRole("article")).toHaveTextContent("second question");
 });
+
+test("archiving the open item with the pane's button keeps the keys working", async () => {
+  setup(thread, 4);
+  const keys = user();
+  await keys.click(screen.getByText(/second question/));
+  await keys.click(screen.getByRole("button", { name: "Archive" }));
+  expect(screen.getByRole("article")).toHaveTextContent("first question");
+  expect(document.activeElement).toBe(screen.getByRole("listbox"));
+  await keys.keyboard("k");
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+});
