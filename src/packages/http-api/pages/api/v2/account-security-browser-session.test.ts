@@ -51,11 +51,6 @@ jest.mock("@cocalc/server/auth/impersonation", () => ({
     mockAssertNoImpersonation(...args),
 }));
 
-jest.mock("@cocalc/server/accounts/delete", () => ({
-  __esModule: true,
-  default: (...args: any[]) => mockDeleteAccount(...args),
-}));
-
 jest.mock("@cocalc/server/auth/clear-auth-cookies", () => ({
   __esModule: true,
   default: (...args: any[]) => mockClearAuthCookies(...args),
@@ -93,6 +88,7 @@ jest.mock("@cocalc/server/accounts/is-in-group", () => ({
 }));
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  deleteClusterAccount: (...args: any[]) => mockDeleteAccount(...args),
   banClusterAccountAndEquivalentEmails: (...args: any[]) =>
     mockBanClusterAccountAndEquivalentEmails(...args),
   quarantineClusterAccountBillingResources: (...args: any[]) =>
@@ -216,7 +212,11 @@ describe("browser-session-only account security routes", () => {
       account_id: "acct-1",
       action: "delete the account",
     });
-    expect(mockDeleteAccount).toHaveBeenCalledWith("acct-1");
+    expect(mockDeleteAccount).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      initiator: "self",
+      actor_account_id: "acct-1",
+    });
     expect(mockClearAuthCookies).toHaveBeenCalledWith({ req, res });
   });
 
@@ -390,10 +390,13 @@ describe("browser-session-only account security routes", () => {
       req,
       account_id: "acct-1",
     });
+    // With this browser's session, which stays signed in while every other
+    // session ends.
     expect(mockSetPassword).toHaveBeenCalledWith(
       "acct-1",
       "old-password",
       "new-password",
+      "remember-me-hash",
     );
   });
 

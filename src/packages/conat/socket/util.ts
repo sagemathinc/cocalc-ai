@@ -1,3 +1,5 @@
+import type { ReceiveLimits } from "@cocalc/conat/core/receive-budget";
+
 export const SOCKET_HEADER_CMD = "CN-SocketCmd";
 export const SOCKET_HEADER_CONNECT_ATTEMPT = "CN-SocketConnectAttempt";
 export const SOCKET_HEADER_SEQ = "CN-SocketSeq";
@@ -93,6 +95,12 @@ export interface SocketConfiguration {
   loadBalancer?: (subject: string) => Promise<string | SocketServerInfo>;
   loadBalancerTimeout?: number;
   lifecycleReporter?: SocketLifecycleReporter;
+  // Servers only: bounds on raw fragments received on the server's data
+  // subscription, counted before reassembly (see core/receive-budget.ts).
+  // A message over the limits is dropped, so its sender times out.
+  receiveLimits?: ReceiveLimits;
+  // Servers only: the same, for the status subscription.
+  statusReceiveLimits?: ReceiveLimits;
 }
 
 export interface ConatSocketOptions extends SocketConfiguration {

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
+import { uuidsha1 } from "@cocalc/util/misc";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import type {
   AgentRpcControlApi,
@@ -27,6 +28,7 @@ import {
 } from "@cocalc/conat/agents/rpc";
 import { validateAttachmentPayload } from "@cocalc/conat/agents/attachments";
 import {
+  agentRpcReportForVersion,
   validateAgentRpcTurnFailureReport,
   type AgentRpcExecution,
 } from "@cocalc/conat/agents/rpc-reports";
@@ -244,6 +246,28 @@ function preparationKey(e: AgentRpcEnvelope) {
   });
 }
 
+/**
+ * The delivery report version a host advertises: 1 if it advertises none,
+ * or advertised it for another build than the one it runs now (heartbeat
+ * metadata is merged, so a rolled-back host keeps the newer build's value).
+ */
+/** The report version that has "completed" reports (report_no_reply). */
+const REPORT_NO_REPLY_HOST_VERSION = 3;
+
+async function hostAgentRpcReportVersion(host_id: string): Promise<number> {
+  const { rows } = await agentStore().query(
+    `SELECT metadata->'agent_rpc_report'->>'version' AS version,
+            metadata->'agent_rpc_report'->>'project_host' AS for_build,
+            metadata->'software'->>'project_host' AS build
+       FROM project_hosts WHERE id=$1`,
+    [host_id],
+  );
+  const row = rows[0];
+  const version = Number(row?.version);
+  if (!Number.isSafeInteger(version) || version < 1) return 1;
+  return row?.for_build && row.for_build === row.build ? version : 1;
+}
+
 export async function hostFor(endpoint: AgentEndpoint) {
   const project = (
     await agentStore().query(
@@ -379,7 +403,8 @@ async function submitAgentRpcOperation(
   let permitId: string | undefined;
   let proof: AgentNetworkAuthorization | undefined;
   let observedOutcome:
-    import("@cocalc/conat/agents/rpc").AgentRpcOutcome | undefined;
+    | import("@cocalc/conat/agents/rpc").AgentRpcOutcome
+    | undefined;
   try {
     const checked = opts.authorization
       ? validateSnapshotAuthorization(
@@ -426,6 +451,25 @@ async function submitAgentRpcOperation(
       thread_id: target.thread_id,
       deadline: Date.now() + 30_000,
     };
+    // Asked to hear of a turn without a reply: refused, sending nothing, if
+    // no report could arrive (checked here, against the current network
+    // and the recipient's host, not the sender's earlier discovery).
+    if (phase === "send" && opts.request.report_no_reply) {
+      const why = envelope.guidance
+        ? `Agent Network "${proof.network_title}" delivers live, into the recipient's running turn`
+        : isExternalAgentSource(opts.source) ||
+            isExternalAgentSource(opts.request.target)
+          ? "external network members never get turn reports"
+          : (await hostAgentRpcReportVersion(host.host_id)) <
+              REPORT_NO_REPLY_HOST_VERSION
+            ? "the recipient's project host is too old to report it"
+            : undefined;
+      if (why)
+        return rpcOutcome(opts.request, "rejected", {
+          reason: `--report-no-reply is not possible here: ${why}; no message was sent`,
+          chat_effect: "none",
+        });
+    }
     // A queued message starts a turn of its own; if that turn fails, its
     // host may report it, but only this exact message (see
     // rpc-report-capability.ts).
@@ -435,7 +479,14 @@ async function submitAgentRpcOperation(
           executionOfEnvelope(envelope),
         );
       } catch (err) {
-        // Reports are a courtesy: the message still goes, unreportable.
+        // Reports are a courtesy: the message still goes, unreportable,
+        // unless the sender asked to hear of no reply (it never would).
+        if (opts.request.report_no_reply)
+          return rpcOutcome(opts.request, "rejected", {
+            reason:
+              "--report-no-reply is not possible here: this hub cannot sign the report; no message was sent",
+            chat_effect: "none",
+          });
         logger.warn("agent message sent without a report capability", {
           attempt_id: envelope.attempt_id,
           err: `${err}`,
@@ -631,9 +682,19 @@ export const agentRpcControl: AgentRpcControlApi = {
       throw new Error("the report does not match an admitted message");
     const identity = await sourceIdentity(sender);
     const host = await hostFor(sender);
+    // Only what the sender's host can render truthfully (see
+    // agentRpcReportForVersion); held reports are tried again later.
+    const report = agentRpcReportForVersion(
+      opts.report,
+      await hostAgentRpcReportVersion(host.host_id),
+    );
+    if (!report)
+      throw new Error(
+        "the sender's host must be upgraded before it can receive this report",
+      );
     const result = await host.api.deliverAgentRpcReport({
       account_id: opts.account_id,
-      report: opts.report,
+      report,
       path: identity.path,
       thread_id: identity.thread_id,
       target_label: opts.target_label,
@@ -662,6 +723,36 @@ export const agentRpcControl: AgentRpcControlApi = {
       const outcome = await (
         await hostFor(opts.request.target)
       ).api.inspectAgentRpc({
+        source: opts.source,
+        request: opts.request,
+        account_id: proof.account_id,
+      });
+      validateAgentRpcOutcome(outcome, opts.request);
+      return outcome;
+    } catch {
+      return rpcOutcome(opts.request, "unknown", {
+        reason: "Operational evidence unavailable",
+      });
+    }
+  },
+  withdraw: async (opts) => {
+    await local(opts, opts.request.target);
+    validateAgentRpcRequest({ ...opts.request, action: "withdraw" });
+    const proof = await networkProof(
+      opts.account_id,
+      opts.source,
+      opts.run_id,
+      opts.request.target,
+      opts.request.agent_network_id,
+    );
+    if ("denied" in proof)
+      return rpcOutcome(opts.request, "unknown", {
+        reason: "Operational evidence unavailable",
+      });
+    try {
+      const outcome = await (
+        await hostFor(opts.request.target)
+      ).api.withdrawAgentRpc({
         source: opts.source,
         request: opts.request,
         account_id: proof.account_id,
@@ -890,7 +981,11 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
     // Last, once everything else allowed it: one turn per reported message.
     if (
       !(await claimAgentRpcReportExecution({
-        attempt_id: report.attempt_id,
+        // A held report's turn and the final one's are each one turn.
+        attempt_id:
+          report.phase === "held"
+            ? uuidsha1(`agent-rpc-report-held:${report.attempt_id}`)
+            : report.attempt_id,
         report_id: report.report_id,
         account_id,
         project_id: message.source.project_id,
@@ -1064,10 +1159,10 @@ export async function acceptAgentRpc(
           }),
     );
   }
-  if (request.action === "inspect") {
-    const { action: _, ...attempt } = request;
+  if (request.action === "inspect" || request.action === "withdraw") {
+    const { action, ...attempt } = request;
     return routed(target.project_id, (api, route) =>
-      api.inspect({
+      api[action]({
         ...route,
         account_id: run.account_id,
         source,
@@ -1156,10 +1251,10 @@ export async function acceptExternalAgentRpc(
     return submitExternalInbox(account_id, source, undefined, request);
   }
   const target = request.target;
-  if (request.action === "inspect") {
-    const { action: _, ...attempt } = request;
+  if (request.action === "inspect" || request.action === "withdraw") {
+    const { action, ...attempt } = request;
     return routed(target.project_id, (api, route) =>
-      api.inspect({
+      api[action]({
         ...route,
         account_id,
         source,

@@ -17,6 +17,11 @@ import { decimalToStripe } from "@cocalc/util/stripe/calc";
 import { url } from "@cocalc/server/messages/send";
 import { toDecimal } from "@cocalc/util/money";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
+import { assertBusinessTaxIdForPurchase } from "./business-tax-id-gate";
+import {
+  BILLING_ADDRESS_REQUIRED_MESSAGE,
+  billingAddressRequiredBeforeCheckout,
+} from "@cocalc/util/stripe/business-tax-id";
 
 const logger = getLogger("purchases:stripe:get-checkout-session");
 
@@ -50,6 +55,8 @@ function checkoutSessionKey({
 interface Options extends CheckoutSessionOptions {
   // user that is paying: assumed already authenticated/valid
   account_id: string;
+  // The Cloudflare country of the request (cf-ipcountry), if known.
+  request_country?: string | string[];
 }
 
 export default async function getCheckoutSession({
@@ -60,6 +67,7 @@ export default async function getCheckoutSession({
   return_url,
   metadata,
   checkout_instance_id,
+  request_country,
 }: Options): Promise<CheckoutSessionSecret> {
   logger.debug("getCheckoutSession", {
     account_id,
@@ -89,6 +97,26 @@ export default async function getCheckoutSession({
   const customer = await getStripeCustomerId({ account_id, create: true });
   if (!customer) {
     throw Error("bug");
+  }
+  // An EU or UK customer without a valid VAT ID is refused before a session
+  // exists (util/stripe/business-tax-id.ts).
+  const taxIdStatus = await assertBusinessTaxIdForPurchase({
+    stripe,
+    customer,
+    account_id,
+    path: `checkout:${purpose}`,
+    amount: total.toString(),
+  });
+  // Checkout would otherwise collect the address itself, after this check.
+  if (
+    !taxIdStatus.country &&
+    billingAddressRequiredBeforeCheckout(
+      Array.isArray(request_country) ? request_country[0] : request_country,
+    )
+  ) {
+    throw Object.assign(new Error(BILLING_ADDRESS_REQUIRED_MESSAGE), {
+      code: "billing_address_required",
+    });
   }
 
   const baseMetadata = {

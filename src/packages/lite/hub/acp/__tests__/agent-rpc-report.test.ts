@@ -116,7 +116,7 @@ describe("the sender's host writes the report", () => {
       deliverAgentRpcReport({} as any, delivery, running),
     ).resolves.toEqual({ message_id: "m1" });
     expect(prepared.request.prompt).toMatch(
-      /^\[Delivery report\] @reviewer's turn ended with an error/,
+      /^\[Delivery report\] @reviewer's turn ended before it replied/,
     );
     expect(prepared.request.chat).toEqual({
       agent_message: true,
@@ -163,6 +163,42 @@ describe("the sender's host writes the report", () => {
     );
     await expect(
       deliverAgentRpcReport({} as any, delivery, running),
+    ).resolves.toEqual({ skipped: "duplicate" });
+    expect(admit).not.toHaveBeenCalled();
+  });
+
+  it("a held report and the final one are each once", async () => {
+    // The held report was written; the final report is not its duplicate.
+    syncdb.rows.push(
+      fromB("2026-10-12T20:00:09Z", {
+        delivery_report: { report_id: "held", attempt_id, phase: "held" },
+      }),
+    );
+    await expect(
+      deliverAgentRpcReport({} as any, delivery, running),
+    ).resolves.not.toEqual({ skipped: "duplicate" });
+    // But another held report for it is.
+    await expect(
+      deliverAgentRpcReport(
+        {} as any,
+        { ...delivery, report: { ...delivery.report, phase: "held" } },
+        running,
+      ),
+    ).resolves.toEqual({ skipped: "duplicate" });
+  });
+
+  it("a held report that arrives after the final one is out of date", async () => {
+    syncdb.rows.push(
+      fromB("2026-10-12T20:00:09Z", {
+        delivery_report: { report_id: "final", attempt_id },
+      }),
+    );
+    await expect(
+      deliverAgentRpcReport(
+        {} as any,
+        { ...delivery, report: { ...delivery.report, phase: "held" } },
+        running,
+      ),
     ).resolves.toEqual({ skipped: "duplicate" });
     expect(admit).not.toHaveBeenCalled();
   });
@@ -313,29 +349,130 @@ describe("the recipient's host reports a failed turn", () => {
     expect(listDueAgentRpcReports(STARTED + 60_000)).toHaveLength(1);
   });
 
+  const ended = (op_id: string, outcome: any, error?: string) =>
+    noteAgentMessageTurnFailed({
+      op_id,
+      request: { chat: { agent_rpc_execution: execution } },
+      ...(error ? { error } : {}),
+      outcome,
+      turn_started_at: STARTED,
+      now: STARTED + 60_000,
+    });
+
   it("of the kind the host classified, not what the error text suggests", () => {
     // Claude's weekly limit ends the prompt with a generic internal error;
     // its rate limit report says what it was.
-    const report = noteAgentMessageTurnFailed({
-      op_id: "op-limit",
+    const report = ended(
+      "op-limit",
+      {
+        version: 1,
+        state: "failed",
+        failure: { kind: "limit", scope: "credential", resets_at: STARTED },
+        tool_ran: false,
+      },
+      "Claude could not run this request. (ACP session/prompt, code -32603)",
+    );
+    expect(report).toMatchObject({
+      kind: "limit",
+      resets_at: STARTED,
+      tool_ran: false,
+    });
+    expect(
+      ended(
+        "op-lost",
+        { version: 1, state: "failed", failure: { kind: "host-lost" } },
+        "This content was flagged",
+      ),
+    ).toMatchObject({ kind: "host-lost" });
+  });
+
+  it("a held turn once, and the final report after it too", () => {
+    const limit = {
+      version: 1,
+      state: "failed",
+      failure: { kind: "limit", scope: "credential" },
+      tool_ran: false,
+    };
+    const held = noteAgentMessageTurnFailed({
+      op_id: "op-held",
       request: { chat: { agent_rpc_execution: execution } },
-      error:
-        "Claude could not run this request. (ACP session/prompt, code -32603)",
-      failure: { kind: "limit", scope: "credential", resets_at: STARTED },
+      outcome: limit as any,
+      turn_started_at: STARTED,
+      held: { resume_at: STARTED + 3_600_000 },
+      now: STARTED + 60_000,
+    });
+    // No reset time from the provider: the time it resumes.
+    expect(held).toMatchObject({
+      kind: "limit",
+      phase: "held",
+      resets_at: STARTED + 3_600_000,
+    });
+    expect(
+      noteAgentMessageTurnFailed({
+        op_id: "op-held",
+        request: { chat: { agent_rpc_execution: execution } },
+        outcome: limit as any,
+        turn_started_at: STARTED,
+        held: { resume_at: STARTED + 3_600_000 },
+        now: STARTED + 60_000,
+      }),
+    ).toBeUndefined();
+    // The same message's final report is still sent.
+    expect(ended("op-held", limit)).toMatchObject({ kind: "limit" });
+    expect(ended("op-held", limit)).toBeUndefined();
+    // And replaces the held one if that was not sent yet: it would only
+    // arrive out of date.
+    expect(
+      listDueAgentRpcReports(STARTED + 60_000).map(
+        ({ report }) => report.phase,
+      ),
+    ).toEqual([undefined]);
+  });
+
+  it("a success only when the sender asked to hear of no reply", () => {
+    const success = { version: 1, state: "completed" };
+    expect(ended("op-done", success)).toBeUndefined();
+    const asked = noteAgentMessageTurnFailed({
+      op_id: "op-done-asked",
+      request: {
+        chat: {
+          agent_rpc_execution: { ...execution, report_no_reply: true },
+        },
+      },
+      outcome: success as any,
       turn_started_at: STARTED,
       now: STARTED + 60_000,
     });
-    expect(report?.kind).toBe("limit");
-    // Kinds a v1 report has no name for are an error.
-    const lost = noteAgentMessageTurnFailed({
-      op_id: "op-lost",
-      request: { chat: { agent_rpc_execution: execution } },
-      error: "This content was flagged",
-      failure: { kind: "host-lost" },
-      turn_started_at: STARTED,
-      now: STARTED + 60_000,
+    expect(asked).toMatchObject({ kind: "completed", attempt_id });
+    expect(asked).not.toHaveProperty("tool_ran");
+  });
+
+  it("for a stop, a cancel or a superseded turn too, but never a success", () => {
+    expect(
+      ended("op-stop", {
+        version: 1,
+        state: "canceled",
+        by: "person",
+        tool_ran: true,
+      }),
+    ).toMatchObject({ kind: "stopped", tool_ran: true });
+    const canceled = ended("op-cancel", {
+      version: 1,
+      state: "never-started",
+      reason: "canceled",
     });
-    expect(lost?.kind).toBe("error");
+    expect(canceled).toMatchObject({ kind: "canceled", tool_ran: false });
+    // Nothing to quote, and no made-up error text.
+    expect(canceled?.detail).toBeUndefined();
+    expect(
+      ended("op-superseded", {
+        version: 1,
+        state: "canceled",
+        by: "superseded",
+      }),
+    ).toMatchObject({ kind: "superseded" });
+    expect(ended("op-ok", { version: 1, state: "completed" })).toBeUndefined();
+    expect(listDueAgentRpcReports(STARTED + 60_000)).toHaveLength(3);
   });
 
   it("not for guidance, a person's message, a report, or an old or unsigned message", () => {

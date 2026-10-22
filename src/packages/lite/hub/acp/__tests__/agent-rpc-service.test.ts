@@ -180,6 +180,47 @@ test.each([
   },
 );
 
+test("the sender's request to hear of no reply rides on the turn", async () => {
+  for (const asked of [true, false]) {
+    const { e, deps, service } = fixture();
+    if (asked) (e as any).report_no_reply = true;
+    expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+    const request = (deps.admit as jest.Mock).mock.calls[0][0].request;
+    expect(request.chat.agent_rpc_execution.report_no_reply).toBe(
+      asked ? true : undefined,
+    );
+  }
+});
+
+test("withdraw goes to the host's queue, and says so when it can't", async () => {
+  const { e, deps } = fixture();
+  const attempt = {
+    version: 3 as const,
+    attempt_id: e.attempt_id,
+    agent_network_id: e.agent_network_id,
+    target: e.target,
+  };
+  const withdraw = jest.fn(async () =>
+    rpcOutcome(attempt, "accepted", { reason: "Withdrawn" }),
+  );
+  const service = createAgentRpcService({ ...deps, withdraw } as any);
+  await expect(
+    service.withdraw(e.source, attempt, e.account_id),
+  ).resolves.toMatchObject({ outcome: "accepted" });
+  expect(withdraw).toHaveBeenCalledWith(e.source, attempt, e.account_id);
+  // No principal, or a host without it: unknown, never a guess.
+  await expect(service.withdraw(e.source, attempt)).resolves.toMatchObject({
+    outcome: "unknown",
+  });
+  await expect(
+    createAgentRpcService({ ...deps } as any).withdraw(
+      e.source,
+      attempt,
+      e.account_id,
+    ),
+  ).resolves.toMatchObject({ outcome: "unknown" });
+});
+
 test("a same-project sender is named as sharing the recipient's project", async () => {
   const { e, deps, service } = fixture();
   e.source = { ...e.source, project_id: e.target.project_id };
@@ -911,4 +952,38 @@ describe("payment launch receipts", () => {
       /no payment method recorded for this account/,
     );
   });
+});
+
+test("inspect reports the turn from the recipient's record, after the receipt expired", () => {
+  const { e, deps } = fixture();
+  const turn = {
+    state: "ended" as const,
+    queued_at: 1_000,
+    ended_at: 2_000,
+    outcome: { version: 1 as const, state: "completed" as const },
+  };
+  const lookups: any[] = [];
+  deps.turnState = (source, attempt, accountId) => {
+    lookups.push([source, attempt.attempt_id, accountId]);
+    return turn;
+  };
+  // A fresh service: no receipt for this attempt (it expired, or the host
+  // restarted).
+  const service = createAgentRpcService(deps);
+  expect(service.inspect(e.source, e, e.account_id)).toMatchObject({
+    outcome: "accepted",
+    chat_effect: "saved",
+    turn,
+  });
+  // Looked up as the caller the hub authenticated, never another sender.
+  expect(lookups).toEqual([[e.source, e.attempt_id, e.account_id]]);
+  // No record: the receipt alone answers, as before.
+  deps.turnState = () => undefined;
+  expect(service.inspect(e.source, e, e.account_id)).not.toHaveProperty("turn");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
+  // A failing lookup never breaks inspect.
+  deps.turnState = () => {
+    throw new Error("sqlite busy");
+  };
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
 });

@@ -11,7 +11,7 @@ export const privacyPolicy: PublicPolicy = {
   navLabel: "Privacy",
   slug: "privacy",
   title: "Privacy Policy",
-  updated: "June 30, 2026",
+  updated: "October 21, 2026",
   content: (
     <>
       <p>
@@ -816,6 +816,16 @@ export const privacyPolicy: PublicPolicy = {
           conduct audits, pursue legitimate business purposes, enforce our
           agreements, and comply with applicable laws.{" "}
         </p>{" "}
+        <p>
+          When you delete your account, Sagemath removes your email address,
+          name, password, profile picture, SSH keys, sign-in connections,
+          settings and other personal data from your account record, and deletes
+          any contact record about you in our sales and marketing system. We
+          keep your former email address for 90 days to help with account
+          recovery requests and to prevent abuse, and then delete it. Records
+          that we must keep by law, such as purchase and tax records, are kept
+          for as long as the law requires.
+        </p>
       </PolicySection>{" "}
       <PolicySection
         id="security-of-your-information"
@@ -1165,6 +1175,10 @@ export const privacyPolicy: PublicPolicy = {
             <tr>
               <td>Update: clarify automated abuse detection safeguards</td>
               <td> 2026-06-30 </td>
+            </tr>
+            <tr>
+              <td>Update: what account deletion removes and keeps</td>
+              <td> 2026-10-21 </td>
             </tr>
           </tbody>
         </table>

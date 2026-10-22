@@ -21,6 +21,7 @@ import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-pr
 import { publicShareCountFromProject } from "@cocalc/frontend/projects/public-share-labels";
 import RemoveMyself from "@cocalc/frontend/projects/remove-myself";
 import { ArchiveProject } from "./archive-project";
+import { RevokeContentLinksButton } from "./revoke-content-links";
 import MoveProject from "./move-project";
 import { Project } from "./types";
 import { useProjectRuntimeCapabilities } from "../runtime-capabilities";
@@ -142,6 +143,12 @@ export function HideDeleteBox(props: Readonly<Props>) {
               onChange={toggle_hide_project}
             />
           }
+        />
+        <DangerActionRow
+          icon="ban"
+          title="Revoke Content Links"
+          description={`Stop every link to this ${projectLabelLower}'s files on the separate content site (where HTML previews run), for example after one was shared by mistake. Previews get new links automatically.`}
+          action={<RevokeContentLinksButton project_id={project_id} />}
         />
         {extraRows}
         {isOwner ? (

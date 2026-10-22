@@ -291,12 +291,23 @@ describe("watchers", () => {
     });
   });
 
+  it("a reminder may be months ahead: deadlines are", () => {
+    const spec = validateSensorWatch(
+      { type: "at", at: "2027-07-31T15:00:00Z", note: "WA annual report" },
+      { now },
+    );
+    expect(spec.watch).toMatchObject({ at: "2027-07-31T15:00:00.000Z" });
+    // It gives up only after its own time, not a day after it was set.
+    expect(spec.expires_at).toBe("2027-07-31T16:00:00.000Z");
+  });
+
   it("refuses bad watchers", () => {
     for (const watch of [
       { type: "ci", repo: "no-slash", pr: 1 },
       { type: "ci", repo: "a/b", pr: 0 },
       { type: "at", at: "2026-10-09T00:00:00Z", note: "past" },
-      { type: "at", at: "2026-12-01T00:00:00Z", note: "too far" },
+      // More than 400 days ahead.
+      { type: "at", at: "2027-11-20T00:00:00Z", note: "too far" },
       { type: "cron", expr: "* * * * *" },
       { type: "file", path: "x", extra: 1 },
     ])
@@ -609,5 +620,112 @@ describe("prompt texts", () => {
     ).toBe(
       "[Reminder] You set this reminder for 2026-10-16T15:00:00.000Z (sensor s2): Check CI",
     );
+  });
+});
+
+describe("watching the turn an agent's message started", () => {
+  const attempt_id = "55555555-5555-4555-8555-555555555555";
+  const agent_network_id = "88888888-8888-4888-8888-888888888888";
+  const target = {
+    project_id: "11111111-1111-4111-8111-111111111111",
+    agent_id: "22222222-2222-4222-8222-222222222222",
+  };
+
+  it("needs the message's attempt, network and target", () => {
+    const spec = validateSensorWatch({
+      type: "agent-turn",
+      attempt_id,
+      agent_network_id,
+      target,
+      name: "@reviewer",
+    });
+    expect(spec.title).toBe("Turn of my message to @reviewer");
+    expect(spec.watch).toEqual({
+      type: "agent-turn",
+      attempt_id,
+      agent_network_id,
+      target,
+      name: "reviewer",
+    });
+    for (const bad of [
+      { type: "agent-turn", attempt_id, agent_network_id },
+      { type: "agent-turn", attempt_id: "x", agent_network_id, target },
+      {
+        type: "agent-turn",
+        attempt_id,
+        agent_network_id,
+        target: { ...target, extra: 1 },
+      },
+      { type: "agent-turn", attempt_id, agent_network_id, target, other: 1 },
+    ])
+      expect(() => validateSensorWatch(bad)).toThrow();
+  });
+
+  it("its script waits for the turn to end, then wakes once with what happened", () => {
+    const dir = mkdtempSync(join(tmpdir(), "watch-turn-"));
+    // A fake `cocalc --json agent rpc inspect ...`, checking its arguments.
+    writeFileSync(
+      join(dir, "cocalc"),
+      `#!/usr/bin/env python3
+import json, os, sys
+want = ["--json", "agent", "rpc", "inspect", "${attempt_id}", "--agent-network", "${agent_network_id}", "--to-agent", "${target.agent_id}", "--target-project", "${target.project_id}"]
+if sys.argv[1:] != want:
+    print("bad arguments %s" % sys.argv[1:], file=sys.stderr)
+    sys.exit(2)
+data = json.load(open(os.environ["FAKE_INSPECT"]))
+if data.get("fail"):
+    print("hub unreachable", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps({"ok": True, "command": "agent rpc inspect", "data": data}))
+`,
+      { mode: 0o755 },
+    );
+    const script = sensorWatchScript({
+      type: "agent-turn",
+      attempt_id,
+      agent_network_id,
+      target,
+      name: "reviewer",
+    })!;
+    const run = (data: object) => {
+      writeFileSync(join(dir, "data.json"), JSON.stringify(data));
+      return execFileSync("python3", ["-c", script], {
+        encoding: "utf8",
+        env: {
+          PATH: `${dir}:/usr/bin:/bin`,
+          FAKE_INSPECT: join(dir, "data.json"),
+        },
+      });
+    };
+    // Queued or running: keep waiting.
+    for (const state of ["queued", "running"])
+      expect(
+        run({
+          outcome: "accepted",
+          turn: { state, queued_at: 1 },
+          summary: "Queued since …",
+        }),
+      ).toBe("");
+    // An older host that keeps no record of the turn: keep waiting.
+    expect(run({ outcome: "accepted", summary: "Admitted; …" })).toBe("");
+    const ended = parseSensorWake(
+      run({
+        outcome: "accepted",
+        turn: { state: "ended", queued_at: 1, outcome: { state: "completed" } },
+        summary: "Ended: it completed.",
+      }),
+    );
+    expect(ended?.summary).toBe(
+      "Your message to @reviewer: Ended: it completed.",
+    );
+    expect(ended?.data).toMatchObject({ attempt_id, turn: { state: "ended" } });
+    // Not delivered: there will never be a turn.
+    expect(
+      parseSensorWake(
+        run({ outcome: "rejected", summary: "Not delivered: paused." }),
+      )?.summary,
+    ).toBe("Your message to @reviewer: Not delivered: paused.");
+    // A failed inspect is a failed run, not a wake.
+    expect(() => run({ fail: true })).toThrow(/hub unreachable/);
   });
 });

@@ -269,6 +269,8 @@ export interface CommercialInvoicePreview {
   metadata: Record<string, string>;
   ready: boolean;
   blockers: string[];
+  // Not blocking, but worth a look before invoicing.
+  warnings?: string[];
 }
 
 export interface CommercialInvoicePreviewRequest extends CommercialReadRequest {
@@ -486,6 +488,15 @@ export interface CommercialProvisionRequest extends CommercialMutationRequest {
   existing_site_license_id?: string;
   /** Link a named license despite reviewed target_mismatches. */
   allow_target_mismatch?: boolean;
+}
+
+/**
+ * Record that a membership-seat order (all items product_kind
+ * "membership_package") was fulfilled by the given membership packages, which
+ * must be owned by the order's customer account and not expired.
+ */
+export interface CommercialMembershipFulfillmentRequest extends CommercialOrderTransitionRequest {
+  membership_package_ids: string[];
 }
 
 export interface CommercialDiagnosticsRequest extends CommercialReadRequest {
@@ -706,6 +717,9 @@ export interface CommercialOrdersApi {
   endFulfillment: (
     opts: CommercialOrderTransitionRequest,
   ) => Promise<CommercialOrder>;
+  recordMembershipFulfillment: (
+    opts: CommercialMembershipFulfillmentRequest,
+  ) => Promise<CommercialOrder>;
   diagnostics: (
     opts: CommercialDiagnosticsRequest,
   ) => Promise<CommercialOrderDiagnostics>;
@@ -765,6 +779,7 @@ export const commercialOrders = {
   fulfillmentPreview: authFirstRequireAccount,
   provision: authFirstRequireAccount,
   endFulfillment: authFirstRequireAccount,
+  recordMembershipFulfillment: authFirstRequireAccount,
   diagnostics: authFirstRequireAccount,
   retryStripeEvent: authFirstRequireAccount,
   resolveProviderOperation: authFirstRequireAccount,

@@ -8,6 +8,7 @@ import { docsIcon, projectActionParameters } from "../helpers";
 import {
   FILE_EXPLORER_BODY,
   GIT_BODY,
+  HISTORY_UNLOADABLE_BODY,
   LATEX_BODY,
   MARKDOWN_BODY,
   PROJECT_FILES_BODY,
@@ -241,6 +242,20 @@ export const FILES_ENTRIES: DocsEntry[] = [
     status: "ready",
     summary: "Inspect, compare, and recover the history of files in a project.",
     title: "Use TimeTravel",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: HISTORY_UNLOADABLE_BODY.trim(),
+    category: "Files",
+    id: "files.history-unloadable",
+    lastReviewed: "2026-10-21",
+    noActionReason:
+      "The document that cannot be loaded offers its own actions (restart, open as text, download, retry); there is no general destination.",
+    slug: "files/history-unloadable",
+    status: "ready",
+    summary:
+      "What CoCalc does when a file's, notebook's, or board's edit history is too large to load, and how to get to your file.",
+    title: "When a document's edit history can't be loaded",
   },
   {
     actions: [

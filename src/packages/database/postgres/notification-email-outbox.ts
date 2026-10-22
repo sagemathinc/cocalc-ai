@@ -456,12 +456,66 @@ export async function requeueNotificationEmail(opts: {
   );
 }
 
+/**
+ * Email is a fallback for when you are not using CoCalc (I3-C, William,
+ * Oct 20): a notification is emailed only once it is still unresolved after
+ * this long, and only if you have not been active in that time. Read it
+ * meanwhile and it is never sent. Critical mail (security, billing, on-call
+ * incidents) and project membership and access requests always go at once.
+ */
+export const NOTIFICATION_EMAIL_AWAY_MS = Math.max(
+  0,
+  Number(process.env.COCALC_NOTIFICATION_EMAIL_AWAY_MS ?? 15 * 60_000) || 0,
+);
+const ALWAYS_EMAIL_CATEGORIES = ["membership_requests", "access_requests"];
+
+export function emailWaitsUntilAway(
+  row: Pick<NotificationEmailOutboxRow, "lane" | "category" | "delivery_mode">,
+): boolean {
+  return (
+    NOTIFICATION_EMAIL_AWAY_MS > 0 &&
+    row.delivery_mode === "immediate" &&
+    (row.lane === "notification" ||
+      (row.lane === "transactional" &&
+        !ALWAYS_EMAIL_CATEGORIES.includes(`${row.category ?? ""}`)))
+  );
+}
+
+/** Send now, never (read), or later: when it is old enough and you away. */
+export function awayDecision(opts: {
+  created_at: Date | string;
+  last_active?: Date | string | null;
+  read?: boolean;
+  now: Date;
+}): NotificationEmailRevalidation | undefined {
+  if (opts.read)
+    return { action: "skip", reason: "read before it was emailed" };
+  const now = opts.now.valueOf();
+  const due = new Date(opts.created_at).valueOf() + NOTIFICATION_EMAIL_AWAY_MS;
+  if (due > now)
+    return {
+      action: "reschedule",
+      scheduled_at: new Date(due),
+      reason: "emailed only if still unresolved after a while",
+    };
+  const active = opts.last_active ? new Date(opts.last_active).valueOf() : 0;
+  if (Number.isFinite(active) && active + NOTIFICATION_EMAIL_AWAY_MS > now)
+    return {
+      action: "reschedule",
+      scheduled_at: new Date(active + NOTIFICATION_EMAIL_AWAY_MS),
+      reason: "the person is using CoCalc",
+    };
+  return undefined;
+}
+
 export async function revalidateNotificationEmail(opts: {
   row: NotificationEmailOutboxRow;
   now?: Date;
   db?: Queryable;
   // Server resolves the current directory home immediately before delivery.
   financial_home?: { current: string; local: string };
+  // The same, for an email that waits until the person is away.
+  home?: { current: string; local: string };
 }): Promise<NotificationEmailRevalidation> {
   const { row } = opts;
   if (isFinancialReceipt(row.summary_json?.summary)) {
@@ -496,6 +550,31 @@ export async function revalidateNotificationEmail(opts: {
   }
   if (row.category === "ai" && !codexNotificationEmailEnabled()) {
     return { action: "skip", reason: "Codex notification email is disabled" };
+  }
+  // Activity and read state live on the account's home bay: once it moved
+  // elsewhere they are stale here, so the email goes out as it did before
+  // waiting for away existed.
+  const homedHere = !opts.home || opts.home.current === opts.home.local;
+  if (emailWaitsUntilAway(row) && homedHere) {
+    const notificationId =
+      row.summary_json?.projection_notification_id ?? row.notification_id;
+    const { rows } = await queryable(opts.db).query(
+      `SELECT accounts.last_active, idx.read_state
+         FROM accounts
+         LEFT JOIN account_notification_index idx
+           ON idx.account_id = accounts.account_id
+          AND idx.notification_id = $2::UUID
+        WHERE accounts.account_id = $1::UUID
+        LIMIT 1`,
+      [row.target_account_id, notificationId ?? null],
+    );
+    const decision = awayDecision({
+      created_at: row.created_at,
+      last_active: rows[0]?.last_active,
+      read: rows[0]?.read_state?.read === true,
+      now: opts.now ?? new Date(),
+    });
+    if (decision) return decision;
   }
   if (row.category !== "ai" || row.notification_id == null) {
     return { action: "send" };

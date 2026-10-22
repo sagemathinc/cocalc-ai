@@ -20,6 +20,7 @@ import {
   AccountSignOutOutputSchema,
 } from "@cocalc/http-api/lib/api/schema/accounts/sign-out";
 import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
+import { requestSignedOutSessionSweep } from "@cocalc/server/conat/socketio/sign-in-session-sweep";
 
 async function handle(req, res) {
   try {
@@ -41,6 +42,9 @@ async function signOut(req, res): Promise<void> {
       const account_id = await getAccountId(req);
       if (!account_id) return; // not signed in
       await endAllSignInSessions(account_id);
+      // Close this process's sockets of those sessions now; other hub
+      // processes do it on their next sweep.
+      requestSignedOutSessionSweep();
       // Revoke host-level persistent sessions/tokens issued before now.
       await recordAccountRevocation(account_id, Date.now());
     } else {
@@ -50,6 +54,7 @@ async function signOut(req, res): Promise<void> {
       for (const hash of getRememberMeHashes(req)) {
         await endSignInSession({ session_hash: hash });
       }
+      requestSignedOutSessionSweep();
     }
   } finally {
     // also delete any security relevant cookies for safety and to avoid

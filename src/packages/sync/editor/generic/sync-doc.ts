@@ -70,8 +70,10 @@ import type {
   CompressedPatch,
   DocType,
   Document,
+  LiveSeedResult,
   Patch,
 } from "./types";
+import { sha256Utf8 } from "@cocalc/util/sha256-utf8";
 import { isTestClient, patch_cmp } from "./util";
 import mergeDeep from "@cocalc/util/immutable-deep-merge";
 import { type Filesystem, type Stats } from "@cocalc/conat/files/fs";
@@ -79,6 +81,33 @@ import { getLogger } from "@cocalc/conat/logger";
 import * as remote from "./remote";
 import type { JSONValue } from "@cocalc/util/types";
 import { rebaseLocalDocument } from "./rebase-local-document";
+import {
+  FILE_PROOF_MAX_BYTES,
+  type FileProof,
+  SAVED_FILE_CHECKPOINT,
+  fileProof,
+} from "./file-proof";
+import {
+  TRANSITION_MAX_PENDING,
+  TRANSITION_MAX_PENDING_BYTES,
+  TRANSITION_MAX_VALUE_BYTES,
+  canDropAll,
+  recoveryCopyName,
+  valueBytesCapped,
+} from "./history-transition";
+import {
+  ProofReads,
+  type SavedFile,
+  proofCoversHistory,
+  resetOptions,
+  savedFileOf,
+  historyRestartKind,
+  savesThroughWriteFile,
+  seedFor,
+  seedOfValue,
+  validProof,
+} from "./history-restart";
+import type { ResetHistoryResult } from "@cocalc/conat/persist/storage";
 
 const fallbackCursorPresence = new PatchflowMemoryPresenceAdapter();
 
@@ -170,6 +199,10 @@ export interface SyncOpts0 {
   // if true, never saves to disk or loads from disk -- this is NOT
   // ephemeral -- the history is tracked in the conat database!
   noSaveToDisk?: boolean;
+  // Where the patches stream is written: a persist service, and the identity
+  // to ask it as. A board's manager writes its board stream through the host's
+  // board write service, as the hub (conat/persist/board-policy.ts).
+  patchesPersist?: { service: string; persistUser: Record<string, never> };
 
   // if true, do not register backend sync-fs watching for this document.
   // This still allows explicit save_to_disk writes.
@@ -416,6 +449,45 @@ interface PatchDocMetadataV1 {
   settings?: JSONValue;
 }
 
+// The live-writer seed's encoded size (bounded history plan H1b-3, §2 step 6).
+const LIVE_SEED_MAX_BYTES = 40 * 1024 * 1024;
+// how long an opener waits for the live writer's answer, in all (the
+// writer's own deadline is shorter), and how often it looks for another
+// opener's seed when the writer is busy with it
+const LIVE_SEED_WAIT_MS = 60_000;
+const LIVE_SEED_POLL_MS = 2_000;
+
+class DeadlineExpired extends Error {}
+
+function withDeadlineAt<T>(
+  deadlineAt: number,
+  p: Promise<T>,
+  now: () => number,
+): Promise<T> {
+  const ms = deadlineAt - now();
+  if (ms <= 0) {
+    p.catch(() => {});
+    return Promise.reject(new DeadlineExpired());
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new DeadlineExpired()), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+// True once cond holds, false after ms (checked every 25 ms).
+async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
+  const end = Date.now() + Math.max(0, ms);
+  for (;;) {
+    if (cond()) return true;
+    if (Date.now() >= end) return false;
+    await delay(25);
+  }
+}
+
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
@@ -557,6 +629,10 @@ export class SyncDoc extends EventEmitter {
   };
 
   private markLocalUnsavedChange = (): void => {
+    // every local change, including during a history transition (see
+    // runHistoryTransition): a later generation is never released by a copy
+    // of an earlier one
+    this.localGeneration += 1;
     if (this.state !== "ready") {
       return;
     }
@@ -730,52 +806,754 @@ export class SyncDoc extends EventEmitter {
   });
 
   // A patch too large to load (e.g., a runaway notebook output saved as one
-  // 500 MB patch) makes every open of this document fail with 413.  Rather
-  // than leave whoever is opening it stuck, reset the history through the
-  // document's own patch stream, keeping the old history aside: open copies
-  // of the document see the new history epoch and close instead of writing
-  // stale state, and the persist server fences out writes from the old epoch.
-  // The reset only happens if that patch is still there, so when several
-  // clients hit it at once only the first resets the history.  This only
-  // happens when a client opens the document, at most once per SyncDoc.
+  // 500 MB patch) makes every open of this document fail with 413.  A
+  // document saved with writeFile may be reset from its saved file, but only
+  // when its proof covers every accepted edit (resetOversizedHistoryFromFile);
+  // nothing else is reset automatically.  The user is told instead
+  // (history-unloadable) and can choose a restart.  At most once per SyncDoc.
   private oversizedHistoryReset = false;
   private resetOversizedHistory = async (err: unknown): Promise<boolean> => {
     const oversized_seq = (err as any)?.oversizedHistorySeq;
+    if (typeof oversized_seq != "number" || this.oversizedHistoryReset) {
+      return false;
+    }
+    if (savesThroughWriteFile(this.syncPath)) {
+      // saved with writeFile, so with a proof of what the file covers
+      return await this.resetOversizedHistoryFromFile();
+    }
+    // Documents whose file is written elsewhere (a notebook's .ipynb, a
+    // board's file) have no proof.  They are never reset automatically: that
+    // would silently drop every edit since the file was saved (bounded
+    // history plan H1b-3).  A notebook asks its live writer, the project's
+    // backend, to seed a new history from its live value (A), once; failing
+    // that, the user is told, and can confirm restarting from the saved
+    // .ipynb (B, restartHistoryFromIpynb); the open keeps retrying meanwhile.
     if (
-      typeof oversized_seq != "number" ||
-      this.oversizedHistoryReset ||
-      typeof this.client.resetOversizedHistory != "function"
+      historyRestartKind(this.syncPath) == "ipynb" &&
+      (await this.askLiveWriterToSeed(oversized_seq))
+    ) {
+      return true;
+    }
+    this.reportUnloadableHistory((err as any)?.oversizedHistoryEpoch);
+    return false;
+  };
+
+  // (A), asked at most once per SyncDoc.  True if the history now has a new
+  // epoch seeded with the live value (from this request, or one before it).
+  // No answer, a refusal, or an error is never a rollback: false.
+  private liveSeedAsked = false;
+  // One deadline for the whole request: every await below, the writer's
+  // answer and each poll included (the tests shorten them).
+  private liveSeedWaitMs = LIVE_SEED_WAIT_MS;
+  private liveSeedPollMs = LIVE_SEED_POLL_MS;
+  private askLiveWriterToSeed = async (
+    oversizedSeq: number,
+  ): Promise<boolean> => {
+    const client = this.client;
+    if (
+      this.liveSeedAsked ||
+      typeof client.askLiveWriterToSeed != "function" ||
+      typeof client.historyResetState != "function"
     ) {
       return false;
     }
-    this.oversizedHistoryReset = true;
-    let result: { history_epoch: number; reset: boolean };
+    this.liveSeedAsked = true;
+    const end = Date.now() + this.liveSeedWaitMs;
+    const bounded = <T>(p: Promise<T>) => withDeadlineAt(end, p, Date.now);
     try {
-      result = await this.client.resetOversizedHistory({
-        project_id: this.project_id,
-        path: this.syncPath,
-        oversized_seq,
-      });
-    } catch (resetErr) {
-      // e.g., no permission or no connection: keep retrying the open, and
-      // try the reset again next time
-      this.oversizedHistoryReset = false;
-      this.dbg("resetOversizedHistory")(`failed -- ${resetErr}`);
+      const state = await bounded(
+        client.historyResetState({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+        }),
+      );
+      const result = await bounded(
+        client.askLiveWriterToSeed({
+          project_id: this.project_id,
+          path: this.syncPath,
+          epoch: state.epoch,
+          oversizedSeq,
+        }),
+      );
+      if (!result?.seeded) {
+        this.dbg("askLiveWriterToSeed")(
+          `not seeded -- ${result?.reason} ${result?.message ?? ""}`,
+        );
+        // busy: another opener's request is seeding it right now; if its
+        // epoch moves within this request's time, open with it
+        if (result?.reason == "busy") {
+          while (Date.now() < end && !this.isClosed()) {
+            await delay(Math.min(this.liveSeedPollMs, end - Date.now()));
+            const now = await bounded(
+              client.historyResetState({
+                project_id: this.project_id,
+                path: this.syncPath,
+                ...this.patchesPersistOpts(),
+              }),
+            );
+            if (now.epoch > state.epoch) {
+              this.oversizedHistoryReset = true;
+              this.history_epoch = now.epoch;
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+      this.oversizedHistoryReset = true;
+      this.history_epoch = result.history_epoch;
+      if (!result.repeated) {
+        this.client.alert_message?.({
+          type: "info",
+          title: "Edit history archived and restarted",
+          message: `The edit history (TimeTravel) of ${this.path} had an entry too large to load, most likely a huge output. It was archived and restarted from the running notebook, which includes every edit, and the notebook opened normally. Its kernel was restarted: variables and anything it was running are lost.`,
+          block: true,
+        });
+      }
+      return true;
+    } catch (err) {
+      this.dbg("askLiveWriterToSeed")(`no answer -- ${err}`);
       return false;
     }
-    // Open with the epoch now in effect -- from our reset, or from whoever
-    // reset the history first -- rather than close, as this document would
-    // when it sees the epoch change.
-    this.history_epoch = result.history_epoch;
-    if (result.reset) {
-      this.client.alert_message?.({
-        type: "info",
-        title: "Edit history reset",
-        message: `The edit history (TimeTravel) of ${this.path} contained an entry too large to load, most likely a huge output, so its edit history was reset and the file opened normally. CoCalc kept a copy of the old history; contact support if you need it.`,
-        block: true,
-      });
+  };
+
+  // (A) The live-writer seed (bounded history plan H1b-3 r4, §2).  This
+  // document, open and ready, seeds a new history from its live value when
+  // that value covers exactly the history's revision N: caught up to N, with
+  // nothing of its own pending, captured in one synchronous step, then reset
+  // with ifRevision N and ifInitEpoch, coveredSeq N.  Anything accepted after
+  // N refuses the reset (moved): at most 3 rounds.  Everything is bounded by
+  // deadlineAt.  The caller's gate (gate.beforeReset) admits the one reset
+  // mutation; gate.answered is called with its opId whenever its answer
+  // arrives, also after the deadline.  Never a rollback: any doubt refuses.
+  seedHistoryFromLiveValue = async ({
+    epoch,
+    deadlineAt,
+    gate,
+    now = Date.now,
+    limits = {},
+    track = (p) => p,
+  }: {
+    epoch: number;
+    deadlineAt: number;
+    // every RPC this starts, so the caller can wait for them to settle after
+    // a deadline before it lets another run start (LIMIT-H1B3B-1)
+    track?: <T>(p: Promise<T>) => Promise<T>;
+    // for tests
+    limits?: { stepMs?: number; reserveMs?: number; valueBytes?: number };
+    gate?: {
+      beforeReset: (reset: {
+        opId: string;
+        epoch: number;
+        revision: { seq: number; count: number };
+      }) => boolean;
+      answered: (opId: string) => void;
+    };
+    now?: () => number;
+  }): Promise<LiveSeedResult> => {
+    const client = this.client;
+    if (
+      typeof client.historyResetState != "function" ||
+      typeof client.resetHistory != "function"
+    ) {
+      return { seeded: false, reason: "failed", message: "not supported" };
     }
+    // kept for the reset itself
+    const RESERVE_MS = limits.reserveMs ?? 10_000;
+    const STEP_MS = limits.stepMs ?? 10_000;
+    const VALUE_BYTES = limits.valueBytes ?? TRANSITION_MAX_VALUE_BYTES;
+    const remaining = () => deadlineAt - now();
+    const notReady = () => !this.isReady() || this.historyTransition != null;
+    const dstream = this.dstream();
+    const caughtUpTo = (seq: number) =>
+      dstream.receivedThroughSeq() >= seq &&
+      !this.remotePatchesPending &&
+      !(this.patchflowSession as any)?.needsMoreHistory?.();
+    const quiet = () =>
+      (dstream.pendingStats?.().count ?? 0) == 0 &&
+      !this.remotePatchesPending &&
+      this.doc != null &&
+      this.last != null &&
+      this.documentsEqual(this.doc, this.last);
+    try {
+      for (let round = 0; round < 3; round++) {
+        if (notReady()) return { seeded: false, reason: "not-ready" };
+        if ((this.history_epoch ?? 0) !== epoch) {
+          return { seeded: false, reason: "epoch" };
+        }
+        if (remaining() < RESERVE_MS) {
+          return { seeded: false, reason: "deadline" };
+        }
+        const state = await withDeadlineAt(
+          deadlineAt,
+          track(
+            client.historyResetState({
+              project_id: this.project_id,
+              path: this.syncPath,
+              ...this.patchesPersistOpts(),
+            }),
+          ),
+          now,
+        );
+        if (state.epoch !== epoch) return { seeded: false, reason: "epoch" };
+        const N = state.seq;
+        // catch up to N
+        if (
+          !(await waitFor(
+            () => notReady() || caughtUpTo(N),
+            Math.min(STEP_MS, remaining() - RESERVE_MS),
+          )) ||
+          notReady()
+        ) {
+          return notReady()
+            ? { seeded: false, reason: "not-ready" }
+            : { seeded: false, reason: "not-caught-up" };
+        }
+        // quiesce: everything of ours acknowledged, so at a seq at most N
+        if (
+          this.doc != null &&
+          this.last != null &&
+          !this.documentsEqual(this.doc, this.last)
+        ) {
+          this.commit();
+        }
+        if (
+          !(await waitFor(
+            () => notReady() || quiet(),
+            Math.min(STEP_MS, remaining() - RESERVE_MS),
+          )) ||
+          notReady()
+        ) {
+          return notReady()
+            ? { seeded: false, reason: "not-ready" }
+            : { seeded: false, reason: "busy" };
+        }
+        // capture, in one synchronous step
+        if (dstream.receivedThroughSeq() !== N || !caughtUpTo(N) || !quiet()) {
+          // something arrived meanwhile: another round
+          continue;
+        }
+        if (valueBytesCapped(this.doc, VALUE_BYTES) == null) {
+          return { seeded: false, reason: "too-large" };
+        }
+        const value = this.to_str();
+        const seed = seedOfValue(value);
+        if (seed.raw.length > LIVE_SEED_MAX_BYTES) {
+          return { seeded: false, reason: "too-large" };
+        }
+        const revision = { seq: N, count: state.count };
+        const opId = [
+          "live-seed",
+          epoch,
+          N,
+          state.count,
+          sha256Utf8(value)?.sha256,
+        ].join(":");
+        if (remaining() <= 0) return { seeded: false, reason: "deadline" };
+        if (gate != null && !gate.beforeReset({ opId, epoch, revision })) {
+          return { seeded: false, reason: "busy" };
+        }
+        const time = now();
+        const reset = client.resetHistory({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+          busyAttempts: Math.max(1, Math.floor(remaining() / 1000) - 1),
+          options: {
+            ifRevision: revision,
+            ifInitEpoch: epoch,
+            coveredSeq: N,
+            allowRollback: false,
+            archive: true,
+            seed,
+            reason: "live-seed",
+            opId,
+            settings: {
+              history_purged_at: time,
+              history_reset: {
+                reason: "live-seed",
+                coverage: "proven",
+                coveredSeq: N,
+                time,
+              },
+            },
+          } as any,
+        });
+        track(reset);
+        reset.then(
+          () => gate?.answered(opId),
+          () => gate?.answered(opId),
+        );
+        const result = await withDeadlineAt(deadlineAt, reset, now);
+        if (result.reset) {
+          return {
+            seeded: true,
+            history_epoch: result.history_epoch,
+            ...(result.repeated ? { repeated: true } : {}),
+          };
+        }
+        if (result.refused == "moved") continue;
+        return {
+          seeded: false,
+          reason:
+            result.refused == "epoch"
+              ? "epoch"
+              : result.refused == "busy"
+                ? "busy"
+                : result.refused == "seed-too-large"
+                  ? "too-large"
+                  : "failed",
+          message: result.refused,
+        };
+      }
+      return { seeded: false, reason: "moved" };
+    } catch (err) {
+      if (err instanceof DeadlineExpired) {
+        return { seeded: false, reason: "deadline" };
+      }
+      return { seeded: false, reason: "failed", message: `${err}` };
+    }
+  };
+
+  // The history holds an entry too large to load (a 413).  Reset it from the
+  // saved file only if nothing can be lost: the file's proof is valid for
+  // its exact bytes and covers every accepted message (bounded history plan
+  // r3, §2.3 case 1).  Otherwise nothing is reset automatically: the editor
+  // is told ("history-unloadable") and the user can choose to restart the
+  // history from the saved file (restartHistoryFromSavedFile).
+  private proofReads = new ProofReads();
+  private resetOversizedHistoryFromFile = async (): Promise<boolean> => {
+    const client = this.client;
+    if (
+      typeof client.historyResetState != "function" ||
+      typeof client.readFileBounded != "function" ||
+      typeof client.resetHistory != "function"
+    ) {
+      this.reportUnloadableHistory();
+      return false;
+    }
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const state = await client.historyResetState({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+        });
+        if (!proofCoversHistory(state)) break;
+        // Read the file only once per proof: if its bytes do not match,
+        // reading it again on every retry of the open would not help.
+        if (!this.proofReads.shouldRead(state)) break;
+        const file = (await this.readSavedFile()).file;
+        const proof = file != null ? validProof(state, file) : undefined;
+        if (file == null || proof == null) {
+          this.proofReads.reject(state);
+          break;
+        }
+        const result = await client.resetHistory({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+          options: resetOptions({
+            mode: "oversized",
+            state,
+            file,
+            proof,
+            seed: this.seedOf(file.value),
+          }),
+        });
+        if (result.reset) {
+          this.oversizedHistoryReset = true;
+          this.history_epoch = result.history_epoch;
+          const lost =
+            (result.dropped?.records ?? 0) +
+            (result.droppedArchived?.records ?? 0);
+          // only the client whose reset ran tells its user (another one that
+          // made the same request got its result back, as repeated)
+          if (result.repeated) return true;
+          this.client.alert_message?.({
+            type: "info",
+            title: "Edit history archived and restarted",
+            message: `The edit history (TimeTravel) of ${this.path} had an entry too large to load, most likely a huge output. It was archived and restarted from the saved file, which includes every edit, and the file opened normally.${lost > 0 ? ` ${lost} older history entries could not be kept in the archive.` : ""}`,
+            block: true,
+          });
+          return true;
+        }
+        if (result.refused !== "moved" && result.refused !== "epoch") break;
+      }
+    } catch (err) {
+      // e.g., no connection: the open retries, and so does this
+      this.dbg("resetOversizedHistoryFromFile")(`failed -- ${err}`);
+      return false;
+    }
+    this.reportUnloadableHistory();
+    return false;
+  };
+
+  private patchesPersistOpts = () =>
+    this.opts.patchesPersist ? { persist: this.opts.patchesPersist } : {};
+
+  // the saved file, read with a bound (at most FILE_PROOF_MAX_BYTES)
+  private readSavedFile = async (): Promise<{
+    file?: SavedFile;
+    problem?: string;
+  }> => {
+    const read = await this.client.readFileBounded!({
+      project_id: this.project_id,
+      path: this.path,
+      maxBytes: FILE_PROOF_MAX_BYTES,
+    });
+    if (read.status != "ok") {
+      return {
+        problem:
+          read.status == "missing"
+            ? "the file does not exist"
+            : read.status == "too-large"
+              ? "the file is larger than 32 MiB"
+              : `the file could not be read (${read.error ?? ""})`,
+      };
+    }
+    const file = savedFileOf(read.data);
+    return file == null ? { problem: "the file is not UTF-8 text" } : { file };
+  };
+
+  // The first message of a restarted history: a snapshot of value, by the
+  // filesystem user (the first user of a document).
+  private seedOf = (value: string) =>
+    seedFor({
+      value,
+      time: legacyPatchId(Date.now()),
+      wall: Date.now(),
+      userId: 0,
+    });
+
+  private unloadableHistoryReported = false;
+  // history_epoch: the epoch the persist server failed to load the history
+  // in, when it said (so a later reset is recognized as a recovery, H1b-4).
+  private reportUnloadableHistory = (history_epoch?: number): void => {
+    if (this.unloadableHistoryReported) return;
+    this.unloadableHistoryReported = true;
+    this.emit("history-unloadable", {
+      path: this.path,
+      restart: historyRestartKind(this.syncPath),
+      ...(typeof history_epoch == "number" ? { history_epoch } : {}),
+    });
+  };
+
+  // The user's choice when the history cannot be loaded: restart it from the
+  // saved file, removing newer edits from the live document (they are kept
+  // in the archived history, as far as its limits allow).  With a valid
+  // proof the file covers what it proves; without one, nothing.  Resolves to
+  // the reset's result; the document then opens with the restarted history.
+  restartHistoryFromSavedFile = async (): Promise<ResetHistoryResult> => {
+    const client = this.client;
+    if (
+      typeof client.historyResetState != "function" ||
+      typeof client.readFileBounded != "function" ||
+      typeof client.resetHistory != "function"
+    ) {
+      throw Error("restarting the history is not supported here");
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const state = await client.historyResetState({
+        project_id: this.project_id,
+        path: this.syncPath,
+        ...this.patchesPersistOpts(),
+      });
+      const { file, problem } = await this.readSavedFile();
+      if (file == null) {
+        throw Error(
+          `cannot restart the history from the saved file: ${problem}`,
+        );
+      }
+      const result = await client.resetHistory({
+        project_id: this.project_id,
+        path: this.syncPath,
+        ...this.patchesPersistOpts(),
+        options: resetOptions({
+          mode: "user-restart-from-file",
+          state,
+          file,
+          proof: validProof(state, file),
+          seed: this.seedOf(file.value),
+        }),
+      });
+      if (result.reset) {
+        this.oversizedHistoryReset = true;
+        this.history_epoch = result.history_epoch;
+        return result;
+      }
+      if (result.refused !== "moved" && result.refused !== "epoch") {
+        throw Error(`the history was not restarted (${result.refused})`);
+      }
+    }
+    throw Error("the history kept changing; please try again");
+  };
+
+  // When the history is reset under this open copy (a new epoch), keep this
+  // tab's edits (bounded history plan H1b-2): ask which pending patches the
+  // new history already includes; if everything this tab has is included,
+  // reload; otherwise first save the current value to a recovery copy beside
+  // the file.  Nothing is reconstructed from the old history and nothing is
+  // merged into the new one (H2).  Edits keep going into the live document
+  // meanwhile; nothing more is written in the old epoch.
+  private localGeneration = 0;
+  private historyTransition?: {
+    // the epoch this tab's pending patches were written in
+    fromEpoch: number;
+    toEpoch: number;
+    // generation when the transition began: anything later is unsaved
+    startGeneration: number;
+    // copies written so far (kept and reported, never overwritten)
+    copies: string[];
+    // a newer reset arrived while this one ran: run again
+    restart: boolean;
+    // the value is resident but not saved anywhere (too large to copy, or
+    // the copy failed): the editor shows NOT SAVED
+    unsaved?: string;
+  };
+
+  private beginHistoryTransition = (
+    toEpoch?: number,
+    fromEpoch?: number,
+  ): void => {
+    const epoch = toEpoch ?? this.history_epoch ?? 0;
+    const t = this.historyTransition;
+    if (t != null) {
+      // a duplicate is ignored; a newer reset restarts, keeping everything
+      if (epoch <= t.toEpoch) return;
+      t.toEpoch = epoch;
+      t.restart = true;
+      t.unsaved = undefined;
+    } else {
+      this.patchflowSession?.off?.("change", this.handlePatchflowChange);
+      this.historyTransition = {
+        // a document never reset has epoch 0; a wrong guess only means
+        // nothing can be proven absent, so the value is copied
+        fromEpoch: fromEpoch ?? 0,
+        toEpoch: epoch,
+        startGeneration: this.localGeneration,
+        copies: [],
+        restart: false,
+      };
+    }
+    void this.runHistoryTransition();
+  };
+
+  // The editor's "Retry" while NOT SAVED.
+  retryHistoryTransition = (): void => {
+    const t = this.historyTransition;
+    if (t == null || t.unsaved == null) return;
+    t.unsaved = undefined;
+    void this.runHistoryTransition();
+  };
+
+  // For the editor's "Download a copy" while NOT SAVED: the value and the
+  // generation it represents.  reloadAfterDownload(generation) reloads only
+  // if nothing changed since that download.
+  valueForDownload = (): { value: string; generation: number } => ({
+    value: this.to_str(),
+    generation: this.localGeneration,
+  });
+
+  reloadAfterDownload = (generation: number): boolean => {
+    const t = this.historyTransition;
+    if (t == null || this.localGeneration !== generation) return false;
+    this.finishHistoryTransition();
     return true;
+  };
+
+  // One run at a time; a newer reset during a run makes it run again.  The
+  // flag is cleared in the same synchronous step as the last restart check,
+  // so a restart is never lost between them.
+  private historyTransitionRunning = false;
+  private runHistoryTransition = async (): Promise<void> => {
+    if (this.historyTransitionRunning) {
+      if (this.historyTransition != null) this.historyTransition.restart = true;
+      return;
+    }
+    this.historyTransitionRunning = true;
+    try {
+      for (;;) {
+        const t = this.historyTransition;
+        if (t == null || this.isClosed()) return;
+        t.restart = false;
+        await this.historyTransitionStep();
+        if (!this.historyTransition?.restart) return;
+      }
+    } catch (err) {
+      // never silently: the value stays in this tab, NOT SAVED
+      this.dbg("runHistoryTransition")(`${err}`);
+      this.reportUnsavedTransition("copy-failed");
+    } finally {
+      this.historyTransitionRunning = false;
+    }
+  };
+
+  private historyTransitionStep = async (): Promise<void> => {
+    const t = this.historyTransition!;
+    const stillCurrent = () =>
+      this.historyTransition === t && !t.restart && !this.isClosed();
+    let dstream: any;
+    try {
+      dstream = this.dstream();
+    } catch {
+      dstream = undefined;
+    }
+    // admission, before anything is serialized (LIMIT-H1B-2, LIMIT-H1B2P-2)
+    const stats = dstream?.pendingStats?.() ?? { count: 0, bytes: 0 };
+    const admitted =
+      stats.count <= TRANSITION_MAX_PENDING &&
+      stats.bytes <= TRANSITION_MAX_PENDING_BYTES;
+    // the value, measured capped before anything else touches the whole
+    // document (pendingMessages, the query, is_equal): over the cap, or not
+    // measurable, is NOT SAVED at once (plan r3 step 2, LIMIT-H1B2I-1)
+    if (!this.admitValue()) return;
+    const pending: { id: string }[] =
+      admitted && dstream?.pendingMessages != null
+        ? dstream.pendingMessages()
+        : [];
+    const ids = pending.map(({ id }) => id);
+    let statuses: { [id: string]: { status: any } } | undefined;
+    if (admitted && ids.length > 0) {
+      statuses = await this.queryHistoryInclusion(t, ids);
+      if (!stillCurrent()) return;
+    }
+    const hasDraft =
+      this.doc != null && this.last != null && !this.doc.is_equal(this.last);
+    if (
+      admitted &&
+      canDropAll({
+        ids,
+        statuses,
+        hasDraft,
+        hasLaterEdits: this.localGeneration !== t.startGeneration,
+      })
+    ) {
+      // everything this tab has is in the new history
+      this.finishHistoryTransition();
+      return;
+    }
+    await this.copyThenFinishHistoryTransition(stillCurrent);
+  };
+
+  // One inclusion request, retried a few times; undefined if it keeps
+  // failing (then the value is copied, never dropped).
+  private queryHistoryInclusion = async (
+    t: { fromEpoch: number },
+    ids: string[],
+  ): Promise<{ [id: string]: { status: any } } | undefined> => {
+    if (typeof this.client.historyInclusion != "function") return undefined;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await this.client.historyInclusion({
+          project_id: this.project_id,
+          path: this.syncPath,
+          ...this.patchesPersistOpts(),
+          // the epoch they were written in, so a missing id can be proven
+          // absent (a newer reset keeps the first transition's epoch)
+          epoch: t.fromEpoch,
+          ids,
+        });
+        return result.ids;
+      } catch (err) {
+        this.dbg("queryHistoryInclusion")(`${err}`);
+        if (attempt < 2) await delay(1000 * (attempt + 1));
+      }
+    }
+    return undefined;
+  };
+
+  // Save the current value to a recovery copy, then reload.  Each copy is
+  // an immutable value with the generation it represents; a successful copy
+  // releases only that generation (astra's condition 2): if the document
+  // changed while it was written, the later generation is copied again, up
+  // to 3 times, then NOT SAVED.
+  private copyThenFinishHistoryTransition = async (
+    stillCurrent: () => boolean,
+  ): Promise<void> => {
+    const t = this.historyTransition!;
+    for (let round = 0; round < 3; round++) {
+      if (!this.admitValue()) return;
+      const generation = this.localGeneration;
+      const value = this.to_str();
+      const path = await this.writeRecoveryCopy(value);
+      if (path != null) t.copies.push(path);
+      if (!stillCurrent()) return;
+      if (path == null) {
+        this.reportUnsavedTransition("copy-failed");
+        return;
+      }
+      if (this.localGeneration === generation) {
+        // in the same synchronous step as the check: no edit can fall
+        // between them
+        this.finishHistoryTransition();
+        return;
+      }
+    }
+    this.reportUnsavedTransition("still-changing");
+  };
+
+  // Write value to a new recovery copy beside the file; its path, or
+  // undefined after 3 failed attempts.  Names are unique per client and
+  // random; the existence check makes overwriting an earlier copy unlikely
+  // but cannot rule it out (best effort: the fs API has no exclusive create).
+  private writeRecoveryCopy = async (
+    value: string,
+  ): Promise<string | undefined> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const path = recoveryCopyName(this.path, {
+        clientId: this.client.client_id?.() ?? "",
+      });
+      try {
+        if (await this.fs.exists(path)) continue;
+        await this.fs.writeFile(path, value);
+        return path;
+      } catch (err) {
+        this.dbg("writeRecoveryCopy")(`${err}`);
+        if (attempt < 2) await delay(1000 * (attempt + 1));
+      }
+    }
+    return undefined;
+  };
+
+  // Whether the current value is within the 32 MiB cap, measured capped and
+  // cached per document (documents are immutable, so the same object has the
+  // same size); otherwise reports NOT SAVED.
+  private admittedValueDoc?: Document;
+  private admitValue = (): boolean => {
+    if (this.doc != null && this.doc === this.admittedValueDoc) return true;
+    if (valueBytesCapped(this.doc, TRANSITION_MAX_VALUE_BYTES) == null) {
+      this.reportUnsavedTransition("too-large");
+      return false;
+    }
+    this.admittedValueDoc = this.doc;
+    return true;
+  };
+
+  // NOT SAVED: the tab keeps its value, which is saved nowhere; the editor
+  // offers "Download a copy" and "Retry".
+  private reportUnsavedTransition = (reason: string): void => {
+    const t = this.historyTransition;
+    if (t == null) return;
+    t.unsaved = reason;
+    this.emit("history-reset-unsaved", {
+      history_epoch: t.toEpoch,
+      reason,
+      copies: [...t.copies],
+    });
+  };
+
+  // Everything this tab had is in the new history or in a copy: hand off.
+  // The editor reopens the file, which opens the new history.
+  private finishHistoryTransition = (): void => {
+    const t = this.historyTransition;
+    if (t == null) return;
+    this.emit("history-reset", {
+      history_epoch: t.toEpoch,
+      copies: [...t.copies],
+    });
+    this.close();
   };
 
   // A 413 while loading the patches means the edit history itself holds a
@@ -785,6 +1563,9 @@ export class SyncDoc extends EventEmitter {
     const seq = (err as any)?.oversizedSeq;
     if ((err as any)?.code == 413 && typeof seq == "number") {
       (err as any).oversizedHistorySeq = seq;
+      // the history epoch the persist server read it in
+      const epoch = (err as any)?.oversizedEpoch;
+      if (typeof epoch == "number") (err as any).oversizedHistoryEpoch = epoch;
     }
     return err;
   };
@@ -1115,6 +1896,8 @@ export class SyncDoc extends EventEmitter {
   */
   undo = (): Document => {
     this.assert_is_ready("undo");
+    // the old graph may hold the new epoch's seed (see handlePatchflowChange)
+    if (this.historyTransition != null) return this.doc!;
     const session = this.requirePatchflowSession();
     this.ensurePatchflowLiveDocCommitted();
     this.undo_mode = true;
@@ -1131,6 +1914,7 @@ export class SyncDoc extends EventEmitter {
 
   redo = (): Document => {
     this.assert_is_ready("redo");
+    if (this.historyTransition != null) return this.doc!;
     const session = this.requirePatchflowSession();
     this.undo_mode = true;
     const prev = session.getDocument() as Document;
@@ -1442,8 +2226,7 @@ export class SyncDoc extends EventEmitter {
       historyEpochIncreased ||
       (this.isReady() && historyPurgeMarkerChanged)
     ) {
-      this.emit("history-reset", { history_epoch: nextHistoryEpoch });
-      this.close();
+      this.beginHistoryTransition(nextHistoryEpoch, previousHistoryEpoch);
       return;
     }
 
@@ -1754,6 +2537,7 @@ export class SyncDoc extends EventEmitter {
         noAutosave: this.noAutosave,
         initPhaseReporter:
           this.makeConatInitPhaseReporter("patches_corestream"),
+        ...(this.opts.patchesPersist ?? {}),
       });
 
       // If the checkpoint is stale or otherwise wrong, fall back to a full load.
@@ -1774,6 +2558,9 @@ export class SyncDoc extends EventEmitter {
             noAutosave: this.noAutosave,
             initPhaseReporter:
               this.makeConatInitPhaseReporter("patches_corestream"),
+            // The same routing as the first open: a board's checkpoint repair
+            // writes through the board write service.
+            ...(this.opts.patchesPersist ?? {}),
           });
           let repaired = false;
           let n = synctable.dstream.length - 1;
@@ -2133,6 +2920,12 @@ export class SyncDoc extends EventEmitter {
     if (this.useConat) {
       await this.loadPatchBootstrap();
       const dstream = this.dstream();
+      // pending patches are sized by what they hold (bounded history plan
+      // H1b-2: the transition's admission bound)
+      dstream.setPendingSizeOf?.(
+        (mesg: any) =>
+          (mesg?.patch?.length ?? 0) + (mesg?.snapshot?.length ?? 0) + 256,
+      );
       dstream.on("metadata-change", this.patchMetadataChanged);
       dstream.on("checkpoints-change", this.patchMetadataChanged);
     }
@@ -2442,6 +3235,9 @@ export class SyncDoc extends EventEmitter {
   save = reuseInFlight(async () => {
     const dbg = this.dbg("save");
     dbg();
+    if (this.historyTransition != null) {
+      return;
+    }
     // We just keep trying while syncdoc is ready and there
     // are changes that have not been saved (due to this.doc
     // changing during the while loop!).
@@ -2483,6 +3279,64 @@ export class SyncDoc extends EventEmitter {
     // useful to ensure specific undo points (e.g., right before a paste).
     await this.patches_table.save();
   });
+
+  // Remote patches received but not applied to this.doc yet: they are
+  // applied in a microtask (see the patchflow subscribe adapter).
+  private remotePatchesPending = false;
+
+  // The proof that value, about to be written to the file, is this document's
+  // value including every patch with seq at most receivedThroughSeq.  Called
+  // in the same synchronous step that captured value, so no remote patch
+  // can be applied in between.  Undefined when that cannot be proven, e.g.,
+  // remote patches are still to be applied or there is an uncommitted draft;
+  // the file is still written, without a proof.
+  private captureFileProof = (value: string): FileProof | undefined => {
+    if (
+      this.remotePatchesPending ||
+      this.patchflowSession == null ||
+      !this.patchflowReady() ||
+      (this.patchflowSession as any).needsMoreHistory?.() ||
+      this.doc == null ||
+      this.last == null ||
+      !this.documentsEqual(this.doc, this.last)
+    ) {
+      return undefined;
+    }
+    let seq: number;
+    try {
+      const dstream = this.dstream();
+      if (typeof dstream.receivedThroughSeq !== "function") return undefined;
+      seq = dstream.receivedThroughSeq();
+    } catch {
+      return undefined;
+    }
+    return fileProof({ value, epoch: this.history_epoch ?? 0, seq });
+  };
+
+  // After the bytes of proof were written: record it, if this is still the
+  // epoch it belongs to.  A failure only means there is no proof.
+  private publishFileProof = async (proof?: FileProof): Promise<void> => {
+    if (
+      proof == null ||
+      this.isClosed() ||
+      (this.history_epoch ?? 0) !== proof.epoch
+    ) {
+      return;
+    }
+    try {
+      await this.dstream().setCheckpoint({
+        name: SAVED_FILE_CHECKPOINT,
+        seq: proof.seq,
+        data: {
+          sha256: proof.sha256,
+          bytes: proof.bytes,
+          epoch: proof.epoch,
+        },
+      });
+    } catch (err) {
+      this.dbg("publishFileProof")(`${err}`);
+    }
+  };
 
   private dstream = () => {
     // @ts-ignore -- in general patches_table might not be a conat one still,
@@ -3038,16 +3892,21 @@ export class SyncDoc extends EventEmitter {
         const pendingKeys = new Set<any>();
         const flush = () => {
           scheduled = false;
-          if (closed || pendingKeys.size === 0) {
+          try {
+            if (closed || pendingKeys.size === 0) {
+              pendingKeys.clear();
+              return;
+            }
+            const keys = [...pendingKeys];
             pendingKeys.clear();
-            return;
+            this.applyPatchflowRemoteEnvelopes(
+              this.patchflowEnvelopesForKeys(keys),
+              onEnvelope,
+            );
+          } finally {
+            // patches that arrived while this one applied are scheduled again
+            this.remotePatchesPending = scheduled;
           }
-          const keys = [...pendingKeys];
-          pendingKeys.clear();
-          this.applyPatchflowRemoteEnvelopes(
-            this.patchflowEnvelopesForKeys(keys),
-            onEnvelope,
-          );
         };
         const handler = (keys: any[]) => {
           for (const key of keys ?? []) {
@@ -3055,6 +3914,7 @@ export class SyncDoc extends EventEmitter {
           }
           if (!scheduled) {
             scheduled = true;
+            this.remotePatchesPending = true;
             queueMicrotask(flush);
           }
         };
@@ -3063,6 +3923,7 @@ export class SyncDoc extends EventEmitter {
         return () => {
           closed = true;
           pendingKeys.clear();
+          this.remotePatchesPending = false;
           if (table?.off) {
             table.off("change", handler);
           } else if (table?.removeListener) {
@@ -3378,8 +4239,10 @@ export class SyncDoc extends EventEmitter {
       history_epoch_increased ||
       (this.isReady() && history_purge_marker_changed)
     ) {
-      this.emit("history-reset", { history_epoch: current_history_epoch });
-      this.close();
+      this.beginHistoryTransition(
+        current_history_epoch,
+        previous_history_epoch,
+      );
       return;
     }
 
@@ -3734,6 +4597,12 @@ export class SyncDoc extends EventEmitter {
   };
 
   private handlePatchflowChange = (doc: Document): void => {
+    if (this.historyTransition != null) {
+      // The history was reset: whatever reaches the old graph now (the new
+      // epoch's seed, its patches) must not replace this tab's value or its
+      // committed base, which is what the recovery copy saves (CORR-H1B2-2).
+      return;
+    }
     const committed = doc as Document;
     const previous = this.doc;
     const next =
@@ -3842,6 +4711,7 @@ export class SyncDoc extends EventEmitter {
         );
         return;
       }
+      if (this.historyTransition != null || this.isClosed()) return;
       this.valueOnDisk = diskValue;
       this.isDeleted = false;
       if (!diskValue) {
@@ -4004,6 +4874,10 @@ export class SyncDoc extends EventEmitter {
     if (!this.patchflowReady() || this.patchflowSession == null) {
       return false;
     }
+    if (this.historyTransition != null) {
+      // the draft is kept (see runHistoryTransition)
+      return false;
+    }
     return this.commitWithPatchflow({
       emitChangeImmediately,
       file,
@@ -4036,6 +4910,11 @@ export class SyncDoc extends EventEmitter {
       );
     }
     this.assert_is_ready("commitExactPatch");
+    if (this.historyTransition != null) {
+      throw new Error(
+        "the edit history was reset; nothing more is committed to this session",
+      );
+    }
     const session = this.requirePatchflowSession();
     const codec = this.patchflowCodec;
     if (codec == null || this.patches_table == null) {
@@ -4156,6 +5035,9 @@ export class SyncDoc extends EventEmitter {
     if (this.opts.noSaveToDisk) {
       return;
     }
+    // once the history was reset, this tab's value goes to a recovery copy,
+    // never over the file (CORR-H1B2-1): checked here and after every await
+    if (this.historyTransition != null) return;
     const dbg = this.dbg("writeFile");
     if (this.client.is_deleted(this.path, this.project_id)) {
       dbg("not saving to disk because deleted");
@@ -4169,12 +5051,15 @@ export class SyncDoc extends EventEmitter {
         return;
       }
     }
+    if (this.historyTransition != null) return;
 
     const value = this.to_str();
+    // in the same synchronous step as value (see captureFileProof)
+    const proof = this.captureFileProof(value);
     // include {ignore:true} with events for this long,
     // so no clients waste resources loading in response to us saving
     // to disk.
-    if (this.isClosed()) return;
+    if (this.isClosed() || this.historyTransition != null) return;
     this.last_save_to_disk_time = new Date();
     this.emit("before-save-to-disk");
     try {
@@ -4202,6 +5087,11 @@ export class SyncDoc extends EventEmitter {
     this.diskMissingOnLoad = false;
     this.localEditsSinceDiskBaseline = false;
     this.valueOnDisk = value;
+    // a proof in the old epoch would be refused anyway
+    if (this.historyTransition != null) return;
+    // only after these exact bytes were written
+    await this.publishFileProof(proof);
+    if (this.isClosed()) return;
     this.emit("save-to-disk");
   };
 
@@ -4218,10 +5108,17 @@ export class SyncDoc extends EventEmitter {
       // properly.
       return;
     }
+    if (this.historyTransition != null) {
+      // the history was reset: this tab's value goes to a recovery copy,
+      // never over the file (see runHistoryTransition)
+      return;
+    }
     // Persist the live draft to Patchflow before writing its serialized form
     // to disk. Otherwise a failed history commit followed by a disk write is
     // observed by sync-fs as a destructive edit made by "The Filesystem".
     await this.save();
+    // the transition may have begun while save() waited (CORR-H1B2-1)
+    if (this.historyTransition != null || this.isClosed()) return;
     if (
       this.doc == null ||
       this.last == null ||

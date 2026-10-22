@@ -1,4 +1,13 @@
-import { Alert, Button, Divider, Modal, Space } from "antd";
+import {
+  Alert,
+  Button,
+  Divider,
+  Input,
+  Modal,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
@@ -13,6 +22,10 @@ import ShowError from "@cocalc/frontend/components/error";
 import { loadStripe } from "@cocalc/frontend/billing/stripe";
 import { BigSpin, ConfirmButton } from "./stripe-payment";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  BUSINESS_TAX_ID_REQUIRED_MESSAGE,
+  requiresBusinessTaxId,
+} from "@cocalc/util/stripe/business-tax-id";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -125,6 +138,13 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
   const elements = useElements();
   const [ready, setReady] = useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const [country, setCountry] = useState<string>(
+    `${customer?.address?.country ?? ""}`,
+  );
+  const [vatId, setVatId] = useState<string>(
+    `${customer?.vat_id?.value ?? ""}`,
+  );
+  const vatRequired = requiresBusinessTaxId(country);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -144,8 +164,14 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
       }
       const { complete, value } = await addressElement.getValue();
       if (complete) {
+        const vatCountry = requiresBusinessTaxId(value?.address?.country);
         const completed = await runFreshAuthAction(async () => {
-          await setStripeCustomer(value);
+          await setStripeCustomer({
+            ...value,
+            // Only EU and UK addresses carry a VAT number; leave any other
+            // tax ID alone.
+            ...(vatCountry ? { vat_id: vatId.trim() } : {}),
+          });
         });
         if (!completed) {
           return;
@@ -171,8 +197,58 @@ function AddressForm({ style, onFinished, showCancel, customer }) {
         onReady={() => {
           setReady(true);
         }}
-        options={{ mode: "billing", defaultValues: customer }}
+        onChange={(event) =>
+          setCountry(`${event?.value?.address?.country ?? ""}`)
+        }
+        options={{
+          mode: "billing",
+          defaultValues: {
+            name: customer?.name,
+            address: customer?.address,
+            phone: customer?.phone,
+          },
+        }}
       />
+      {ready && vatRequired && (
+        <div style={{ marginTop: "15px" }}>
+          <div style={{ marginBottom: "5px" }}>
+            <label htmlFor="billing-vat-number">
+              <b>VAT number</b>
+            </label>{" "}
+            {customer?.vat_id?.value &&
+              customer.vat_id.value ===
+                vatId.replace(/\s+/g, "").toUpperCase() &&
+              customer.vat_id.status && (
+                <Tag
+                  color={
+                    customer.vat_id.status === "verified"
+                      ? "green"
+                      : customer.vat_id.status === "unverified"
+                        ? "red"
+                        : "gold"
+                  }
+                >
+                  {customer.vat_id.status}
+                </Tag>
+              )}
+          </div>
+          <Input
+            id="billing-vat-number"
+            aria-describedby="billing-vat-number-help"
+            placeholder="e.g. DE123456789"
+            value={vatId}
+            onChange={(e) => setVatId(e.target.value)}
+            maxLength={40}
+          />
+          <Typography.Text
+            id="billing-vat-number-help"
+            type="secondary"
+            style={{ display: "block", marginTop: "5px" }}
+          >
+            {BUSINESS_TAX_ID_REQUIRED_MESSAGE}
+          </Typography.Text>
+        </div>
+      )}
       <div style={{ textAlign: "center", marginTop: "15px" }}>
         <Space>
           {ready && (

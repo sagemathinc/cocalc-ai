@@ -395,6 +395,7 @@ async function createWatcher(
     agent_id: agent.agent_id,
     sensor_id,
     expires_at: spec.expires_at,
+    ...(spec.watch.type === "at" ? { reminder: true } : {}),
   });
   let rows: any[];
   try {

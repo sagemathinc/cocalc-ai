@@ -235,6 +235,10 @@ export interface JupyterStoreState {
   runCellOverlays?: Map<string, Map<string, any>>;
 
   stdin?: { id: string; prompt: string; password?: boolean };
+
+  // Set once the open has chosen between the stored notebook and the .ipynb
+  // file and applied it; until then no cells may just mean not loaded yet.
+  initial_source_settled?: boolean;
 }
 
 export const initial_jupyter_store_state: {
