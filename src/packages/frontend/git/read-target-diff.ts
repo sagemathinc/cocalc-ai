@@ -50,10 +50,11 @@ export async function readTargetDiff(
 }
 
 /**
- * Keep each file's patch whole while the running total fits `budget` lines;
- * a file that does not fit keeps only its header (through `+++`), which still
- * parses as that one file with no hunks. `omitted[i]` is file i's patch
- * length when its body was left out.
+ * Keep each file's patch whole while it fits `budget` lines with room left
+ * for the header (through `+++`) of every later file; a file that does not
+ * fit keeps only its header, which still parses as that one file with no
+ * hunks. `omitted[i]` is file i's patch length when its body was left out.
+ * Refuses when the headers alone do not fit: too many files to list.
  */
 export function budgetPatch(
   patch: string,
@@ -66,16 +67,10 @@ export function budgetPatch(
   });
   if (lines.length <= budget || starts.length === 0)
     return { patch, omitted: [] };
-  const out = lines.slice(0, starts[0]);
-  const omitted: number[] = [];
-  let used = out.length;
-  starts.forEach((start, i) => {
-    const section = lines.slice(start, starts[i + 1] ?? lines.length);
-    if (used + section.length <= budget) {
-      out.push(...section);
-      used += section.length;
-      return;
-    }
+  const sections = starts.map((start, i) =>
+    lines.slice(start, starts[i + 1] ?? lines.length),
+  );
+  const headers = sections.map((section) => {
     const body = section.findIndex(
       (line, j) =>
         j > 0 &&
@@ -83,9 +78,24 @@ export function budgetPatch(
           line.startsWith("Binary files ") ||
           line === "GIT binary patch"),
     );
-    const header = body < 0 ? section : section.slice(0, body);
-    out.push(...header);
-    used += header.length;
+    return body < 0 ? section : section.slice(0, body);
+  });
+  const out = lines.slice(0, starts[0]);
+  // Header lines of the files after the current one: always kept.
+  let reserved = headers.reduce((n, header) => n + header.length, 0);
+  if (out.length + reserved > budget)
+    throw new GitReadError(
+      "unsupported",
+      `This comparison changes ${sections.length} files, too many to list at once. Narrow the comparison.`,
+    );
+  const omitted: number[] = [];
+  sections.forEach((section, i) => {
+    reserved -= headers[i].length;
+    if (out.length + section.length + reserved <= budget) {
+      out.push(...section);
+      return;
+    }
+    out.push(...headers[i]);
     omitted[i] = section.length;
   });
   return { patch: out.join("\n"), omitted };

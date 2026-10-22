@@ -1,4 +1,4 @@
-import { readTargetDiff } from "./read-target-diff";
+import { budgetPatch, readTargetDiff } from "./read-target-diff";
 import type { ImmutableReviewTarget } from "@cocalc/frontend/components/diff-viewer/review-model";
 
 const target: ImmutableReviewTarget = {
@@ -95,4 +95,33 @@ test("a comparison that fits is unchanged", async () => {
   expect(
     parsed.files[0].lines.filter((l) => l.startsWith("+line")),
   ).toHaveLength(3);
+});
+
+test("later files' headers are kept: an earlier file gives up its body for them", () => {
+  // Fits whole by itself (6 + 8 lines), but not with the 4 later headers.
+  const patch = [
+    fileSection("a.txt", 9),
+    ...["b", "c", "d", "e"].map((n) => fileSection(n, 1)),
+  ].join("\n");
+  const { patch: kept, omitted } = budgetPatch(patch, 24);
+  expect(kept.split("\n").length).toBeLessThanOrEqual(24);
+  expect(omitted[0]).toBe(14);
+  // Every later file still has at least its header.
+  for (const n of ["b", "c", "d", "e"])
+    expect(kept).toContain(`diff --git a/${n} b/${n}`);
+});
+
+test("more files than their headers can list is refused, never a partial review", async () => {
+  const names = Array.from({ length: 6000 }, (_, i) => `f${i}`);
+  const reader = {
+    changedFiles: jest.fn().mockResolvedValue(names.map(entry)),
+    patch: jest
+      .fn()
+      .mockResolvedValue(names.map((n) => fileSection(n, 1)).join("\n")),
+    commitSummary: jest.fn().mockResolvedValue("commit x\n"),
+  };
+  await expect(readTargetDiff(reader as any, target, 3)).rejects.toMatchObject({
+    kind: "unsupported",
+    message: expect.stringMatching(/6000 files, too many to list/),
+  });
 });

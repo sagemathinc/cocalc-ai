@@ -508,3 +508,35 @@ test("a failed fetch says why and offers to try again", async () => {
     await screen.findByRole("button", { name: "Fetch from origin" }),
   ).toBeInTheDocument();
 });
+
+test("a fetch that ends after another commit was opened changes nothing", async () => {
+  jest
+    .mocked(projectGitReader.pinCommit)
+    .mockRejectedValueOnce(
+      new GitReadError(
+        "missing",
+        `Commit ${commit} isn't in this clone (/repo).`,
+      ),
+    );
+  const fetch = deferred<any>();
+  const exec = jest.mocked(webapp_client.project_client.exec);
+  const ordinary = exec.getMockImplementation();
+  exec.mockImplementation(async (opts: any) =>
+    opts.args?.[0] === "fetch" ? fetch.promise : ordinary?.(opts),
+  );
+  const { rerender } = render(<GitCommitDrawer {...props} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Fetch from origin" }),
+  );
+  // Another commit, which this clone has, while the fetch runs.
+  rerender(<GitCommitDrawer {...props} commitHash={"b".repeat(40)} />);
+  expect(
+    await screen.findByRole("region", { name: "Git diff" }),
+  ).toBeInTheDocument();
+  await act(async () => {
+    fetch.resolve({ exit_code: 128, stderr: "fatal: not our ref\n" });
+  });
+  expect(screen.queryByText(/from origin failed/)).toBeNull();
+  expect(screen.getByRole("region", { name: "Git diff" })).toBeInTheDocument();
+  expect(projectGitReader.invalidateDiscovery).not.toHaveBeenCalled();
+});

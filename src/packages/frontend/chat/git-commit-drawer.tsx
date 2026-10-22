@@ -2539,8 +2539,15 @@ export function GitCommitDrawer({
     reviewRecord,
   ]);
 
+  // What a fetch was started for: its result is dropped once the drawer
+  // shows something else (another commit, repository or project).
+  const fetchScope = `${projectId}\0${diffRepoRoot || diffCwd}\0${missingCommit ?? ""}`;
+  const fetchScopeRef = useRef(fetchScope);
+  fetchScopeRef.current = fetchScope;
   const fetchMissingCommit = async () => {
     if (!projectId || !missingCommit) return;
+    const scope = fetchScope;
+    const current = () => fetchScopeRef.current === scope;
     setFetchingCommit(true);
     try {
       // By full object id: works for a commit no branch here points to.
@@ -2549,6 +2556,7 @@ export function GitCommitDrawer({
         cwd: diffRepoRoot || diffCwd,
         args: ["fetch", "--no-tags", "origin", missingCommit],
       });
+      if (!current()) return;
       if (result.exit_code !== 0) {
         setError(
           `Fetching ${missingCommit} from origin failed: ${(result.stderr || result.stdout || "git fetch failed").trim()}`,
@@ -2558,7 +2566,8 @@ export function GitCommitDrawer({
       projectGitReader.invalidateDiscovery(projectId);
       setCommitReload((n) => n + 1);
     } catch (err) {
-      setError(`Fetching ${missingCommit} from origin failed: ${err}`);
+      if (current())
+        setError(`Fetching ${missingCommit} from origin failed: ${err}`);
     } finally {
       setFetchingCommit(false);
     }
