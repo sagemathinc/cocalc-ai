@@ -93,6 +93,39 @@ test("friendly discovery omits internal identifiers", () => {
   assert.doesNotMatch(JSON.stringify(value), /agent_network_id|project_id/);
 });
 
+test("friendly discovery names an external agent by what agent send takes", () => {
+  const member = (label: string, member_id = randomUUID()) => ({
+    member: {
+      kind: "external" as const,
+      member_id,
+      source: {
+        kind: "external" as const,
+        account_id: randomUUID(),
+        agent_id: member_id,
+        installation_id: randomUUID(),
+      },
+      label,
+      available: true,
+      added_at: new Date().toISOString(),
+    },
+    networks: [],
+  });
+  const unnamed = randomUUID();
+  const value = friendlyAgentDestinations({
+    peers: [
+      member("ops0 on alpha.cocalc.ai (ops project)"),
+      member("(unnamed)", unnamed),
+    ],
+  });
+  assert.deepEqual(
+    value.peers.map(({ name, label }: any) => ({ name, label })),
+    [
+      { name: "ops0", label: "ops0 on alpha.cocalc.ai (ops project)" },
+      { name: unnamed, label: "(unnamed)" },
+    ],
+  );
+});
+
 test("friendly discovery says what a peer is doing", () => {
   const peer = (name: string, status?: any) => ({
     member: {
@@ -264,6 +297,17 @@ test("cocalc agent send takes a name and reports a readable outcome", async () =
       /^Delivered to @reviewer \(Support\) via Agent Network "cocalc"/,
     );
     assert.equal(output[0].outcome, "accepted");
+    // Before waiting, the way to check without resending (a shell that
+    // times out still has it).
+    const before = stderr.mock.calls
+      .map((call) => `${call.arguments[0]}`)
+      .join("");
+    assert.match(
+      before,
+      new RegExp(
+        `Sending \\(attempt ${send.attempt_id}\\)\\. If this is cut off, check without resending: cocalc agent rpc inspect ${send.attempt_id} --agent-network ${network} --to-agent ${send.target.agent_id} --target-project ${send.target.project_id}`,
+      ),
+    );
     assert.equal(process.exitCode, 0);
   } finally {
     stderr.mock.restore();

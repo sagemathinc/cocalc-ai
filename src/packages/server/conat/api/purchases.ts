@@ -210,6 +210,14 @@ import type {
   SiteLicenseAccountDetails,
   SiteLicensePoolAccountSearchResult,
 } from "@cocalc/conat/hub/api/purchases";
+import {
+  attachAdminCreditAttribution,
+  listAdminCreditAttribution,
+} from "@cocalc/server/purchases/admin-credit-attribution";
+import type {
+  AdminCreditAttribution,
+  AdminCreditAttributionAttachResult,
+} from "@cocalc/conat/hub/api/purchases";
 import { searchClusterAccounts } from "@cocalc/server/inter-bay/accounts";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
@@ -2504,6 +2512,78 @@ export async function adminProvisionSiteLicense({
     starts_at,
     expires_at,
     metadata,
+  });
+}
+
+export async function adminListCreditAttribution({
+  account_id,
+  browser_id,
+  session_hash,
+  since,
+  until,
+  missing_only,
+  limit,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  since?: string;
+  until?: string;
+  missing_only?: boolean;
+  limit?: number;
+} = {}): Promise<AdminCreditAttribution[]> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  return await listAdminCreditAttribution({
+    admin_account_id: actorId,
+    since,
+    until,
+    missing_only,
+    limit,
+  });
+}
+
+export async function adminAttachCreditAttribution({
+  account_id,
+  browser_id,
+  session_hash,
+  purchase_id,
+  attributed_admin_account_id,
+  reason,
+  commit,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  purchase_id?: number;
+  attributed_admin_account_id?: string;
+  reason?: string;
+  commit?: boolean;
+} = {}): Promise<AdminCreditAttributionAttachResult> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  return await attachAdminCreditAttribution({
+    admin_account_id: actorId,
+    purchase_id: Number(purchase_id),
+    attributed_admin_account_id: `${attributed_admin_account_id ?? ""}`,
+    reason: `${reason ?? ""}`,
+    commit: commit === true,
   });
 }
 

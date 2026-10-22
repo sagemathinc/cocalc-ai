@@ -198,6 +198,15 @@ export default async function adminPurchase({
     );
   }
 
+  if (
+    product === "balance" &&
+    !(balance_admin_note?.trim() || comment?.trim())
+  ) {
+    // Recorded with the creating admin in the admin audit log, never in the
+    // customer-visible purchase.
+    throw Error("an internal reason is required for a balance adjustment");
+  }
+
   const notes = buildNotes({
     admin_account_id,
     comment,

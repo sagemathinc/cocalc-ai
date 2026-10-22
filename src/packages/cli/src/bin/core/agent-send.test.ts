@@ -59,7 +59,8 @@ test("the summary says what happened and where a reply arrives", () => {
   const unknown = agentSendSummary(
     sent({ outcome: "unknown", reason: "timeout" }),
   );
-  assert.match(unknown, /unconfirmed: timeout/);
+  // Its first word says it: never mistaken for "Delivered".
+  assert.match(unknown, /^UNCONFIRMED: delivery to @reviewer .*\(timeout\)/);
   assert.match(unknown, /do not resend automatically/);
   assert.ok(unknown.includes(`agent rpc inspect ${base.attempt_id}`));
   assert.ok(unknown.includes(`--to-agent ${target.agent_id}`));

@@ -4,6 +4,7 @@
  */
 
 import type { PostgreSQL } from "../types";
+import { DELETED_ACCOUNT_CLEARED_FIELDS } from "@cocalc/util/db-schema/deleted-account-fields";
 import { account_exists } from "./basic";
 
 interface DeleteAccountOptions {
@@ -50,6 +51,8 @@ export async function deleteAccount(
  * - Saves the email address to email_address_before_delete
  * - Clears email_address (sets to null)
  * - Clears passports (sets to null)
+ * - Clears DELETED_ACCOUNT_CLEARED_FIELDS (personal data, credentials,
+ *   settings), like packages/server/accounts/delete.ts
  *
  * Either account_id or email_address must be provided.
  *
@@ -82,7 +85,7 @@ export async function markAccountDeleted(
 
   // Get the current email address
   const result = await db.async_query({
-    query: "SELECT email_address FROM accounts",
+    query: "SELECT email_address, deleted FROM accounts",
     where: { "account_id = $::UUID": account_id },
   });
 
@@ -91,15 +94,26 @@ export async function markAccountDeleted(
   }
 
   email_address = result.rows[0].email_address;
+  // Marking an already deleted account again keeps its former email and
+  // original deletion time.
+  const alreadyDeleted = !!result.rows[0].deleted;
 
   // Mark the account as deleted
   await db.async_query({
     query: "UPDATE accounts",
     set: {
       "deleted::BOOLEAN": true,
-      "email_address_before_delete::TEXT": email_address,
+      ...(alreadyDeleted
+        ? {}
+        : {
+            "deleted_at::TIMESTAMP": new Date(),
+            "email_address_before_delete::TEXT": email_address,
+          }),
       email_address: null,
       passports: null,
+      ...Object.fromEntries(
+        DELETED_ACCOUNT_CLEARED_FIELDS.map((field) => [field, null]),
+      ),
     },
     where: { "account_id = $::UUID": account_id },
   });

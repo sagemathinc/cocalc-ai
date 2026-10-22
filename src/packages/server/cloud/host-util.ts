@@ -572,6 +572,14 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     metadata: {
       host_id: row.id,
       ...sanitizedMetadata,
+      ...(providerId === "gcp"
+        ? {
+            labels: {
+              application: "project-host",
+              ...(sanitizedMetadata.labels ?? {}),
+            },
+          }
+        : {}),
       ...imageMetadata,
       ...(platform ? { platform } : {}),
       machine_type: machine.machine_type,

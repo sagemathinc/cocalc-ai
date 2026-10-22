@@ -426,6 +426,107 @@ it("repairs a missing projection when authenticated attention history is listed"
   expect(saved[1].history[0].content).toContain("Where should this run?\nEU");
 });
 
+it("checks @agents in an answer as in a person's own message", async () => {
+  const { hubApi } = require("../../api");
+  const { serializeAgentMention } = require("@cocalc/util/agent-mentions");
+  const target = {
+    project_id: projectId,
+    agent_id: "44444444-4444-4444-8444-444444444444",
+  };
+  const mention = serializeAgentMention({
+    version: 1,
+    naming_account_id: accountId,
+    target,
+    name: "reviewer",
+  });
+  const original = hubApi.agent.getMentionIdentity;
+  const getMentionIdentity = jest.fn(async () => ({
+    ...target,
+    disabled_at: new Date(),
+  }));
+  hubApi.agent.getMentionIdentity = getMentionIdentity;
+  try {
+    // Disabled since it was named: refused, nothing saved.
+    const refused = await respond("response-1", `Ask ${mention} first`);
+    expect(refused).toMatchObject({
+      ok: false,
+      error:
+        "Agent reference @reviewer is unavailable. Your answer was not sent.",
+    });
+    expect(getMentionIdentity).toHaveBeenCalledWith({
+      account_id: accountId,
+      project_id: projectId,
+      target,
+    });
+    expect(
+      getAcpAttention(record.attention_id)?.response_id ?? null,
+    ).toBeNull();
+    // Available: saved as written.
+    getMentionIdentity.mockResolvedValue({
+      ...target,
+      disabled_at: null,
+    } as any);
+    const sent = await respond("response-2", `Ask ${mention} first`);
+    expect(sent.ok).toBe(true);
+    // Its reply lost, the same response is retried after the agent was
+    // disabled (or the lookup fails): it was accepted, so it still is.
+    getMentionIdentity.mockRejectedValue(new Error("lookup failed"));
+    getMentionIdentity.mockClear();
+    const retried = await respond("response-2", `Ask ${mention} first`);
+    expect(retried.ok).toBe(true);
+    expect(getMentionIdentity).not.toHaveBeenCalled();
+    // An option the agent wrote is not the person's own reference: choosing
+    // it is never refused over its @agent.
+    const choice = upsertAcpAttention({
+      project_id: projectId,
+      account_id: accountId,
+      path: "agent.chat",
+      thread_id: "thread-1",
+      turn_id: "turn-1",
+      source_kind: "codex_sync_question",
+      source_id: "thread-1:turn-1:request-choice",
+      attention_kind: "question",
+      is_blocking: true,
+      title: "Who reviews?",
+      questions: [
+        {
+          id: "who",
+          header: "Who",
+          question: "Who reviews?",
+          isOther: true,
+          options: [{ label: `Ask ${mention}`, description: "" }],
+        },
+      ],
+      chat: {
+        project_id: projectId,
+        path: "agent.chat",
+        thread_id: "thread-1",
+        message_id: "assistant-1",
+        message_date: ownerDate,
+        sender_id: "gpt-6-astra",
+      },
+    });
+    const answer = (response_id: string, text: string) =>
+      acpTestInternals.handleAcpAttentionRequest({
+        action: "respond",
+        project_id: projectId,
+        account_id: accountId,
+        attention_id: choice.attention_id,
+        response_id,
+        answers: { who: [text] },
+      });
+    // ...but the same reference typed as a custom answer is checked.
+    expect(await answer("choice-1", `Ask ${mention} now`)).toMatchObject({
+      ok: false,
+    });
+    expect(getMentionIdentity).toHaveBeenCalledTimes(1);
+    expect((await answer("choice-2", `Ask ${mention}`)).ok).toBe(true);
+    expect(getMentionIdentity).toHaveBeenCalledTimes(1);
+  } finally {
+    hubApi.agent.getMentionIdentity = original;
+  }
+});
+
 it("lists the saved answer to its author only, never in shared activity", async () => {
   await respond();
   const list = async (account_id: string) =>

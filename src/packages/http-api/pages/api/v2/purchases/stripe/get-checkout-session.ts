@@ -43,5 +43,8 @@ async function get(req) {
     lineItems,
     metadata,
     checkout_instance_id,
+    // Cloudflare's country for this request, so a customer without a billing
+    // address in or near the EU or UK must enter one before checkout.
+    request_country: req.headers["cf-ipcountry"],
   });
 }

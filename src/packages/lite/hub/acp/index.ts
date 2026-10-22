@@ -277,8 +277,9 @@ import { agentUserTimeContext } from "./user-locale";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
+  resolveHumanAgentMentions,
   resolveHumanTurnMentions,
-  resolveHumanTurnArtifactMentions,
+  humanTurnArtifacts,
 } from "./turn-mentions";
 import { augmentPromptWithAgentMentions } from "@cocalc/util/agent-mentions";
 import {
@@ -8278,10 +8279,10 @@ async function executeAcpRequest({
   const mentionReferences = harness
     ? []
     : await resolveHumanTurnMentions(request, hubApi.agent);
-  const artifactReferences = await resolveHumanTurnArtifactMentions(
-    request,
-    hubApi.artifactCatalog,
-  );
+  // A project-host's agent worker has no artifact catalog: its chips are
+  // named to the agent instead of bound (never a failed turn).
+  const { references: artifactReferences, note: artifactNote } =
+    await humanTurnArtifacts(request, hubApi.artifactCatalog);
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -8497,7 +8498,9 @@ async function executeAcpRequest({
             artifactReferences.length
               ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
               : augmentPromptWithAgentMentions(prompt, mentionReferences),
-            humanTurnComputerNote(request),
+            [humanTurnComputerNote(request), artifactNote]
+              .filter(Boolean)
+              .join("\n\n"),
           ),
           local_images: harness ? undefined : local_images,
           image_attachments: harness ? image_attachments : undefined,
@@ -12943,6 +12946,33 @@ async function handleAcpAttentionRequest(
       const answers = Object.fromEntries(
         Object.entries(normalized).map(([id, value]) => [id, value.answers]),
       );
+      // @agents in what the person wrote (not the agent's own option labels)
+      // are checked as in their own message: each must name an available
+      // agent, checked under this account. A retry of a stored response is
+      // not checked again: it was accepted, and nothing new is stored.
+      const custom = current.questions.flatMap((question) => {
+        const labels = new Set(
+          (question.options ?? []).map(({ label }) => label),
+        );
+        return (answers[question.id] ?? []).filter(
+          (answer) => !labels.has(answer),
+        );
+      });
+      if (!request.decline && !current.response_id && custom.length > 0) {
+        try {
+          await resolveHumanAgentMentions(
+            custom.join("\n"),
+            { account_id: request.account_id, project_id: request.project_id },
+            hubApi.agent,
+          );
+        } catch (err) {
+          return {
+            ok: false,
+            state: current.state,
+            error: `${(err as Error)?.message ?? err}. Your answer was not sent.`,
+          };
+        }
+      }
       const submitted = submitAcpAttentionResponse({
         codex_credential_id: request.codex_credential_id,
         attention_id: request.attention_id,
