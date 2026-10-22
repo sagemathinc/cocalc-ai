@@ -93,6 +93,39 @@ test("friendly discovery omits internal identifiers", () => {
   assert.doesNotMatch(JSON.stringify(value), /agent_network_id|project_id/);
 });
 
+test("friendly discovery names an external agent by what agent send takes", () => {
+  const member = (label: string, member_id = randomUUID()) => ({
+    member: {
+      kind: "external" as const,
+      member_id,
+      source: {
+        kind: "external" as const,
+        account_id: randomUUID(),
+        agent_id: member_id,
+        installation_id: randomUUID(),
+      },
+      label,
+      available: true,
+      added_at: new Date().toISOString(),
+    },
+    networks: [],
+  });
+  const unnamed = randomUUID();
+  const value = friendlyAgentDestinations({
+    peers: [
+      member("ops0 on alpha.cocalc.ai (ops project)"),
+      member("(unnamed)", unnamed),
+    ],
+  });
+  assert.deepEqual(
+    value.peers.map(({ name, label }: any) => ({ name, label })),
+    [
+      { name: "ops0", label: "ops0 on alpha.cocalc.ai (ops project)" },
+      { name: unnamed, label: "(unnamed)" },
+    ],
+  );
+});
+
 test("friendly discovery says what a peer is doing", () => {
   const peer = (name: string, status?: any) => ({
     member: {
