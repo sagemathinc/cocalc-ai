@@ -407,9 +407,22 @@ export async function projectQuotaWithHistory<
   const group = await readProjectQuotaGroup({ project_id, path: home });
   if (!group?.member || group.limit == null) return quota;
   let history_used = 0;
+  // the files and history together: the group's, plus the history volume's
+  // own if it isn't in the group (e.g., its join failed, until the audit
+  // repairs it), so it is never left out
+  let total = group.total;
   if (history != null && (await exists(history))) {
-    const own = await readProjectQuotaGroup({ project_id, path: history });
-    if (own?.member) history_used = own.own;
+    const found = await lookupQgroup({
+      mount: dirname(history),
+      getSubvolumeId: async () => await subvolumeIdOf(history),
+    });
+    if (found != null) {
+      history_used = found.row.referenced;
+      const member = found.parents.some(
+        (r) => r.qgroupid === projectQuotaGroup(project_id),
+      );
+      if (!member) total += history_used;
+    }
   }
   // R: what the group's limit leaves beyond the quota, but never more than
   // the configured reserve (the group's limit may not have followed a lower
@@ -422,10 +435,10 @@ export async function projectQuotaWithHistory<
     ...quota,
     used: effectiveQuotaUsage({
       files: quota.used,
-      total: group.total,
+      total,
       reserve,
     }),
-    files_used: Math.max(0, group.total - history_used),
+    files_used: Math.max(0, total - history_used),
     history_used,
     history_reserve: reserve,
   };
