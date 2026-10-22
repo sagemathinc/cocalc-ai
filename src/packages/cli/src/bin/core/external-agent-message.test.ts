@@ -141,4 +141,10 @@ test("an external agent sends to every name destinations shows it", () => {
     () => resolveExternalAgentNameIn(directory, "ops0", other.title),
     /No approved destination/,
   );
+  // A label that itself starts with "@" is matched as typed.
+  directory.peers[1].member.label = "@ops0 on alpha";
+  assert.deepEqual(
+    resolveExternalAgentNameIn(directory, "@ops0 on alpha", "cocalc").target,
+    external,
+  );
 });

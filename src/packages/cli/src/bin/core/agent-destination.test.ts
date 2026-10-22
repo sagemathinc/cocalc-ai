@@ -252,6 +252,24 @@ test("two external agents with one handle are ambiguous, not a guess", () => {
   );
 });
 
+test("a full label that starts with @ is matched as typed", () => {
+  const label = "@ops0 on alpha";
+  const { value, external } = withExternal(label);
+  // send (and --external-agent send, which resolves the same way)
+  assert.equal(resolveAgentName(label, value).target, external);
+  assert.equal(resolveAgentName("ops0", value).target, external);
+  // broadcast
+  assert.deepEqual(resolveBroadcastTargets([label], value).targets, [external]);
+  assert.deepEqual(resolveBroadcastTargets(["@ops0"], value).targets, [
+    external,
+  ]);
+  // A registered name with a leading @ still works.
+  assert.equal(resolveAgentName("@reviewer", value).target, target);
+  assert.deepEqual(resolveBroadcastTargets(["@reviewer"], value).targets, [
+    target,
+  ]);
+});
+
 test("a requested network tells apart same-handle agents in different networks", () => {
   const { value, external: alpha } = withExternal(
     "ops0 on alpha.cocalc.ai (ops project)",

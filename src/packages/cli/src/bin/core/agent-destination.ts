@@ -76,16 +76,21 @@ export function resolveAgentName(
   references: AgentNameBinding[] = [],
   requestedNetwork?: string,
 ): ResolvedAgentDestination {
-  const name = input.trim().replace(/^@/, "");
+  // An external label is free text and may itself start with "@": it is
+  // compared as typed; "@" is only dropped for names, handles and ids.
+  const raw = input.trim();
+  const name = raw.replace(/^@/, "");
+  const isLabel = (label: string) => {
+    const value = label.trim().toLowerCase();
+    return value === raw.toLowerCase() || value === name.toLowerCase();
+  };
   // A peer's member id, or an external agent's full label (what discovery
   // shows for it), name it too.
   const byId: boolean = isUuid(name as unknown);
   const byLabel =
     !byId &&
     directory.peers.some(
-      ({ member }) =>
-        member.kind === "external" &&
-        member.label.trim().toLowerCase() === name.toLowerCase(),
+      ({ member }) => member.kind === "external" && isLabel(member.label),
     );
   if (!byId && !byLabel && !/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name))
     throw new Error("Use an exact lowercase agent name, such as reviewer");
@@ -102,7 +107,7 @@ export function resolveAgentName(
         (byId &&
           (member.member_id === name || member.endpoint.agent_id === name))
       : externalAgentHandle(member.label) === name ||
-        member.label.trim().toLowerCase() === name.toLowerCase() ||
+        isLabel(member.label) ||
         (byId && member.member_id === name),
   );
   const pinned = selected.map((ref) => ref.target);
@@ -216,8 +221,10 @@ export function parseBroadcastTarget(
 ): { name: string } | { member_id: string } | { target: AgentRpcTarget } {
   const where = `--targets[${index}]`;
   if (typeof entry === "string") {
-    const name = entry.trim().replace(/^@/, "");
-    return isUuid(name) ? { member_id: name } : { name };
+    // Kept as typed: a full external label may start with "@".
+    const name = entry.trim();
+    const bare = name.replace(/^@/, "");
+    return isUuid(bare) ? { member_id: bare } : { name };
   }
   if (!entry || typeof entry !== "object" || Array.isArray(entry))
     throw new Error(
@@ -286,8 +293,10 @@ export function resolveBroadcastTargets(
           ? peer.member.member_id === p.member_id ||
             (peer.member.kind === "registered" &&
               peer.member.endpoint.agent_id === p.member_id)
-          : peerName(peer).trim().toLowerCase() === p.name.toLowerCase() ||
-            peerHandle(peer) === p.name.replace(/^@/, "").toLowerCase(),
+          : [p.name, p.name.replace(/^@/, "")].some(
+              (name) =>
+                peerName(peer).trim().toLowerCase() === name.toLowerCase(),
+            ) || peerHandle(peer) === p.name.replace(/^@/, "").toLowerCase(),
     );
     const matches = inRequestedNetwork(named, requestedNetwork);
     if (matches.length === 0)
