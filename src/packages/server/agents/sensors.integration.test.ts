@@ -944,6 +944,39 @@ describeDb("agent sensors", () => {
     expect(shown.runs[0].output).toContain("connection refused");
   });
 
+  test("a quarterly prompt is scheduled for its next day, months ahead if need be", async () => {
+    const created = (await sensorControlLocal(owner, project_id, {
+      op: "create-prompt",
+      agent_id,
+      spec: {
+        kind: "prompt",
+        title: "L&I quarterly report",
+        prompt: "File the WA L&I quarterly report.",
+        schedule: {
+          kind: "monthly",
+          dates: [31],
+          months: [1, 4, 7, 10],
+          times: ["08:30"],
+          timezone: "America/Los_Angeles",
+        },
+      },
+    })) as any;
+    expect(created.sensor.status).toBe("active");
+    const next = new Date(created.sensor.next_run_at);
+    // The last day of the next quarter-end month, 08:30 in Seattle.
+    expect([1, 4, 7, 10]).toContain(next.getUTCMonth() + 1);
+    expect(next.getTime()).toBeGreaterThan(Date.now());
+    expect(next.getTime()).toBeLessThan(Date.now() + 100 * 86_400_000);
+    expect(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Los_Angeles",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(next),
+    ).toBe("08:30");
+  });
+
   test("a person's scheduled prompt is a normal turn on a schedule", async () => {
     const created = (await sensorControlLocal(owner, project_id, {
       op: "create-prompt",

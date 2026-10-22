@@ -51,6 +51,10 @@ Script spec (JSON): {"title", "purpose", "language": "sh"|"python"|"node",
   "script", "uses": ["cocalc"|"github"|"cloudflare", ...] (default none),
   "schedule": {"kind": "interval", "minutes": 30}
            or {"kind": "daily", "times": ["07:00"], "timezone": "Europe/Berlin"},
+           or {"kind": "monthly", "dates": [3], "times": ["08:30"],
+               "timezone": "America/Los_Angeles"} (days of the month 1-31; a
+               day past a month's end runs on its last day; quarterly: add
+               "months": [1, 4, 7, 10]),
   optional "days" [0-6, 0=Sunday], interval "window" {"start","end"},
   "timeout_seconds" (default 60, max 300), "max_wakes_per_day" (default 24)}
 Prompt spec: {"kind": "prompt", "title", "prompt", "schedule", "max_wakes_per_day"}`;

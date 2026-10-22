@@ -151,3 +151,113 @@ describe("describeSensorSchedule", () => {
     ).toBe("Daily at 07:00 on Mon, Tue, Wed, Thu, Fri (Europe/Berlin)");
   });
 });
+
+describe("monthly and quarterly schedules", () => {
+  const monthly = (fields: Record<string, unknown>) =>
+    validateSensorSchedule(
+      {
+        kind: "monthly",
+        times: ["08:30"],
+        timezone: "America/Los_Angeles",
+        ...fields,
+      },
+      min15,
+    );
+
+  it("validates days of the month and months", () => {
+    expect(monthly({ dates: [3] })).toEqual({
+      kind: "monthly",
+      dates: [3],
+      times: ["08:30"],
+      timezone: "America/Los_Angeles",
+    });
+    expect(monthly({ dates: [31, 3, 3], months: [10, 1, 7, 4] })).toMatchObject(
+      {
+        dates: [3, 31],
+        months: [1, 4, 7, 10],
+      },
+    );
+    // Every month listed is the same as none.
+    expect(
+      monthly({ dates: [1], months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }),
+    ).not.toHaveProperty("months");
+    for (const bad of [
+      { dates: [] },
+      { dates: [0] },
+      { dates: [32] },
+      { dates: [1], months: [13] },
+      { dates: [1], days: [1] },
+    ])
+      expect(() => monthly(bad)).toThrow();
+  });
+
+  it("describes them plainly", () => {
+    expect(describeSensorSchedule(monthly({ dates: [3] }))).toBe(
+      "Monthly on the 3rd at 08:30 (America/Los_Angeles)",
+    );
+    expect(
+      describeSensorSchedule(monthly({ dates: [1], months: [1, 4, 7, 10] })),
+    ).toBe("Quarterly on the 1st at 08:30 (America/Los_Angeles)");
+    expect(describeSensorSchedule(monthly({ dates: [31], months: [7] }))).toBe(
+      "In Jul on the 31st at 08:30 (America/Los_Angeles)",
+    );
+  });
+
+  it("runs on the next such day, in the time zone", () => {
+    const schedule = monthly({ dates: [3] });
+    // Oct 21 2026, noon in Seattle: next is Nov 3, 08:30 PST (16:30 UTC).
+    const now = Date.parse("2026-10-21T19:00:00Z");
+    expect(new Date(nextSensorRunAt(schedule, now)!).toISOString()).toBe(
+      "2026-11-03T16:30:00.000Z",
+    );
+    // Same day, before the time: today (PDT, 15:30 UTC).
+    expect(
+      new Date(
+        nextSensorRunAt(schedule, Date.parse("2026-10-03T10:00:00Z"))!,
+      ).toISOString(),
+    ).toBe("2026-10-03T15:30:00.000Z");
+  });
+
+  it("a day past the month's end runs on its last day", () => {
+    const schedule = monthly({ dates: [31] });
+    expect(
+      new Date(
+        nextSensorRunAt(schedule, Date.parse("2027-02-01T00:00:00Z"))!,
+      ).toISOString(),
+    ).toBe("2027-02-28T16:30:00.000Z");
+  });
+
+  it("quarterly reaches months ahead (the end-of-quarter reports)", () => {
+    const schedule = monthly({ dates: [31], months: [1, 4, 7, 10] });
+    // After Oct 31 2026: next is Jan 31 2027.
+    expect(
+      new Date(
+        nextSensorRunAt(schedule, Date.parse("2026-11-01T00:00:00Z"))!,
+      ).toISOString(),
+    ).toBe("2027-01-31T16:30:00.000Z");
+    // A yearly date, 11 months away, is still found.
+    const yearly = monthly({ dates: [31], months: [7] });
+    expect(
+      new Date(
+        nextSensorRunAt(yearly, Date.parse("2026-08-15T00:00:00Z"))!,
+      ).toISOString(),
+    ).toBe("2027-07-31T15:30:00.000Z");
+  });
+
+  it("a time skipped by the spring-forward gap runs just after it, never early or a month late", () => {
+    // Mar 14 2027: Seattle's clocks go from 02:00 PST to 03:00 PDT.
+    const schedule = monthly({ dates: [14], times: ["02:30"] });
+    // Set before that day: it runs at 03:30 PDT (10:30 UTC), not 01:30.
+    expect(
+      new Date(
+        nextSensorRunAt(schedule, Date.parse("2027-03-01T00:00:00Z"))!,
+      ).toISOString(),
+    ).toBe("2027-03-14T10:30:00.000Z");
+    // Recomputed that morning after 01:30 PST (09:30 UTC): still that day.
+    expect(
+      new Date(
+        nextSensorRunAt(schedule, Date.parse("2027-03-14T09:45:00Z"))!,
+      ).toISOString(),
+    ).toBe("2027-03-14T10:30:00.000Z");
+  });
+});
