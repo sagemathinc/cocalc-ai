@@ -2197,6 +2197,7 @@ describe("reading a whole thread in the log", () => {
       u: ["p1"],
       a: { p2: "p2" },
     }));
+    actions.isProjectReadStateReady = jest.fn(() => true);
     actions.updateReaderState = jest.fn();
     actions.clearReaderReadExceptions("thread-1");
     const change = actions.updateReaderState.mock.calls[0][1];
@@ -2204,10 +2205,16 @@ describe("reading a whole thread in the log", () => {
       state: { a: { p2: "p2" } },
     });
     // Nothing to clear: nothing is written.
+    actions.isProjectReadStateReady = jest.fn(() => true);
     actions.updateReaderState.mockClear();
     actions.getReaderState = jest.fn(() => ({ a: { p2: "p2" } }));
     actions.clearReaderReadExceptions("thread-1");
     expect(actions.updateReaderState).not.toHaveBeenCalled();
+    // Not loaded yet: the saved exceptions are unknown, so the clear waits.
+    actions.isProjectReadStateReady = jest.fn(() => false);
+    actions.getReaderState = jest.fn(() => ({}));
+    actions.clearReaderReadExceptions("thread-1");
+    expect(actions.updateReaderState).toHaveBeenCalledTimes(1);
   });
 });
 
