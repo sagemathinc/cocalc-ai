@@ -28,6 +28,8 @@ const clean: BillingExposureHealth = {
   idle_hosts: [],
 };
 
+const BAY = "bay-test";
+const OTHER_BAY = "bay-other";
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 
@@ -128,6 +130,8 @@ describe("getBillingExposureHealth", () => {
   const restartedHost = uuid();
   const pooledHost = uuid();
   const siteHost = uuid();
+  const rehomedStuckHost = uuid();
+  const rehomedIdleHost = uuid();
   let now: number;
 
   async function purchase(
@@ -160,12 +164,25 @@ describe("getBillingExposureHealth", () => {
       status = "running",
       tier = null,
       metadata = {},
-    }: { status?: string; tier?: number | null; metadata?: any },
+      bay_id = BAY,
+    }: {
+      status?: string;
+      tier?: number | null;
+      metadata?: any;
+      bay_id?: string;
+    },
   ) {
     await getPool().query(
-      `INSERT INTO project_hosts (id,name,status,tier,metadata,created,updated)
-       VALUES ($1,$2,$3,$4,$5::jsonb,NOW(),NOW())`,
-      [id, name, status, tier, JSON.stringify({ owner: prepaid, ...metadata })],
+      `INSERT INTO project_hosts (id,name,status,tier,metadata,bay_id,created,updated)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,NOW(),NOW())`,
+      [
+        id,
+        name,
+        status,
+        tier,
+        JSON.stringify({ owner: prepaid, ...metadata }),
+        bay_id,
+      ],
     );
   }
 
@@ -333,10 +350,18 @@ describe("getBillingExposureHealth", () => {
       metadata: { billing: { funding_mode: "site-funded" } },
     });
     await samples(siteHost, [[3 * DAY - HOUR, 0]]);
+    // Rows left behind by hosts rehomed to another bay are not this bay's.
+    await host(rehomedStuckHost, "rehomed-stuck", {
+      status: "off",
+      metadata: enforcement(past, "failed"),
+      bay_id: OTHER_BAY,
+    });
+    await host(rehomedIdleHost, "rehomed-idle", { bay_id: OTHER_BAY });
+    await samples(rehomedIdleHost, [[3 * DAY - HOUR, 0]]);
   }, 60_000);
 
   it("reports live balances, open metered usage and stuck or idle hosts", async () => {
-    const health = await getBillingExposureHealth();
+    const health = await getBillingExposureHealth({ bay_id: BAY });
     expect(health.negative.count).toBe(6);
     expect(health.negative.total_usd).toBe(260);
     // The five most negative, worst first.
@@ -413,7 +438,7 @@ describe("getBillingExposureHealth", () => {
       [stuckHost],
     );
     await samples(idleHost, [[HOUR / 2, 1]]);
-    const health = await getBillingExposureHealth();
+    const health = await getBillingExposureHealth({ bay_id: BAY });
     expect(health.negative.count).toBe(0);
     expect(health.open_metered.count).toBe(0);
     expect(health.stuck_hosts).toEqual([]);

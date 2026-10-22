@@ -306,6 +306,7 @@ async function getBalanceExposure(
 
 async function getStuckHosts(
   db: Queryable,
+  bay_id: string,
   now: number,
 ): Promise<BillingExposureStuckHost[]> {
   // deprovision_after is free-form JSON text, so compare it here instead of
@@ -316,8 +317,10 @@ async function getStuckHosts(
             metadata#>>'{billing,enforcement,final_backup_status}' AS final_backup_status
        FROM project_hosts
       WHERE deleted IS NULL
+        AND bay_id = $1
         AND metadata#>>'{billing,enforcement,state}' = 'stopped_billing_blocked'
         AND COALESCE(metadata#>>'{billing,enforcement,final_backup_status}', '') <> 'succeeded'`,
+    [bay_id],
   );
   return rows
     .filter((row) => {
@@ -335,7 +338,10 @@ async function getStuckHosts(
     .slice(0, HOSTS_LIMIT);
 }
 
-async function getIdleHosts(db: Queryable): Promise<BillingExposureIdleHost[]> {
+async function getIdleHosts(
+  db: Queryable,
+  bay_id: string,
+): Promise<BillingExposureIdleHost[]> {
   const { rows } = await db.query(
     `SELECT h.id, h.name, h.metadata->>'owner' AS owner, s.last_busy_at
        FROM project_hosts h
@@ -350,6 +356,7 @@ async function getIdleHosts(db: Queryable): Promise<BillingExposureIdleHost[]> {
           WHERE host_id = h.id
        ) s ON TRUE
       WHERE h.deleted IS NULL
+        AND h.bay_id = $4
         AND h.status = 'running'
         AND h.tier IS NULL
         AND h.metadata->>'owner' IS NOT NULL
@@ -359,7 +366,12 @@ async function getIdleHosts(db: Queryable): Promise<BillingExposureIdleHost[]> {
              OR s.last_busy_at < NOW() - make_interval(days => $1::int))
       ORDER BY s.last_busy_at NULLS FIRST, h.id
       LIMIT $3`,
-    [IDLE_HOST_DAYS, IDLE_HOST_WINDOW_START_TOLERANCE_HOURS, HOSTS_LIMIT],
+    [
+      IDLE_HOST_DAYS,
+      IDLE_HOST_WINDOW_START_TOLERANCE_HOURS,
+      HOSTS_LIMIT,
+      bay_id,
+    ],
   );
   return rows.map((row) => ({
     host_id: `${row.id}`,
@@ -369,7 +381,13 @@ async function getIdleHosts(db: Queryable): Promise<BillingExposureIdleHost[]> {
   }));
 }
 
-export async function getBillingExposureHealth(): Promise<BillingExposureHealth> {
+// Host checks cover only hosts this bay is responsible for: a rehomed host's
+// row stays behind in the source bay's database.
+export async function getBillingExposureHealth({
+  bay_id,
+}: {
+  bay_id: string;
+}): Promise<BillingExposureHealth> {
   // The metrics table is created on first use; make sure it exists before the
   // read-only transaction queries it.
   await ensureProjectHostMetricsSamplesSchema();
@@ -380,8 +398,8 @@ export async function getBillingExposureHealth(): Promise<BillingExposureHealth>
       `SET LOCAL statement_timeout = '${BILLING_EXPOSURE_STATEMENT_TIMEOUT_MS}ms'`,
     );
     const balances = await getBalanceExposure(client);
-    const stuck_hosts = await getStuckHosts(client, Date.now());
-    const idle_hosts = await getIdleHosts(client);
+    const stuck_hosts = await getStuckHosts(client, bay_id, Date.now());
+    const idle_hosts = await getIdleHosts(client, bay_id);
     await client.query("COMMIT");
     return { ...balances, stuck_hosts, idle_hosts };
   } catch (err) {

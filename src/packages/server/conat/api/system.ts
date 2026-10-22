@@ -2282,7 +2282,7 @@ export async function getLaunchHealth({
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
     getHostIntrusionObservationSummary(),
     getBackupPurgeHealth(),
-    getBillingExposureHealth(),
+    getBillingExposureHealth({ bay_id: currentBay.bay_id }),
   ]);
 
   const settings =
