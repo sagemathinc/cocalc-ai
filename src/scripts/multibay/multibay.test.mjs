@@ -1781,13 +1781,15 @@ describe("host reads across bays", () => {
       replace: true,
     });
     assert.ok(
-      set.some((d) => d.host_id === host_id && d.desired_version === "ph-routed"),
+      set.some(
+        (d) => d.host_id === host_id && d.desired_version === "ph-routed",
+      ),
     );
     assert.equal(await forwarded(), before + 1);
-    const listed = await alice.client.call(
-      "hosts.listHostRuntimeDeployments",
-      { scope_type: "host", id: host_id },
-    );
+    const listed = await alice.client.call("hosts.listHostRuntimeDeployments", {
+      scope_type: "host",
+      id: host_id,
+    });
     assert.ok(
       listed.some(
         (d) => d.target === "project-host" && d.desired_version === "ph-routed",
@@ -3612,7 +3614,12 @@ describe("outgoing support tickets across bays", () => {
     // The same commit, forwarded from the attached bay twice and run on the
     // seed directly, uses one seed ledger entry.
     const key = "multibay-support-create-" + Date.now();
-    const commit = { ...request, requester_account_id: bob.account_id, payload_hash: plan.payload_hash, idempotency_key: key };
+    const commit = {
+      ...request,
+      requester_account_id: bob.account_id,
+      payload_hash: plan.payload_hash,
+      idempotency_key: key,
+    };
     const errors = await runInBay(
       cluster,
       ATTACHED,
@@ -3659,5 +3666,96 @@ describe("outgoing support tickets across bays", () => {
        return r.rows[0].n;`,
     );
     assert.equal(attachedLedger, 0);
+  });
+});
+
+describe("billing exposure in admin health across bays", () => {
+  // With central billing, purchases are authoritative only on the seed, and
+  // each bay reports only the hosts it is responsible for (a rehomed host's
+  // row stays behind in the source bay's database).
+  const health = (bayId) =>
+    runInBay(
+      cluster,
+      bayId,
+      `process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+       const { getConfiguredBayId } = server("bay-config.js");
+       const { getBillingExposureHealth } = server(
+         "purchases/billing-exposure-health.js");
+       return await getBillingExposureHealth({ bay_id: getConfiguredBayId() });`,
+      // Its own process: it switches on billing-authority mode.
+      { fresh: true },
+    );
+
+  async function insertStuckHost(bayId, { id, host_bay_id }) {
+    await runInBay(
+      cluster,
+      bayId,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`INSERT INTO project_hosts (id,name,status,metadata,bay_id,created,updated)
+          VALUES ($1,$2,'off',$3::jsonb,$4,NOW(),NOW())\`,
+         [${JSON.stringify(id)}, "stuck-" + ${JSON.stringify(id)}.slice(0, 8),
+          JSON.stringify({
+            owner: ${JSON.stringify(randomUUID())},
+            billing: {
+              funding_mode: "account-prepaid",
+              enforcement: {
+                state: "stopped_billing_blocked",
+                deprovision_after: new Date(Date.now() - 86400000).toISOString(),
+                final_backup_status: "failed",
+              },
+            },
+          }),
+          ${JSON.stringify(host_bay_id)}]);`,
+    );
+  }
+
+  it("reports balances only on the seed and hosts only on their own bay", async () => {
+    const customer = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "rhea",
+    });
+    // The authoritative debt on the seed, and a stale non-authoritative row
+    // in the attached bay's database that must not be reported there.
+    for (const [bayId, cost] of [
+      [SEED, 5000],
+      [ATTACHED, 7000],
+    ]) {
+      await runInBay(
+        cluster,
+        bayId,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(
+           \`INSERT INTO purchases (time,account_id,cost,service,description)
+            VALUES (NOW(),$1,$2,'dedicated-host','{}'::jsonb)\`,
+           [${JSON.stringify(customer.account_id)}, ${cost}]);`,
+      );
+    }
+    const attachedHost = randomUUID();
+    const residueOnSeed = randomUUID();
+    await insertStuckHost(ATTACHED, {
+      id: attachedHost,
+      host_bay_id: ATTACHED,
+    });
+    // A host row left behind on the seed after a rehome to the attached bay.
+    await insertStuckHost(SEED, { id: residueOnSeed, host_bay_id: ATTACHED });
+
+    const seed = await health(SEED);
+    assert.equal(seed.balances_checked_on_bay, undefined);
+    assert.deepEqual(seed.negative.worst[0], {
+      account_id: customer.account_id,
+      balance: -5000,
+    });
+    assert.ok(
+      !seed.stuck_hosts.some(({ host_id }) => host_id === residueOnSeed),
+    );
+
+    const attached = await health(ATTACHED);
+    assert.equal(attached.balances_checked_on_bay, SEED);
+    assert.equal(attached.negative.count, 0);
+    assert.equal(attached.open_metered.count, 0);
+    assert.ok(
+      attached.stuck_hosts.some(({ host_id }) => host_id === attachedHost),
+    );
   });
 });

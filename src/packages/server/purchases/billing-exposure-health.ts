@@ -31,7 +31,8 @@ export const NEGATIVE_BALANCE_THRESHOLD_USD = 20;
 export const EXPOSURE_CRITICAL_USD = 200;
 export const IDLE_HOST_DAYS = 3;
 // A host counts as idle only if it reported metrics near the start of the idle
-// window, so a host restarted after a long stop is not reported.
+// window (so a host restarted after a long stop is not reported) and within
+// this many hours of now (so a host whose telemetry stopped is not reported).
 export const IDLE_HOST_WINDOW_START_TOLERANCE_HOURS = 6;
 export const WORST_ACCOUNTS_LIMIT = 5;
 export const HOSTS_LIMIT = 20;
@@ -368,7 +369,9 @@ async function getIdleHosts(
                 BOOL_OR(collected_at <= NOW() - make_interval(days => $1::int)
                           + make_interval(hours => $2::int)
                         AND collected_at >= NOW() - make_interval(days => $1::int))
-                  AS reported_at_window_start
+                  AS reported_at_window_start,
+                BOOL_OR(collected_at >= NOW() - make_interval(hours => $2::int))
+                  AS reported_recently
            FROM project_host_metrics_samples
           WHERE host_id = h.id
        ) s ON TRUE
@@ -379,6 +382,7 @@ async function getIdleHosts(
         AND h.metadata->>'owner' IS NOT NULL
         AND COALESCE(h.metadata#>>'{billing,funding_mode}', '') <> 'site-funded'
         AND s.reported_at_window_start
+        AND s.reported_recently
         AND (s.last_busy_at IS NULL
              OR s.last_busy_at < NOW() - make_interval(days => $1::int))
       ORDER BY s.last_busy_at NULLS FIRST, h.id

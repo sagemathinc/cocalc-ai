@@ -180,6 +180,7 @@ describe("getBillingExposureHealth", () => {
   const idleHost = uuid();
   const busyHost = uuid();
   const restartedHost = uuid();
+  const staleHost = uuid();
   const pooledHost = uuid();
   const siteHost = uuid();
   const rehomedStuckHost = uuid();
@@ -397,11 +398,23 @@ describe("getBillingExposureHealth", () => {
       [HOUR, 0],
     ]);
     await host(pooledHost, "pool", { tier: 1 });
-    await samples(pooledHost, [[3 * DAY - HOUR, 0]]);
+    // Reported at the window start, then went silent: not known to be idle.
+    await host(staleHost, "silent", {});
+    await samples(staleHost, [
+      [3 * DAY - HOUR, 0],
+      [2 * DAY, 0],
+    ]);
+    await samples(pooledHost, [
+      [3 * DAY - HOUR, 0],
+      [HOUR, 0],
+    ]);
     await host(siteHost, "site", {
       metadata: { billing: { funding_mode: "site-funded" } },
     });
-    await samples(siteHost, [[3 * DAY - HOUR, 0]]);
+    await samples(siteHost, [
+      [3 * DAY - HOUR, 0],
+      [HOUR, 0],
+    ]);
     // Rows left behind by hosts rehomed to another bay are not this bay's.
     await host(rehomedStuckHost, "rehomed-stuck", {
       status: "off",
@@ -409,7 +422,10 @@ describe("getBillingExposureHealth", () => {
       bay_id: OTHER_BAY,
     });
     await host(rehomedIdleHost, "rehomed-idle", { bay_id: OTHER_BAY });
-    await samples(rehomedIdleHost, [[3 * DAY - HOUR, 0]]);
+    await samples(rehomedIdleHost, [
+      [3 * DAY - HOUR, 0],
+      [HOUR, 0],
+    ]);
   }, 60_000);
 
   it("reports live balances, open metered usage and stuck or idle hosts", async () => {
