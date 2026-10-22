@@ -218,7 +218,7 @@ test("unread archived items still count while hidden", async () => {
 test("narrow: back to the list keeps the keys working", async () => {
   setup(thread, 0, { narrow: true });
   const keys = user();
-  await keys.click(screen.getByText(/second question/));
+  // A phone starts on a message.
   expect(screen.queryByRole("listbox")).toBeNull();
   await keys.click(screen.getByRole("button", { name: "All messages" }));
   expect(document.activeElement).toBe(screen.getByRole("listbox"));
@@ -251,7 +251,6 @@ test("narrow: keys keep working as items open, though the list goes", async () =
   setup(thread, 4, { narrow: true });
   const keys = user();
   // Back on the list, which has the focus.
-  await keys.click(screen.getByText(/first question/));
   await keys.click(screen.getByRole("button", { name: "All messages" }));
   expect(document.activeElement).toBe(screen.getByRole("listbox"));
   // Opening an item replaces the list.
@@ -261,6 +260,29 @@ test("narrow: keys keep working as items open, though the list goes", async () =
   expect(document.activeElement).toBe(screen.getByLabelText("Reader"));
   await keys.keyboard("j");
   expect(screen.getByRole("article")).toHaveTextContent("second question");
+});
+
+test("phone: starts on the first unread message, with one bar to move and act", async () => {
+  // p1 (with its answer) is read; p2 and p3 are not.
+  const { state } = setup(thread, 2, { narrow: true });
+  const keys = user();
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+  const bar = screen.getByRole("toolbar", { name: "Message navigation" });
+  expect(bar).toHaveTextContent("1 of 3");
+  // The list's header (Mark all read, Show archived) waits for the list.
+  expect(screen.queryByRole("button", { name: "Mark all read" })).toBeNull();
+  expect(within(bar).getByRole("button", { name: "Newer" })).toBeDisabled();
+  await keys.click(within(bar).getByRole("button", { name: "Older" }));
+  expect(screen.getByRole("article")).toHaveTextContent("second question");
+  expect(bar).toHaveTextContent("2 of 3");
+  await keys.click(within(bar).getByRole("button", { name: "Mark unread" }));
+  expect(state().u).toEqual(["p2"]);
+  await keys.click(within(bar).getByRole("button", { name: "Archive" }));
+  expect(state().a).toEqual({ p2: "p2" });
+  await keys.click(screen.getByRole("button", { name: "All messages" }));
+  expect(
+    screen.getByRole("button", { name: "Mark all read" }),
+  ).toBeInTheDocument();
 });
 
 test("Newer and Older keep the keys working, though the pane is replaced", async () => {

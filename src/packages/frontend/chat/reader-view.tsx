@@ -9,7 +9,7 @@
 // unread again; j and k move, u goes to the next unread one. The list never
 // scrolls by itself: new items wait behind an "N new" button.
 
-import { Button, Checkbox, Empty, Space } from "antd";
+import { Badge, Button, Checkbox, Empty, Space } from "antd";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -184,6 +184,19 @@ export function ChatReaderView({
     [actions, threadId],
   );
 
+  // Narrow: start on a message, not the list (the first unread one from the
+  // top, else the newest); once per thread.
+  const startedRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!narrow || startedRef.current === threadId || !visible.length) return;
+    startedRef.current = threadId;
+    if (selectedId) return;
+    const first =
+      visible.find((item) => !isItemRead(item, watermark, state)) ?? visible[0];
+    setSelectedId(first.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [narrow, threadId, visible.length]);
+
   // Opening an item, or a new reply arriving while it is open, reads it.
   useEffect(() => {
     if (!selected || isItemRead(selected, watermark, state)) return;
@@ -349,7 +362,7 @@ export function ChatReaderView({
                 focusKeys();
               }}
               style={{
-                padding: "8px 12px",
+                padding: narrow ? "12px 12px" : "8px 12px",
                 cursor: "pointer",
                 borderBottom: `1px solid ${UI_COLORS.border}`,
                 background:
@@ -436,6 +449,70 @@ export function ChatReaderView({
     </div>
   );
 
+  // Narrow (a phone): the message takes the screen; this one row moves
+  // between items and acts on the open one.
+  const navBar = selected ? (
+    <div
+      role="toolbar"
+      aria-label="Message navigation"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        padding: "2px 4px",
+        borderBottom: `1px solid ${UI_COLORS.border}`,
+        background: UI_COLORS.surface,
+      }}
+    >
+      <Badge count={unread} size="small" offset={[-4, 4]}>
+        <Button
+          type="text"
+          aria-label="All messages"
+          icon={<Icon name="bars" />}
+          onClick={() => {
+            focusListRef.current = true;
+            setSelectedId(undefined);
+          }}
+        />
+      </Badge>
+      <Button
+        type="text"
+        aria-label="Newer"
+        icon={<Icon name="chevron-up" />}
+        disabled={findItem(visible, selectedIndex, -1) == null}
+        onClick={() => open(findItem(visible, selectedIndex, -1))}
+      />
+      <Button
+        type="text"
+        aria-label="Older"
+        icon={<Icon name="chevron-down" />}
+        disabled={findItem(visible, selectedIndex, 1) == null}
+        onClick={() => open(findItem(visible, selectedIndex, 1))}
+      />
+      <span
+        style={{ color: UI_COLORS.muted, fontSize: 12, flex: 1, marginLeft: 4 }}
+      >
+        {selectedIndex + 1} of {visible.length}
+      </span>
+      <Button
+        type="text"
+        aria-label={
+          isItemArchived(selected, state) ? "Move to inbox" : "Archive"
+        }
+        icon={
+          <Icon name={isItemArchived(selected, state) ? "undo" : "container"} />
+        }
+        onClick={() => archive(selected)}
+      />
+      <Button
+        type="text"
+        aria-label="Mark unread"
+        icon={<Icon name="mail" />}
+        onClick={() => markUnread(selected)}
+      />
+    </div>
+  ) : null;
+
   const pane = selected ? (
     <div
       key={selected.id}
@@ -445,42 +522,33 @@ export function ChatReaderView({
         flex: 1,
         minWidth: 0,
         overflowY: "auto",
-        padding: "8px 16px 24px",
+        padding: narrow ? "8px 12px 24px" : "8px 16px 24px",
       }}
     >
-      <Space wrap style={{ marginBottom: 8 }}>
-        {narrow ? (
+      {narrow ? null : (
+        <Space wrap style={{ marginBottom: 8 }}>
           <Button
             size="small"
-            onClick={() => {
-              focusListRef.current = true;
-              setSelectedId(undefined);
-            }}
+            disabled={findItem(visible, selectedIndex, -1) == null}
+            onClick={() => open(findItem(visible, selectedIndex, -1))}
           >
-            <Icon name="arrow-left" /> All messages
+            Newer
           </Button>
-        ) : null}
-        <Button
-          size="small"
-          disabled={findItem(visible, selectedIndex, -1) == null}
-          onClick={() => open(findItem(visible, selectedIndex, -1))}
-        >
-          Newer
-        </Button>
-        <Button
-          size="small"
-          disabled={findItem(visible, selectedIndex, 1) == null}
-          onClick={() => open(findItem(visible, selectedIndex, 1))}
-        >
-          Older
-        </Button>
-        <Button size="small" onClick={() => archive(selected)}>
-          {isItemArchived(selected, state) ? "Move to inbox" : "Archive"}
-        </Button>
-        <Button size="small" onClick={() => markUnread(selected)}>
-          Mark unread
-        </Button>
-      </Space>
+          <Button
+            size="small"
+            disabled={findItem(visible, selectedIndex, 1) == null}
+            onClick={() => open(findItem(visible, selectedIndex, 1))}
+          >
+            Older
+          </Button>
+          <Button size="small" onClick={() => archive(selected)}>
+            {isItemArchived(selected, state) ? "Move to inbox" : "Archive"}
+          </Button>
+          <Button size="small" onClick={() => markUnread(selected)}>
+            Mark unread
+          </Button>
+        </Space>
+      )}
       {selected.messages.map((message) => {
         const date = dateValue(message);
         const sender = readerSender(message, userMap);
@@ -558,40 +626,46 @@ export function ChatReaderView({
         outline: "none",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-          padding: "6px 12px",
-          borderBottom: `1px solid ${UI_COLORS.border}`,
-          flexWrap: "wrap",
-        }}
-      >
-        <span>
-          {unread
-            ? `${unread} unread${hiddenUnread ? ` (${hiddenUnread} archived)` : ""}`
-            : "All read"}
-        </span>
-        <Button
-          size="small"
-          disabled={!unread}
-          onClick={() => save((current) => markAllRead(items, current))}
+      {narrow && selected ? (
+        navBar
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            padding: "6px 12px",
+            borderBottom: `1px solid ${UI_COLORS.border}`,
+            flexWrap: "wrap",
+          }}
         >
-          Mark all read
-        </Button>
-        <Checkbox
-          checked={showArchived}
-          onChange={(e) => setShowArchived(e.target.checked)}
-        >
-          Show archived
-        </Checkbox>
-        <Tooltip title="j/k: next and previous · u: next unread · y: archive · m: mark unread">
-          <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
-            <Icon name="keyboard" /> Keys
+          <span>
+            {unread
+              ? `${unread} unread${hiddenUnread ? ` (${hiddenUnread} archived)` : ""}`
+              : "All read"}
           </span>
-        </Tooltip>
-      </div>
+          <Button
+            size="small"
+            disabled={!unread}
+            onClick={() => save((current) => markAllRead(items, current))}
+          >
+            Mark all read
+          </Button>
+          <Checkbox
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+          >
+            Show archived
+          </Checkbox>
+          {narrow ? null : (
+            <Tooltip title="j/k: next and previous · u: next unread · y: archive · m: mark unread">
+              <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
+                <Icon name="keyboard" /> Keys
+              </span>
+            </Tooltip>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {narrow && selected ? null : list}
         {pane}

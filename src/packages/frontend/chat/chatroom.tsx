@@ -2641,6 +2641,22 @@ function ChatPanelContent({
     </Tooltip>
   ) : null;
 
+  // On a phone the thread toolbar is in the tools drawer: the reader, used
+  // most there, gets its own button in the header.
+  const readerToggleButton =
+    narrow && singleThreadView && selectedThreadKey ? (
+      <Button
+        type="text"
+        aria-label={readerMode ? "Back to the chat log" : "Reader"}
+        aria-pressed={readerMode}
+        icon={<Icon name="mail" />}
+        onClick={() => setReaderMode(!readerMode)}
+        style={{
+          color: readerMode ? UI_COLORS.primary : "inherit",
+        }}
+      />
+    ) : null;
+
   const renderChatContent = () => (
     <div className="smc-vfill" style={GRID_STYLE}>
       <ChatRoomThreadPanel
@@ -2902,6 +2918,7 @@ function ChatPanelContent({
                   />
                 )}
               {focusButton}
+              {readerToggleButton}
               <Button
                 type="text"
                 aria-label="Chat tools"
@@ -2961,6 +2978,7 @@ function ChatPanelContent({
               />
             )}
           {focusButton}
+          {readerToggleButton}
           <Button
             type="text"
             aria-label="Chat tools"

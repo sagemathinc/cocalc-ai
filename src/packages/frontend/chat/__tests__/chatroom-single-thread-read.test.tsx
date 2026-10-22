@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
@@ -21,6 +21,12 @@ let currentThread = {
 let currentThreads = [currentThread];
 let currentThreadMetadata: any;
 let latestThreadPanelProps: any;
+let mockNarrow = false;
+
+jest.mock("../use-chat-viewport", () => ({
+  ...jest.requireActual("../use-chat-viewport"),
+  useNarrowChatViewport: () => mockNarrow,
+}));
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
@@ -157,6 +163,8 @@ describe("ChatPanel selected thread read tracking", () => {
     currentThreads = [currentThread];
     currentThreadMetadata = undefined;
     latestThreadPanelProps = undefined;
+    mockNarrow = false;
+    localStorage.clear();
   });
 
   function renderPanel() {
@@ -315,5 +323,30 @@ describe("ChatPanel selected thread read tracking", () => {
     expect(actions.markThreadRead).toHaveBeenCalledTimes(2);
     expect(actions.markThreadRead).toHaveBeenNthCalledWith(1, "thread-1", 2);
     expect(actions.markThreadRead).toHaveBeenNthCalledWith(2, "thread-1", 2);
+  });
+
+  it("does not mark the whole thread read while it is shown in the reader", () => {
+    localStorage.setItem(
+      "cocalc-chat-reader-mode",
+      JSON.stringify({ "project-1:chat/test.chat": true }),
+    );
+    const { actions } = renderPanel();
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(actions.markThreadRead).not.toHaveBeenCalled();
+    // Back to the log: it marks it read, as before.
+    act(() => latestThreadPanelProps.onReaderModeChange(false));
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 2);
+  });
+
+  it("on a phone, the reader has its own button in the header", () => {
+    mockNarrow = true;
+    renderPanel();
+    const button = screen.getByRole("button", { name: "Reader" });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(button);
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "Back to the chat log" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 });
