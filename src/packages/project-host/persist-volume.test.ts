@@ -130,6 +130,12 @@ afterEach(async () => {
 
 const read = (path: string) => readFileSync(path, "utf8");
 
+// the joins fakeOps recorded, with staged restore volumes named alike
+const joins = (ops: { joined: string[] }) =>
+  ops.joined.map((x) =>
+    x.replace(/\/\.persist-import\/restore-[^/]+$/, "/staged"),
+  );
+
 const GiB = 1024 ** 3;
 
 function fakeOps(): PersistVolumeOps & {
@@ -686,8 +692,13 @@ describe("in the project-host", () => {
     await writeFile(join(root, "new.db"), "after the snapshot");
     const ops = fakeOps();
     await restoreHome(snapshotPath, { ops });
-    // the history put in place counts against the project's quota
-    expect(ops.joined).toEqual([`${PROJECT}:${root}`]);
+    // what was staged (the history, and its copy), then the history put in
+    // place, count against the project's quota
+    expect(joins(ops)).toEqual([
+      `${PROJECT}:${mount}/staged`,
+      `${PROJECT}:${mount}/staged`,
+      `${PROJECT}:${root}`,
+    ]);
     expect(read(join(root, "a.db"))).toBe("live");
     expect(existsSync(join(root, "new.db"))).toBe(false);
     // the copy in the restored home is gone
@@ -903,7 +914,11 @@ describe("in the project-host", () => {
     };
     await mergeRestoredHistory({ project_id: PROJECT, source, env, ops });
     expect(mergedWhileFenced).toBe(true);
-    expect(ops.joined).toEqual([`${PROJECT}:${root}`]);
+    // the merge counts against the project's quota before it is used
+    expect(joins(ops)).toEqual([
+      `${PROJECT}:${mount}/staged`,
+      `${PROJECT}:${root}`,
+    ]);
     expect(read(join(root, "a.db"))).toBe("backup");
     // never an old log on a restored database
     expect(existsSync(join(root, "a.db-wal"))).toBe(false);
@@ -1161,6 +1176,159 @@ describe("in the project-host", () => {
     await capture?.release();
   });
 
+  it("restores with room in the quota for its extra copies of the history", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "x".repeat(5000),
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    const order: string[] = [];
+    const staged = () =>
+      readdirSync(join(mount, ".persist-import")).filter((x) =>
+        x.startsWith("restore-"),
+      );
+    await restoreBackupWithHistory({
+      project_id: PROJECT,
+      candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+      listDirectory: backup.listDirectory,
+      restoreInto: backup.restoreInto,
+      restoreFiles: async () => {
+        order.push("restore files");
+      },
+      withRoom: async (bytes, fn) => {
+        // what was restored, and some to spare
+        expect(bytes).toBeGreaterThanOrEqual(5000);
+        order.push("room");
+        try {
+          return await fn();
+        } finally {
+          // the staged history and the replaced volume are gone before
+          order.push(`room released (staged: ${staged().length})`);
+        }
+      },
+      env,
+      ops: fakeOps(),
+    });
+    expect(order).toEqual([
+      "room",
+      "restore files",
+      "room released (staged: 0)",
+    ]);
+    expect(read(join(root, "a.db"))).toBe("x".repeat(5000));
+  });
+
+  it("refuses a restored history that can't fit, before any file changes", async () => {
+    await readyVolume();
+    const ops = fakeOps();
+    // a disk quota smaller than the restored history
+    ops.quotas.set(home, 4096);
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "x".repeat(10_000),
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    let restored = false;
+    // (no room for the history beyond the disk quota)
+    const tight = {
+      ...env,
+      COCALC_PERSIST_HISTORY_RESERVE_MIN_BYTES: "0",
+      COCALC_PERSIST_HISTORY_RESERVE_PERCENT: "0",
+    };
+    await expect(
+      restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        listDirectory: backup.listDirectory,
+        restoreInto: backup.restoreInto,
+        restoreFiles: async () => {
+          restored = true;
+        },
+        env: tight,
+        ops,
+      }),
+    ).rejects.toThrow(/does not fit/);
+    expect(restored).toBe(false);
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("puts what a backup's history was restored into in the project's quota, inside its room", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    const ops = fakeOps();
+    const order: string[] = [];
+    const joinQuotaGroup = ops.joinQuotaGroup;
+    ops.joinQuotaGroup = async (project_id, path) => {
+      order.push(`join ${basename(path).split("-")[0]}`);
+      await joinQuotaGroup(project_id, path);
+    };
+    await restoreBackupWithHistory({
+      project_id: PROJECT,
+      candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+      listDirectory: backup.listDirectory,
+      restoreInto: async (path, dest) => {
+        order.push("download");
+        await backup.restoreInto(path, dest);
+      },
+      restoreFiles: async () => {
+        order.push("restore files");
+      },
+      withRoom: async (bytes, fn) => {
+        // the copy in the home and the staged history at once
+        expect(bytes).toBeGreaterThanOrEqual(2 * "backup".length);
+        order.push("room");
+        try {
+          return await fn();
+        } finally {
+          order.push("room released");
+        }
+      },
+      env,
+      ops,
+    });
+    expect(order).toEqual([
+      "download",
+      "room",
+      // the downloaded history, the merge, then the new volume (again)
+      "join restore",
+      "join restore",
+      "restore files",
+      "join project",
+      "room released",
+    ]);
+  });
+
+  it("restores nothing if what it staged can't count against the project's quota", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    const ops = fakeOps();
+    ops.joinQuotaGroup = async () => {
+      throw new Error("qgroup assign failed");
+    };
+    let restored = false;
+    await expect(
+      restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        listDirectory: backup.listDirectory,
+        restoreInto: backup.restoreInto,
+        restoreFiles: async () => {
+          restored = true;
+        },
+        env,
+        ops,
+      }),
+    ).rejects.toThrow("qgroup assign failed");
+    expect(restored).toBe(false);
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(leftovers()).toEqual([]);
+  });
+
   it("restores no files when the history can't be merged", async () => {
     await readyVolume();
     const backup = backupWith({
@@ -1277,10 +1445,11 @@ describe("in the project-host", () => {
       await setQuota(path, bytes);
     };
     await restoreHome(snapshotPath, { ops });
-    // every staged volume is limited to the disk quota from the start
+    // every staged volume is limited from the start, as the history is
+    // (the disk quota and a tenth more)
     expect(limits.filter(([kind]) => kind === "restore")[0]).toEqual([
       "restore",
-      10 * GiB,
+      11 * GiB,
     ]);
   });
 
