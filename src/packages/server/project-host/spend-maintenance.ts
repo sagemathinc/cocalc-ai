@@ -29,6 +29,7 @@ import {
 } from "./spend";
 import {
   DEDICATED_HOST_BILLING_DISK_GRACE_HOURS,
+  billingRescueDiskDeletionTime,
   buildDedicatedHostBillingEnforcementMetadata,
   evaluateDedicatedHostBillingEnforcement,
   type DedicatedHostBillingEnforcementMetadata,
@@ -69,6 +70,24 @@ const RUNNING_BILLING_STATUSES = new Set([
 const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const DEPROVISION_REMINDER_LEAD_MS = 24 * 3600_000;
+const BILLING_STOP_RETRY_MS = 30 * 60_000;
+// A billing deprovision whose operation is gone (failed, or never created)
+// is queued again at most this often.
+const BILLING_DEPROVISION_RETRY_MS = 60 * 60_000;
+// A billing stop still "stopping" after this long is retried as if it had
+// failed: its work may never have been queued (the enqueue failed after the
+// status was written) or may be stuck.
+const BILLING_STOPPING_STALE_MS = 2 * 60 * 60_000;
+
+function billingStopLooksStuck(
+  enforcement: DedicatedHostBillingEnforcementMetadata,
+  now = Date.now(),
+): boolean {
+  const since = Date.parse(
+    `${enforcement.stop_retry_requested_at ?? enforcement.stopped_at ?? ""}`,
+  );
+  return Number.isFinite(since) && now - since >= BILLING_STOPPING_STALE_MS;
+}
 
 let started = false;
 
@@ -512,6 +531,74 @@ async function requestHostStopForExceededLane({
   });
 }
 
+// A host billing enforcement stopped is still running (its stop failed, or it
+// is in error): request the provider stop again, at most every
+// BILLING_STOP_RETRY_MS, without restarting its enforcement clock.
+async function retryBillingEnforcementStop({
+  row,
+  provider,
+  enforcement,
+  now = Date.now(),
+}: {
+  row: CandidateHostRow;
+  provider: string;
+  enforcement: DedicatedHostBillingEnforcementMetadata;
+  now?: number;
+}): Promise<void> {
+  const last = Date.parse(`${enforcement.stop_retry_requested_at ?? ""}`);
+  if (Number.isFinite(last) && now - last < BILLING_STOP_RETRY_MS) {
+    return;
+  }
+  const nowIso = new Date(now).toISOString();
+  const metadata = {
+    ...(row.metadata ?? {}),
+    desired_state: "stopped",
+    billing: {
+      ...(row.metadata?.billing ?? {}),
+      enforcement: { ...enforcement, stop_retry_requested_at: nowIso },
+    },
+    last_action: "stop",
+    last_action_status: "pending",
+    last_action_error: null,
+    last_action_at: nowIso,
+  };
+  const stopIntent = await writeHostBillingChanges({
+    row,
+    metadata,
+    status: { status: "stopping", clear_last_seen: true },
+  });
+  if (!stopIntent.written) {
+    return;
+  }
+  await enqueueCloudVmWork({
+    vm_id: row.id,
+    action: "stop",
+    payload: { provider, intent_generation: stopIntent.generation },
+  });
+  logger.warn("retrying the stop of a billing-blocked dedicated host", {
+    host_id: row.id,
+    status: row.status,
+  });
+  try {
+    await adminAlert({
+      subject: `Billing-blocked dedicated host still running: ${row.id}`,
+      body: [
+        `Host ID: ${row.id}`,
+        `Host name: ${row.name}`,
+        `Status: ${row.status}`,
+        "Billing enforcement stopped this host, but it is still running or in error. The stop was requested again; it is retried every 30 minutes. Its running-rate purchase session is closed, so the owner is not billed for it meanwhile. If its projects lack a final backup, their rescue drain waits until the host is off: check the VM with the provider.",
+      ].join("\n"),
+      dedupMinutes: 24 * 60,
+      dedupBySubject: true,
+    });
+  } catch (err) {
+    logger.error("failed to send billing stop retry alert", {
+      host_id: row.id,
+      err: `${err}`,
+    });
+  }
+}
+
 async function requestHostStopForOwnerSpendLimit({
   row,
   provider,
@@ -823,9 +910,12 @@ async function updateHostStatusAndBillingMetadata({
 async function requestHostDrainForBilling({
   row,
   enforcement,
+  rescue = false,
 }: {
   row: CandidateHostRow;
   enforcement: DedicatedHostBillingEnforcementMetadata;
+  // Start the stopped host first (see startBillingBlockedHostForRescue).
+  rescue?: boolean;
 }): Promise<void> {
   const metadata = { ...(row.metadata ?? {}) };
   const owner = `${metadata?.owner ?? ""}`.trim();
@@ -871,6 +961,7 @@ async function requestHostDrainForBilling({
       force: false,
       managed_egress_override: "admin-host-drain",
       billing_enforcement: true,
+      ...(rescue ? { billing_rescue: true } : {}),
     },
     dedupe_key: `${HOST_DRAIN_LRO_KIND}:billing:${row.id}`,
     status: "queued",
@@ -888,10 +979,101 @@ async function requestHostDrainForBilling({
   });
 }
 
-async function requestHostDeprovisionForBilling({
+// Deduplicated: while an operation is queued or running this returns it.
+async function queueBillingDeprovisionLro({
   row,
+  owner,
 }: {
   row: CandidateHostRow;
+  owner: string;
+}) {
+  return await createLro({
+    kind: HOST_DEPROVISION_LRO_KIND,
+    scope_type: "host",
+    scope_id: row.id,
+    created_by: owner,
+    routing: "hub",
+    input: {
+      id: row.id,
+      account_id: owner,
+      skip_backups: true,
+      billing_enforcement: true,
+    },
+    dedupe_key: `${HOST_DEPROVISION_LRO_KIND}:billing:${row.id}`,
+    status: "queued",
+  });
+}
+
+// deprovision_pending with no runnable operation (its creation failed, or it
+// failed) would otherwise keep the host forever: queue it again, at most every
+// BILLING_DEPROVISION_RETRY_MS. While one is queued or running, the
+// deduplicated create returns it.
+async function maybeRequeueBillingDeprovision({
+  row,
+  owner,
+  enforcement,
+  now = Date.now(),
+}: {
+  row: CandidateHostRow;
+  owner: string;
+  enforcement: DedicatedHostBillingEnforcementMetadata;
+  now?: number;
+}): Promise<void> {
+  const last = Date.parse(
+    `${enforcement.deprovision_retry_requested_at ?? enforcement.deprovision_requested_at ?? ""}`,
+  );
+  if (Number.isFinite(last) && now - last < BILLING_DEPROVISION_RETRY_MS) {
+    return;
+  }
+  const metadata = row.metadata ?? {};
+  if (
+    !(await updateHostBillingMetadata({
+      row,
+      metadata: {
+        ...metadata,
+        billing: {
+          ...(metadata.billing ?? {}),
+          enforcement: {
+            ...enforcement,
+            deprovision_retry_requested_at: new Date(now).toISOString(),
+          },
+        },
+      },
+    }))
+  ) {
+    return;
+  }
+  const lro = await queueBillingDeprovisionLro({ row, owner });
+  if (Date.parse(`${lro?.created_at ?? ""}`) >= now - 60_000) {
+    logger.warn("queued a billing deprovision again", { host_id: row.id });
+    try {
+      await adminAlert({
+        subject: `Billing deprovision of dedicated host queued again: ${row.id}`,
+        body: [
+          `Host ID: ${row.id}`,
+          `Host name: ${row.name}`,
+          `Status: ${row.status}`,
+          "Its billing deprovision had no queued or running operation (it failed, or was never created), so it was queued again. It is retried hourly; check the host-deprovision operations.",
+        ].join("\n"),
+        dedupMinutes: 24 * 60,
+        dedupBySubject: true,
+      });
+    } catch (err) {
+      logger.error("failed to send billing deprovision retry alert", {
+        host_id: row.id,
+        err: `${err}`,
+      });
+    }
+  }
+}
+
+async function requestHostDeprovisionForBilling({
+  row,
+  reason,
+}: {
+  row: CandidateHostRow;
+  // Recorded when the disk is deleted without a confirmed final backup.
+  reason?: string;
 }): Promise<void> {
   const metadata = { ...(row.metadata ?? {}) };
   const owner = `${metadata?.owner ?? ""}`.trim();
@@ -909,6 +1091,7 @@ async function requestHostDeprovisionForBilling({
         state: "deprovision_pending",
         deprovision_requested_at:
           enforcement?.deprovision_requested_at ?? nowIso,
+        ...(reason ? { deprovision_reason: reason } : {}),
       },
     },
     last_action: "deprovision",
@@ -924,21 +1107,7 @@ async function requestHostDeprovisionForBilling({
   ) {
     return;
   }
-  await createLro({
-    kind: HOST_DEPROVISION_LRO_KIND,
-    scope_type: "host",
-    scope_id: row.id,
-    created_by: owner,
-    routing: "hub",
-    input: {
-      id: row.id,
-      account_id: owner,
-      skip_backups: true,
-      billing_enforcement: true,
-    },
-    dedupe_key: `${HOST_DEPROVISION_LRO_KIND}:billing:${row.id}`,
-    status: "queued",
-  });
+  await queueBillingDeprovisionLro({ row, owner });
   await notifyBillingEnforcementTransition({
     row,
     owner,
@@ -1021,8 +1190,11 @@ async function maybeSendDeprovisionReminder({
 
 async function maybeProgressInactiveEnforcement({
   row,
+  allowRescueRequest = true,
 }: {
   row: CandidateHostRow;
+  // False for a host whose billing stop failed (see runPass).
+  allowRescueRequest?: boolean;
 }): Promise<boolean> {
   const metadata = row.metadata ?? {};
   const enforcement = currentEnforcement(metadata);
@@ -1058,11 +1230,17 @@ async function maybeProgressInactiveEnforcement({
     }
     return true;
   }
-  if (
-    enforcement?.state !== "stopped_billing_blocked" ||
-    enforcement.final_backup_status !== "succeeded" ||
-    !enforcement.deprovision_after
-  ) {
+  if (enforcement?.state !== "stopped_billing_blocked") {
+    return false;
+  }
+  if (enforcement.final_backup_status !== "succeeded") {
+    return await maybeRescueUnbackedBillingBlockedHost({
+      row,
+      enforcement,
+      allowRescueRequest,
+    });
+  }
+  if (!enforcement.deprovision_after) {
     return false;
   }
   if (await maybeSendDeprovisionReminder({ row })) {
@@ -1073,6 +1251,134 @@ async function maybeProgressInactiveEnforcement({
     return false;
   }
   await requestHostDeprovisionForBilling({ row });
+  return true;
+}
+
+// A billing-blocked host keeps its disk while a project on it has no confirmed
+// final backup; without this it would keep the disk, and bill for it, forever.
+// After the grace period, request one rescue: start the host without a billing
+// session, drain it (each move takes a final backup) and stop it; the normal
+// deprovision then follows. If the rescue fails, delete the disk anyway at
+// billingRescueDiskDeletionTime (30 days after the stop, and at least 7 days
+// after the failure alert); projects then restore from their last backup.
+async function sendRescueFailureDeletionAlert({
+  row,
+  enforcement,
+  stoppedAt,
+  now,
+}: {
+  row: CandidateHostRow;
+  enforcement: DedicatedHostBillingEnforcementMetadata;
+  stoppedAt: number;
+  now: number;
+}): Promise<boolean> {
+  const deletion = new Date(
+    billingRescueDiskDeletionTime({ stoppedAt, failedAt: now }),
+  ).toISOString();
+  try {
+    await adminAlert({
+      subject: `Dedicated host disk deletion scheduled: ${row.id}`,
+      body: [
+        `Host ID: ${row.id}`,
+        `Host name: ${row.name}`,
+        `Owner account ID: ${row.metadata?.owner ?? ""}`,
+        "",
+        "The billing rescue drain of this host failed, so its projects have no confirmed final backup.",
+        `Its disk will be deleted automatically on or after ${deletion}; its projects then restore from their last backup, losing newer changes.`,
+        "To keep its data, restore the owner's funding or move the projects off the host before then.",
+      ].join("\n"),
+      errorOnFail: true,
+    });
+  } catch (err) {
+    // Retried on the next pass; nothing is deleted without a delivered alert.
+    logger.error("failed to send the dedicated host disk deletion alert", {
+      host_id: row.id,
+      err: `${err}`,
+    });
+    return false;
+  }
+  const metadata = row.metadata ?? {};
+  return await updateHostBillingMetadata({
+    row,
+    metadata: {
+      ...metadata,
+      billing: {
+        ...(metadata.billing ?? {}),
+        enforcement: {
+          ...enforcement,
+          rescue_failure_alerted_at: new Date(now).toISOString(),
+        },
+      },
+    },
+  });
+}
+
+async function maybeRescueUnbackedBillingBlockedHost({
+  row,
+  enforcement,
+  allowRescueRequest = true,
+  now = Date.now(),
+}: {
+  row: CandidateHostRow;
+  enforcement: DedicatedHostBillingEnforcementMetadata;
+  allowRescueRequest?: boolean;
+  now?: number;
+}): Promise<boolean> {
+  const stoppedAt = Date.parse(`${enforcement.stopped_at ?? ""}`);
+  const graceEnd = enforcement.deprovision_after
+    ? Date.parse(enforcement.deprovision_after)
+    : stoppedAt + DEDICATED_HOST_BILLING_DISK_GRACE_HOURS * 3600_000;
+  if (!Number.isFinite(graceEnd) || graceEnd > now) {
+    return false;
+  }
+  if (!enforcement.rescue_requested_at) {
+    if (!allowRescueRequest) return false;
+    await requestHostDrainForBilling({
+      row,
+      enforcement: {
+        ...enforcement,
+        state: "draining",
+        rescue_requested_at: new Date(now).toISOString(),
+      },
+      rescue: true,
+    });
+    return true;
+  }
+  // Delete without a final backup only after a recorded rescue failure (which
+  // sent the admin alert naming the deletion time); a rescue still running, or
+  // one whose outcome was never recorded, keeps the disk.
+  const failedAt = Date.parse(`${enforcement.final_backup_failed_at ?? ""}`);
+  if (
+    enforcement.final_backup_status !== "failed" ||
+    !Number.isFinite(stoppedAt) ||
+    !Number.isFinite(failedAt) ||
+    failedAt < Date.parse(enforcement.rescue_requested_at)
+  ) {
+    return false;
+  }
+  // The review period runs from a delivered alert: the worker's failure alert
+  // may have been lost, so send (and record) one naming the deletion time.
+  const alertedAt = Date.parse(
+    `${enforcement.rescue_failure_alerted_at ?? ""}`,
+  );
+  if (!Number.isFinite(alertedAt)) {
+    // On failure, fall through (false) so a host whose stop failed still gets
+    // its stop retried.
+    return await sendRescueFailureDeletionAlert({
+      row,
+      enforcement,
+      stoppedAt,
+      now,
+    });
+  }
+  if (now < billingRescueDiskDeletionTime({ stoppedAt, failedAt: alertedAt })) {
+    return false;
+  }
+  await requestHostDeprovisionForBilling({
+    row,
+    reason:
+      "final backup unavailable: the rescue drain failed and the retention period ended",
+  });
   return true;
 }
 
@@ -1184,6 +1490,25 @@ async function maybeClearRecoveredInactiveEnforcement({
   return true;
 }
 
+// Best-effort: a billing-authority outage must not block the lifecycle steps
+// that follow (stop retries, deprovision deadlines).
+async function closeBlockedHostPurchaseSession(
+  row: CandidateHostRow,
+  owner: string,
+): Promise<void> {
+  try {
+    await closeDedicatedHostPurchaseSessionForAccount({
+      account_id: owner,
+      host_id: row.id,
+    });
+  } catch (err) {
+    logger.warn(
+      "failed to close the purchase session of a billing-blocked host",
+      { host_id: row.id, err: `${err}` },
+    );
+  }
+}
+
 async function runPass(): Promise<void> {
   const rows = await listCandidateHosts();
   const snapshotCache = new Map<
@@ -1194,7 +1519,9 @@ async function runPass(): Promise<void> {
   const getSnapshot = async (
     account_id: string,
     funding_mode_override?:
-      "account-prepaid" | "account-postpaid" | "site-funded",
+      | "account-prepaid"
+      | "account-postpaid"
+      | "site-funded",
   ) => {
     const cacheKey = `${account_id}:${funding_mode_override ?? ""}`;
     const cached = snapshotCache.get(cacheKey);
@@ -1230,6 +1557,25 @@ async function runPass(): Promise<void> {
     }
 
     const status = `${row.status ?? ""}`.trim().toLowerCase();
+    // A queued billing deprovision deletes the host whatever its state. Until
+    // it has run, keep the host unbilled and its enforcement as it is: running
+    // or stopped reconciliation would reopen a session and could replace
+    // deprovision_pending (with ok, if funding recovered) while the deletion
+    // still goes ahead. Once deprovisioned, maybeProgressInactiveEnforcement
+    // marks it recoverable.
+    if (
+      currentEnforcement(metadata)?.state === "deprovision_pending" &&
+      status !== "deprovisioned"
+    ) {
+      await closeBlockedHostPurchaseSession(row, owner);
+      await maybeRequeueBillingDeprovision({
+        row,
+        owner,
+        enforcement: currentEnforcement(metadata)!,
+      });
+      deleteSnapshotCacheForAccount(owner);
+      continue;
+    }
     const billingState = billingStateForHost(row);
     if (!billingState) {
       const fundingMode = currentFundingMode(metadata);
@@ -1281,6 +1627,50 @@ async function runPass(): Promise<void> {
     }
 
     const enforcement = currentEnforcement(metadata);
+    if (enforcement?.state === "stopped_billing_blocked") {
+      // Billing enforcement stopped this host after a drain or a rescue drain.
+      // Do not reprice it as running; a rescue run is site-paid. The
+      // running-rate session opened before the block would keep accruing until
+      // the host is off, so close it; stopped pricing starts once it is off.
+      await closeBlockedHostPurchaseSession(row, owner);
+      // Restored funding ends the block here too, before any deadline. Like
+      // the close, this probe is best-effort: a billing-authority outage must
+      // not block the stop retry or a due deprovision.
+      let recovered = false;
+      try {
+        recovered = await maybeClearRecoveredInactiveEnforcement({
+          row,
+          provider,
+          snapshot: await getSnapshot(owner, currentFundingMode(metadata)),
+        });
+      } catch (err) {
+        logger.warn(
+          "failed to check whether a billing-blocked host's funding recovered",
+          { host_id: row.id, err: `${err}` },
+        );
+      }
+      if (recovered) {
+        deleteSnapshotCacheForAccount(owner);
+        continue;
+      }
+      // The deprovision deadlines still apply, also to a stop that never
+      // finishes (deprovisioning deletes the VM too); until one is due, a
+      // failed stop is retried. A rescue is requested only once the host is
+      // off: a failed stop leaves status "error" whether or not the VM still
+      // runs, and starting a running VM restarts it or fails on some
+      // providers, which would lose the only rescue attempt.
+      if (
+        !(await maybeProgressInactiveEnforcement({
+          row,
+          allowRescueRequest: false,
+        })) &&
+        (status !== "stopping" || billingStopLooksStuck(enforcement))
+      ) {
+        await retryBillingEnforcementStop({ row, provider, enforcement });
+      }
+      deleteSnapshotCacheForAccount(owner);
+      continue;
+    }
     if (enforcement?.state === "draining") {
       const assignedProjects = await countProjectsAssignedToHost(row.id);
       if (assignedProjects === 0) {

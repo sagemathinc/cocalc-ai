@@ -94,8 +94,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: src/packages/pnpm-lock.yaml
 
-      - name: Build
-        run: cd src && pnpm build
+      # Emit only: the typecheck job checks the whole solution in parallel, so
+      # the test jobs do not wait for type checking.
+      - name: Build (emit only)
+        run: |
+          node src/scripts/ci-tsc-emit-only.mjs
+          cd src && pnpm build
 
       - name: Pack workspace build
         run: |
@@ -125,6 +129,35 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 1
+
+  # Type checking for every workspace project (tsconfig.solution.json); the
+  # build job only emits.
+  typecheck:
+    needs: plan
+    if: needs.plan.outputs.has_tests == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - name: Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        run: pnpm -C src/packages install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm -C src tsc
 
   checks:
     needs: plan

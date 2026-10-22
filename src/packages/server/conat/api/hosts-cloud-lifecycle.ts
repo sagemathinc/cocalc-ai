@@ -544,6 +544,7 @@ export async function createHostInternalHelper({
 export async function startHostInternalHelper({
   account_id,
   id,
+  billing_rescue,
   onWorkQueued,
   loadHostForStartStop,
   markHostActionPending,
@@ -552,6 +553,10 @@ export async function startHostInternalHelper({
 }: {
   account_id?: string;
   id: string;
+  // Billing enforcement starts a billing-blocked host only to take its final
+  // backups: open no billable session for the owner (the site pays for the
+  // short run) and keep the host's billing and enforcement metadata as is.
+  billing_rescue?: boolean;
   onWorkQueued?: (workId: string) => void;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   markHostActionPending: (id: string, action: string) => Promise<void>;
@@ -633,7 +638,7 @@ export async function startHostInternalHelper({
   );
   const nextMetadata = metaRowsFinal[0]?.metadata ?? metadata;
   const billableSession =
-    owner && machineCloud
+    owner && machineCloud && !billing_rescue
       ? await resolveBillableHostSessionConfig({
           account_id: owner,
           action: "start",
