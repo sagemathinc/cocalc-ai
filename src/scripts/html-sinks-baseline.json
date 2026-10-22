@@ -107,9 +107,6 @@
   "src/packages/frontend/jquery-plugins/misc.ts": {
     "innerHTML assignment": 1
   },
-  "src/packages/frontend/jupyter/browser-actions.ts": {
-    "document.write": 1
-  },
   "src/packages/frontend/jupyter/nbviewer/export.ts": {
     "noSanitize": 1
   },

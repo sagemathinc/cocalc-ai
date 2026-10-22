@@ -12,6 +12,7 @@ import {
 import { randomUUID } from "crypto";
 import logger from "./logger";
 import { gcpInternalHostname } from "./gcp-internal";
+import { withDefaultGcpLabels } from "./gcp-labels";
 import type {
   CloudProvider,
   DataDiskSnapshot,
@@ -818,7 +819,7 @@ export class GcpProvider implements CloudProvider {
       guestAccelerators,
       tags: spec.tags ? { items: spec.tags } : undefined,
       scheduling,
-      labels: spec.metadata?.labels,
+      labels: withDefaultGcpLabels(spec.metadata?.labels),
       canIpForward: false,
       deletionProtection: false,
       serviceAccounts:
@@ -1634,7 +1635,7 @@ export class GcpProvider implements CloudProvider {
           guestAccelerators,
           tags: spec.tags ? { items: spec.tags } : undefined,
           scheduling: spotScheduling(),
-          labels: spec.metadata?.labels,
+          labels: withDefaultGcpLabels(spec.metadata?.labels),
           metadata:
             spec.metadata?.block_project_ssh_keys === true
               ? {

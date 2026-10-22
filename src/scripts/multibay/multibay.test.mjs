@@ -1673,6 +1673,121 @@ describe("host reads across bays", () => {
       await db.end();
     }
   });
+
+  it("changes a host's access on the host's bay, with fresh auth from home", async () => {
+    // Granting manager access needs fresh auth: the host's bay asks alice's
+    // home bay (the seed) to vouch for her session. Removing access also
+    // needs a second factor, which alice has not enrolled: the host's bay
+    // refuses, and the caller gets its reason.
+    const forwarded = async (name) =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND account_id=$3 AND finished IS NOT NULL",
+           [${JSON.stringify(name)}, ${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const bobsRoles = async () =>
+      (await alice.client.call("hosts.listHostAccess", { id: host_id }))
+        .filter((entry) => entry.account_id === bob.account_id)
+        .map(({ role }) => role);
+    const grant = async (role) =>
+      await alice.client.call("hosts.setHostAccess", {
+        id: host_id,
+        target_account_id: bob.account_id,
+        role,
+      });
+
+    const setBefore = await forwarded("hosts.setHostAccess");
+    assert.equal((await grant("manager")).role, "manager");
+    assert.deepEqual(await bobsRoles(), ["manager"]);
+    assert.equal((await grant("user")).role, "user");
+    assert.deepEqual(await bobsRoles(), ["user"]);
+    assert.equal(await forwarded("hosts.setHostAccess"), setBefore + 2);
+
+    const removeBefore = await forwarded("hosts.removeHostAccess");
+    await assert.rejects(
+      alice.client.call("hosts.removeHostAccess", {
+        id: host_id,
+        target_account_id: bob.account_id,
+      }),
+      (err) => err.code === "two_factor_required",
+    );
+    assert.equal(await forwarded("hosts.removeHostAccess"), removeBefore + 1);
+    assert.deepEqual(await bobsRoles(), ["user"]);
+  });
+
+  it("sets a host's runtime deployments on the host's bay", async () => {
+    // Host-scoped: routed to the host's bay, which records it, and the
+    // listing (also routed) reads it back there.
+    const forwarded = async () =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.setHostRuntimeDeployments' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+           [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const before = await forwarded();
+    const set = await alice.client.call("hosts.setHostRuntimeDeployments", {
+      scope_type: "host",
+      id: host_id,
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "ph-routed",
+        },
+      ],
+      replace: true,
+    });
+    assert.ok(
+      set.some((d) => d.host_id === host_id && d.desired_version === "ph-routed"),
+    );
+    assert.equal(await forwarded(), before + 1);
+    const listed = await alice.client.call(
+      "hosts.listHostRuntimeDeployments",
+      { scope_type: "host", id: host_id },
+    );
+    assert.ok(
+      listed.some(
+        (d) => d.target === "project-host" && d.desired_version === "ph-routed",
+      ),
+    );
+  });
+
+  it("queues a host start on the host's bay", async () => {
+    // Last in this group: the start itself then fails (this host has no
+    // cloud provider), so only where it is queued is checked.
+    const forwarded = async () =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.startHost' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+           [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const before = await forwarded();
+    const op = await alice.client.call("hosts.startHost", { id: host_id });
+    assert.ok(op?.op_id, "a start operation was queued");
+    assert.equal(await forwarded(), before + 1);
+    const queuedOn = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM long_running_operations WHERE op_id=$1",
+         [${JSON.stringify(op.op_id)}]);
+       return rows[0].n;`,
+    );
+    assert.equal(queuedOn, 1, "the operation is recorded on the host's bay");
+  });
 });
 
 describe("course reconfiguration across bays", () => {
@@ -2338,14 +2453,89 @@ describe("sensor budgets on the account's home bay", () => {
     );
   });
 
-  async function countsFor(bay) {
+  it("keeps reminders set from another bay on the home bay, under their own cap", async () => {
+    // dave, also homed on the attached bay, with two wakes a day. A reminder
+    // may be far ahead; it is counted as a reminder, not a watcher, released
+    // when deleted, and refused only when it is due before the day's wakes
+    // come back.
+    const dave = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "dave",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { setAccountEntitlementOverrideLocal } = server("membership/entitlement-overrides.js");
+       await setAccountEntitlementOverrideLocal({
+         account_id: ${JSON.stringify(dave.account_id)},
+         actor_account_id: ${JSON.stringify(dave.account_id)},
+         override: { usage_limits: { sensor_max_wakes_per_day: { mode: "set", value: 2 } } },
+         reason: "multibay sensor reminder test",
+       });`,
+    );
+    const reminder = (hours) => ({
+      account_id: dave.account_id,
+      project_id,
+      agent_id,
+      sensor_id: randomUUID(),
+      // A reminder's reservation ends an hour after it is due.
+      expires_at: new Date(Date.now() + (hours + 1) * 3_600_000).toISOString(),
+      reminder: true,
+    });
+    const wake = () => ({
+      account_id: dave.account_id,
+      project_id,
+      agent_id,
+      sensor_id: randomUUID(),
+      run_id: randomUUID(),
+    });
+    const deleted = reminder(90 * 24);
+    const out = await fromSeed([
+      ["reserveWatcher", deleted],
+      [
+        "releaseWatcher",
+        { account_id: dave.account_id, sensor_id: deleted.sensor_id },
+      ],
+      ["reserveWake", wake()],
+      ["reserveWake", wake()],
+      // Due within the day, after its wakes are spent: it could not fire.
+      ["reserveWatcher", reminder(0.5)],
+      // Due in two months: the wakes are back by then.
+      ["reserveWatcher", reminder(60 * 24)],
+    ]);
+    assert.deepEqual(
+      out.map((o) => o.ok),
+      [true, true, true, true, false, true],
+      JSON.stringify(out),
+    );
+    assert.match(out[4].error, /used all 2 wakes/);
+    assert.deepEqual(await countsFor(ATTACHED, dave), {
+      reminder: 2,
+      wake: 2,
+    });
+    assert.deepEqual(await countsFor(SEED, dave), {});
+    assert.equal(
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT released_at IS NOT NULL AS released FROM agent_sensor_events WHERE account_id=$1 AND sensor_id=$2",
+           [${JSON.stringify(dave.account_id)}, ${JSON.stringify(deleted.sensor_id)}]);
+         return rows[0]?.released ?? null;`,
+      ),
+      true,
+    );
+  });
+
+  async function countsFor(bay, account = carol) {
     return await runInBay(
       cluster,
       bay,
       `const getPool = require("@cocalc/database/pool").default;
        const { rows } = await getPool().query(
          "SELECT kind, count(*)::int AS n FROM agent_sensor_events WHERE account_id=$1 GROUP BY kind ORDER BY kind",
-         [${JSON.stringify(carol.account_id)}]);
+         [${JSON.stringify(account.account_id)}]);
        return Object.fromEntries(rows.map((r) => [r.kind, r.n]));`,
     );
   }
@@ -3156,5 +3346,244 @@ describe("membership-seat order fulfillment across bays", () => {
     });
     await makeAdmin(admin);
     await recordOnSeed({ admin, customer: admin });
+  });
+});
+
+describe("admin credit attribution across bays", () => {
+  // Admin balance adjustments are read and attributed on the seed (billing
+  // authority), while the acting admin and the attributed admin may be homed
+  // on another bay.
+  it("lets an admin homed on the attached bay attribute a credit to another attached-bay admin", async () => {
+    const actor = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "olga",
+    });
+    const attributed = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "petra",
+    });
+    for (const account of [actor, attributed]) {
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(
+           "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+           [${JSON.stringify(account.account_id)}]);`,
+      );
+    }
+    const customer = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "quinn",
+    });
+    const result = await runInBay(
+      cluster,
+      SEED,
+      `const createCredit = server("purchases/create-credit.js").default;
+       const purchase_id = await createCredit({
+         account_id: ${JSON.stringify(customer.account_id)},
+         amount: 24,
+         tag: "admin-purchase",
+         description: {
+           description: "Admin balance adjustment",
+           purpose: "admin-balance-adjustment",
+         },
+       });
+       // Cluster-aware admin and account checks, as with the billing authority.
+       process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+       const attribution = server("purchases/admin-credit-attribution.js");
+       const actor = ${JSON.stringify(actor.account_id)};
+       const missing = await attribution.listAdminCreditAttribution({
+         admin_account_id: actor,
+         missing_only: true,
+       });
+       const attached = await attribution.attachAdminCreditAttribution({
+         admin_account_id: actor,
+         purchase_id,
+         attributed_admin_account_id: ${JSON.stringify(attributed.account_id)},
+         reason: "multibay attribution",
+         commit: true,
+       });
+       return {
+         purchase_id,
+         missing: missing.map((row) => row.purchase_id),
+         after: attached.after,
+       };`,
+    );
+    assert.ok(result.missing.includes(result.purchase_id));
+    assert.equal(result.after.source, "attached");
+    assert.equal(result.after.created_by, attributed.account_id);
+    assert.equal(result.after.attached_by, actor.account_id);
+  });
+});
+
+describe("EU/UK VAT refusal notice across bays", () => {
+  // Automatic payments run on the seed (billing authority); the refused
+  // customer may be homed on another bay and must get the notice there.
+  it("delivers the off-session refusal notice from the seed to a customer homed on the attached bay", async () => {
+    const result = await runInBay(
+      cluster,
+      SEED,
+      `const { sendOffSessionRefusalNotice } = server("purchases/stripe/business-tax-id-gate.js");
+       const first = await sendOffSessionRefusalNotice(${JSON.stringify(bob.account_id)});
+       const second = await sendOffSessionRefusalNotice(${JSON.stringify(bob.account_id)});
+       const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT target_home_bay_id FROM notification_target_outbox WHERE target_account_id=$1 AND kind='account_notice' ORDER BY created_at DESC LIMIT 1",
+         [${JSON.stringify(bob.account_id)}]);
+       return { first, second, target: rows[0]?.target_home_bay_id };`,
+    );
+    assert.equal(result.first, true);
+    assert.equal(result.second, false);
+    assert.equal(result.target, ATTACHED);
+    const isThisNotice = (row) =>
+      row.summary?.title === "Automatic payment not made: EU and UK customers";
+    await eventually(
+      async () =>
+        (await bob.client.call("notifications.list", { limit: 50 })).some(
+          isThisNotice,
+        ),
+      { timeoutMs: 60_000, what: "the VAT refusal notice to reach bob" },
+    );
+    const notices = (
+      await bob.client.call("notifications.list", { limit: 50 })
+    ).filter(isThisNotice);
+    assert.equal(notices.length, 1);
+  });
+});
+
+describe("outgoing support tickets across bays", () => {
+  // Outreach settings, contact suppressions and the support mutation ledger
+  // are seed-global: admin support create must run on the seed even when the
+  // admin and the customer are homed on another bay.
+  it("plans and commits on the seed for an admin and customer homed on the attached bay", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "sven",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    // Seed-only configuration: the outreach Zendesk identity and a legal
+    // suppression. (No Zendesk token, so a commit is rejected before sending.)
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       for (const [name, value] of [
+         ["crm_outreach_zendesk_submitter_id", "4001"],
+         ["crm_outreach_zendesk_group_id", "5002"],
+         ["crm_outreach_zendesk_support_address", "help@multibay.example"],
+       ]) {
+         await getPool().query(
+           "INSERT INTO server_settings (name, value) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value",
+           [name, value]);
+       }
+       await getPool().query(
+         "INSERT INTO crm_contact_suppressions (id, scope, normalized_scope_value, reason, source, active, created_at) VALUES (gen_random_uuid(), 'email', 'blocked@multibay.example', 'legal', 'cli', true, NOW())");`,
+    );
+    const request = {
+      subject: "About your account",
+      public_reply: "Hello, a short note from CoCalc support.",
+      reason: "multibay outgoing ticket",
+    };
+    let plan;
+    let lastError;
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
+      try {
+        plan = await runInBay(
+          cluster,
+          ATTACHED,
+          `const support = server("conat/api/admin-support.js");
+           return await support.planCreate({
+             account_id: ${JSON.stringify(admin.account_id)},
+             requester_account_id: ${JSON.stringify(bob.account_id)},
+             ...${JSON.stringify(request)},
+           });`,
+        );
+        break;
+      } catch (err) {
+        // The seed's settings cache may still be stale for a few seconds.
+        lastError = err;
+        await sleep(2_000);
+      }
+    }
+    assert.ok(plan, `planning failed: ${lastError}`);
+    assert.equal(plan.operation, "create");
+    assert.equal(plan.requester.account_id, bob.account_id);
+    assert.ok(plan.requester.email.includes("@"));
+
+    const blocked = await runInBay(
+      cluster,
+      ATTACHED,
+      `const support = server("conat/api/admin-support.js");
+       try {
+         await support.planCreate({
+           account_id: ${JSON.stringify(admin.account_id)},
+           requester_email: "blocked@multibay.example",
+           ...${JSON.stringify(request)},
+         });
+         return "planned";
+       } catch (err) {
+         return String(err.message ?? err);
+       }`,
+    );
+    assert.match(blocked, /is suppressed \(legal\)/);
+
+    // The same commit, forwarded from the attached bay twice and run on the
+    // seed directly, uses one seed ledger entry.
+    const key = "multibay-support-create-" + Date.now();
+    const commit = { ...request, requester_account_id: bob.account_id, payload_hash: plan.payload_hash, idempotency_key: key };
+    const errors = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getInterBayBridge } = server("inter-bay/bridge.js");
+       const errors = [];
+       for (let i = 0; i < 2; i++) {
+         try {
+           await getInterBayBridge()
+             .bayOps(${JSON.stringify(SEED)}, { timeout_ms: 60_000 })
+             .crm({ action: "supportCreate",
+                    actor_account_id: ${JSON.stringify(admin.account_id)},
+                    payload: ${JSON.stringify(commit)} });
+           errors.push("sent");
+         } catch (err) {
+           errors.push(String(err.message ?? err));
+         }
+       }
+       return errors;`,
+    );
+    assert.equal(errors.length, 2);
+    for (const error of errors) assert.match(error, /Zendesk token/);
+    const ledger = await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT status, account_id FROM admin_support_mutations WHERE idempotency_key=$1",
+         [${JSON.stringify(key)}]);
+       return rows;`,
+    );
+    assert.deepEqual(ledger, [
+      { status: "rejected", account_id: admin.account_id },
+    ]);
+    const attachedLedger = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT to_regclass('admin_support_mutations') IS NOT NULL AS exists");
+       if (!rows[0].exists) return 0;
+       const r = await getPool().query(
+         "SELECT count(*)::int AS n FROM admin_support_mutations WHERE idempotency_key=$1",
+         [${JSON.stringify(key)}]);
+       return r.rows[0].n;`,
+    );
+    assert.equal(attachedLedger, 0);
   });
 });

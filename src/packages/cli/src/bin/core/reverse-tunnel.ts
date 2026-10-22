@@ -12,14 +12,15 @@ import { spawn, type ChildProcess } from "node:child_process";
 // How OpenSSH reports that the project side could not listen (port in use,
 // or the server refused the bind).
 const FORWARD_REFUSED = /remote port forwarding failed|port forwarding failed/i;
-// Errors that retrying cannot fix.
+// Errors that retrying cannot fix. Everything else (a dropped connection, a
+// laptop asleep or offline, the project's ssh endpoint briefly refusing the
+// websocket while it restarts) is retried for as long as the tunnel is
+// wanted: the browser it serves stays open meanwhile.
 const FATAL =
-  /Permission denied|Host key verification failed|Could not resolve hostname|Bad (local|remote) forwarding specification/i;
-const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10_000];
+  /Permission denied|Host key verification failed|Bad (local|remote) forwarding specification/i;
+const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10_000, 20_000, 30_000, 60_000];
 // A connection that stayed up this long counts as healthy, resetting backoff.
 const HEALTHY_MS = 30_000;
-// Give up after this many consecutive connections that never became healthy.
-const MAX_QUICK_FAILURES = 6;
 
 export function reverseTunnelSshArgs({
   alias,
@@ -52,6 +53,39 @@ export function reverseTunnelSshArgs({
   ];
 }
 
+/**
+ * The other direction, for the same lifetime-tied ssh: 127.0.0.1:<localPort>
+ * on this computer reaches 127.0.0.1:<projectPort> inside the project (e.g.
+ * a .browser file's service, for the hand-off keys in `browser connect`).
+ */
+export function localForwardSshArgs({
+  alias,
+  projectPort,
+  localPort,
+  compress,
+}: {
+  alias: string;
+  projectPort: number;
+  localPort: number;
+  compress?: boolean;
+}): string[] {
+  return [
+    "-T",
+    "-o",
+    "ExitOnForwardFailure=yes",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=2",
+    ...(compress ? ["-C"] : []),
+    // Loopback only on this computer too.
+    "-L",
+    `127.0.0.1:${localPort}:127.0.0.1:${projectPort}`,
+    alias,
+    "cat >/dev/null",
+  ];
+}
+
 export interface ReverseTunnel {
   // Settles only if the tunnel gives up: the project refused the port, or
   // reconnecting keeps failing.
@@ -71,22 +105,33 @@ export function startReverseTunnel({
       windowsHide: true,
     }),
   reconnectDelaysMs = RECONNECT_DELAYS_MS,
+  maxQuickFailures = Infinity,
+  jitter = 0.2,
 }: {
   args: string[];
   onStatus?: (message: string) => void;
   spawnSsh?: (args: string[]) => ChildProcess;
   reconnectDelaysMs?: number[];
+  /** Give up after this many consecutive connections that never became
+   * healthy (default: never). */
+  maxQuickFailures?: number;
+  /** Each delay varies by up to this fraction, so many tunnels dropped at
+   * once do not all come back at once. */
+  jitter?: number;
 }): ReverseTunnel {
   let child: ChildProcess | null = null;
   let stopping = false;
   let timer: NodeJS.Timeout | undefined;
   let quickFailures = 0;
+  let attempts = 0;
   let giveUp: (err: Error) => void = () => {};
   const failed = new Promise<Error>((resolve) => (giveUp = resolve));
 
   const connect = () => {
     if (stopping) return;
     const started = Date.now();
+    attempts += 1;
+    const first = attempts === 1;
     let stderr = "";
     const ssh = spawnSsh(args);
     child = ssh;
@@ -105,7 +150,9 @@ export function startReverseTunnel({
       child = null;
       if (stopping) return;
       const detail = stderr.trim().split("\n").slice(-3).join(" ");
-      if (FORWARD_REFUSED.test(stderr)) {
+      // Refused at once: the port is taken. After a drop, though, the
+      // project may still hold the old connection's port for a while.
+      if (first && FORWARD_REFUSED.test(stderr)) {
         stopping = true;
         giveUp(
           new Error(
@@ -121,15 +168,16 @@ export function startReverseTunnel({
       }
       quickFailures =
         Date.now() - started >= HEALTHY_MS ? 0 : quickFailures + 1;
-      if (quickFailures >= MAX_QUICK_FAILURES) {
+      if (quickFailures >= maxQuickFailures) {
         stopping = true;
         giveUp(new Error(`could not keep the ssh tunnel up: ${detail}`));
         return;
       }
-      const delay =
+      const base =
         reconnectDelaysMs[
           Math.min(Math.max(quickFailures - 1, 0), reconnectDelaysMs.length - 1)
         ];
+      const delay = Math.round(base * (1 + jitter * (2 * Math.random() - 1)));
       onStatus(
         `Connection to the project dropped${detail ? ` (${detail})` : ""}; reconnecting in ${Math.round(delay / 1000)}s...`,
       );

@@ -139,8 +139,12 @@ export async function sendAgentMessage(
         `--report-no-reply is not possible here: ${why}; no message was sent`,
       );
   }
+  // Before waiting: a shell or tool that times out still has what it needs
+  // to learn what happened, without sending again.
   process.stderr.write(
-    `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
+    isExternalAgentSource(target)
+      ? `Sending (attempt ${attempt_id}).\n`
+      : `Sending (attempt ${attempt_id}). If this is cut off, check without resending: cocalc agent rpc inspect ${attempt_id} --agent-network ${agent_network_id} --to-agent ${target.agent_id} --target-project ${target.project_id}${opts.externalAgent ? ` --external-agent ${JSON.stringify(opts.externalAgent)}` : ""}\n`,
   );
   const result = (outcome: AgentRpcOutcome): AgentSendResult => ({
     outcome,
@@ -269,7 +273,7 @@ export function agentSendSummary(result: AgentSendResult): string {
   const inspect = isExternalAgentSource(target)
     ? ""
     : ` Check without resending: agent rpc inspect ${outcome.attempt_id} --agent-network ${outcome.agent_network_id} --to-agent ${target.agent_id} --target-project ${target.project_id}${profile}.`;
-  return `Delivery to ${who} via ${network} is unconfirmed: ${why}. It may still run, so do not resend automatically.${inspect} A deliberate retry needs a new --attempt-id.`;
+  return `UNCONFIRMED: delivery to ${who} via ${network} is not known (${why}). It may still run, so do not resend automatically.${inspect} A deliberate retry needs a new --attempt-id.`;
 }
 
 /** One plain sentence for `agent rpc inspect`: where the turn is, if known. */

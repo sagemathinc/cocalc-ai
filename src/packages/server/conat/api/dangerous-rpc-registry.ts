@@ -4,7 +4,9 @@
  */
 
 export type DangerousRpcFreshAuthDecision =
-  "fresh-auth-required" | "fresh-auth-not-required" | "internal-auth-only";
+  | "fresh-auth-required"
+  | "fresh-auth-not-required"
+  | "internal-auth-only";
 
 export type DangerousRpcDecision = {
   decision: DangerousRpcFreshAuthDecision;
@@ -440,6 +442,16 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "adminSupport.merge": {
     decision: "fresh-auth-required",
     reason: "merges Zendesk tickets and can add customer-visible comments",
+  },
+  "adminSupport.create": {
+    decision: "fresh-auth-required",
+    reason:
+      "opens a new customer-visible Zendesk ticket that emails a customer from the shared support identity",
+  },
+  "adminSupport.createOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed-local helper is only reached from the fresh-auth-checked adminSupport.create RPC or the trusted CRM seed channel",
   },
   "adminSupport.spam": {
     decision: "fresh-auth-required",
@@ -1415,6 +1427,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason:
       "admin-only idempotent reconstruction of derived membership analytics events",
+  },
+  "purchases.adminAttachCreditAttribution": {
+    decision: "fresh-auth-required",
+    reason: "admin audit-log attribution of a past balance adjustment",
+  },
+  "purchases.adminListCreditAttribution": {
+    decision: "fresh-auth-required",
+    reason: "admin read of balance adjustments with internal reasons",
   },
   "purchases.adminCreateMembershipPackagePurchase": {
     decision: "fresh-auth-required",
