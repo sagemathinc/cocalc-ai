@@ -16,6 +16,22 @@ jest.mock("../bounded-static-markdown", () => ({
   __esModule: true,
   default: ({ value }: { value: string }) => <div>{value}</div>,
 }));
+jest.mock("@cocalc/frontend/components/copy-button", () => ({
+  __esModule: true,
+  default: () => <button data-testid="copy-button">copy</button>,
+}));
+jest.mock("../contextual-reply", () => ({
+  __esModule: true,
+  default: ({ children, source, disabled }: any) => (
+    <div
+      data-testid="contextual-reply"
+      data-source={source.id}
+      data-disabled={String(!!disabled)}
+    >
+      {children}
+    </div>
+  ),
+}));
 jest.mock("../user-name", () => ({
   getUserName: () => "Alice",
 }));
@@ -99,18 +115,27 @@ const thread = [
 test("items are unread past the watermark; opening one reads it", async () => {
   const { count } = setup(thread, 2);
   const keys = user();
-  expect(options().map(isUnread)).toEqual([false, true, true]);
+  // Newest first, as in an inbox.
+  expect(options().map((o) => o.textContent)).toEqual([
+    expect.stringContaining("third question"),
+    expect.stringContaining("second question"),
+    expect.stringContaining("first question"),
+  ]);
+  expect(options().map(isUnread)).toEqual([true, true, false]);
   expect(screen.getByText("2 unread")).toBeInTheDocument();
   // An item shows its replies in the reading pane.
   await keys.click(screen.getByText(/first question/));
   expect(screen.getByRole("article")).toHaveTextContent("first answer");
   // Clicking an item leaves the focus where the keys work.
   expect(document.activeElement).toBe(screen.getByRole("listbox"));
-  // j opens the next one: read, and the watermark moves over it.
-  await keys.keyboard("j");
+  // k goes up to the newer one: read, and the watermark moves over it.
+  await keys.keyboard("k");
   expect(screen.getByRole("article")).toHaveTextContent("second question");
   expect(count()).toBe(3);
-  expect(options().map(isUnread)).toEqual([false, false, true]);
+  expect(options().map(isUnread)).toEqual([true, false, false]);
+  // j goes back down, to the older one.
+  await keys.keyboard("j");
+  expect(screen.getByRole("article")).toHaveTextContent("first answer");
 });
 
 test("u jumps to the next unread; m marks unread; y archives", async () => {
@@ -118,14 +143,20 @@ test("u jumps to the next unread; m marks unread; y archives", async () => {
   const { state, count } = setup(thread, 0, { autoFocus: true });
   expect(document.activeElement).toBe(screen.getByRole("listbox"));
   const keys = user();
+  // The first unread one from the top: the newest.
   await keys.keyboard("u");
-  expect(screen.getByRole("article")).toHaveTextContent("first question");
-  expect(count()).toBe(2);
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+  // Read out of order: the watermark stays.
+  expect(count()).toBe(0);
+  // u again: the next unread one down, then from the top.
+  await keys.keyboard("u");
+  expect(screen.getByRole("article")).toHaveTextContent("second question");
+  await keys.keyboard("k");
   await keys.keyboard("m");
-  expect(state().u).toEqual(["p1"]);
+  expect(state().u).toEqual(["p3"]);
   expect(isUnread(options()[0])).toBe(true);
   await keys.keyboard("y");
-  // Archived: gone from the list, and the next item opens.
+  // Archived: gone from the list, and the next (older) item opens.
   expect(options()).toHaveLength(2);
   expect(screen.getByRole("article")).toHaveTextContent("second question");
   fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
@@ -144,6 +175,8 @@ test("showing archived items is not new items", () => {
   const list = screen.getByRole("listbox");
   Object.defineProperty(list, "scrollHeight", { value: 1000 });
   Object.defineProperty(list, "clientHeight", { value: 100 });
+  // Scrolled away from the top, where new items would appear.
+  Object.defineProperty(list, "scrollTop", { value: 500, writable: true });
   fireEvent.click(screen.getByText(/third question/));
   fireEvent.keyDown(list, { key: "y" });
   expect(options()).toHaveLength(2);
@@ -155,10 +188,9 @@ test("showing archived items is not new items", () => {
 test("new items wait behind a button; mark all read", () => {
   const { setMessages, count } = setup(thread, 4);
   expect(screen.getByText("All read")).toBeInTheDocument();
-  // jsdom lays nothing out, so the list counts as scrolled up.
+  // Scrolled away from the top, where new items appear.
   const list = screen.getByRole("listbox");
-  Object.defineProperty(list, "scrollHeight", { value: 1000 });
-  Object.defineProperty(list, "clientHeight", { value: 100 });
+  Object.defineProperty(list, "scrollTop", { value: 500, writable: true });
   setMessages([...thread, person("p4", "fourth", 5), person("p5", "fifth", 6)]);
   // Announced: it appears in a live region that was already there.
   const status = screen.getByRole("status", { name: "New messages" });
@@ -191,5 +223,26 @@ test("narrow: back to the list keeps the keys working", async () => {
   await keys.click(screen.getByRole("button", { name: "All messages" }));
   expect(document.activeElement).toBe(screen.getByRole("listbox"));
   await keys.keyboard("j");
-  expect(screen.getByRole("article")).toHaveTextContent("first question");
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+});
+
+test("new items at the top are seen when the list is at the top", () => {
+  const { setMessages } = setup(thread, 4);
+  setMessages([...thread, person("p4", "fourth", 5)]);
+  expect(screen.queryByRole("button", { name: /new/ })).toBeNull();
+  expect(options()[0]).toHaveTextContent("fourth");
+});
+
+test("the reading pane has the log's selection actions and a copy button", async () => {
+  setup(thread, 4, { projectId: "project-1", path: "a.chat" });
+  await user().click(screen.getByText(/first question/));
+  const pane = screen.getByRole("article");
+  // Each message: copy as markdown, and Reply/Quote/Copy on a selection.
+  expect(within(pane).getAllByTestId("copy-button")).toHaveLength(2);
+  expect(within(pane).getAllByTestId("contextual-reply")).toHaveLength(2);
+  expect(
+    within(pane)
+      .getAllByTestId("contextual-reply")
+      .map((el) => el.getAttribute("data-source")),
+  ).toEqual(["p1", "a1"]);
 });

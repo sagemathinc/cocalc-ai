@@ -17,7 +17,9 @@ import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { dateValue, field, isAcpAssistantMessage } from "./access";
 import type { ChatActions } from "./actions";
+import CopyButton from "@cocalc/frontend/components/copy-button";
 import StaticMarkdown from "./bounded-static-markdown";
+import ContextualReply from "./contextual-reply";
 import {
   findItem,
   isItemArchived,
@@ -26,6 +28,7 @@ import {
   markItemRead,
   markItemUnread,
   readerItems,
+  readerMessageId,
   setItemArchived,
   type ReaderChange,
   type ReaderItem,
@@ -108,6 +111,8 @@ export function ChatReaderView({
   messages,
   accountId,
   readStateVersion,
+  projectId,
+  path,
   fontSize,
   narrow,
   autoFocus,
@@ -120,6 +125,8 @@ export function ChatReaderView({
   accountId?: string;
   /** Changes whenever any read state does (here or on another device). */
   readStateVersion?: number;
+  projectId?: string;
+  path?: string;
   fontSize?: number;
   /** Show the list or the open item, not both side by side. */
   narrow?: boolean;
@@ -140,11 +147,15 @@ export function ChatReaderView({
     [actions, threadId, readStateVersion],
   );
   const [showArchived, setShowArchived] = useState(false);
+  // Newest first, as in an inbox: j goes down the list, to older items.
   const visible = useMemo(
     () =>
-      showArchived
+      (showArchived
         ? items
-        : items.filter((item) => !isItemArchived(item, state)),
+        : items.filter((item) => !isItemArchived(item, state))
+      )
+        .slice()
+        .reverse(),
     [items, state, showArchived],
   );
   // Counted over every item, as Mark all read reads every item; archived
@@ -226,16 +237,16 @@ export function ChatReaderView({
             ),
           );
           return true;
-        case "u":
+        case "u": {
+          // The next unread one down the list, then from the top.
+          const unreadItem = (item: ReaderItem) =>
+            !isItemRead(item, watermark, state);
           open(
-            findItem(
-              visible,
-              selectedIndex,
-              1,
-              (item) => !isItemRead(item, watermark, state),
-            ),
+            findItem(visible, selectedIndex, 1, unreadItem) ??
+              findItem(visible, -1, 1, unreadItem),
           );
           return true;
+        }
         case "y":
           if (selected) archive(selected);
           return !!selected;
@@ -251,7 +262,7 @@ export function ChatReaderView({
     }
   };
 
-  // New items wait behind a button instead of moving the list.
+  // New items (at the top) wait behind a button instead of moving the list.
   const listRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   // Back to the list (narrow): the keys stay with it once it is shown again.
@@ -278,17 +289,16 @@ export function ChatReaderView({
       setSeenCount(visible.length);
       return;
     }
+    // New items arrive at the top: seen if the list is scrolled to it.
     const list = listRef.current;
-    if (list && list.scrollHeight - list.scrollTop - list.clientHeight < 8)
-      setSeenCount(visible.length);
+    if (list && list.scrollTop < 8) setSeenCount(visible.length);
     else if (visible.length < seenCount) setSeenCount(visible.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible.length, context]);
   const newCount = Math.max(0, visible.length - seenCount);
   const onListScroll = () => {
     const list = listRef.current;
-    if (list && list.scrollHeight - list.scrollTop - list.clientHeight < 8)
-      setSeenCount(visible.length);
+    if (list && list.scrollTop < 8) setSeenCount(visible.length);
   };
 
   const list = (
@@ -402,7 +412,7 @@ export function ChatReaderView({
         aria-label="New messages"
         style={{
           position: "absolute",
-          bottom: 12,
+          top: 8,
           left: "50%",
           transform: "translateX(-50%)",
         }}
@@ -414,7 +424,7 @@ export function ChatReaderView({
             type="primary"
             onClick={() => {
               const list = listRef.current;
-              list?.scrollTo?.({ top: list.scrollHeight });
+              list?.scrollTo?.({ top: 0 });
               setSeenCount(visible.length);
             }}
           >
@@ -427,6 +437,7 @@ export function ChatReaderView({
 
   const pane = selected ? (
     <div
+      key={selected.id}
       role="article"
       aria-label="Message"
       style={{
@@ -453,14 +464,14 @@ export function ChatReaderView({
           disabled={findItem(visible, selectedIndex, -1) == null}
           onClick={() => open(findItem(visible, selectedIndex, -1))}
         >
-          Previous
+          Newer
         </Button>
         <Button
           size="small"
           disabled={findItem(visible, selectedIndex, 1) == null}
           onClick={() => open(findItem(visible, selectedIndex, 1))}
         >
-          Next
+          Older
         </Button>
         <Button size="small" onClick={() => archive(selected)}>
           {isItemArchived(selected, state) ? "Move to inbox" : "Archive"}
@@ -483,23 +494,49 @@ export function ChatReaderView({
       </Space>
       {selected.messages.map((message) => {
         const date = dateValue(message);
+        const sender = readerSender(message, userMap);
+        const value = `${newest_content(message) ?? ""}`;
         return (
           <div key={`${date?.valueOf()}`} style={{ marginBottom: 20 }}>
-            <div style={{ color: UI_COLORS.muted, marginBottom: 4 }}>
-              <b style={{ color: UI_COLORS.text }}>
-                {readerSender(message, userMap)}
-              </b>
-              {date ? (
-                <>
-                  {" · "}
-                  <TimeAgo date={date} />
-                </>
-              ) : null}
+            <div
+              style={{
+                color: UI_COLORS.muted,
+                marginBottom: 4,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <b style={{ color: UI_COLORS.text }}>{sender}</b>
+              {date ? <TimeAgo date={date} /> : null}
+              <CopyButton
+                markdown
+                value={value}
+                size="small"
+                noText
+                style={{ fontSize: "12px" }}
+              />
             </div>
-            <StaticMarkdown
-              value={`${newest_content(message) ?? ""}`}
-              style={{ fontSize: `${fontSize ?? 14}px` }}
-            />
+            {/* The log's selection actions: Reply, Quote and Copy. */}
+            <ContextualReply
+              actions={actions}
+              projectId={projectId ?? ""}
+              path={path ?? ""}
+              disabled={!projectId || !path || !value.trim()}
+              source={{
+                kind: "message",
+                id: readerMessageId(message),
+                thread_id: threadId,
+                title: isAcpAssistantMessage(message)
+                  ? "Assistant response"
+                  : `Message from ${sender}`,
+              }}
+            >
+              <StaticMarkdown
+                value={value}
+                style={{ fontSize: `${fontSize ?? 14}px` }}
+              />
+            </ContextualReply>
           </div>
         );
       })}
