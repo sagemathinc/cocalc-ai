@@ -3422,3 +3422,139 @@ describe("EU/UK VAT refusal notice across bays", () => {
     assert.equal(notices.length, 1);
   });
 });
+
+describe("outgoing support tickets across bays", () => {
+  // Outreach settings, contact suppressions and the support mutation ledger
+  // are seed-global: admin support create must run on the seed even when the
+  // admin and the customer are homed on another bay.
+  it("plans and commits on the seed for an admin and customer homed on the attached bay", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "sven",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    // Seed-only configuration: the outreach Zendesk identity and a legal
+    // suppression. (No Zendesk token, so a commit is rejected before sending.)
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       for (const [name, value] of [
+         ["crm_outreach_zendesk_submitter_id", "4001"],
+         ["crm_outreach_zendesk_group_id", "5002"],
+         ["crm_outreach_zendesk_support_address", "help@multibay.example"],
+       ]) {
+         await getPool().query(
+           "INSERT INTO server_settings (name, value) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value",
+           [name, value]);
+       }
+       await getPool().query(
+         "INSERT INTO crm_contact_suppressions (id, scope, normalized_scope_value, reason, source, active, created_at) VALUES (gen_random_uuid(), 'email', 'blocked@multibay.example', 'legal', 'cli', true, NOW())");`,
+    );
+    const request = {
+      subject: "About your account",
+      public_reply: "Hello, a short note from CoCalc support.",
+      reason: "multibay outgoing ticket",
+    };
+    let plan;
+    let lastError;
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
+      try {
+        plan = await runInBay(
+          cluster,
+          ATTACHED,
+          `const support = server("conat/api/admin-support.js");
+           return await support.planCreate({
+             account_id: ${JSON.stringify(admin.account_id)},
+             requester_account_id: ${JSON.stringify(bob.account_id)},
+             ...${JSON.stringify(request)},
+           });`,
+        );
+        break;
+      } catch (err) {
+        // The seed's settings cache may still be stale for a few seconds.
+        lastError = err;
+        await sleep(2_000);
+      }
+    }
+    assert.ok(plan, `planning failed: ${lastError}`);
+    assert.equal(plan.operation, "create");
+    assert.equal(plan.requester.account_id, bob.account_id);
+    assert.ok(plan.requester.email.includes("@"));
+
+    const blocked = await runInBay(
+      cluster,
+      ATTACHED,
+      `const support = server("conat/api/admin-support.js");
+       try {
+         await support.planCreate({
+           account_id: ${JSON.stringify(admin.account_id)},
+           requester_email: "blocked@multibay.example",
+           ...${JSON.stringify(request)},
+         });
+         return "planned";
+       } catch (err) {
+         return String(err.message ?? err);
+       }`,
+    );
+    assert.match(blocked, /is suppressed \(legal\)/);
+
+    // The same commit, forwarded from the attached bay twice and run on the
+    // seed directly, uses one seed ledger entry.
+    const key = "multibay-support-create-" + Date.now();
+    const commit = { ...request, requester_account_id: bob.account_id, payload_hash: plan.payload_hash, idempotency_key: key };
+    const errors = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getInterBayBridge } = server("inter-bay/bridge.js");
+       const errors = [];
+       for (let i = 0; i < 2; i++) {
+         try {
+           await getInterBayBridge()
+             .bayOps(${JSON.stringify(SEED)}, { timeout_ms: 60_000 })
+             .crm({ action: "supportCreate",
+                    actor_account_id: ${JSON.stringify(admin.account_id)},
+                    payload: ${JSON.stringify(commit)} });
+           errors.push("sent");
+         } catch (err) {
+           errors.push(String(err.message ?? err));
+         }
+       }
+       return errors;`,
+    );
+    assert.equal(errors.length, 2);
+    for (const error of errors) assert.match(error, /Zendesk token/);
+    const ledger = await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT status, account_id FROM admin_support_mutations WHERE idempotency_key=$1",
+         [${JSON.stringify(key)}]);
+       return rows;`,
+    );
+    assert.deepEqual(ledger, [
+      { status: "rejected", account_id: admin.account_id },
+    ]);
+    const attachedLedger = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT to_regclass('admin_support_mutations') IS NOT NULL AS exists");
+       if (!rows[0].exists) return 0;
+       const r = await getPool().query(
+         "SELECT count(*)::int AS n FROM admin_support_mutations WHERE idempotency_key=$1",
+         [${JSON.stringify(key)}]);
+       return r.rows[0].n;`,
+    );
+    assert.equal(attachedLedger, 0);
+  });
+});

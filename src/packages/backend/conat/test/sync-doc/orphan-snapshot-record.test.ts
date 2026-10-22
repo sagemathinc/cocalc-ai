@@ -2,10 +2,12 @@
 A snapshot is written about one interval after the patch it covers, so the
 range a client loads from the latest snapshot onward also contains the
 previous snapshot's record, without that snapshot's patch or its children.
-That record looks like a second head without an exact merged value, so the
-client loads more history, which used to go back to the previous snapshot's
+That record used to look like a second head without an exact merged value,
+so the client loaded more history, which went back to the previous snapshot's
 own start: after a long gap between snapshots, everything (a prod agent chat
-loaded 29,496 versions). It must step back only to the previous snapshot.
+loaded 29,496 versions). The client now ignores it until its patch is loaded
+(see snapshot-chain.test.ts), and loading more history steps back only to the
+previous snapshot.
 */
 
 import {
@@ -76,11 +78,15 @@ describe("opening a document whose previous snapshot's record follows the latest
     expect(s3.to_str()).toBe(expected);
     const session3 = (s3 as any).patchflowSession;
     expect(session3.needsMoreHistory()).toBe(false);
-    // One step back, to the older snapshot's patch, and no further.
     expect(s3.hasFullHistory()).toBe(false);
-    const loaded = new Set(
-      session3.history({ includeSnapshots: true }).map((p) => p.time),
-    );
+    const loadedTimes = () =>
+      new Set(session3.history({ includeSnapshots: true }).map((p) => p.time));
+    // Nothing before the latest snapshot is loaded on open.
+    expect(loadedTimes().has(older)).toBe(false);
+    // One step back, to the older snapshot's patch, and no further.
+    expect(await s3.loadMoreHistory()).toBe(true);
+    expect(s3.to_str()).toBe(expected);
+    const loaded = loadedTimes();
     expect(loaded.has(older)).toBe(true);
     expect(loaded.has(versions[0])).toBe(false);
     expect(loaded.has(versions[1])).toBe(false);
