@@ -5,13 +5,18 @@ const destroyed: string[] = [];
 // what `btrfs qgroup show -prc --raw /mnt/cocalc` prints
 let filesystemQgroups = "";
 const scans = jest.fn();
+// the subvolume at each path, as `btrfs subvolume show` says
+const ids = new Map<string, number>();
+const subvolumeShow = (path: string) => ({
+  stdout: `Subvolume ID:\t${ids.get(path) ?? 999}\n`,
+  stderr: "",
+  exit_code: 0,
+});
 
 jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
-  cachedBtrfsSubvolumeShow: jest.fn(async () => ({
-    stdout: "Subvolume ID: 999\n",
-    stderr: "",
-    exit_code: 0,
-  })),
+  cachedBtrfsSubvolumeShow: jest.fn(async (path: string) =>
+    subvolumeShow(path),
+  ),
 }));
 jest.mock("@cocalc/file-server/btrfs/quota-queue", () => ({
   queueSyncQuotaGroup: jest.fn(async (opts: any) => {
@@ -30,6 +35,9 @@ jest.mock("@cocalc/file-server/btrfs/util", () => ({
   refusedByStorageWrapper: (err: unknown) =>
     /SECURITY_DENY/.test(`${(err as any)?.message ?? err}`),
   btrfs: jest.fn(async ({ args }: { args: string[] }) => {
+    if (args[0] === "subvolume" && args[1] === "show") {
+      return subvolumeShow(args[2]);
+    }
     scans(args);
     return { stdout: filesystemQgroups, stderr: "", exit_code: 0 };
   }),
@@ -86,6 +94,7 @@ function filesystem({
     [history, history?.id ?? 257, `project-${PROJECT}-persist`],
   ] as const) {
     if (v == null) continue;
+    ids.set(`/mnt/cocalc/${path}`, id);
     const member = v.member ?? true;
     if (member) {
       members.push(`0/${id}`);
@@ -109,6 +118,7 @@ beforeEach(() => {
   queueError = undefined;
   filesystemQgroups = "";
   resetQgroupScansForTest();
+  ids.clear();
   existing.clear();
   queued.length = 0;
   destroyed.length = 0;
@@ -245,6 +255,41 @@ describe("the project's quota group", () => {
       history_used: 8 * GiB,
       history_reserve: GiB,
     });
+  });
+
+  it("never takes more room for the history than configured", async () => {
+    existing.add(HISTORY);
+    // the quota was lowered from 50 to 10 GiB, but the group's limit didn't
+    // follow (yet): R is still about 1 GiB, not 45 GiB
+    filesystem({
+      home: { own: 3 * GiB },
+      history: { own: 8 * GiB },
+      groupLimit: 55 * GiB,
+    });
+    expect(
+      await projectQuotaWithHistory({
+        project_id: PROJECT,
+        home: HOME,
+        history: HISTORY,
+        quota: { size: 10 * GiB, used: 3 * GiB },
+        env: {},
+      }),
+    ).toMatchObject({ used: 10 * GiB, history_reserve: GiB });
+    // and a group limit not yet raised leaves less room
+    filesystem({
+      home: { own: 3 * GiB },
+      history: { own: 8 * GiB },
+      groupLimit: 10.5 * GiB,
+    });
+    expect(
+      await projectQuotaWithHistory({
+        project_id: PROJECT,
+        home: HOME,
+        history: HISTORY,
+        quota: { size: 10 * GiB, used: 3 * GiB },
+        env: {},
+      }),
+    ).toMatchObject({ used: 10.5 * GiB, history_reserve: 0.5 * GiB });
   });
 });
 

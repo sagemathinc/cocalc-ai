@@ -199,7 +199,7 @@ export async function syncProjectQuotaGroup({
   // read again (one project after another, e.g., when they all join)
   const members = [home];
   if (history != null && (await exists(history))) members.push(history);
-  noteQgroupGroup({ mount, group, members, size });
+  await noteQgroupGroup({ mount, group, members, size });
 }
 
 // Puts a home or persist volume the project gets (e.g., by a restore) in its
@@ -225,7 +225,7 @@ export async function joinProjectQuotaGroup({
   await unlessRefused(
     async () => await addToQuotaGroup({ mount, group, path }),
   );
-  noteQgroupGroup({ mount, group, members: [path] });
+  await noteQgroupGroup({ mount, group, members: [path] });
 }
 
 // Destroys the quota groups of deleted projects: those with no members (the
@@ -361,11 +361,13 @@ export async function projectQuotaWithHistory<
   home,
   history,
   quota,
+  env = process.env,
 }: {
   project_id: string;
   home: string;
   history?: string;
   quota: T;
+  env?: NodeJS.ProcessEnv;
 }): Promise<T & ProjectQuotaBreakdown> {
   if (btrfsQuotasDisabled() || !(quota.size > 0)) return quota;
   const group = await readProjectQuotaGroup({ project_id, path: home });
@@ -375,7 +377,13 @@ export async function projectQuotaWithHistory<
     const own = await readProjectQuotaGroup({ project_id, path: history });
     if (own?.member) history_used = own.own;
   }
-  const reserve = Math.max(0, group.limit - quota.size);
+  // R: what the group's limit leaves beyond the quota, but never more than
+  // the configured reserve (the group's limit may not have followed a lower
+  // quota yet, e.g., its update deferred): never less usage than it is
+  const reserve = Math.max(
+    0,
+    Math.min(group.limit - quota.size, historyReserve(quota.size, env)),
+  );
   return {
     ...quota,
     used: effectiveQuotaUsage({

@@ -61,6 +61,8 @@ import {
 import { SubvolumeQuota } from "@cocalc/file-server/btrfs/subvolume-quota";
 import { btrfsQuotasDisabled } from "@cocalc/file-server/btrfs/config";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
+import { forgetSubvolumePaths } from "@cocalc/file-server/btrfs/operation-cache";
+import { noteQgroupLimit } from "@cocalc/file-server/btrfs/qgroup-scan";
 import { setPrepareProjectStore } from "@cocalc/conat/persist/context";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { CapturedSnapshotData } from "@cocalc/file-server/btrfs/snapshot-preparer";
@@ -284,6 +286,8 @@ export const btrfsOps: PersistVolumeOps = {
       args: ["qgroup", "limit", `${bytes}`, path, dirname(path)],
       verbose: false,
     });
+    // what's read of the filesystem's quotas says so too (qgroup-scan.ts)
+    await noteQgroupLimit({ mount: dirname(path), path, size: bytes });
   },
   removeFromHome: async (home, relative) => {
     await rmBeneathHome(home, relative);
@@ -1201,6 +1205,16 @@ export async function withProjectStorageFenced<T>(
   );
 }
 
+// Moves a volume: what was read about the paths (subvolume ids, the quota
+// scan) no longer holds (file-server qgroup-scan.ts).
+async function moveVolume(source: string, destination: string) {
+  try {
+    await sudo({ command: "mv", args: [source, destination] });
+  } finally {
+    forgetSubvolumePaths(source, destination);
+  }
+}
+
 // Puts the volume at `staged` in place of the project's persist volume; the
 // path the replaced one is now at (to delete), if there was one.
 async function swapInVolume(
@@ -1217,13 +1231,13 @@ async function swapInVolume(
       IMPORT_STAGING_DIR,
       stagingName("replaced", project_id),
     );
-    await sudo({ command: "mv", args: [volume, previous] });
+    await moveVolume(volume, previous);
   }
   try {
-    await sudo({ command: "mv", args: [staged, volume] });
+    await moveVolume(staged, volume);
   } catch (err) {
     if (previous != null) {
-      await sudo({ command: "mv", args: [previous, volume] });
+      await moveVolume(previous, volume);
     }
     throw err;
   }

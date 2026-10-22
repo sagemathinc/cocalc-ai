@@ -15,13 +15,14 @@ for a while (COCALC_BTRFS_QGROUP_SCAN_CACHE_MS, 30 s by default): with simple
 quotas the counts only change when btrfs commits (every 30 s by default), so
 this is about as fresh as reading again.
 
-What this host changes itself (a limit) is updated in the cached scan, rather
-than dropping it; other changes (snapshots made or deleted, restores) drop it
-(invalidateQgroupScan), and a subvolume not in the scan (e.g., just made)
-reads it again (once).
+Subvolumes are found by their id, not their path (a restore puts another
+subvolume at a home's path).  What this host changes itself (a limit) is
+updated in the cached scan, rather than dropping it; other changes (snapshots
+made or deleted, restores and other swaps) drop it (invalidateQgroupScan, or
+forgetSubvolumePaths in operation-cache.ts), and a subvolume not in the scan
+(e.g., just made) reads it again (once).
 */
 
-import { relative } from "node:path";
 import { btrfs } from "./util";
 
 export interface QgroupScanRow {
@@ -150,36 +151,42 @@ export async function getQgroupScan(mount: string): Promise<QgroupScan> {
   return await scan(mount);
 }
 
+// The id of the subvolume at `path`, as it is now (not cached: e.g., a
+// restore may have put another subvolume there).
+export async function currentSubvolumeId(path: string): Promise<number> {
+  const { stdout } = await btrfs({
+    verbose: false,
+    args: ["subvolume", "show", path],
+  });
+  const id = Number(stdout.match(/^\s*Subvolume ID:\s*(\d+)/m)?.[1]);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new Error(`no subvolume id for ${path}`);
+  }
+  return id;
+}
+
 // The qgroup of the subvolume at `path` (level 0), with the groups it is in.
+// It is found by the subvolume's id, never by its path: a path can be given
+// to another subvolume (e.g., a restore swaps homes), and its old row would
+// still be in what was read.
 export async function lookupQgroup({
   mount,
-  path,
   getSubvolumeId,
 }: {
   mount: string;
-  path: string;
-  // used if the path is not in the scan (e.g., `mount` isn't the top level)
+  path?: string;
   getSubvolumeId: () => Promise<number>;
 }): Promise<
   { row: QgroupScanRow; parents: QgroupScanRow[]; warning?: string } | undefined
 > {
   const started = Date.now();
-  const rel = relative(mount, path);
-  let id: string | undefined;
-  const find = async (s: QgroupScan) => {
-    let row = rel && !rel.startsWith("..") ? s.byPath.get(rel) : undefined;
-    if (row == null) {
-      id ??= `0/${await getSubvolumeId()}`;
-      row = s.rows.get(id);
-    }
-    return row;
-  };
+  const id = `0/${await getSubvolumeId()}`;
   let s = await getQgroupScan(mount);
-  let row = await find(s);
+  let row = s.rows.get(id);
   // not there: read again, unless what was read is from after this began
   if (row == null && s.scanned_at < started) {
     s = await scan(mount);
-    row = await find(s);
+    row = s.rows.get(id);
   }
   if (row == null) return;
   return {
@@ -192,7 +199,8 @@ export async function lookupQgroup({
 }
 
 // The scan of `mount` (or the one containing the path) is dropped: the next
-// lookup reads the filesystem again.
+// lookup reads the filesystem again, also if a read was under way (it is
+// never kept, nor given to anyone who asks from now on).
 export function invalidateQgroupScan(pathOrMount: string): void {
   for (const mount of new Set([...scans.keys(), ...inflight.keys()])) {
     if (
@@ -201,6 +209,7 @@ export function invalidateQgroupScan(pathOrMount: string): void {
       mount.startsWith(`${pathOrMount}/`)
     ) {
       scans.delete(mount);
+      inflight.delete(mount);
       generations.set(mount, (generations.get(mount) ?? 0) + 1);
     }
   }
@@ -208,7 +217,7 @@ export function invalidateQgroupScan(pathOrMount: string): void {
 
 // This host set the limit of the subvolume at `path` to `size` bytes: the
 // cached scan says so too (or is dropped, if it can't tell which row).
-export function noteQgroupLimit({
+export async function noteQgroupLimit({
   mount,
   path,
   size,
@@ -216,17 +225,26 @@ export function noteQgroupLimit({
   mount: string;
   path: string;
   size: number | string;
-}): void {
-  if (inflight.has(mount)) {
+}): Promise<void> {
+  const generation = generations.get(mount) ?? 0;
+  if (inflight.has(mount) || !scans.has(mount)) {
     // (a read already under way may be from before the change)
     invalidateQgroupScan(mount);
     return;
   }
-  const s = scans.get(mount);
-  if (s == null) return;
   const bytes = Number(size);
-  const row = s.byPath.get(relative(mount, path));
-  if (row == null || !Number.isSafeInteger(bytes) || bytes <= 0) {
+  let id: number | undefined;
+  try {
+    id = await currentSubvolumeId(path);
+  } catch {}
+  const s = scans.get(mount);
+  const row = id == null ? undefined : s?.rows.get(`0/${id}`);
+  if (
+    row == null ||
+    (generations.get(mount) ?? 0) !== generation ||
+    !Number.isSafeInteger(bytes) ||
+    bytes <= 0
+  ) {
     invalidateQgroupScan(mount);
     return;
   }
@@ -235,9 +253,10 @@ export function noteQgroupLimit({
 
 // This host put the subvolumes at `members` (all existing) in `group`, with
 // `size` as its limit if given: the cached scan says so too (or is dropped,
-// if it can't place one).  With simple quotas a subvolume's usage counts in
+// if it can't place one).  Members are found by their ids as they are now
+// (as for noteQgroupLimit).  With simple quotas a subvolume's usage counts in
 // a group as soon as it joins.
-export function noteQgroupGroup({
+export async function noteQgroupGroup({
   mount,
   group,
   members,
@@ -247,15 +266,26 @@ export function noteQgroupGroup({
   group: string;
   members: string[];
   size?: number;
-}): void {
-  if (inflight.has(mount)) {
+}): Promise<void> {
+  const generation = generations.get(mount) ?? 0;
+  if (inflight.has(mount) || !scans.has(mount)) {
+    invalidateQgroupScan(mount);
+    return;
+  }
+  let ids: number[];
+  try {
+    ids = await Promise.all(members.map(currentSubvolumeId));
+  } catch {
     invalidateQgroupScan(mount);
     return;
   }
   const s = scans.get(mount);
-  if (s == null) return;
-  const rows = members.map((path) => s.byPath.get(relative(mount, path)));
-  if (rows.some((row) => row == null)) {
+  const rows = ids.map((id) => s?.rows.get(`0/${id}`));
+  if (
+    s == null ||
+    (generations.get(mount) ?? 0) !== generation ||
+    rows.some((row) => row == null)
+  ) {
     invalidateQgroupScan(mount);
     return;
   }

@@ -151,6 +151,16 @@ export function invalidateBtrfsQgroupShowRaw(pathOrMount: string): void {
   invalidateQgroupScan(pathOrMount);
 }
 
+// The subvolumes at `paths` were replaced or moved (e.g., a restore swapped a
+// home): what was read about them, and of their filesystem's quotas, no
+// longer holds.
+export function forgetSubvolumePaths(...paths: string[]): void {
+  for (const path of paths) {
+    invalidateBtrfsSubvolumeShow(path);
+    invalidateQgroupScan(path);
+  }
+}
+
 export async function cachedBtrfsSubvolumeShow(
   path: string,
   opts?: { err_on_exit?: boolean },
