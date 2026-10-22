@@ -145,6 +145,14 @@ export class ProjectVolumeQuotaManager {
         operation_class,
         priority,
       });
+      if (incomplete && overrides.length) {
+        // A temporary raise (e.g., for a restore) is only useful whole: with
+        // the project's quota group still at its old limit, what it is for
+        // would run out of room midway.  Fails like a limit not set.
+        throw new Error(
+          `temporary quota override not fully applied: ${incomplete}`,
+        );
+      }
       if (overrides.length) {
         for (const { override_id } of overrides) {
           markProjectVolumeQuotaOverrideApplied(override_id);
