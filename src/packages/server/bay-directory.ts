@@ -120,18 +120,12 @@ export async function listConfiguredBaysAuthoritative(): Promise<BayInfo[]> {
   return await listAuthoritativeClusterBayInfos();
 }
 
-// No live account row exists for this id: it was deleted, or never existed.
-export class AccountNotFoundError extends Error {
-  constructor(readonly account_id: string) {
-    super(`account '${account_id}' not found`);
-    this.name = "AccountNotFoundError";
-  }
-}
+import {
+  AccountNotFoundError,
+  isAccountNotFoundError,
+} from "@cocalc/server/bay-directory-errors";
 
-// By name, so it also matches an instance from another copy of this module.
-export function isAccountNotFoundError(err: unknown): boolean {
-  return (err as Error | undefined)?.name === "AccountNotFoundError";
-}
+export { AccountNotFoundError, isAccountNotFoundError };
 
 async function getAccountRow(account_id: string): Promise<{
   account_id: string;
