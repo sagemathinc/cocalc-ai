@@ -39,8 +39,15 @@ export interface ProjectVolumeQuotaAdapter {
     operation_id?: string;
     operation_class: string;
     priority?: "lifecycle" | "interactive" | "scheduled" | "scavenger";
-  }) => Promise<{ volume_identity: string }>;
+  }) => Promise<{
+    volume_identity: string;
+    // the limit is set, but not all of the quota (why): checked again soon
+    incomplete?: string;
+  }>;
 }
+
+// When a quota applied incompletely is checked again.
+const INCOMPLETE_RETRY_MS = 5 * 60_000;
 
 export interface ProjectVolumeQuotaManagerLogger {
   info: (message: string, metadata?: Record<string, unknown>) => void;
@@ -129,7 +136,7 @@ export class ProjectVolumeQuotaManager {
     });
     markProjectVolumeQuotaApplying({ project_id, volume_kind });
     try {
-      const { volume_identity } = await this.adapter.applyRaw({
+      const { volume_identity, incomplete } = await this.adapter.applyRaw({
         project_id,
         volume_kind,
         size: effective_bytes,
@@ -138,6 +145,14 @@ export class ProjectVolumeQuotaManager {
         operation_class,
         priority,
       });
+      if (incomplete && overrides.length) {
+        // A temporary raise (e.g., for a restore) is only useful whole: with
+        // the project's quota group still at its old limit, what it is for
+        // would run out of room midway.  Fails like a limit not set.
+        throw new Error(
+          `temporary quota override not fully applied: ${incomplete}`,
+        );
+      }
       if (overrides.length) {
         for (const { override_id } of overrides) {
           markProjectVolumeQuotaOverrideApplied(override_id);
@@ -151,6 +166,13 @@ export class ProjectVolumeQuotaManager {
               expires_at == null ? Date.now() + 5 * 60_000 : expires_at,
             ),
           ),
+        });
+      } else if (incomplete) {
+        invalidateProjectVolumeQuota({
+          project_id,
+          volume_kind,
+          reason: incomplete,
+          retry_at: Date.now() + INCOMPLETE_RETRY_MS,
         });
       } else {
         markProjectVolumeQuotaApplied({

@@ -85,6 +85,51 @@ describe("persist maintenance coordinator", () => {
     coordinator.close();
   });
 
+  it("works on a database only while it holds a claim on it", async () => {
+    const before = statSync(sourcePath);
+    let refuse = true;
+    let held = 0;
+    const claimed: string[] = [];
+    const runWorker = jest.fn(
+      async (options: {
+        sourcePath: string;
+        outputPath?: string;
+        timeoutMs: number;
+      }) => {
+        expect(held).toBe(1);
+        return await runPersistMaintenanceWorker(options);
+      },
+    );
+    const coordinator = new PersistMaintenanceCoordinator({
+      expectedWorkerIds: ["0"],
+      config: maintenanceTestConfig({
+        root,
+        catalogPath: join(root, ".maintenance", "catalog.sqlite"),
+      }),
+      runWorker,
+      claim: (path) => {
+        claimed.push(path);
+        if (refuse) return;
+        held += 1;
+        return () => {
+          held -= 1;
+        };
+      },
+    });
+    coordinator.createLocalHooks("0");
+    // e.g., its project is fenced while its files are replaced
+    await coordinator.tick();
+    expect(claimed).toContain(sourcePath);
+    expect(runWorker).not.toHaveBeenCalled();
+    expect(statSync(sourcePath).ino).toBe(before.ino);
+    refuse = false;
+    await coordinator.tick();
+    expect(runWorker).toHaveBeenCalled();
+    expect(statSync(sourcePath).size).toBeLessThan(before.size);
+    expect(held).toBe(0);
+    coordinator.close();
+  });
+
   it("discards a completed build if a worker opens the source", async () => {
     let releaseBuild!: () => void;
     let buildStarted!: () => void;

@@ -8,6 +8,7 @@ import {
   EPHEMERAL_SQLITE_CACHE_KIB_ENV,
   getPersistentStreamDiagnostics,
   getPersistentStreamSqliteDiagnostics,
+  openDiskStreamPaths,
   openPaths,
   resolveEphemeralSqliteCacheKiB,
 } from "@cocalc/conat/persist/storage";
@@ -75,6 +76,23 @@ describe("persistent stream close lifecycle", () => {
     expect(closes).toBe(0);
     second.close();
     expect(closes).toBe(1);
+  });
+
+  it("a database that fails to close stays open for fences", () => {
+    const path = join(dir, "unclosed");
+    const stream = pstream({ path, noCache: true });
+    const db = (stream as any).db;
+    const close = db.close.bind(db);
+    db.close = () => {
+      throw new Error("disk I/O error");
+    };
+    try {
+      stream.close();
+      // a fence of its project never takes it as closed (fence.ts)
+      expect(openDiskStreamPaths()).toContain(path);
+    } finally {
+      close();
+    }
   });
 
   it("tracks ephemeral and disk stream lifecycles without exposing paths", () => {

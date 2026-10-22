@@ -255,6 +255,7 @@ export class DKV<T = any> extends EventEmitter {
     kv.on("recovering", this.handleRecovering);
     kv.on("paused", this.handlePaused);
     kv.on("recovered", this.handleRecovered);
+    kv.on("instance-reset", this.handleInstanceReset);
     await kv.init();
     if (!this.isActiveStream(kv)) {
       return;
@@ -280,6 +281,7 @@ export class DKV<T = any> extends EventEmitter {
       kv.removeListener("recovering", this.handleRecovering);
       kv.removeListener("paused", this.handlePaused);
       kv.removeListener("recovered", this.handleRecovered);
+      kv.removeListener("instance-reset", this.handleInstanceReset);
       kv.close();
     }
     this.emit("closed");
@@ -299,6 +301,30 @@ export class DKV<T = any> extends EventEmitter {
     delete this.local[key];
     delete this.options[key];
     delete this.saved[key];
+    if (this.isStable()) {
+      this.emit("stable");
+    }
+  };
+
+  // The files of this (disk-backed) store were replaced under it, e.g., by a
+  // restore (conat/persist/fence.ts).  What it had not saved was based on the
+  // replaced history, so it is dropped, never written to the new one, and
+  // emitted as "replaced" for an owner that wants it.  (An ephemeral store's
+  // server instance changes when it restarts; that store keeps its changes
+  // and writes them to the new instance, as before.)
+  private handleInstanceReset = () => {
+    if (this.opts?.ephemeral || this.local == null) return;
+    const dropped: { [key: string]: T | undefined } = {};
+    for (const key of this.unsavedChanges()) {
+      const value = this.local[key];
+      dropped[key] = value === TOMBSTONE ? undefined : (value as T);
+    }
+    this.local = {};
+    this.options = {};
+    this.saved = {};
+    this.changed.clear();
+    this.invalidSeq.clear();
+    this.emit("replaced", { dropped });
     if (this.isStable()) {
       this.emit("stable");
     }

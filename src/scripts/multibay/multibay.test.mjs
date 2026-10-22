@@ -1433,6 +1433,99 @@ describe("document history across bays", () => {
   });
 });
 
+describe("edit history storage across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, lists and manages the edit history and logs it stores. Both
+  // run on the project's bay, which records each forwarded call. (This
+  // cluster's workspace runtime keeps the history with the project's files,
+  // so the list is unsupported and a change is refused, after the checks of
+  // who asks.)
+  const LIST = "projects.listProjectPersistStorage";
+  const APPLY = "projects.applyProjectPersistStorage";
+  const forwardedCalls = async (name) =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND account_id=$3 AND finished IS NOT NULL",
+         [${JSON.stringify(name)}, ${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+       return rows[0].n;`,
+    );
+  // the owner's switch (Settings: Storage history)
+  const allowCollaborators = async (allow) =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE projects SET allow_collaborator_destructive_storage_actions=$1 WHERE project_id=$2",
+         [${JSON.stringify(allow)}, ${JSON.stringify(bob.project)}]);`,
+    );
+
+  it("lists on the project's bay, saying who may manage it", async () => {
+    assert.ok(bob.project, "needs bob's project");
+    const before = await forwardedCalls(LIST);
+    const list = await alice.client.call(LIST, { project_id: bob.project });
+    assert.equal(list.supported, false);
+    assert.equal(list.can_manage, false);
+    assert.equal(await forwardedCalls(LIST), before + 1);
+    const owners = await bob.client.call(LIST, { project_id: bob.project });
+    assert.equal(owners.can_manage, true);
+  });
+
+  it("lets a collaborator on the other bay manage it only if the owner allows", async () => {
+    await assert.rejects(
+      alice.client.call(APPLY, {
+        project_id: bob.project,
+        actions: [{ op: "delete", name: "patchflow/home/user/a.md" }],
+      }),
+      /Only project owners can delete or trim edit history and logs/,
+    );
+    await allowCollaborators(true);
+    try {
+      const list = await alice.client.call(LIST, { project_id: bob.project });
+      assert.equal(list.can_manage, true);
+      const before = await forwardedCalls(APPLY);
+      assert.deepEqual(
+        await alice.client.call(APPLY, {
+          project_id: bob.project,
+          actions: [],
+        }),
+        { results: [], freed: 0 },
+      );
+      assert.equal(await forwardedCalls(APPLY), before + 1);
+      await assert.rejects(
+        alice.client.call(APPLY, {
+          project_id: bob.project,
+          actions: [
+            {
+              op: "delete",
+              name: "patchflow/home/user/a.md",
+              ifDocumentMissing: true,
+            },
+          ],
+        }),
+        /trusted workspace keeps its edit history with its files/,
+      );
+    } finally {
+      await allowCollaborators(false);
+    }
+  });
+
+  it("refuses a non-member on the other bay", async () => {
+    const ines = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "ines",
+    });
+    ines.client = await client(ines);
+    await assert.rejects(ines.client.call(LIST, { project_id: bob.project }));
+    await assert.rejects(
+      ines.client.call(APPLY, { project_id: bob.project, actions: [] }),
+    );
+  });
+});
+
 describe("project moves across bays", () => {
   // bob's project lives on the attached bay; alice, a collaborator homed on
   // the seed, asks to move it or place it on a host. Both are routed to the
@@ -1781,13 +1874,15 @@ describe("host reads across bays", () => {
       replace: true,
     });
     assert.ok(
-      set.some((d) => d.host_id === host_id && d.desired_version === "ph-routed"),
+      set.some(
+        (d) => d.host_id === host_id && d.desired_version === "ph-routed",
+      ),
     );
     assert.equal(await forwarded(), before + 1);
-    const listed = await alice.client.call(
-      "hosts.listHostRuntimeDeployments",
-      { scope_type: "host", id: host_id },
-    );
+    const listed = await alice.client.call("hosts.listHostRuntimeDeployments", {
+      scope_type: "host",
+      id: host_id,
+    });
     assert.ok(
       listed.some(
         (d) => d.target === "project-host" && d.desired_version === "ph-routed",
@@ -3612,7 +3707,12 @@ describe("outgoing support tickets across bays", () => {
     // The same commit, forwarded from the attached bay twice and run on the
     // seed directly, uses one seed ledger entry.
     const key = "multibay-support-create-" + Date.now();
-    const commit = { ...request, requester_account_id: bob.account_id, payload_hash: plan.payload_hash, idempotency_key: key };
+    const commit = {
+      ...request,
+      requester_account_id: bob.account_id,
+      payload_hash: plan.payload_hash,
+      idempotency_key: key,
+    };
     const errors = await runInBay(
       cluster,
       ATTACHED,

@@ -641,6 +641,25 @@ export class SyncDoc extends EventEmitter {
   private readonly patchMetadataChanged = () => {
     void this.refreshPatchMetadataFromDStream();
   };
+  // The files of the patches were replaced under this open copy, e.g., by a
+  // restore of the project (conat/persist/fence.ts): hand off to the new
+  // history as after a reset, keeping any edits it lacks in a recovery copy.
+  // (An ephemeral document's server instance changes when it restarts; that
+  // copy keeps its value and writes it to the new instance, as before.)
+  // (While opening, it waits until the document is ready: see init.)
+  private readonly patchesInstanceReset = () => {
+    if (this.ephemeral || !this.isReady()) return;
+    this.beginHistoryTransition(undefined, this.history_epoch, "replaced");
+  };
+
+  // Whether the patches' stream was replaced (it then writes nothing more).
+  private patchesReplaced = (): boolean => {
+    try {
+      return this.dstream()?.isReplaced?.() === true;
+    } catch {
+      return false;
+    }
+  };
 
   public ipywidgets_state?: IpywidgetsState;
 
@@ -903,6 +922,10 @@ export class SyncDoc extends EventEmitter {
     if (this.isClosed()) return;
     this.set_state("ready");
     this.emitOpenPhase("sync_ready");
+    // replaced while this opened: hand off now
+    if (this.patchesReplaced()) {
+      this.patchesInstanceReset();
+    }
 
     // Success -- everything initialized with no issues.
     if (this.opts.ignoreInitialChanges) {
@@ -1409,6 +1432,9 @@ export class SyncDoc extends EventEmitter {
     // the epoch this tab's pending patches were written in
     fromEpoch: number;
     toEpoch: number;
+    // reset: the history was reset (a new epoch); replaced: its files were
+    // replaced, e.g., by a restore
+    cause: "reset" | "replaced";
     // generation when the transition began: anything later is unsaved
     startGeneration: number;
     // copies written so far (kept and reported, never overwritten)
@@ -1423,6 +1449,7 @@ export class SyncDoc extends EventEmitter {
   private beginHistoryTransition = (
     toEpoch?: number,
     fromEpoch?: number,
+    cause: "reset" | "replaced" = "reset",
   ): void => {
     const epoch = toEpoch ?? this.history_epoch ?? 0;
     const t = this.historyTransition;
@@ -1439,6 +1466,7 @@ export class SyncDoc extends EventEmitter {
         // nothing can be proven absent, so the value is copied
         fromEpoch: fromEpoch ?? 0,
         toEpoch: epoch,
+        cause,
         startGeneration: this.localGeneration,
         copies: [],
         restart: false,
@@ -1647,6 +1675,7 @@ export class SyncDoc extends EventEmitter {
     this.emit("history-reset-unsaved", {
       history_epoch: t.toEpoch,
       reason,
+      cause: t.cause,
       copies: [...t.copies],
     });
   };
@@ -1658,6 +1687,7 @@ export class SyncDoc extends EventEmitter {
     if (t == null) return;
     this.emit("history-reset", {
       history_epoch: t.toEpoch,
+      cause: t.cause,
       copies: [...t.copies],
     });
     this.close();
@@ -2544,6 +2574,7 @@ export class SyncDoc extends EventEmitter {
       const dstream = this.dstream();
       dstream.removeListener("metadata-change", this.patchMetadataChanged);
       dstream.removeListener("checkpoints-change", this.patchMetadataChanged);
+      dstream.removeListener("instance-reset", this.patchesInstanceReset);
     }
 
     // must be after the emits above, so clients know
@@ -3035,6 +3066,9 @@ export class SyncDoc extends EventEmitter {
       );
       dstream.on("metadata-change", this.patchMetadataChanged);
       dstream.on("checkpoints-change", this.patchMetadataChanged);
+      dstream.on("instance-reset", this.patchesInstanceReset);
+      // which handles a replacement of the history (patchesInstanceReset)
+      dstream.keepOpenWhenReplaced?.();
     }
     this.applyPatchWriteHeaders();
 

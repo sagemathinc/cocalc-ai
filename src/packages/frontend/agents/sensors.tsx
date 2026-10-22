@@ -146,6 +146,12 @@ function watchText(spec: Extract<SensorSpec, { kind: "watch" }>): string {
   if (w.type === "exit") return `${w.command} exits`;
   if (w.type === "agent-turn")
     return `the turn my message started on ${w.name ? `@${w.name}` : "another agent"} ends`;
+  if (w.type === "agent") {
+    const who = w.name ? `@${w.name}` : "another agent";
+    if (w.until === "failed") return `a turn of ${who} ends without completing`;
+    if (w.until === "idle") return `${who} finishes its turns and is idle`;
+    return `a turn of ${who} ends`;
+  }
   return `${new Date(w.at).toLocaleString()}: ${w.note}`;
 }
 

@@ -1184,15 +1184,26 @@ export class BaseEditorActions<
     });
     this._syncstring.on(
       "history-reset",
-      ({ copies }: { copies?: string[] } = {}) => {
-        // The edit history was reset in another session.  Everything this
-        // tab had is in the new history or in the recovery copies; reopen.
+      ({
+        copies,
+        cause,
+      }: { copies?: string[]; cause?: "reset" | "replaced" } = {}) => {
+        // The edit history was reset in another session, or replaced (e.g.,
+        // the project was restored).  Everything this tab had is in the new
+        // history or in the recovery copies; reopen.
+        const what =
+          cause == "replaced"
+            ? "was replaced, e.g., by restoring the project"
+            : "was reset in another session";
         alert_message({
           type: copies?.length ? "warning" : "info",
-          title: "Edit history was reset",
+          title:
+            cause == "replaced"
+              ? "Edit history was replaced"
+              : "Edit history was reset",
           message: copies?.length
-            ? `The edit history of ${this.path} was reset in another session, which removed edits made here. They are saved in ${copies.join(", ")}. ${this.path} is opening again.`
-            : `The edit history of ${this.path} was reset in another session; it is opening again.`,
+            ? `The edit history of ${this.path} ${what}, which removed edits made here. They are saved in ${copies.join(", ")}. ${this.path} is opening again.`
+            : `The edit history of ${this.path} ${what}; it is opening again.`,
           block: !!copies?.length,
         });
         reopenSyncdocAndFile();
@@ -1200,11 +1211,20 @@ export class BaseEditorActions<
     );
     this._syncstring.on(
       "history-reset-unsaved",
-      ({ reason, copies }: { reason: string; copies?: string[] }) => {
-        // NOT SAVED: the edit history was reset in another session, and the
-        // edits made here could not be saved to a recovery copy.  They are
-        // only in this tab: offer a download, then retry or reload.
-        void this.handleHistoryResetUnsaved({ reason, copies });
+      ({
+        reason,
+        copies,
+        cause,
+      }: {
+        reason: string;
+        copies?: string[];
+        cause?: "reset" | "replaced";
+      }) => {
+        // NOT SAVED: the edit history was reset in another session (or
+        // replaced), and the edits made here could not be saved to a recovery
+        // copy.  They are only in this tab: offer a download, then retry or
+        // reload.
+        void this.handleHistoryResetUnsaved({ reason, copies, cause });
       },
     );
 
@@ -2622,9 +2642,11 @@ export class BaseEditorActions<
   private handleHistoryResetUnsaved = async ({
     reason,
     copies,
+    cause,
   }: {
     reason: string;
     copies?: string[];
+    cause?: "reset" | "replaced";
   }): Promise<void> => {
     const syncdoc: any = this._syncstring;
     if (syncdoc == null || syncdoc.isClosed?.()) return;
@@ -2637,7 +2659,7 @@ export class BaseEditorActions<
     const page = this.redux.getActions("page");
     const download = await page.popconfirm({
       title: `NOT SAVED: edits to ${this.path}`,
-      description: `The edit history of ${this.path} was reset in another session. Edits made in this tab are not in the new history and were not saved, because ${why}.${copies?.length ? ` Earlier copies: ${copies.join(", ")}.` : ""} Download them before reloading, or try again.`,
+      description: `The edit history of ${this.path} ${cause == "replaced" ? "was replaced, e.g., by restoring the project" : "was reset in another session"}. Edits made in this tab are not in the new history and were not saved, because ${why}.${copies?.length ? ` Earlier copies: ${copies.join(", ")}.` : ""} Download them before reloading, or try again.`,
       okText: "Download a copy",
       cancelText: "Try again",
     });

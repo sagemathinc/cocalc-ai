@@ -22,6 +22,8 @@ import type { GitRef } from "./read-parsers";
 export const GIT_READ_LIMIT = 4_000_000;
 const DISCOVERY_TTL = 30_000;
 const MAX_PATCH_LINES = 20_000;
+const MISSING_OBJECT =
+  /Needed a single revision|unknown revision|bad object|not a valid object|bad revision/i;
 
 type Failure =
   | "transport"
@@ -258,14 +260,31 @@ export class GitReadService {
     ref: string,
   ): Promise<string> {
     requireValue(ref);
-    const commit = outputLine(
-      await this.run(repository.projectId, repository.locator, [
+    let output: string;
+    try {
+      output = await this.run(repository.projectId, repository.locator, [
         "rev-parse",
         "--verify",
         "--end-of-options",
         `${ref}^{commit}`,
-      ]),
-    );
+      ]);
+    } catch (err) {
+      // Git's words for an object this clone doesn't have, e.g. a commit
+      // made on GitHub that was never fetched here.
+      if (
+        err instanceof GitReadError &&
+        err.kind === "git" &&
+        // Only an object id names a commit that could be fetched.
+        /^[0-9a-f]{4,64}$/i.test(ref) &&
+        MISSING_OBJECT.test(err.message)
+      )
+        throw new GitReadError(
+          "missing",
+          `Commit ${ref} isn't in this clone (${repository.locator}). Fetch it from origin, or open it from a clone that has it.`,
+        );
+      throw err;
+    }
+    const commit = outputLine(output);
     requireObject(commit);
     return commit;
   }
@@ -483,7 +502,16 @@ export class GitReadService {
     }));
   }
 
-  async patch(target: ImmutableReviewTarget, context = 3): Promise<string> {
+  /**
+   * The comparison's patch. Over `maxLines` it is refused; a reader that
+   * budgets per file (readTargetDiff) passes Infinity and is bounded by the
+   * output limit instead.
+   */
+  async patch(
+    target: ImmutableReviewTarget,
+    context = 3,
+    maxLines = MAX_PATCH_LINES,
+  ): Promise<string> {
     if (!Number.isInteger(context) || context < 0 || context > 1000)
       throw new GitReadError("invalid", "Invalid diff context");
     const { repository } = target;
@@ -499,10 +527,10 @@ export class GitReadService {
         `-U${context}`,
       ]),
     );
-    if (patch.split("\n").length > MAX_PATCH_LINES)
+    if (patch.split("\n").length > maxLines)
       throw new GitReadError(
         "incomplete",
-        "Diff exceeds 20,000 lines; narrow the comparison",
+        `Diff exceeds ${maxLines.toLocaleString("en-US")} lines; narrow the comparison`,
       );
     return patch;
   }

@@ -1,0 +1,637 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+/*
+A project fence quiesces one project's persistent streams on this persist
+server, so that something else can replace their files (e.g., restore the
+project's home from a snapshot), and then lets clients open them again.
+
+fenceProject:
+1. new opens of the project's disk-backed streams wait (project-fence.ts);
+2. opens already under way finish;
+3. every server socket serving one of them is closed: clients reconnect with
+   backoff, and their opens wait;
+4. streams waiting in the release queue are released now, so their databases
+   close (checkpointing their WAL);
+5. it resolves once no disk-backed stream of the project is open in this
+   process, and no other work on its files is under way (claimPersistFile,
+   e.g., SQLite maintenance).  If that takes longer than timeoutMs, the fence
+   is released and it fails, so the caller never replaces files that are open.
+
+unfenceProject releases it.  With replaced, the project's streams report a
+new instance from then on, so clients drop what they have and load the new
+history, instead of resuming from seqs of the old files (as for a new
+ephemeral instance, see client.ts noteInstance).  And nothing based on the
+old files is written to the new ones:
+- a write from a client that saw another instance is refused, with the
+  current one (server.ts assertCurrentInstance), so the client starts over;
+- a DStream keeps what it had not saved for its owner instead of writing it
+  (dstream.ts handleInstanceReset), and SyncDoc saves it to a recovery copy;
+  a DKV drops it (dkv.ts handleInstanceReset).
+
+Ephemeral streams are not affected: they have no files.
+
+Other processes fence a project through the persist fence service below,
+e.g., project-host's main process while the persist server runs as its own
+daemon.  Only the host's system account may use its subject (project-host
+conat-auth.ts).  A fence there fails closed: it is held until its holder, a
+process on this host, releases it, or until it and whatever it started since
+the fence was taken (its process group) are gone, never for a fixed time, so
+it cannot lapse while the files may still be changing.  The service keeps in a store the fences it holds, which a restarted
+service holds again before its persist server serves, and each replaced
+project's instance, saved before the fence is released: a client that last
+saw the project before a restart must still learn that it was replaced.
+*/
+
+import { type Client, ConatError } from "@cocalc/conat/core/client";
+import { getLogger } from "@cocalc/conat/logger";
+import { randomId } from "@cocalc/conat/names";
+import { isValidUUID } from "@cocalc/util/misc";
+import { delay } from "awaiting";
+import { resolve } from "node:path";
+import { openDiskStreamPaths } from "./storage";
+import { releaseQueuedStreams } from "./server";
+import { resolveLocalPath } from "./util";
+import {
+  beginProjectFence,
+  closeProjectSockets,
+  endProjectFence,
+  fencedProjects,
+  isProjectFencedBy,
+  setProjectReplacedInstance,
+  waitForProjectOpens,
+} from "./project-fence";
+
+const logger = getLogger("persist:fence");
+
+export const PERSIST_FENCE_SUBJECT = "persist-control.fence";
+
+export const DEFAULT_FENCE_TIMEOUT_MS = 60_000;
+const POLL_MS = 25;
+
+// Where the project's disk-backed streams live on this server; every one is
+// this path or under it.
+function projectStreamsRoot(project_id: string): string {
+  return resolveLocalPath(`projects/${project_id}`, { ephemeral: true });
+}
+
+function underRoot(root: string): (path: string) => boolean {
+  return (path) => path === root || path.startsWith(`${root}/`);
+}
+
+// Work on a project's persist files other than through its streams (e.g.,
+// SQLite maintenance, backend/conat/persist-maintenance): a fence waits for it
+// as for an open stream, and none starts while the project is fenced.
+const claimedFiles = new Map<string, number>();
+
+// Claims the file at path for such work: undefined if it is a fenced
+// project's, else the function to call once the work is done.
+export function claimPersistFile(path: string): (() => void) | undefined {
+  const file = resolve(path);
+  if (
+    fencedProjects().some((project_id) =>
+      underRoot(resolve(projectStreamsRoot(project_id)))(file),
+    )
+  ) {
+    return;
+  }
+  claimedFiles.set(file, (claimedFiles.get(file) ?? 0) + 1);
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    const n = (claimedFiles.get(file) ?? 1) - 1;
+    if (n > 0) {
+      claimedFiles.set(file, n);
+    } else {
+      claimedFiles.delete(file);
+    }
+  };
+}
+
+export function openProjectStreamPaths(project_id: string): string[] {
+  return openDiskStreamPaths().filter(
+    underRoot(projectStreamsRoot(project_id)),
+  );
+}
+
+export async function fenceProject({
+  project_id,
+  token,
+  timeoutMs = DEFAULT_FENCE_TIMEOUT_MS,
+}: {
+  project_id: string;
+  token: string;
+  timeoutMs?: number;
+}): Promise<{ closed_sockets: number }> {
+  beginProjectFence(project_id, token);
+  const deadline = Date.now() + timeoutMs;
+  try {
+    if (!(await waitForProjectOpens(project_id, deadline - Date.now()))) {
+      throw new ConatError(
+        "timed out waiting for opens of this project's persistent streams",
+        { code: 504 },
+      );
+    }
+    const root = projectStreamsRoot(project_id);
+    const under = underRoot(root);
+    const claimedUnder = underRoot(resolve(root));
+    const closed_sockets = closeProjectSockets(project_id);
+    while (true) {
+      await releaseQueuedStreams(under);
+      const open = openDiskStreamPaths().filter(under);
+      const claimed = [...claimedFiles.keys()].filter(claimedUnder);
+      if (open.length == 0 && claimed.length == 0) {
+        logger.debug("fenced project", { project_id, closed_sockets });
+        return { closed_sockets };
+      }
+      if (Date.now() >= deadline) {
+        logger.warn("project fence: streams did not close", {
+          project_id,
+          open: open.slice(0, 10),
+          claimed: claimed.slice(0, 10),
+        });
+        throw new ConatError(
+          open.length > 0
+            ? `timed out closing ${open.length} of this project's persistent streams`
+            : `timed out waiting for work on ${claimed.length} of this project's persist files (e.g., maintenance)`,
+          { code: 504 },
+        );
+      }
+      await delay(POLL_MS);
+    }
+  } catch (err) {
+    endProjectFence(project_id, token, { replaced: false });
+    throw err;
+  }
+}
+
+export function unfenceProject({
+  project_id,
+  token,
+  replaced,
+  instance,
+}: {
+  project_id: string;
+  token: string;
+  replaced: boolean;
+  instance?: string;
+}): boolean {
+  return endProjectFence(project_id, token, { replaced, instance });
+}
+
+export interface PersistFenceHolder {
+  pid: number;
+  // the process's start time, so a reused pid is a different holder
+  start: string;
+  // its process group: what it runs to change the files (e.g., rustic, or
+  // sudo waiting for a helper) is in it, and may outlive it
+  pgid?: number;
+}
+
+export interface PersistFenceRecord {
+  project_id: string;
+  token: string;
+  holder: PersistFenceHolder;
+  since: number;
+  // what the holder does (e.g., "restore-snapshot"), to tell a person
+  reason?: string;
+}
+
+// What keeps a fence held (see initPersistFenceService describeHolder).
+export interface PersistFenceHolderState {
+  holder_running: boolean;
+  // if the holder is gone: the processes it started since the fence was taken
+  keeping?: { pid: number; command: string }[];
+}
+
+// A fence this service holds, to tell a person (e.g., in diagnostics).
+export interface PersistFenceDiagnostic extends Partial<PersistFenceHolderState> {
+  project_id: string;
+  reason?: string;
+  since: string;
+  age_seconds: number;
+  holder: PersistFenceHolder;
+}
+
+// Where a fence service keeps the fences it holds, so it still holds them
+// after a restart, and the instance of each project whose files were
+// replaced, so its streams keep reporting it (by project).
+export interface PersistFenceStore {
+  load: () => PersistFenceRecord[];
+  save: (record: PersistFenceRecord) => void;
+  remove: (project_id: string, token: string) => void;
+  loadInstances: () => { [project_id: string]: string };
+  saveInstance: (project_id: string, instance: string) => void;
+}
+
+export type PersistFenceRequest =
+  | {
+      cmd: "acquire";
+      project_id: string;
+      token: string;
+      holder: PersistFenceHolder;
+      timeout_ms?: number;
+      // features the persist server must have (e.g., "persist-volume"):
+      // the fence is refused if it lacks one
+      requires?: string[];
+      reason?: string;
+    }
+  | { cmd: "release"; project_id: string; token: string; replaced?: boolean };
+
+const MAX_TIMEOUT_MS = 5 * 60_000;
+// how often the service checks that the holders of its fences still run
+const DEFAULT_HOLDER_CHECK_MS = 5_000;
+// A fence held this long is logged as such, and again each time as long
+// again (it is kept: see above).  Its holder does the same.
+export const LONG_FENCE_MS = 15 * 60_000;
+
+function reasonOf(value: unknown): string | undefined {
+  return typeof value == "string" && value ? value.slice(0, 200) : undefined;
+}
+
+function boundedMs(
+  value: unknown,
+  { min, max, fallback }: { min: number; max: number; fallback: number },
+): number {
+  const n = Number(value ?? fallback);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+function isHolder(holder: unknown): holder is PersistFenceHolder {
+  const h = holder as PersistFenceHolder;
+  return (
+    h != null &&
+    Number.isSafeInteger(h.pid) &&
+    h.pid > 0 &&
+    typeof h.start == "string" &&
+    h.start.length <= 64 &&
+    (h.pgid == null || (Number.isSafeInteger(h.pgid) && h.pgid > 0))
+  );
+}
+
+// The persist fence service, for the persist server in this process.  Start
+// it before the persist server serves: it first holds again the fences in
+// store whose holders still run.  Resolves once it is subscribed.
+export async function initPersistFenceService({
+  client,
+  holderAlive,
+  store,
+  features = [],
+  holderCheckMs = DEFAULT_HOLDER_CHECK_MS,
+  describeHolder,
+  longFenceMs = LONG_FENCE_MS,
+}: {
+  client: Client;
+  // whether holder, or anything it started (since the fence was taken, at
+  // since) to change the files, still runs
+  holderAlive: (holder: PersistFenceHolder, since: number) => boolean;
+  store?: PersistFenceStore;
+  // what else this persist server does, which a holder may require
+  features?: string[];
+  holderCheckMs?: number;
+  // what keeps a fence held, to tell a person
+  describeHolder?: (
+    holder: PersistFenceHolder,
+    since: number,
+  ) => PersistFenceHolderState;
+  longFenceMs?: number;
+}): Promise<{ close: () => void; fences: () => PersistFenceDiagnostic[] }> {
+  // the fences this service holds, by project
+  const held = new Map<string, PersistFenceRecord>();
+  // when to log each long-held fence again, by token
+  const warnAt = new Map<string, number>();
+
+  const describe = (
+    record: PersistFenceRecord,
+    now = Date.now(),
+  ): PersistFenceDiagnostic => ({
+    project_id: record.project_id,
+    ...(record.reason ? { reason: record.reason } : {}),
+    since: new Date(record.since).toISOString(),
+    age_seconds: Math.round((now - record.since) / 1000),
+    holder: record.holder,
+    ...describeHolder?.(record.holder, record.since),
+  });
+  // acquires under way, by project and token, so a retried acquire joins
+  // the first
+  const acquiring = new Map<string, Promise<{ closed_sockets: number }>>();
+
+  // Releases a fence this service holds.  A replacement's new instance is
+  // saved first: if that fails, the fence stays held (and this throws).
+  const releaseFence = ({
+    project_id,
+    token,
+    replaced,
+  }: {
+    project_id: string;
+    token: string;
+    replaced: boolean;
+  }): boolean => {
+    if (!isProjectFencedBy(project_id, token)) return false;
+    const instance = replaced ? randomId() : undefined;
+    // Both durably first, so a failure (thrown to the holder, who tries
+    // again) leaves the fence held, and a restart never brings back a fence
+    // that was released.
+    if (instance != null) {
+      store?.saveInstance(project_id, instance);
+    }
+    store?.remove(project_id, token);
+    if (held.get(project_id)?.token === token) {
+      held.delete(project_id);
+    }
+    warnAt.delete(token);
+    return unfenceProject({ project_id, token, replaced, instance });
+  };
+
+  for (const [project_id, instance] of Object.entries(
+    store?.loadInstances() ?? {},
+  )) {
+    setProjectReplacedInstance(project_id, instance);
+  }
+  // Held again, whether or not the holder still runs: one that is gone may
+  // have replaced files before it went away, so its fence is released by
+  // checkHolders below (before this resolves), as replaced, like any other.
+  for (const record of store?.load() ?? []) {
+    beginProjectFence(record.project_id, record.token);
+    held.set(record.project_id, record);
+    logger.warn("holding a persist fence again after a restart", {
+      project_id: record.project_id,
+      reason: record.reason,
+      holder: record.holder,
+    });
+  }
+
+  const checkHolders = () => {
+    const now = Date.now();
+    for (const record of [...held.values()]) {
+      if (holderAlive(record.holder, record.since)) {
+        const due = warnAt.get(record.token) ?? record.since + longFenceMs;
+        if (now >= due) {
+          warnAt.set(record.token, now + (now - record.since));
+          const info = describe(record, now);
+          logger.warn(
+            `persist fence of project ${record.project_id} held for ${Math.round(info.age_seconds / 60)} minutes: its documents can't be opened until it is released. ` +
+              (info.holder_running === false
+                ? `Its holder (pid ${record.holder.pid}) is gone; it is released once the processes it started since are gone (keeping).`
+                : `Its holder (pid ${record.holder.pid}, ${record.reason ?? "no reason given"}) still runs; if it is stuck, restarting it releases the fence.`),
+            info,
+          );
+        }
+        continue;
+      }
+      try {
+        // it may have replaced files before it went away
+        if (
+          releaseFence({
+            project_id: record.project_id,
+            token: record.token,
+            replaced: true,
+          })
+        ) {
+          logger.warn("released a persist fence whose holder is gone", {
+            project_id: record.project_id,
+            reason: record.reason,
+            holder: record.holder,
+            age_seconds: Math.round((now - record.since) / 1000),
+          });
+        }
+      } catch (err) {
+        // still held; tried again next time
+        logger.warn("unable to release a persist fence whose holder is gone", {
+          project_id: record.project_id,
+          err: `${err}`,
+        });
+      }
+    }
+  };
+  checkHolders();
+  const checker = setInterval(checkHolders, holderCheckMs);
+  checker.unref?.();
+
+  const handle = async (request: PersistFenceRequest) => {
+    const { cmd, project_id, token } = request ?? ({} as PersistFenceRequest);
+    if (!isValidUUID(project_id)) {
+      throw new ConatError("invalid project_id", { code: 400 });
+    }
+    if (typeof token != "string" || !token || token.length > 128) {
+      throw new ConatError("invalid token", { code: 400 });
+    }
+    if (request.cmd == "acquire") {
+      const { holder } = request;
+      const missing = (
+        Array.isArray(request.requires) ? request.requires : []
+      ).filter((feature) => !features.includes(`${feature}`));
+      if (missing.length > 0) {
+        throw new ConatError(
+          `this persist server lacks ${missing.join(", ")} (it is from an older version)`,
+          { code: 412 },
+        );
+      }
+      if (!isHolder(holder) || !holderAlive(holder, Date.now())) {
+        throw new ConatError("the fence holder is not a running process", {
+          code: 400,
+        });
+      }
+      const timeoutMs = boundedMs(request.timeout_ms, {
+        min: 1000,
+        max: MAX_TIMEOUT_MS,
+        fallback: DEFAULT_FENCE_TIMEOUT_MS,
+      });
+      const key = `${project_id}/${token}`;
+      let pending = acquiring.get(key);
+      if (pending == null) {
+        pending = (async () => {
+          const result = await fenceProject({ project_id, token, timeoutMs });
+          const reason = reasonOf(request.reason);
+          const record = {
+            project_id,
+            token,
+            holder,
+            since: Date.now(),
+            ...(reason ? { reason } : {}),
+          };
+          try {
+            store?.save(record);
+          } catch (err) {
+            // not held unless it would be held again after a restart
+            unfenceProject({ project_id, token, replaced: false });
+            throw err;
+          }
+          held.set(project_id, record);
+          return result;
+        })();
+        acquiring.set(key, pending);
+        void pending.catch(() => {}).finally(() => acquiring.delete(key));
+      }
+      return await pending;
+    }
+    if (request.cmd == "release") {
+      // An acquire still under way finishes first, so it cannot take the
+      // fence after this release.
+      await acquiring.get(`${project_id}/${token}`)?.catch(() => {});
+      const released = releaseFence({
+        project_id,
+        token,
+        replaced: request.replaced !== false,
+      });
+      return { released };
+    }
+    throw new ConatError(`unknown command ${cmd}`, { code: 400 });
+  };
+
+  let closed = false;
+  let sub: any = undefined;
+  let resolveReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => (resolveReady = resolve));
+  (async () => {
+    while (!closed) {
+      try {
+        sub = await client.subscribe(PERSIST_FENCE_SUBJECT);
+        resolveReady();
+        for await (const mesg of sub) {
+          void (async () => {
+            try {
+              mesg.respondSync(await handle(mesg.data));
+            } catch (err) {
+              mesg.respondSync(null, {
+                headers: {
+                  error: `${(err as any)?.message ?? err}`,
+                  code: (err as any)?.code ?? 500,
+                },
+              });
+            }
+          })();
+        }
+      } catch (err) {
+        logger.debug("persist fence service: restarting", { err: `${err}` });
+      } finally {
+        sub?.close();
+        sub = undefined;
+      }
+      if (!closed) await delay(1000);
+    }
+  })();
+  await ready;
+
+  return {
+    close: () => {
+      closed = true;
+      clearInterval(checker);
+      sub?.close();
+    },
+    fences: () => [...held.values()].map((record) => describe(record)),
+  };
+}
+
+// No fence service answered.  The caller decides whether that can only be a
+// persist server from before fences (then it may go ahead unfenced) or a
+// passing gap (then it must not).
+export class PersistFenceUnavailableError extends Error {}
+
+// Runs fn while project_id is fenced by the persist fence service, held by
+// holder (this process).  Unless replaces is false (fn only reads the files),
+// clients load the history again afterwards.  If the release does not get
+// through, it is retried until it does; meanwhile the project stays fenced
+// (as it does if this process exits first, until the service sees that).
+export async function withPersistFence<T>(
+  {
+    client,
+    project_id,
+    holder,
+    replaces = true,
+    requires,
+    timeoutMs = DEFAULT_FENCE_TIMEOUT_MS,
+    reason,
+    longFenceMs = LONG_FENCE_MS,
+  }: {
+    client: Client;
+    project_id: string;
+    holder: PersistFenceHolder;
+    replaces?: boolean;
+    // features the persist server granting the fence must have
+    requires?: string[];
+    timeoutMs?: number;
+    // what fn does (e.g., "restore-snapshot"), to tell a person
+    reason?: string;
+    longFenceMs?: number;
+  },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const token = randomId();
+  const request = async (data: PersistFenceRequest, timeout: number) =>
+    (await client.request(PERSIST_FENCE_SUBJECT, data, { timeout })).data;
+  const releaseOnce = async (replaced: boolean): Promise<boolean> => {
+    try {
+      await request({ cmd: "release", project_id, token, replaced }, 30_000);
+      return true;
+    } catch (err) {
+      logger.warn("failed releasing persist fence", {
+        project_id,
+        err: `${err}`,
+      });
+      return false;
+    }
+  };
+  // One attempt now; then in the background until it gets through.
+  const release = async (replaced: boolean) => {
+    if (await releaseOnce(replaced)) return;
+    void (async () => {
+      for (let attempt = 1; client.state != "closed"; attempt++) {
+        await delay(Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5)));
+        if (await releaseOnce(replaced)) return;
+      }
+    })();
+  };
+  try {
+    await request(
+      {
+        cmd: "acquire",
+        project_id,
+        token,
+        holder,
+        timeout_ms: timeoutMs,
+        ...(requires?.length ? { requires } : {}),
+        ...(reason ? { reason } : {}),
+      },
+      timeoutMs + 10_000,
+    );
+  } catch (err) {
+    if (
+      (err as any)?.code == 503 &&
+      `${(err as any)?.message}`.includes("no subscribers")
+    ) {
+      throw new PersistFenceUnavailableError(
+        `persist fence service unavailable: ${err}`,
+      );
+    }
+    // it may have been acquired after all (e.g., the reply was lost)
+    void release(false);
+    throw err;
+  }
+  // logged while fn runs long, and again each time as long again
+  const since = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const warnLater = (ms: number) => {
+    timer = setTimeout(() => {
+      const minutes = Math.round((Date.now() - since) / 60_000);
+      logger.warn(
+        `still holding the persist fence of project ${project_id} after ${minutes} minutes (${reason ?? "no reason given"}): its documents can't be opened until this finishes`,
+        { project_id, reason, minutes },
+      );
+      warnLater(Date.now() - since);
+    }, ms);
+    timer.unref?.();
+  };
+  warnLater(longFenceMs);
+  try {
+    return await fn();
+  } finally {
+    clearTimeout(timer);
+    // even if fn failed: it may have replaced some files
+    await release(replaces);
+  }
+}

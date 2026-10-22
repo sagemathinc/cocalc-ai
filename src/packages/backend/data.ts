@@ -32,6 +32,7 @@ import { isEmpty } from "lodash";
 import basePath from "@cocalc/backend/base-path";
 import port from "@cocalc/backend/port";
 import { FALLBACK_ACCOUNT_UUID } from "@cocalc/util/misc";
+import { projectPersistTemplates } from "@cocalc/backend/conat/persist-volume-template";
 // using old version of pkg-dir because of nextjs :-(
 import { sync as packageDirectorySync } from "pkg-dir";
 
@@ -249,7 +250,9 @@ export const syncFiles = {
   // OPTIONAL: Override local storage base for specific subjects.
   // Use [project_id], [account_id], or [host_id] as placeholders.
   // Example: /btrfs/project-[project_id]/.local/share/cocalc/persist
-  localProjects: process.env.COCALC_SYNC_PROJECTS ?? "",
+  // A project-host keeps them in a volume next to the project's home instead
+  // of in the home (see conat/persist-volume-template.ts).
+  localProjects: projectPersistTemplates().template,
   localAccounts: process.env.COCALC_SYNC_ACCOUNTS ?? "",
   localHosts: process.env.COCALC_SYNC_HOSTS ?? "",
   localHub: process.env.COCALC_SYNC_HUB ?? "",

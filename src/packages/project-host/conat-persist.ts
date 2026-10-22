@@ -4,6 +4,7 @@
  */
 
 import { once } from "node:events";
+import path from "node:path";
 import {
   createServer as createHttpServer,
   type Server as HttpServer,
@@ -13,8 +14,21 @@ import type { Application } from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { installProjectPersistVolumes } from "./persist-volume";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
+import {
+  claimPersistFile,
+  initPersistFenceService,
+} from "@cocalc/conat/persist/fence";
+import {
+  fileFenceStore,
+  describeFenceHolder,
+  isFenceHolderAlive,
+  removeFenceCapability,
+  writeFenceCapability,
+} from "@cocalc/backend/conat/persist-fence";
+import { resolveHostAgentDataDir } from "./host-agent-state";
 import {
   connect as connectToConat,
   type Client as ConatClient,
@@ -80,6 +94,12 @@ async function delay(ms: number): Promise<void> {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
+}
+
+// Where the persist daemon keeps its fences and its capability file
+// (conat/persist/fence.ts, persist-fence.ts).
+export function persistFenceDir(): string {
+  return path.join(resolveHostAgentDataDir(), "persist-fences");
 }
 
 export function isProjectHostExternalConatPersistEnabled(): boolean {
@@ -168,6 +188,9 @@ export async function startStandaloneProjectHostConatPersist({
   // The board write service (conat/persist/board-policy.ts): the host's board
   // managers write board streams only through it.
   boardPersistServer: ConatSocketServer;
+  // Lets the host's main process fence a project's streams, e.g., while it
+  // restores the project's files (conat/persist/fence.ts).
+  fenceService: { close: () => void };
   maintenance?: PersistMaintenanceCoordinator;
   port: number;
 }> {
@@ -189,6 +212,25 @@ export async function startStandaloneProjectHostConatPersist({
     systemAccountPassword,
   });
   const id = resolveProjectHostConatPersistId();
+  // Before the persist server serves: it holds again the fences it held
+  // before a restart, and its capability file tells the host's main process
+  // that it has fences (persist-fence.ts).
+  const fenceDir = persistFenceDir();
+  // the history in volumes of their own (persist-volume.ts), which restores
+  // require of the server that fences them (persist-fence.ts)
+  const features = installProjectPersistVolumes() ? ["persist-volume"] : [];
+  const fenceService = await initPersistFenceService({
+    client,
+    holderAlive: isFenceHolderAlive,
+    describeHolder: describeFenceHolder,
+    store: fileFenceStore(fenceDir),
+    features,
+  });
+  writeFenceCapability(fenceDir, features);
+  const closeFenceService = () => {
+    fenceService.close();
+    removeFenceCapability(fenceDir);
+  };
   const maintenanceConfig = loadPersistMaintenanceConfig();
   let maintenance: PersistMaintenanceCoordinator | undefined;
   if (maintenanceConfig.enabled) {
@@ -196,6 +238,9 @@ export async function startStandaloneProjectHostConatPersist({
       maintenance = createPersistMaintenanceCoordinator({
         expectedWorkerIds: [id],
         config: maintenanceConfig,
+        // never on the files of a fenced project, e.g., being restored (and
+        // after the fences held before a restart are held again)
+        claim: claimPersistFile,
       });
     } catch (err) {
       // Catalog failure must not prevent the data plane from starting.
@@ -274,6 +319,7 @@ export async function startStandaloneProjectHostConatPersist({
           ready: persistReady,
           serverId: id,
           streamReleases: getPersistStreamReleaseQueueDiagnostics(),
+          fences: fenceService.fences(),
         }),
       );
     } catch (err) {
@@ -304,6 +350,7 @@ export async function startStandaloneProjectHostConatPersist({
     maintenance,
     persistServer,
     boardPersistServer,
+    fenceService: { close: closeFenceService },
     port: bindPort,
   };
 }

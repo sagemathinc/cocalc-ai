@@ -22,8 +22,13 @@ import {
   writeHostAgentState,
 } from "./host-agent-state";
 import { activateInstalledProjectHostVersion } from "./upgrade";
+import { PersistLayoutDowngradeError } from "./persist-layout-guard";
 
 const logger = getLogger("project-host:host-agent");
+
+// The candidate whose rollback the persist layout refused
+// (persist-layout-guard.ts): not tried again every pass.
+let refusedRollbackTarget: string | undefined;
 
 function parseIndex(argv: string[]): number {
   const indexFlag = argv.findIndex((arg) => arg === "--index");
@@ -574,6 +579,7 @@ async function reconcileProjectHostRollback({
     activePending.target_version === currentVersion &&
     deadlineExpired(activePending.deadline_at, now)
   ) {
+    if (refusedRollbackTarget === activePending.target_version) return;
     logger.error("host-agent rolling back unhealthy project-host candidate", {
       index,
       target_version: activePending.target_version,
@@ -610,7 +616,28 @@ async function reconcileProjectHostRollback({
       rollbackStartedAt: nowIso,
       failureReason: "health_deadline_exceeded",
     });
-    await activateInstalledProjectHostVersion(activePending.previous_version);
+    try {
+      await activateInstalledProjectHostVersion(activePending.previous_version);
+    } catch (err) {
+      if (!(err instanceof PersistLayoutDowngradeError)) throw err;
+      // not tried again for this candidate (until the agent restarts)
+      refusedRollbackTarget = activePending.target_version;
+      logger.error("host-agent will not roll back the project-host candidate", {
+        index,
+        target_version: activePending.target_version,
+        rollback_version: activePending.previous_version,
+        err: `${err}`,
+      });
+      recordHostAgentEvent(status.dataDir, {
+        component: "project-host",
+        action: "reconcile_failed",
+        message: `not rolling back the unhealthy candidate: ${err}`,
+        target_version: activePending.target_version,
+        previous_version: activePending.previous_version,
+        running_version: runningVersion,
+      });
+      return;
+    }
     restartProjectHost(index, {
       preserveManagedAuxiliaryDaemons: true,
       preserveAcpWorkers: true,

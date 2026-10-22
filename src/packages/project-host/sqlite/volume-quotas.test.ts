@@ -260,6 +260,33 @@ describe("project volume quota ledger", () => {
     ]);
   });
 
+  it("counts the quotas applied in an earlier epoch", async () => {
+    const ledger = await import("./volume-quotas");
+    for (const project_id of ["project-old-1", "project-old-2"]) {
+      ledger.acceptProjectVolumeQuotaDesired({
+        project_id,
+        volume_kind: "home",
+        desired_bytes: 10,
+        desired_revision: 1,
+      });
+      ledger.markProjectVolumeQuotaApplied({
+        project_id,
+        volume_kind: "home",
+        desired_bytes: 10,
+        desired_revision: 1,
+        volume_identity: "volume-1",
+        epoch: "filesystem-1:1",
+      });
+    }
+    const before = ledger.countProjectVolumeQuotaEpochBacklog({
+      epoch: "filesystem-1:1",
+    });
+    // e.g., a new quota layout
+    expect(
+      ledger.countProjectVolumeQuotaEpochBacklog({ epoch: "filesystem-1:2" }),
+    ).toBe(before + 2);
+  });
+
   it("delays failed-row retries but immediately detects an epoch change", async () => {
     const ledger = await import("./volume-quotas");
     ledger.acceptProjectVolumeQuotaDesired({

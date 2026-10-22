@@ -1234,6 +1234,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "project snapshot path deletion",
   },
+  "projects.applyProjectPersistStorage": {
+    decision: "fresh-auth-required",
+    reason: "project edit history and log deletion",
+  },
   "projects.drainProjectRehome": {
     decision: "fresh-auth-required",
     reason: "project ownership migration maintenance",

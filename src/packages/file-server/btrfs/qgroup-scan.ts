@@ -43,6 +43,9 @@ export interface QgroupScan {
   // e.g., btrfs saying its quota accounting is inconsistent
   warning?: string;
   scanned_at: number;
+  // which read this is (they are numbered as they begin): what began after a
+  // lookup began has a higher number than any it could have joined
+  seq?: number;
 }
 
 const DEFAULT_SCAN_CACHE_MS = 30_000;
@@ -111,6 +114,8 @@ export function parseQgroupScan(
 }
 
 const scans = new Map<string, QgroupScan>();
+// reads begun so far, on any filesystem
+let readsBegun = 0;
 const inflight = new Map<string, Promise<QgroupScan>>();
 // bumped when a mount's scan is dropped: a read that started before is not
 // kept
@@ -123,11 +128,12 @@ async function scan(mount: string): Promise<QgroupScan> {
   const promise = (async () => {
     // (as of when it started: what changed meanwhile may not be in it)
     const started = Date.now();
+    const seq = ++readsBegun;
     const { stdout, stderr } = await btrfs({
       verbose: false,
       args: ["qgroup", "show", "-prc", "--raw", mount],
     });
-    const result = parseQgroupScan(stdout, stderr, started);
+    const result = { ...parseQgroupScan(stdout, stderr, started), seq };
     if ((generations.get(mount) ?? 0) === generation) {
       scans.set(mount, result);
     }
@@ -179,14 +185,15 @@ export async function lookupQgroup({
 }): Promise<
   { row: QgroupScanRow; parents: QgroupScanRow[]; warning?: string } | undefined
 > {
-  const started = Date.now();
+  // the reads begun before this lookup: one of them may not have it
+  const begun = readsBegun;
   const id = `0/${await getSubvolumeId()}`;
   let s = await getQgroupScan(mount);
   let row = s.rows.get(id);
   // not there: read again, unless what was read began after this did (a
   // read joined under way may have begun before, e.g., before the subvolume
   // was made: then once more)
-  for (let i = 0; row == null && s.scanned_at < started && i < 3; i++) {
+  for (let i = 0; row == null && (s.seq ?? 0) <= begun && i < 3; i++) {
     s = await scan(mount);
     row = s.rows.get(id);
   }
@@ -253,8 +260,69 @@ export async function noteQgroupLimit({
   row.max_referenced = bytes;
 }
 
+// This host put the subvolumes at `members` (all existing) in `group`, with
+// `size` as its limit if given: the cached scan says so too (or is dropped,
+// if it can't place one).  Members are found by their ids as they are now
+// (as for noteQgroupLimit).  With simple quotas a subvolume's usage counts in
+// a group as soon as it joins.
+export async function noteQgroupGroup({
+  mount,
+  group,
+  members,
+  size,
+}: {
+  mount: string;
+  group: string;
+  members: string[];
+  size?: number;
+}): Promise<void> {
+  const generation = generations.get(mount) ?? 0;
+  if (inflight.has(mount) || !scans.has(mount)) {
+    invalidateQgroupScan(mount);
+    return;
+  }
+  let ids: number[];
+  try {
+    ids = await Promise.all(members.map(currentSubvolumeId));
+  } catch {
+    invalidateQgroupScan(mount);
+    return;
+  }
+  const s = scans.get(mount);
+  const rows = ids.map((id) => s?.rows.get(`0/${id}`));
+  if (
+    s == null ||
+    (generations.get(mount) ?? 0) !== generation ||
+    rows.some((row) => row == null)
+  ) {
+    invalidateQgroupScan(mount);
+    return;
+  }
+  let row = s.rows.get(group);
+  if (row == null) {
+    row = {
+      qgroupid: group,
+      referenced: 0,
+      exclusive: 0,
+      max_referenced: "none",
+      parents: [],
+      children: [],
+    };
+    s.rows.set(group, row);
+  }
+  for (const member of rows as QgroupScanRow[]) {
+    if (member.parents.includes(group)) continue;
+    member.parents.push(group);
+    row.children.push(member.qgroupid);
+    row.referenced += member.referenced;
+    row.exclusive += member.exclusive;
+  }
+  if (size != null) row.max_referenced = size;
+}
+
 export function resetQgroupScansForTest(): void {
   scans.clear();
   inflight.clear();
   generations.clear();
+  readsBegun = 0;
 }
