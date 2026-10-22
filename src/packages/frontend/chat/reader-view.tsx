@@ -201,7 +201,8 @@ export function ChatReaderView({
   useEffect(() => {
     if (!narrow || startedRef.current === threadId || !visible.length) return;
     startedRef.current = threadId;
-    if (selectedId) return;
+    // Kept only if it is in this thread (not one left from the last thread).
+    if (selectedId && visible.some((item) => item.id === selectedId)) return;
     const first =
       visible.find((item) => !isItemRead(item, watermark, state)) ?? visible[0];
     setSelectedId(first.id);

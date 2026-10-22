@@ -365,3 +365,24 @@ test("a read-only chat offers no replies from a selection, as in the log", async
   ))
     expect(el).toHaveAttribute("data-disabled", "true");
 });
+
+test("phone: another thread opens on its own first message", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  const view = (threadId: string, messages: any[]) => (
+    <ChatReaderView
+      actions={actions}
+      threadId={threadId}
+      messages={messages}
+      accountId="acct"
+      narrow
+    />
+  );
+  const { rerender } = render(view("thread-1", thread));
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+  rerender(view("thread-2", [person("q1", "other thread", 7)]));
+  expect(screen.getByRole("article")).toHaveTextContent("other thread");
+});
