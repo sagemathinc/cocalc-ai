@@ -717,7 +717,8 @@ describe("inspecting a sent message's turn across bays", () => {
        }
        service.close();
        return "served";`,
-      { timeoutMs: lifetimeMs + 60_000 },
+      // Its own process: it serves for a while.
+      { timeoutMs: lifetimeMs + 60_000, fresh: true },
     );
   }
 
