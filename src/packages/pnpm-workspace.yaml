@@ -131,6 +131,7 @@ minimumReleaseAgeExclude:
   # Maintainer-approved exact-version exception; review in .agents/git-review-modernization.md.
   - "@pierre/diffs@1.4.1"
   # CoCalc-owned upstream package; fresh releases are reviewed here before use.
+  - "@sagemathinc/sagebrush-board"
   - "@cocalc/openat2@0.2.0"
   - "@cocalc/openat2-linux-arm64-gnu@0.2.0"
   - "@cocalc/openat2-linux-x64-gnu@0.2.0"

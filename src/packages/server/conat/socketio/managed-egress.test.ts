@@ -138,4 +138,16 @@ describe("hub conat managed egress", () => {
       resets_at: blocked_until.toISOString(),
     });
   });
+
+  it("records a sample's whole breakdown across sockets, past the stored 256-subject size", () => {
+    // four sockets, each at its own cap: more than 256 subjects in one sample
+    const bySubject: Record<string, number> = { recurring: 10 };
+    for (let i = 0; i < 300; i++) bySubject[`once-${i}`] = 100;
+    const recorded = __test__.sampleTopSubjects(bySubject);
+    expect(recorded).toHaveLength(301);
+    expect(recorded.find(({ subject }) => subject === "recurring")).toEqual({
+      subject: "recurring",
+      bytes: 10,
+    });
+  });
 });

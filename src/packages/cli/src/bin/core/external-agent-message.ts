@@ -166,6 +166,11 @@ export async function sendExternalAgentMessage(
         reason:
           "Preparation not acknowledged; no bytes or message were sent. Startup may still finish.",
       });
+    if (request.action === "withdraw")
+      return rpcOutcome(request, "unknown", {
+        reason:
+          "No authoritative response; inspect to see whether it was withdrawn.",
+      });
     if (request.action === "send" || request.action === "inspect")
       return rpcOutcome(request, "unknown", {
         reason:

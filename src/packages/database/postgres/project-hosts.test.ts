@@ -37,8 +37,14 @@ describe("upsertProjectHost", () => {
         public_route: { active_mode: "cloudflare-tunnel" },
         dns: { record_id: "untrusted-record" },
         cloudflare_tunnel: { id: "untrusted-tunnel" },
+        content_dns: { name: "*.untrusted.example", record_id: "untrusted" },
       },
     });
+    const { rows: inserted } = await getPool().query(
+      "SELECT metadata FROM project_hosts WHERE id=$1",
+      [HOST_ID],
+    );
+    expect(inserted[0]?.metadata.content_dns).toBeUndefined();
 
     await getPool().query(
       `UPDATE project_hosts
@@ -69,6 +75,7 @@ describe("upsertProjectHost", () => {
           public_route: { active_mode: "cloudflare-proxy" },
           dns: { record_id: "control-plane-record" },
           cloudflare_tunnel: { id: "control-plane-tunnel" },
+          content_dns: { name: "*.h-control.example", record_id: "control" },
         }),
       ],
     );
@@ -84,6 +91,7 @@ describe("upsertProjectHost", () => {
         public_route: { active_mode: "cloudflare-tunnel" },
         dns: { record_id: "stale-host-record" },
         cloudflare_tunnel: { id: "stale-host-tunnel" },
+        content_dns: { name: "*.victim.example", record_id: "stale-host" },
       },
     });
 
@@ -102,6 +110,7 @@ describe("upsertProjectHost", () => {
       public_route: { active_mode: "cloudflare-proxy" },
       dns: { record_id: "control-plane-record" },
       cloudflare_tunnel: { id: "control-plane-tunnel" },
+      content_dns: { name: "*.h-control.example", record_id: "control" },
     });
   });
 

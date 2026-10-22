@@ -72,6 +72,8 @@ import {
   statSync,
   copyFileSync,
   ensureContainingDirectoryExists,
+  assertSafeDatabasePath,
+  isProjectOwnedDatabasePath,
 } from "./context";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
@@ -85,6 +87,8 @@ import { getLogger } from "@cocalc/conat/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { throttle } from "lodash";
 import type { PersistMaintenanceHandle } from "./maintenance/types";
+import { decode } from "@cocalc/conat/core/codec";
+import { historyLimits, type HistoryLimits } from "./history-limits";
 
 const logger = getLogger("persist:storage");
 
@@ -241,22 +245,393 @@ export function maxPersistMessageBytes(
     : DEFAULT_MAX_PERSIST_MESSAGE_BYTES;
 }
 
+// A project's persist files live in the project, so the project can change
+// them: nothing read from them is trusted.  The limits below bound what any
+// stored message can cost the (shared) persist server to read.
+
+// Largest stored headers (serialized JSON) that will be parsed.  Conat message
+// headers are at most MAX_MESSAGE_HEADER_BYTES (100 KB), so larger ones were
+// not written by this server.
+export const MAX_PERSIST_HEADERS_CHARS = 1_000_000;
+
+// Decompressing a stored message produces at most its recorded size (which is
+// at least its uncompressed length, see set), and never less than this.
+const MIN_DECOMPRESS_LIMIT_BYTES = 64 * 1024;
+
+// The "size" of a stored message whose data is not a BLOB (only a changed
+// file has that): over every limit, so it is never read, and a client can
+// remove it like any oversized message (resetHistory).
+const NOT_A_BLOB_SIZE = Number.MAX_SAFE_INTEGER;
+
+// The size of a stored message, for checking limits before reading it: the
+// recorded size, but never less than what is physically stored.  (typeof()
+// and length() of a BLOB do not read it.)
+const EFFECTIVE_SIZE_SQL = `CASE WHEN typeof(raw) <> 'blob' THEN ${NOT_A_BLOB_SIZE} ELSE MAX(IFNULL(CAST(size AS INTEGER), 0), length(raw) + IFNULL(length(headers), 0) + IFNULL(length(key), 0)) END`;
+
+// SQLite locking mode for the persist database at path.  A project owns the
+// -shm file of its databases, which SQLite memory-maps, so it could truncate
+// it and crash the whole persist server with SIGBUS.  "exclusive" keeps the
+// WAL index in this process's memory instead, but then no other connection
+// can open the file while this one has it open.  That is fine for project
+// files, which a project-host's single persist server opens, but persist
+// servers elsewhere (and tests) share files, so by default only project files
+// are exclusive.  COCALC_PERSIST_SQLITE_LOCKING_MODE=normal or =exclusive
+// applies one mode to every file.
+export function persistSqliteLockingMode(
+  path: string,
+  env: NodeJS.ProcessEnv = process.env,
+): "exclusive" | "normal" {
+  const mode = env.COCALC_PERSIST_SQLITE_LOCKING_MODE;
+  if (mode === "normal" || mode === "exclusive") {
+    return mode;
+  }
+  return path !== ":memory:" && isProjectOwnedDatabasePath(path)
+    ? "exclusive"
+    : "normal";
+}
+
+// sqlite3_set_authorizer return codes
+const SQLITE_OK = 0;
+const SQLITE_DENY = 1;
+
+// How long an operation waits for a lock held by another connection to the
+// same file.  The API is synchronous, so the whole server waits: keep it short.
+export const DEFAULT_PERSIST_SQLITE_BUSY_TIMEOUT_MS = 500;
+
+export function persistSqliteBusyTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const value = Number(env.COCALC_PERSIST_SQLITE_BUSY_TIMEOUT_MS);
+  return env.COCALC_PERSIST_SQLITE_BUSY_TIMEOUT_MS != null &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+    ? value
+    : DEFAULT_PERSIST_SQLITE_BUSY_TIMEOUT_MS;
+}
+
+function decompressLimit(size: number): number {
+  const recorded = Number.isFinite(size) ? size : 0;
+  return Math.min(
+    maxPersistMessageBytes(),
+    Math.max(recorded, MIN_DECOMPRESS_LIMIT_BYTES),
+  );
+}
+
+function parseStoredHeaders(headers?: string | null) {
+  if (!headers) return undefined;
+  if (headers.length > MAX_PERSIST_HEADERS_CHARS) {
+    throw new ConatError(
+      `stored message headers are ${headers.length} characters, over the ${MAX_PERSIST_HEADERS_CHARS} limit`,
+      { code: 413 },
+    );
+  }
+  return JSON.parse(headers);
+}
+
+// The tables that bound sync document history: the msgID of each accepted
+// message, the records a load can start from, each history epoch and the
+// loadable segments of the archived ones, and the results of resets by
+// operation id.  The schema check accepts them before this server creates
+// them, so a server can roll back to this version after a newer one has
+// created them.
+export const HISTORY_SCHEMA = {
+  message_ids: `CREATE TABLE IF NOT EXISTS message_ids (
+          seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL
+        )`,
+  idx_message_ids_msg_id:
+    "CREATE INDEX IF NOT EXISTS idx_message_ids_msg_id ON message_ids(msg_id)",
+  history_cuts: `CREATE TABLE IF NOT EXISTS history_cuts (
+          seq INTEGER PRIMARY KEY, snapshot_seq INTEGER
+        )`,
+  history_epochs: `CREATE TABLE IF NOT EXISTS history_epochs (
+          id INTEGER PRIMARY KEY,
+          epoch INTEGER NOT NULL,
+          first_seq INTEGER NOT NULL,
+          last_seq INTEGER,
+          covered_seq INTEGER,
+          seed_seq INTEGER,
+          starts_empty INTEGER NOT NULL,
+          ids_complete INTEGER NOT NULL,
+          archive TEXT,
+          kept_records INTEGER NOT NULL DEFAULT 0,
+          kept_bytes INTEGER NOT NULL DEFAULT 0,
+          dropped_records INTEGER NOT NULL DEFAULT 0,
+          dropped_bytes INTEGER NOT NULL DEFAULT 0,
+          info_json TEXT,
+          time INTEGER NOT NULL
+        )`,
+  history_segments: `CREATE TABLE IF NOT EXISTS history_segments (
+          epoch_id INTEGER NOT NULL,
+          first_seq INTEGER NOT NULL,
+          last_seq INTEGER NOT NULL,
+          cut_seq INTEGER,
+          snapshot_seq INTEGER,
+          cut_bytes INTEGER NOT NULL,
+          suffix_bytes INTEGER NOT NULL,
+          records INTEGER NOT NULL,
+          PRIMARY KEY (epoch_id, first_seq)
+        )`,
+  history_ops: `CREATE TABLE IF NOT EXISTS history_ops (
+          op_id TEXT PRIMARY KEY, result_json TEXT NOT NULL, time INTEGER NOT NULL
+        )`,
+} as const;
+
+// The tables the bounded reset work keeps (bounded history plan H1c): the
+// stream's live and trash counts, and the ledger of trash left by resets
+// (renamed tables, id ranges and cuts, removed in bounded steps).  This
+// server only ACCEPTS them (H1c-0), so a server can roll back to it after
+// H1c has created them; H1c creates them.
+export const RESET_TRASH_SCHEMA = {
+  stream_counts: `CREATE TABLE IF NOT EXISTS stream_counts (
+          id INTEGER PRIMARY KEY CHECK(id = 1),
+          records INTEGER NOT NULL DEFAULT 0,
+          bytes INTEGER NOT NULL DEFAULT 0,
+          initialized INTEGER NOT NULL DEFAULT 0,
+          init_cursor INTEGER,
+          init_records INTEGER NOT NULL DEFAULT 0,
+          init_bytes INTEGER NOT NULL DEFAULT 0,
+          counted_through_seq INTEGER,
+          trash_items INTEGER NOT NULL DEFAULT 0,
+          trash_records INTEGER NOT NULL DEFAULT 0,
+          trash_bytes INTEGER NOT NULL DEFAULT 0,
+          trash_unknown_items INTEGER NOT NULL DEFAULT 0
+        )`,
+  history_trash: `CREATE TABLE IF NOT EXISTS history_trash (
+          id INTEGER PRIMARY KEY,
+          kind TEXT NOT NULL,
+          target TEXT,
+          lo INTEGER,
+          hi INTEGER,
+          cursor INTEGER,
+          epoch_id INTEGER,
+          records INTEGER NOT NULL,
+          bytes INTEGER NOT NULL,
+          exact INTEGER NOT NULL,
+          removed_records INTEGER NOT NULL DEFAULT 0,
+          removed_bytes INTEGER NOT NULL DEFAULT 0,
+          time INTEGER NOT NULL
+        )`,
+} as const;
+
+// The schema objects this server creates, keyed by name.  Opening a file with
+// anything else (triggers, views, other indexes or tables, or a changed
+// definition) is refused: such objects run code on every write or change
+// query plans, and this server never creates them.
+const SCHEMA = {
+  messages: `CREATE TABLE IF NOT EXISTS messages (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, time INTEGER NOT NULL, headers TEXT, compress NUMBER NOT NULL, encoding NUMBER NOT NULL, raw BLOB NOT NULL, size NUMBER NOT NULL, ttl NUMBER
+          )`,
+  idx_messages_key:
+    "CREATE INDEX IF NOT EXISTS idx_messages_key ON messages(key)",
+  idx_messages_time:
+    "CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)",
+  config: `CREATE TABLE IF NOT EXISTS config (
+          field TEXT PRIMARY KEY, value TEXT NOT NULL
+        )`,
+  stream_metadata: `CREATE TABLE IF NOT EXISTS stream_metadata (
+          id INTEGER PRIMARY KEY CHECK(id = 1),
+          metadata_json TEXT,
+          revision INTEGER NOT NULL DEFAULT 0
+        )`,
+  stream_checkpoints: `CREATE TABLE IF NOT EXISTS stream_checkpoints (
+          name TEXT PRIMARY KEY,
+          seq INTEGER NOT NULL,
+          time INTEGER NOT NULL,
+          data_json TEXT,
+          revision INTEGER NOT NULL DEFAULT 0
+        )`,
+  idx_stream_checkpoints_seq:
+    "CREATE INDEX IF NOT EXISTS idx_stream_checkpoints_seq ON stream_checkpoints(seq)",
+  ...HISTORY_SCHEMA,
+} as const;
+
+function normalizeSchemaSql(sql: string): string {
+  return sql
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),=])\s*/g, "$1")
+    .replace(/^CREATE (TABLE|INDEX) IF NOT EXISTS /i, "CREATE $1 ")
+    .trim()
+    .toLowerCase();
+}
+
+const ARCHIVED_MESSAGES_TABLE = /^messages_archived_\d+(?:_\d+)?$/;
+// a message_ids table moved aside by a reset (H1c), removed in bounded steps
+const TRASH_MESSAGE_IDS_TABLE = /^message_ids_trash_\d+$/;
+
+// The indexes of the tables that resets rename (H1c): each has a purpose (its
+// one column) and an owner (the live table, or a table a reset renamed it
+// with).  A renamed table keeps its indexes, under their names, and the
+// live table's new ones get a generation suffix, so names never collide.
+const PURPOSE_INDEXES: {
+  name: RegExp;
+  column: string;
+  owner: RegExp;
+}[] = [
+  {
+    name: /^idx_messages_key(?:_g\d+)?$/,
+    column: "key",
+    owner: /^(?:messages|messages_archived_\d+(?:_\d+)?)$/,
+  },
+  {
+    name: /^idx_messages_time(?:_g\d+)?$/,
+    column: "time",
+    owner: /^(?:messages|messages_archived_\d+(?:_\d+)?)$/,
+  },
+  {
+    name: /^idx_message_ids_msg_id(?:_g\d+)?$/,
+    column: "msg_id",
+    owner: /^(?:message_ids|message_ids_trash_\d+)$/,
+  },
+];
+
+// Why an index of a renamed table's family is not exactly one this server
+// (or H1c) creates, or undefined if it is: a plain index on its purpose's
+// one column, of an owner of that purpose.
+function unexpectedPurposeIndex(
+  name: string,
+  tbl_name: string,
+  sql: string | null,
+): string | undefined {
+  const purpose = PURPOSE_INDEXES.find((p) => p.name.test(name));
+  if (purpose == null) return "unexpected";
+  if (!purpose.owner.test(tbl_name)) return "unexpected";
+  const table =
+    tbl_name === "messages" || tbl_name === "message_ids"
+      ? tbl_name
+      : `"${tbl_name}"`;
+  const expected = normalizeSchemaSql(
+    `CREATE INDEX ${name} ON ${table}(${purpose.column})`,
+  );
+  // SQLite stores a renamed table's name quoted, and a created one as written
+  const stored = normalizeSchemaSql(sql ?? "");
+  if (
+    stored === expected ||
+    stored ===
+      normalizeSchemaSql(
+        `CREATE INDEX ${name} ON ${tbl_name}(${purpose.column})`,
+      )
+  ) {
+    return undefined;
+  }
+  return "changed";
+}
+
+export function persistSchemaCheckEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.COCALC_PERSIST_SCHEMA_CHECK !== "off";
+}
+
+// Why a database's schema is not one this server creates, or undefined if it
+// is.  Exported for tests.
+export function unexpectedPersistSchema(
+  objects: {
+    type: string;
+    name: string;
+    tbl_name: string;
+    sql: string | null;
+  }[],
+): string | undefined {
+  const expected = new Map(
+    Object.entries(SCHEMA).map(([name, sql]) => [
+      name,
+      normalizeSchemaSql(sql),
+    ]),
+  );
+  const archivedTable = normalizeSchemaSql(SCHEMA.messages);
+  const trashIdsTable = normalizeSchemaSql(HISTORY_SCHEMA.message_ids);
+  const resetTrash = new Map(
+    Object.entries(RESET_TRASH_SCHEMA).map(([name, sql]) => [
+      name,
+      normalizeSchemaSql(sql),
+    ]),
+  );
+  // at most one index of each purpose per table (H1c)
+  const purposes = new Set<string>();
+  const ourTables = new Set([
+    "messages",
+    "config",
+    "stream_checkpoints",
+    "history_segments",
+    "history_ops",
+  ]);
+  for (const { type, name, tbl_name, sql } of objects) {
+    const label = `${type} ${JSON.stringify(String(name).slice(0, 80))}`;
+    if (type === "table" && name === "sqlite_sequence") continue;
+    if (type === "index" && name.startsWith("sqlite_autoindex_")) {
+      if (ourTables.has(tbl_name) || ARCHIVED_MESSAGES_TABLE.test(tbl_name)) {
+        continue;
+      }
+      return `unexpected ${label}`;
+    }
+    if (type === "table" && ARCHIVED_MESSAGES_TABLE.test(name)) {
+      // created by ALTER TABLE messages RENAME TO "<name>" (resetHistory)
+      const renamed = normalizeSchemaSql(sql ?? "").replace(
+        /^create table "?messages_archived_\d+(?:_\d+)?"?\(/,
+        "create table messages(",
+      );
+      if (renamed === archivedTable) continue;
+      return `changed ${label}`;
+    }
+    if (type === "table" && TRASH_MESSAGE_IDS_TABLE.test(name)) {
+      // created by ALTER TABLE message_ids RENAME TO "<name>" (H1c)
+      const renamed = normalizeSchemaSql(sql ?? "").replace(
+        /^create table "?message_ids_trash_\d+"?\(/,
+        "create table message_ids(",
+      );
+      if (renamed === trashIdsTable) continue;
+      return `changed ${label}`;
+    }
+    if (type === "table" && resetTrash.has(name)) {
+      if (normalizeSchemaSql(sql ?? "") === resetTrash.get(name)) continue;
+      return `changed ${label}`;
+    }
+    if (type === "index" && PURPOSE_INDEXES.some((p) => p.name.test(name))) {
+      const problem = unexpectedPurposeIndex(name, tbl_name, sql);
+      if (problem != null) return `${problem} ${label}`;
+      const purpose = `${tbl_name}\u0000${
+        PURPOSE_INDEXES.find((p) => p.name.test(name))!.column
+      }`;
+      if (purposes.has(purpose)) return `duplicate ${label}`;
+      purposes.add(purpose);
+      continue;
+    }
+    if (
+      (type === "table" || type === "index") &&
+      expected.has(name) &&
+      (type === "index") === name.startsWith("idx_")
+    ) {
+      if (normalizeSchemaSql(sql ?? "") === expected.get(name)) continue;
+      return `changed ${label}`;
+    }
+    return `unexpected ${label}`;
+  }
+  return undefined;
+}
+
 export function persistMessageTooLargeError({
   size,
   limit,
   seq,
+  epoch,
 }: {
   size: number;
   limit: number;
   seq: number;
+  // the history epoch it was read in, when known
+  epoch?: number;
 }): ConatError {
   const err = new ConatError(
-    `stored message ${seq} is ${size} bytes, over the ${limit} byte limit, so it cannot be read; an operator must remove it from the stream`,
+    size >= NOT_A_BLOB_SIZE
+      ? `stored message ${seq} is corrupt (its data is not stored as bytes), so it cannot be read; an operator must remove it from the stream`
+      : `stored message ${seq} is ${size} bytes, over the ${limit} byte limit, so it cannot be read; an operator must remove it from the stream`,
     { code: 413 },
   );
   // which message, so a client can ask for exactly this one to be dealt with
   // (see resetHistory)
   (err as any).oversizedSeq = seq;
+  // and in which history: a recovery is only a later one (H1b-4)
+  if (typeof epoch == "number") (err as any).oversizedEpoch = epoch;
   return err;
 }
 
@@ -271,10 +646,54 @@ export interface ResetHistoryOptions {
   ifOversizedSeq?: number;
   // keep the old messages, in a table of their own, instead of deleting them
   archive?: boolean;
+  // Only reset if the stream is still as judged: its newest seq and number of
+  // messages (see inventory), and its history epoch.
+  ifRevision?: { seq: number; count: number };
+  ifInitEpoch?: number;
+  // The first message of the new history: a snapshot of the document's value
+  // including every message with seq <= coveredSeq.  It is inserted in the
+  // same transaction, so there is never an empty history to open.
+  seed?: ResetHistorySeed;
+  // required with a seed: the stream's newest seq, so the seed covers every
+  // message the server accepted ...
+  coveredSeq?: number;
+  // ... or older than that, if the newer messages cannot be used (a damaged
+  // history, reset from the saved file).  Their ids are then reported as
+  // excluded by historyInclusion, never as included.
+  allowRollback?: boolean;
+  // Identifies this reset: a repeated request (e.g., after a lost reply)
+  // returns the first result instead of resetting again.
+  opId?: string;
+  // recorded with the archived epoch, e.g., "oversized" or "damaged"
+  reason?: string;
 }
 
+export interface ResetHistorySeed {
+  encoding: DataEncoding;
+  // the encoded patch object, not compressed; it must be a snapshot
+  // ({is_snapshot: true, snapshot: string, ...})
+  raw: Buffer | Uint8Array;
+  // the server adds the new history_epoch
+  headers?: { [key: string]: JSONValue };
+  msgID?: string;
+  // a checkpoint to set at the seed's seq, e.g., latest_snapshot
+  checkpoint?: { name: string; data?: JSONValue };
+}
+
+export type ResetHistoryRefusal =
+  // ifOversizedSeq is gone or not too large
+  | "not-oversized"
+  // ifRevision, or coveredSeq without allowRollback, is not the stream's
+  | "moved"
+  | "epoch"
+  | "seed-too-large"
+  | "seed-invalid"
+  // another reset of this stream is in progress on the persist server (see
+  // the reset slot in server.ts); nothing was done, try again later
+  | "busy";
+
 export interface ResetHistoryResult {
-  // false if ifOversizedSeq was given and that message is gone or not too large
+  // false if a condition did not hold; see refused
   reset: boolean;
   // the history epoch now in effect
   history_epoch: number;
@@ -282,10 +701,123 @@ export interface ResetHistoryResult {
   count: number;
   // name of the table the old messages were archived in
   archive?: string;
+  refused?: ResetHistoryRefusal;
+  // the seed's seq and what it covers
+  seedSeq?: number;
+  coveredSeq?: number;
+  // the archive: its loadable segments, and the messages that are in no
+  // loadable segment, so were removed
+  segments?: number;
+  dropped?: { records: number; bytes: number };
+  // older archived history removed to stay within maxArchiveBytes
+  droppedArchived?: { records: number; bytes: number };
+  // this opId was already done; this is its result
+  repeated?: boolean;
+}
+
+// What historyInclusion knows about a msg id:
+//  - live: accepted in the current history;
+//  - included: accepted in an older epoch, and in the current history's seed;
+//  - excluded: accepted in an older epoch, and not in the current seed (a
+//    rollback, or a reset without a seed);
+//  - absent: never accepted in the epoch asked about;
+//  - unknown: the evidence is gone or was never complete (older servers, an
+//    expired archive, deleted messages).  Never treat this as absent.
+export type InclusionStatus =
+  | "live"
+  | "included"
+  | "excluded"
+  | "absent"
+  | "unknown";
+
+export interface HistoryInclusion {
+  history_epoch: number;
+  ids: { [msgID: string]: { status: InclusionStatus; seq?: number } };
+}
+
+export interface ArchivedHistoryEpoch {
+  epoch: number;
+  first_seq: number;
+  last_seq: number;
+  covered_seq?: number;
+  archive?: string;
+  kept: { records: number; bytes: number };
+  dropped: { records: number; bytes: number };
+  info?: JSONValue;
+  time: number;
+  segments: ArchivedHistorySegment[];
+}
+
+// a loadable stretch of archived history: start at the cut (or the empty
+// document if cut_seq is undefined) and load through last_seq
+export interface ArchivedHistorySegment {
+  first_seq: number;
+  last_seq: number;
+  cut_seq?: number;
+  snapshot_seq?: number;
+  cut_bytes: number;
+  suffix_bytes: number;
+  records: number;
 }
 
 // tables holding history kept by resetHistory({archive:true})
 const ARCHIVED_MESSAGES_PREFIX = "messages_archived_";
+
+// a stored archive table name, which is pasted into SQL: only exactly the
+// names this server creates
+function archiveTableName(name: unknown): string | undefined {
+  return typeof name === "string" && ARCHIVED_MESSAGES_TABLE.test(name)
+    ? name
+    : undefined;
+}
+
+// The checkpoint sync documents set at their latest snapshot (see SyncDoc's
+// LATEST_SNAPSHOT_CHECKPOINT): the only checkpoints that are archive cuts.
+const SNAPSHOT_CHECKPOINT = "latest_snapshot";
+
+// results of resets kept by opId, so a repeated request gets the first result
+const MAX_HISTORY_OPS = 100;
+// closed epochs without an archive kept in history_epochs
+const MAX_HISTORY_EPOCH_ROWS = 100;
+// archived epochs kept per stream (also bounded by maxArchiveBytes)
+const MAX_ARCHIVED_EPOCHS = 100;
+// charged against maxArchiveBytes for what an archived record and an archive
+// table store beyond the message itself (row header, seq/time/size columns,
+// index entries; schema and root pages), conservatively
+export const ARCHIVE_RECORD_OVERHEAD_BYTES = 128;
+export const ARCHIVE_TABLE_OVERHEAD_BYTES = 64 * 1024;
+
+// the size recorded for a message: uncompressed data plus headers and key
+function messageSize({
+  serializedHeaders,
+  raw,
+  key,
+}: {
+  serializedHeaders?: string;
+  raw?: Buffer | Uint8Array;
+  key?: string;
+}): number {
+  return (
+    (serializedHeaders?.length ?? 0) + (raw?.length ?? 0) + (key?.length ?? 0)
+  );
+}
+
+// info_json of the open epoch: the newest seq written by a server that
+// records msg ids (see verifyIdLedger)
+function ledgerInfo(seq: number): string {
+  return JSON.stringify({ ledger_seq: seq });
+}
+
+// The seed of a reset must be a snapshot patch: the document's whole value.
+function isSnapshotPatch(obj: unknown): boolean {
+  return (
+    obj != null &&
+    typeof obj === "object" &&
+    !Array.isArray(obj) &&
+    (obj as any).is_snapshot === true &&
+    typeof (obj as any).snapshot === "string"
+  );
+}
 
 function epochOf(x: { [key: string]: JSONValue }): number {
   const epoch = x.history_epoch;
@@ -313,14 +845,24 @@ export const ASYNC_DECOMPRESS_MIN_BYTES = 1_000_000;
 export async function storedRowToMessage(
   row: StoredRow,
 ): Promise<StoredMessage> {
+  if (!(row.raw instanceof Uint8Array)) {
+    // the size of such a row is NOT_A_BLOB_SIZE, but don't rely on callers
+    // checking it
+    throw persistMessageTooLargeError({
+      size: NOT_A_BLOB_SIZE,
+      limit: maxPersistMessageBytes(),
+      seq: row.seq,
+    });
+  }
   let raw: Buffer;
   if (row.compress == CompressionAlgorithm.None) {
     raw = row.raw;
   } else if (row.compress == CompressionAlgorithm.Zstd) {
+    const limit = decompressLimit(row.size);
     raw =
       row.size >= ASYNC_DECOMPRESS_MIN_BYTES
-        ? await decompressAsync(row.raw)
-        : decompress(row.raw);
+        ? await decompressAsync(row.raw, limit)
+        : decompress(row.raw, limit);
   } else {
     throw Error(`unknown compression ${row.compress}`);
   }
@@ -330,7 +872,7 @@ export async function storedRowToMessage(
     key: row.key != null ? row.key : undefined,
     encoding: row.encoding,
     raw,
-    headers: row.headers ? JSON.parse(row.headers) : undefined,
+    headers: parseStoredHeaders(row.headers),
   };
 }
 
@@ -611,9 +1153,24 @@ export class PersistentStream extends EventEmitter {
         : this.options.path + ".db";
       if (location !== ":memory:") {
         this.dbPath = location;
+        assertSafeDatabasePath(location);
       }
       this.initArchive();
-      this.db = createDatabase(location);
+      if (location !== ":memory:") {
+        // again: initArchive may have written the file
+        assertSafeDatabasePath(location);
+      }
+      // defensive: no writable_schema or other ways to corrupt the file
+      this.db = createDatabase(location, { defensive: true });
+      try {
+        this.hardenConnection(location);
+        if (location !== ":memory:") {
+          this.assertExpectedSchema();
+        }
+      } catch (err) {
+        this.db.close();
+        throw err;
+      }
       const configuredCacheKiB = this.options.ephemeral
         ? effectiveEphemeralSqliteCacheKiB()
         : undefined;
@@ -677,11 +1234,73 @@ export class PersistentStream extends EventEmitter {
     }
   };
 
-  private initSchema = () => {
+  // Limit what this connection can do, whatever the (untrusted) file holds.
+  // Runs before anything reads the database.
+  private hardenConnection = (location: string) => {
     // Avoid immediate "database is locked" errors under concurrent access
-    // (e.g., jest workers) by enabling WAL and a small busy timeout.
+    // (e.g., jest workers), also for the first read (the schema check).
+    this.db.exec(`PRAGMA busy_timeout=${persistSqliteBusyTimeoutMs()}`);
+    if (persistSqliteLockingMode(location) === "exclusive") {
+      // Before the first read: then SQLite never creates or maps a -shm file
+      // (see persistSqliteLockingMode).
+      this.db.exec("PRAGMA locking_mode=EXCLUSIVE");
+    }
+    const limits = (this.db as any).limits;
+    if (limits != null) {
+      // Never attach another database file, e.g., through a crafted table
+      // name.  (This server never attaches or vacuums on these connections.)
+      limits.attach = 0;
+      // No string, blob or row larger than the largest message we read.
+      limits.length = maxPersistMessageBytes() + 16 * 1024 * 1024;
+    }
+    // Functions with side effects can't run from the file's schema.
+    this.db.exec("PRAGMA trusted_schema=OFF");
+    // The project can change the file while it is open, e.g., add a trigger
+    // after assertExpectedSchema checked it.  This server never uses triggers
+    // or views, so refuse anything done from inside one.  SQLite checks this
+    // whenever a statement is prepared, and re-prepares statements after any
+    // schema change.
+    const db = this.db as any;
+    if (typeof db.setAuthorizer === "function") {
+      db.setAuthorizer(
+        (
+          _action: number,
+          _arg1: string | null,
+          _arg2: string | null,
+          _dbName: string | null,
+          triggerOrView: string | null,
+        ) => (triggerOrView == null ? SQLITE_OK : SQLITE_DENY),
+      );
+    }
+  };
+
+  private assertExpectedSchema = () => {
+    if (!persistSchemaCheckEnabled()) return;
+    const objects = this.db
+      .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master")
+      .all() as {
+      type: string;
+      name: string;
+      tbl_name: string;
+      sql: string | null;
+    }[];
+    const problem = unexpectedPersistSchema(objects);
+    if (problem != null) {
+      logger.warn("refusing to open persist database with unexpected schema", {
+        path: this.dbPath,
+        problem,
+      });
+      throw new ConatError(
+        `this persistent storage was changed outside CoCalc (${problem}), so it cannot be opened`,
+        { code: 500 },
+      );
+    }
+  };
+
+  private initSchema = () => {
+    // WAL, so readers and a writer can use the file at once (see also
+    // busy_timeout in hardenConnection).
     this.db.prepare("PRAGMA journal_mode=WAL").run();
-    this.db.prepare("PRAGMA busy_timeout=5000").run();
     if (!this.options.sync && !this.options.ephemeral) {
       // Unless sync is set, we do not require that the filesystem has commited changes
       // to disk after every insert. This can easily make things 10x faster.  sets are
@@ -691,62 +1310,143 @@ export class PersistentStream extends EventEmitter {
       this.db.prepare("PRAGMA synchronous=OFF").run();
     }
     this.createMessagesTable();
-    this.db
-      .prepare(
-        `
-         CREATE TABLE IF NOT EXISTS config (
-          field TEXT PRIMARY KEY, value TEXT NOT NULL
-        )`,
-      )
-      .run();
-    this.db
-      .prepare(
-        `
-         CREATE TABLE IF NOT EXISTS stream_metadata (
-          id INTEGER PRIMARY KEY CHECK(id = 1),
-          metadata_json TEXT,
-          revision INTEGER NOT NULL DEFAULT 0
-        )`,
-      )
-      .run();
-    this.db
-      .prepare(
-        `
-         CREATE TABLE IF NOT EXISTS stream_checkpoints (
-          name TEXT PRIMARY KEY,
-          seq INTEGER NOT NULL,
-          time INTEGER NOT NULL,
-          data_json TEXT,
-          revision INTEGER NOT NULL DEFAULT 0
-        )`,
-      )
-      .run();
-    this.db
-      .prepare(
-        "CREATE INDEX IF NOT EXISTS idx_stream_checkpoints_seq ON stream_checkpoints(seq)",
-      )
-      .run();
+    this.db.prepare(SCHEMA.config).run();
+    this.db.prepare(SCHEMA.stream_metadata).run();
+    this.db.prepare(SCHEMA.stream_checkpoints).run();
+    this.db.prepare(SCHEMA.idx_stream_checkpoints_seq).run();
+    for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
+      if (name === "idx_message_ids_msg_id") {
+        this.ensurePurposeIndex("message_ids", "msg_id", name);
+      } else {
+        this.db.prepare(sql).run();
+      }
+    }
 
     this.conf = this.config();
+    this.ensureCurrentEpoch();
+    this.runTransaction(() => this.trimArchivedHistory(historyLimits()));
+  };
+
+  // The history epoch in effect: the fence's, or the metadata's if higher.
+  // The history epoch in effect, for answers that do not open a reset.
+  historyEpochNow = (): number => this.currentEpoch();
+
+  private currentEpoch = (): number => {
+    const fence = isPlainRecord(this.conf?.required_headers)
+      ? this.conf.required_headers
+      : {};
+    const metadata = this.getMetadata();
+    const settings =
+      isPlainRecord(metadata) && isPlainRecord(metadata.settings)
+        ? metadata.settings
+        : {};
+    return Math.max(epochOf(settings), epochOf(fence));
+  };
+
+  // the seq the next message will get
+  private nextSeq = (): number => {
+    const row = this.db
+      .prepare("SELECT seq FROM sqlite_sequence WHERE name='messages'")
+      .get() as { seq?: number } | undefined;
+    return Number(row?.seq ?? 0) + 1;
+  };
+
+  // The row of history_epochs describing the current history.  A stream from
+  // before this server either is empty (so its ids are complete from now on),
+  // or has messages whose ids were never recorded.
+  private ensureCurrentEpoch = (): void => {
+    if (
+      this.db
+        .prepare("SELECT id FROM history_epochs WHERE last_seq IS NULL")
+        .get() != null
+    ) {
+      this.verifyIdLedger({ epoch: true });
+      return;
+    }
+    const { first } = this.db
+      .prepare("SELECT MIN(seq) AS first FROM messages")
+      .get() as { first: number | null };
+    const empty = first == null;
+    this.db
+      .prepare(
+        "INSERT INTO history_epochs(epoch, first_seq, starts_empty, ids_complete, info_json, time) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        this.currentEpoch(),
+        empty ? this.nextSeq() : first,
+        // nothing was deleted from its start, so it can be loaded from the
+        // empty document
+        empty || first === 1 ? 1 : 0,
+        empty ? 1 : 0,
+        ledgerInfo(this.nextSeq() - 1),
+        Date.now(),
+      );
+  };
+
+  // The current epoch's ids are complete only if every message in it was
+  // written by a server that records ids.  An older server can open this
+  // database (H1a0 accepts the tables) and write messages without their ids,
+  // so the open epoch records the newest seq written by this code
+  // (ledger_seq).  If the stream has moved past it -- or its epoch was
+  // changed elsewhere -- the ids are incomplete, and absence is never
+  // claimed for that epoch.  Checked on open, before each write, and when
+  // the epoch is closed.
+  private verifyIdLedger = ({ epoch }: { epoch?: boolean } = {}): void => {
+    const row = this.db
+      .prepare(
+        "SELECT id, epoch, first_seq, ids_complete, info_json FROM history_epochs WHERE last_seq IS NULL",
+      )
+      .get() as
+      | {
+          id: number;
+          epoch: number;
+          first_seq: number;
+          ids_complete: number;
+          info_json: string | null;
+        }
+      | undefined;
+    if (row == null || row.ids_complete !== 1) return;
+    let ledger = row.first_seq - 1;
+    try {
+      const info = JSON.parse(row.info_json ?? "null");
+      if (Number.isSafeInteger(info?.ledger_seq)) ledger = info.ledger_seq;
+    } catch {}
+    if (
+      this.nextSeq() - 1 > ledger ||
+      (epoch && row.epoch !== this.currentEpoch())
+    ) {
+      this.db
+        .prepare("UPDATE history_epochs SET ids_complete=0 WHERE id=?")
+        .run(row.id);
+    }
   };
 
   private createMessagesTable = () => {
     // time is in *seconds* since the epoch, since that is standard for sqlite.
     // ttl is in milliseconds.
-    this.db
+    this.db.prepare(SCHEMA.messages).run();
+    this.ensurePurposeIndex("messages", "key", "idx_messages_key");
+    this.ensurePurposeIndex("messages", "time", "idx_messages_time");
+  };
+
+  // The index of table on column, unless it has one (under any name of its
+  // purpose: a reset may have given the live table a generation-suffixed
+  // one, H1c).  A free name: the base name, else the next generation.
+  private ensurePurposeIndex = (
+    table: "messages" | "message_ids",
+    column: string,
+    base: string,
+  ) => {
+    const indexes = this.db
       .prepare(
-        `CREATE TABLE IF NOT EXISTS messages (
-          seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, time INTEGER NOT NULL, headers TEXT, compress NUMBER NOT NULL, encoding NUMBER NOT NULL, raw BLOB NOT NULL, size NUMBER NOT NULL, ttl NUMBER
-          )
-        `,
+        "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND (name = ? OR name LIKE ?)",
       )
-      .run();
-    this.db
-      .prepare("CREATE INDEX IF NOT EXISTS idx_messages_key ON messages(key)")
-      .run();
-    this.db
-      .prepare("CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)")
-      .run();
+      .all(base, `${base}_g%`) as { name: string; tbl_name: string }[];
+    if (indexes.some((i) => i.tbl_name === table)) return;
+    const taken = new Set(indexes.map((i) => i.name));
+    let name = base;
+    for (let g = 1; taken.has(name); g++) name = `${base}_g${g}`;
+    this.db.prepare(`CREATE INDEX ${name} ON ${table}(${column})`).run();
   };
 
   private readSqliteCacheKiB = (): number => {
@@ -877,6 +1577,7 @@ export class PersistentStream extends EventEmitter {
       try {
         // getStream creates these directories before opening the database.
         // Synchronous copies keep close atomic with respect to refCacheSync.
+        assertSafeDatabasePath(this.dbPath);
         copyFileSync(this.dbPath, dest);
       } catch (err) {
         logger.warn("error creating backup while closing database", {
@@ -906,6 +1607,7 @@ export class PersistentStream extends EventEmitter {
     try {
       await ensureContainingDirectoryExists(dest);
       if (this.closing) return;
+      assertSafeDatabasePath(this.dbPath);
       copyFileSync(this.dbPath, dest);
     } catch (err) {
       if (!process.env.COCALC_TEST_MODE) {
@@ -1004,41 +1706,24 @@ export class PersistentStream extends EventEmitter {
         });
       }
     }
-    const time = Date.now();
-    const compressedRaw = this.compress(raw);
     const serializedHeaders = JSON.stringify(headers);
-    const size =
-      (serializedHeaders?.length ?? 0) +
-      (raw?.length ?? 0) +
-      (key?.length ?? 0);
-    this.enforceLimits(size, changes);
+    this.enforceLimits(messageSize({ serializedHeaders, raw, key }), changes);
 
     if (key !== undefined) {
-      this.db.prepare("DELETE FROM messages WHERE key = ?").run(key);
+      const replaced = this.db
+        .prepare("DELETE FROM messages WHERE key = ? RETURNING seq")
+        .all(key) as { seq: number }[];
+      this.forgetSeqs(replaced.map(({ seq }) => seq));
     }
-    const row = this.db
-      .prepare(
-        "INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)  RETURNING seq",
-      )
-      .get(
-        time / 1000,
-        compressedRaw.compress,
-        encoding,
-        compressedRaw.raw,
-        serializedHeaders ?? null,
-        key ?? null,
-        size,
-        ttl ?? null,
-      );
-    const seq = Number((row as any).seq);
-    if (checkpoint != null) {
-      this.writeCheckpoint({
-        name: checkpoint.name,
-        seq: checkpoint.seq ?? seq,
-        time: checkpoint.time ?? time,
-        data: checkpoint.data,
-      });
-    }
+    const { time, seq } = this.insertMessage({
+      encoding,
+      raw,
+      serializedHeaders,
+      key,
+      ttl,
+      msgID,
+      checkpoint,
+    });
     changes.push({
       seq,
       time,
@@ -1052,6 +1737,64 @@ export class PersistentStream extends EventEmitter {
       time,
       seq,
     };
+  };
+
+  // Insert one message, with its msg id and checkpoint, after all checks.
+  private insertMessage = ({
+    encoding,
+    raw,
+    serializedHeaders,
+    key,
+    ttl,
+    msgID,
+    checkpoint,
+  }: {
+    encoding: DataEncoding;
+    raw: Buffer;
+    serializedHeaders?: string;
+    key?: string;
+    ttl?: number;
+    msgID?: string;
+    checkpoint?: CheckpointUpdate;
+  }): { time: number; seq: number } => {
+    this.verifyIdLedger();
+    const time = Date.now();
+    const compressedRaw = this.compress(raw);
+    const row = this.db
+      .prepare(
+        "INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)  RETURNING seq",
+      )
+      .get(
+        time / 1000,
+        compressedRaw.compress,
+        encoding,
+        compressedRaw.raw,
+        serializedHeaders ?? null,
+        key ?? null,
+        messageSize({ serializedHeaders, raw, key }),
+        ttl ?? null,
+      );
+    const seq = Number((row as any).seq);
+    this.db
+      .prepare("UPDATE history_epochs SET info_json=? WHERE last_seq IS NULL")
+      .run(ledgerInfo(seq));
+    if (msgID != null) {
+      // persisted, so after a reset a client can learn which of its patches
+      // the server accepted (historyInclusion)
+      this.db
+        .prepare("INSERT INTO message_ids(seq, msg_id) VALUES (?, ?)")
+        .run(seq, msgID);
+    }
+    if (checkpoint != null) {
+      this.writeCheckpoint({
+        name: checkpoint.name,
+        seq: checkpoint.seq ?? seq,
+        time: checkpoint.time ?? time,
+        data: checkpoint.data,
+        snapshotSeq: seq,
+      });
+    }
+    return { time, seq };
   };
 
   set = ({
@@ -1177,13 +1920,17 @@ export class PersistentStream extends EventEmitter {
     let meta: { seq: number; size: number } | undefined;
     if (seq) {
       meta = this.db
-        .prepare("SELECT seq, size FROM messages WHERE seq=?")
+        .prepare(
+          `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE seq=?`,
+        )
         .get(seq) as any;
     } else if (key != null) {
       // NOTE: we guarantee when doing set above that there is at most one
       // row with a given key.  Also there's a unique constraint.
       meta = this.db
-        .prepare("SELECT seq, size FROM messages WHERE key=?")
+        .prepare(
+          `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE key=?`,
+        )
         .get(key) as any;
     }
     if (meta == null) {
@@ -1195,6 +1942,7 @@ export class PersistentStream extends EventEmitter {
         size: Number(meta.size),
         limit: sizeLimit,
         seq: Number(meta.seq),
+        epoch: this.currentEpoch(),
       });
     }
     const x = this.db
@@ -1202,7 +1950,7 @@ export class PersistentStream extends EventEmitter {
         `SELECT seq, key, time, compress, encoding, raw, headers${ttl} FROM messages WHERE seq=?`,
       )
       .get(meta.seq);
-    return dbToMessage(x as any);
+    return dbToMessage(x as any, Number(meta.size));
   };
 
   seqBounds = (): StreamSeqBounds => {
@@ -1246,7 +1994,7 @@ export class PersistentStream extends EventEmitter {
     const params = end_seq != null ? [after_seq, end_seq] : [after_seq];
     const sizes = this.db
       .prepare(
-        `SELECT seq, size FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
+        `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
       )
       .all(...params, maxRows) as { seq: number; size: number }[];
     const page: { seq: number; size: number }[] = [];
@@ -1267,7 +2015,7 @@ export class PersistentStream extends EventEmitter {
   readPage = (after_seq: number, last_seq: number): StoredRow[] => {
     return this.db
       .prepare(
-        `SELECT seq, key, time, compress, encoding, raw, headers, size FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
+        `SELECT seq, key, time, compress, encoding, raw, headers, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
       )
       .all(after_seq, last_seq) as unknown as StoredRow[];
   };
@@ -1291,10 +2039,27 @@ export class PersistentStream extends EventEmitter {
       where.push("seq<=?");
       v.push(end_seq);
     }
-    query = `SELECT seq, key, time, compress, encoding, raw, headers FROM messages ${where.length == 0 ? "" : " where " + where.join(" AND ")} ORDER BY seq`;
+    // Check sizes before reading any (possibly huge) data.
+    const sizeLimit = maxPersistMessageBytes();
+    const whereSql = where.length == 0 ? "" : " where " + where.join(" AND ");
+    const tooLarge = [...where, `${EFFECTIVE_SIZE_SQL} > ?`].join(" AND ");
+    const oversized = this.db
+      .prepare(
+        `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE ${tooLarge} ORDER BY seq LIMIT 1`,
+      )
+      .get(...v, sizeLimit) as { seq: number; size: number } | undefined;
+    if (oversized != null) {
+      throw persistMessageTooLargeError({
+        size: Number(oversized.size),
+        limit: sizeLimit,
+        seq: Number(oversized.seq),
+        epoch: this.currentEpoch(),
+      });
+    }
+    query = `SELECT seq, key, time, compress, encoding, raw, headers, ${EFFECTIVE_SIZE_SQL} AS size FROM messages ${whereSql} ORDER BY seq`;
     stmt = this.db.prepare(query);
     for (const row of stmt.iterate(...v)) {
-      yield dbToMessage(row)!;
+      yield dbToMessage(row, Number(row.size))!;
     }
   }
 
@@ -1320,6 +2085,7 @@ export class PersistentStream extends EventEmitter {
           .map((row: any) => row.seq);
         this.db.prepare("DELETE FROM messages").run();
         this.db.prepare("DELETE FROM stream_checkpoints").run();
+        this.forgetSeqs(seqs);
       });
     } else if (last_seq) {
       this.runTransaction(() => {
@@ -1355,25 +2121,68 @@ export class PersistentStream extends EventEmitter {
   };
 
   // Reset the history of a sync document -- TimeTravel's "purge history", and
-  // the automatic reset of a history holding a message too large to load --
-  // in one transaction, so concurrent resets and writers cannot interleave:
+  // the automatic reset of a history that cannot be loaded -- in one
+  // transaction, so concurrent resets and writers cannot interleave:
+  //  - check the conditions: ifOversizedSeq, ifInitEpoch, ifRevision, and that
+  //    a seed covers every accepted message (coveredSeq); a repeated opId
+  //    returns the first result;
   //  - fence: only writes with the new history_epoch header are accepted from
   //    now on, so copies of the document opened before cannot add to the new
   //    history;
   //  - publish the new epoch in the metadata, so those copies close;
-  //  - delete the old messages, or keep them in a table of their own.
-  // A reset that does not archive also drops the history kept by earlier
-  // resets, so purging still means the history is gone.
+  //  - delete the old messages, or archive them as loadable segments (what is
+  //    in no loadable segment is removed, and counted), within
+  //    maxArchiveBytes;
+  //  - insert the seed, with its checkpoint, as the first message of the new
+  //    history.
+  // A crash leaves either the old history or the new seeded one.  A reset
+  // that does not archive also drops the history kept by earlier resets, so
+  // purging still means the history is gone.
   resetHistory = ({
     minEpoch = 0,
     settings,
     ifOversizedSeq,
     archive,
+    ifRevision,
+    ifInitEpoch,
+    seed,
+    coveredSeq,
+    allowRollback,
+    opId,
+    reason,
   }: ResetHistoryOptions = {}): ResetHistoryResult => {
+    if (
+      opId != null &&
+      (typeof opId !== "string" || opId.length == 0 || opId.length > 200)
+    ) {
+      throw new ConatError("resetHistory: invalid opId", { code: 400 });
+    }
+    if (
+      coveredSeq != null &&
+      !(Number.isSafeInteger(coveredSeq) && coveredSeq >= 0)
+    ) {
+      throw new ConatError("resetHistory: invalid coveredSeq", { code: 400 });
+    }
+    if (seed != null && coveredSeq == null) {
+      throw new ConatError("resetHistory: a seed requires coveredSeq", {
+        code: 400,
+      });
+    }
+    const limits = historyLimits();
     let result: ResetHistoryResult | undefined;
     let metadata: JSONValue | undefined;
     let seqs: number[] = [];
+    let seedChange = undefined as SetOperation | undefined;
     this.runTransaction(() => {
+      if (opId != null) {
+        const done = this.db
+          .prepare("SELECT result_json FROM history_ops WHERE op_id=?")
+          .get(opId) as { result_json: string } | undefined;
+        if (done != null) {
+          result = { ...JSON.parse(done.result_json), repeated: true };
+          return;
+        }
+      }
       const fence = isPlainRecord(this.conf.required_headers)
         ? this.conf.required_headers
         : {};
@@ -1383,15 +2192,77 @@ export class PersistentStream extends EventEmitter {
         ? currentRecord.settings
         : {};
       const currentEpoch = Math.max(epochOf(currentSettings), epochOf(fence));
+      const refuse = (refused: ResetHistoryRefusal) => {
+        result = {
+          reset: false,
+          history_epoch: currentEpoch,
+          count: 0,
+          refused,
+        };
+      };
       if (ifOversizedSeq != null) {
         const row = this.db
-          .prepare("SELECT size FROM messages WHERE seq=?")
+          .prepare(
+            `SELECT ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE seq=?`,
+          )
           .get(ifOversizedSeq) as { size: number } | undefined;
         if (row == null || !(row.size > maxPersistMessageBytes())) {
-          result = { reset: false, history_epoch: currentEpoch, count: 0 };
+          refuse("not-oversized");
           return;
         }
       }
+      if (ifInitEpoch != null && ifInitEpoch !== currentEpoch) {
+        refuse("epoch");
+        return;
+      }
+      const newest = this.seq();
+      if (
+        ifRevision != null &&
+        (ifRevision.seq !== newest || ifRevision.count !== this.length)
+      ) {
+        refuse("moved");
+        return;
+      }
+      if (
+        coveredSeq != null &&
+        (coveredSeq > newest || (coveredSeq < newest && !allowRollback))
+      ) {
+        refuse("moved");
+        return;
+      }
+      let seedRaw: Buffer | undefined;
+      let seedHeaders: string | undefined;
+      if (seed != null) {
+        seedRaw = Buffer.isBuffer(seed.raw)
+          ? seed.raw
+          : Buffer.from(seed.raw.buffer, seed.raw.byteOffset, seed.raw.length);
+        if (seed.headers != null && !isPlainRecord(seed.headers)) {
+          refuse("seed-invalid");
+          return;
+        }
+        seedHeaders = JSON.stringify({ ...seed.headers });
+        if (
+          messageSize({ serializedHeaders: seedHeaders, raw: seedRaw }) >
+          limits.maxSnapshotBytes
+        ) {
+          refuse("seed-too-large");
+          return;
+        }
+        let obj: unknown;
+        try {
+          obj = decode({ encoding: seed.encoding, data: seedRaw });
+        } catch {
+          obj = undefined;
+        }
+        if (!isSnapshotPatch(obj)) {
+          refuse("seed-invalid");
+          return;
+        }
+      }
+
+      // before the new epoch is published: are the closing epoch's ids
+      // complete?
+      this.verifyIdLedger({ epoch: true });
       const history_epoch = Math.max(minEpoch, currentEpoch) + 1;
       this.db
         .prepare(
@@ -1418,7 +2289,33 @@ export class PersistentStream extends EventEmitter {
         .prepare("SELECT seq FROM messages")
         .all()
         .map((row: any) => row.seq);
+
+      // close the current epoch: its messages, and what the seed covers
+      const lastSeq = this.nextSeq() - 1;
+      const closing = this.db
+        .prepare("SELECT id FROM history_epochs WHERE last_seq IS NULL")
+        .get() as { id: number };
+      this.db
+        .prepare(
+          "UPDATE history_epochs SET last_seq=?, covered_seq=?, info_json=? WHERE id=?",
+        )
+        .run(
+          lastSeq,
+          seed != null ? coveredSeq! : null,
+          JSON.stringify({
+            reason: typeof reason === "string" ? reason.slice(0, 200) : null,
+          }),
+          closing.id,
+        );
+
       let archiveTable: string | undefined;
+      let archived:
+        | {
+            segments: number;
+            dropped: { records: number; bytes: number };
+            droppedArchived: { records: number; bytes: number };
+          }
+        | undefined;
       if (archive) {
         // Renaming keeps the old messages where they are: nothing is copied,
         // so this is fast and needs no disk space.  New messages continue
@@ -1440,43 +2337,826 @@ export class PersistentStream extends EventEmitter {
             )
             .run(last);
         }
-      } else {
-        this.db.prepare("DELETE FROM messages").run();
-        for (const name of this.archivedMessageTables()) {
-          this.db.exec(`DROP TABLE "${name}"`);
+        this.db
+          .prepare("UPDATE history_epochs SET archive=? WHERE id=?")
+          .run(archiveTable, closing.id);
+        const { segments, dropped } = this.segmentArchive(
+          closing.id,
+          archiveTable,
+          limits,
+        );
+        if (segments == 0) {
+          archiveTable = undefined;
         }
+        const quota = this.enforceArchiveQuota(limits);
+        const trimmed = this.trimArchivedHistory(limits);
+        archived = {
+          segments,
+          dropped,
+          droppedArchived: {
+            records: quota.records + trimmed.records,
+            bytes: quota.bytes + trimmed.bytes,
+          },
+        };
+      } else {
+        const bytes = this.totalSize();
+        this.db.prepare("DELETE FROM messages").run();
+        this.dropArchivedHistory(limits);
+        this.db
+          .prepare(
+            "UPDATE history_epochs SET dropped_records=?, dropped_bytes=? WHERE id=?",
+          )
+          .run(seqs.length, bytes, closing.id);
+        // purged: nothing is evidence of what was accepted any more
+        this.db.prepare("DELETE FROM message_ids").run();
+        this.db.prepare("UPDATE history_epochs SET ids_complete=0").run();
       }
       this.db.prepare("DELETE FROM stream_checkpoints").run();
+      this.db.prepare("DELETE FROM history_cuts WHERE seq<=?").run(lastSeq);
+      this.expireArchivedIds(limits);
+      this.pruneEpochRows();
+
+      // the new epoch, starting with its seed
+      const { lastInsertRowid: epochId } = this.db
+        .prepare(
+          "INSERT INTO history_epochs(epoch, first_seq, starts_empty, ids_complete, info_json, time) VALUES (?, ?, ?, 1, ?, ?)",
+        )
+        .run(
+          history_epoch,
+          lastSeq + 1,
+          seed != null ? 0 : 1,
+          ledgerInfo(lastSeq),
+          Date.now(),
+        );
+      let seedSeq: number | undefined;
+      if (seed != null) {
+        const headers = { ...seed.headers, history_epoch };
+        const serializedHeaders = JSON.stringify(headers);
+        const inserted = this.insertMessage({
+          encoding: seed.encoding,
+          raw: seedRaw!,
+          serializedHeaders,
+          msgID: seed.msgID,
+          checkpoint:
+            seed.checkpoint != null
+              ? { name: seed.checkpoint.name, data: seed.checkpoint.data }
+              : undefined,
+        });
+        seedSeq = inserted.seq;
+        this.db
+          .prepare(
+            "INSERT OR REPLACE INTO history_cuts(seq, snapshot_seq) VALUES (?, ?)",
+          )
+          .run(seedSeq, seedSeq);
+        this.db
+          .prepare("UPDATE history_epochs SET seed_seq=? WHERE id=?")
+          .run(seedSeq, epochId);
+        seedChange = {
+          seq: seedSeq,
+          time: inserted.time,
+          encoding: seed.encoding,
+          raw: seedRaw!,
+          headers: headers as Headers,
+          msgID: seed.msgID,
+        };
+      }
+
       result = {
         reset: true,
         history_epoch,
         count: seqs.length,
         ...(archiveTable != null ? { archive: archiveTable } : {}),
+        ...(seedSeq != null ? { seedSeq, coveredSeq } : {}),
+        ...(archived ?? {}),
       };
+      if (opId != null) {
+        this.db
+          .prepare(
+            "INSERT INTO history_ops(op_id, result_json, time) VALUES (?, ?, ?)",
+          )
+          .run(opId, JSON.stringify(result), Date.now());
+        this.db
+          .prepare(
+            `DELETE FROM history_ops WHERE op_id NOT IN (SELECT op_id FROM history_ops ORDER BY time DESC, op_id LIMIT ${MAX_HISTORY_OPS})`,
+          )
+          .run();
+      }
     });
-    if (!result!.reset) {
+    if (!result!.reset || result!.repeated) {
       return result!;
     }
     this.msgIDs.clear();
+    if (seedChange?.msgID != null) {
+      this.msgIDs.set(seedChange.msgID, {
+        time: seedChange.time,
+        seq: seedChange.seq,
+      });
+    }
     // reload the configuration, so the new fence is enforced
     this.config();
     // metadata first: open copies of the document close on the new epoch
     // rather than react to their history disappearing
     this.emit("change", { op: "metadata", metadata });
     this.emit("change", { op: "delete", seqs });
-    this.emit("change", { op: "checkpoints", checkpoints: {} });
+    this.emit("change", {
+      op: "checkpoints",
+      checkpoints: this.getCheckpoints(),
+    });
+    if (seedChange != null) {
+      this.emit("change", seedChange);
+    }
     this.throttledBackup();
     return result!;
   };
 
-  private archivedMessageTables = (): string[] => {
+  // Split the archived epoch into segments: maximal stretches that load
+  // within an open's budget (bounded history design §3.2, §4.5), each
+  // starting at a cut -- a checkpoint, whose snapshot is written with it --
+  // or at the empty document if nothing was ever removed from the epoch's
+  // start.  Messages in no segment cannot be loaded, so they are removed.
+  // Heads and parents are not known here; the loader still verifies a cut.
+  //
+  // Only the newest stretch that the archive bounds could keep is scanned:
+  // at most maxArchiveRecords messages, newest first, by seq and size alone.
+  // An epoch from before these bounds can be far larger; what is older than
+  // that stretch is left to trimArchivedHistory, which removes it a bounded
+  // amount at a time.
+  private segmentArchive = (
+    epochId: number,
+    table: string,
+    limits: HistoryLimits,
+  ): { segments: number; dropped: { records: number; bytes: number } } => {
+    const epoch = this.db
+      .prepare("SELECT starts_empty FROM history_epochs WHERE id=?")
+      .get(epochId) as { starts_empty: number };
+    let tailStart: number | undefined;
+    let tailRecords = 0;
+    let tailBytes = 0;
+    let charged = ARCHIVE_TABLE_OVERHEAD_BYTES;
+    for (const row of this.db
+      .prepare(
+        `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM "${table}" ORDER BY seq DESC`,
+      )
+      .iterate() as Iterable<{ seq: number; size: number }>) {
+      charged += Number(row.size) + ARCHIVE_RECORD_OVERHEAD_BYTES;
+      if (
+        tailRecords + 1 > limits.maxArchiveRecords ||
+        charged > limits.maxArchiveBytes
+      ) {
+        break;
+      }
+      tailStart = Number(row.seq);
+      tailRecords += 1;
+      tailBytes += Number(row.size);
+    }
+    if (tailStart == null) {
+      // nothing can be kept: the whole table is left to trimArchivedHistory
+      return { segments: 0, dropped: { records: 0, bytes: 0 } };
+    }
+    const { first } = this.db
+      .prepare(`SELECT MIN(seq) AS first FROM "${table}"`)
+      .get() as { first: number };
+    // the empty document is a cut only if the scan starts at the epoch's start
+    const startsEmpty = epoch.starts_empty && Number(first) === tailStart;
+    // the current snapshot checkpoint is a cut too (e.g., in streams from
+    // before history_cuts)
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO history_cuts(seq) SELECT seq FROM stream_checkpoints WHERE name=?",
+      )
+      .run(SNAPSHOT_CHECKPOINT);
+
+    interface Run {
+      first: number;
+      last: number;
+      cut?: number;
+      // the snapshot written with the cut; undefined for the empty document,
+      // and for a cut whose snapshot is not known (then assume the largest
+      // message)
+      snap?: number;
+      hasSnapshot: boolean;
+      seen: boolean;
+      snapBytes: number;
+      bytes: number;
+      records: number;
+      maxBytes: number;
+    }
+    const startRun = (row: {
+      seq: number;
+      snapshot_seq: number | null;
+    }): Run => ({
+      first: row.seq,
+      last: row.seq,
+      cut: row.seq,
+      snap: row.snapshot_seq ?? undefined,
+      hasSnapshot: true,
+      seen: row.snapshot_seq == null,
+      snapBytes: 0,
+      bytes: 0,
+      records: 0,
+      maxBytes: 0,
+    });
+    const add = (run: Run, seq: number, size: number) => {
+      if (run.records == 0) run.first = seq;
+      run.last = seq;
+      run.bytes += size;
+      run.records += 1;
+      run.maxBytes = Math.max(run.maxBytes, size);
+      if (run.snap === seq) {
+        run.seen = true;
+        run.snapBytes = size;
+      }
+    };
+    const cutBytes = (run: Run) =>
+      run.hasSnapshot && run.snap == null ? run.maxBytes : run.snapBytes;
+    const fits = (run: Run) =>
+      cutBytes(run) <= limits.maxSnapshotBytes &&
+      run.bytes - cutBytes(run) <= limits.maxSuffixBytes &&
+      run.records - (run.hasSnapshot ? 1 : 0) <= limits.maxOpenRecords;
+    const good = (run: Run) => run.records > 0 && run.seen && fits(run);
+    const freeze = (run: Run): ArchivedHistorySegment => ({
+      first_seq: run.first,
+      last_seq: run.last,
+      cut_seq: run.cut,
+      snapshot_seq: run.snap,
+      cut_bytes: cutBytes(run),
+      suffix_bytes: run.bytes - cutBytes(run),
+      records: run.records,
+    });
+
+    // Segments are written as they are found, so memory stays bounded however
+    // many there are (enforceArchiveQuota then bounds how many are kept).
+    const insert = this.db.prepare(
+      "INSERT INTO history_segments(epoch_id, first_seq, last_seq, cut_seq, snapshot_seq, cut_bytes, suffix_bytes, records) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    let segments = 0;
+    const kept = { records: 0, bytes: 0 };
+    const emit = (s: ArchivedHistorySegment) => {
+      insert.run(
+        epochId,
+        s.first_seq,
+        s.last_seq,
+        s.cut_seq ?? null,
+        s.snapshot_seq ?? null,
+        s.cut_bytes,
+        s.suffix_bytes,
+        s.records,
+      );
+      segments += 1;
+      kept.records += s.records;
+      kept.bytes += s.cut_bytes + s.suffix_bytes;
+    };
+    // the segment being extended
+    let cur: Run | null = startsEmpty
+      ? {
+          first: 0,
+          last: 0,
+          hasSnapshot: false,
+          seen: true,
+          snapBytes: 0,
+          bytes: 0,
+          records: 0,
+          maxBytes: 0,
+        }
+      : null;
+    // cur as it was just before the latest cut inside it, if loadable then
+    let atCut: ArchivedHistorySegment | null = null;
+    // cur as it was at the latest message where it was loadable
+    let lastGood: ArchivedHistorySegment | null = null;
+    // a segment starting at the latest cut inside cur
+    let tail: Run | null = null;
+    for (const row of this.db
+      .prepare(
+        `SELECT m.seq AS seq, ${EFFECTIVE_SIZE_SQL} AS size, c.seq AS cut, c.snapshot_seq AS snapshot_seq FROM "${table}" AS m LEFT JOIN history_cuts AS c ON c.seq = m.seq WHERE m.seq >= ? ORDER BY m.seq`,
+      )
+      .iterate(tailStart) as Iterable<{
+      seq: number;
+      size: number;
+      cut: number | null;
+      snapshot_seq: number | null;
+    }>) {
+      const seq = Number(row.seq);
+      const size = Number(row.size);
+      if (row.cut != null) {
+        if (cur == null) {
+          cur = startRun(row);
+          atCut = lastGood = tail = null;
+        } else {
+          if (cur.records > 0) {
+            atCut = good(cur) ? freeze(cur) : null;
+          }
+          tail = startRun(row);
+        }
+      }
+      if (cur != null) add(cur, seq, size);
+      if (tail != null && tail !== cur) add(tail, seq, size);
+      while (cur != null && !fits(cur)) {
+        if (atCut != null) {
+          // end at the latest cut, and continue from it
+          emit(atCut);
+          cur = tail;
+        } else {
+          // the loadable start of cur, if any; the rest up to the next cut
+          // cannot be loaded
+          if (lastGood != null) emit(lastGood);
+          cur =
+            tail != null && (lastGood == null || tail.first > lastGood.last_seq)
+              ? tail
+              : null;
+        }
+        tail = atCut = lastGood = null;
+      }
+      if (cur != null && good(cur)) {
+        lastGood = freeze(cur);
+      }
+    }
+    if (cur != null && good(cur)) {
+      emit(freeze(cur));
+    } else if (tail != null && good(tail)) {
+      emit(freeze(tail));
+    }
+
+    // remove the messages of the scanned stretch that are in no segment
+    const dropped = {
+      records: tailRecords - kept.records,
+      bytes: tailBytes - kept.bytes,
+    };
+    const deleteRange = this.db.prepare(
+      `DELETE FROM "${table}" WHERE seq BETWEEN ? AND ?`,
+    );
+    let from = tailStart;
+    for (const s of this.db
+      .prepare(
+        "SELECT first_seq, last_seq FROM history_segments WHERE epoch_id=? ORDER BY first_seq",
+      )
+      .iterate(epochId) as Iterable<{ first_seq: number; last_seq: number }>) {
+      if (s.first_seq > from) deleteRange.run(from, s.first_seq - 1);
+      from = s.last_seq + 1;
+    }
+    deleteRange.run(from, Number.MAX_SAFE_INTEGER);
+    // with no segment, the table is left to trimArchivedHistory
+    this.db
+      .prepare(
+        "UPDATE history_epochs SET archive=?, kept_records=?, kept_bytes=?, dropped_records=?, dropped_bytes=? WHERE id=?",
+      )
+      .run(
+        segments > 0 ? table : null,
+        kept.records,
+        kept.bytes,
+        dropped.records,
+        dropped.bytes,
+        epochId,
+      );
+    return { segments, dropped };
+  };
+
+  // Archived history per stream is bounded in bytes (with a conservative
+  // charge for each record's and table's own overhead), records, segments
+  // and archives.  Over a bound, the oldest goes first: segment by segment,
+  // then whole archives.  Each removal deletes one segment's rows, which are
+  // within an open's envelope.  An archive left without segments, with
+  // whatever else its table holds, becomes an archive without an index, and
+  // trimArchivedHistory removes it a bounded amount at a time.  Only the
+  // counts kept in history_epochs are read: nothing is scanned or measured.
+  private enforceArchiveQuota = (
+    limits: HistoryLimits,
+  ): { records: number; bytes: number } => {
+    const dropped = { records: 0, bytes: 0 };
+    const charge = (records: number, bytes: number) =>
+      bytes + ARCHIVE_RECORD_OVERHEAD_BYTES * records;
+    const totals = this.db
+      .prepare(
+        "SELECT COUNT(*) AS tables, SUM(kept_records) AS records, SUM(kept_bytes) AS bytes FROM history_epochs WHERE archive IS NOT NULL",
+      )
+      .get() as {
+      tables: number;
+      records: number | null;
+      bytes: number | null;
+    };
+    const usage = {
+      tables: Number(totals.tables),
+      records: Number(totals.records ?? 0),
+      bytes:
+        charge(Number(totals.records ?? 0), Number(totals.bytes ?? 0)) +
+        ARCHIVE_TABLE_OVERHEAD_BYTES * Number(totals.tables),
+      segments: Number(
+        (
+          this.db
+            .prepare("SELECT COUNT(*) AS n FROM history_segments")
+            .get() as { n: number }
+        ).n,
+      ),
+    };
+    const unregister = (epochId: number) => {
+      this.db
+        .prepare("UPDATE history_epochs SET archive=NULL WHERE id=?")
+        .run(epochId);
+      usage.tables -= 1;
+      usage.bytes -= ARCHIVE_TABLE_OVERHEAD_BYTES;
+    };
+    const oldest = this.db.prepare(
+      "SELECT s.epoch_id AS epoch_id, s.first_seq AS first_seq, s.last_seq AS last_seq, s.records AS records, s.cut_bytes + s.suffix_bytes AS bytes, e.archive AS archive FROM history_segments AS s JOIN history_epochs AS e ON e.id = s.epoch_id ORDER BY s.epoch_id, s.first_seq LIMIT 1",
+    );
+    const dropSegment = (s: {
+      epoch_id: number;
+      first_seq: number;
+      last_seq: number;
+      records: number;
+      bytes: number;
+      archive: string | null;
+    }) => {
+      const table = archiveTableName(s.archive);
+      if (table != null) {
+        this.db
+          .prepare(`DELETE FROM "${table}" WHERE seq BETWEEN ? AND ?`)
+          .run(s.first_seq, s.last_seq);
+      }
+      this.db
+        .prepare(
+          "DELETE FROM history_segments WHERE epoch_id=? AND first_seq=?",
+        )
+        .run(s.epoch_id, s.first_seq);
+      this.db
+        .prepare(
+          "UPDATE history_epochs SET kept_records=kept_records-?, kept_bytes=kept_bytes-?, dropped_records=dropped_records+?, dropped_bytes=dropped_bytes+? WHERE id=?",
+        )
+        .run(s.records, s.bytes, s.records, s.bytes, s.epoch_id);
+      usage.segments -= 1;
+      usage.records -= Number(s.records);
+      usage.bytes -= charge(Number(s.records), Number(s.bytes));
+      dropped.records += Number(s.records);
+      dropped.bytes += Number(s.bytes);
+    };
+    const over = () =>
+      usage.bytes > limits.maxArchiveBytes ||
+      usage.records > limits.maxArchiveRecords ||
+      usage.segments > limits.maxArchiveSegments;
+    while (over()) {
+      const s = oldest.get() as Parameters<typeof dropSegment>[0] | undefined;
+      if (s == null) break;
+      dropSegment(s);
+      if (
+        this.db
+          .prepare("SELECT 1 FROM history_segments WHERE epoch_id=? LIMIT 1")
+          .get(s.epoch_id) == null
+      ) {
+        unregister(s.epoch_id);
+      }
+    }
+    // and at most MAX_ARCHIVED_EPOCHS archives, however small
+    for (const e of this.db
+      .prepare(
+        "SELECT id FROM history_epochs WHERE archive IS NOT NULL ORDER BY id LIMIT ?",
+      )
+      .all(Math.max(0, usage.tables - MAX_ARCHIVED_EPOCHS)) as {
+      id: number;
+    }[]) {
+      for (const s of this.db
+        .prepare(
+          "SELECT s.epoch_id AS epoch_id, s.first_seq AS first_seq, s.last_seq AS last_seq, s.records AS records, s.cut_bytes + s.suffix_bytes AS bytes, e.archive AS archive FROM history_segments AS s JOIN history_epochs AS e ON e.id = s.epoch_id WHERE s.epoch_id=? ORDER BY s.first_seq",
+        )
+        .all(e.id) as Parameters<typeof dropSegment>[0][]) {
+        dropSegment(s);
+      }
+      unregister(e.id);
+    }
+    return dropped;
+  };
+
+  // Remove archived history that has no index a bounded amount at a time:
+  // archives from before segments, archives whose segments were all removed,
+  // and the part of an archive older than its segments (an epoch larger than
+  // the archive bounds).  Each call deletes at most maxTrimRecords messages
+  // and maxTrimBytes (and at least one message, of at most the largest
+  // message size), oldest first, and drops a table once it is empty.  Runs
+  // when a stream opens, after each reset, and on purge, so a stream from
+  // before the archive bounds reaches them in bounded steps.
+  private trimArchivedHistory = (
+    limits: HistoryLimits,
+  ): { records: number; bytes: number; done: boolean } => {
+    const trimmed = { records: 0, bytes: 0 };
+    let records = limits.maxTrimRecords;
+    let bytes = limits.maxTrimBytes;
+    // delete the oldest rows below `below`; true if none are left
+    const trim = (table: string, below: number): boolean => {
+      while (records > 0 && bytes > 0) {
+        const page = this.db
+          .prepare(
+            `SELECT seq, ${EFFECTIVE_SIZE_SQL} AS size FROM "${table}" WHERE seq < ? ORDER BY seq LIMIT ?`,
+          )
+          .all(below, Math.min(records, 1000)) as {
+          seq: number;
+          size: number;
+        }[];
+        if (page.length == 0) return true;
+        let last: number | undefined;
+        for (const row of page) {
+          const size = Number(row.size);
+          if (last != null && size > bytes) break;
+          last = Number(row.seq);
+          records -= 1;
+          bytes -= size;
+          trimmed.records += 1;
+          trimmed.bytes += size;
+        }
+        this.db
+          .prepare(`DELETE FROM "${table}" WHERE seq <= ? AND seq < ?`)
+          .run(last!, below);
+      }
+      return (
+        this.db
+          .prepare(`SELECT 1 FROM "${table}" WHERE seq < ? LIMIT 1`)
+          .get(below) == null
+      );
+    };
+    // the older part of each indexed archive (at most MAX_ARCHIVED_EPOCHS)
+    for (const e of this.db
+      .prepare(
+        "SELECT e.archive AS archive, (SELECT MIN(first_seq) FROM history_segments AS s WHERE s.epoch_id = e.id) AS lo FROM history_epochs AS e WHERE e.archive IS NOT NULL ORDER BY e.id",
+      )
+      .all() as { archive: string; lo: number | null }[]) {
+      const table = archiveTableName(e.archive);
+      if (table == null || e.lo == null) continue;
+      if (!trim(table, e.lo)) return { ...trimmed, done: false };
+    }
+    // archives without an index, oldest first, a few names at a time
+    const unindexed = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'messages_archived_%' AND name NOT IN (SELECT archive FROM history_epochs WHERE archive IS NOT NULL) ORDER BY name LIMIT 8",
+    );
+    while (records > 0 && bytes > 0) {
+      const names = (unindexed.all() as { name: string }[])
+        .map(({ name }) => archiveTableName(name))
+        .filter((name): name is string => name != null);
+      if (names.length == 0) return { ...trimmed, done: true };
+      for (const name of names) {
+        if (!trim(name, Number.MAX_SAFE_INTEGER)) {
+          return { ...trimmed, done: false };
+        }
+        this.db.exec(`DROP TABLE "${name}"`);
+      }
+    }
+    return { ...trimmed, done: false };
+  };
+
+  // Drop all archived history: the segments of indexed archives (each
+  // within an open's envelope, at most maxArchiveSegments), then a bounded
+  // amount of archived history without an index (trimArchivedHistory); done
+  // is false if some of that is left for later calls.  The epochs' msg ids
+  // are kept: they are still evidence of what was accepted.
+  private dropArchivedHistory = (
+    limits: HistoryLimits,
+  ): { records: number; bytes: number; done: boolean } => {
+    const { records, bytes } = this.db
+      .prepare(
+        "SELECT SUM(kept_records) AS records, SUM(kept_bytes) AS bytes FROM history_epochs WHERE archive IS NOT NULL",
+      )
+      .get() as { records: number | null; bytes: number | null };
+    for (const s of this.db
+      .prepare(
+        "SELECT s.first_seq AS first_seq, s.last_seq AS last_seq, e.archive AS archive FROM history_segments AS s JOIN history_epochs AS e ON e.id = s.epoch_id",
+      )
+      .all() as { first_seq: number; last_seq: number; archive: string }[]) {
+      const table = archiveTableName(s.archive);
+      if (table == null) continue;
+      this.db
+        .prepare(`DELETE FROM "${table}" WHERE seq BETWEEN ? AND ?`)
+        .run(s.first_seq, s.last_seq);
+    }
+    this.db.prepare("DELETE FROM history_segments").run();
+    this.db
+      .prepare(
+        "UPDATE history_epochs SET archive=NULL, dropped_records=dropped_records+kept_records, dropped_bytes=dropped_bytes+kept_bytes, kept_records=0, kept_bytes=0 WHERE archive IS NOT NULL",
+      )
+      .run();
+    const trimmed = this.trimArchivedHistory(limits);
+    return {
+      records: Number(records ?? 0) + trimmed.records,
+      bytes: Number(bytes ?? 0) + trimmed.bytes,
+      done: trimmed.done,
+    };
+  };
+
+  // Keep the msg ids of only the newest maxArchivedIdEpochs archived epochs.
+  private expireArchivedIds = (limits: HistoryLimits): void => {
+    const old = this.db
+      .prepare(
+        "SELECT id, first_seq, last_seq FROM history_epochs WHERE last_seq IS NOT NULL ORDER BY id DESC LIMIT -1 OFFSET ?",
+      )
+      .all(limits.maxArchivedIdEpochs) as {
+      id: number;
+      first_seq: number;
+      last_seq: number;
+    }[];
+    for (const { id, first_seq, last_seq } of old) {
+      this.db
+        .prepare("DELETE FROM message_ids WHERE seq BETWEEN ? AND ?")
+        .run(first_seq, last_seq);
+      this.db
+        .prepare("UPDATE history_epochs SET ids_complete=0 WHERE id=?")
+        .run(id);
+    }
+  };
+
+  // at most MAX_HISTORY_EPOCH_ROWS closed epochs without an archive
+  private pruneEpochRows = (): void => {
+    const old = this.db
+      .prepare(
+        "SELECT id, first_seq, last_seq FROM history_epochs WHERE last_seq IS NOT NULL AND archive IS NULL ORDER BY id DESC LIMIT -1 OFFSET ?",
+      )
+      .all(MAX_HISTORY_EPOCH_ROWS) as {
+      id: number;
+      first_seq: number;
+      last_seq: number;
+    }[];
+    for (const { id, first_seq, last_seq } of old) {
+      this.db
+        .prepare("DELETE FROM message_ids WHERE seq BETWEEN ? AND ?")
+        .run(first_seq, last_seq);
+      this.db.prepare("DELETE FROM history_segments WHERE epoch_id=?").run(id);
+      this.db.prepare("DELETE FROM history_epochs WHERE id=?").run(id);
+    }
+  };
+
+  // Which of these msg ids did the server accept, and are they in the current
+  // history (see InclusionStatus)?  epoch: the history epoch the ids were
+  // written in.  After a reset, an open copy of the document asks this about
+  // its pending patches, so it re-applies only those proven absent.
+  historyInclusion = ({
+    epoch,
+    ids,
+  }: {
+    epoch: number;
+    ids: string[];
+  }): HistoryInclusion => {
+    const limits = historyLimits();
+    if (
+      typeof epoch !== "number" ||
+      !Array.isArray(ids) ||
+      ids.length > limits.maxInclusionIds ||
+      ids.some((id) => typeof id !== "string" || id.length > 256)
+    ) {
+      throw new ConatError(
+        `historyInclusion: at most ${limits.maxInclusionIds} string ids`,
+        { code: 400 },
+      );
+    }
+    const rows = this.db
+      .prepare(
+        "SELECT epoch, first_seq, last_seq, covered_seq, seed_seq, ids_complete FROM history_epochs ORDER BY id",
+      )
+      .all() as {
+      epoch: number;
+      first_seq: number;
+      last_seq: number | null;
+      covered_seq: number | null;
+      seed_seq: number | null;
+      ids_complete: number;
+    }[];
+    // Absence is only proven for a closed epoch: the fence refuses its
+    // writes, so nothing more can be accepted in it.
+    const asked = rows.filter((row) => row.epoch === epoch);
+    const absent =
+      asked.length > 0 &&
+      asked.every((row) => row.last_seq != null && row.ids_complete === 1);
+    // What a msg id accepted at a seq in each range means, as at most two
+    // ranges per epoch.  An id can be accepted more than once (a retry after
+    // its dedup expired), so it is looked up per range, best evidence first,
+    // and each lookup reads at most one index entry: it never collects the
+    // id's occurrences.
+    const ranges: { lo: number; hi: number; status: InclusionStatus }[] = [];
+    rows.forEach((row, i) => {
+      if (row.last_seq == null) {
+        ranges.push({
+          lo: row.first_seq,
+          hi: Number.MAX_SAFE_INTEGER,
+          status: "live",
+        });
+        return;
+      }
+      // each later reset's seed must carry this epoch's seed forward
+      const carried = rows
+        .slice(i + 1)
+        .every(
+          (later) =>
+            later.last_seq == null ||
+            (later.seed_seq != null &&
+              later.covered_seq != null &&
+              later.covered_seq >= later.seed_seq),
+        );
+      const covered =
+        row.covered_seq != null && carried
+          ? Math.min(row.covered_seq, row.last_seq)
+          : row.first_seq - 1;
+      if (covered >= row.first_seq) {
+        ranges.push({ lo: row.first_seq, hi: covered, status: "included" });
+      }
+      if (row.last_seq > covered) {
+        ranges.push({
+          lo: Math.max(row.first_seq, covered + 1),
+          hi: row.last_seq,
+          status: "excluded",
+        });
+      }
+    });
+    const rank: InclusionStatus[] = ["included", "live", "excluded"];
+    ranges.sort((a, b) => rank.indexOf(a.status) - rank.indexOf(b.status));
+    // (msg_id, seq) is the index's key, so this is one seek
+    const inRange = this.db.prepare(
+      "SELECT seq FROM message_ids WHERE msg_id=? AND seq BETWEEN ? AND ? ORDER BY seq LIMIT 1",
+    );
+    const anywhere = this.db.prepare(
+      "SELECT seq FROM message_ids WHERE msg_id=? LIMIT 1",
+    );
+    const result: HistoryInclusion["ids"] = {};
+    for (const id of ids) {
+      if (result[id] != null) continue;
+      for (const { lo, hi, status } of ranges) {
+        const row = inRange.get(id, lo, hi) as { seq: number } | undefined;
+        if (row != null) {
+          result[id] = { status, seq: Number(row.seq) };
+          break;
+        }
+      }
+      if (result[id] != null) continue;
+      if (anywhere.get(id) != null) {
+        // accepted at a seq no epoch row describes any more
+        result[id] = { status: "unknown" };
+      } else {
+        result[id] = { status: absent ? "absent" : "unknown" };
+      }
+    }
+    return { history_epoch: this.currentEpoch(), ids: result };
+  };
+
+  // The archived epochs and their loadable segments, oldest first.
+  historyArchives = (): ArchivedHistoryEpoch[] => {
+    // at most maxArchiveSegments are kept (enforceArchiveQuota); the limit
+    // also bounds this response if a database holds more
+    const segments = new Map<number, ArchivedHistorySegment[]>();
+    for (const s of this.db
+      .prepare(
+        "SELECT epoch_id, first_seq, last_seq, cut_seq, snapshot_seq, cut_bytes, suffix_bytes, records FROM history_segments ORDER BY epoch_id, first_seq LIMIT ?",
+      )
+      .iterate(historyLimits().maxArchiveSegments) as Iterable<any>) {
+      const list = segments.get(s.epoch_id) ?? [];
+      list.push({
+        first_seq: s.first_seq,
+        last_seq: s.last_seq,
+        ...(s.cut_seq != null ? { cut_seq: s.cut_seq } : {}),
+        ...(s.snapshot_seq != null ? { snapshot_seq: s.snapshot_seq } : {}),
+        cut_bytes: s.cut_bytes,
+        suffix_bytes: s.suffix_bytes,
+        records: s.records,
+      });
+      segments.set(s.epoch_id, list);
+    }
     return (
       this.db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
-        .all() as { name: string }[]
-    )
-      .map(({ name }) => name)
-      .filter((name) => name.startsWith(ARCHIVED_MESSAGES_PREFIX));
+        .prepare(
+          "SELECT * FROM history_epochs WHERE last_seq IS NOT NULL ORDER BY id",
+        )
+        .all() as any[]
+    ).map((row) => ({
+      epoch: row.epoch,
+      first_seq: row.first_seq,
+      last_seq: row.last_seq,
+      ...(row.covered_seq != null ? { covered_seq: row.covered_seq } : {}),
+      ...(row.archive != null ? { archive: row.archive } : {}),
+      kept: { records: row.kept_records, bytes: row.kept_bytes },
+      dropped: { records: row.dropped_records, bytes: row.dropped_bytes },
+      ...(row.info_json != null ? { info: JSON.parse(row.info_json) } : {}),
+      time: row.time,
+      segments: segments.get(row.id) ?? [],
+    }));
+  };
+
+  // "Delete archived history to save space": irreversible.  The current
+  // history is not touched.  done is false if archived history from before
+  // the archive bounds is still being removed, a bounded amount per call.
+  purgeArchivedHistory = (): {
+    records: number;
+    bytes: number;
+    done: boolean;
+  } => {
+    const dropped = this.runTransaction(() =>
+      this.dropArchivedHistory(historyLimits()),
+    );
+    this.throttledBackup();
+    return dropped;
+  };
+
+  private archivedMessageTables = (): string[] => {
+    return (
+      (
+        this.db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+          .all() as { name: string }[]
+      )
+        .map(({ name }) => name)
+        // the name is pasted into SQL (ALTER/DROP TABLE), so only exactly the
+        // names this server creates
+        .filter((name) => ARCHIVED_MESSAGES_TABLE.test(name))
+    );
   };
 
   private unusedArchiveTableName = (): string => {
@@ -1734,11 +3414,15 @@ export class PersistentStream extends EventEmitter {
     seq,
     time,
     data,
+    snapshotSeq,
   }: {
     name: string;
     seq: number;
     time: number;
     data?: JSONValue;
+    // the message written with this checkpoint, e.g., the snapshot of the
+    // patch at seq
+    snapshotSeq?: number;
   }): void => {
     this.db
       .prepare(
@@ -1753,6 +3437,18 @@ export class PersistentStream extends EventEmitter {
       `,
       )
       .run(name, seq, time, data === undefined ? null : JSON.stringify(data));
+    // A snapshot checkpoint is a place a load can start from, so the archive
+    // segments of a reset start at them.  Only the newest checkpoint per name
+    // is kept above; this keeps all of them.  Other checkpoints (e.g., the
+    // saved_file proof) describe no snapshot, so they are never cuts.
+    if (name !== SNAPSHOT_CHECKPOINT) return;
+    this.db
+      .prepare(
+        `INSERT INTO history_cuts(seq, snapshot_seq) VALUES (?, ?)
+         ON CONFLICT(seq) DO UPDATE SET
+           snapshot_seq=COALESCE(excluded.snapshot_seq, history_cuts.snapshot_seq)`,
+      )
+      .run(seq, snapshotSeq != null && snapshotSeq >= seq ? snapshotSeq : null);
   };
 
   private deleteCheckpointsInSeqs = (seqs: number[]): void => {
@@ -1763,6 +3459,36 @@ export class PersistentStream extends EventEmitter {
     this.db
       .prepare(`DELETE FROM stream_checkpoints WHERE seq IN (${placeholders})`)
       .run(...seqs);
+    this.forgetSeqs(seqs);
+  };
+
+  // Deleted messages: forget their ids and the cuts they were part of.  An id
+  // that is forgotten is no longer evidence that its message was accepted, so
+  // the current history's ids are incomplete from then on, and
+  // historyInclusion answers "unknown" rather than "absent".
+  private forgetSeqs = (seqs: number[]): void => {
+    let forgotten = 0;
+    for (let i = 0; i < seqs.length; i += 500) {
+      const chunk = seqs.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(", ");
+      forgotten += Number(
+        this.db
+          .prepare(`DELETE FROM message_ids WHERE seq IN (${placeholders})`)
+          .run(...chunk).changes,
+      );
+      this.db
+        .prepare(
+          `DELETE FROM history_cuts WHERE seq IN (${placeholders}) OR snapshot_seq IN (${placeholders})`,
+        )
+        .run(...chunk, ...chunk);
+    }
+    if (forgotten > 0) {
+      this.db
+        .prepare(
+          "UPDATE history_epochs SET ids_complete=0 WHERE last_seq IS NULL AND ids_complete=1",
+        )
+        .run();
+    }
   };
 
   private emitDelete = (rows, deferredChanges?: ChangefeedOperation[]) => {
@@ -1924,6 +3650,8 @@ function dbToMessage(
         ttl?: number;
       }
     | undefined,
+  // effective size of the stored message (see EFFECTIVE_SIZE_SQL)
+  size: number,
 ): StoredMessage | undefined {
   if (x === undefined) {
     return x;
@@ -1942,22 +3670,25 @@ function dbToMessage(
     time: x.time * 1000,
     key: x.key != null ? x.key : undefined,
     encoding: x.encoding,
-    raw: handleDecompress(x),
-    headers: x.headers ? JSON.parse(x.headers) : undefined,
+    raw: handleDecompress(x, size),
+    headers: parseStoredHeaders(x.headers),
   };
 }
 
-function handleDecompress({
-  raw,
-  compress,
-}: {
-  raw: Buffer;
-  compress: CompressionAlgorithm;
-}) {
+function handleDecompress(
+  {
+    raw,
+    compress,
+  }: {
+    raw: Buffer;
+    compress: CompressionAlgorithm;
+  },
+  size: number,
+) {
   if (compress == CompressionAlgorithm.None) {
     return raw;
   } else if (compress == CompressionAlgorithm.Zstd) {
-    return decompress(raw);
+    return decompress(raw, decompressLimit(size));
   } else {
     throw Error(`unknown compression ${compress}`);
   }

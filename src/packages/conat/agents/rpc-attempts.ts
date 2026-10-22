@@ -138,6 +138,8 @@ export class AgentRpcAttempts {
           request.body,
           request.file_references ?? null,
           request.snapshot_manifest ?? null,
+          // Only when asked: earlier attempts keep their identity.
+          ...(request.report_no_reply === true ? ["report_no_reply"] : []),
         ]),
       )
       .digest("hex");

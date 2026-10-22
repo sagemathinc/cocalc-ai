@@ -690,9 +690,19 @@ export interface AccountDirectoryTouchRequest {
   account_id: string;
 }
 
+// Who started an account deletion; recorded in the account audit log.
+export type AccountDeletionInitiator =
+  | "self"
+  | "admin"
+  | "ephemeral-expiry"
+  | "system";
+
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
   only_if_tag?: string;
+  initiator?: AccountDeletionInitiator;
+  // the account that asked for the deletion: the account itself or an admin
+  actor_account_id?: string;
 }
 
 export interface AccountDirectoryDeleteResult {
@@ -2588,18 +2598,13 @@ export type HostConnectionMethod =
   | "update-api-relay-usage"
   | "update-api-relay-account-usage"
   | "list"
-  | "list-host-access"
   | "set-host-access"
   | "remove-host-access"
   | "set-host-project-ram-limit"
   | "set-host-owner-spend-limits"
   | "set-host-pool-access"
   | "set-host-deletion-protection"
-  | "get-host-log"
-  | "get-host-availability"
   | "annotate-host-availability-event"
-  | "get-host-runtime-log"
-  | "get-host-metrics-history"
   | "get-host-runtime-deployment-status"
   | "start-host"
   | "stop-host"
@@ -2618,11 +2623,9 @@ export type HostConnectionMethod =
   | "delete-host"
   | "force-deprovision-host"
   | "remove-self-host-connector"
-  | "list-host-rootfs-images"
   | "pull-host-rootfs-image"
   | "delete-host-rootfs-image"
   | "gc-deleted-host-rootfs-images"
-  | "get-host-exam-state"
   | "set-host-exam-config"
   | "create-host-exam-run"
   | "rotate-host-exam-token"
@@ -2630,13 +2633,10 @@ export type HostConnectionMethod =
   | "update-host-exam-deadline"
   | "increase-host-exam-capacity"
   | "stop-and-erase-host-exam-run"
-  | "list-host-ssh-authorized-keys"
   | "add-host-ssh-authorized-key"
   | "remove-host-ssh-authorized-key"
-  | "list-host-runtime-deployments"
   | "list-host-operations"
   | "set-host-runtime-deployments"
-  | "get-host-managed-component-status"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -3319,9 +3319,6 @@ export interface InterBayHostConnectionApi {
   }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
-  listHostAccess: (
-    opts: Parameters<Hosts["listHostAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostAccess"]>>>;
   setHostAccess: (
     opts: Parameters<Hosts["setHostAccess"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostAccess"]>>>;
@@ -3340,21 +3337,9 @@ export interface InterBayHostConnectionApi {
   setHostDeletionProtection: (
     opts: Parameters<Hosts["setHostDeletionProtection"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostDeletionProtection"]>>>;
-  getHostLog: (
-    opts: Parameters<Hosts["getHostLog"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
-  getHostAvailability: (
-    opts: Parameters<Hosts["getHostAvailability"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostAvailability"]>>>;
   annotateHostAvailabilityEvent: (
     opts: Parameters<Hosts["annotateHostAvailabilityEvent"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["annotateHostAvailabilityEvent"]>>>;
-  getHostRuntimeLog: (
-    opts: Parameters<Hosts["getHostRuntimeLog"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeLog"]>>>;
-  getHostMetricsHistory: (
-    opts: Parameters<Hosts["getHostMetricsHistory"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostMetricsHistory"]>>>;
   getHostRuntimeDeploymentStatus: (
     opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
@@ -3409,9 +3394,6 @@ export interface InterBayHostConnectionApi {
   removeSelfHostConnector: (
     opts: Parameters<Hosts["removeSelfHostConnector"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["removeSelfHostConnector"]>>>;
-  listHostRootfsImages: (
-    opts: Parameters<Hosts["listHostRootfsImages"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostRootfsImages"]>>>;
   pullHostRootfsImage: (
     opts: Parameters<Hosts["pullHostRootfsImage"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["pullHostRootfsImage"]>>>;
@@ -3421,9 +3403,6 @@ export interface InterBayHostConnectionApi {
   gcDeletedHostRootfsImages: (
     opts: Parameters<Hosts["gcDeletedHostRootfsImages"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["gcDeletedHostRootfsImages"]>>>;
-  getHostExamState: (
-    opts: Parameters<Hosts["getHostExamState"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostExamState"]>>>;
   setHostExamConfig: (
     opts: Parameters<Hosts["setHostExamConfig"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostExamConfig"]>>>;
@@ -3445,24 +3424,15 @@ export interface InterBayHostConnectionApi {
   stopAndEraseHostExamRun: (
     opts: Parameters<Hosts["stopAndEraseHostExamRun"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["stopAndEraseHostExamRun"]>>>;
-  listHostSshAuthorizedKeys: (
-    opts: Parameters<Hosts["listHostSshAuthorizedKeys"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostSshAuthorizedKeys"]>>>;
   addHostSshAuthorizedKey: (
     opts: Parameters<Hosts["addHostSshAuthorizedKey"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["addHostSshAuthorizedKey"]>>>;
   removeHostSshAuthorizedKey: (
     opts: Parameters<Hosts["removeHostSshAuthorizedKey"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["removeHostSshAuthorizedKey"]>>>;
-  listHostRuntimeDeployments: (
-    opts: Parameters<Hosts["listHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["listHostRuntimeDeployments"]>>>;
   setHostRuntimeDeployments: (
     opts: Parameters<Hosts["setHostRuntimeDeployments"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostRuntimeDeployments"]>>>;
-  getHostManagedComponentStatus: (
-    opts: Parameters<Hosts["getHostManagedComponentStatus"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostManagedComponentStatus"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -3602,7 +3572,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "update-api-relay-account-usage",
   },
   { name: "list", method: "list" },
-  { name: "listHostAccess", method: "list-host-access" },
   { name: "setHostAccess", method: "set-host-access" },
   { name: "removeHostAccess", method: "remove-host-access" },
   {
@@ -3618,14 +3587,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "setHostDeletionProtection",
     method: "set-host-deletion-protection",
   },
-  { name: "getHostLog", method: "get-host-log" },
-  { name: "getHostAvailability", method: "get-host-availability" },
   {
     name: "annotateHostAvailabilityEvent",
     method: "annotate-host-availability-event",
   },
-  { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
-  { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
   {
     name: "getHostRuntimeDeploymentStatus",
     method: "get-host-runtime-deployment-status",
@@ -3659,14 +3624,12 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "deleteHost", method: "delete-host" },
   { name: "forceDeprovisionHost", method: "force-deprovision-host" },
   { name: "removeSelfHostConnector", method: "remove-self-host-connector" },
-  { name: "listHostRootfsImages", method: "list-host-rootfs-images" },
   { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
   { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },
   {
     name: "gcDeletedHostRootfsImages",
     method: "gc-deleted-host-rootfs-images",
   },
-  { name: "getHostExamState", method: "get-host-exam-state" },
   { name: "setHostExamConfig", method: "set-host-exam-config" },
   { name: "createHostExamRun", method: "create-host-exam-run" },
   { name: "rotateHostExamToken", method: "rotate-host-exam-token" },
@@ -3683,27 +3646,15 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "stopAndEraseHostExamRun",
     method: "stop-and-erase-host-exam-run",
   },
-  {
-    name: "listHostSshAuthorizedKeys",
-    method: "list-host-ssh-authorized-keys",
-  },
   { name: "addHostSshAuthorizedKey", method: "add-host-ssh-authorized-key" },
   {
     name: "removeHostSshAuthorizedKey",
     method: "remove-host-ssh-authorized-key",
   },
-  {
-    name: "listHostRuntimeDeployments",
-    method: "list-host-runtime-deployments",
-  },
   { name: "listHostOperations", method: "list-host-operations" },
   {
     name: "setHostRuntimeDeployments",
     method: "set-host-runtime-deployments",
-  },
-  {
-    name: "getHostManagedComponentStatus",
-    method: "get-host-managed-component-status",
   },
   {
     name: "getProjectStartMetadata",

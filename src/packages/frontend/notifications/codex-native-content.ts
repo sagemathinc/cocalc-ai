@@ -18,12 +18,22 @@ const COMPLETION_CONTENT: CodexNativeNotificationContent = Object.freeze({
   body: "Open CoCalc to view details.",
 });
 
+const PAUSED_CONTENT: CodexNativeNotificationContent = Object.freeze({
+  title: "Agent turn paused",
+  body: "It resumes automatically. Open CoCalc to view details.",
+});
+
 // Native notifications may appear on a locked screen. Deliberately accept no
 // model, project, path, or action content here.
 export function codexNativeNotificationContent(
   attention: boolean,
+  paused = false,
 ): CodexNativeNotificationContent {
-  return attention ? ATTENTION_CONTENT : COMPLETION_CONTENT;
+  return attention
+    ? ATTENTION_CONTENT
+    : paused
+      ? PAUSED_CONTENT
+      : COMPLETION_CONTENT;
 }
 
 export function canShowCodexNativeNotification(

@@ -7,14 +7,10 @@ the account that is making the API request.
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import {
-  revokeAllAuthSessions,
-  revokeAuthSession,
+  endAllSignInSessions,
+  endSignInSession,
 } from "@cocalc/server/auth/auth-sessions";
 import { getRememberMeHashes } from "@cocalc/server/auth/remember-me";
-import {
-  deleteRememberMe,
-  deleteAllRememberMe,
-} from "@cocalc/server/auth/remember-me";
 import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
@@ -24,6 +20,7 @@ import {
   AccountSignOutOutputSchema,
 } from "@cocalc/http-api/lib/api/schema/accounts/sign-out";
 import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
+import { requestSignedOutSessionSweep } from "@cocalc/server/conat/socketio/sign-in-session-sweep";
 
 async function handle(req, res) {
   try {
@@ -39,26 +36,31 @@ async function signOut(req, res): Promise<void> {
     throw Error("API keys are not allowed to sign out browser sessions");
   }
   const { all } = getParams(req);
-  if (all) {
-    // invalidate all remember me cookies for this account.
-    const account_id = await getAccountId(req);
-    if (!account_id) return; // not signed in
-    await deleteAllRememberMe(account_id);
-    await revokeAllAuthSessions(account_id);
-    // Revoke host-level persistent sessions/tokens issued before now.
-    await recordAccountRevocation(account_id, Date.now());
-  } else {
-    const account_id = await getAccountId(req);
-    const hashes = getRememberMeHashes(req);
-    for (const hash of hashes) {
-      await deleteRememberMe(hash);
-      if (account_id) {
-        await revokeAuthSession({ account_id, session_hash: hash });
+  try {
+    if (all) {
+      // invalidate all remember me cookies for this account.
+      const account_id = await getAccountId(req);
+      if (!account_id) return; // not signed in
+      await endAllSignInSessions(account_id);
+      // Close this process's sockets of those sessions now; other hub
+      // processes do it on their next sweep.
+      requestSignedOutSessionSweep();
+      // Revoke host-level persistent sessions/tokens issued before now.
+      await recordAccountRevocation(account_id, Date.now());
+    } else {
+      // Each cookie's session homed on this bay, for whichever account it
+      // belongs to. TODO: ending a session homed on another bay needs routing
+      // through the account-local inter-bay API.
+      for (const hash of getRememberMeHashes(req)) {
+        await endSignInSession({ session_hash: hash });
       }
+      requestSignedOutSessionSweep();
     }
+  } finally {
+    // also delete any security relevant cookies for safety and to avoid
+    // confusion -- even if ending a session on the server failed.
+    await clearAuthCookies({ req, res });
   }
-  // also delete any security relevant cookies for safety and to avoid confusion.
-  await clearAuthCookies({ req, res });
 }
 
 export default apiRoute({

@@ -34,6 +34,8 @@ export interface SensorWatcherBudgetRequest {
   sensor_id: string;
   /** When the watcher gives up (ISO). */
   expires_at: string;
+  /** A reminder (`watch at`): counted apart from the other watchers. */
+  reminder?: boolean;
 }
 
 export interface InterBayAgentConnectorApi {

@@ -119,4 +119,28 @@ describe("SyncClient", () => {
     // no hub call: the reset goes straight to the stream
     expect(callHubMock).not.toHaveBeenCalled();
   });
+
+  it("a board's reset goes the way its patches are written: through the board write service", async () => {
+    const stream = {
+      resetHistory: jest.fn(async () => ({ history_epoch: 1, reset: true })),
+      close: jest.fn(),
+    };
+    const client = createConatClient({
+      sync: { synctable: jest.fn(), astream: jest.fn(() => stream) },
+    });
+    const syncClient = new SyncClient(client as any);
+    await syncClient.resetOversizedHistory({
+      project_id: "p",
+      path: "/home/user/.plan.board.json.sage-board",
+      oversized_seq: 7,
+      persist: { service: "persist-board-write", persistUser: {} },
+    });
+    expect(client.sync.astream).toHaveBeenCalledWith({
+      project_id: "p",
+      name: "patchflow//home/user/.plan.board.json.sage-board",
+      noInventory: true,
+      service: "persist-board-write",
+      persistUser: {},
+    });
+  });
 });

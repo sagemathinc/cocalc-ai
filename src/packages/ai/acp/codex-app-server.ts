@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  turnFailureOf,
+  withTurnFailure,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import { joinTurnContext } from "./harness-context";
 import {
   artifactPublicationGuidance,
@@ -2797,7 +2801,12 @@ export class CodexAppServerAgent implements AcpAgent {
           return;
         }
         if (!isRetryableAppServerError(err)) {
-          await request.stream({ type: "error", error: terminalError });
+          const failure = turnFailureOf(err);
+          await request.stream({
+            type: "error",
+            error: terminalError,
+            ...(failure ? { failure } : {}),
+          });
           return;
         }
         const retryKind = err.kind;
@@ -3646,6 +3655,7 @@ export class CodexAppServerAgent implements AcpAgent {
                         ? item.exitCode
                         : undefined,
                   },
+                  ...(item.status === "declined" ? { declined: true } : {}),
                 },
               });
             }
@@ -4319,7 +4329,11 @@ export class CodexAppServerAgent implements AcpAgent {
           },
         );
       }
-      throw new Error(userFacingPrimaryError);
+      const failed = new Error(userFacingPrimaryError);
+      // CoCalc's own allowance stopped it, not the provider.
+      if (quotaStopReason)
+        withTurnFailure(failed, { kind: "limit", scope: "cocalc" });
+      throw failed;
     } finally {
       await spawned.endConnectorTurn?.().catch((error) => {
         logger.warn("managed CoCalc connector revocation unconfirmed", {

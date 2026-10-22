@@ -67,7 +67,9 @@ export class AStream<T = any> {
     this.client = requireAstreamClient(options, "AStream").client;
     this.stream = stream({
       client: this.client,
-      user: this.user,
+      // Who to ask as: persistUser when given (a board's writer asks the
+      // board write service as the hub), as CoreStream does.
+      user: options.persistUser ?? this.user,
       storage: this.storage,
       service: options.service,
     });
@@ -207,6 +209,24 @@ export class AStream<T = any> {
     opts: ResetHistoryOptions,
   ): Promise<ResetHistoryResult> => {
     return await this.stream.resetHistory(opts);
+  };
+
+  // the stream's newest seq, message count and limits
+  inventory = async () => {
+    return await this.stream.inventory();
+  };
+
+  // see PersistentStream.historyInclusion
+  historyInclusion = async (opts: { epoch: number; ids: string[] }) => {
+    return await this.stream.historyInclusion(opts);
+  };
+
+  getCheckpoints = async () => {
+    return await this.stream.getCheckpoints();
+  };
+
+  getMetadata = async () => {
+    return await this.stream.getMetadata();
   };
 
   config = async (
