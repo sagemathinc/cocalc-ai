@@ -815,6 +815,7 @@ export async function restoreBackupWithHistory({
   listDirectory,
   restoreInto,
   restoreFiles,
+  withRoom,
   env = process.env,
   ops = btrfsOps,
 }: {
@@ -826,6 +827,11 @@ export async function restoreBackupWithHistory({
   restoreInto: (path: string, dest: string) => Promise<void>;
   // the restore itself, of files into the home
   restoreFiles: () => Promise<void>;
+  // Runs fn with room for `bytes` more in the project's quota (a temporary
+  // override, file-server.ts): the restored history passes through the home
+  // with the files (until cleanRestoredHome), and is in the old and the new
+  // history at once until the old is deleted.
+  withRoom?: <T>(bytes: number, fn: () => Promise<T>) => Promise<T>;
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<boolean> {
@@ -836,42 +842,76 @@ export async function restoreBackupWithHistory({
     await restoreFiles();
     return false;
   }
-  let previous: string | undefined;
   try {
+    // the project's limits as they are, before any room for the restore
+    const homeQuota = await homeQuotaOf(project_id, env, ops);
     await restoreInto(from, source);
-    await withPersistLock(project_id, async () => {
-      await withProjectPersistFenced(
-        { project_id, reason: "restore-backup", requires: "persist-volume" },
-        async () => {
-          // all of the merge that can fail first, so it never fails after
-          // the files changed
-          const merged = await prepareMergedVolume({
-            project_id,
-            source,
-            env,
-            ops,
-          });
-          try {
-            await restoreFiles();
-          } catch (err) {
-            if (merged != null) await ops.removeTree(merged).catch(() => {});
-            throw err;
-          }
-          if (merged != null) {
-            previous = await swapInVolume(project_id, merged, env);
-          }
-        },
-      );
-      // still holding the lock (see replaceProjectHome)
-      await cleanRestoredHome({ project_id, from, env, ops });
+    const restored = await databaseBytes(source);
+    const room = withRoom ?? (async (_bytes, fn) => await fn());
+    await room(restoreRoom(restored), async () => {
+      let previous: string | undefined;
+      await withPersistLock(project_id, async () => {
+        await withProjectPersistFenced(
+          { project_id, reason: "restore-backup", requires: "persist-volume" },
+          async () => {
+            // all of the merge that can fail first, so it never fails after
+            // the files changed
+            const merged = await prepareMergedVolume({
+              project_id,
+              source,
+              homeQuota,
+              env,
+              ops,
+            });
+            try {
+              await restoreFiles();
+            } catch (err) {
+              if (merged != null) await ops.removeTree(merged).catch(() => {});
+              throw err;
+            }
+            if (merged != null) {
+              previous = await swapInVolume(project_id, merged, env);
+            }
+          },
+        );
+        // still holding the lock (see replaceProjectHome)
+        await cleanRestoredHome({ project_id, from, env, ops });
+      });
+      // what the restore staged goes before its room does
+      await ops.removeTree(source).catch(() => {});
+      if (previous != null) {
+        await ops.removeTree(previous).catch(() => {});
+      }
     });
   } finally {
     await ops.removeTree(source).catch(() => {});
   }
-  if (previous != null) {
-    await ops.removeTree(previous).catch(() => {});
-  }
   return true;
+}
+
+// The room a restore of `bytes` of history needs in the project's quota
+// beyond what it has (see restoreBackupWithHistory's withRoom), with some to
+// spare for the databases' write-ahead logs and metadata.
+export function restoreRoom(bytes: number): number {
+  return Math.max(0, bytes) + 64 * MiB;
+}
+
+// The databases in `root` (a host-only volume or staging directory), with
+// their write-ahead logs, in bytes.
+export async function databaseBytes(root: string): Promise<number> {
+  let bytes = 0;
+  const walk = async (dir: string, depth: number) => {
+    for await (const entry of await opendir(dir)) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory() && depth < MAX_IMPORT_DEPTH) {
+        await walk(path, depth + 1);
+      } else if (entry.isFile() && DATABASE_FILE.test(entry.name)) {
+        bytes += (await lstat(path)).size;
+      }
+    }
+  };
+  await walk(root, 0);
+  return bytes;
 }
 
 // Where the backup holds the history a restore covers, if it does.
@@ -1337,11 +1377,15 @@ async function mergeIntoVolume(opts: {
 async function prepareMergedVolume({
   project_id,
   source,
+  homeQuota: steadyHomeQuota,
   env,
   ops,
 }: {
   project_id: string;
   source: string;
+  // the project's disk quota without any room for the restore (undefined:
+  // as it is now)
+  homeQuota?: number;
   env: NodeJS.ProcessEnv;
   ops: PersistVolumeOps;
 }): Promise<string | undefined> {
@@ -1371,14 +1415,27 @@ async function prepareMergedVolume({
       dest: staged,
       merge: true,
     });
+    // The merged history is what the volume keeps and what it restored: it
+    // must fit, after the restore, within the history's limit, and the
+    // volume's limit is never below what it already holds.
+    const total = await databaseBytes(staged);
+    const ceiling = persistVolumeCeiling(steadyHomeQuota ?? homeQuota, env);
+    if (total > ceiling) {
+      throw new Error(
+        `the restored edit history (${total} bytes) does not fit in this project's limit for it (${ceiling} bytes)`,
+      );
+    }
     await ops.setQuota(
       staged,
-      persistVolumeQuota({
-        homeQuota,
-        current,
-        imported: imported.bytes,
-        env,
-      }),
+      Math.max(
+        persistVolumeQuota({
+          homeQuota,
+          current,
+          imported: imported.bytes,
+          env,
+        }),
+        total,
+      ),
     );
     // on disk before it is the project's history
     await syncTree(staged);

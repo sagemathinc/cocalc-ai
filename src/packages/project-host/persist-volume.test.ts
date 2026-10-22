@@ -1154,6 +1154,75 @@ describe("in the project-host", () => {
     await capture?.release();
   });
 
+  it("restores with room in the quota for its extra copies of the history", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "x".repeat(5000),
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    const order: string[] = [];
+    const staged = () =>
+      readdirSync(join(mount, ".persist-import")).filter((x) =>
+        x.startsWith("restore-"),
+      );
+    await restoreBackupWithHistory({
+      project_id: PROJECT,
+      candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+      listDirectory: backup.listDirectory,
+      restoreInto: backup.restoreInto,
+      restoreFiles: async () => {
+        order.push("restore files");
+      },
+      withRoom: async (bytes, fn) => {
+        // what was restored, and some to spare
+        expect(bytes).toBeGreaterThanOrEqual(5000);
+        order.push("room");
+        try {
+          return await fn();
+        } finally {
+          // the staged history and the replaced volume are gone before
+          order.push(`room released (staged: ${staged().length})`);
+        }
+      },
+      env,
+      ops: fakeOps(),
+    });
+    expect(order).toEqual([
+      "room",
+      "restore files",
+      "room released (staged: 0)",
+    ]);
+    expect(read(join(root, "a.db"))).toBe("x".repeat(5000));
+  });
+
+  it("refuses a restored history that can't fit, before any file changes", async () => {
+    await readyVolume();
+    const ops = fakeOps();
+    // a disk quota smaller than the restored history
+    ops.quotas.set(home, 4096);
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "x".repeat(10_000),
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    let restored = false;
+    await expect(
+      restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        listDirectory: backup.listDirectory,
+        restoreInto: backup.restoreInto,
+        restoreFiles: async () => {
+          restored = true;
+        },
+        env,
+        ops,
+      }),
+    ).rejects.toThrow(/does not fit/);
+    expect(restored).toBe(false);
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(leftovers()).toEqual([]);
+  });
+
   it("restores no files when the history can't be merged", async () => {
     await readyVolume();
     const backup = backupWith({
