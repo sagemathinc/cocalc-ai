@@ -1043,3 +1043,70 @@ describe("hosts start-worker heartbeat wait", () => {
     ).rejects.toThrow("host status is error");
   });
 });
+
+describe("hosts start-worker billing rescue start", () => {
+  // The rescue request has already set the status to "draining" by the time
+  // the worker runs, whether or not the VM is up.
+  function deps(row: any) {
+    return {
+      loadStatus: jest.fn(async () => row),
+      startHost: jest.fn(async () => ({})) as any,
+      waitStatus: jest.fn(async () => ({})) as any,
+      waitHeartbeat: jest.fn(async () => ({})) as any,
+    };
+  }
+
+  test("drains a source whose failed stop left it running, without starting it", async () => {
+    const d = deps({ status: "draining", last_seen: new Date() });
+    await __test__.startBillingBlockedHostForRescue({
+      account_id: "a",
+      host_id: "h",
+      deps: d,
+    });
+    expect(d.startHost).not.toHaveBeenCalled();
+    expect(d.waitStatus).not.toHaveBeenCalled();
+    expect(d.waitHeartbeat).toHaveBeenCalledWith(
+      expect.objectContaining({ host_id: "h", failOn: expect.any(Array) }),
+    );
+  });
+
+  test("starts a stopped source without a billing session", async () => {
+    const d = deps({ status: "draining", last_seen: null });
+    await __test__.startBillingBlockedHostForRescue({
+      account_id: "a",
+      host_id: "h",
+      deps: d,
+    });
+    expect(d.startHost).toHaveBeenCalledWith({
+      account_id: "a",
+      id: "h",
+      billing_rescue: true,
+    });
+    expect(d.waitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ desired: ["running"] }),
+    );
+    expect(d.waitHeartbeat).toHaveBeenCalled();
+  });
+
+  test("treats only a recent heartbeat as a live source", () => {
+    const now = Date.now();
+    expect(
+      __test__.billingRescueHostIsAlive(
+        { status: "draining", last_seen: new Date(now - 30_000) },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      __test__.billingRescueHostIsAlive(
+        { status: "draining", last_seen: new Date(now - 3 * 24 * 3600_000) },
+        now,
+      ),
+    ).toBe(false);
+    expect(__test__.billingRescueHostIsAlive({ status: "error" }, now)).toBe(
+      false,
+    );
+    expect(__test__.billingRescueHostIsAlive({ status: "running" }, now)).toBe(
+      true,
+    );
+  });
+});
