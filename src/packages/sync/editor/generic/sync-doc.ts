@@ -3308,6 +3308,11 @@ export class SyncDoc extends EventEmitter {
   // Remote patches received but not applied to this.doc yet: they are
   // applied in a microtask (see the patchflow subscribe adapter).
   private remotePatchesPending = false;
+  // Table keys of snapshot records ignored because their patch was before the
+  // loaded range (see isSnapshotRecordBeforeLoadedRange). A snapshot record
+  // has its own key, which loading more history does not change, so it is fed
+  // to patchflow again here once its patch is loaded.
+  private snapshotRecordsBeforeLoadedRange = new Set<any>();
 
   // The proof that value, about to be written to the file, is this document's
   // value including every patch with seq at most receivedThroughSeq.  Called
@@ -3974,7 +3979,29 @@ export class SyncDoc extends EventEmitter {
         x = fromJS(x);
       }
       const p = this.processPatch({ x });
-      if (p != null && !isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)) {
+      if (p == null) continue;
+      if (isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)) {
+        this.snapshotRecordsBeforeLoadedRange.add(key);
+      } else {
+        this.snapshotRecordsBeforeLoadedRange.delete(key);
+        envs.push(this.toPatchflowEnvelope(p));
+      }
+    }
+    // Ignored snapshot records whose patch is loaded now, in the same batch.
+    for (const key of [...this.snapshotRecordsBeforeLoadedRange]) {
+      let x = this.patches_table.get(key);
+      if (x == null) {
+        this.snapshotRecordsBeforeLoadedRange.delete(key);
+        continue;
+      }
+      if (!Map.isMap(x)) {
+        x = fromJS(x);
+      }
+      const p = this.processPatch({ x });
+      if (p == null) {
+        this.snapshotRecordsBeforeLoadedRange.delete(key);
+      } else if (!isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)) {
+        this.snapshotRecordsBeforeLoadedRange.delete(key);
         envs.push(this.toPatchflowEnvelope(p));
       }
     }
@@ -4062,13 +4089,13 @@ export class SyncDoc extends EventEmitter {
     }
     const v: Patch[] = [];
     const firstLoadedSeq = this.firstLoadedSeq();
-    m.forEach((x, _) => {
+    m.forEach((x, key) => {
       try {
         const p = this.processPatch({ x });
-        if (
-          p != null &&
-          !isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)
-        ) {
+        if (p == null) return;
+        if (isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)) {
+          this.snapshotRecordsBeforeLoadedRange.add(key);
+        } else {
           return v.push(p);
         }
       } catch (err) {
