@@ -257,6 +257,13 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
     [tab_is_visible],
   );
 
+  // Printing uses the content view while the preview is on the content
+  // origin (the rmd/qmd/rst views share this frame but not this actions API).
+  useEffect(() => {
+    (actions as any)?.setContentOriginReady?.(isolated);
+    return () => (actions as any)?.setContentOriginReady?.(false);
+  }, [actions, isolated]);
+
   // A click inside a cross-origin frame is invisible here, but focus moves
   // into the frame, so the window blurs.
   useEffect(() => {

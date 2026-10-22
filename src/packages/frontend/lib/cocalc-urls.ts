@@ -31,6 +31,26 @@ export function fileURL({
   return url;
 }
 
+// The hub page that shows a project file in a sandboxed frame on the
+// project's content origin (/content-view, hub/servers/app/content-view.ts).
+export function contentViewURL({
+  project_id,
+  path,
+  print = false,
+}: {
+  project_id: string;
+  path: string;
+  print?: boolean;
+}): string {
+  const url = join(
+    appBasePath,
+    "content-view",
+    project_id,
+    encode_path(path.replace(/^\/+/, "")),
+  );
+  return print ? `${url}?print=1` : url;
+}
+
 export function projectReadFileURL({
   project_id,
   path,
