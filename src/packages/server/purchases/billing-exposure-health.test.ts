@@ -6,6 +6,7 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { ensureProjectHostMetricsSamplesSchema } from "@cocalc/database/postgres/project-host-metrics";
 import { uuid } from "@cocalc/util/misc";
+import { hasUsageSubscription } from "./stripe-usage-based-subscription";
 import {
   billingExposureHealthDetails,
   billingExposureHealthLevel,
@@ -103,7 +104,7 @@ describe("billing exposure levels", () => {
     };
     expect(billingExposureHealthLevel(health)).toBe("healthy");
     expect(billingExposureHealthDetails(health)).toEqual([
-      "Post-paid (monthly collection) accounts below -$20.00, expected between collections: 1 account, $900.00; p -$900.00",
+      "Post-paid accounts (collected later) below -$20.00, expected between collections: 1 account, $900.00; p -$900.00",
     ]);
   });
 });
@@ -113,6 +114,12 @@ describe("getBillingExposureHealth", () => {
   const small = uuid();
   const postpaid = uuid();
   const meteredOwner = uuid();
+  const blocked = uuid();
+  const legacy = uuid();
+  const optedOut = uuid();
+  const banned = uuid();
+  const deleted = uuid();
+  const fenced = uuid();
   const stuckHost = uuid();
   const backedUpHost = uuid();
   const notYetDueHost = uuid();
@@ -192,23 +199,78 @@ describe("getBillingExposureHealth", () => {
     await initEphemeralDatabase({ reset: true });
     await ensureProjectHostMetricsSamplesSchema();
     now = Date.now();
-    for (const account_id of [prepaid, small, postpaid, meteredOwner]) {
+    for (const account_id of [
+      prepaid,
+      small,
+      postpaid,
+      meteredOwner,
+      blocked,
+      legacy,
+      optedOut,
+      banned,
+      deleted,
+      fenced,
+    ]) {
       await getPool().query("INSERT INTO accounts (account_id) VALUES ($1)", [
         account_id,
       ]);
     }
+    const consent = '{"enabled":true,"terms_version":1}';
+    for (const account_id of [postpaid, blocked, banned, deleted, fenced]) {
+      await getPool().query(
+        "UPDATE accounts SET monthly_collection=$2::jsonb WHERE account_id=$1",
+        [account_id, consent],
+      );
+    }
+    // Collection is blocked while a statement needs review: not post-paid.
     await getPool().query(
-      `UPDATE accounts SET monthly_collection='{"enabled":true,"terms_version":"1"}'::jsonb
-        WHERE account_id=$1`,
-      [postpaid],
+      `INSERT INTO statements(interval,time,account_id,balance,total_charges,num_charges,total_credits,num_credits,monthly_collection)
+       VALUES('month',NOW(),$1,-40,40,1,0,0,'{"state":"requires_review"}'::jsonb)`,
+      [blocked],
     );
+    // Legacy usage subscription without explicit consent: post-paid.
+    await getPool().query(
+      "UPDATE accounts SET stripe_usage_subscription='sub_legacy' WHERE account_id=$1",
+      [legacy],
+    );
+    // An explicit opt-out overrides the legacy subscription: not post-paid.
+    await getPool().query(
+      `UPDATE accounts SET stripe_usage_subscription='sub_legacy',
+              monthly_collection='{"enabled":false,"terms_version":1}'::jsonb
+        WHERE account_id=$1`,
+      [optedOut],
+    );
+    // Consent does not make a banned or deleted account collectible: the
+    // collection worker skips them.
+    await getPool().query(
+      "UPDATE accounts SET banned=TRUE WHERE account_id=$1",
+      [banned],
+    );
+    await getPool().query(
+      "UPDATE accounts SET deleted=TRUE WHERE account_id=$1",
+      [deleted],
+    );
+    await getPool().query(
+      "INSERT INTO billing_authority_account_fences (account_id, frozen) VALUES ($1, TRUE)",
+      [fenced],
+    );
+    for (const account_id of [
+      blocked,
+      legacy,
+      optedOut,
+      banned,
+      deleted,
+      fenced,
+    ]) {
+      await purchase(account_id, { cost: 40 });
+    }
     // A cached positive balance must not hide the live debt.
     await getPool().query(
       "UPDATE accounts SET balance=100 WHERE account_id=$1",
       [prepaid],
     );
-    // -$30 live: $50 charge minus a $20 credit.
-    await purchase(prepaid, { cost: 50 });
+    // -$60 live: $80 charge minus a $20 credit.
+    await purchase(prepaid, { cost: 80 });
     await purchase(prepaid, { cost: -20 });
     // -$5: negative but above the threshold.
     await purchase(small, { cost: 5 });
@@ -275,14 +337,32 @@ describe("getBillingExposureHealth", () => {
 
   it("reports live balances, open metered usage and stuck or idle hosts", async () => {
     const health = await getBillingExposureHealth();
-    expect(health.negative).toEqual({
-      count: 1,
-      total_usd: 30,
-      worst: [{ account_id: prepaid, balance: -30 }],
+    expect(health.negative.count).toBe(6);
+    expect(health.negative.total_usd).toBe(260);
+    // The five most negative, worst first.
+    expect(health.negative.worst).toHaveLength(5);
+    expect(health.negative.worst[0]).toEqual({
+      account_id: prepaid,
+      balance: -60,
     });
-    expect(health.postpaid_negative.count).toBe(1);
-    expect(health.postpaid_negative.worst[0].account_id).toBe(postpaid);
-    expect(health.postpaid_negative.total_usd).toBeGreaterThan(500);
+    for (const { account_id, balance } of health.negative.worst.slice(1)) {
+      expect([blocked, optedOut, banned, deleted, fenced]).toContain(
+        account_id,
+      );
+      expect(balance).toBe(-40);
+    }
+    expect(health.postpaid_negative.count).toBe(2);
+    expect(
+      health.postpaid_negative.worst.map(({ account_id }) => account_id),
+    ).toEqual([postpaid, legacy]);
+    expect(health.postpaid_negative.total_usd).toBeGreaterThan(540);
+    // Post-paid here means exactly what the collection path considers
+    // collectible.
+    for (const account_id of [prepaid, postpaid, blocked, legacy, optedOut]) {
+      expect(await hasUsageSubscription(account_id)).toBe(
+        account_id === postpaid || account_id === legacy,
+      );
+    }
 
     expect(health.open_metered.count).toBe(1);
     expect(health.open_metered.cost_per_hour_usd).toBe(2);
@@ -308,16 +388,23 @@ describe("getBillingExposureHealth", () => {
 
     expect(billingExposureHealthLevel(health)).toBe("critical");
     expect(billingExposureHealthSummary(health)).toBe(
-      "1 account below -$20.00 ($30.00 owed); 1 open metered purchase with a negative owner balance ($2.00/hour); 1 billing-blocked host past deprovision without a successful final backup; 1 running dedicated host with no running project for 3 days.",
+      "6 accounts below -$20.00 ($260.00 owed); 1 open metered purchase with a negative owner balance ($2.00/hour); 1 billing-blocked host past deprovision without a successful final backup; 1 running dedicated host with no running project for 3 days.",
     );
     const details = billingExposureHealthDetails(health);
-    expect(details[0]).toBe(`Most negative accounts: ${prepaid} -$30.00`);
+    expect(details[0]).toMatch(
+      new RegExp(`^Most negative accounts: ${prepaid} -\\$60\\.00, `),
+    );
     expect(details.join("\n")).toContain(stuckHost);
     expect(details.join("\n")).toContain(idleHost);
   });
 
   it("stops reporting once the debt is paid and the host is used", async () => {
-    await purchase(prepaid, { cost: -30 });
+    await purchase(prepaid, { cost: -60 });
+    await purchase(blocked, { cost: -40 });
+    await purchase(optedOut, { cost: -40 });
+    await purchase(banned, { cost: -40 });
+    await purchase(deleted, { cost: -40 });
+    await purchase(fenced, { cost: -40 });
     await purchase(meteredOwner, { cost: -1000 });
     await getPool().query(
       `UPDATE project_hosts

@@ -22,6 +22,7 @@ healthy otherwise.
 */
 
 import getPool from "@cocalc/database/pool";
+import { ensureProjectHostMetricsSamplesSchema } from "@cocalc/database/postgres/project-host-metrics";
 import { billingAccountsTable } from "./billing-account";
 import { COST_OR_METERED_COST } from "./get-balance";
 
@@ -163,7 +164,7 @@ export function billingExposureHealthDetails(
   }
   if (health.postpaid_negative.count > 0) {
     details.push(
-      `Post-paid (monthly collection) accounts below -${usd(NEGATIVE_BALANCE_THRESHOLD_USD)}, expected between collections: ${plural(health.postpaid_negative.count, "account")}, ${usd(health.postpaid_negative.total_usd)}; ${accounts(health.postpaid_negative.worst).join(", ")}`,
+      `Post-paid accounts (collected later) below -${usd(NEGATIVE_BALANCE_THRESHOLD_USD)}, expected between collections: ${plural(health.postpaid_negative.count, "account")}, ${usd(health.postpaid_negative.total_usd)}; ${accounts(health.postpaid_negative.worst).join(", ")}`,
     );
   }
   return details;
@@ -204,10 +205,35 @@ async function getBalanceExposure(
          FROM purchases
         GROUP BY account_id
      ), negative AS (
+       -- Post-paid means collectible later: an active account (not banned,
+       -- deleted or fenced, as the monthly collection worker requires) that
+       -- hasUsageSubscription in stripe-usage-based-subscription.ts accepts:
+       -- explicit monthly collection consent without a blocked collection,
+       -- else legacy enrollment in a stripe usage subscription.
        SELECT l.account_id, l.balance,
-              COALESCE(a.monthly_collection->>'enabled' = 'true'
-                       AND a.monthly_collection->>'terms_version' = '1',
-                       FALSE) AS postpaid
+              COALESCE(
+                CASE
+                  -- The collection worker skips these, so they are never
+                  -- collected.
+                  WHEN a.banned IS TRUE OR a.deleted IS TRUE
+                       OR EXISTS (
+                         SELECT 1 FROM billing_authority_account_fences f
+                          WHERE f.account_id = l.account_id AND f.frozen)
+                  THEN FALSE
+                  WHEN a.monthly_collection IS NOT NULL
+                       AND a.monthly_collection <> 'null'::jsonb
+                  THEN a.monthly_collection->'enabled' = 'true'::jsonb
+                       AND a.monthly_collection->'terms_version' = '1'::jsonb
+                       AND NOT EXISTS (
+                         SELECT 1 FROM statements st
+                          WHERE st.account_id = l.account_id
+                            AND st.paid_purchase_id IS NULL
+                            AND (st.monthly_collection->>'state' = 'requires_review'
+                                 OR (st.monthly_collection->>'state' IN ('claimed','issued')
+                                     AND st.automatic_payment < clock_timestamp() - interval '10 minutes')))
+                  ELSE COALESCE(a.stripe_usage_subscription, '') <> ''
+                END,
+                FALSE) AS postpaid
          FROM live l
          LEFT JOIN ${table} a ON a.account_id = l.account_id
         WHERE l.balance < 0
@@ -224,24 +250,31 @@ async function getBalanceExposure(
          WHERE NOT postpaid AND balance < -$1::numeric)::TEXT AS negative_count,
        (SELECT COALESCE(-SUM(balance), 0) FROM negative
          WHERE NOT postpaid AND balance < -$1::numeric)::TEXT AS negative_total,
-       (SELECT COALESCE(json_agg(w ORDER BY w.balance), '[]'::json)
-          FROM (SELECT account_id, balance::TEXT AS balance FROM negative
+       (SELECT COALESCE(json_agg(
+            json_build_object('account_id', w.account_id, 'balance', w.balance::TEXT)
+            ORDER BY w.balance, w.account_id), '[]'::json)
+          FROM (SELECT account_id, balance FROM negative
                  WHERE NOT postpaid AND balance < -$1::numeric
                  ORDER BY balance, account_id LIMIT $2) w) AS negative_worst,
        (SELECT COUNT(*) FROM negative
          WHERE postpaid AND balance < -$1::numeric)::TEXT AS postpaid_count,
        (SELECT COALESCE(-SUM(balance), 0) FROM negative
          WHERE postpaid AND balance < -$1::numeric)::TEXT AS postpaid_total,
-       (SELECT COALESCE(json_agg(w ORDER BY w.balance), '[]'::json)
-          FROM (SELECT account_id, balance::TEXT AS balance FROM negative
+       (SELECT COALESCE(json_agg(
+            json_build_object('account_id', w.account_id, 'balance', w.balance::TEXT)
+            ORDER BY w.balance, w.account_id), '[]'::json)
+          FROM (SELECT account_id, balance FROM negative
                  WHERE postpaid AND balance < -$1::numeric
                  ORDER BY balance, account_id LIMIT $2) w) AS postpaid_worst,
        (SELECT COUNT(*) FROM open_metered)::TEXT AS open_metered_count,
        (SELECT COALESCE(SUM(cost_per_hour), 0) FROM open_metered)::TEXT
          AS open_metered_cost_per_hour,
        (SELECT MIN(period_start) FROM open_metered) AS open_metered_oldest,
-       (SELECT COALESCE(json_agg(account_id), '[]'::json)
-          FROM (SELECT account_id FROM open_metered
+       (SELECT COALESCE(
+                 json_agg(o.account_id ORDER BY o.cost_per_hour DESC, o.account_id),
+                 '[]'::json)
+          FROM (SELECT account_id, SUM(cost_per_hour) AS cost_per_hour
+                  FROM open_metered
                  GROUP BY account_id
                  ORDER BY SUM(cost_per_hour) DESC, account_id LIMIT $2) o)
          AS open_metered_accounts`,
@@ -337,6 +370,9 @@ async function getIdleHosts(db: Queryable): Promise<BillingExposureIdleHost[]> {
 }
 
 export async function getBillingExposureHealth(): Promise<BillingExposureHealth> {
+  // The metrics table is created on first use; make sure it exists before the
+  // read-only transaction queries it.
+  await ensureProjectHostMetricsSamplesSchema();
   const client = await getPool().connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
