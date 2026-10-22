@@ -131,11 +131,12 @@ describe("lookupQgroup", () => {
       });
       expect(fresh!.row.qgroupid).toBe("0/400");
       expect(scans()).toBe(2);
-      // one that doesn't exist: not found, without reading again at once
+      // one that doesn't exist: not found, after one more read (the one it
+      // had began before it did), not more
       expect(
         await lookupQgroup({ mount: MOUNT, getSubvolumeId: async () => 999 }),
       ).toBeUndefined();
-      expect(scans()).toBe(2);
+      expect(scans()).toBe(3);
     } finally {
       spy.mockRestore();
     }
@@ -301,6 +302,41 @@ describe("a lookup joining a read that began before it", () => {
       await new Promise((r) => setImmediate(r));
       // then a subvolume is made, and looked up
       spy.mockReturnValue(now + 6_000);
+      scanText = `${SCAN}0/400 16384 16384 none - - project-new\n`;
+      const lookup = lookupQgroup({
+        mount: MOUNT,
+        getSubvolumeId: async () => 400,
+      });
+      await new Promise((r) => setImmediate(r));
+      finish();
+      expect(await other).toBeUndefined();
+      expect((await lookup)!.row.qgroupid).toBe("0/400");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("a lookup joining a read begun in the same millisecond", () => {
+  it("still reads again if the subvolume isn't in it", async () => {
+    // (the clock doesn't move: a read and a lookup in the same millisecond)
+    const spy = jest.spyOn(Date, "now").mockReturnValue(1_000_000);
+    let finish!: () => void;
+    try {
+      await getQgroupScan(MOUNT);
+      spy.mockReturnValue(2_000_000);
+      btrfsMock.mockImplementationOnce(
+        async () =>
+          await new Promise((resolve) => {
+            finish = () => resolve({ stdout: SCAN, stderr: "" });
+          }),
+      );
+      const other = lookupQgroup({
+        mount: MOUNT,
+        getSubvolumeId: async () => 999,
+      });
+      await new Promise((r) => setImmediate(r));
+      // made, then looked up, within that millisecond
       scanText = `${SCAN}0/400 16384 16384 none - - project-new\n`;
       const lookup = lookupQgroup({
         mount: MOUNT,
