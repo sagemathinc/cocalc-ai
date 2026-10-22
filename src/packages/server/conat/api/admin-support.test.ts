@@ -89,8 +89,10 @@ jest.mock("@cocalc/server/crm/outreach/store", () => ({
   loadOutreachConfiguration: () => mockOutreachConfig(),
 }));
 const mockClusterAccount = jest.fn();
+const mockClusterAccountByEmail = jest.fn(async () => null);
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountById: (id: string) => mockClusterAccount(id),
+  getClusterAccountByEmail: (email: string) => mockClusterAccountByEmail(email),
 }));
 const suppressionRows: Array<{ reason: string }> = [];
 let suppressionError: Error | undefined;
@@ -1578,8 +1580,13 @@ describe("admin support API", () => {
 
     it("refuses suppressed addresses and warns about outreach opt-outs", async () => {
       zendesk();
-      suppressionRows.push({ reason: "hard_bounce" });
-      await expect(planCreate(base)).rejects.toThrow("is suppressed");
+      for (const reason of ["hard_bounce", "legal", "manual", "other"]) {
+        suppressionRows.length = 0;
+        suppressionRows.push({ reason });
+        await expect(planCreate(base)).rejects.toThrow(
+          `is suppressed (${reason})`,
+        );
+      }
       suppressionRows.length = 0;
       suppressionRows.push({ reason: "opt_out" });
       const plan = await planCreate(base);
@@ -1594,16 +1601,30 @@ describe("admin support API", () => {
       await expect(planCreate(base)).rejects.toThrow("relation does not exist");
     });
 
-    it("checks suppressions on the CRM person, email and organization too", async () => {
+    it("checks suppressions for the requester account's CRM person links", async () => {
       zendesk();
       await planCreate(base);
-      const sql = poolQuery.mock.calls
-        .map(([q]) => `${q}`)
-        .find((q) => q.includes("FROM crm_contact_suppressions"))!;
-      expect(sql).toContain("crm_person_emails");
-      expect(sql).toContain("scope='person'");
-      expect(sql).toContain("scope='organization'");
-      expect(sql).toContain("person_email_id");
+      const suppressionQuery = () =>
+        poolQuery.mock.calls.filter(([q]) =>
+          `${q}`.includes("FROM crm_contact_suppressions"),
+        );
+      expect(suppressionQuery().at(-1)?.[1]).toEqual([
+        "lee@korea.ac.kr",
+        "korea.ac.kr",
+        [ACCOUNT],
+      ]);
+      // By email: the account using that address is checked too.
+      mockClusterAccountByEmail.mockResolvedValueOnce({
+        account_id: ACCOUNT,
+      } as any);
+      const { requester_account_id: _, ...byEmail } = base;
+      await planCreate({ ...byEmail, requester_email: "Lee@Korea.ac.kr" });
+      expect(mockClusterAccountByEmail).toHaveBeenCalledWith("lee@korea.ac.kr");
+      expect(suppressionQuery().at(-1)?.[1]).toEqual([
+        "lee@korea.ac.kr",
+        "korea.ac.kr",
+        [ACCOUNT],
+      ]);
     });
 
     it("forces a new review when an opt-out appears after planning", async () => {

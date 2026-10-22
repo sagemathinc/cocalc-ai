@@ -70,6 +70,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { activeSuppressionReasons } from "@cocalc/server/support/outgoing-suppressions";
 import getZendeskClient from "@cocalc/server/support/zendesk-client";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 
@@ -3334,15 +3335,11 @@ async function readClusterBlob(uuid: string): Promise<Buffer | undefined> {
 // plan, human approval, then an idempotent, audited commit.
 
 const CREATE_TAG = "cocalc_support_outgoing";
-// Suppressions that mean mail to this address cannot or must not be sent. An
-// outreach opt-out only stops marketing outreach, so it is only a warning for
-// a support message.
-const BLOCKING_SUPPRESSIONS = new Set([
-  "hard_bounce",
-  "complaint",
-  "invalid_address",
-  "legal",
-]);
+// Every suppression blocks, including manual and other (an operator decided
+// this contact must not be mailed) and any reason added later, except an
+// outreach opt-out: that only stops marketing outreach, so for a necessary
+// support message it is a warning bound into the reviewed payload hash.
+const WARNING_ONLY_SUPPRESSIONS = new Set(["opt_out"]);
 
 interface CreateConfig {
   submitter_id: number;
@@ -3406,10 +3403,14 @@ function normalizedEmail(value: unknown): string {
   return email;
 }
 
+// The requester, plus every account whose verified CRM person links must be
+// checked for suppressions: the given account, or the account using the
+// given email.
 async function resolveRequester(opts: AdminSupportCreatePlanRequest): Promise<{
   email: string;
   name?: string;
   account_id?: string;
+  lookup_account_ids: string[];
 }> {
   const accountId = `${opts.requester_account_id ?? ""}`.trim();
   const rawEmail = `${opts.requester_email ?? ""}`.trim();
@@ -3420,7 +3421,15 @@ async function resolveRequester(opts: AdminSupportCreatePlanRequest): Promise<{
   }
   let name = `${opts.requester_name ?? ""}`.trim().slice(0, 200) || undefined;
   if (!accountId) {
-    return { email: normalizedEmail(rawEmail), name };
+    const email = normalizedEmail(rawEmail);
+    const { getClusterAccountByEmail } =
+      await import("@cocalc/server/inter-bay/accounts");
+    const account = await getClusterAccountByEmail(email);
+    return {
+      email,
+      name,
+      lookup_account_ids: account?.account_id ? [account.account_id] : [],
+    };
   }
   if (!isValidUUID(accountId)) {
     throw new Error("requester_account_id must be an account id");
@@ -3444,34 +3453,8 @@ async function resolveRequester(opts: AdminSupportCreatePlanRequest): Promise<{
     email: normalizedEmail(account.email_address),
     name,
     account_id: accountId,
+    lookup_account_ids: [accountId],
   };
-}
-
-// Every active suppression that applies to this address: the email and its
-// domain, and any CRM person, person email or organization it belongs to (the
-// same scopes outreach honors). A read failure is an error, never "no
-// suppressions".
-async function suppressionsFor(email: string): Promise<string[]> {
-  const domain = email.split("@")[1];
-  const { rows } = await getPool().query(
-    `WITH emails AS (
-       SELECT id, person_id FROM crm_person_emails WHERE normalized_email=$1
-     ), orgs AS (
-       SELECT organization_id FROM crm_organization_people
-        WHERE person_id IN (SELECT person_id FROM emails)
-     )
-     SELECT DISTINCT reason FROM crm_contact_suppressions
-      WHERE active AND (
-        (scope='email' AND normalized_scope_value=$1)
-        OR (scope='domain' AND normalized_scope_value=$2)
-        OR (scope='person' AND person_id IN (SELECT person_id FROM emails))
-        OR (scope='organization'
-            AND organization_id IN (SELECT organization_id FROM orgs))
-        OR person_email_id IN (SELECT id FROM emails))
-      ORDER BY reason`,
-    [email, domain],
-  );
-  return rows.map((row) => `${row.reason}`);
 }
 
 function createPayloadHash(plan: {
@@ -3517,12 +3500,17 @@ async function buildCreatePlan(opts: AdminSupportCreatePlanRequest): Promise<{
     throw new Error(`invalid status '${status}'`);
   }
   const tags = [...new Set([CREATE_TAG, ...normalizedTags(opts.add_tags)])];
-  const requester = await resolveRequester(opts);
-  const suppressions = await suppressionsFor(requester.email);
-  const blocking = suppressions.filter((r) => BLOCKING_SUPPRESSIONS.has(r));
+  const { lookup_account_ids, ...requester } = await resolveRequester(opts);
+  const suppressions = await activeSuppressionReasons({
+    email: requester.email,
+    account_ids: lookup_account_ids,
+  });
+  const blocking = suppressions.filter(
+    (r) => !WARNING_ONLY_SUPPRESSIONS.has(r),
+  );
   if (blocking.length) {
     throw new Error(
-      `${requester.email} is suppressed (${blocking.join(", ")}); mail to this address must not be sent`,
+      `${requester.email} is suppressed (${blocking.join(", ")}); mail to this address must not be sent unless the suppression is reviewed and lifted in the CRM`,
     );
   }
   const warnings = suppressions.includes("opt_out")
