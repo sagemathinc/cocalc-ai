@@ -60,6 +60,7 @@ describe("read state", () => {
     expect(markItemRead(items, two, 1, {})).toEqual({
       state: {},
       watermarkCount: 3,
+      unmoved: expect.any(Object),
     });
   });
 
@@ -75,6 +76,7 @@ describe("read state", () => {
     expect(markItemRead(items, two, 1, state)).toEqual({
       state: {},
       watermarkCount: 4,
+      unmoved: expect.any(Object),
     });
   });
 
@@ -86,6 +88,7 @@ describe("read state", () => {
     expect(markItemRead(items, two, 1, markItemUnread(three, {}))).toEqual({
       state: { u: ["p3"] },
       watermarkCount: 3,
+      unmoved: expect.any(Object),
     });
     // Before the watermark it stays: p1 unread with p2 opened past it.
     expect(markItemRead(items, three, 1, unread)).toEqual({
@@ -105,7 +108,12 @@ describe("read state", () => {
   it("mark all read keeps archives and drops the exceptions", () => {
     expect(
       markAllRead(items, { r: { p3: "p3" }, u: ["p1"], a: { p2: "p2" } }),
-    ).toEqual({ state: { a: { p2: "p2" } }, watermarkCount: 4 });
+    ).toEqual({
+      state: { a: { p2: "p2" } },
+      watermarkCount: 4,
+      // If the watermark cannot move, nothing changes.
+      unmoved: { r: { p3: "p3" }, u: ["p1"], a: { p2: "p2" } },
+    });
   });
 
   it("keeps each list bounded, newest last", () => {
@@ -176,11 +184,27 @@ describe("interleaved histories", () => {
   it("the watermark moves only over messages whose items are read", () => {
     // Reading A (both its messages) leaves B's message unread between them.
     const a = markItemRead(items, items[0], -1, {});
-    expect(a).toEqual({ state: { r: { pa: "ra" } }, watermarkCount: 1 });
+    expect(a).toEqual({
+      state: { r: { pa: "ra" } },
+      watermarkCount: 1,
+      unmoved: expect.any(Object),
+    });
     // Then B: everything is read, in order.
     expect(markItemRead(items, items[1], 0, a.state)).toEqual({
       state: {},
       watermarkCount: 3,
+      unmoved: expect.any(Object),
+    });
+  });
+});
+
+describe("when the watermark cannot move", () => {
+  it("the change says what to keep: the exceptions as they were", () => {
+    const items = readerItems([person("p1"), person("p2")]);
+    expect(markItemRead(items, items[0], -1, { r: { p2: "p2" } })).toEqual({
+      state: {},
+      watermarkCount: 2,
+      unmoved: { r: { p1: "p1", p2: "p2" } },
     });
   });
 });
