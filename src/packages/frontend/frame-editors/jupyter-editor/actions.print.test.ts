@@ -46,6 +46,10 @@ describe("notebook Print", () => {
         .spyOn(jupyter, "setState")
         .mockImplementation(() => {});
       jest.spyOn(jupyter, "toHTML").mockResolvedValue("<html>Notebook</html>");
+      // The passive writer itself is tested in browser-actions-nbconvert.
+      const writePrintDocument = jest
+        .spyOn(jupyter, "writePrintDocument")
+        .mockImplementation(() => {});
       const frame: any = {
         jupyter_actions: jupyter,
         print: JupyterEditorActions.prototype.print,
@@ -66,7 +70,8 @@ describe("notebook Print", () => {
       const format = setState.mock.calls[0][0].nbconvert_dialog.to;
       expect(format).toBe("cocalc-pdf");
       await jupyter.nbconvertToHtml(format);
-      expect(popup.document.write).toHaveBeenCalledWith(
+      expect(writePrintDocument).toHaveBeenCalledWith(
+        popup,
         "<html>Notebook</html>",
       );
       await popup.onload();

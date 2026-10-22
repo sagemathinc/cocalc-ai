@@ -184,9 +184,16 @@ describe("local HTML and PDF delivery", () => {
         getStore: jest.fn(() => undefined),
         removeActions: jest.fn(),
       } as any),
-      // These tests cover the delivery and timing logic on the trusted (raw
-      // write) path; the passive path is tested separately below.
-      { isClosed: jest.fn(() => false), isPassiveExport: () => false },
+      // These tests cover the delivery and timing logic, with a stand-in
+      // writer; the passive writer is tested separately below.
+      {
+        isClosed: jest.fn(() => false),
+        isPassiveExport: () => false,
+        writePrintDocument: (popup: any, html: string) => {
+          popup.document.open();
+          popup.document.write(html);
+        },
+      },
       overrides,
     );
   }
@@ -480,47 +487,50 @@ describe("local HTML and PDF delivery", () => {
   });
 });
 
-describe("passive print of an untrusted notebook", () => {
+describe("passive print", () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it("writes the export through the passive-document boundary", async () => {
-    const iframe = document.createElement("iframe");
-    document.body.appendChild(iframe);
-    const doc = iframe.contentDocument!;
-    Object.defineProperty(doc, "images", { value: [] });
-    const popup: any = { document: doc, print: jest.fn(), close: jest.fn() };
-    jest.spyOn(window, "open").mockReturnValue(popup);
-    const target = Object.assign(
-      new JupyterActions("export-test", {
-        getStore: jest.fn(() => undefined),
-        removeActions: jest.fn(),
-      } as any),
-      {
-        isClosed: jest.fn(() => false),
-        isPassiveExport: () => true,
-        setState: jest.fn(),
-        toHTML: jest.fn(
-          async () =>
-            `<html><head><title>n.ipynb</title><link rel="stylesheet" href="https://cdn.example/k.css"></head><body><p>cell</p><meta http-equiv="refresh" content="0;url=/x"><iframe src="/x"></iframe><script>parent.__x=1</script><img src="a.png" onerror="parent.__x=2"><link rel="stylesheet" href="https://e.example/body.css"></body></html>`,
+  it.each([true, false])(
+    "writes the export through the passive-document boundary (untrusted: %s)",
+    async (passive) => {
+      const iframe = document.createElement("iframe");
+      document.body.appendChild(iframe);
+      const doc = iframe.contentDocument!;
+      Object.defineProperty(doc, "images", { value: [] });
+      const popup: any = { document: doc, print: jest.fn(), close: jest.fn() };
+      jest.spyOn(window, "open").mockReturnValue(popup);
+      const target = Object.assign(
+        new JupyterActions("export-test", {
+          getStore: jest.fn(() => undefined),
+          removeActions: jest.fn(),
+        } as any),
+        {
+          isClosed: jest.fn(() => false),
+          isPassiveExport: () => passive,
+          setState: jest.fn(),
+          toHTML: jest.fn(
+            async () =>
+              `<html><head><title>n.ipynb</title><link rel="stylesheet" href="https://cdn.example/k.css"></head><body><p>cell</p><meta http-equiv="refresh" content="0;url=/x"><iframe src="/x"></iframe><script>parent.__x=1</script><img src="a.png" onerror="parent.__x=2"><link rel="stylesheet" href="https://e.example/body.css"></body></html>`,
+          ),
+        },
+      );
+      await target.nbconvertToHtml("cocalc-pdf");
+      expect(doc.head.firstElementChild?.getAttribute("http-equiv")).toBe(
+        "Content-Security-Policy",
+      );
+      expect(doc.title).toBe("n.ipynb");
+      expect(
+        Array.from(doc.head.querySelectorAll("link")).map((l) =>
+          l.getAttribute("href"),
         ),
-      },
-    );
-    await target.nbconvertToHtml("cocalc-pdf");
-    expect(doc.head.firstElementChild?.getAttribute("http-equiv")).toBe(
-      "Content-Security-Policy",
-    );
-    expect(doc.title).toBe("n.ipynb");
-    expect(
-      Array.from(doc.head.querySelectorAll("link")).map((l) =>
-        l.getAttribute("href"),
-      ),
-    ).toEqual(["https://cdn.example/k.css"]);
-    expect(doc.body.textContent).toContain("cell");
-    expect(
-      doc.querySelector("meta[http-equiv=refresh], iframe, script"),
-    ).toBeNull();
-    expect(doc.querySelector("img")?.hasAttribute("onerror")).toBe(false);
-    await popup.onload?.();
-    expect(popup.print).toHaveBeenCalledTimes(1);
-  });
+      ).toEqual(["https://cdn.example/k.css"]);
+      expect(doc.body.textContent).toContain("cell");
+      expect(
+        doc.querySelector("meta[http-equiv=refresh], iframe, script"),
+      ).toBeNull();
+      expect(doc.querySelector("img")?.hasAttribute("onerror")).toBe(false);
+      await popup.onload?.();
+      expect(popup.print).toHaveBeenCalledTimes(1);
+    },
+  );
 });
