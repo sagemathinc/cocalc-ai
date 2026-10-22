@@ -234,6 +234,10 @@ export class SharedBrowserServer {
   // The tab each view key (e.g. an editor frame) last showed, so a frame
   // that reloads comes back to its own tab.
   private viewTabs = new Map<string, string>();
+  // Views (by key) that have opened this browser before: one coming back (a
+  // reconnect after sleep or a network blip, a reload, a card remounting)
+  // is not someone opening it, so it never takes it from an agent.
+  private seenViews = new Set<string>();
   private agentSockets = new Set<WebSocket>();
   private held: Array<{
     client: WebSocket;
@@ -1149,7 +1153,13 @@ export class SharedBrowserServer {
     this.state.viewers = this.views.size;
     if (this.handBackTimer) clearTimeout(this.handBackTimer);
     this.handBackTimer = null;
-    if (this.options.humanFirst && this.agentSockets.size === 0)
+    const returning = !!key && this.seenViews.has(key);
+    if (key) {
+      this.seenViews.add(key);
+      while (this.seenViews.size > 1000)
+        this.seenViews.delete(this.seenViews.values().next().value!);
+    }
+    if (this.options.humanFirst && this.agentSockets.size === 0 && !returning)
       this.setDriver("human");
     channel.send({ type: "state", state: this.stateFor(tab) });
     this.sendSelection(channel);

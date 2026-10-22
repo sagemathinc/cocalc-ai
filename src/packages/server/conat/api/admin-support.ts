@@ -15,6 +15,10 @@ import getLogger from "@cocalc/backend/logger";
 import type {
   AdminSupportCategory,
   AdminSupportAttachmentReference,
+  AdminSupportCreatePlanRequest,
+  AdminSupportCreatePlanResponse,
+  AdminSupportCreateRequest,
+  AdminSupportCreateResponse,
   AdminSupportBlobDocumentReference,
   AdminSupportGetAttachmentRequest,
   AdminSupportGetAttachmentResponse,
@@ -66,6 +70,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { activeSuppressionReasons } from "@cocalc/server/support/outgoing-suppressions";
 import getZendeskClient from "@cocalc/server/support/zendesk-client";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 
@@ -129,7 +134,7 @@ type ZendeskMergeJob = {
   results?: unknown;
 };
 
-type SupportMutationOperation = "update" | "merge" | "spam";
+type SupportMutationOperation = "update" | "merge" | "spam" | "create";
 
 let activeZendeskReads = 0;
 const MAX_ACTIVE_ZENDESK_READS = 2;
@@ -350,11 +355,11 @@ async function ensureMutationSchema(): Promise<void> {
   mutationSchemaReady ??= getPool().query(`
     CREATE TABLE IF NOT EXISTS ${MUTATION_TABLE} (
       idempotency_key TEXT PRIMARY KEY,
-      operation TEXT NOT NULL CHECK (operation IN ('update', 'merge', 'spam')),
+      operation TEXT NOT NULL CHECK (operation IN ('update', 'merge', 'spam', 'create')),
       account_id UUID NOT NULL,
       payload_hash TEXT NOT NULL,
       audit_id UUID NOT NULL,
-      ticket_id BIGINT NOT NULL,
+      ticket_id BIGINT,
       source_ticket_id BIGINT,
       status TEXT NOT NULL CHECK (
         status IN ('reserved', 'remote_started', 'succeeded', 'rejected', 'indeterminate')
@@ -375,15 +380,17 @@ async function ensureMutationSchema(): Promise<void> {
         FROM pg_constraint
         WHERE conrelid = '${MUTATION_TABLE}'::regclass
           AND conname = 'admin_support_mutations_operation_check'
-          AND pg_get_constraintdef(oid) LIKE '%spam%'
+          AND pg_get_constraintdef(oid) LIKE '%create%'
       ) THEN
         ALTER TABLE ${MUTATION_TABLE}
           DROP CONSTRAINT IF EXISTS admin_support_mutations_operation_check;
         ALTER TABLE ${MUTATION_TABLE}
           ADD CONSTRAINT admin_support_mutations_operation_check
-          CHECK (operation IN ('update', 'merge', 'spam'));
+          CHECK (operation IN ('update', 'merge', 'spam', 'create'));
       END IF;
     END $$;
+    -- A created ticket has no id until Zendesk returns it.
+    ALTER TABLE ${MUTATION_TABLE} ALTER COLUMN ticket_id DROP NOT NULL;
   `) as unknown as Promise<void>;
   await mutationSchemaReady;
 }
@@ -395,7 +402,11 @@ type MutationLedgerRow = {
   payload_hash: string;
   audit_id: string;
   status:
-    "reserved" | "remote_started" | "succeeded" | "rejected" | "indeterminate";
+    | "reserved"
+    | "remote_started"
+    | "succeeded"
+    | "rejected"
+    | "indeterminate";
   safe_response?: unknown;
   error?: string | null;
   updated_at?: string | Date;
@@ -415,7 +426,7 @@ async function reserveMutation({
   accountId: string;
   hash: string;
   auditId: string;
-  ticketId: number;
+  ticketId: number | null;
   sourceTicketId?: number;
 }): Promise<{ row: MutationLedgerRow; created: boolean }> {
   await ensureMutationSchema();
@@ -1205,7 +1216,9 @@ async function recordAudit({
     | "plan_merge"
     | "merge"
     | "plan_spam"
-    | "spam";
+    | "spam"
+    | "plan_create"
+    | "create";
   reason: string;
   ticketId?: number;
   sinceMinutes?: number;
@@ -3308,4 +3321,501 @@ async function readClusterBlob(uuid: string): Promise<Buffer | undefined> {
     timeout: 60_000,
   }).getBlob({ uuid });
   return data == null ? undefined : Buffer.from(data);
+}
+
+// ---------------------------------------------------------------------------
+// New outgoing tickets.
+//
+// Support can open a ticket to contact a customer who has no open ticket
+// (e.g. to tell them about a billing change). The ticket comes from the shared
+// Zendesk support identity that customer outreach uses (the
+// crm_outreach_zendesk_* site settings: submitter, group, form and support
+// address), so the whole conversation is visible to everyone in Zendesk and
+// never tied to one person's mailbox. The workflow is the same as for replies:
+// plan, human approval, then an idempotent, audited commit.
+
+const CREATE_TAG = "cocalc_support_outgoing";
+// Every suppression blocks, including manual and other (an operator decided
+// this contact must not be mailed) and any reason added later, except an
+// outreach opt-out: that only stops marketing outreach, so for a necessary
+// support message it is a warning bound into the reviewed payload hash.
+const WARNING_ONLY_SUPPRESSIONS = new Set(["opt_out"]);
+
+interface CreateConfig {
+  submitter_id: number;
+  group_id: number;
+  form_id?: number;
+  support_address: string;
+}
+
+function configuredZendeskId(
+  value: unknown,
+  name: string,
+  optional = false,
+): number | undefined {
+  const text = `${value ?? ""}`.trim();
+  if (!text && optional) return undefined;
+  const id = Number(text);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new Error(
+      `${name} is not configured (site setting ${name}); outgoing support tickets use the customer outreach Zendesk settings`,
+    );
+  }
+  return id;
+}
+
+async function loadCreateConfig(): Promise<CreateConfig> {
+  const { loadOutreachConfiguration } =
+    await import("@cocalc/server/crm/outreach/store");
+  const config = await loadOutreachConfiguration();
+  const support_address = `${config.support_address ?? ""}`.trim();
+  if (!support_address) {
+    throw new Error(
+      "crm_outreach_zendesk_support_address is not configured; outgoing support tickets use the customer outreach Zendesk settings",
+    );
+  }
+  return {
+    submitter_id: configuredZendeskId(
+      config.submitter_id,
+      "crm_outreach_zendesk_submitter_id",
+    )!,
+    group_id: configuredZendeskId(
+      config.group_id,
+      "crm_outreach_zendesk_group_id",
+    )!,
+    form_id: configuredZendeskId(
+      config.form_id,
+      "crm_outreach_zendesk_form_id",
+      true,
+    ),
+    support_address,
+  };
+}
+
+function normalizedEmail(value: unknown): string {
+  const email = `${value ?? ""}`.trim().toLowerCase();
+  if (
+    email.length > 254 ||
+    !/^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/.test(email)
+  ) {
+    throw new Error(`invalid requester email '${email}'`);
+  }
+  return email;
+}
+
+// The requester, plus every account whose verified CRM person links must be
+// checked for suppressions: the given account, or the account using the
+// given email.
+async function resolveRequester(opts: AdminSupportCreatePlanRequest): Promise<{
+  email: string;
+  name?: string;
+  account_id?: string;
+  lookup_account_ids: string[];
+}> {
+  const accountId = `${opts.requester_account_id ?? ""}`.trim();
+  const rawEmail = `${opts.requester_email ?? ""}`.trim();
+  if (!!accountId === !!rawEmail) {
+    throw new Error(
+      "give exactly one of requester_account_id or requester_email",
+    );
+  }
+  let name = `${opts.requester_name ?? ""}`.trim().slice(0, 200) || undefined;
+  if (!accountId) {
+    const email = normalizedEmail(rawEmail);
+    const { getClusterAccountByEmail } =
+      await import("@cocalc/server/inter-bay/accounts");
+    const account = await getClusterAccountByEmail(email);
+    return {
+      email,
+      name,
+      lookup_account_ids: account?.account_id ? [account.account_id] : [],
+    };
+  }
+  if (!isValidUUID(accountId)) {
+    throw new Error("requester_account_id must be an account id");
+  }
+  // Accounts can be homed on any bay; the directory knows them all.
+  const { getClusterAccountById } =
+    await import("@cocalc/server/inter-bay/accounts");
+  const account = await getClusterAccountById(accountId);
+  if (account == null) {
+    throw new Error(`account ${accountId} does not exist`);
+  }
+  if (!account.email_address) {
+    throw new Error(`account ${accountId} has no email address`);
+  }
+  name ??=
+    [account.first_name, account.last_name]
+      .map((x) => `${x ?? ""}`.trim())
+      .filter(Boolean)
+      .join(" ") || undefined;
+  return {
+    email: normalizedEmail(account.email_address),
+    name,
+    account_id: accountId,
+    lookup_account_ids: [accountId],
+  };
+}
+
+function createPayloadHash(plan: {
+  requester: { email: string; name?: string; account_id?: string };
+  subject: string;
+  body: string;
+  status: string;
+  tags: string[];
+  // What the operator was warned about; a new warning forces a new review.
+  warnings: string[];
+}): string {
+  return payloadHash({
+    operation: "create",
+    requester_email: plan.requester.email,
+    requester_name: plan.requester.name ?? null,
+    requester_account_id: plan.requester.account_id ?? null,
+    subject: plan.subject,
+    body_sha256: sha256(plan.body),
+    status: plan.status,
+    tags: plan.tags,
+    warnings: plan.warnings,
+  });
+}
+
+async function buildCreatePlan(opts: AdminSupportCreatePlanRequest): Promise<{
+  requester: { email: string; name?: string; account_id?: string };
+  subject: string;
+  body: string;
+  status: AdminSupportMutableTicketStatus;
+  tags: string[];
+  warnings: string[];
+  hash: string;
+}> {
+  const subject = `${opts.subject ?? ""}`.replace(/\s+/g, " ").trim();
+  if (!subject) throw new Error("a subject is required");
+  if (subject.length > MAX_SUBJECT_CHARS) {
+    throw new Error(`subject must be at most ${MAX_SUBJECT_CHARS} chars`);
+  }
+  const body = normalizedComment(opts.public_reply);
+  if (!body) throw new Error("the message body (public_reply) is required");
+  const status = opts.status ?? "pending";
+  if (!ADMIN_SUPPORT_MUTABLE_TICKET_STATUSES.includes(status)) {
+    throw new Error(`invalid status '${status}'`);
+  }
+  const tags = [...new Set([CREATE_TAG, ...normalizedTags(opts.add_tags)])];
+  const { lookup_account_ids, ...requester } = await resolveRequester(opts);
+  const suppressions = await activeSuppressionReasons({
+    email: requester.email,
+    account_ids: lookup_account_ids,
+  });
+  const blocking = suppressions.filter(
+    (r) => !WARNING_ONLY_SUPPRESSIONS.has(r),
+  );
+  if (blocking.length) {
+    throw new Error(
+      `${requester.email} is suppressed (${blocking.join(", ")}); mail to this address must not be sent unless the suppression is reviewed and lifted in the CRM`,
+    );
+  }
+  const warnings = suppressions.includes("opt_out")
+    ? [
+        `${requester.email} opted out of customer outreach; send only a necessary support or account message`,
+      ]
+    : [];
+  const plan = { requester, subject, body, status, tags, warnings };
+  return { ...plan, hash: createPayloadHash(plan) };
+}
+
+// Suppressions, site settings and the mutation ledger are seed-global, so the
+// whole workflow runs on the seed: the receiving bay checks admin (and fresh
+// auth for commits), then forwards over the CRM seed channel.
+async function onSeed<T>(
+  action: "supportPlanCreate" | "supportCreate",
+  accountId: string,
+  payload: Record<string, unknown>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const seed = getConfiguredClusterSeedBayId();
+  if (getConfiguredBayId() === seed) return await run();
+  const { getInterBayBridge } = await import("@cocalc/server/inter-bay/bridge");
+  const forwarded = { ...payload };
+  delete forwarded.account_id;
+  delete forwarded.browser_id;
+  delete forwarded.session_hash;
+  return (await getInterBayBridge()
+    .bayOps(seed, { timeout_ms: 120_000 })
+    .crm({ action, actor_account_id: accountId, payload: forwarded })) as T;
+}
+
+export async function planCreate(
+  opts: AdminSupportCreatePlanRequest & AuthOpts,
+): Promise<AdminSupportCreatePlanResponse> {
+  const accountId = await requireAdmin(opts);
+  requiredReason(opts.reason);
+  return await onSeed("supportPlanCreate", accountId, opts as any, () =>
+    planCreateOnSeed(opts, accountId),
+  );
+}
+
+// Seed side of planCreate; the caller has checked that accountId is an admin.
+export async function planCreateOnSeed(
+  opts: AdminSupportCreatePlanRequest,
+  accountId: string,
+): Promise<AdminSupportCreatePlanResponse> {
+  const started = Date.now();
+  const auditId = uuid();
+  const reason = requiredReason(opts.reason);
+  try {
+    // Fail early when outgoing tickets are not configured.
+    await loadCreateConfig();
+    const plan = await buildCreatePlan(opts);
+    const preview = commentPreview(plan.body, "public_reply");
+    const result: AdminSupportCreatePlanResponse = {
+      audit_id: auditId,
+      operation: "create",
+      commit: false,
+      payload_hash: plan.hash,
+      requester: plan.requester,
+      ticket: {
+        subject: plan.subject,
+        status: plan.status,
+        tags: plan.tags,
+        comment_chars: preview.comment_chars!,
+        comment_sha256: preview.comment_sha256!,
+        comment_preview: preview.comment_preview!,
+      },
+      warnings: plan.warnings,
+    };
+    await recordAudit({
+      auditId,
+      accountId,
+      mode: "plan_create",
+      reason,
+      payloadHash: plan.hash,
+      resultStatus: "dry_run",
+      durationMs: Date.now() - started,
+    });
+    return result;
+  } catch (error) {
+    await recordAudit({
+      auditId,
+      accountId,
+      mode: "plan_create",
+      reason,
+      durationMs: Date.now() - started,
+      error,
+    });
+    throw error;
+  }
+}
+
+function createExternalId(idempotencyKey: string): string {
+  return `cocalc-support-create:${idempotencyKey}`;
+}
+
+async function findCreatedTicket(
+  externalId: string,
+): Promise<Ticket | undefined> {
+  const found = await withZendeskReadSlot(
+    () => searchTickets(`type:ticket external_id:${externalId}`),
+    "Zendesk outgoing ticket lookup",
+  );
+  const exact = found.filter((ticket) => ticket.external_id === externalId);
+  if (exact.length > 1) {
+    throw new Error(
+      `multiple Zendesk tickets use external_id ${externalId}; resolve them in Zendesk`,
+    );
+  }
+  return exact[0];
+}
+
+export async function create(
+  opts: AdminSupportCreateRequest & AuthOpts,
+): Promise<AdminSupportCreateResponse> {
+  const accountId = await requireFreshAdmin(opts);
+  requiredReason(opts.reason);
+  return await onSeed("supportCreate", accountId, opts as any, () =>
+    createOnSeed(opts, accountId),
+  );
+}
+
+// Seed side of create; the caller has checked admin and fresh auth.
+export async function createOnSeed(
+  opts: AdminSupportCreateRequest,
+  accountId: string,
+): Promise<AdminSupportCreateResponse> {
+  const started = Date.now();
+  const auditId = uuid();
+  const reason = requiredReason(opts.reason);
+  const idempotencyKey = normalizedIdempotencyKey(opts.idempotency_key);
+  const approvedHash = `${opts.payload_hash ?? ""}`.trim();
+  if (!approvedHash) {
+    throw new Error("payload_hash from the reviewed plan is required");
+  }
+  const externalId = createExternalId(idempotencyKey);
+  let plan: Awaited<ReturnType<typeof buildCreatePlan>> | undefined;
+  let remoteStarted = false;
+  let reservationCreated = false;
+  let ticketId: number | undefined;
+  const finish = async (
+    ticket: Ticket,
+    recovered: boolean,
+  ): Promise<AdminSupportCreateResponse> => {
+    ticketId = Number(ticket.id);
+    let verifiedTicket = ticket;
+    let comment: AdminSupportCreateResponse["comment"];
+    try {
+      const verified = await withZendeskReadSlot(
+        () => loadTicket(ticketId!),
+        "Zendesk outgoing ticket verification",
+      );
+      verifiedTicket = verified.ticket;
+      comment = findAppliedComment(verified.comments, plan!.body, true);
+    } catch (error) {
+      logger.warn("outgoing ticket created but verification read failed", {
+        ticket_id: ticketId,
+        audit_id: auditId,
+        error,
+      });
+    }
+    const result: AdminSupportCreateResponse = {
+      audit_id: auditId,
+      operation: "create",
+      commit: true,
+      payload_hash: plan!.hash,
+      idempotency_key: idempotencyKey,
+      idempotent_replay: false,
+      ...(recovered ? { recovered: true } : {}),
+      ...(comment ? { comment } : {}),
+      ticket: summarizeTicket(verifiedTicket),
+    };
+    await setMutationStatus({
+      idempotencyKey,
+      status: "succeeded",
+      safeResponse: result,
+    });
+    await recordAudit({
+      auditId,
+      accountId,
+      mode: "create",
+      reason,
+      ticketId,
+      payloadHash: plan!.hash,
+      idempotencyKey,
+      resultStatus: recovered ? "recovered" : result.ticket.status,
+      durationMs: Date.now() - started,
+    });
+    return result;
+  };
+  try {
+    const config = await loadCreateConfig();
+    plan = await buildCreatePlan(opts);
+    if (plan.hash !== approvedHash) {
+      throw new Error(
+        "the request no longer matches the reviewed plan (payload_hash); plan it again",
+      );
+    }
+    const reservation = await reserveMutation({
+      idempotencyKey,
+      operation: "create",
+      accountId,
+      hash: plan.hash,
+      auditId,
+      ticketId: null,
+    });
+    reservationCreated = reservation.created;
+    if (!reservation.created) {
+      const row = reservation.row;
+      if (row.status === "remote_started" || row.status === "indeterminate") {
+        // An earlier attempt may have created the ticket: find it by its
+        // external id instead of creating a second one.
+        if (row.payload_hash !== plan.hash) {
+          throw new Error(
+            "idempotency_key was already used for a different support mutation",
+          );
+        }
+        const existing = await findCreatedTicket(externalId);
+        if (existing) return await finish(existing, true);
+        throw new Error(
+          "this outgoing ticket may still reach Zendesk; inspect Zendesk before using a new idempotency key",
+        );
+      }
+      const replay = replayOrRejectMutation<AdminSupportCreateResponse>(row);
+      if (replay) {
+        await recordAudit({
+          auditId,
+          accountId,
+          mode: "create",
+          reason,
+          ticketId: replay.ticket?.id,
+          payloadHash: plan.hash,
+          idempotencyKey,
+          resultStatus: "idempotent_replay",
+          durationMs: Date.now() - started,
+        });
+        return replay;
+      }
+    }
+
+    const ticketPayload: Record<string, unknown> = {
+      external_id: externalId,
+      requester: {
+        email: plan.requester.email,
+        ...(plan.requester.name ? { name: plan.requester.name } : {}),
+      },
+      submitter_id: config.submitter_id,
+      recipient: config.support_address,
+      subject: plan.subject,
+      comment: { body: plan.body, public: true },
+      group_id: config.group_id,
+      status: plan.status,
+      tags: plan.tags,
+      metadata: {
+        custom: {
+          cocalc_idempotency_key: idempotencyKey,
+          cocalc_payload_hash: plan.hash,
+          cocalc_audit_id: auditId,
+        },
+      },
+    };
+    if (config.form_id) ticketPayload.ticket_form_id = config.form_id;
+
+    // A missing Zendesk configuration fails here, before anything is sent.
+    const client = await getZendeskClient();
+    await setMutationStatus({ idempotencyKey, status: "remote_started" });
+    remoteStarted = true;
+    const response = (await withTimeout(
+      client.tickets.create({ ticket: ticketPayload } as CreateOrUpdateTicket),
+      "Zendesk outgoing ticket creation",
+    )) as any;
+    const created =
+      response?.result ?? response?.response?.ticket ?? response?.ticket;
+    if (
+      !Number.isSafeInteger(Number(created?.id)) ||
+      Number(created?.id) <= 0
+    ) {
+      throw new Error("Zendesk ticket creation returned no ticket id");
+    }
+    return await finish(created as Ticket, false);
+  } catch (error) {
+    if (reservationCreated) {
+      await setMutationStatus({
+        idempotencyKey,
+        status:
+          remoteStarted && !zendeskDefinitelyRejected(error)
+            ? "indeterminate"
+            : "rejected",
+        error,
+      });
+    }
+    await recordAudit({
+      auditId,
+      accountId,
+      mode: "create",
+      reason,
+      ticketId,
+      payloadHash: plan?.hash ?? approvedHash,
+      idempotencyKey,
+      resultStatus: remoteStarted ? "error_after_remote_start" : "rejected",
+      durationMs: Date.now() - started,
+      error,
+    });
+    throw error;
+  }
 }

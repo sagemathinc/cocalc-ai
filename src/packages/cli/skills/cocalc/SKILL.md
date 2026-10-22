@@ -440,6 +440,64 @@ its result; the `graph` layout places the notes along the edges.
 }
 ```
 
+To keep a calendar of deadlines or reminders the user can see (taxes,
+renewals, a release schedule), write `foo.cal.json` and publish it with
+`--source`. The card shows an agenda: overdue items first, then the next 60
+days; a title opens its details, and "Download .ics" adds it to Google, Apple
+or Outlook calendars. Keep the file current (mark items `done`) and publish
+again with `--update` to keep the same card. Times are local to `timezone`:
+`"2026-11-03T08:30"`, or a date `"2026-12-01"` with `"all_day": true`.
+
+```json
+{
+  "format": "cocalc-calendar",
+  "version": 1,
+  "id": "tax-calendar",
+  "title": "Tax calendar",
+  "timezone": "America/Los_Angeles",
+  "default_view": "agenda",
+  "categories": { "tax": { "label": "Tax filing", "color": "#d9480f" } },
+  "events": [
+    {
+      "id": "q4-return",
+      "title": "File the Q4 return",
+      "start": "2027-01-04",
+      "all_day": true,
+      "due": "2027-01-31",
+      "category": "tax",
+      "status": "pending",
+      "details": "Markdown, shown when the item is opened.",
+      "links": [{ "label": "Portal", "url": "https://example.com" }]
+    },
+    {
+      "id": "quarterly",
+      "title": "Quarterly filing",
+      "start": "2027-01-06",
+      "all_day": true,
+      "recurrence": { "freq": "monthly", "interval": 3 },
+      "due_offset_days": 25
+    }
+  ]
+}
+```
+
+`status` is `scheduled`, `pending`, `done` or `cancelled`. A recurring
+event's deadline is `due_offset_days` (days after each occurrence), not `due`. An item with a
+`due` (or `due_offset_days`) is overdue once that day has ended, until it is
+marked `done` or `cancelled`; a one-off `pending` item without one, once its
+time has passed. A recurring `pending` event needs `due_offset_days`. `recurrence` takes `freq`
+(`daily`, `weekly`, `monthly`, `yearly`), `interval`, `bymonthday`,
+`bymonth`, `byweekday` (`"MO"`...), `until` and `count`. A day after the
+28th falls on the last day of shorter months (the 31st is Feb 28); a rule
+may name at most one such day, and not together with `byweekday`.
+`bymonthday` is for monthly and yearly rules; a yearly rule without
+`bymonth` picks its days in its start's month. These rules are iCalendar's,
+so the .ics shows the same dates as the card. Links must be
+http(s). Keep the calendar's `id` and each event's `id` unchanged: they name
+the events in calendar apps that imported the .ics. The card names anything it cannot read and still shows the rest. A
+calendar is for people to see; to be woken at a time, also set a watcher
+(`cocalc sensor watch at`).
+
 JSON contains `title`, `markdown`, and optionally one of `file`, `actions`,
 `github_pr`, `commit`, plus optional `theme`. No message/operation/artifact IDs
 are needed for creation. Chat/thread/date default to current runtime context;

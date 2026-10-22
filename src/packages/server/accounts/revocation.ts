@@ -12,6 +12,10 @@ const logger = getLogger("server:accounts:revocation");
 
 let ensured = false;
 
+export async function ensureAccountRevocationsTable(): Promise<void> {
+  await ensureTable();
+}
+
 async function ensureTable() {
   if (ensured) return;
   const pool = getPool();

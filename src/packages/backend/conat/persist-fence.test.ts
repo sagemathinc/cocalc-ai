@@ -172,23 +172,33 @@ describe("what a holder started", () => {
   it("keeps the fence while a process of the holder's group started since runs", async () => {
     const holder = currentFenceHolder();
     expect(holder.pgid).toEqual(expect.any(Number));
-    // a holder that is gone, in this process's group
-    const gone = { pid: 2 ** 22 + 17, start: "", pgid: holder.pgid };
-    // (processes that started just before a fence count, to be safe)
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    const since = Date.now();
-    expect(isFenceHolderAlive(gone, since)).toBe(false);
-    // what it started to change the files, which outlives it
-    const child = spawn("sleep", ["30"], { stdio: "ignore" });
+    // A group of its own (other tests start processes in this one): a shell
+    // that starts `sleep 30` when told to.
+    const group = spawn("sh", ["-c", "read go; sleep 30"], {
+      detached: true,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const pgid = group.pid;
+    const exited = new Promise((resolve) => group.once("exit", resolve));
     try {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // a holder that is gone, in that group
+      const gone = { pid: 2 ** 22 + 17, start: "", pgid };
+      // (processes that started just before a fence count, to be safe)
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      const since = Date.now();
+      expect(isFenceHolderAlive(gone, since)).toBe(false);
+      // what it started to change the files, which outlives it
+      group.stdin.write("go\n");
+      const started = Date.now();
+      while (!isFenceHolderAlive(gone, since) && Date.now() - started < 5000) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       expect(isFenceHolderAlive(gone, since)).toBe(true);
       // which a person is told
-      // (and whatever else of this group started since, e.g., in other tests)
       const state = describeFenceHolder(gone, since);
       expect(state.holder_running).toBe(false);
       expect(state.keeping).toContainEqual({
-        pid: child.pid,
+        pid: expect.any(Number),
         command: "sleep 30",
       });
       expect(describeFenceHolder(holder, since)).toEqual({
@@ -196,11 +206,18 @@ describe("what a holder started", () => {
       });
       // processes from before the fence don't count
       expect(isFenceHolderAlive(gone, Date.now() + 10_000)).toBe(false);
+      process.kill(-pgid, "SIGKILL");
+      await exited;
+      const stopped = Date.now();
+      while (isFenceHolderAlive(gone, since) && Date.now() - stopped < 5000) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(isFenceHolderAlive(gone, since)).toBe(false);
     } finally {
-      child.kill("SIGKILL");
-      await new Promise((resolve) => child.once("exit", resolve));
+      try {
+        process.kill(-pgid, "SIGKILL");
+      } catch {}
     }
-    expect(isFenceHolderAlive(gone, since)).toBe(false);
   });
 });
 

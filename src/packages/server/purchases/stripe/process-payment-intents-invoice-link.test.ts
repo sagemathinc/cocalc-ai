@@ -554,9 +554,10 @@ describe("processPaymentIntents invoice-payment links", () => {
     expect(stripe.customers.retrieve).toHaveBeenCalledWith(
       "cus_paid_duplicate",
     );
-    expect(mockSetStripeCustomerId).toHaveBeenCalledWith(
-      { account_id: "acct-1", id: "cus_paid_duplicate" },
-    );
+    expect(mockSetStripeCustomerId).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      id: "cus_paid_duplicate",
+    });
     expect(mockApplyMembershipChange).toHaveBeenCalledWith(
       expect.objectContaining({
         account_id: "acct-1",

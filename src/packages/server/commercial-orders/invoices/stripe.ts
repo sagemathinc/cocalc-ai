@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { requiresBusinessTaxId } from "@cocalc/util/stripe/business-tax-id";
 import { getLogger } from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import type {
@@ -120,6 +121,20 @@ export function approvedInvoiceTerms(order: CommercialOrder): {
   };
 }
 
+// An EU or UK invoice without the customer's VAT ID can end up charging VAT
+// (the reverse charge needs the VAT ID). Commercial invoices are business
+// sales, so this only warns.
+export function commercialInvoiceVatWarnings(
+  invoiceTerms: ReturnType<typeof approvedInvoiceTerms>,
+): string[] {
+  const country = invoiceTerms.billing_address?.country;
+  if (!requiresBusinessTaxId(country)) return [];
+  if (/\bVAT\b/i.test(invoiceTerms.memo ?? "")) return [];
+  return [
+    `the billing address is in ${`${country}`.toUpperCase()} but the invoice memo names no VAT ID: add the customer's VAT ID (and a reverse-charge note) to terms_snapshot.invoice.memo and to the Stripe customer, or Stripe Tax may charge VAT`,
+  ];
+}
+
 async function invoicePreviewForOrder(
   order: CommercialOrder,
   ignoreActiveInvoiceId?: string,
@@ -175,6 +190,7 @@ async function invoicePreviewForOrder(
     },
     ready: blockers.length === 0,
     blockers,
+    warnings: commercialInvoiceVatWarnings(invoiceTerms),
   };
 }
 

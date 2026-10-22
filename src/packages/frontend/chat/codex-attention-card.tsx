@@ -29,6 +29,8 @@ import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { lite } from "@cocalc/frontend/lite";
 import { useNamedAgents } from "@cocalc/frontend/agents/api";
+import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
+import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
 import { findWorkspaceAgentForThread } from "@cocalc/frontend/agents/workspace-model";
 
 import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
@@ -130,6 +132,9 @@ export type CodexAttentionDraftUpdater = (
   current: CodexAttentionDraft,
 ) => CodexAttentionDraft;
 
+/** The approval dialog was opened by Send, not by an answer's picker. */
+const SEND_FOCUS = "\u0000send";
+
 export function CodexAttentionCard({
   initialRecord,
   responseInActivity,
@@ -178,6 +183,46 @@ function RuntimeCodexAttentionCard({
     record.thread_id,
   );
   const agentName = namedAgent ? `@${namedAgent.name}` : undefined;
+  // @agents in a custom answer are checked as in the composer (an active
+  // Agent Network with this agent, approved here if needed) before sending.
+  // Each custom answer's editor, and the one last typed in: focus goes back
+  // there after the network approval dialog closes.
+  const answerControls = useRef(new Map<string, { current: any }>());
+  const answerControl = (id: string) => {
+    let control = answerControls.current.get(id);
+    if (!control) {
+      control = { current: null };
+      answerControls.current.set(id, control);
+    }
+    return control;
+  };
+  // Which answer was last typed in, or Send when Send asked for approval:
+  // the dialog returns focus to whichever opened it.
+  const lastAnswer = useRef<string | undefined>(undefined);
+  const sendButton = useRef<HTMLButtonElement>(null);
+  const agentMentions = useAgentMentions({
+    projectId: record.project_id,
+    path: record.path,
+    threadId: record.thread_id,
+    threadTitle: agentName,
+    runnable: !lite,
+    restoreFocus: () => {
+      const id = lastAnswer.current;
+      if (id === SEND_FOCUS) sendButton.current?.focus();
+      else if (id) answerControls.current.get(id)?.current?.focus?.();
+    },
+  });
+  const agentMentionContext = {
+    ...agentMentions.context,
+    // An answer's @agents are checked; artifacts and computers would reach
+    // the agent unresolved, so they are not offered here.
+    agentsOnly: true,
+    source: {
+      projectId: record.project_id,
+      path: record.path,
+      threadId: record.thread_id,
+    },
+  };
   const [localDraft, setLocalDraft] = useState<CodexAttentionDraft>({
     selected: {},
     other: {},
@@ -289,27 +334,43 @@ function RuntimeCodexAttentionCard({
     record.state,
   ]);
 
-  const answers = useMemo(
-    () =>
-      Object.fromEntries(
-        record.questions.map((question) => [
-          question.id,
-          answersForQuestion({
-            question,
-            selected: draft.selected[question.id],
-            other: draft.other[question.id] ?? "",
-          }),
-        ]),
-      ),
-    [draft, record.questions],
-  );
-  const canSubmit = record.questions.every(
-    ({ id }) =>
-      (answers[id]?.length ?? 0) > 0 &&
-      answers[id].every(
-        (answer) => answer.length <= CODEX_ATTENTION_ANSWER_MAX_LENGTH,
-      ),
-  );
+  const answersFor = (value: CodexAttentionDraft) =>
+    Object.fromEntries(
+      record.questions.map((question) => [
+        question.id,
+        answersForQuestion({
+          question,
+          selected: value.selected[question.id],
+          other: value.other[question.id] ?? "",
+        }),
+      ]),
+    );
+  const submittable = (value: Record<string, string[]>) =>
+    record.questions.every(
+      ({ id }) =>
+        (value[id]?.length ?? 0) > 0 &&
+        value[id].every(
+          (answer) => answer.length <= CODEX_ATTENTION_ANSWER_MAX_LENGTH,
+        ),
+    );
+  const answers = useMemo(() => answersFor(draft), [draft, record.questions]);
+  const canSubmit = submittable(answers);
+
+  // Send the response, from the Send button or Shift+Enter in an answer:
+  // `origin` is where focus returns if a network approval opens first.
+  // `from` is the draft to send: the rendered one, or, for Shift+Enter, the
+  // editor's live value, which may not have rendered yet.
+  const send = (origin: string, from: CodexAttentionDraft = draft) => {
+    lastAnswer.current = origin;
+    void agentMentions.preflight(
+      // Only what the person wrote: an agent's own choices may name agents,
+      // with no picker to bind them.
+      Object.values(from.other)
+        .filter((value) => value?.trim())
+        .join("\n"),
+      () => respond(false, answersFor(from)),
+    );
+  };
 
   const selectedCredentialId = () =>
     readCodexSubscriptionSelection({
@@ -318,7 +379,7 @@ function RuntimeCodexAttentionCard({
       threadKey: record.thread_id,
     });
 
-  const respond = async (decline = false) => {
+  const respond = async (decline = false, submitted = answers) => {
     setSubmitting(true);
     setError(undefined);
     const focusedControl = document.activeElement;
@@ -329,7 +390,7 @@ function RuntimeCodexAttentionCard({
         project_id: record.project_id,
         attention_id: record.attention_id,
         response_id: responseIdRef.current,
-        answers: decline ? undefined : answers,
+        answers: decline ? undefined : submitted,
         decline,
       });
       if (result.state === "already_submitted") {
@@ -346,7 +407,7 @@ function RuntimeCodexAttentionCard({
         restoreReceiptFocus.current = document.activeElement === focusedControl;
         updateDraft((current) => ({
           ...current,
-          submitted: { answers: decline ? {} : answers, declined: decline },
+          submitted: { answers: decline ? {} : submitted, declined: decline },
         }));
         takeActionResult(result.record);
       }
@@ -671,37 +732,70 @@ function RuntimeCodexAttentionCard({
                         role="group"
                         aria-label={`Custom answer for ${question.header}`}
                       >
-                        <MarkdownInput
-                          cacheId={`codex-answer:${record.attention_id}:${question.id}`}
-                          project_id={record.project_id}
-                          path={record.path}
-                          placeholder={`Custom answer for ${question.header}`}
-                          autoGrow
-                          autoGrowMaxHeight={220}
-                          hideHelp
-                          compact
-                          enableMentions={false}
-                          enableUpload
-                          saveDebounceMs={0}
-                          undoMode="local"
-                          redoMode="local"
-                          onUploadStart={() => setUploads((n) => n + 1)}
-                          onUploadEnd={() =>
-                            setUploads((n) => Math.max(0, n - 1))
-                          }
-                          value={draft.other[question.id] ?? ""}
-                          onChange={(value) => {
-                            updateDraft((current) => ({
-                              other: { ...current.other, [question.id]: value },
-                              selected: value
-                                ? {
-                                    ...current.selected,
-                                    [question.id]: undefined,
-                                  }
-                                : current.selected,
-                            }));
-                          }}
-                        />
+                        <AgentMentionContext.Provider
+                          value={agentMentionContext}
+                        >
+                          <MarkdownInput
+                            cacheId={`codex-answer:${record.attention_id}:${question.id}`}
+                            project_id={record.project_id}
+                            path={record.path}
+                            placeholder={`Custom answer for ${question.header}`}
+                            autoGrow
+                            autoGrowMaxHeight={220}
+                            hideHelp
+                            compact
+                            enableMentions={!lite}
+                            enableUpload
+                            saveDebounceMs={0}
+                            undoMode="local"
+                            redoMode="local"
+                            onUploadStart={() => setUploads((n) => n + 1)}
+                            onUploadEnd={() =>
+                              setUploads((n) => Math.max(0, n - 1))
+                            }
+                            controlRef={answerControl(question.id)}
+                            // Shift+Enter sends, as in chat, once the
+                            // response can be sent.
+                            onShiftEnter={(value) => {
+                              // The editor's live value: its onChange may not
+                              // have rendered into the draft yet.
+                              const live = `${value ?? draft.other[question.id] ?? ""}`;
+                              const from: CodexAttentionDraft = {
+                                other: { ...draft.other, [question.id]: live },
+                                selected: live
+                                  ? {
+                                      ...draft.selected,
+                                      [question.id]: undefined,
+                                    }
+                                  : draft.selected,
+                              };
+                              if (
+                                answerable &&
+                                !pendingFreshAuth &&
+                                submittable(answersFor(from)) &&
+                                uploads === 0 &&
+                                !submitting
+                              )
+                                send(question.id, from);
+                            }}
+                            value={draft.other[question.id] ?? ""}
+                            onChange={(value) => {
+                              lastAnswer.current = question.id;
+                              updateDraft((current) => ({
+                                other: {
+                                  ...current.other,
+                                  [question.id]: value,
+                                },
+                                selected: value
+                                  ? {
+                                      ...current.selected,
+                                      [question.id]: undefined,
+                                    }
+                                  : current.selected,
+                              }));
+                            }}
+                          />
+                        </AgentMentionContext.Provider>
                         <div role="status" aria-live="polite">
                           <Text
                             type={
@@ -727,6 +821,7 @@ function RuntimeCodexAttentionCard({
             {error ? (
               <Alert type="error" showIcon message={error} role="alert" />
             ) : null}
+            {agentMentions.ui}
             {pendingFreshAuth ? (
               <Space wrap>
                 <Button
@@ -754,10 +849,11 @@ function RuntimeCodexAttentionCard({
             ) : answerable ? (
               <Space wrap>
                 <Button
+                  ref={sendButton}
                   type="primary"
                   disabled={!canSubmit || uploads > 0}
                   loading={submitting}
-                  onClick={() => void respond(false)}
+                  onClick={() => send(SEND_FOCUS)}
                 >
                   {lateQuestion ? "Send as new message" : "Send response"}
                 </Button>

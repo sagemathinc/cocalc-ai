@@ -16,6 +16,7 @@ import {
   removeNamedAgent,
 } from "../../core/agent-create";
 import { akv } from "@cocalc/conat/sync/akv";
+import { externalAgentHandle } from "@cocalc/conat/agents/external";
 import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
 import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
 import { CHAT_DRAFT_STORE } from "@cocalc/chat";
@@ -852,7 +853,13 @@ export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
     ...(you ? { you } : {}),
     peers: directory.peers.map(({ member, same_project, networks }) => ({
       kind: member.kind,
-      name: member.kind === "registered" ? member.name : member.label,
+      // What `agent send` takes. An external agent's label is free text: its
+      // handle, or its member id if the label has no name in it.
+      name:
+        member.kind === "registered"
+          ? member.name
+          : (externalAgentHandle(member.label) ?? member.member_id),
+      ...(member.kind === "external" ? { label: member.label } : {}),
       ...(member.kind === "registered" && member.project_title
         ? { project: member.project_title }
         : {}),

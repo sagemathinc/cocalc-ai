@@ -120,6 +120,19 @@ export async function listConfiguredBaysAuthoritative(): Promise<BayInfo[]> {
   return await listAuthoritativeClusterBayInfos();
 }
 
+// No live account row exists for this id: it was deleted, or never existed.
+export class AccountNotFoundError extends Error {
+  constructor(readonly account_id: string) {
+    super(`account '${account_id}' not found`);
+    this.name = "AccountNotFoundError";
+  }
+}
+
+// By name, so it also matches an instance from another copy of this module.
+export function isAccountNotFoundError(err: unknown): boolean {
+  return (err as Error | undefined)?.name === "AccountNotFoundError";
+}
+
 async function getAccountRow(account_id: string): Promise<{
   account_id: string;
   email_address?: string | null;
@@ -137,7 +150,7 @@ async function getAccountRow(account_id: string): Promise<{
     if (local?.account_id) {
       return local;
     }
-    throw new Error(`account '${account_id}' not found`);
+    throw new AccountNotFoundError(account_id);
   }
   // An account homed here is served from this bay's own row (it is the
   // source of truth), so attached bays do not depend on the seed for it.
@@ -169,7 +182,7 @@ async function getAccountRow(account_id: string): Promise<{
   }
   const local = await getLocalAccountRow(account_id);
   if (!local?.account_id) {
-    throw new Error(`account '${account_id}' not found`);
+    throw new AccountNotFoundError(account_id);
   }
   return local;
 }

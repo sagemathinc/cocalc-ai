@@ -12,6 +12,7 @@ import { parseComputerMention } from "@cocalc/util/computer-mentions";
 const mockGetStore = jest.fn();
 const mockUseNamedAgents = jest.fn();
 let mockAllowAgentMentions = false;
+let mockAgentsOnly = false;
 const mockProjectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 let mockArtifactNames: any[] = [];
 
@@ -57,6 +58,7 @@ jest.mock("@cocalc/frontend/agents/api", () => ({
 jest.mock("@cocalc/frontend/agents/mention-context", () => ({
   useAgentMentionContext: () => ({
     allowAgentMentions: mockAllowAgentMentions,
+    agentsOnly: mockAgentsOnly,
     states: {},
   }),
 }));
@@ -199,6 +201,54 @@ describe("mentionableUsers", () => {
       plain.result.current("").some((item) => item.group === "Computers"),
     ).toBe(false);
     mockComputers = [];
+  });
+
+  it("offers only agents (and people) where other references go unresolved", () => {
+    mockStores(jest.fn());
+    mockAllowAgentMentions = true;
+    mockArtifactNames = [
+      { name: "nb1", project_id, entry_id: "a".repeat(64), active: true },
+    ];
+    mockComputers = [
+      {
+        computer_id: "1a057860-889d-461a-9073-4b8c69d65121",
+        name: "m1",
+        hostname: "studio.local",
+        machine_user: "sage",
+        deadline: Date.now() + 3_600_000,
+        revoked_at: null,
+        connected: true,
+      },
+    ];
+    jest
+      .mocked(useTypedRedux)
+      .mockImplementation(((store: string, key: string) =>
+        store === "customize" && key === "computers_enabled"
+          ? true
+          : undefined) as any);
+    try {
+      const offered = (agentsOnly: boolean, query = "") => {
+        mockAgentsOnly = agentsOnly;
+        const { result } = renderHook(() => useMentionableUsers());
+        return result.current(query);
+      };
+      const groups = (agentsOnly: boolean) =>
+        new Set(offered(agentsOnly).map((item) => item.group));
+      const all = groups(false);
+      expect(all.has("Artifacts") && all.has("Computers")).toBe(true);
+      const only = groups(true);
+      expect(only.has("Artifacts")).toBe(false);
+      expect(only.has("Computers")).toBe(false);
+      // The agent is still offered.
+      expect(
+        offered(true, "illustrator").some(
+          (item) => item.group === "Other agents",
+        ),
+      ).toBe(true);
+    } finally {
+      mockAgentsOnly = false;
+      mockComputers = [];
+    }
   });
 
   it("keeps unresolved collaborators visible while their names hydrate", () => {

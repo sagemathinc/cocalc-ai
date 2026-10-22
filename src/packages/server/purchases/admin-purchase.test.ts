@@ -34,6 +34,7 @@ describe("admin balance adjustments", () => {
         user_account_id,
         price: 25,
         product: "balance",
+        balance_admin_note: "test adjustment",
         source: "free",
       }),
     ).rejects.toThrow("must be an admin");
@@ -59,9 +60,32 @@ describe("admin balance adjustments", () => {
         user_account_id,
         price: 25,
         product: "balance",
+        balance_admin_note: "test adjustment",
         source: "free",
       }),
     ).rejects.toThrow(/homed on/);
+    const { rows } = await getPool().query(
+      "SELECT id FROM purchases WHERE account_id=$1",
+      [user_account_id],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it("requires an internal reason for a balance adjustment", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    await createAdminAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await expect(
+      adminPurchase({
+        admin_account_id,
+        user_account_id,
+        balance_admin_note: "   ",
+        price: 25,
+        product: "balance",
+        source: "free",
+      }),
+    ).rejects.toThrow("an internal reason is required");
     const { rows } = await getPool().query(
       "SELECT id FROM purchases WHERE account_id=$1",
       [user_account_id],
