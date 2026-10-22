@@ -333,6 +333,8 @@ describe("ChatPanel selected thread read tracking", () => {
     );
     const { actions } = renderPanel();
     expect(latestThreadPanelProps.readerMode).toBe(true);
+    // Opened in the reader: the composer keeps the focus.
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(false);
     expect(actions.markThreadRead).not.toHaveBeenCalled();
     // Back to the log: it marks it read, as before.
     act(() => latestThreadPanelProps.onReaderModeChange(false));
@@ -344,8 +346,11 @@ describe("ChatPanel selected thread read tracking", () => {
     renderPanel();
     const button = screen.getByRole("button", { name: "Reader" });
     expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(false);
     fireEvent.click(button);
     expect(latestThreadPanelProps.readerMode).toBe(true);
+    // Turned on by the person: the reader takes the keys.
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(true);
     expect(
       screen.getByRole("button", { name: "Back to the chat log" }),
     ).toHaveAttribute("aria-pressed", "true");

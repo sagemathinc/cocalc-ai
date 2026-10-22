@@ -1824,6 +1824,14 @@ function ChatPanelContent({
   const selectedThreadReadSignatureRef = useRef<string | null>(null);
 
   const [readerMode, setReaderMode] = useChatReaderMode(project_id, path);
+  // The reader takes the keys when the person turns it on (from any of its
+  // buttons), never when a chat simply opens in it.
+  const [readerAutoFocus, setReaderAutoFocus] = useState(false);
+  const [previousReaderMode, setPreviousReaderMode] = useState(readerMode);
+  if (previousReaderMode !== readerMode) {
+    setPreviousReaderMode(readerMode);
+    setReaderAutoFocus(readerMode);
+  }
 
   useEffect(() => {
     // The reader marks what is opened in it, not the whole thread.
@@ -2723,6 +2731,7 @@ function ChatPanelContent({
         mobile={narrow}
         readerMode={readerMode}
         onReaderModeChange={setReaderMode}
+        readerAutoFocus={readerAutoFocus}
         readStateVersion={effectiveReadStateVersion}
         onMobileToolsAction={() => setMobileToolsOpen(false)}
         allowSidebarToggle={
