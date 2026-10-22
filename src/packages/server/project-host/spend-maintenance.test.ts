@@ -1264,6 +1264,95 @@ describe("dedicated host spend maintenance", () => {
     );
   });
 
+  it.each([
+    [
+      "the rescue outcome was never recorded",
+      { final_backup_status: "unknown", final_backup_failed_at: undefined },
+    ],
+    [
+      "the only recorded failure predates the rescue",
+      { final_backup_status: "failed", final_backup_failed_at: "old" },
+    ],
+  ])(
+    "keeps the disk when %s",
+    async (_name, { final_backup_status, final_backup_failed_at }) => {
+      const now = Date.now();
+      const rescueRequestedAt = now - 8 * 24 * 3600_000;
+      queryMock = jest.fn(async (sql: string) => {
+        if (sql.includes("pg_try_advisory_lock")) {
+          return { rows: [{ locked: true }] };
+        }
+        if (sql.includes("FROM project_hosts")) {
+          return {
+            rows: [
+              blockedHostRow({
+                final_backup_status,
+                stopped_at: new Date(now - 31 * 24 * 3600_000).toISOString(),
+                deprovision_after: new Date(now - 3600_000).toISOString(),
+                rescue_requested_at: new Date(rescueRequestedAt).toISOString(),
+                ...(final_backup_failed_at
+                  ? {
+                      // The first drain's failure, before the rescue.
+                      final_backup_failed_at: new Date(
+                        rescueRequestedAt - 20 * 24 * 3600_000,
+                      ).toISOString(),
+                    }
+                  : {}),
+              }),
+            ],
+          };
+        }
+        if (sql.includes("pg_advisory_unlock")) {
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+
+      const { runDedicatedHostSpendMaintenancePass } =
+        await import("./spend-maintenance");
+      await runDedicatedHostSpendMaintenancePass();
+
+      expect(createLroMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not reprice a host as running while billing enforcement stops it", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              ...blockedHostRow({
+                final_backup_status: "succeeded",
+                stopped_at: new Date().toISOString(),
+                deprovision_after: new Date(
+                  Date.now() + 72 * 3600_000,
+                ).toISOString(),
+              }),
+              status: "stopping",
+            },
+          ],
+        };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
   it("does not rescue a blocked host before its grace period ends", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("pg_try_advisory_lock")) {

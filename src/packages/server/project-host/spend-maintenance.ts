@@ -29,6 +29,7 @@ import {
 } from "./spend";
 import {
   DEDICATED_HOST_BILLING_DISK_GRACE_HOURS,
+  billingRescueDiskDeletionTime,
   buildDedicatedHostBillingEnforcementMetadata,
   evaluateDedicatedHostBillingEnforcement,
   type DedicatedHostBillingEnforcementMetadata,
@@ -69,12 +70,6 @@ const RUNNING_BILLING_STATUSES = new Set([
 const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const DEPROVISION_REMINDER_LEAD_MS = 24 * 3600_000;
-// A billing-blocked host whose projects have no confirmed final backup gets one
-// rescue drain after its grace period. If that fails, its disk is deleted
-// anyway this long after the host stopped, and at least
-// BILLING_RESCUE_REVIEW_MS after the failure, so an operator can step in.
-const BILLING_RESCUE_FALLBACK_MS = 30 * 24 * 3600_000;
-const BILLING_RESCUE_REVIEW_MS = 7 * 24 * 3600_000;
 
 let started = false;
 
@@ -1096,10 +1091,9 @@ async function maybeProgressInactiveEnforcement({
 // final backup; without this it would keep the disk, and bill for it, forever.
 // After the grace period, request one rescue: start the host without a billing
 // session, drain it (each move takes a final backup) and stop it; the normal
-// deprovision then follows. If the rescue fails, delete the disk anyway once
-// BILLING_RESCUE_FALLBACK_MS have passed since the stop, and at least
-// BILLING_RESCUE_REVIEW_MS since the failure (its admin alert); projects then
-// restore from their last backup.
+// deprovision then follows. If the rescue fails, delete the disk anyway at
+// billingRescueDiskDeletionTime (30 days after the stop, and at least 7 days
+// after the failure alert); projects then restore from their last backup.
 async function maybeRescueUnbackedBillingBlockedHost({
   row,
   enforcement,
@@ -1128,14 +1122,16 @@ async function maybeRescueUnbackedBillingBlockedHost({
     });
     return true;
   }
-  const failedAt = Date.parse(
-    `${enforcement.final_backup_failed_at ?? enforcement.rescue_requested_at}`,
-  );
+  // Delete without a final backup only after a recorded rescue failure (which
+  // sent the admin alert naming the deletion time); a rescue still running, or
+  // one whose outcome was never recorded, keeps the disk.
+  const failedAt = Date.parse(`${enforcement.final_backup_failed_at ?? ""}`);
   if (
+    enforcement.final_backup_status !== "failed" ||
     !Number.isFinite(stoppedAt) ||
     !Number.isFinite(failedAt) ||
-    now < stoppedAt + BILLING_RESCUE_FALLBACK_MS ||
-    now < failedAt + BILLING_RESCUE_REVIEW_MS
+    failedAt < Date.parse(enforcement.rescue_requested_at) ||
+    now < billingRescueDiskDeletionTime({ stoppedAt, failedAt })
   ) {
     return false;
   }
@@ -1354,6 +1350,14 @@ async function runPass(): Promise<void> {
     }
 
     const enforcement = currentEnforcement(metadata);
+    if (enforcement?.state === "stopped_billing_blocked") {
+      // Billing enforcement stopped this host after a drain or a rescue drain.
+      // Do not reprice it as running while its provider stop is pending, or if
+      // that stop failed (the drain's admin alert reports it); a rescue run is
+      // site-paid. Stopped pricing resumes once the host is off.
+      deleteSnapshotCacheForAccount(owner);
+      continue;
+    }
     if (enforcement?.state === "draining") {
       const assignedProjects = await countProjectsAssignedToHost(row.id);
       if (assignedProjects === 0) {

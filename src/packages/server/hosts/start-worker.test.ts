@@ -968,9 +968,32 @@ describe("hosts start-worker billing drain completion metadata", () => {
     expect(alert.body).toContain("project-1");
     expect(alert.body).toContain("The compute stop request succeeded.");
     expect(alert.body).toContain("provider disk were retained");
-    expect(alert.body).toContain("Automatic disk deprovisioning is disabled");
+    expect(alert.body).toContain("rescue drain");
+    expect(alert.body).toContain("30 days after the host stopped");
+    expect(alert.body).not.toContain("deprovisioning is disabled");
     expect(alert.dedupMinutes).toBe(24 * 60);
     expect(alert.dedupBySubject).toBe(true);
+  });
+
+  test("names the disk deletion time when a rescue drain fails", () => {
+    const now = Date.parse("2026-10-23T00:00:00.000Z");
+    const alert = __test__.billingEnforcementDrainFailureAdminAlert({
+      host_id: "host-1",
+      account_id: "account-1",
+      op_id: "op-1",
+      error: new Error("failed to drain workspace project-1"),
+      final_backup_status: "failed",
+      rescue: true,
+      // Stopped long ago: the 7-day review period after this alert decides.
+      stopped_at: "2026-09-22T00:00:00.000Z",
+      now,
+    });
+
+    expect(alert.body).toContain("The rescue drain failed.");
+    expect(alert.body).toContain(
+      "deleted automatically on or after 2026-10-30T00:00:00.000Z",
+    );
+    expect(alert.body).toContain("restore the owner's funding");
   });
 
   test("preserves successful-backup messaging when only the compute stop fails", () => {

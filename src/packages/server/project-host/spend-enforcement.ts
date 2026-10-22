@@ -15,6 +15,26 @@ import type { DedicatedHostFundingLane } from "./spend";
 export const DEDICATED_HOST_BILLING_WARNING_RUNWAY_HOURS = 2;
 export const DEDICATED_HOST_BILLING_DRAIN_RUNWAY_HOURS = 1;
 export const DEDICATED_HOST_BILLING_DISK_GRACE_HOURS = 72;
+// A billing-blocked host without a confirmed final backup gets one rescue drain
+// after its grace period. If that fails, its disk is deleted anyway this long
+// after the host stopped, and at least BILLING_RESCUE_REVIEW_MS after the
+// failure alert, so an operator can step in.
+export const BILLING_RESCUE_FALLBACK_MS = 30 * 24 * 3600_000;
+export const BILLING_RESCUE_REVIEW_MS = 7 * 24 * 3600_000;
+
+// When the disk of a host whose rescue drain failed at failedAt will be deleted.
+export function billingRescueDiskDeletionTime({
+  stoppedAt,
+  failedAt,
+}: {
+  stoppedAt: number;
+  failedAt: number;
+}): number {
+  return Math.max(
+    stoppedAt + BILLING_RESCUE_FALLBACK_MS,
+    failedAt + BILLING_RESCUE_REVIEW_MS,
+  );
+}
 
 export type DedicatedHostBillingEnforcementState =
   | "ok"
