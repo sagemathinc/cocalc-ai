@@ -193,6 +193,10 @@ export interface CoreStreamOptions {
   // for sharing cluster state date, where the servers are ephemeral and
   // there is one for each node.
   service?: string;
+  // The identity the persist service is asked as, when it isn't the one the
+  // storage path belongs to: a project host's board manager writes a
+  // project's board stream as the hub (conat/persist/board-policy.ts).
+  persistUser?: User;
 
   initPhaseReporter?: CoreStreamInitPhaseReporter;
 }
@@ -277,6 +281,7 @@ export class CoreStream<T = any> extends EventEmitter {
   // in a project has user {project_id} even if it is being accessed by
   // an account.
   private user: User;
+  private persistUser?: User;
   private storage: StorageOptions;
   private client?: Client;
   private persistClient: PersistStreamClient;
@@ -306,6 +311,7 @@ export class CoreStream<T = any> extends EventEmitter {
     sync,
     client,
     service,
+    persistUser,
     initPhaseReporter,
     bootstrapRetry = true,
   }: CoreStreamOptions) {
@@ -319,6 +325,7 @@ export class CoreStream<T = any> extends EventEmitter {
     this.client = client;
     this.service = service;
     this.user = { account_id, project_id, host_id };
+    this.persistUser = persistUser;
     this.name = name;
     this.storage = {
       path: storagePath({ account_id, project_id, host_id, name }),
@@ -470,7 +477,7 @@ export class CoreStream<T = any> extends EventEmitter {
     }
     this.persistClient = persist({
       client: this.client,
-      user: this.user,
+      user: this.persistUser ?? this.user,
       storage: this.storage,
       service: this.service,
       registerRecoveryWithScheduler: false,
@@ -1158,6 +1165,23 @@ export class CoreStream<T = any> extends EventEmitter {
 
   private processPersistentSetLargestSeq: number = 0;
   private missingMessages = new Set<number>();
+
+  // Every message with seq at most this has been received (or deleted before
+  // it could be): the largest seq received, unless the changefeed skipped
+  // some that are not recovered yet.
+  receivedThroughSeq = (): number => {
+    let through = this.processPersistentSetLargestSeq;
+    for (const seq of this.missingMessages) {
+      through = Math.min(through, seq - 1);
+    }
+    return through;
+  };
+
+  // Was seq received (or deleted before it could be)?  Only meaningful for
+  // seq at most the largest seq received.
+  isReceivedSeq = (seq: number): boolean =>
+    seq <= this.processPersistentSetLargestSeq &&
+    !this.missingMessages.has(seq);
   private processPersistentSet = (
     { seq, time, key, encoding, raw: data, headers, msgID }: SetOperation,
     {
@@ -1296,7 +1320,15 @@ export class CoreStream<T = any> extends EventEmitter {
     if (instance !== undefined) {
       this.persistInstance = instance;
     }
-    if (Object.keys(this.requestedConfig).length > 0) {
+    // A new ephemeral instance starts with defaults, so this stream's
+    // configuration is applied again.  A disk-backed stream resets when its
+    // files were replaced (e.g., restored, conat/persist/fence.ts): they keep
+    // their own configuration, and nothing from before is written to them
+    // (applying a limit could delete restored messages).
+    if (
+      this.storage.ephemeral &&
+      Object.keys(this.requestedConfig).length > 0
+    ) {
       this.configReapplyPending = true;
       this.closeWriteGate();
     }

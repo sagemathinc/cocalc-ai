@@ -53,6 +53,11 @@ import type {
   PersistMaintenancePath,
   PersistMaintenanceScopeType,
 } from "./maintenance/types";
+import {
+  enterProjectOpen,
+  projectOfStoragePath,
+  projectReplacedInstance,
+} from "./project-fence";
 
 // this is per-server -- and "user" means where the resource is, usually
 // a given project.  E.g., 500 streams in a project, across many users.
@@ -191,6 +196,34 @@ export async function getStream({
     path: storage.path,
     service,
   });
+  // While a project is fenced its disk-backed streams wait here, and once its
+  // files were replaced they report a new instance (project-fence.ts).
+  const project_id = storage.ephemeral
+    ? undefined
+    : projectOfStoragePath(storage.path);
+  if (project_id == null) {
+    return await openStream({ storage, maintenance });
+  }
+  const leave = await enterProjectOpen(project_id);
+  try {
+    const stream = await openStream({ storage, maintenance });
+    const replaced = projectReplacedInstance(project_id);
+    if (replaced != null) {
+      stream.replacedInstance = replaced;
+    }
+    return stream;
+  } finally {
+    leave();
+  }
+}
+
+async function openStream({
+  storage,
+  maintenance,
+}: {
+  storage: StorageOptions;
+  maintenance?: PersistMaintenanceHooks;
+}): Promise<PersistentStream> {
   // Project/host/account paths can be redirected to per-subject roots.
   const ephemeral = !!storage.ephemeral;
   const path = resolveLocalPath(storage.path, { ephemeral });

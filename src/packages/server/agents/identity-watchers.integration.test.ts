@@ -18,6 +18,10 @@ jest.mock("./identity-routing", () => ({
 jest.mock("./personal", () => ({
   withPersonalHome: (...args) => withPersonalHome(...args),
 }));
+const listCredentials = jest.fn();
+jest.mock("@cocalc/server/external-credentials/routing", () => ({
+  listAccountExternalCredentialsRouted: (...args) => listCredentials(...args),
+}));
 jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
   assertProjectHostAgentTokenAccess: (...args) => assertHost(...args),
 }));
@@ -27,7 +31,7 @@ import {
   notifyIdentityWatchers,
   watchIdentity,
 } from "./identity-watchers";
-import { reportRuntime } from "./api";
+import { credentialUpdatedAt, reportRuntime, reportStatus } from "./api";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -183,5 +187,227 @@ describeDb("agent identity watchers", () => {
     await expect(
       reportRuntime({ ...report, runtime: { kind: "bogus" } as any }),
     ).rejects.toThrow("invalid agent runtime");
+  });
+
+  test("credentialUpdatedAt: when the account signed in again, nothing else", async () => {
+    const at = (iso: string) => new Date(iso);
+    const credential = (id: string, extra = {}) => ({
+      id,
+      provider: "anthropic",
+      kind: "claude-subscription",
+      scope: "account",
+      owner_account_id: alice,
+      metadata: { label: "Max A", secret_hint: "should not leave" },
+      created: at("2026-10-01T00:00:00Z"),
+      updated: at("2026-10-20T01:00:00Z"),
+      revoked: null,
+      last_used: null,
+      ...extra,
+    });
+    const id = randomUUID();
+    const replacement = randomUUID();
+    listCredentials.mockResolvedValue([
+      credential(id, { revoked: at("2026-10-20T02:00:00Z") }),
+      credential(replacement, { updated: at("2026-10-20T03:00:00Z") }),
+      // Another kind or provider does not count.
+      credential(randomUUID(), {
+        kind: "anthropic-api-key",
+        updated: at("2026-10-20T05:00:00Z"),
+      }),
+      credential(randomUUID(), {
+        revoked: at("2026-10-20T04:00:00Z"),
+        updated: at("2026-10-20T04:00:00Z"),
+      }),
+    ]);
+    const answer = await credentialUpdatedAt({
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      credential_id: id,
+      provider: "anthropic",
+    });
+    expect(answer).toEqual({
+      updated_at: Date.parse("2026-10-20T01:00:00Z"),
+      revoked: true,
+      newest_updated_at: Date.parse("2026-10-20T03:00:00Z"),
+      // Its id, so the held turn runs with it (William approved: the id
+      // only, never the secret or its label).
+      newest_credential_id: replacement,
+    });
+    expect(JSON.stringify(answer)).not.toMatch(/Max A|secret/);
+    expect(listCredentials).toHaveBeenCalledWith({
+      owner_account_id: alice,
+      includeRevoked: true,
+      provider: "anthropic",
+    });
+    expect(assertHost).toHaveBeenCalledWith(
+      expect.objectContaining({ account_id: alice, project_id }),
+    );
+    await expect(
+      credentialUpdatedAt({
+        host_id: randomUUID(),
+        account_id: alice,
+        project_id,
+        credential_id: "not-a-uuid",
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("the host's status report reaches watchers, only when it changes, never a credential", async () => {
+    await watchIdentity({
+      account_id: alice,
+      project_id,
+      agent_id,
+      watching: true,
+    });
+    const status = {
+      version: 1 as const,
+      running: 0,
+      queued: 1,
+      unavailable: { reason: "limit" as const, until: Date.now() + 3_600_000 },
+      // In the past, so the refresh below (6 hours later) is too.
+      at: Date.now() - 7 * 60 * 60_000,
+    };
+    const report = {
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+      // A credential id smuggled in is dropped, never stored.
+      status: { ...status, credential_id: randomUUID() } as any,
+    };
+    await expect(reportStatus(report)).resolves.toEqual({ registered: true });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(1);
+    expect(withPersonalHome).toHaveBeenCalledWith(alice, {
+      action: "identityChanged",
+      options: {
+        endpoint: { project_id, agent_id },
+        snapshot: expect.objectContaining({ status }),
+      },
+    });
+    const stored = (
+      await getPool().query(
+        "SELECT turn_status FROM agent_identities WHERE agent_id=$1",
+        [agent_id],
+      )
+    ).rows[0].turn_status;
+    expect(stored).toEqual(status);
+    // The same status computed later: no write, no notification.
+    await reportStatus({
+      ...report,
+      status: { ...status, at: status.at + 5 },
+    });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(1);
+    // The host's refresh, hours later: stored and passed on, so it never
+    // outlives its TTL while still true.
+    const refreshed = { ...status, at: status.at + 6 * 60 * 60_000 };
+    await reportStatus({ ...report, status: refreshed });
+    await settle();
+    expect(withPersonalHome).toHaveBeenCalledTimes(2);
+    expect(
+      (
+        await getPool().query(
+          "SELECT turn_status FROM agent_identities WHERE agent_id=$1",
+          [agent_id],
+        )
+      ).rows[0].turn_status,
+    ).toEqual(refreshed);
+    // A conversation that isn't a registered agent.
+    await expect(
+      reportStatus({ ...report, thread_id: "not-an-agent" }),
+    ).resolves.toEqual({ registered: false });
+    await expect(
+      reportStatus({ ...report, status: { version: 1, running: -1 } as any }),
+    ).rejects.toThrow("invalid agent status");
+  });
+
+  test("each watcher sees only its own account's limit or sign-in", async () => {
+    for (const account_id of [alice, bob])
+      await watchIdentity({ account_id, project_id, agent_id, watching: true });
+    const at = Date.now() - 1_000;
+    await reportStatus({
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+      status: {
+        version: 1,
+        running: 0,
+        queued: 0,
+        by_account: { [alice]: { reason: "sign-in" } },
+        at,
+      },
+    });
+    await settle();
+    const snapshotFor = (account: string) =>
+      (withPersonalHome.mock.calls as any[]).find(
+        ([who]) => who === account,
+      )?.[1].options.snapshot;
+    expect(snapshotFor(alice).status).toEqual({
+      version: 1,
+      running: 0,
+      queued: 0,
+      unavailable: { reason: "sign-in" },
+      at,
+    });
+    // Bob's credentials may work: no warning, and no one else's account.
+    expect(snapshotFor(bob).status).toEqual({
+      version: 1,
+      running: 0,
+      queued: 0,
+      at,
+    });
+    expect(JSON.stringify(withPersonalHome.mock.calls)).not.toMatch(
+      /by_account/,
+    );
+  });
+
+  test("an older report never replaces a newer one, and no host clock outruns the hub's", async () => {
+    const report = {
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+    };
+    const stored = async () =>
+      (
+        await getPool().query(
+          "SELECT turn_status FROM agent_identities WHERE agent_id=$1",
+          [agent_id],
+        )
+      ).rows[0].turn_status;
+    const busy = { version: 1 as const, running: 1, queued: 0, at: Date.now() };
+    await reportStatus({ ...report, status: busy });
+    expect(await stored()).toEqual(busy);
+    // A retried earlier report that lands last: refused.
+    await reportStatus({
+      ...report,
+      status: { version: 1, running: 0, queued: 0, at: busy.at - 10_000 },
+    });
+    expect(await stored()).toEqual(busy);
+    // A host whose clock is a day ahead: stored as of the hub's now...
+    const before = Date.now();
+    await reportStatus({
+      ...report,
+      status: {
+        version: 1,
+        running: 0,
+        queued: 2,
+        at: before + 24 * 60 * 60_000,
+      },
+    });
+    const ahead = await stored();
+    expect(ahead.queued).toBe(2);
+    expect(ahead.at).toBeLessThanOrEqual(Date.now());
+    // ...so a correct report right after still replaces it.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const idle = { version: 1 as const, running: 0, queued: 0, at: Date.now() };
+    await reportStatus({ ...report, status: idle });
+    expect(await stored()).toEqual(idle);
   });
 });

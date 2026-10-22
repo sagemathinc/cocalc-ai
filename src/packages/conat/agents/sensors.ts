@@ -49,8 +49,15 @@ export const SENSOR_LIMITS = {
   /** Watchers give up (and say so) after this long. */
   maxWatchHours: 72,
   defaultWatchHours: 24,
-  /** How far ahead a reminder may be set. */
-  maxReminderHours: 7 * 24,
+  /** How far ahead a reminder (`watch at`) may be set: far enough for
+   * deadlines months away. */
+  maxReminderHours: 400 * 24,
+  /**
+   * Pending reminders, counted apart from the other watchers (they check
+   * nothing until they fire, so they take no watcher's place).
+   */
+  maxRemindersPerAgent: 50,
+  maxRemindersPerAccount: 200,
   /** How much of the end of a file a file watcher reads. */
   maxWatchFileBytes: 1_000_000,
   /** How much of the end of a command's output an exit watcher reports. */
@@ -117,7 +124,41 @@ export type SensorWatch =
    * A command `cocalc sensor watch exit` started in a project terminal; it
    * records its exit code and output under sensorExitPaths(id).
    */
-  | { type: "exit"; id: string; command: string };
+  | { type: "exit"; id: string; command: string }
+  /**
+   * The turn this agent's message started on another agent: wakes when it
+   * ends (or the message was not delivered), from `agent rpc inspect`.
+   */
+  | {
+      type: "agent-turn";
+      attempt_id: string;
+      agent_network_id: string;
+      target: { project_id: string; agent_id: string };
+      /** The recipient's @name, for the title. */
+      name?: string;
+    }
+  /**
+   * Another agent's turns, whoever started them, from the status its host
+   * reports to peers (`agent rpc destinations`). Wakes once when a turn that
+   * ends after `since` (the end time of the last turn seen when the watcher
+   * was set) satisfies `until`.
+   */
+  | {
+      type: "agent";
+      target: { project_id: string; agent_id: string };
+      until: SensorWatchAgentUntil;
+      since: number;
+      /** The agent's @name, for the title. */
+      name?: string;
+    };
+
+/**
+ * ended: any turn ends. failed: a turn ends without completing (failed,
+ * canceled or never started). idle: a turn ends and none is running or
+ * waiting.
+ */
+export const SENSOR_WATCH_AGENT_UNTIL = ["ended", "failed", "idle"] as const;
+export type SensorWatchAgentUntil = (typeof SENSOR_WATCH_AGENT_UNTIL)[number];
 
 /** Where an exit watcher's command records its output and exit code. */
 export function sensorExitPaths(id: string): {
@@ -545,8 +586,82 @@ export function validateSensorWatch(
     const command = oneLine(w.command, "command", 200);
     watch = { type: "exit", id: w.id, command };
     title = `Exit of ${command}`.slice(0, 90);
+  } else if (w.type === "agent-turn") {
+    onlyFields(w, ["type", "attempt_id", "agent_network_id", "target", "name"]);
+    const target = w.target as Record<string, unknown> | undefined;
+    if (
+      !isValidUUID(w.attempt_id) ||
+      !isValidUUID(w.agent_network_id) ||
+      !target ||
+      typeof target !== "object" ||
+      Object.keys(target).some((k) => k !== "project_id" && k !== "agent_id") ||
+      !isValidUUID(target.project_id) ||
+      !isValidUUID(target.agent_id)
+    )
+      throw new Error(
+        "an agent-turn watcher needs the message's attempt, Agent Network and target (UUIDs, as agent send printed them)",
+      );
+    const name =
+      w.name != null
+        ? oneLine(w.name, "name", 64).replace(/^@/, "")
+        : undefined;
+    watch = {
+      type: "agent-turn",
+      attempt_id: w.attempt_id as string,
+      agent_network_id: w.agent_network_id as string,
+      target: {
+        project_id: target.project_id as string,
+        agent_id: target.agent_id as string,
+      },
+      ...(name ? { name } : {}),
+    };
+    title = `Turn of my message to ${name ? `@${name}` : "an agent"}`;
+  } else if (w.type === "agent") {
+    onlyFields(w, ["type", "target", "until", "since", "name"]);
+    const target = w.target as Record<string, unknown> | undefined;
+    if (
+      !target ||
+      typeof target !== "object" ||
+      Object.keys(target).some((k) => k !== "project_id" && k !== "agent_id") ||
+      !isValidUUID(target.project_id) ||
+      !isValidUUID(target.agent_id)
+    )
+      throw new Error(
+        "an agent watcher needs the agent's project_id and agent_id (UUIDs)",
+      );
+    const until = w.until ?? "ended";
+    if (!SENSOR_WATCH_AGENT_UNTIL.includes(until as SensorWatchAgentUntil))
+      throw new Error('until must be "ended", "failed" or "idle"');
+    // The last end seen when it was set; without one, from now on.
+    const since =
+      w.since == null
+        ? now
+        : boundedInt(w.since, "since", 0, now + 86_400_000, 0);
+    const name =
+      w.name != null
+        ? oneLine(w.name, "name", 64).replace(/^@/, "")
+        : undefined;
+    watch = {
+      type: "agent",
+      target: {
+        project_id: target.project_id as string,
+        agent_id: target.agent_id as string,
+      },
+      until: until as SensorWatchAgentUntil,
+      since,
+      ...(name ? { name } : {}),
+    };
+    title = `${name ? `@${name}` : "An agent"} ${
+      until === "failed"
+        ? "has a turn that fails"
+        : until === "idle"
+          ? "is idle"
+          : "finishes a turn"
+    }`;
   } else {
-    throw new Error('watch type must be "ci", "file", "at" or "exit"');
+    throw new Error(
+      'watch type must be "ci", "file", "at", "exit", "agent-turn" or "agent"',
+    );
   }
   return {
     kind: "watch",
@@ -625,6 +740,72 @@ if P.get("match"):
     print(json.dumps({"wake": True, "summary": "%s now contains %s" % (P["path"], json.dumps(P["match"])), "data": {"path": P["path"], "line": line}}))
 else:
     print(json.dumps({"wake": True, "summary": "%s now exists" % P["path"], "data": {"path": P["path"]}}))
+`
+    );
+  if (watch.type === "agent-turn")
+    return (
+      params +
+      `t = P["target"]
+r = subprocess.run(["cocalc", "--json", "agent", "rpc", "inspect", P["attempt_id"], "--agent-network", P["agent_network_id"], "--to-agent", t["agent_id"], "--target-project", t["project_id"]], capture_output=True, text=True, timeout=55)
+if r.returncode != 0:
+    print((r.stderr or r.stdout or "").strip()[-1000:], file=sys.stderr)
+    sys.exit(1)
+out = json.loads(r.stdout)
+o = out.get("data", out) if isinstance(out, dict) else {}
+turn = o.get("turn") or {}
+# Not delivered: there will be no turn. Ended: it is over. Otherwise wait.
+if o.get("outcome") != "rejected" and turn.get("state") != "ended":
+    sys.exit(0)
+who = ("@" + P["name"]) if P.get("name") else "the agent"
+summary = "Your message to %s: %s" % (who, o.get("summary") or o.get("reason") or o.get("outcome"))
+print(json.dumps({"wake": True, "summary": summary[:500], "data": {"attempt_id": P["attempt_id"], "outcome": o.get("outcome"), "turn": turn}}))
+`
+    );
+  if (watch.type === "agent")
+    return (
+      params +
+      `t = P["target"]
+who = ("@" + P["name"]) if P.get("name") else "the agent"
+r = subprocess.run(["cocalc", "--json", "agent", "rpc", "destinations"], capture_output=True, text=True, timeout=55)
+if r.returncode != 0:
+    print((r.stderr or r.stdout or "").strip()[-1000:], file=sys.stderr)
+    sys.exit(1)
+out = json.loads(r.stdout)
+d = out.get("data", out) if isinstance(out, dict) else {}
+member = None
+for peer in d.get("peers") or []:
+    m = peer.get("member") or {}
+    e = m.get("endpoint") or {}
+    if e.get("project_id") == t["project_id"] and e.get("agent_id") == t["agent_id"]:
+        member = m
+        break
+if member is None:
+    print("%s is no longer in any of your Agent Networks" % who, file=sys.stderr)
+    sys.exit(1)
+s = member.get("status") or {}
+last = s.get("last") or {}
+# Only a turn that ended after the watcher was set counts.
+if not isinstance(last.get("at"), (int, float)) or last["at"] <= P["since"]:
+    sys.exit(0)
+state = last.get("state")
+if P["until"] == "failed" and state == "completed":
+    sys.exit(0)
+running = s.get("running") or 0
+queued = s.get("queued") or 0
+if P["until"] == "idle" and (running > 0 or queued > 0):
+    sys.exit(0)
+how = {"completed": "completed", "failed": "failed", "canceled": "was canceled", "never-started": "never started"}.get(state, state or "ended")
+if last.get("kind"):
+    how += " (" + last["kind"] + ")"
+summary = "A turn of %s %s" % (who, how)
+if P["until"] == "idle":
+    summary += "; it is idle now"
+elif running or queued:
+    summary += "; %d running, %d waiting" % (running, queued)
+data = {"agent": P.get("name"), "target": t, "last": last, "running": running, "queued": queued}
+if s.get("unavailable"):
+    data["unavailable"] = s["unavailable"]
+print(json.dumps({"wake": True, "summary": summary[:500], "data": data}))
 `
     );
   if (watch.type === "exit") {

@@ -1936,7 +1936,68 @@ describe("moveProjectToHost", () => {
       exclude_host_id: SOURCE_HOST_ID,
       bay_id: "bay-0",
       account_id: "account-id",
+      project_region: "wnam",
+      allow_region_fallback: false,
     });
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("picks a destination only in the project's region when none is given", async () => {
+    const consts = await import("@cocalc/util/consts");
+    (consts.parseR2Region as jest.Mock).mockImplementation((value: string) =>
+      value === "enam" ? value : null,
+    );
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT\n        projects.project_id,\n        projects.host_id,",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "enam",
+              project_state: "opened",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    // No running host in enam: the move must not fall back to another region.
+    selectActiveHostMock = jest.fn(async () => undefined);
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        account_id: "account-id",
+        allow_offline: true,
+      }),
+    ).rejects.toThrow("no running project-host available in region enam");
+
+    expect(selectActiveHostMock).toHaveBeenCalledWith({
+      exclude_host_id: SOURCE_HOST_ID,
+      bay_id: "bay-0",
+      account_id: "account-id",
+      project_region: "enam",
+      allow_region_fallback: false,
+    });
+    expect(savePlacementMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
   });
 

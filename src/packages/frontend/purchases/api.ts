@@ -896,6 +896,8 @@ export async function setStripeCustomer(changes: {
   name?: string;
   address?;
   email?: string;
+  // EU or UK VAT number; an empty string removes it.
+  vat_id?: string;
 }) {
   return await api("purchases/stripe/set-customer", { changes });
 }

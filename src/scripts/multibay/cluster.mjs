@@ -63,6 +63,8 @@ export class MultibayCluster {
       mkdtempSync(path.join(process.env.MULTIBAY_DIR ?? tmpdir(), "mb-"));
     this.home = path.join(this.dir, "home");
     this.procs = new Map();
+    // Called with a bay's id when it stops (e.g. runInBay's worker for it).
+    this.stopHooks = new Set();
     // Every bay of a real cluster has the same one (bay-systemd installs it).
     this.sharedSecret = randomBytes(32).toString("hex");
   }
@@ -221,6 +223,7 @@ export class MultibayCluster {
   }
 
   async stopBay(id) {
+    for (const hook of this.stopHooks) hook(id);
     const child = this.procs.get(id);
     if (child?.pid && child.exitCode == null) {
       const exited = new Promise((resolve) => child.once("exit", resolve));
@@ -274,9 +277,8 @@ export class MultibayCluster {
   }
 
   async stop({ keep = !!process.env.MULTIBAY_KEEP } = {}) {
-    for (const id of [...this.bayIds].reverse()) {
-      await this.stopBay(id);
-    }
+    // Tearing the whole cluster down: no bay needs another to exit first.
+    await Promise.all(this.bayIds.map((id) => this.stopBay(id)));
     if (!keep) rmSync(this.dir, { recursive: true, force: true });
   }
 }

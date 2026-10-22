@@ -1007,6 +1007,30 @@ describe("project-host Conat auth", () => {
     ).resolves.toBe(true);
   });
 
+  it("allows only hub principals to use the persist fence service", async () => {
+    mockGetRow.mockReturnValue({
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    const { isAllowed } = createProjectHostConatAuth({ host_id });
+    for (const subject of [
+      "persist-control.fence",
+      "persist-control",
+      `persist-control.project-${project_id}`,
+    ]) {
+      for (const type of ["pub", "sub"] as const) {
+        await expect(
+          isAllowed({ user: { hub_id: "hub" }, type, subject }),
+        ).resolves.toBe(true);
+        await expect(
+          isAllowed({ user: { account_id }, type, subject }),
+        ).resolves.toBe(false);
+        await expect(
+          isAllowed({ user: { project_id }, type, subject }),
+        ).resolves.toBe(false);
+      }
+    }
+  });
+
   it("does not cache negative collaborator decisions across user syncs", async () => {
     let projectRead = 0;
     mockGetRow.mockImplementation((table) => {

@@ -57,6 +57,10 @@ import type {
 } from "@cocalc/conat/hub/api/legacy-migration";
 import { firstLegacyMigrationRootfs } from "./legacy-migration-rootfs";
 import { legacyMigrationProjectQuery } from "./legacy-migration-link";
+import {
+  archiveAvailable,
+  restoreRetryAvailable,
+} from "./legacy-migration-restore-retry";
 import type { SettingsPageDefinition } from "./settings-page";
 
 const { Text } = Typography;
@@ -444,15 +448,6 @@ async function openProject(project_id: string): Promise<void> {
   } catch (err) {
     void message.error(`${err}`);
   }
-}
-
-function archiveAvailable(project: LegacyMigrationProjectSummary): boolean {
-  return (
-    project.artifact_status === "available" &&
-    !!project.artifact_key &&
-    typeof project.artifact_bytes === "number" &&
-    Number.isFinite(project.artifact_bytes)
-  );
 }
 
 function projectActionAvailable(
@@ -1011,6 +1006,7 @@ export function LegacyMigrationPage() {
   const [importProject, setImportProject] =
     useState<LegacyMigrationProjectSummary>();
   const [openingLegacyProjectId, setOpeningLegacyProjectId] = useState("");
+  const [retryingLegacyProjectId, setRetryingLegacyProjectId] = useState("");
   const [selectedLegacyProjectIds, setSelectedLegacyProjectIds] = useState<
     string[]
   >([]);
@@ -1088,6 +1084,25 @@ export function LegacyMigrationPage() {
     }
     await openProject(project_id);
     await loadProjects();
+  }
+
+  async function retryRestore(
+    project: LegacyMigrationProjectSummary,
+  ): Promise<void> {
+    setRetryingLegacyProjectId(project.legacy_project_id);
+    try {
+      await webapp_client.conat_client.hub.legacyMigration.retryProjectRestore({
+        legacy_project_id: project.legacy_project_id,
+      });
+      void message.success(
+        "Restore restarted. CoCalc will restore the legacy files in the background.",
+      );
+      await loadProjects();
+    } catch (err) {
+      void message.error(`${err}`);
+    } finally {
+      setRetryingLegacyProjectId("");
+    }
   }
 
   async function handleProjectAction(
@@ -1295,6 +1310,18 @@ export function LegacyMigrationPage() {
                       missingCount === 1 ? "" : "s"
                     }`
                   : "Show error"}
+              </Button>
+            ) : null}
+            {restoreRetryAvailable(project) ? (
+              <Button
+                size="small"
+                loading={retryingLegacyProjectId === project.legacy_project_id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void retryRestore(project);
+                }}
+              >
+                Retry restore
               </Button>
             ) : null}
             {progressText ? (

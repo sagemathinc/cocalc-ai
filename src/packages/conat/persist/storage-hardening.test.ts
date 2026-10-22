@@ -32,6 +32,8 @@ import {
   persistSqliteLockingMode,
   storedRowToMessage,
   unexpectedPersistSchema,
+  HISTORY_SCHEMA,
+  RESET_TRASH_SCHEMA,
 } from "./storage";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
@@ -141,6 +143,308 @@ describe("the schema of a stored database", () => {
       .map(({ name }: any) => name);
     expect(tables).toContain(archive);
     stream.close();
+  });
+
+  it("opens files with the history tables, which a newer server creates", () => {
+    const path = serverFile();
+    // with the autoindexes of their primary keys, as SQLite makes them
+    tamper(path, Object.values(HISTORY_SCHEMA).join(";\n"));
+    const stream = open(path);
+    expect(
+      Buffer.from(stream.get({ seq: 1, key: undefined })!.raw).toString(),
+    ).toBe('{"a":1}');
+    stream.close();
+  });
+
+  it("creates the history tables from HISTORY_SCHEMA, so a fresh database passes the check", () => {
+    const path = serverFile();
+    const db = new DatabaseSync(path + ".db");
+    const objects = db
+      .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master")
+      .all() as any[];
+    db.close();
+    expect(unexpectedPersistSchema(objects)).toBeUndefined();
+    const names = objects.map(({ name }) => name);
+    for (const name of Object.keys(HISTORY_SCHEMA)) {
+      expect(names).toContain(name);
+    }
+    // the stored definitions are exactly HISTORY_SCHEMA's
+    for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
+      const stored = objects.find((o) => o.name === name)!.sql;
+      expect(stored.replace(/\s+/g, " ")).toBe(
+        sql.replace(/\s+/g, " ").replace(" IF NOT EXISTS", ""),
+      );
+    }
+  });
+
+  it("still passes the check after a seeded reset and archive", () => {
+    const path = serverFile();
+    let stream = open(path);
+    stream.set({ encoding: 1 as any, raw: Buffer.from('"b"'), msgID: "b" });
+    const { seq, count } = stream.inventory();
+    expect(
+      stream.resetHistory({
+        ifRevision: { seq, count },
+        coveredSeq: seq,
+        archive: true,
+        opId: "op",
+        seed: {
+          encoding: 1 as any,
+          raw: Buffer.from('{"is_snapshot":true,"snapshot":"v"}'),
+          msgID: "seed",
+          checkpoint: { name: "latest_snapshot" },
+        },
+      }).reset,
+    ).toBe(true);
+    stream.close();
+    stream = open(path);
+    expect(stream.length).toBe(1);
+    stream.close();
+  });
+
+  describe("msg ids written by an older server (rolled back after H1a)", () => {
+    const seedOptions = (stream: PersistentStream) => {
+      const { seq, count } = stream.inventory();
+      return {
+        ifRevision: { seq, count },
+        coveredSeq: seq,
+        archive: true,
+        seed: {
+          encoding: 1 as any,
+          raw: Buffer.from('{"is_snapshot":true,"snapshot":"v"}'),
+        },
+      };
+    };
+    // What #1247's server (ec031aacf3) writes for an acknowledged message:
+    // the messages row only, with no msg id and no history_epochs update.
+    const olderServerWrite = (path: string) =>
+      tamper(
+        path,
+        `INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (${Date.now() / 1000}, 0, 1, X'2262220a', NULL, NULL, 4, NULL)`,
+      );
+
+    it("never reports as absent an id the older server accepted", () => {
+      const path = serverFile();
+      let stream = open(path);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"a"'), msgID: "a" });
+      stream.close();
+      // its acknowledgment for "b" is seq 3; it records no id
+      olderServerWrite(path);
+      stream = open(path);
+      expect(stream.resetHistory(seedOptions(stream)).reset).toBe(true);
+      expect(
+        stream.historyInclusion({ epoch: 0, ids: ["a", "b"] }).ids,
+      ).toEqual({
+        a: { status: "included", seq: 2 },
+        b: { status: "unknown" },
+      });
+      stream.close();
+    });
+
+    it("notices a write by another server while this one has the file open", () => {
+      const path = serverFile();
+      const stream = open(path);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"a"'), msgID: "a" });
+      olderServerWrite(path);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"c"'), msgID: "c" });
+      expect(stream.resetHistory(seedOptions(stream)).reset).toBe(true);
+      expect(
+        stream.historyInclusion({ epoch: 0, ids: ["a", "b", "c"] }).ids,
+      ).toMatchObject({
+        a: { status: "included" },
+        b: { status: "unknown" },
+        c: { status: "included" },
+      });
+      stream.close();
+    });
+
+    it("notices an epoch changed by another server", () => {
+      const path = serverFile();
+      let stream = open(path);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"a"'), msgID: "a" });
+      stream.close();
+      tamper(
+        path,
+        `INSERT INTO config(field, value) VALUES('required_headers', '{"history_epoch":3}')`,
+      );
+      stream = open(path);
+      expect(stream.resetHistory(seedOptions(stream)).reset).toBe(true);
+      expect(stream.historyInclusion({ epoch: 0, ids: ["x"] }).ids).toEqual({
+        x: { status: "unknown" },
+      });
+      stream.close();
+    });
+
+    it("still proves absence after a clean close and reopen", () => {
+      const path = serverFile();
+      let stream = open(path);
+      // the file serverFile made is from before msg ids: start a complete
+      // epoch with a reset
+      stream.resetHistory(seedOptions(stream));
+      stream.set({
+        encoding: 1 as any,
+        raw: Buffer.from('"a"'),
+        msgID: "a",
+        headers: { history_epoch: 1 },
+      });
+      stream.close();
+      stream = open(path);
+      expect(stream.resetHistory(seedOptions(stream)).reset).toBe(true);
+      expect(
+        stream.historyInclusion({ epoch: 1, ids: ["a", "x"] }).ids,
+      ).toEqual({ a: { status: "included", seq: 3 }, x: { status: "absent" } });
+      stream.close();
+    });
+  });
+
+  // H1c-0: a server rolled back past H1c must still open what H1c wrote
+  describe("the reset-trash schema (accepted for H1c)", () => {
+    // what H1c leaves after a purge and an archive: the counts and trash
+    // tables; renamed tables keeping their indexes; and the live tables'
+    // generation-suffixed indexes
+    const H1C_SHAPE = [
+      ...Object.values(RESET_TRASH_SCHEMA),
+      'ALTER TABLE messages RENAME TO "messages_archived_3"',
+      "CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, time INTEGER NOT NULL, headers TEXT, compress NUMBER NOT NULL, encoding NUMBER NOT NULL, raw BLOB NOT NULL, size NUMBER NOT NULL, ttl NUMBER)",
+      "CREATE INDEX idx_messages_key_g1 ON messages(key)",
+      "CREATE INDEX idx_messages_time_g1 ON messages(time)",
+      'ALTER TABLE message_ids RENAME TO "message_ids_trash_7"',
+      "CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL)",
+      "CREATE INDEX idx_message_ids_msg_id_g1 ON message_ids(msg_id)",
+      "INSERT INTO messages(time, compress, encoding, raw, size) VALUES (1, 0, 1, CAST('{\"b\":2}' AS BLOB), 7)",
+    ].join(";\n");
+
+    const indexesOf = (path: string) => {
+      const db = new DatabaseSync(path + ".db");
+      try {
+        return db
+          .prepare(
+            "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+          )
+          .all() as { name: string; tbl_name: string }[];
+      } finally {
+        db.close();
+      }
+    };
+
+    it("opens, reads and writes a database H1c shaped, and creates no second index of a purpose", () => {
+      const path = serverFile();
+      tamper(path, H1C_SHAPE);
+      const before = indexesOf(path);
+      let stream = open(path);
+      expect(
+        [...stream.getAll()].map((m) => Buffer.from(m.raw).toString()),
+      ).toEqual(['{"b":2}']);
+      stream.set({ encoding: 1 as any, raw: Buffer.from('"c"'), msgID: "c" });
+      stream.close();
+      // the live tables' indexes are the same: they already had theirs (the
+      // renamed messages table is unindexed archive, which the open trims)
+      const live = (list: { name: string; tbl_name: string }[]) =>
+        list.filter((i) => ["messages", "message_ids"].includes(i.tbl_name));
+      expect(live(indexesOf(path))).toEqual(live(before));
+      expect(live(before)).toHaveLength(3);
+      // and it still opens
+      stream = open(path);
+      expect([...stream.getAll()]).toHaveLength(2);
+      stream.close();
+    });
+
+    it("gives a live table without an index of a purpose one under a free name", () => {
+      const path = serverFile();
+      // the base name is carried by a renamed table
+      tamper(
+        path,
+        [
+          'ALTER TABLE message_ids RENAME TO "message_ids_trash_2"',
+          "CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL)",
+        ].join(";\n"),
+      );
+      open(path).close();
+      expect(
+        indexesOf(path).filter((i) => i.name.startsWith("idx_message_ids")),
+      ).toEqual([
+        { name: "idx_message_ids_msg_id", tbl_name: "message_ids_trash_2" },
+        { name: "idx_message_ids_msg_id_g1", tbl_name: "message_ids" },
+      ]);
+    });
+
+    it.each([
+      [
+        "a second index of a purpose on one table",
+        "CREATE INDEX idx_messages_key_g5 ON messages(key)",
+      ],
+      [
+        "an index whose column is not its name's",
+        "CREATE INDEX idx_messages_key_g5 ON messages(time)",
+      ],
+      [
+        "a unique index of a purpose",
+        "DROP INDEX idx_messages_time; CREATE UNIQUE INDEX idx_messages_time_g2 ON messages(time)",
+      ],
+      [
+        "an index of a purpose on another table",
+        "CREATE INDEX idx_messages_key_g5 ON message_ids(msg_id)",
+      ],
+      [
+        "an index of a purpose on a table of another purpose",
+        "CREATE INDEX idx_message_ids_msg_id_g5 ON messages(key)",
+      ],
+      [
+        "an index of a purpose on two columns",
+        "DROP INDEX idx_messages_time; CREATE INDEX idx_messages_time_g2 ON messages(time, raw)",
+      ],
+      [
+        "a generation that is not a number",
+        "DROP INDEX idx_messages_time; CREATE INDEX idx_messages_time_gx ON messages(time)",
+      ],
+      [
+        "a changed counts table",
+        RESET_TRASH_SCHEMA.stream_counts.replace(
+          "trash_unknown_items INTEGER NOT NULL DEFAULT 0",
+          "trash_unknown_items INTEGER NOT NULL DEFAULT 0, x BLOB",
+        ),
+      ],
+      [
+        "a changed trash ledger",
+        RESET_TRASH_SCHEMA.history_trash.replace(
+          "kind TEXT NOT NULL",
+          "kind BLOB",
+        ),
+      ],
+      [
+        "a changed renamed id table",
+        'CREATE TABLE "message_ids_trash_4" (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL, x BLOB)',
+      ],
+      [
+        "a trash id table name with a quote",
+        `CREATE TABLE "message_ids_trash_1""; --"(seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL)`,
+      ],
+    ])("refuses %s", (_, sql) => {
+      const path = serverFile();
+      tamper(path, sql);
+      expect(() => open(path)).toThrow(/changed outside CoCalc/);
+    });
+
+    it("this server does not create the reset-trash tables", () => {
+      const path = serverFile();
+      const db = new DatabaseSync(path + ".db");
+      const names = (
+        db.prepare("SELECT name FROM sqlite_master").all() as { name: string }[]
+      ).map(({ name }) => name);
+      db.close();
+      for (const name of Object.keys(RESET_TRASH_SCHEMA)) {
+        expect(names).not.toContain(name);
+      }
+    });
+  });
+
+  it("refuses a changed history table", () => {
+    const path = serverFile();
+    tamper(
+      path,
+      "DROP TABLE message_ids; CREATE TABLE message_ids (seq INTEGER PRIMARY KEY, msg_id TEXT NOT NULL, x BLOB)",
+    );
+    expect(() => open(path)).toThrow(/changed outside CoCalc/);
   });
 
   it("can be turned off in an emergency", () => {

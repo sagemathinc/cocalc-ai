@@ -201,6 +201,11 @@ import { open as nodeOpen } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { getMasterConatClient, queueProjectProvisioned } from "./master-status";
+import {
+  restoreTouchesPersistFiles,
+  setPersistFenceClient,
+  withProjectPersistFenced,
+} from "./persist-fence";
 import callHub from "@cocalc/conat/hub/call-hub";
 import type {
   AuthorizePublicDirectoryShareReadResponse,
@@ -3201,10 +3206,19 @@ async function restoreSnapshot({
     ) {
       throw new Error(`safety snapshot is missing: ${safety_snapshot_name}`);
     }
-    ({ oldHomePath } = await swapProjectHome({
-      project_id,
-      replacementPath: staged.path,
-    }));
+    // If the home holds the project's persist files, nothing may have them
+    // open while it is swapped (persist-fence.ts).
+    const swap = async () =>
+      await swapProjectHome({
+        project_id,
+        replacementPath: staged.path,
+      });
+    ({ oldHomePath } = homeHoldsPersistFiles(project_id)
+      ? await withProjectPersistFenced(
+          { project_id, reason: "restore-snapshot" },
+          swap,
+        )
+      : await swap());
     cleanupStagedClone = false;
   } finally {
     if (cleanupStagedClone) {
@@ -4381,58 +4395,72 @@ async function restoreBackup({
 
   const progress = createLroRusticReporter(lro, "restore");
   const absoluteDest = relDest ? path.join(root, relDest) : root;
-  const requiresPrivilegedRestore = needsPrivilegedProjectRestore({
-    root,
-    scratch,
-    restorePath,
-    relDest,
-  });
-  if (requiresPrivilegedRestore) {
-    await assertBackupSnapshotExists({ project_id, id });
-    try {
-      await vol.rustic.restore({
-        id,
-        path: restorePath,
-        dest: absoluteDest,
-        timeout: PROJECT_RUSTIC_TIMEOUT_MS,
-        progress,
-        runner: async ({ snapshot, dest, timeout, progress }) =>
-          await projectRusticRestore({
-            repoProfile: vol.fs.rusticRepo,
-            snapshot,
-            dest,
-            timeoutMs: timeout,
-            progress,
-            remote_only,
-          }),
-      });
-    } catch (err) {
-      if (err instanceof ProjectRusticUnsupportedError) {
-        throw new Error(
-          "host runtime storage wrapper is too old for xattr-preserving restore; reconcile or upgrade the host first",
-        );
-      }
-      throw err;
-    }
-  } else {
-    await restoreFs.rustic(
-      [
-        "restore",
-        ...(remote_only ? ["--no-cache"] : []),
-        `${id}${restorePath ? ":" + restorePath : ""}`,
-        relDest,
-      ],
-      {
-        timeout: PROJECT_RUSTIC_TIMEOUT_MS,
-        env: lro ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
-        onStderrLine: progress
-          ? createRusticProgressHandler({ onProgress: progress })
-          : undefined,
-      },
-    );
-  }
+  // A restore that can write the project's persist files runs while nothing
+  // has them open (persist-fence.ts).
+  const fenced =
+    root === home &&
+    restoreTouchesPersistFiles({ project_id, home, dest: relDest });
+  await (fenced
+    ? withProjectPersistFenced(
+        { project_id, reason: "restore-backup" },
+        async () => await runRestore(),
+      )
+    : runRestore());
   invalidateProjectFsServer(project_id);
   void touchProjectLastEdited(project_id, "restore-backup");
+
+  async function runRestore(): Promise<void> {
+    const requiresPrivilegedRestore = needsPrivilegedProjectRestore({
+      root,
+      scratch,
+      restorePath,
+      relDest,
+    });
+    if (requiresPrivilegedRestore) {
+      await assertBackupSnapshotExists({ project_id, id });
+      try {
+        await vol.rustic.restore({
+          id,
+          path: restorePath,
+          dest: absoluteDest,
+          timeout: PROJECT_RUSTIC_TIMEOUT_MS,
+          progress,
+          runner: async ({ snapshot, dest, timeout, progress }) =>
+            await projectRusticRestore({
+              repoProfile: vol.fs.rusticRepo,
+              snapshot,
+              dest,
+              timeoutMs: timeout,
+              progress,
+              remote_only,
+            }),
+        });
+      } catch (err) {
+        if (err instanceof ProjectRusticUnsupportedError) {
+          throw new Error(
+            "host runtime storage wrapper is too old for xattr-preserving restore; reconcile or upgrade the host first",
+          );
+        }
+        throw err;
+      }
+    } else {
+      await restoreFs.rustic(
+        [
+          "restore",
+          ...(remote_only ? ["--no-cache"] : []),
+          `${id}${restorePath ? ":" + restorePath : ""}`,
+          relDest,
+        ],
+        {
+          timeout: PROJECT_RUSTIC_TIMEOUT_MS,
+          env: lro ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
+          onStderrLine: progress
+            ? createRusticProgressHandler({ onProgress: progress })
+            : undefined,
+        },
+      );
+    }
+  }
 }
 
 async function beginRestoreStaging({
@@ -4452,6 +4480,16 @@ async function beginRestoreStaging({
   });
 }
 
+// Whether replacing the project's whole home replaces its persist files
+// (COCALC_SYNC_PROJECTS is in the home).
+function homeHoldsPersistFiles(project_id: string): boolean {
+  return restoreTouchesPersistFiles({
+    project_id,
+    home: projectMountpoint(project_id),
+    dest: "",
+  });
+}
+
 async function ensureRestoreStaging({
   handle,
 }: {
@@ -4465,7 +4503,15 @@ async function finalizeRestoreStaging({
 }: {
   handle: RestoreStagingHandle;
 }): Promise<void> {
-  await finalizeRestoreStagingBtrfs(handle);
+  // Swaps in a whole new home: if it holds the project's persist files,
+  // nothing may have them open meanwhile (persist-fence.ts).
+  const finalize = async () => await finalizeRestoreStagingBtrfs(handle);
+  await (homeHoldsPersistFiles(handle.project_id)
+    ? withProjectPersistFenced(
+        { project_id: handle.project_id, reason: "restore-staging" },
+        finalize,
+      )
+    : finalize());
   invalidateProjectFsServer(handle.project_id);
   void touchProjectLastEdited(handle.project_id, "restore-staging");
 }
@@ -5586,6 +5632,7 @@ export async function initFileServer({
   enableSsh?: boolean;
 }) {
   logger.debug("initFileServer", { enableSsh });
+  setPersistFenceClient(client);
   if (servers != null) {
     logger.debug("initFileServer: already initialized");
 

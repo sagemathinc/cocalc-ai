@@ -528,6 +528,29 @@ export async function createCodexTurnNotice(
       ? null
       : `${opts.stable_source_id}`.trim();
   const source_bay_id = getConfiguredBayId();
+  const group_key =
+    opts.group_key == null || `${opts.group_key}`.trim() === ""
+      ? null
+      : `${opts.group_key}`.trim().slice(0, 200);
+  const groupDedupe = group_key
+    ? `agent_turn_group:${group_key}:${account_id}`
+    : null;
+  if (groupDedupe) {
+    // Already told today (on this bay): the others share that notice.
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM notification_targets WHERE target_account_id=$1 AND dedupe_key=$2 AND created_at > NOW() - interval '24 hours' LIMIT 1",
+      [account_id, groupDedupe],
+    );
+    if (rows.length)
+      return {
+        event_id: "",
+        kind: "account_notice",
+        source_bay_id,
+        target_count: 0,
+        notification_ids: [],
+        targets: [],
+      };
+  }
 
   return await createNotificationResult({
     kind: "account_notice",
@@ -550,22 +573,25 @@ export async function createCodexTurnNotice(
         thread_id,
         thread_label,
         stable_source_id,
+        ...(opts.paused === true ? { turn_state: "paused" } : {}),
       },
     }),
     buildTargets: async (targetHomeBays) => [
       {
         target_account_id: account_id,
         target_home_bay_id: targetHomeBays[account_id],
-        dedupe_key: stable_source_id
-          ? [
-              "codex_turn_completion",
-              source_project_id,
-              source_path,
-              thread_id,
-              stable_source_id,
-              account_id,
-            ].join(":")
-          : null,
+        dedupe_key: groupDedupe
+          ? groupDedupe
+          : stable_source_id
+            ? [
+                "codex_turn_completion",
+                source_project_id,
+                source_path,
+                thread_id,
+                stable_source_id,
+                account_id,
+              ].join(":")
+            : null,
         summary_json: {
           title,
           body_markdown,
@@ -578,6 +604,7 @@ export async function createCodexTurnNotice(
           thread_id,
           thread_label,
           stable_source_id,
+          ...(opts.paused === true ? { turn_state: "paused" } : {}),
         },
       },
     ],

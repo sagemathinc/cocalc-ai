@@ -106,7 +106,7 @@
     "test:audit": "node ./scripts/test-audit.mjs",
     "test:audit-tool": "node --test ./scripts/test-audit.test.mjs",
     "test:workspaces": "python3 ./scripts/test_workspaces.py",
-    "test:ci-plan": "node --test ./scripts/ci-test-plan.test.mjs ./scripts/ci-jest-cache-key.test.mjs",
+    "test:ci-plan": "node --test ./scripts/ci-test-plan.test.mjs ./scripts/ci-jest-cache-key.test.mjs ./scripts/ci-test-timings.test.mjs",
     "check-unicode-controls": "node --test ./scripts/check-unicode-controls.test.mjs",
     "check-html-sinks": "node --test ./scripts/check-html-sinks.test.mjs",
     "test:sync-tools": "node --test ./scripts/dev/sync-replay.test.mjs",

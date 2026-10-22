@@ -19,6 +19,7 @@ import {
   getCoCalcUserType,
   isAccountAllowed as isAccountSubjectAllowed,
   isFileServerManagementSubject,
+  isPersistControlSubject,
   isProjectAllowed as isProjectSubjectAllowed,
   isProjectCollaboratorGroup,
   type CoCalcUser,
@@ -463,6 +464,9 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     if (userType === "hub") {
       // Local internal services authenticate using the system account.
       return true;
+    }
+    if (isPersistControlSubject(subject)) {
+      return false;
     }
     if (user.auth_api_key) {
       const binding = user.auth_api_key;

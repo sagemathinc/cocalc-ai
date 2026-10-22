@@ -28,6 +28,13 @@ import {
 import { setConatClient } from "@cocalc/conat/client";
 import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import { initPersistFenceService } from "@cocalc/conat/persist/fence";
+import {
+  fileFenceStore,
+  describeFenceHolder,
+  isFenceHolderAlive,
+} from "@cocalc/backend/conat/persist-fence";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
@@ -206,6 +213,7 @@ import {
 } from "./browser-session";
 import {
   isProjectHostExternalConatPersistEnabled,
+  persistFenceDir,
   waitForProjectHostConatPersistReady,
 } from "./conat-persist";
 import {
@@ -627,9 +635,26 @@ export async function main(
   // Local persist must exist before ACP startup, which uses project-scoped
   // stores.
   const externalPersist = isProjectHostExternalConatPersistEnabled();
+  // Lets file-server restores fence a project's streams (as the daemon does);
+  // started before the persist server serves.
+  const persistFenceService = externalPersist
+    ? undefined
+    : await initPersistFenceService({
+        client: conatClient,
+        holderAlive: isFenceHolderAlive,
+        describeHolder: describeFenceHolder,
+        store: fileFenceStore(persistFenceDir()),
+      });
   const persistServer = externalPersist
     ? undefined
     : createPersistServer({ client: conatClient });
+  // The board write service (conat/persist/board-policy.ts), beside it.
+  const boardPersistServer = externalPersist
+    ? undefined
+    : createPersistServer({
+        client: conatClient,
+        service: BOARD_WRITE_SERVICE,
+      });
   if (externalPersist) {
     await waitForProjectHostConatPersistReady({ client: conatClient });
   }
@@ -1780,6 +1805,8 @@ export async function main(
     if (closed) return;
     closed = true;
     persistServer?.close?.();
+    boardPersistServer?.close?.();
+    persistFenceService?.close();
     fsServer?.close?.();
     // Keep the catalog's exclusive lease until process exit: filesystem calls
     // already in flight may still complete after the service stops accepting.

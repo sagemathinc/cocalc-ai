@@ -1,4 +1,5 @@
 import { sudo } from "@cocalc/file-server/btrfs/util";
+import { forgetSubvolumePaths } from "@cocalc/file-server/btrfs/operation-cache";
 
 export class SnapshotHomeSwapError extends Error {
   constructor(
@@ -25,7 +26,12 @@ export async function swapSnapshotHome({
   record: () => Promise<void>;
 }): Promise<void> {
   const move = async (source: string, destination: string) => {
-    await sudo({ command: "mv", args: [source, destination] });
+    try {
+      await sudo({ command: "mv", args: [source, destination] });
+    } finally {
+      // another subvolume at these paths (file-server qgroup-scan.ts)
+      forgetSubvolumePaths(source, destination);
+    }
   };
   let originalMoved = false;
   let installed = false;

@@ -15,13 +15,23 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { Command } from "commander";
+import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
+import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import {
   parseSensorWake,
+  SENSOR_WATCH_AGENT_UNTIL,
   sensorExitPaths,
   sensorInterpreterArgv,
   validateSensorSpec,
+  type SensorWatch,
+  type SensorWatchAgentUntil,
 } from "@cocalc/conat/agents/sensors";
 import { describeSensorSchedule } from "@cocalc/util/ai/sensor-schedule";
+import {
+  readTurnAgentReferences,
+  resolveAgentName,
+  type AgentNameBinding,
+} from "../core/agent-destination";
 import { sendIdentityMessage } from "../core/agent-message";
 import type { ProjectCommandDeps } from "./project";
 import { spawnProjectTerminalSession } from "./project/terminal";
@@ -34,6 +44,8 @@ const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. 
      cocalc sensor watch file --path out.log [--match 'BUILD DONE']
      cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123"
      cocalc sensor watch exit -- make test   # runs it in a project terminal
+     cocalc agent send reviewer --watch-turn "..."   # its turn on your message
+     cocalc sensor watch agent worker --until failed # any turn of a peer
 2. Scripts: a small program you write and a person approves. It runs like a
    command in your turn: in this project's software, as the approving person,
    with the connectors the spec lists in "uses" (if they gave them to you).
@@ -50,6 +62,10 @@ Script spec (JSON): {"title", "purpose", "language": "sh"|"python"|"node",
   "script", "uses": ["cocalc"|"github"|"cloudflare", ...] (default none),
   "schedule": {"kind": "interval", "minutes": 30}
            or {"kind": "daily", "times": ["07:00"], "timezone": "Europe/Berlin"},
+           or {"kind": "monthly", "dates": [3], "times": ["08:30"],
+               "timezone": "America/Los_Angeles"} (days of the month 1-31; a
+               day past a month's end runs on its last day; quarterly: add
+               "months": [1, 4, 7, 10]),
   optional "days" [0-6, 0=Sunday], interval "window" {"start","end"},
   "timeout_seconds" (default 60, max 300), "max_wakes_per_day" (default 24)}
 Prompt spec: {"kind": "prompt", "title", "prompt", "schedule", "max_wakes_per_day"}`;
@@ -171,6 +187,47 @@ export function exitWatcherArgs(command: string, id: string): string[] {
   ];
 }
 
+/**
+ * An agent watcher for a peer named as `agent send` names it, from now on:
+ * `since` is when its last turn seen here ended. `now` is what it is doing.
+ */
+export function agentWatch(
+  name: string,
+  until: string,
+  directory: AgentNetworkDiscovery,
+  references: AgentNameBinding[] = [],
+  network?: string,
+): { watch: SensorWatch; now?: string } {
+  if (!SENSOR_WATCH_AGENT_UNTIL.includes(until as SensorWatchAgentUntil))
+    throw new Error("--until must be ended, failed or idle");
+  const { target } = resolveAgentName(name, directory, references, network);
+  const peer = directory.peers.find(
+    ({ member }) =>
+      member.kind === "registered" &&
+      member.endpoint.project_id === (target as any).project_id &&
+      member.endpoint.agent_id === (target as any).agent_id,
+  );
+  if (peer?.member.kind !== "registered")
+    throw new Error(
+      `@${name.replace(/^@/, "")} is an external agent: its turns are not reported`,
+    );
+  const { member } = peer;
+  const now = agentTurnStatusText(member.status, Date.now());
+  return {
+    watch: {
+      type: "agent",
+      target: {
+        project_id: member.endpoint.project_id,
+        agent_id: member.endpoint.agent_id,
+      },
+      until: until as SensorWatchAgentUntil,
+      since: member.status?.last?.at ?? 0,
+      name: member.name,
+    },
+    ...(now ? { now } : {}),
+  };
+}
+
 export function registerSensorCommand(
   program: Command,
   deps: Pick<
@@ -290,7 +347,9 @@ export function registerSensorCommand(
     );
   watch
     .command("at")
-    .description("a reminder: wake at a time with a note to yourself")
+    .description(
+      "a reminder: wake at a time (up to 400 days ahead) with a note to yourself; pending reminders show in `sensor list` and are cancelled with `sensor delete`",
+    )
     .requiredOption("--at <time>", "ISO time, e.g. 2026-10-16T15:00:00Z")
     .requiredOption("--note <text>", "what to do then")
     .action(async (opts, cmd) =>
@@ -304,6 +363,76 @@ export function registerSensorCommand(
         "sensor watch at",
       ),
     );
+  watch
+    .command("agent-turn")
+    .description(
+      "when the turn your message started on another agent ends, or the message was not delivered (agent send --watch-turn sets this for you)",
+    )
+    .requiredOption("--attempt <uuid>", "the message's attempt_id")
+    .requiredOption("--agent-network <uuid>", "its agent_network_id")
+    .requiredOption("--to-agent <uuid>", "the recipient's agent_id")
+    .requiredOption("--target-project <uuid>", "the recipient's project_id")
+    .option("--name <name>", "the recipient's @name, for the title")
+    .option("--hours <n>", "give up after this many hours (default 24)")
+    .action(async (opts, cmd) =>
+      send(
+        cmd,
+        {
+          action: "sensor",
+          op: "watch",
+          watch: {
+            type: "agent-turn",
+            attempt_id: opts.attempt,
+            agent_network_id: opts.agentNetwork,
+            target: { project_id: opts.targetProject, agent_id: opts.toAgent },
+            ...(opts.name ? { name: opts.name } : {}),
+          },
+          ...hours(opts.hours),
+        },
+        "sensor watch agent-turn",
+      ),
+    );
+  watch
+    .command("agent")
+    .description(
+      "when another agent in your Agent Networks finishes a turn, whoever started it (to watch the turn your own message started, use agent send --watch-turn)",
+    )
+    .argument("<name>", "the agent's @name, as agent destinations shows it")
+    .option(
+      "--until <when>",
+      "ended: any turn ends; failed: a turn ends without completing (failed, canceled or never started); idle: a turn ends and none is running or waiting",
+      "ended",
+    )
+    .option(
+      "--network <title-or-id>",
+      "the Agent Network, if the name is in several",
+    )
+    .option("--hours <n>", "give up after this many hours (default 24)")
+    .action(async (name: string, opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      const [references, directory] = await Promise.all([
+        readTurnAgentReferences(),
+        sendIdentityMessage(
+          { version: 3, action: "destinations" },
+          globals.api,
+        ) as Promise<AgentNetworkDiscovery>,
+      ]);
+      const { watch: w, now } = agentWatch(
+        name,
+        opts.until,
+        directory,
+        references,
+        opts.network,
+      );
+      const set: any = await sendIdentityMessage(
+        { action: "sensor", op: "watch", watch: w, ...hours(opts.hours) },
+        globals.api,
+      );
+      emitSuccess({ globals }, "sensor watch agent", {
+        ...set,
+        ...(now ? { now } : {}),
+      });
+    });
   watch
     .command("exit")
     .description(

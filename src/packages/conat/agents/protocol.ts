@@ -21,6 +21,8 @@ export interface AgentIdentity {
   runtime?:
     | import("@cocalc/util/ai/agent-runtime-kind").AgentRuntimeSummary
     | null;
+  /** What it is doing, as its project host last reported. */
+  turn_status?: import("./agent-status").AgentTurnStatus | null;
 }
 
 export interface AgentCredential {

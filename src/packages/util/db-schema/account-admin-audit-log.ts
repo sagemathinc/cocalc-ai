@@ -10,6 +10,16 @@ Table({
   rules: {
     primary_key: "id",
     pg_indexes: ["account_id", "actor_account_id", "action", "created"],
+    pg_custom_indexes: [
+      {
+        // At most one after-the-fact attribution per admin balance adjustment
+        // (server/purchases/admin-credit-attribution.ts).
+        name: "account_admin_audit_log_attribution_purchase_unique",
+        unique: true,
+        query:
+          "((metadata->>'purchase_id')) WHERE action = 'balance-adjustment-attribution'",
+      },
+    ],
     user_query: {
       get: {
         admin: true,

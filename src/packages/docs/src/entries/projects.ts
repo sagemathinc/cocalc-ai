@@ -325,9 +325,9 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
       "/public/docs/collaborators-8ce1955f.webp",
       "Collaborators sharing a project folder with realtime cursors",
     ),
-    lastReviewed: "2026-09-08",
+    lastReviewed: "2026-10-21",
     searchKeywords:
-      "collaborator viewer reviewer read-only access selected files directories invitation read policy promote revoke",
+      "collaborator viewer reviewer read-only access selected files directories invitation read policy promote revoke remove authorized_keys ssh security",
     slug: "projects/collaborators",
     status: "ready",
     summary:
