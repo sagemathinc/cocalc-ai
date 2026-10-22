@@ -54,6 +54,22 @@ export function selectAgentNetwork(
   )[0];
 }
 
+/**
+ * The peers in the requested network, when one is requested and any are: an
+ * explicit network disambiguates peers sharing a name in different networks
+ * (external labels need not be unique). Otherwise all of them, so the
+ * network check reports the mismatch.
+ */
+function inRequestedNetwork<
+  T extends { networks: AgentNetworkDiscovery["peers"][number]["networks"] },
+>(peers: T[], requestedNetwork?: string): T[] {
+  if (requestedNetwork === undefined) return peers;
+  const inside = peers.filter(({ networks }) =>
+    networks.some((network) => matchesAgentNetwork(network, requestedNetwork)),
+  );
+  return inside.length ? inside : peers;
+}
+
 export function resolveAgentName(
   input: string,
   directory: AgentNetworkDiscovery,
@@ -90,8 +106,9 @@ export function resolveAgentName(
         (byId && member.member_id === name),
   );
   const pinned = selected.map((ref) => ref.target);
+  const candidates = inRequestedNetwork(peers, requestedNetwork);
   const matches = pinned.length
-    ? peers.filter(
+    ? candidates.filter(
         ({ member }) =>
           member.kind === "registered" &&
           pinned.some(
@@ -100,7 +117,7 @@ export function resolveAgentName(
               target.project_id === member.endpoint.project_id,
           ),
       )
-    : peers;
+    : candidates;
   if (!matches.length)
     throw new Error(
       `No approved destination or current-turn mention named @${name}. Discover destinations or select the agent in the human composer; no message was sent.`,
@@ -262,7 +279,7 @@ export function resolveBroadcastTargets(
   }
   const peers = parsed.map((p, index) => {
     const where = `--targets[${index}]`;
-    const matches = directory.peers.filter((peer) =>
+    const named = directory.peers.filter((peer) =>
       "target" in p
         ? agentRpcSourceKey(peerTarget(peer)) === agentRpcSourceKey(p.target)
         : "member_id" in p
@@ -272,6 +289,7 @@ export function resolveBroadcastTargets(
           : peerName(peer).trim().toLowerCase() === p.name.toLowerCase() ||
             peerHandle(peer) === p.name.replace(/^@/, "").toLowerCase(),
     );
+    const matches = inRequestedNetwork(named, requestedNetwork);
     if (matches.length === 0)
       throw new Error(
         `${where}: no network peer ${"name" in p ? `named @${p.name}` : "matches this target"}; run agent destinations. No message was sent.`,

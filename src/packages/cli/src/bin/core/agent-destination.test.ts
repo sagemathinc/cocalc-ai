@@ -185,7 +185,11 @@ test("explicit targets in an explicit network need no discovery", () => {
   );
 });
 
-function withExternal(label: string, value = directory()) {
+function withExternal(
+  label: string,
+  value = directory(),
+  networks?: AgentNetworkDiscovery["peers"][number]["networks"],
+) {
   const agent_id = randomUUID();
   const external = {
     kind: "external" as const,
@@ -202,7 +206,7 @@ function withExternal(label: string, value = directory()) {
       available: true,
       added_at: new Date().toISOString(),
     },
-    networks: value.peers[0].networks,
+    networks: networks ?? value.peers[0].networks,
   });
   return { value, external, member_id: agent_id };
 }
@@ -245,6 +249,37 @@ test("two external agents with one handle are ambiguous, not a guess", () => {
   assert.throws(
     () => resolveBroadcastTargets(["ops0"], value),
     /ambiguous peer/,
+  );
+});
+
+test("a requested network tells apart same-handle agents in different networks", () => {
+  const { value, external: alpha } = withExternal(
+    "ops0 on alpha.cocalc.ai (ops project)",
+  );
+  const beta = randomUUID();
+  const { external: other } = withExternal("ops0 on beta (laptop)", value, [
+    {
+      agent_network_id: beta,
+      title: "Beta",
+      delivery_mode: "live",
+      generation: randomUUID(),
+    },
+  ]);
+  // Without a network: ambiguous, never a guess.
+  assert.throws(() => resolveAgentName("ops0", value), /Ambiguous/);
+  // With one, by title or id: the agent in it.
+  assert.equal(resolveAgentName("ops0", value, [], "Review").target, alpha);
+  assert.equal(resolveAgentName("ops0", value, [], beta).target, other);
+  assert.deepEqual(resolveBroadcastTargets(["ops0"], value, "Beta").targets, [
+    other,
+  ]);
+  assert.deepEqual(resolveBroadcastTargets(["@ops0"], value, network).targets, [
+    alpha,
+  ]);
+  // A network neither is in still says so.
+  assert.throws(
+    () => resolveAgentName("ops0", value, [], "Nowhere"),
+    /Ambiguous|not in one/,
   );
 });
 
