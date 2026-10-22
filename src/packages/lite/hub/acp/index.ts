@@ -278,7 +278,7 @@ import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
   resolveHumanTurnMentions,
-  resolveHumanTurnArtifactMentions,
+  humanTurnArtifacts,
 } from "./turn-mentions";
 import { augmentPromptWithAgentMentions } from "@cocalc/util/agent-mentions";
 import {
@@ -8278,10 +8278,10 @@ async function executeAcpRequest({
   const mentionReferences = harness
     ? []
     : await resolveHumanTurnMentions(request, hubApi.agent);
-  const artifactReferences = await resolveHumanTurnArtifactMentions(
-    request,
-    hubApi.artifactCatalog,
-  );
+  // A project-host's agent worker has no artifact catalog: its chips are
+  // named to the agent instead of bound (never a failed turn).
+  const { references: artifactReferences, note: artifactNote } =
+    await humanTurnArtifacts(request, hubApi.artifactCatalog);
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -8497,7 +8497,9 @@ async function executeAcpRequest({
             artifactReferences.length
               ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
               : augmentPromptWithAgentMentions(prompt, mentionReferences),
-            humanTurnComputerNote(request),
+            [humanTurnComputerNote(request), artifactNote]
+              .filter(Boolean)
+              .join("\n\n"),
           ),
           local_images: harness ? undefined : local_images,
           image_attachments: harness ? image_attachments : undefined,
