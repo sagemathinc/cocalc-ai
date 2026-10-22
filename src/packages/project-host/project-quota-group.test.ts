@@ -1,17 +1,17 @@
-const qgroupShow = new Map<string, string>();
 const existing = new Set<string>();
 const queued: any[] = [];
 let queueError: Error | undefined;
 const destroyed: string[] = [];
+// what `btrfs qgroup show -prc --raw /mnt/cocalc` prints
 let filesystemQgroups = "";
+const scans = jest.fn();
 
 jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
-  cachedBtrfsQgroupShowRawForPath: jest.fn(async (path: string) => ({
-    stdout: qgroupShow.get(path) ?? "",
+  cachedBtrfsSubvolumeShow: jest.fn(async () => ({
+    stdout: "Subvolume ID: 999\n",
     stderr: "",
     exit_code: 0,
   })),
-  invalidateBtrfsQgroupShowRaw: jest.fn(),
 }));
 jest.mock("@cocalc/file-server/btrfs/quota-queue", () => ({
   queueSyncQuotaGroup: jest.fn(async (opts: any) => {
@@ -29,11 +29,10 @@ jest.mock("@cocalc/file-server/btrfs/quota-group", () => ({
 jest.mock("@cocalc/file-server/btrfs/util", () => ({
   refusedByStorageWrapper: (err: unknown) =>
     /SECURITY_DENY/.test(`${(err as any)?.message ?? err}`),
-  btrfs: jest.fn(async () => ({
-    stdout: filesystemQgroups,
-    stderr: "",
-    exit_code: 0,
-  })),
+  btrfs: jest.fn(async ({ args }: { args: string[] }) => {
+    scans(args);
+    return { stdout: filesystemQgroups, stderr: "", exit_code: 0 };
+  }),
 }));
 jest.mock("@cocalc/backend/misc/async-utils-node", () => ({
   exists: jest.fn(async (path: string) => existing.has(path)),
@@ -55,6 +54,7 @@ import {
   projectQuotaWithHistory,
   syncProjectQuotaGroup,
 } from "./project-quota-group";
+import { resetQgroupScansForTest } from "@cocalc/file-server/btrfs/qgroup-scan";
 
 const PROJECT = "00000000-1111-4222-8333-444444444444";
 const GROUP = projectQuotaGroup(PROJECT);
@@ -67,36 +67,52 @@ const HEADER = `Qgroupid Referenced Exclusive Max referenced Parent Child Path
 -------- ---------- --------- -------------- ------ ----- ----
 `;
 
-// what btrfs qgroup show -prcF shows from a subvolume in GROUP
-function show({
-  id,
-  own,
-  limit = "none",
-  member = true,
-  total,
-  groupLimit,
+// The filesystem's quotas: the home (0/256) and history (0/257, or `id`),
+// each in GROUP if `member`, and GROUP if either is.
+function filesystem({
+  home,
+  history,
+  groupLimit = "none",
 }: {
-  id: number;
-  own: number;
-  limit?: number | "none";
-  member?: boolean;
-  total: number;
-  groupLimit: number | "none";
-}): string {
-  if (!member) return `${HEADER}0/${id} ${own} ${own} ${limit} - - x\n`;
-  return (
-    HEADER +
-    `0/${id} ${own} ${own} ${limit} ${GROUP} - x\n` +
-    `${GROUP} ${total} ${total} ${groupLimit} - 0/256,0/257 <2 member qgroups>\n`
-  );
+  home?: { own: number; member?: boolean };
+  history?: { own: number; member?: boolean; id?: number };
+  groupLimit?: number | "none";
+}): void {
+  const rows: string[] = [`0/5 16384 16384 none - - <toplevel>`];
+  const members: string[] = [];
+  let total = 0;
+  for (const [v, id, path] of [
+    [home, 256, `project-${PROJECT}`],
+    [history, history?.id ?? 257, `project-${PROJECT}-persist`],
+  ] as const) {
+    if (v == null) continue;
+    const member = v.member ?? true;
+    if (member) {
+      members.push(`0/${id}`);
+      total += v.own;
+    }
+    rows.push(
+      `0/${id} ${v.own} ${v.own} none ${member ? GROUP : "-"} - ${path}`,
+    );
+  }
+  if (members.length > 0) {
+    rows.push(
+      `${GROUP} ${total} ${total} ${groupLimit} - ${members.join(",")} <${members.length} member qgroups>`,
+    );
+  }
+  filesystemQgroups = HEADER + rows.join("\n") + "\n";
+  // (read again)
+  resetQgroupScansForTest();
 }
 
 beforeEach(() => {
   queueError = undefined;
-  qgroupShow.clear();
+  filesystemQgroups = "";
+  resetQgroupScansForTest();
   existing.clear();
   queued.length = 0;
   destroyed.length = 0;
+  scans.mockClear();
 });
 
 describe("the project's quota group", () => {
@@ -143,6 +159,10 @@ describe("the project's quota group", () => {
       env: {},
     };
     // no group yet
+    filesystem({
+      home: { own: GiB, member: false },
+      history: { own: GiB, member: false },
+    });
     await syncProjectQuotaGroup(opts);
     expect(queued).toEqual([
       expect.objectContaining({
@@ -153,16 +173,18 @@ describe("the project's quota group", () => {
         project_id: PROJECT,
       }),
     ]);
-    // as it should be
-    qgroupShow.set(
-      HOME,
-      show({ id: 256, own: GiB, total: 2 * GiB, groupLimit: 11 * GiB }),
-    );
-    qgroupShow.set(
-      HISTORY,
-      show({ id: 257, own: GiB, total: 2 * GiB, groupLimit: 11 * GiB }),
-    );
+    // what was read of the filesystem says so now: in sync, without reading
+    // it again
     expect(await projectQuotaGroupInSync(opts)).toBe(true);
+    expect(
+      await projectQuotaWithHistory({
+        project_id: PROJECT,
+        home: HOME,
+        history: HISTORY,
+        quota: { size: 10 * GiB, used: GiB },
+      }),
+    ).toMatchObject({ used: GiB, history_used: GiB, files_used: GiB });
+    expect(scans).toHaveBeenCalledTimes(1);
     await syncProjectQuotaGroup(opts);
     expect(queued).toHaveLength(1);
     await syncProjectQuotaGroup({ ...opts, force: true });
@@ -171,11 +193,19 @@ describe("the project's quota group", () => {
     expect(await projectQuotaGroupInSync({ ...opts, quota: 20 * GiB })).toBe(
       false,
     );
+    // as read from the filesystem
+    filesystem({
+      home: { own: GiB },
+      history: { own: GiB },
+      groupLimit: 11 * GiB,
+    });
+    expect(await projectQuotaGroupInSync(opts)).toBe(true);
     // the history isn't in it (e.g., a restore put a new one in place)
-    qgroupShow.set(
-      HISTORY,
-      show({ id: 258, own: GiB, member: false, total: 0, groupLimit: "none" }),
-    );
+    filesystem({
+      home: { own: GiB },
+      history: { own: GiB, member: false, id: 258 },
+      groupLimit: 11 * GiB,
+    });
     expect(await projectQuotaGroupInSync(opts)).toBe(false);
     // no history volume yet: just the home
     existing.delete(HISTORY);
@@ -186,10 +216,7 @@ describe("the project's quota group", () => {
     existing.add(HISTORY);
     const quota = { size: 10 * GiB, used: 3 * GiB, warning: "x" };
     // not in a group yet: as before
-    qgroupShow.set(
-      HOME,
-      show({ id: 256, own: 3 * GiB, member: false, total: 0, groupLimit: 0 }),
-    );
+    filesystem({ home: { own: 3 * GiB, member: false } });
     expect(
       await projectQuotaWithHistory({
         project_id: PROJECT,
@@ -198,14 +225,11 @@ describe("the project's quota group", () => {
         quota,
       }),
     ).toEqual(quota);
-    qgroupShow.set(
-      HOME,
-      show({ id: 256, own: 3 * GiB, total: 11 * GiB, groupLimit: 11 * GiB }),
-    );
-    qgroupShow.set(
-      HISTORY,
-      show({ id: 257, own: 7 * GiB, total: 11 * GiB, groupLimit: 11 * GiB }),
-    );
+    filesystem({
+      home: { own: 3 * GiB },
+      history: { own: 8 * GiB },
+      groupLimit: 11 * GiB,
+    });
     expect(
       await projectQuotaWithHistory({
         project_id: PROJECT,
@@ -217,8 +241,8 @@ describe("the project's quota group", () => {
       ...quota,
       // the group is full
       used: 10 * GiB,
-      files_used: 4 * GiB,
-      history_used: 7 * GiB,
+      files_used: 3 * GiB,
+      history_used: 8 * GiB,
       history_reserve: GiB,
     });
   });
@@ -226,6 +250,7 @@ describe("the project's quota group", () => {
 
 describe("deleteEmptyQuotaGroups", () => {
   it("destroys only project groups with no members and no usage", async () => {
+    resetQgroupScansForTest();
     filesystemQgroups =
       HEADER +
       `0/5 16384 16384 none - - <toplevel>\n` +

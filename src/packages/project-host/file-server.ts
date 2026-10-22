@@ -145,6 +145,7 @@ import {
   bootstrapProjectVolumeQuotaLedger,
   deleteProjectVolumeQuotas,
   invalidateProjectVolumeQuota,
+  countProjectVolumeQuotaEpochBacklog,
   listProjectVolumeQuotaAuditBatch,
   markProjectVolumeQuotaApplied,
   markProjectVolumeQuotaFailed,
@@ -359,6 +360,15 @@ const PROJECT_QUOTA_REPAIR_SWEEP_MS = Math.max(
 const PROJECT_QUOTA_REPAIR_BATCH_SIZE = Math.max(
   1,
   Math.min(256, envToInt("COCALC_PROJECT_QUOTA_REPAIR_BATCH_SIZE", 32)),
+);
+// While quotas applied in an earlier quota epoch remain (e.g., every project
+// after the layout changed, when each joins its quota group), the audit takes
+// more at a time: each needs only a few small btrfs commands, since what's
+// read of the filesystem's quotas is shared (qgroup-scan.ts).  E.g., 10k
+// quotas on a big host take about 40 minutes instead of 5 hours.
+const PROJECT_QUOTA_MIGRATION_BATCH_SIZE = Math.max(
+  1,
+  Math.min(256, envToInt("COCALC_PROJECT_QUOTA_MIGRATION_BATCH_SIZE", 256)),
 );
 const PROJECT_QUOTA_OVERRIDE_SCAVENGE_MS = Math.max(
   60_000,
@@ -2657,7 +2667,13 @@ async function repairProjectQuotaLimits(
   };
   try {
     const projects = listProjectVolumeQuotaAuditBatch({
-      limit: PROJECT_QUOTA_REPAIR_BATCH_SIZE,
+      limit:
+        countProjectVolumeQuotaEpochBacklog() > 0
+          ? Math.max(
+              PROJECT_QUOTA_REPAIR_BATCH_SIZE,
+              PROJECT_QUOTA_MIGRATION_BATCH_SIZE,
+            )
+          : PROJECT_QUOTA_REPAIR_BATCH_SIZE,
     });
     for (const project of projects) {
       if (projectQuotaGraceActive.has(project.project_id)) {

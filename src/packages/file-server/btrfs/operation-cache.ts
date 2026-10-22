@@ -6,6 +6,7 @@ import {
   withBtrfsMutationContext,
 } from "./mutation-context";
 import { btrfs } from "./util";
+import { invalidateQgroupScan, resetQgroupScansForTest } from "./qgroup-scan";
 
 export {
   type BtrfsMutationContext,
@@ -24,8 +25,6 @@ type CacheEntry<T> = {
   value: T;
 };
 
-const qgroupShowCache = new Map<string, CacheEntry<BtrfsOutput>>();
-const qgroupShowInflight = new Map<string, Promise<BtrfsOutput>>();
 const subvolumeShowCache = new Map<string, CacheEntry<BtrfsOutput>>();
 const subvolumeShowInflight = new Map<string, Promise<BtrfsOutput>>();
 const DEFAULT_MUTATION_LOCK_WAIT_MS = 2 * 60_000;
@@ -96,10 +95,6 @@ function envDurationMs(name: string, fallback: number): number {
   return fallback;
 }
 
-function qgroupShowCacheMs(): number {
-  return envDurationMs("COCALC_BTRFS_QGROUP_SHOW_CACHE_MS", 2_000);
-}
-
 function subvolumeShowCacheMs(): number {
   return envDurationMs("COCALC_BTRFS_SUBVOLUME_SHOW_CACHE_MS", 1_000);
 }
@@ -150,31 +145,10 @@ async function cached<T>({
   }
 }
 
-export async function cachedBtrfsQgroupShowRawForPath(
-  path: string,
-): Promise<BtrfsOutput> {
-  return await cached({
-    cache: qgroupShowCache,
-    inflight: qgroupShowInflight,
-    key: path,
-    ttlMs: qgroupShowCacheMs(),
-    run: async () =>
-      await btrfs({
-        verbose: false,
-        // -F restricts output to qgroups affecting this subvolume, its own
-        // and the groups it is in (quota-group.ts). Without it, qgroup show
-        // enumerates every qgroup on the filesystem.
-        args: ["qgroup", "show", "-prcF", "--raw", path],
-      }),
-  });
-}
-
+// Quota numbers are read once per filesystem and shared (qgroup-scan.ts);
+// this drops what was read of the filesystem with `pathOrMount`.
 export function invalidateBtrfsQgroupShowRaw(pathOrMount: string): void {
-  for (const key of qgroupShowCache.keys()) {
-    if (key === pathOrMount || key.startsWith(`${pathOrMount}/`)) {
-      qgroupShowCache.delete(key);
-    }
-  }
+  invalidateQgroupScan(pathOrMount);
 }
 
 export async function cachedBtrfsSubvolumeShow(
@@ -419,8 +393,7 @@ export function getBtrfsMutationLockStatus(): BtrfsMutationLockStatus[] {
 }
 
 export function clearBtrfsOperationCachesForTest(): void {
-  qgroupShowCache.clear();
-  qgroupShowInflight.clear();
+  resetQgroupScansForTest();
   subvolumeShowCache.clear();
   subvolumeShowInflight.clear();
   for (const state of mutationLocks.values()) {

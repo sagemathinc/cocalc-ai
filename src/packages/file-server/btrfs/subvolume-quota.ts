@@ -3,11 +3,9 @@ import { btrfs } from "./util";
 import { queueSetSubvolumeQuota } from "./quota-queue";
 import getLogger from "@cocalc/backend/logger";
 import { btrfsQuotasDisabled } from "./config";
-import {
-  cachedBtrfsQgroupShowRawForPath,
-  invalidateBtrfsQgroupShowRaw,
-  type BtrfsMutationPriority,
-} from "./operation-cache";
+import { type BtrfsMutationPriority } from "./operation-cache";
+import { lookupQgroup } from "./qgroup-scan";
+import { dirname } from "node:path";
 
 const logger = getLogger("file-server:btrfs:subvolume-quota");
 
@@ -93,42 +91,30 @@ export function parsePlainQgroupShow(stdout: string): QgroupShowRow[] {
   return rows;
 }
 
-function quotaWarning(stderr?: string): string | undefined {
-  const text = `${stderr ?? ""}`.trim();
-  if (!text) return;
-  if (text.toLowerCase().includes("qgroup data inconsistent")) {
-    return "Btrfs quota accounting is currently inconsistent on this host, so counted quota usage may be inaccurate until it is repaired.";
-  }
-  return text;
-}
-
-function selectQgroup(
-  groups: QgroupShowRow[],
-  id: number,
-): QgroupShowRow | undefined {
-  // CoCalc intentionally uses only simple quotas, so read the direct subvolume
-  // row rather than creating or preferring tracking qgroups.
-  return (
-    groups.find((g) => g.qgroupid === `0/${id}`) ??
-    groups.find((g) => g.path != null) ??
-    groups[0]
-  );
+// The filesystem the subvolume is on, as mounted (its parent directory if
+// not known: CoCalc's volumes are at the top of the filesystem).
+export function subvolumeMount(subvolume: {
+  path: string;
+  filesystem?: { opts?: { mount?: string } };
+}): string {
+  return subvolume.filesystem?.opts?.mount ?? dirname(subvolume.path);
 }
 
 export class SubvolumeQuota {
   constructor(public subvolume: Subvolume) {}
 
+  // (CoCalc intentionally uses only simple quotas, so this is the
+  // subvolume's own row, never a tracking qgroup.)
   private qgroup = async () => {
-    const id = await this.subvolume.getSubvolumeId();
-    let groups: QgroupShowRow[];
-    const result = await cachedBtrfsQgroupShowRawForPath(this.subvolume.path);
-    groups = parsePlainQgroupShow(result.stdout);
-    const warning = quotaWarning(result.stderr);
-    const match = selectQgroup(groups, id);
-    if (!match) {
+    const found = await lookupQgroup({
+      mount: subvolumeMount(this.subvolume),
+      path: this.subvolume.path,
+      getSubvolumeId: async () => await this.subvolume.getSubvolumeId(),
+    });
+    if (!found) {
       throw Error(`no qgroup info for ${this.subvolume.path}`);
     }
-    return { match, warning };
+    return { match: found.row, warning: found.warning };
   };
 
   get = async (): Promise<SubvolumeQuotaInfo> => {
@@ -192,7 +178,7 @@ export class SubvolumeQuota {
       wait: true,
       ...opts,
     });
-    invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
+    // (the quota queue updates the cached quota tree, qgroup-scan.ts)
   };
 
   du = async () => {

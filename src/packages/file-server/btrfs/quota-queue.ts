@@ -1,3 +1,4 @@
+import { noteQgroupLimit } from "./qgroup-scan";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import getLogger from "@cocalc/backend/logger";
 import { randomUUID } from "node:crypto";
@@ -333,6 +334,7 @@ async function setSubvolumeLimitNow({
     args: ["qgroup", "limit", `${size}`, path, mount],
     verbose: false,
   });
+  noteQgroupLimit({ mount, path, size });
 }
 
 async function executeRow(row: QueueRow): Promise<void> {

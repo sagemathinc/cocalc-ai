@@ -428,3 +428,48 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
     ).rejects.toThrow("cannot prune the snapshots directory from snapshots");
   });
 });
+
+describe("snapshot usage", () => {
+  beforeEach(() => {
+    btrfsMock.mockReset();
+    require("./qgroup-scan").resetQgroupScansForTest();
+  });
+
+  it("reads the filesystem's quotas once for all of a project's snapshots", async () => {
+    const names = [
+      "2026-10-20T00:00:00.000Z",
+      "2026-10-21T00:00:00.000Z",
+      "2026-10-22T00:00:00.000Z",
+    ];
+    btrfsMock.mockResolvedValue({
+      stdout: [
+        "Qgroupid Referenced Exclusive Max referenced Parent Child Path",
+        "-------- ---------- --------- -------------- ------ ----- ----",
+        "0/300 1000 900 5000 - - project-1",
+        ...names.map(
+          (name, i) =>
+            `0/${400 + i} ${100 + i} ${10 + i} none - - project-1/${SNAPSHOTS}/${name}`,
+        ),
+      ].join("\n"),
+      stderr: "",
+    });
+    const snapshots = new SubvolumeSnapshots(
+      createSubvolumeWithSnapshots(names) as any,
+    );
+    await expect(
+      Promise.all(names.map(async (name) => await snapshots.usage(name))),
+    ).resolves.toEqual(
+      names.map((name, i) => ({
+        name,
+        used: 100 + i,
+        exclusive: 10 + i,
+        quota: 0,
+      })),
+    );
+    expect(btrfsMock).toHaveBeenCalledTimes(1);
+    expect(btrfsMock).toHaveBeenCalledWith({
+      verbose: false,
+      args: ["qgroup", "show", "-prc", "--raw", "/mnt/test"],
+    });
+  });
+});
