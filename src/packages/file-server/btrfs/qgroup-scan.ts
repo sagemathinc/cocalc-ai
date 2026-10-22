@@ -183,8 +183,10 @@ export async function lookupQgroup({
   const id = `0/${await getSubvolumeId()}`;
   let s = await getQgroupScan(mount);
   let row = s.rows.get(id);
-  // not there: read again, unless what was read is from after this began
-  if (row == null && s.scanned_at < started) {
+  // not there: read again, unless what was read began after this did (a
+  // read joined under way may have begun before, e.g., before the subvolume
+  // was made: then once more)
+  for (let i = 0; row == null && s.scanned_at < started && i < 3; i++) {
     s = await scan(mount);
     row = s.rows.get(id);
   }
