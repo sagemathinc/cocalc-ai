@@ -203,3 +203,53 @@ test("balances database and backend without expanding affected selection", () =>
     ]);
   }
 });
+
+test("runs the two-bay cluster test only for changes that reach a hub's server side", () => {
+  const plan = (changedFiles, affectedPackages, full = false) =>
+    createPlan({
+      workspaces,
+      changedFiles,
+      affectedPackages,
+      full,
+      base: "base",
+    });
+  assert.equal(plan([], [], true).runMultibay, true);
+  // Frontend-only: reaches hub/launchpad only through static assets.
+  assert.equal(
+    plan(
+      ["src/packages/frontend/app.tsx"],
+      [
+        "frontend",
+        "static",
+        "hub",
+        "launchpad",
+        "lite",
+        "plus",
+        "project-host",
+      ],
+    ).runMultibay,
+    false,
+  );
+  // Anything the server depends on is affected with it.
+  assert.equal(
+    plan(["src/packages/util/misc.ts"], ["util", "server", "frontend"])
+      .runMultibay,
+    true,
+  );
+  assert.equal(
+    plan(["src/packages/server/x.ts"], ["server", "hub"]).runMultibay,
+    true,
+  );
+  // The hub's own code, which the server does not load.
+  assert.equal(
+    plan(["src/packages/hub/servers/app.ts"], ["hub", "launchpad"]).runMultibay,
+    true,
+  );
+  // Shared test infrastructure, including the cluster test itself, is full.
+  assert.equal(
+    plan(["src/scripts/multibay/multibay.test.mjs"], []).runMultibay,
+    true,
+  );
+  // Nothing to test at all.
+  assert.equal(plan(["docs/operations.md"], []).runMultibay, false);
+});
