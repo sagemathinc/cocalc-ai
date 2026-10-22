@@ -1253,6 +1253,36 @@ describeDb("agent sensors", () => {
     });
   });
 
+  test("a watcher whose container cannot start says it could not run, not what it watches", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1278 },
+    })) as any;
+    // As on 2026-10-22: podman refused the run (a container name in use).
+    host.runAgentSensor.mockResolvedValue({
+      exit_code: 125,
+      timed_out: false,
+      stdout: "",
+      stderr:
+        'Error: creating container storage: the container name "sandbox-p-1792637287987" is already in use\n',
+    });
+    for (let i = 0; i < 5; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    const delivered = host.deliverAgentSensorWake.mock.calls.map(
+      (call: any[]) => call[0],
+    );
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].prompt).toMatch(
+      /Gave up: .*could not run 5 times in a row, because of a problem running it \(not a result of what it watches\)\. Last error: The sensor's container could not start/,
+    );
+    expect(delivered[0].prompt).toContain("already in use");
+    expect(delivered[0].prompt).not.toMatch(/exited with code/);
+  });
+
   test("a watcher whose check keeps failing gives up and tells its agent why", async () => {
     limits.sensor_max_active_watchers = 1;
     const ci = (await agentSensorRequest(run, agent, {
@@ -1318,7 +1348,7 @@ describeDb("agent sensors", () => {
     await runDue();
     expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
     expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toMatch(
-      /Gave up: .*failed 5 times in a row\. Last error: .*container failed to start/,
+      /Gave up: .*could not run 5 times in a row, because of a problem running it .*Last error: .*container failed to start/,
     );
     expect(paused).toHaveLength(0);
     const { rows } = await getPool().query(
@@ -1353,7 +1383,7 @@ describeDb("agent sensors", () => {
       await runDue();
       expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
       expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toMatch(
-        /Gave up: .*failed 5 times in a row\. Last error: .*home bay unreachable/,
+        /Gave up: .*could not run 5 times in a row, because of a problem running it .*Last error: .*home bay unreachable/,
       );
       expect(paused).toHaveLength(0);
       const { rows } = await getPool().query(
