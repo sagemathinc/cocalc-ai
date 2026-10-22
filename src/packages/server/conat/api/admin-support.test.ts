@@ -1429,6 +1429,19 @@ describe("admin support API", () => {
       });
     });
 
+    it("exposes only the checked entry points as hub RPCs", async () => {
+      const { getHubApiPrincipalPolicy } =
+        await import("@cocalc/conat/hub/api");
+      expect(getHubApiPrincipalPolicy("adminSupport.planCreate")).toBeDefined();
+      expect(getHubApiPrincipalPolicy("adminSupport.create")).toBeDefined();
+      expect(
+        getHubApiPrincipalPolicy("adminSupport.planCreateOnSeed"),
+      ).toBeUndefined();
+      expect(
+        getHubApiPrincipalPolicy("adminSupport.createOnSeed"),
+      ).toBeUndefined();
+    });
+
     function zendesk(overrides: Record<string, unknown> = {}) {
       const tickets = {
         create: jest.fn(async () => ({ result: created, response: {} })),
