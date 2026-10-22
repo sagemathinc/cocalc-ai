@@ -1626,9 +1626,16 @@ describe("dedicated host spend maintenance", () => {
     );
   });
 
-  it.each(["error", "stopping", "running"])(
-    "leaves a %s host with a queued billing deprovision alone, unbilled",
-    async (status) => {
+  it.each([
+    ["error", undefined],
+    ["stopping", undefined],
+    ["running", undefined],
+    ["off", "i-123"],
+    ["stopped", "i-123"],
+    ["off", undefined],
+  ])(
+    "leaves a %s host (instance %s) with a queued billing deprovision alone, unbilled",
+    async (status, instance_id) => {
       queryMock = jest.fn(async (sql: string) => {
         if (sql.includes("pg_try_advisory_lock")) {
           return { rows: [{ locked: true }] };
@@ -1640,7 +1647,18 @@ describe("dedicated host spend maintenance", () => {
             stopped_at: "2026-01-01T00:00:00.000Z",
             deprovision_requested_at: new Date().toISOString(),
           });
-          return { rows: [{ ...row, status }] };
+          return {
+            rows: [
+              {
+                ...row,
+                status,
+                metadata: {
+                  ...row.metadata,
+                  ...(instance_id ? { runtime: { instance_id } } : {}),
+                },
+              },
+            ],
+          };
         }
         if (sql.includes("pg_advisory_unlock")) {
           return { rows: [] };
@@ -1660,6 +1678,12 @@ describe("dedicated host spend maintenance", () => {
       ).not.toHaveBeenCalled();
       expect(createLroMock).not.toHaveBeenCalled();
       expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+      // No metadata rewrite either: deprovision_pending stays.
+      expect(
+        queryMock.mock.calls.some(([sql]) =>
+          `${sql}`.includes("UPDATE project_hosts"),
+        ),
+      ).toBe(false);
     },
   );
 
