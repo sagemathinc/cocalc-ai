@@ -36,8 +36,13 @@ import {
   restoredHistoryCandidates,
   snapshotWithHistory,
   syncPersistVolumeQuota,
+  btrfsOps,
   type PersistVolumeOps,
 } from "./persist-volume";
+import {
+  projectQuotaGroup,
+  projectQuotaGroupsPermitted,
+} from "./project-quota-group";
 import type { CapturedSnapshotData } from "@cocalc/file-server/btrfs/snapshot-preparer";
 
 // whether a persist fence is held (persist-fence.ts), as the code under test
@@ -64,6 +69,8 @@ jest.mock("@cocalc/file-server/btrfs/util", () => {
   const copy = (src: string, dest: string) =>
     fs.cp(src, dest, { recursive: true, verbatimSymlinks: true });
   return {
+    refusedByStorageWrapper: (err: unknown) =>
+      /\bSECURITY_DENY\b/.test(`${(err as any)?.message ?? err}`),
     btrfs: jest.fn(async ({ args }: { args: string[] }) => {
       const [, op, ...rest] = args;
       if (op === "snapshot") {
@@ -92,6 +99,26 @@ jest.mock("@cocalc/file-server/btrfs/util", () => {
     ),
   };
 });
+// what was read about subvolumes and quotas (file-server qgroup-scan.ts)
+const forgotten: string[][] = [];
+const notedLimits: any[] = [];
+jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
+  ...jest.requireActual("@cocalc/file-server/btrfs/operation-cache"),
+  forgetSubvolumePaths: (...paths: string[]) => {
+    forgotten.push(paths);
+  },
+}));
+jest.mock("@cocalc/file-server/btrfs/qgroup-scan", () => ({
+  ...jest.requireActual("@cocalc/file-server/btrfs/qgroup-scan"),
+  noteQgroupLimit: async (opts: any) => {
+    notedLimits.push(opts);
+  },
+}));
+jest.mock("@cocalc/file-server/btrfs/quota-group", () => ({
+  ...jest.requireActual("@cocalc/file-server/btrfs/quota-group"),
+  addToQuotaGroup: jest.fn(),
+  destroyQuotaGroup: jest.fn(),
+}));
 jest.mock("@cocalc/file-server/btrfs/subvolume", () => ({
   isBtrfsSubvolume: jest.fn(async () => true),
 }));
@@ -130,17 +157,32 @@ afterEach(async () => {
 
 const read = (path: string) => readFileSync(path, "utf8");
 
+// the joins fakeOps recorded, with staged restore volumes named alike
+const joins = (ops: { joined: string[] }) =>
+  ops.joined.map((x) =>
+    x.replace(/\/\.persist-import\/restore-[^/ ]+/, "/staged"),
+  );
+
 const GiB = 1024 ** 3;
 
 function fakeOps(): PersistVolumeOps & {
   calls: string[];
   quotas: Map<string, number>;
+  // volumes put in their project's quota group
+  joined: string[];
 } {
   const calls: string[] = [];
   const quotas = new Map<string, number>();
+  const joined: string[] = [];
   return {
     calls,
     quotas,
+    joined,
+    joinQuotaGroup: async (project_id, path, opts) => {
+      joined.push(
+        `${project_id}:${path}${opts?.required ? " (required)" : ""}`,
+      );
+    },
     getQuota: async (path) => quotas.get(path) ?? 0,
     setQuota: async (path, bytes) => {
       quotas.set(path, bytes);
@@ -201,12 +243,13 @@ describe("importPersistDatabases", () => {
       ops.quotas.set(path, bytes);
     };
     ops.quotas.set(home, 40 * 1024 ** 2);
-    env.COCALC_PERSIST_VOLUME_QUOTA_MIN_BYTES = `${1024 ** 2}`;
+    env.COCALC_PERSIST_HISTORY_RESERVE_MIN_BYTES = `${1024 ** 2}`;
     await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
     // imported, like every database: its size is not trusted
     expect(existsSync(join(root, "big.db"))).toBe(true);
-    // never more than the disk quota, during and after the import
-    expect(limits).toEqual([40 * 1024 ** 2, 40 * 1024 ** 2]);
+    // never more than the disk quota while importing, then the limit of the
+    // project's files and history together
+    expect(limits).toEqual([40 * 1024 ** 2, 44 * 1024 ** 2]);
   });
 
   it("stops reading a directory at its limit", async () => {
@@ -271,8 +314,10 @@ describe("prepareProjectPersistVolume", () => {
     ops.quotas.set(home, 10 * GiB);
     await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
     expect(ops.calls).toEqual(["create", "snapshot", "delete"]);
-    // a fifth of the disk quota (at most the disk quota while importing)
-    expect(ops.quotas.get(root)).toBe(2 * GiB);
+    // counted with the project's files, in its quota group, whose limit (the
+    // disk quota and a tenth more) is its own too
+    expect(ops.joined).toEqual([`${PROJECT}:${root}`]);
+    expect(ops.quotas.get(root)).toBe(11 * GiB);
     // the old directory is gone from the home
     expect(existsSync(join(home, LEGACY))).toBe(false);
     expect(existsSync(join(home, ".local/share/cocalc"))).toBe(true);
@@ -443,31 +488,22 @@ describe("prepareProjectPersistVolume", () => {
 });
 
 describe("persistVolumeQuota", () => {
-  it("is a fifth of the disk quota, but at least 256 MiB", () => {
-    expect(persistVolumeQuota({ homeQuota: 10 * GiB, env: {} })).toBe(2 * GiB);
+  it("is the limit of the project's files and history together", () => {
+    // the disk quota and a tenth more, at least 256 MiB more
+    expect(persistVolumeQuota({ homeQuota: 10 * GiB, env: {} })).toBe(11 * GiB);
     expect(persistVolumeQuota({ homeQuota: GiB / 2, env: {} })).toBe(
-      256 * 1024 ** 2,
+      768 * 1024 ** 2,
     );
   });
 
   it("is always a limit, even when the home has none", () => {
-    expect(persistVolumeQuota({ homeQuota: 0, env: {} })).toBe(2 * GiB);
-  });
-
-  it("leaves room for history imported beyond it, and is never lowered", () => {
+    expect(persistVolumeQuota({ homeQuota: 0, env: {} })).toBe(20 * GiB);
     expect(
-      persistVolumeQuota({ homeQuota: 10 * GiB, imported: 4 * GiB, env: {} }),
+      persistVolumeQuota({
+        homeQuota: 0,
+        env: { COCALC_PERSIST_VOLUME_QUOTA_MAX_BYTES: `${5 * GiB}` },
+      }),
     ).toBe(5 * GiB);
-    // the history fit in the disk quota, so it never earns more than that
-    expect(
-      persistVolumeQuota({ homeQuota: 10 * GiB, imported: 100 * GiB, env: {} }),
-    ).toBe(10 * GiB);
-    expect(
-      persistVolumeQuota({ homeQuota: 0, imported: 100 * GiB, env: {} }),
-    ).toBe(20 * GiB);
-    expect(
-      persistVolumeQuota({ homeQuota: 5 * GiB, current: 3 * GiB, env: {} }),
-    ).toBe(3 * GiB);
   });
 
   it("can be configured", () => {
@@ -475,11 +511,11 @@ describe("persistVolumeQuota", () => {
       persistVolumeQuota({
         homeQuota: 10 * GiB,
         env: {
-          COCALC_PERSIST_VOLUME_QUOTA_PERCENT: "50",
-          COCALC_PERSIST_VOLUME_QUOTA_MIN_BYTES: "nonsense",
+          COCALC_PERSIST_HISTORY_RESERVE_PERCENT: "50",
+          COCALC_PERSIST_HISTORY_RESERVE_MIN_BYTES: "nonsense",
         },
       }),
-    ).toBe(5 * GiB);
+    ).toBe(15 * GiB);
   });
 });
 
@@ -683,7 +719,15 @@ describe("in the project-host", () => {
     // edits after the snapshot
     await writeFile(join(root, "a.db"), "after the snapshot");
     await writeFile(join(root, "new.db"), "after the snapshot");
-    await restoreHome(snapshotPath);
+    const ops = fakeOps();
+    await restoreHome(snapshotPath, { ops });
+    // what was staged (the history, and its copy), then the history put in
+    // place, count against the project's quota
+    expect(joins(ops)).toEqual([
+      `${PROJECT}:${mount}/staged (required)`,
+      `${PROJECT}:${mount}/staged (required)`,
+      `${PROJECT}:${root}`,
+    ]);
     expect(read(join(root, "a.db"))).toBe("live");
     expect(existsSync(join(root, "new.db"))).toBe(false);
     // the copy in the restored home is gone
@@ -695,7 +739,9 @@ describe("in the project-host", () => {
     const replacement = join(mount, "replacement");
     await mkdir(replacement);
     await writeFile(join(replacement, "work.txt"), "restored");
-    await restoreHome(replacement);
+    const ops = fakeOps();
+    await restoreHome(replacement, { ops });
+    expect(ops.joined).toEqual([]);
     expect(read(join(home, "work.txt"))).toBe("restored");
     expect(read(join(root, "a.db"))).toBe("live");
     // fenced (the persist server must have volumes), but nothing replaced
@@ -802,6 +848,8 @@ describe("in the project-host", () => {
     const { subvolume, snapshotPath } = await backupSnapshot();
     await copyPersistVolumeIntoSnapshot({ subvolume, snapshotPath });
     await writeFile(join(root, "a.db"), "after the snapshot");
+    forgotten.length = 0;
+    let movedBack = 0;
     await expect(
       replaceProjectHome({
         project_id: PROJECT,
@@ -810,10 +858,18 @@ describe("in the project-host", () => {
         env,
         ops: fakeOps(),
         swap: async () => {
+          // (e.g., the promoted history's id read while it is in place)
+          movedBack = forgotten.length;
           throw new Error("swap failed");
         },
       }),
     ).rejects.toThrow("swap failed");
+    // the rollback forgets what was read about each path it moves back, as
+    // the swap did
+    expect(forgotten.slice(movedBack)).toEqual([
+      [root, expect.stringMatching(/\/\.persist-import\//)],
+      [expect.stringMatching(/\/\.persist-import\/replaced-/), root],
+    ]);
     expect(read(join(root, "a.db"))).toBe("after the snapshot");
     expect(await isPersistVolumeReady(root)).toBe(true);
     expect(leftovers()).toEqual([]);
@@ -895,8 +951,20 @@ describe("in the project-host", () => {
       mergedWhileFenced ||= fenced;
       return await getQuota(path);
     };
+    forgotten.length = 0;
     await mergeRestoredHistory({ project_id: PROJECT, source, env, ops });
     expect(mergedWhileFenced).toBe(true);
+    // another subvolume at the volume's path: what was read about the paths
+    // no longer holds
+    expect(forgotten).toEqual([
+      [root, expect.stringMatching(/\/\.persist-import\/replaced-/)],
+      [expect.stringMatching(/\/\.persist-import\/restore-/), root],
+    ]);
+    // the merge counts against the project's quota before it is used
+    expect(joins(ops)).toEqual([
+      `${PROJECT}:${mount}/staged (required)`,
+      `${PROJECT}:${root}`,
+    ]);
     expect(read(join(root, "a.db"))).toBe("backup");
     // never an old log on a restored database
     expect(existsSync(join(root, "a.db-wal"))).toBe(false);
@@ -1205,6 +1273,92 @@ describe("in the project-host", () => {
       [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
     });
     let restored = false;
+    // (no room for the history beyond the disk quota)
+    const tight = {
+      ...env,
+      COCALC_PERSIST_HISTORY_RESERVE_MIN_BYTES: "0",
+      COCALC_PERSIST_HISTORY_RESERVE_PERCENT: "0",
+    };
+    await expect(
+      restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        listDirectory: backup.listDirectory,
+        restoreInto: backup.restoreInto,
+        restoreFiles: async () => {
+          restored = true;
+        },
+        env: tight,
+        ops,
+      }),
+    ).rejects.toThrow(/does not fit/);
+    expect(restored).toBe(false);
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("puts what a backup's history was restored into in the project's quota, inside its room", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    const ops = fakeOps();
+    const order: string[] = [];
+    const joinQuotaGroup = ops.joinQuotaGroup;
+    ops.joinQuotaGroup = async (project_id, path, opts) => {
+      order.push(
+        `join ${basename(path).split("-")[0]}${opts?.required ? " (required)" : ""}`,
+      );
+      await joinQuotaGroup(project_id, path, opts);
+    };
+    await restoreBackupWithHistory({
+      project_id: PROJECT,
+      candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+      listDirectory: backup.listDirectory,
+      restoreInto: async (path, dest) => {
+        order.push("download");
+        await backup.restoreInto(path, dest);
+      },
+      restoreFiles: async () => {
+        order.push("restore files");
+      },
+      withRoom: async (bytes, fn) => {
+        // the copy in the home and the staged history at once
+        expect(bytes).toBeGreaterThanOrEqual(2 * "backup".length);
+        order.push("room");
+        try {
+          return await fn();
+        } finally {
+          order.push("room released");
+        }
+      },
+      env,
+      ops,
+    });
+    expect(order).toEqual([
+      "download",
+      "room",
+      // the downloaded history, the merge, then the new volume (again)
+      "join restore (required)",
+      "join restore (required)",
+      "restore files",
+      "join project",
+      "room released",
+    ]);
+  });
+
+  it("restores nothing if what it staged can't count against the project's quota", async () => {
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    const ops = fakeOps();
+    ops.joinQuotaGroup = async () => {
+      throw new Error("qgroup assign failed");
+    };
+    let restored = false;
     await expect(
       restoreBackupWithHistory({
         project_id: PROJECT,
@@ -1217,10 +1371,68 @@ describe("in the project-host", () => {
         env,
         ops,
       }),
-    ).rejects.toThrow(/does not fit/);
+    ).rejects.toThrow("qgroup assign failed");
     expect(restored).toBe(false);
     expect(read(join(root, "a.db"))).toBe("live");
     expect(leftovers()).toEqual([]);
+  });
+
+  // (leaves project-quota-group.ts refusing groups for an hour: the other
+  // tests use fakeOps)
+  it("never skips those joins while the host's root helper was refusing groups", async () => {
+    const { addToQuotaGroup, destroyQuotaGroup } = jest.requireMock(
+      "@cocalc/file-server/btrfs/quota-group",
+    );
+    const deny = async () => {
+      throw new Error(
+        "SECURITY_DENY code=relative-path-not-allowed detail=1/1",
+      );
+    };
+    // the check when the file server starts is refused: no groups for an hour
+    (destroyQuotaGroup as jest.Mock).mockImplementationOnce(deny);
+    expect(await projectQuotaGroupsPermitted(mount)).toBe(false);
+    await readyVolume();
+    const backup = backupWith({
+      [`${HISTORY_IN_SNAPSHOTS}/a.db`]: "backup",
+      [`${HISTORY_IN_SNAPSHOTS}/${READY_MARKER}`]: "{}",
+    });
+    // the joins as the file server makes them
+    const ops = { ...fakeOps(), joinQuotaGroup: btrfsOps.joinQuotaGroup };
+    let restored = false;
+    const restore = async () =>
+      await restoreBackupWithHistory({
+        project_id: PROJECT,
+        candidates: restoredHistoryCandidates({ path: "", dest: "", env }),
+        listDirectory: backup.listDirectory,
+        restoreInto: backup.restoreInto,
+        restoreFiles: async () => {
+          restored = true;
+        },
+        env,
+        ops,
+      });
+    // still refused: nothing restored, nothing left
+    (addToQuotaGroup as jest.Mock).mockImplementation(deny);
+    await expect(restore()).rejects.toThrow("SECURITY_DENY");
+    expect(restored).toBe(false);
+    expect(read(join(root, "a.db"))).toBe("live");
+    expect(leftovers()).toEqual([]);
+    // the helper updated within the hour: what it stages is in the group
+    (addToQuotaGroup as jest.Mock).mockReset();
+    expect(await restore()).toBe(true);
+    expect(restored).toBe(true);
+    expect(read(join(root, "a.db"))).toBe("backup");
+    expect(
+      (addToQuotaGroup as jest.Mock).mock.calls.map(([opts]) => [
+        opts.group,
+        basename(opts.path).split("-")[0],
+      ]),
+    ).toEqual([
+      // the downloaded history, then the merge; the new volume's own join
+      // waits for the hour (its quota audit adds it)
+      [projectQuotaGroup(PROJECT), "restore"],
+      [projectQuotaGroup(PROJECT), "restore"],
+    ]);
   });
 
   it("restores no files when the history can't be merged", async () => {
@@ -1339,10 +1551,11 @@ describe("in the project-host", () => {
       await setQuota(path, bytes);
     };
     await restoreHome(snapshotPath, { ops });
-    // every staged volume is limited to the disk quota from the start
+    // every staged volume is limited from the start, as the history is
+    // (the disk quota and a tenth more)
     expect(limits.filter(([kind]) => kind === "restore")[0]).toEqual([
       "restore",
-      10 * GiB,
+      11 * GiB,
     ]);
   });
 
@@ -1432,14 +1645,14 @@ describe("in the project-host", () => {
     );
   });
 
-  it("raises the volume's limit with the disk quota", async () => {
+  it("sets the volume's limit with the disk quota", async () => {
     await readyVolume();
     const ops = fakeOps();
     ops.quotas.set(root, 3 * GiB);
     await syncPersistVolumeQuota(PROJECT, 20 * GiB, ops);
-    expect(ops.quotas.get(root)).toBe(4 * GiB);
+    expect(ops.quotas.get(root)).toBe(22 * GiB);
     await syncPersistVolumeQuota(PROJECT, 5 * GiB, ops);
-    expect(ops.quotas.get(root)).toBe(4 * GiB);
+    expect(ops.quotas.get(root)).toBe(5.5 * GiB);
     await syncPersistVolumeQuota(OTHER, 20 * GiB, ops);
     expect(ops.quotas.size).toBe(1);
   });
@@ -1508,6 +1721,8 @@ describe("in the project-host", () => {
     expect(read(join(copy, "a.db"))).toBe("live");
     expect(existsSync(join(copy, READY_MARKER))).toBe(true);
     expect(cloneLimit(ops)).toBe(3 * GiB);
+    // counted against the copy's quota
+    expect(ops.joined).toEqual([`${OTHER}:${copy}`]);
     // nothing left where copies are made
     expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
     await deletePersistVolume(OTHER);
@@ -1616,5 +1831,19 @@ describe("in the project-host", () => {
     } finally {
       delete process.env.COCALC_PERSIST_PROJECT_VOLUME;
     }
+  });
+});
+
+describe("btrfsOps.setQuota", () => {
+  it("updates what's read of the filesystem's quotas too", async () => {
+    notedLimits.length = 0;
+    const path = join(mount, `project-${PROJECT}-persist`);
+    await mkdir(path, { recursive: true });
+    await btrfsOps.setQuota(path, 1234);
+    expect(btrfs).toHaveBeenCalledWith({
+      args: ["qgroup", "limit", "1234", path, mount],
+      verbose: false,
+    });
+    expect(notedLimits).toEqual([{ mount, path, size: 1234 }]);
   });
 });

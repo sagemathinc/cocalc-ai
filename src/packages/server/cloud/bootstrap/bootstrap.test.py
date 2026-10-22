@@ -4490,6 +4490,61 @@ normalize_project_io_class_state
                     expected,
                 )
 
+    def test_btrfs_qgroup_commands_take_only_project_quota_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = self._storage_wrapper_for(make_cfg(tmpdir))
+        functions = "".join(
+            name + "() {" + script.split("\n" + name + "() {", 1)[1].split(
+                "\n}\n", 1
+            )[0] + "\n}\n"
+            for name in ("check_args", "check_qgroup_args")
+        )
+        stubs = (
+            'deny() { echo "DENY $1 $2"; exit 2; }\n'
+            'allow_path() { [[ "$1" == /mnt/cocalc || "$1" == /mnt/cocalc/* ]]; }\n'
+        )
+        branch = script.split("  btrfs|btrfs-maintenance)", 1)[1].split(
+            "\n    ;;", 1
+        )[0]
+        self.assertIn('check_qgroup_args "$@"', branch)
+
+        def check(*args: str) -> str:
+            return subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    "set -euo pipefail\n" + stubs + functions
+                    + 'check_qgroup_args "$@"; echo OK',
+                    "_",
+                    *args,
+                ],
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        for args in [
+            ["qgroup", "create", "1/162710717947708", "/mnt/cocalc"],
+            ["qgroup", "destroy", "1/7", "/mnt/cocalc"],
+            [
+                "qgroup", "assign", "--no-rescan",
+                "/mnt/cocalc/project-x", "1/7", "/mnt/cocalc",
+            ],
+            ["qgroup", "limit", "1073741824", "1/7", "/mnt/cocalc"],
+            ["qgroup", "show", "-prcF", "--raw", "/mnt/cocalc/project-x"],
+        ]:
+            with self.subTest(args=args):
+                self.assertEqual(check(*args), "OK")
+        for args, denied in [
+            # a subvolume's own quota group
+            (["qgroup", "remove", "0/256", "1/7", "/mnt/cocalc"], "0/256"),
+            (["qgroup", "create", "1/7", "/etc"], "/etc"),
+            (["qgroup", "create", "1/7/../x", "/mnt/cocalc"], "1/7/../x"),
+            (["qgroup", "create", "2/7", "/mnt/cocalc"], "2/7"),
+        ]:
+            with self.subTest(args=args):
+                self.assertIn(denied, check(*args))
+                self.assertTrue(check(*args).startswith("DENY"))
+
     def test_project_egress_conat_port_accepts_what_project_host_accepts(self) -> None:
         # Values project-host runs with even though they are not plain digits.
         self.assertEqual(

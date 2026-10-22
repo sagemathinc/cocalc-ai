@@ -66,6 +66,7 @@ import {
   rusticRepo,
 } from "@cocalc/backend/data";
 import { filesystem, type Filesystem } from "@cocalc/file-server/btrfs";
+import type { SubvolumeQuotaInfo } from "@cocalc/file-server/btrfs/subvolume-quota";
 import {
   BACKUP_INDEX_LABEL_PREFIX,
   backupIndexDir,
@@ -144,6 +145,7 @@ import {
   bootstrapProjectVolumeQuotaLedger,
   deleteProjectVolumeQuotas,
   invalidateProjectVolumeQuota,
+  countProjectVolumeQuotaEpochBacklog,
   listProjectVolumeQuotaAuditBatch,
   markProjectVolumeQuotaApplied,
   markProjectVolumeQuotaFailed,
@@ -244,7 +246,18 @@ import {
   snapshotNeedsPersistVolume,
   snapshotWithHistory,
   syncPersistVolumeQuota,
+  persistVolumePath,
 } from "./persist-volume";
+import {
+  deleteEmptyQuotaGroups,
+  joinProjectQuotaGroup,
+  limitNewProjectQuotaGroup,
+  projectQuotaGroupInSync,
+  projectQuotaGroupsPermitted,
+  projectQuotaWithHistory,
+  syncProjectQuotaGroup,
+  type ProjectQuotaBreakdown,
+} from "./project-quota-group";
 import { setSnapshotPreparer } from "@cocalc/file-server/btrfs/snapshot-preparer";
 import { withBackupParallelLimit } from "./backup-queue";
 import { createSharedWorkLimit } from "./shared-work-limit";
@@ -347,6 +360,15 @@ const PROJECT_QUOTA_REPAIR_SWEEP_MS = Math.max(
 const PROJECT_QUOTA_REPAIR_BATCH_SIZE = Math.max(
   1,
   Math.min(256, envToInt("COCALC_PROJECT_QUOTA_REPAIR_BATCH_SIZE", 32)),
+);
+// While quotas applied in an earlier quota epoch remain (e.g., every project
+// after the layout changed, when each joins its quota group), the audit takes
+// more at a time: each needs only a few small btrfs commands, since what's
+// read of the filesystem's quotas is shared (qgroup-scan.ts).  E.g., 10k
+// quotas on a big host take about 40 minutes instead of 5 hours.
+const PROJECT_QUOTA_MIGRATION_BATCH_SIZE = Math.max(
+  1,
+  Math.min(256, envToInt("COCALC_PROJECT_QUOTA_MIGRATION_BATCH_SIZE", 256)),
 );
 const PROJECT_QUOTA_OVERRIDE_SCAVENGE_MS = Math.max(
   60_000,
@@ -1190,7 +1212,27 @@ async function swapProjectHome({
       });
     },
   });
+  await joinHomeToQuotaGroup(project_id);
   return { oldHomePath };
+}
+
+// A home put in place (by a restore or a copy) counts against the project's
+// quota with its history (project-quota-group.ts); if this fails, the
+// project's next quota apply or audit adds it.
+async function joinHomeToQuotaGroup(project_id: string): Promise<void> {
+  try {
+    await joinProjectQuotaGroup({
+      project_id,
+      mount: getMountPoint(),
+      path: projectMountpoint(project_id),
+    });
+  } catch (err) {
+    logger.warn("unable to add a home to its project's quota", {
+      project_id,
+      err: `${err}`,
+    });
+  }
+  invalidateQuotaCache(project_id, false);
 }
 
 export async function getVolume(project_id: string, scratch?: boolean) {
@@ -2221,7 +2263,22 @@ async function clone({
     project_id,
     cloneHome: async () => {
       await fs!.subvolumes.clone(volName(src_project_id), volName(project_id));
+      // made outside any group, like its history (which joins by itself)
+      await joinHomeToQuotaGroup(project_id);
     },
+  });
+  // the group's limit now, not at the copy's first quota check
+  await limitNewProjectQuotaGroup({
+    project_id,
+    mount: getMountPoint(),
+    home: projectMountpoint(project_id),
+    history: persistVolumePath(project_id),
+  }).catch((err) => {
+    // (its next quota check sets it)
+    logger.warn("unable to limit a copied project's quota group", {
+      project_id,
+      err: `${err}`,
+    });
   });
   await recordManagedProjectVolume({
     project_id,
@@ -2273,7 +2330,9 @@ async function getQuota({
       throw Error("file server not initialized");
     }
     const vol = await fs.subvolumes.get(volName);
-    const value = await vol.quota.get();
+    const value = scratch
+      ? await vol.quota.get()
+      : await projectHomeQuota(project_id, vol);
     if (QUOTA_CACHE_TTL_MS > 0) {
       quotaCache.set(cacheKey, {
         expires: Date.now() + QUOTA_CACHE_TTL_MS,
@@ -2292,6 +2351,33 @@ async function getQuota({
     if (quotaInFlight.get(cacheKey) === load) {
       quotaInFlight.delete(cacheKey);
     }
+  }
+}
+
+// The project's disk quota and usage: its files and edit history together
+// (project-quota-group.ts).
+// `forQuota`: count usage against that quota, not the home's limit as it is
+// (a start with a new quota, checked before it is applied).
+export async function projectHomeQuota(
+  project_id: string,
+  vol: { path: string; quota: { get: () => Promise<SubvolumeQuotaInfo> } },
+  { forQuota }: { forQuota?: number } = {},
+): Promise<SubvolumeQuotaInfo & ProjectQuotaBreakdown> {
+  const quota = await vol.quota.get();
+  try {
+    return await projectQuotaWithHistory({
+      project_id,
+      home: vol.path,
+      history: persistVolumePath(project_id),
+      quota,
+      forQuota,
+    });
+  } catch (err) {
+    logger.warn("unable to read a project's quota group", {
+      project_id,
+      err: `${err}`,
+    });
+    return quota;
   }
 }
 
@@ -2342,7 +2428,7 @@ async function applyManagedProjectVolumeQuotaRaw({
   operation_id?: string;
   operation_class: string;
   priority?: "lifecycle" | "interactive" | "scheduled" | "scavenger";
-}): Promise<{ volume_identity: string }> {
+}): Promise<{ volume_identity: string; incomplete?: string }> {
   const target = Math.floor(size);
   if (!Number.isFinite(target) || target <= 0) {
     throw new Error("raw managed project quota must be finite and positive");
@@ -2363,9 +2449,32 @@ async function applyManagedProjectVolumeQuotaRaw({
       priority,
     });
   }
-  invalidateQuotaCache(project_id, scratch);
+  let incomplete: string | undefined;
   if (!scratch) {
-    // the edit history's limit follows the disk quota
+    // The project's files and edit history together (project-quota-group.ts).
+    // If this fails (e.g., deferred under I/O pressure), each has a limit of
+    // its own meanwhile, and the quota is checked again soon (incomplete).
+    await syncProjectQuotaGroup({
+      project_id,
+      mount: vol.filesystem.opts.mount,
+      home: vol.path,
+      history: persistVolumePath(project_id),
+      quota: target,
+      force: force_write,
+      operation_id,
+      operation_class,
+      priority,
+    }).catch((err) => {
+      // background work held off: the audit tries again soon, as for the
+      // limit (repairProjectQuotaLimits)
+      if (err instanceof BtrfsMutationDeferredError) throw err;
+      logger.warn("unable to update project quota group", {
+        project_id,
+        err: `${err}`,
+      });
+      incomplete = `project quota group not updated: ${err}`;
+    });
+    // its own limit, a safety net
     await syncPersistVolumeQuota(project_id, target).catch((err) => {
       logger.warn("unable to update persist volume quota", {
         project_id,
@@ -2373,7 +2482,8 @@ async function applyManagedProjectVolumeQuotaRaw({
       });
     });
   }
-  return { volume_identity };
+  invalidateQuotaCache(project_id, scratch);
+  return { volume_identity, ...(incomplete ? { incomplete } : {}) };
 }
 
 export async function reconcileManagedProjectVolumeQuota({
@@ -2428,6 +2538,11 @@ async function setQuota({
   });
 }
 
+// How project quotas are laid out on the filesystem: since "project-groups",
+// a project's files and edit history count against one quota
+// (project-quota-group.ts).
+const PROJECT_QUOTA_LAYOUT = "project-groups";
+
 function projectQuotaRepairEnabled(): boolean {
   const raw = `${process.env.COCALC_PROJECT_QUOTA_REPAIR ?? "yes"}`
     .trim()
@@ -2461,13 +2576,29 @@ async function repairProjectVolumeQuota({
     return "missing";
   }
   const current = await vol.quota.get();
-  const repaired = current.size !== target;
+  // the project's files and edit history together (project-quota-group.ts)
+  const groupInSync =
+    scratch ||
+    (await projectQuotaGroupInSync({
+      project_id: row.project_id,
+      home: vol.path,
+      history: persistVolumePath(row.project_id),
+      quota: target,
+    }).catch((err) => {
+      logger.warn("unable to read a project's quota group", {
+        project_id: row.project_id,
+        err: `${err}`,
+      });
+      return false;
+    }));
+  const repaired = current.size !== target || !groupInSync;
   if (repaired) {
     logger.warn("repairing project btrfs quota limit", {
       project_id: row.project_id,
       volume_kind: row.volume_kind,
       current_size: current.size,
       desired_size: target,
+      quota_group_in_sync: groupInSync,
       warning: current.warning,
     });
   }
@@ -2553,7 +2684,13 @@ async function repairProjectQuotaLimits(
   };
   try {
     const projects = listProjectVolumeQuotaAuditBatch({
-      limit: PROJECT_QUOTA_REPAIR_BATCH_SIZE,
+      limit:
+        countProjectVolumeQuotaEpochBacklog() > 0
+          ? Math.max(
+              PROJECT_QUOTA_REPAIR_BATCH_SIZE,
+              PROJECT_QUOTA_MIGRATION_BATCH_SIZE,
+            )
+          : PROJECT_QUOTA_REPAIR_BATCH_SIZE,
     });
     for (const project of projects) {
       if (projectQuotaGraceActive.has(project.project_id)) {
@@ -4622,7 +4759,10 @@ async function finalizeRestoreStaging({
     replacement: handle.stagingPath,
     reason: "restore-staging",
     historyInHome: homeHoldsPersistFiles(handle.project_id),
-    swap: async () => await finalizeRestoreStagingBtrfs(handle),
+    swap: async () => {
+      await finalizeRestoreStagingBtrfs(handle);
+      await joinHomeToQuotaGroup(handle.project_id);
+    },
   });
   invalidateProjectFsServer(handle.project_id);
   void touchProjectLastEdited(handle.project_id, "restore-staging");
@@ -5793,6 +5933,12 @@ export async function initFileServer({
       err: `${err}`,
     });
   });
+  // what deleted projects left (project-quota-group.ts)
+  await deleteEmptyQuotaGroups({ mount: fs.opts.mount }).catch((err) => {
+    logger.warn("unable to look for empty project quota groups", {
+      err: `${err}`,
+    });
+  });
   // Snapshots and backups of a project's home carry its edit history
   // (persist-volume.ts).
   setSnapshotPreparer({
@@ -5804,7 +5950,14 @@ export async function initFileServer({
   const filesystemQuotaState = reconcileProjectFilesystemQuotaState({
     mountpoint: fs.opts.mount,
     filesystem_uuid: quotaRuntime.filesystem_uuid,
-    quota_mode: quotaRuntime.status.mode,
+    // with how quotas are laid out: a new layout starts a new quota epoch, so
+    // every project's quota is applied again (once), e.g., to put existing
+    // projects in their quota groups once the host's root helper allows them
+    quota_mode:
+      quotaRuntime.status.enabled &&
+      (await projectQuotaGroupsPermitted(fs.opts.mount))
+        ? `${quotaRuntime.status.mode}/${PROJECT_QUOTA_LAYOUT}`
+        : quotaRuntime.status.mode,
     quota_mode_reconciled: quotaRuntime.reconciled,
   });
   logger.info("initialized durable project filesystem quota state", {
