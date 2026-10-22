@@ -351,10 +351,39 @@ export function fileFenceStore(
   };
 }
 
-// Written by a fence service once it serves (removed when it stops).
-export function writeFenceCapability(dir: string): void {
+// Written by a fence service once it serves (removed when it stops), with
+// what else its persist server does (e.g., "persist-volume").
+export function writeFenceCapability(
+  dir: string,
+  features: string[] = [],
+): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeJson(join(dir, CAPABILITY_FILE), { holder: currentFenceHolder() });
+  writeJson(join(dir, CAPABILITY_FILE), {
+    holder: currentFenceHolder(),
+    features,
+  });
+}
+
+// Whether the persist server running on this host has feature: only if its
+// capability file says so and names a process that runs (anything that
+// can't be told is no).
+export function persistServerHasFeature(dir: string, feature: string): boolean {
+  let data;
+  try {
+    data = readJson(join(dir, CAPABILITY_FILE));
+  } catch {
+    return false;
+  }
+  const holder = data?.holder;
+  return (
+    Array.isArray(data?.features) &&
+    data.features.includes(feature) &&
+    holder != null &&
+    Number.isSafeInteger(holder.pid) &&
+    holder.pid > 0 &&
+    typeof holder.start == "string" &&
+    isProcessAlive(holder)
+  );
 }
 
 export function removeFenceCapability(dir: string): void {

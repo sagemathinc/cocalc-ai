@@ -6,7 +6,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -32,6 +32,7 @@ import {
 } from "@cocalc/util/legacy-migration";
 import { assertValidSnapshotName } from "@cocalc/util/snapshot-name";
 import { publishLroEvent } from "../lro/stream";
+import { HISTORY_IN_SNAPSHOTS } from "../persist-volume";
 
 import { normalizeArchivePath } from "../archive-path";
 import {
@@ -72,6 +73,8 @@ const LEGACY_PROJECT_ARCHIVE_MANAGED_EXCLUDE_ROOTS = [
   ".smc",
   ".ssh/.cocalc",
   ".ssh/authorized_keys",
+  // the edit history in a snapshot (persist-volume.ts)
+  HISTORY_IN_SNAPSHOTS,
 ];
 const RESTORED_PROJECT_QUOTA_HEADROOM_BYTES =
   Math.max(
@@ -107,8 +110,13 @@ type LegacyProjectArchiveDeps = {
   markProjectArchiveInitialBackupExempt?: (project_id: string) => void;
   projectMountpoint: (project_id: string) => string;
   createWritableSnapshot: (source: string, dest: string) => Promise<void>;
-  createReadonlySnapshot: (source: string, dest: string) => Promise<void>;
-  setSubvolumeReadonly: (path: string, readOnly: boolean) => Promise<void>;
+  // a read-only snapshot in the project's ~/.snapshots of its home or a
+  // snapshot of it, with its edit history as in every snapshot there
+  createProjectSnapshot: (opts: {
+    project_id: string;
+    source: string;
+    dest: string;
+  }) => Promise<void>;
   deleteSubvolumeTree: (path?: string) => Promise<void>;
   invalidateProjectFsServer: (project_id: string) => void;
   touchProjectLastEdited: (project_id: string, reason: string) => void;
@@ -882,8 +890,7 @@ export function createLegacyProjectArchiveHandlers({
   markProjectArchiveInitialBackupExempt,
   projectMountpoint,
   createWritableSnapshot,
-  createReadonlySnapshot,
-  setSubvolumeReadonly,
+  createProjectSnapshot,
   deleteSubvolumeTree,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -1008,9 +1015,11 @@ export function createLegacyProjectArchiveHandlers({
               slashDir(workSnapshotPath),
             ],
           });
-          await setSubvolumeReadonly(workSnapshotPath, true);
-          await rename(workSnapshotPath, finalSnapshotPath);
-          workSnapshotPath = undefined;
+          await createProjectSnapshot({
+            project_id,
+            source: workSnapshotPath,
+            dest: finalSnapshotPath,
+          });
         }
         const diff = await runRsyncItemized({
           args: [
@@ -1086,7 +1095,11 @@ export function createLegacyProjectArchiveHandlers({
       const rsyncExclude = projectArchiveRsyncExcludeArgs(exclude);
       try {
         setProjectArchiveRestoreActive?.(project_id, true);
-        await createReadonlySnapshot(home, safetySnapshotPath);
+        await createProjectSnapshot({
+          project_id,
+          source: home,
+          dest: safetySnapshotPath,
+        });
         const applied = await runRsyncItemized({
           args: [
             "-ai",
@@ -1259,7 +1272,11 @@ export function createLegacyProjectArchiveHandlers({
           `before-legacy-restore-${new Date().toISOString()}`,
         );
         const safetySnapshotPath = join(home, ".snapshots", safetySnapshotName);
-        await createReadonlySnapshot(home, safetySnapshotPath);
+        await createProjectSnapshot({
+          project_id,
+          source: home,
+          dest: safetySnapshotPath,
+        });
         // Apply only after extraction succeeds. Managed service state remains
         // in the live home, and the snapshot makes a failed rsync reversible.
         try {

@@ -232,6 +232,20 @@ import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { importJupyterIpynb, saveJupyterIpynb } from "./jupyter-ipynb";
 import { boardHandlers } from "./board/service";
 import { resetClonedProjectState } from "./clone-state";
+import {
+  capturePersistVolume,
+  cloneProjectWithPersistVolume,
+  deleteOrphanedPersistVolumes,
+  deletePersistVolume,
+  replaceProjectHome,
+  withProjectStorageFenced,
+  restoreBackupWithHistory,
+  restoredHistoryCandidates,
+  snapshotNeedsPersistVolume,
+  snapshotWithHistory,
+  syncPersistVolumeQuota,
+} from "./persist-volume";
+import { setSnapshotPreparer } from "@cocalc/file-server/btrfs/snapshot-preparer";
 import { withBackupParallelLimit } from "./backup-queue";
 import { createSharedWorkLimit } from "./shared-work-limit";
 export { getBackupExecutionStatus } from "./backup-queue";
@@ -430,10 +444,7 @@ const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
   projectMountpoint,
   createWritableSnapshot: async (source, dest) =>
     await btrfsSnapshotWritable({ source, dest }),
-  createReadonlySnapshot: async (source, dest) =>
-    await btrfsSnapshotReadonly({ source, dest }),
-  setSubvolumeReadonly: async (path, readOnly) =>
-    await btrfsSetSubvolumeReadonly({ path, readOnly }),
+  createProjectSnapshot: snapshotWithHistory,
   deleteSubvolumeTree,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -1084,20 +1095,6 @@ async function btrfsSnapshotWritable({
   });
 }
 
-async function btrfsSetSubvolumeReadonly({
-  path,
-  readOnly,
-}: {
-  path: string;
-  readOnly: boolean;
-}): Promise<void> {
-  await btrfs({
-    args: ["property", "set", "-ts", path, "ro", readOnly ? "true" : "false"],
-    err_on_exit: true,
-    verbose: false,
-  });
-}
-
 async function deleteSubvolumeTree(pathToDelete?: string): Promise<void> {
   if (!pathToDelete || !(await exists(pathToDelete))) return;
   const root = resolveProjectMountRoot();
@@ -1339,111 +1336,118 @@ export async function deleteVolume(
     throw Error("file server not initialized");
   }
   invalidateProjectVolumeLifecycle(project_id);
-  await withProjectVolumeLifecycleLock(project_id, async () => {
-    const deleteIfExists = async ({
-      name,
-      volume_kind,
-      clearSnapshots = false,
-    }: {
-      name: string;
-      volume_kind: "home" | "scratch";
-      clearSnapshots?: boolean;
-    }) => {
-      const vol = await fs!.subvolumes.get(name);
-      if (!(await exists(vol.path))) {
+  await withProjectVolumeLifecycleLock(project_id, async () =>
+    // Nothing may have the project's history open while its storage goes
+    // (persist-volume.ts): streams of it close, and clients start over if
+    // it comes back (e.g., restored from an archive).
+    withProjectStorageFenced({ project_id, reason: "delete" }, async () => {
+      const deleteIfExists = async ({
+        name,
+        volume_kind,
+        clearSnapshots = false,
+      }: {
+        name: string;
+        volume_kind: "home" | "scratch";
+        clearSnapshots?: boolean;
+      }) => {
+        const vol = await fs!.subvolumes.get(name);
+        if (!(await exists(vol.path))) {
+          if (volume_kind === "home") {
+            await deleteStagedArchiveSnapshots(vol);
+          }
+          markProjectVolumeAbsent(project_id, volume_kind);
+          return;
+        }
+        if (clearSnapshots) {
+          try {
+            const snapshots = await vol.snapshots.readdir();
+            for (const snapshot of snapshots) {
+              await vol.snapshots.delete(snapshot);
+            }
+          } catch (err) {
+            logger.warn("deleteVolume: snapshot cleanup failed", {
+              project_id,
+              name,
+              err: `${err}`,
+            });
+          }
+        }
+        await fs!.subvolumes.delete(name);
         if (volume_kind === "home") {
+          // Automatic archive staging lives outside the project subvolume. This
+          // also covers deferred inventory cleanup after an unavailable host
+          // returns, including the idempotent parent-already-absent case above.
           await deleteStagedArchiveSnapshots(vol);
         }
         markProjectVolumeAbsent(project_id, volume_kind);
-        return;
-      }
-      if (clearSnapshots) {
-        try {
-          const snapshots = await vol.snapshots.readdir();
-          for (const snapshot of snapshots) {
-            await vol.snapshots.delete(snapshot);
-          }
-        } catch (err) {
-          logger.warn("deleteVolume: snapshot cleanup failed", {
-            project_id,
-            name,
-            err: `${err}`,
-          });
-        }
-      }
-      await fs!.subvolumes.delete(name);
-      if (volume_kind === "home") {
-        // Automatic archive staging lives outside the project subvolume. This
-        // also covers deferred inventory cleanup after an unavailable host
-        // returns, including the idempotent parent-already-absent case above.
-        await deleteStagedArchiveSnapshots(vol);
-      }
-      markProjectVolumeAbsent(project_id, volume_kind);
-    };
+      };
 
-    if (opts.expected_archive_generation == null) {
-      await deleteIfExists({
-        name: volName(project_id),
-        volume_kind: "home",
-        clearSnapshots: true,
-      });
-      await deleteIfExists({
-        name: scratchVolName(project_id),
-        volume_kind: "scratch",
-      });
-    } else {
-      const expectedBackupId =
-        `${opts.expected_archive_backup_id ?? ""}`.trim();
-      if (!expectedBackupId) {
-        throw new Error("an archive backup snapshot id is required");
-      }
-      const expectedGeneration = Number(opts.expected_archive_generation);
-      if (
-        !Number.isSafeInteger(expectedGeneration) ||
-        expectedGeneration <= 0
-      ) {
-        throw new Error("a valid archive backup generation is required");
-      }
-      const volume = await getVolumeForBackup(project_id);
-      try {
-        if (!(await volume.rustic.snapshotExists({ id: expectedBackupId }))) {
-          throw new Error(
-            `refusing to archive project because final backup ${expectedBackupId} no longer exists`,
-          );
-        }
-        const status = await assertFrozenVolumeMatchesBackup({
-          volume,
-          expectedGeneration,
+      if (opts.expected_archive_generation == null) {
+        await deleteIfExists({
+          name: volName(project_id),
+          volume_kind: "home",
+          clearSnapshots: true,
         });
-        // Scratch is ephemeral. Delete it before the durable home volume so a
-        // scratch cleanup failure can never reopen a project after home data
-        // was already removed. The durable backup was verified first.
         await deleteIfExists({
           name: scratchVolName(project_id),
           volume_kind: "scratch",
         });
-        if (status === "present") {
-          await fs!.subvolumes.delete(volName(project_id));
+      } else {
+        const expectedBackupId =
+          `${opts.expected_archive_backup_id ?? ""}`.trim();
+        if (!expectedBackupId) {
+          throw new Error("an archive backup snapshot id is required");
         }
-        await deleteStagedArchiveSnapshots(volume);
-        markProjectVolumeAbsent(project_id, "home");
-      } catch (err) {
-        // If cleanup did not complete, return the retained volume to a writable
-        // state before a retry. A missing volume is the idempotent-success case
-        // and releaseArchiveVolumeFreeze is a no-op.
-        await releaseArchiveVolumeFreeze(volume).catch((releaseErr) => {
-          logger.error("unable to release failed archive deletion freeze", {
-            project_id,
-            err: `${releaseErr}`,
+        const expectedGeneration = Number(opts.expected_archive_generation);
+        if (
+          !Number.isSafeInteger(expectedGeneration) ||
+          expectedGeneration <= 0
+        ) {
+          throw new Error("a valid archive backup generation is required");
+        }
+        const volume = await getVolumeForBackup(project_id);
+        try {
+          if (!(await volume.rustic.snapshotExists({ id: expectedBackupId }))) {
+            throw new Error(
+              `refusing to archive project because final backup ${expectedBackupId} no longer exists`,
+            );
+          }
+          const status = await assertFrozenVolumeMatchesBackup({
+            volume,
+            expectedGeneration,
           });
-        });
-        throw err;
+          // Scratch is ephemeral. Delete it before the durable home volume so a
+          // scratch cleanup failure can never reopen a project after home data
+          // was already removed. The durable backup was verified first.
+          await deleteIfExists({
+            name: scratchVolName(project_id),
+            volume_kind: "scratch",
+          });
+          if (status === "present") {
+            await fs!.subvolumes.delete(volName(project_id));
+          }
+          await deleteStagedArchiveSnapshots(volume);
+          markProjectVolumeAbsent(project_id, "home");
+        } catch (err) {
+          // If cleanup did not complete, return the retained volume to a writable
+          // state before a retry. A missing volume is the idempotent-success case
+          // and releaseArchiveVolumeFreeze is a no-op.
+          await releaseArchiveVolumeFreeze(volume).catch((releaseErr) => {
+            logger.error("unable to release failed archive deletion freeze", {
+              project_id,
+              err: `${releaseErr}`,
+            });
+          });
+          throw err;
+        }
       }
-    }
-    deleteProjectVolumeQuotas(project_id);
-    deleteProjectVolumeQuotaOverrides(project_id);
-    invalidateProjectFsServer(project_id);
-  });
+      // the project's edit history goes with its home
+      await deletePersistVolume(project_id);
+      deleteProjectVolumeQuotas(project_id);
+      deleteProjectVolumeQuotaOverrides(project_id);
+      invalidateProjectFsServer(project_id);
+    }),
+  );
   if (opts.reportProvisioned !== false) {
     queueProjectProvisioned(project_id, false);
   }
@@ -2211,7 +2215,14 @@ async function clone({
   if (fs == null) {
     throw Error("file server not initialized");
   }
-  await fs.subvolumes.clone(volName(src_project_id), volName(project_id));
+  // with its edit history (persist-volume.ts)
+  await cloneProjectWithPersistVolume({
+    src_project_id,
+    project_id,
+    cloneHome: async () => {
+      await fs!.subvolumes.clone(volName(src_project_id), volName(project_id));
+    },
+  });
   await recordManagedProjectVolume({
     project_id,
     path: projectMountpoint(project_id),
@@ -2284,6 +2295,37 @@ async function getQuota({
   }
 }
 
+// Runs fn with room for `bytes` more in the project's disk quota: a temporary
+// override, released afterwards (e.g., while a restore holds an extra copy of
+// the history, persist-volume.ts restoreBackupWithHistory).
+async function withProjectQuotaRoom<T>(
+  project_id: string,
+  bytes: number,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const { size } = await getQuota({ project_id });
+  if (!(size > 0) || !(bytes > 0)) return await fn();
+  const handle = await projectVolumeQuotaManager.beginTemporaryOverride({
+    project_id,
+    kind: "restore_history",
+    minimum_bytes: size + bytes,
+    expires_at: Date.now() + PROJECT_QUOTA_OVERRIDE_DEFAULT_TTL_MS,
+    operation_class: "restore_backup",
+    priority: "lifecycle",
+  });
+  try {
+    return await fn();
+  } finally {
+    // (if this fails, the override scavenger releases it when it expires)
+    await handle.release().catch((err) =>
+      logger.warn("unable to release a restore's quota room", {
+        project_id,
+        err: `${err}`,
+      }),
+    );
+  }
+}
+
 async function applyManagedProjectVolumeQuotaRaw({
   project_id,
   volume_kind,
@@ -2322,6 +2364,15 @@ async function applyManagedProjectVolumeQuotaRaw({
     });
   }
   invalidateQuotaCache(project_id, scratch);
+  if (!scratch) {
+    // the edit history's limit follows the disk quota
+    await syncPersistVolumeQuota(project_id, target).catch((err) => {
+      logger.warn("unable to update persist volume quota", {
+        project_id,
+        err: `${err}`,
+      });
+    });
+  }
   return { volume_identity };
 }
 
@@ -2800,7 +2851,11 @@ async function createPathCopyArchive({
   let uncompressed_bytes = 0;
   let snapshotCreated = false;
   try {
-    await volume.snapshots.create(snapshot, { quotaMode: "skip" });
+    // only read from, then deleted: no edit history needed
+    await volume.snapshots.create(snapshot, {
+      quotaMode: "skip",
+      includePreparedData: false,
+    });
     snapshotCreated = true;
     for (const root of roots) {
       // The source path is the project user's, and so is the .snapshots
@@ -3206,19 +3261,19 @@ async function restoreSnapshot({
     ) {
       throw new Error(`safety snapshot is missing: ${safety_snapshot_name}`);
     }
-    // If the home holds the project's persist files, nothing may have them
-    // open while it is swapped (persist-fence.ts).
-    const swap = async () =>
-      await swapProjectHome({
-        project_id,
-        replacementPath: staged.path,
-      });
-    ({ oldHomePath } = homeHoldsPersistFiles(project_id)
-      ? await withProjectPersistFenced(
-          { project_id, reason: "restore-snapshot" },
-          swap,
-        )
-      : await swap());
+    // The snapshot's edit history replaces the project's together with its
+    // home, while nothing has either open (persist-volume.ts).
+    ({ oldHomePath } = await replaceProjectHome({
+      project_id,
+      replacement: staged.path,
+      reason: "restore-snapshot",
+      historyInHome: homeHoldsPersistFiles(project_id),
+      swap: async () =>
+        await swapProjectHome({
+          project_id,
+          replacementPath: staged.path,
+        }),
+    }));
     cleanupStagedClone = false;
   } finally {
     if (cleanupStagedClone) {
@@ -3934,65 +3989,86 @@ async function backupProjectToExternalRepository({
           migration_id,
         });
         const snapshotPath = join(stagingRoot, "home");
-        await withBtrfsMutationLock({
-          mount: vol.filesystem.opts.mount,
-          operation: "project-site-migration-snapshot-create",
-          run: async () => {
-            await deleteProjectSiteMigrationSnapshot(snapshotPath).catch(
-              () => {},
-            );
-            await rm(stagingRoot, { recursive: true, force: true }).catch(
-              () => {},
-            );
-            await sudo({ command: "mkdir", args: ["-p", stagingRoot] });
-            await btrfs({
-              args: ["subvolume", "snapshot", vol.path, snapshotPath],
-            });
-          },
-        });
+        // the project's edit history, captured before its home, as in every
+        // backup (persist-volume.ts)
+        let captured = await capturePersistVolume({ subvolume: vol.name });
         try {
-          await sudo({
-            command: "rm",
-            args: [
-              "-rf",
-              join(snapshotPath, PROJECT_SITE_MIGRATION_ROOTFS_STATE_PATH),
-            ],
-          });
-          const backup = await projectRusticBackup({
-            src: snapshotPath,
-            repoProfile: profilePath,
-            host: projectRusticSnapshotHost(destination_project_id),
-            timeoutMs: PROJECT_RUSTIC_TIMEOUT_MS,
-            tags,
-            maxFileBytes: await projectBackupMaxFileBytes(vol),
-            progress,
-          });
-          if (backup.oversized_files) {
-            // The migration restores from this backup alone.
-            throw oversizedFilesError(
-              "migrate this project",
-              backup.oversized_files,
-            );
-          }
-          return {
-            time: backup.time,
-            id: backup.id,
-            summary: backup.summary,
-          };
-        } finally {
-          try {
+          const takeSnapshot = async () =>
             await withBtrfsMutationLock({
               mount: vol.filesystem.opts.mount,
-              operation: "project-site-migration-snapshot-delete",
+              operation: "project-site-migration-snapshot-create",
               run: async () => {
-                await deleteProjectSiteMigrationSnapshot(snapshotPath);
+                await deleteProjectSiteMigrationSnapshot(snapshotPath).catch(
+                  () => {},
+                );
+                await rm(stagingRoot, { recursive: true, force: true }).catch(
+                  () => {},
+                );
+                await sudo({ command: "mkdir", args: ["-p", stagingRoot] });
+                await btrfs({
+                  args: ["subvolume", "snapshot", vol.path, snapshotPath],
+                });
               },
             });
-          } finally {
-            await rm(stagingRoot, { recursive: true, force: true }).catch(
-              () => {},
-            );
+          await takeSnapshot();
+          if (captured == null) {
+            // the history may have just moved out of the home: then take the
+            // snapshot again with it
+            captured = await capturePersistVolume({ subvolume: vol.name });
+            if (captured != null) await takeSnapshot();
           }
+          try {
+            await sudo({
+              command: "rm",
+              args: [
+                "-rf",
+                join(snapshotPath, PROJECT_SITE_MIGRATION_ROOTFS_STATE_PATH),
+              ],
+            });
+            await captured?.addTo(snapshotPath);
+            // The snapshot holds the history now, so the upload (up to
+            // PROJECT_RUSTIC_TIMEOUT_MS) doesn't need the persist lock, which
+            // holds off snapshots, restores and copies of the project.
+            await captured?.release();
+            captured = undefined;
+            const backup = await projectRusticBackup({
+              src: snapshotPath,
+              repoProfile: profilePath,
+              host: projectRusticSnapshotHost(destination_project_id),
+              timeoutMs: PROJECT_RUSTIC_TIMEOUT_MS,
+              tags,
+              maxFileBytes: await projectBackupMaxFileBytes(vol),
+              progress,
+            });
+            if (backup.oversized_files) {
+              // The migration restores from this backup alone.
+              throw oversizedFilesError(
+                "migrate this project",
+                backup.oversized_files,
+              );
+            }
+            return {
+              time: backup.time,
+              id: backup.id,
+              summary: backup.summary,
+            };
+          } finally {
+            try {
+              await withBtrfsMutationLock({
+                mount: vol.filesystem.opts.mount,
+                operation: "project-site-migration-snapshot-delete",
+                run: async () => {
+                  await deleteProjectSiteMigrationSnapshot(snapshotPath);
+                },
+              });
+            } finally {
+              await rm(stagingRoot, { recursive: true, force: true }).catch(
+                () => {},
+              );
+            }
+          }
+        } finally {
+          await captured?.release();
         }
       },
     });
@@ -4152,9 +4228,16 @@ async function createBackup({
           let backupResult: Awaited<ReturnType<(typeof vol.rustic)["backup"]>>;
           try {
             archiveFreezeMayExist = freeze_source === true;
-            archiveFreeze = freeze_source
-              ? await freezeVolumeForArchiveBackup(vol)
-              : undefined;
+            archiveFreeze = !freeze_source
+              ? undefined
+              : snapshotNeedsPersistVolume(vol.name)
+                ? // the home and its persist volume are frozen one after
+                  // the other: no write to the history between them
+                  await withProjectPersistFenced(
+                    { project_id, reason: "archive-freeze", replaces: false },
+                    async () => await freezeVolumeForArchiveBackup(vol),
+                  )
+                : await freezeVolumeForArchiveBackup(vol);
             try {
               const maxFileBytes = skip_oversized_files
                 ? await projectBackupMaxFileBytes(vol)
@@ -4395,17 +4478,46 @@ async function restoreBackup({
 
   const progress = createLroRusticReporter(lro, "restore");
   const absoluteDest = relDest ? path.join(root, relDest) : root;
-  // A restore that can write the project's persist files runs while nothing
-  // has them open (persist-fence.ts).
-  const fenced =
-    root === home &&
-    restoreTouchesPersistFiles({ project_id, home, dest: relDest });
-  await (fenced
-    ? withProjectPersistFenced(
-        { project_id, reason: "restore-backup" },
-        async () => await runRestore(),
-      )
-    : runRestore());
+  const historyCandidates =
+    root === home
+      ? restoredHistoryCandidates({ path: restorePath, dest: relDest })
+      : [];
+  if (historyCandidates.length > 0) {
+    // The backup's edit history goes with its files: restored first where
+    // only the host can write, then the files restored and the history
+    // merged into the project's as one step, while nothing has it open
+    // (persist-volume.ts).
+    await restoreBackupWithHistory({
+      project_id,
+      candidates: historyCandidates,
+      listDirectory: async (path) =>
+        await getBackupFiles({ project_id, id, path: path || undefined }),
+      restoreInto: async (path, dest) => {
+        await new SandboxedFilesystem(dest, {
+          rusticRepo: vol.fs.rusticRepo,
+          host: vol.name,
+        }).rustic(["restore", `${id}:${path}`, "."], {
+          timeout: PROJECT_RUSTIC_TIMEOUT_MS,
+        });
+      },
+      restoreFiles: runRestore,
+      withRoom: async (bytes, fn) =>
+        await withProjectQuotaRoom(project_id, bytes, fn),
+    });
+  } else {
+    // In the old layout (history in the home), a restore that can write the
+    // project's persist files runs while nothing has them open
+    // (persist-fence.ts).
+    const fenced =
+      root === home &&
+      restoreTouchesPersistFiles({ project_id, home, dest: relDest });
+    await (fenced
+      ? withProjectPersistFenced(
+          { project_id, reason: "restore-backup" },
+          async () => await runRestore(),
+        )
+      : runRestore());
+  }
   invalidateProjectFsServer(project_id);
   void touchProjectLastEdited(project_id, "restore-backup");
 
@@ -4503,15 +4615,15 @@ async function finalizeRestoreStaging({
 }: {
   handle: RestoreStagingHandle;
 }): Promise<void> {
-  // Swaps in a whole new home: if it holds the project's persist files,
-  // nothing may have them open meanwhile (persist-fence.ts).
-  const finalize = async () => await finalizeRestoreStagingBtrfs(handle);
-  await (homeHoldsPersistFiles(handle.project_id)
-    ? withProjectPersistFenced(
-        { project_id: handle.project_id, reason: "restore-staging" },
-        finalize,
-      )
-    : finalize());
+  // The restored home and its edit history replace the project's together,
+  // while nothing has either open (persist-volume.ts).
+  await replaceProjectHome({
+    project_id: handle.project_id,
+    replacement: handle.stagingPath,
+    reason: "restore-staging",
+    historyInHome: homeHoldsPersistFiles(handle.project_id),
+    swap: async () => await finalizeRestoreStagingBtrfs(handle),
+  });
   invalidateProjectFsServer(handle.project_id);
   void touchProjectLastEdited(handle.project_id, "restore-staging");
 }
@@ -5674,6 +5786,19 @@ export async function initFileServer({
       });
     }
   }
+
+  // Before serving, so no restore or copy runs (persist-volume.ts).
+  await deleteOrphanedPersistVolumes().catch((err) => {
+    logger.warn("unable to look for orphaned persist volumes", {
+      err: `${err}`,
+    });
+  });
+  // Snapshots and backups of a project's home carry its edit history
+  // (persist-volume.ts).
+  setSnapshotPreparer({
+    appliesTo: snapshotNeedsPersistVolume,
+    capture: capturePersistVolume,
+  });
 
   const quotaRuntime = fs.getQuotaRuntime();
   const filesystemQuotaState = reconcileProjectFilesystemQuotaState({

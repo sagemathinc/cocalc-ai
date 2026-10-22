@@ -12,6 +12,7 @@ import {
   fenceCapableServerRunning,
   fileFenceStore,
   isFenceHolderAlive,
+  persistServerHasFeature,
   removeFenceCapability,
   writeFenceCapability,
 } from "./persist-fence";
@@ -262,5 +263,27 @@ describe("when /proc can't be read", () => {
       spy.mockRestore();
     }
     expect(isFenceHolderAlive({ pid: process.pid, start: "1" })).toBe(false);
+  });
+});
+
+describe("persist server features", () => {
+  it("are what its capability file names, while its process runs", () => {
+    expect(persistServerHasFeature(dir, "persist-volume")).toBe(false);
+    writeFenceCapability(dir, ["persist-volume"]);
+    expect(persistServerHasFeature(dir, "persist-volume")).toBe(true);
+    expect(persistServerHasFeature(dir, "other")).toBe(false);
+    writeFenceCapability(dir);
+    expect(persistServerHasFeature(dir, "persist-volume")).toBe(false);
+    // a process that is gone, or a file that can't be read: no
+    writeFileSync(
+      join(dir, "capability.json"),
+      JSON.stringify({
+        holder: { pid: 2 ** 22 + 17, start: "" },
+        features: ["persist-volume"],
+      }),
+    );
+    expect(persistServerHasFeature(dir, "persist-volume")).toBe(false);
+    writeFileSync(join(dir, "capability.json"), "{oops");
+    expect(persistServerHasFeature(dir, "persist-volume")).toBe(false);
   });
 });

@@ -14,6 +14,7 @@ import type { Application } from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { installProjectPersistVolumes } from "./persist-volume";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
 import {
@@ -215,13 +216,17 @@ export async function startStandaloneProjectHostConatPersist({
   // before a restart, and its capability file tells the host's main process
   // that it has fences (persist-fence.ts).
   const fenceDir = persistFenceDir();
+  // the history in volumes of their own (persist-volume.ts), which restores
+  // require of the server that fences them (persist-fence.ts)
+  const features = installProjectPersistVolumes() ? ["persist-volume"] : [];
   const fenceService = await initPersistFenceService({
     client,
     holderAlive: isFenceHolderAlive,
     describeHolder: describeFenceHolder,
     store: fileFenceStore(fenceDir),
+    features,
   });
-  writeFenceCapability(fenceDir);
+  writeFenceCapability(fenceDir, features);
   const closeFenceService = () => {
     fenceService.close();
     removeFenceCapability(fenceDir);

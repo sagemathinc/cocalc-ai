@@ -17,6 +17,7 @@ import {
   withPersistFence,
 } from "@cocalc/conat/persist/fence";
 import {
+  enterProjectOpen,
   isProjectFenced,
   projectReplacedInstance,
 } from "@cocalc/conat/persist/project-fence";
@@ -276,6 +277,26 @@ describe("fence a project, replace its history, and clients reload it", () => {
       ),
     ).rejects.toThrow("not a running process");
     expect(isProjectFenced(project_id)).toBe(false);
+  });
+
+  it("a fence that can't close the project's streams fails within its timeout", async () => {
+    // an open of one of the project's streams that never finishes
+    const leave = await enterProjectOpen(project_id);
+    try {
+      const fn = jest.fn(async () => {});
+      const start = Date.now();
+      await expect(
+        withPersistFence(
+          { client: connect(), project_id, holder, timeoutMs: 1000 },
+          fn,
+        ),
+      ).rejects.toThrow("timed out");
+      expect(Date.now() - start).toBeLessThan(5000);
+      expect(fn).not.toHaveBeenCalled();
+      expect(isProjectFenced(project_id)).toBe(false);
+    } finally {
+      leave();
+    }
   });
 
   it("waits for other work on the project's files, and none starts while it is fenced", async () => {

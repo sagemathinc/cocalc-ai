@@ -17,6 +17,7 @@ import { syncFiles } from "@cocalc/backend/data";
 import {
   currentFenceHolder,
   fenceCapableServerRunning,
+  persistServerHasFeature,
 } from "@cocalc/backend/conat/persist-fence";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import {
@@ -67,25 +68,65 @@ async function whenUnavailable(
 // persist daemon from before fences (e.g., kept running across an upgrade)
 // does it go ahead unfenced, as restores did before; if a server with fences
 // can't be reached, it waits a while and then fails without running fn.
+//
+// With requires (e.g., "persist-volume": fn changes the history's volume), the
+// persist server must have that feature (its capability file says so, see
+// conat-persist.ts), and it never goes ahead unfenced: a daemon from before
+// would keep using the history where it was, and its writes would be lost.
+//
+// waitMs bounds the wait for an unreachable fence service, and timeoutMs how
+// long the persist server may take to close the project's streams.  With
+// replaces false, fn changes none of the files (withPersistFence).
 export async function withProjectPersistFenced<T>(
-  { project_id, reason }: { project_id: string; reason: string },
+  {
+    project_id,
+    reason,
+    requires,
+    replaces,
+  }: {
+    project_id: string;
+    reason: string;
+    requires?: string;
+    replaces?: boolean;
+  },
   fn: () => Promise<T>,
-  { waitMs = UNAVAILABLE_WAIT_MS }: { waitMs?: number } = {},
+  {
+    waitMs = UNAVAILABLE_WAIT_MS,
+    timeoutMs,
+  }: { waitMs?: number; timeoutMs?: number } = {},
 ): Promise<T> {
   const client = fenceClient;
   if (client == null) {
     throw new Error("persist fences are not set up (no file server)");
   }
+  if (
+    requires != null &&
+    isProjectHostExternalConatPersistEnabled() &&
+    !persistServerHasFeature(persistFenceDir(), requires)
+  ) {
+    throw new Error(
+      `the persist daemon on this host is from an older version (no ${requires}), so the project's history can't be replaced now; try again after it is upgraded`,
+    );
+  }
   const deadline = Date.now() + waitMs;
   for (let attempt = 0; ; attempt++) {
     try {
       return await withPersistFence(
-        { client, project_id, holder: currentFenceHolder(), reason },
+        {
+          client,
+          project_id,
+          holder: currentFenceHolder(),
+          reason,
+          // checked by the server that grants the fence
+          ...(requires != null ? { requires: [requires] } : {}),
+          ...(timeoutMs != null ? { timeoutMs } : {}),
+          ...(replaces === false ? { replaces } : {}),
+        },
         fn,
       );
     } catch (err) {
       if (!(err instanceof PersistFenceUnavailableError)) throw err;
-      if ((await whenUnavailable(client)) == "unfenced") {
+      if (requires == null && (await whenUnavailable(client)) == "unfenced") {
         logger.warn("the persist daemon has no fences; going ahead unfenced", {
           project_id,
           reason,

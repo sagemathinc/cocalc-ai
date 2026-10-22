@@ -5,6 +5,7 @@
 
 const withPersistFence = jest.fn();
 const fenceCapableServerRunning = jest.fn(() => false);
+const persistServerHasFeature = jest.fn(() => true);
 const checkProjectHostConatPersistReady = jest.fn(async () => true);
 const isProjectHostExternalConatPersistEnabled = jest.fn(() => true);
 
@@ -19,6 +20,7 @@ jest.mock("@cocalc/conat/persist/fence", () => {
 jest.mock("@cocalc/backend/conat/persist-fence", () => ({
   currentFenceHolder: () => ({ pid: 123, start: "9" }),
   fenceCapableServerRunning: () => fenceCapableServerRunning(),
+  persistServerHasFeature: () => persistServerHasFeature(),
 }));
 
 jest.mock("./conat-persist", () => ({
@@ -175,6 +177,58 @@ describe("withProjectPersistFenced", () => {
         async () => "done",
       ),
     ).resolves.toBe("done");
+  });
+
+  it("never goes ahead unfenced when fn needs a feature of the persist server", async () => {
+    unavailable();
+    const fn = jest.fn(async () => "done");
+    await expect(
+      withProjectPersistFenced(
+        { project_id, reason: "test", requires: "persist-volume" },
+        fn,
+        { waitMs: 300 },
+      ),
+    ).rejects.toThrow("can't be replaced safely now");
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("refuses at once when the persist daemon lacks the feature", async () => {
+    persistServerHasFeature.mockReturnValue(false);
+    const fn = jest.fn(async () => "done");
+    await expect(
+      withProjectPersistFenced(
+        { project_id, reason: "test", requires: "persist-volume" },
+        fn,
+      ),
+    ).rejects.toThrow("older version");
+    expect(fn).not.toHaveBeenCalled();
+    expect(withPersistFence).not.toHaveBeenCalled();
+    persistServerHasFeature.mockReturnValue(true);
+  });
+
+  it("leaves clients alone when fn changes no files", async () => {
+    withPersistFence.mockImplementation(async (_opts, fn) => await fn());
+    await withProjectPersistFenced(
+      { project_id, reason: "archive-freeze", replaces: false },
+      async () => {},
+    );
+    expect(withPersistFence).toHaveBeenCalledWith(
+      expect.objectContaining({ replaces: false }),
+      expect.any(Function),
+    );
+  });
+
+  it("lets the persist server take at most timeoutMs to fence", async () => {
+    withPersistFence.mockImplementation(async (_opts, fn) => await fn());
+    await withProjectPersistFenced(
+      { project_id, reason: "test" },
+      async () => {},
+      { timeoutMs: 5000 },
+    );
+    expect(withPersistFence).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 5000 }),
+      expect.any(Function),
+    );
   });
 
   it("fails, without running fn, when the fence cannot be taken", async () => {

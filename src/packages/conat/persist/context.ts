@@ -44,6 +44,25 @@ export let assertSafeDatabasePath: (path: string) => void = () => {};
 // and -shm files) at any time.  The backend sets it; by default nothing is.
 export let isProjectOwnedDatabasePath: (path: string) => boolean = () => false;
 
+// Called before a project's databases are opened, with the directory that
+// holds them.  A project-host creates that directory (a volume of its own) and
+// imports the project's old databases into it; it throws to refuse access.
+// By default it does nothing.
+export type PrepareProjectStore = (opts: {
+  project_id: string;
+  root: string;
+}) => Promise<void>;
+let prepareProjectStoreFn: PrepareProjectStore = async () => {};
+export function prepareProjectStore(opts: {
+  project_id: string;
+  root: string;
+}): Promise<void> {
+  return prepareProjectStoreFn(opts);
+}
+export function setPrepareProjectStore(fn: PrepareProjectStore): void {
+  prepareProjectStoreFn = fn;
+}
+
 export let syncFiles = {
   local: "",
   localProjects: "",

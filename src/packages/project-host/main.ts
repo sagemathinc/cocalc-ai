@@ -28,6 +28,7 @@ import {
 import { setConatClient } from "@cocalc/conat/client";
 import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { installProjectPersistVolumes } from "./persist-volume";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { initPersistFenceService } from "@cocalc/conat/persist/fence";
 import {
@@ -588,6 +589,9 @@ export async function main(
   const externalPersist = isProjectHostExternalConatPersistEnabled();
   // Lets file-server restores fence a project's streams (as the daemon does);
   // started before the persist server serves.
+  // the history in volumes of their own (persist-volume.ts), before anything
+  // is served
+  const persistVolumes = !externalPersist && installProjectPersistVolumes();
   const persistFenceService = externalPersist
     ? undefined
     : await initPersistFenceService({
@@ -595,6 +599,7 @@ export async function main(
         holderAlive: isFenceHolderAlive,
         describeHolder: describeFenceHolder,
         store: fileFenceStore(persistFenceDir()),
+        features: persistVolumes ? ["persist-volume"] : [],
       });
   const persistServer = externalPersist
     ? undefined
