@@ -1532,6 +1532,137 @@ describe("dedicated host spend maintenance", () => {
     },
   );
 
+  it("still retries the stop when closing the purchase session fails", async () => {
+    closeDedicatedHostPurchaseSessionForAccountMock.mockRejectedValue(
+      new Error("billing seed bay unreachable"),
+    );
+    const now = Date.now();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              ...blockedHostRow({
+                final_backup_status: "succeeded",
+                stopped_at: new Date(now - 3600_000).toISOString(),
+                deprovision_after: new Date(now + 71 * 3600_000).toISOString(),
+              }),
+              status: "error",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET status=$2")
+      ) {
+        return { rows: [{ desired_state_generation: 3 }], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith(
+      expect.objectContaining({ vm_id: "host-1", action: "stop" }),
+    );
+  });
+
+  it("still deletes a due disk when closing the purchase session fails", async () => {
+    closeDedicatedHostPurchaseSessionForAccountMock.mockRejectedValue(
+      new Error("billing seed bay unreachable"),
+    );
+    const now = Date.now();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              ...blockedHostRow({
+                final_backup_status: "failed",
+                stopped_at: new Date(now - 31 * 24 * 3600_000).toISOString(),
+                deprovision_after: new Date(now - 3600_000).toISOString(),
+                rescue_requested_at: new Date(
+                  now - 9 * 24 * 3600_000,
+                ).toISOString(),
+                final_backup_failed_at: new Date(
+                  now - 8 * 24 * 3600_000,
+                ).toISOString(),
+              }),
+              status: "error",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=(")
+      ) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "host-deprovision", scope_id: "host-1" }),
+    );
+  });
+
+  it.each(["error", "stopping", "running"])(
+    "leaves a %s host with a queued billing deprovision alone, unbilled",
+    async (status) => {
+      queryMock = jest.fn(async (sql: string) => {
+        if (sql.includes("pg_try_advisory_lock")) {
+          return { rows: [{ locked: true }] };
+        }
+        if (sql.includes("FROM project_hosts")) {
+          const row = blockedHostRow({
+            state: "deprovision_pending",
+            final_backup_status: "failed",
+            stopped_at: "2026-01-01T00:00:00.000Z",
+            deprovision_requested_at: new Date().toISOString(),
+          });
+          return { rows: [{ ...row, status }] };
+        }
+        if (sql.includes("pg_advisory_unlock")) {
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+
+      const { runDedicatedHostSpendMaintenancePass } =
+        await import("./spend-maintenance");
+      await runDedicatedHostSpendMaintenancePass();
+
+      expect(
+        closeDedicatedHostPurchaseSessionForAccountMock,
+      ).toHaveBeenCalledWith({ account_id: "acc-1", host_id: "host-1" });
+      expect(
+        reconcileDedicatedHostPurchaseSessionForAccountMock,
+      ).not.toHaveBeenCalled();
+      expect(createLroMock).not.toHaveBeenCalled();
+      expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("waits between stop retries of a billing-blocked host", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("pg_try_advisory_lock")) {

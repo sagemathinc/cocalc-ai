@@ -1429,32 +1429,48 @@ async function runPass(): Promise<void> {
     }
 
     const enforcement = currentEnforcement(metadata);
-    if (enforcement?.state === "stopped_billing_blocked") {
-      // Billing enforcement stopped this host after a drain or a rescue drain.
-      // Do not reprice it as running while its provider stop is pending, or if
-      // that stop failed; a rescue run is site-paid. The deprovision deadlines
-      // still apply, also to a stop that never finishes (deprovisioning
-      // deletes the VM too); until one is due, a failed stop is retried. A
-      // rescue is requested only once the host is off: a failed stop leaves
-      // status "error" whether or not the VM still runs, and starting a
-      // running VM restarts it or fails on some providers, which would lose
-      // the only rescue attempt.
-      //
-      // The running-rate session opened before the block would keep accruing
-      // until a stop succeeds, so close it now; stopped pricing starts once
-      // the host is off.
-      await closeDedicatedHostPurchaseSessionForAccount({
-        account_id: owner,
-        host_id: row.id,
-      });
-      if (
-        !(await maybeProgressInactiveEnforcement({
-          row,
-          allowRescueRequest: false,
-        })) &&
-        status !== "stopping"
-      ) {
-        await retryBillingEnforcementStop({ row, provider, enforcement });
+    if (
+      enforcement?.state === "stopped_billing_blocked" ||
+      enforcement?.state === "deprovision_pending"
+    ) {
+      // Billing enforcement stopped this host after a drain or a rescue drain
+      // (or queued its deprovision while a stop was still pending or failed).
+      // Do not reprice it as running; a rescue run is site-paid. The
+      // running-rate session opened before the block would keep accruing until
+      // the host is off, so close it; stopped pricing starts once it is off.
+      // That close is best-effort: a billing-authority outage must not block
+      // the stop retry or the deadlines below.
+      try {
+        await closeDedicatedHostPurchaseSessionForAccount({
+          account_id: owner,
+          host_id: row.id,
+        });
+      } catch (err) {
+        logger.warn(
+          "failed to close the purchase session of a billing-blocked host",
+          {
+            host_id: row.id,
+            err: `${err}`,
+          },
+        );
+      }
+      // A queued deprovision deletes the VM; leave it alone until then.
+      if (enforcement.state === "stopped_billing_blocked") {
+        // The deprovision deadlines still apply, also to a stop that never
+        // finishes (deprovisioning deletes the VM too); until one is due, a
+        // failed stop is retried. A rescue is requested only once the host is
+        // off: a failed stop leaves status "error" whether or not the VM still
+        // runs, and starting a running VM restarts it or fails on some
+        // providers, which would lose the only rescue attempt.
+        if (
+          !(await maybeProgressInactiveEnforcement({
+            row,
+            allowRescueRequest: false,
+          })) &&
+          status !== "stopping"
+        ) {
+          await retryBillingEnforcementStop({ row, provider, enforcement });
+        }
       }
       deleteSnapshotCacheForAccount(owner);
       continue;
