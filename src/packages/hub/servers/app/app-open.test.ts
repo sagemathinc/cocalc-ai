@@ -138,6 +138,24 @@ describe("app open", () => {
     expect(issue).not.toHaveBeenCalled();
   });
 
+  it("never sends a request from the project host back there", async () => {
+    issue.mockResolvedValue({ url: LINK, expires_at: 0 });
+    let res = await get(
+      `/app-open/${PROJECT}/port/8000/a?b=1&cocalc_app_redirect=1`,
+      sameOrigin,
+    );
+    expect(res.headers.get("location")).toBe(LINK);
+    expect(issue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ path: `/${PROJECT}/port/8000/a?b=1` }),
+    );
+    issue.mockResolvedValue({ unavailable: "host-not-ready" });
+    res = await get(
+      `/app-open/${PROJECT}/port/8000/?cocalc_app_redirect=1`,
+      sameOrigin,
+    );
+    expect(res.headers.get("location")).toBe(`/projects/${PROJECT}`);
+  });
+
   it("does not issue for bearer-authenticated requests", async () => {
     const res = await get(`/app-open/${PROJECT}/port/8000/`, {
       ...sameOrigin,
