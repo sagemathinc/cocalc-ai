@@ -20,6 +20,7 @@ import type { ChatActions } from "./actions";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import StaticMarkdown from "./bounded-static-markdown";
 import ContextualReply from "./contextual-reply";
+import { presentedMessageMarkdown } from "./message-presentation";
 import {
   findItem,
   isItemArchived,
@@ -565,6 +566,8 @@ export function ChatReaderView({
         const date = dateValue(message);
         const sender = readerSender(message, userMap);
         const value = `${newest_content(message) ?? ""}`;
+        // As the log shows it: e.g. an agent message as its "From" card.
+        const shown = presentedMessageMarkdown(message, value);
         return (
           <div key={`${date?.valueOf()}`} style={{ marginBottom: 20 }}>
             <div
@@ -602,7 +605,7 @@ export function ChatReaderView({
               }}
             >
               <StaticMarkdown
-                value={value}
+                value={shown}
                 style={{ fontSize: `${fontSize ?? 14}px` }}
               />
             </ContextualReply>
