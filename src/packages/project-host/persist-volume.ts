@@ -243,11 +243,15 @@ export interface PersistVolumeOps {
   // deletes a host-only staging directory
   removeTree: (path: string) => Promise<void>;
   // puts the volume at path in the project's quota group
-  // (project-quota-group.ts)
-  joinQuotaGroup: (project_id: string, path: string) => Promise<void>;
+  // (project-quota-group.ts; `required`: see joinProjectQuotaGroup)
+  joinQuotaGroup: (
+    project_id: string,
+    path: string,
+    opts?: { required?: boolean },
+  ) => Promise<void>;
 }
 
-const btrfsOps: PersistVolumeOps = {
+export const btrfsOps: PersistVolumeOps = {
   createVolume: async (path) => {
     await btrfs({ args: ["subvolume", "create", path] });
     await sudo({
@@ -309,8 +313,13 @@ const btrfsOps: PersistVolumeOps = {
   deleteVolume: async (path) => {
     await btrfs({ args: ["subvolume", "delete", path] });
   },
-  joinQuotaGroup: async (project_id, path) => {
-    await joinProjectQuotaGroup({ project_id, mount: dirname(path), path });
+  joinQuotaGroup: async (project_id, path, opts) => {
+    await joinProjectQuotaGroup({
+      project_id,
+      mount: dirname(path),
+      path,
+      required: opts?.required,
+    });
   },
 };
 
@@ -337,13 +346,15 @@ async function joinQuotaGroup(
 // history, counts against the project's quota from now on.  Required: btrfs
 // simple quotas charge data to the subvolume that wrote it for as long as
 // anything uses it, even after that subvolume is deleted, so one outside the
-// project's group would leave that data uncounted for good.
+// project's group would leave that data uncounted for good.  So it is never
+// skipped (e.g., while the host's root helper was refusing groups): it is
+// in the group, or this throws.
 async function requireQuotaGroup(
   ops: PersistVolumeOps,
   project_id: string,
   path: string,
 ): Promise<void> {
-  await ops.joinQuotaGroup(project_id, path);
+  await ops.joinQuotaGroup(project_id, path, { required: true });
 }
 
 const preparing = new Map<string, Promise<void>>();

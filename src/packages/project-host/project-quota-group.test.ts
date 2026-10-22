@@ -47,6 +47,7 @@ import {
   deleteEmptyQuotaGroups,
   effectiveQuotaUsage,
   historyReserve,
+  joinProjectQuotaGroup,
   projectQuotaGroup,
   projectQuotaGroupInSync,
   projectQuotaGroupLimit,
@@ -289,5 +290,46 @@ describe("a host whose root helper refuses quota groups", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("still makes the joins a restore requires", async () => {
+    const { addToQuotaGroup, destroyQuotaGroup } = jest.requireMock(
+      "@cocalc/file-server/btrfs/quota-group",
+    );
+    const deny = new Error(
+      "SECURITY_DENY code=relative-path-not-allowed detail=1/7",
+    );
+    // refused when the file server starts: no groups for an hour
+    (destroyQuotaGroup as jest.Mock).mockRejectedValueOnce(deny);
+    expect(await projectQuotaGroupsPermitted("/mnt/cocalc")).toBe(false);
+    (addToQuotaGroup as jest.Mock).mockClear();
+    const join = { project_id: PROJECT, mount: "/mnt/cocalc", path: HISTORY };
+    // a join that can wait (the quota audit adds it) does
+    await joinProjectQuotaGroup(join);
+    expect(addToQuotaGroup).not.toHaveBeenCalled();
+    // a required one is tried, and a refusal is thrown
+    (addToQuotaGroup as jest.Mock).mockRejectedValueOnce(deny);
+    await expect(
+      joinProjectQuotaGroup({ ...join, required: true }),
+    ).rejects.toThrow("SECURITY_DENY");
+    // and is made as soon as the helper allows groups, within the hour
+    await joinProjectQuotaGroup({ ...join, required: true });
+    expect(addToQuotaGroup).toHaveBeenCalledTimes(2);
+    expect((addToQuotaGroup as jest.Mock).mock.calls[1][0]).toEqual({
+      mount: "/mnt/cocalc",
+      group: GROUP,
+      path: HISTORY,
+    });
+    // the rest still waits for the hour
+    await joinProjectQuotaGroup(join);
+    expect(addToQuotaGroup).toHaveBeenCalledTimes(2);
+    // with quotas off, nothing is required
+    process.env.COCALC_DISABLE_BTRFS_QUOTAS = "1";
+    try {
+      await joinProjectQuotaGroup({ ...join, required: true });
+    } finally {
+      delete process.env.COCALC_DISABLE_BTRFS_QUOTAS;
+    }
+    expect(addToQuotaGroup).toHaveBeenCalledTimes(2);
   });
 });

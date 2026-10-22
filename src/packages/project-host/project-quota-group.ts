@@ -195,16 +195,23 @@ export async function syncProjectQuotaGroup({
 
 // Puts a home or persist volume the project gets (e.g., by a restore) in its
 // group, at once (its limit is set by the project's next quota change).
+//
+// With `required` (a volume that writes data the project keeps, which btrfs
+// charges to it for good), it is put there whenever quotas are on: tried even
+// while this host's root helper is thought to refuse groups, and a refusal is
+// thrown, never skipped.
 export async function joinProjectQuotaGroup({
   project_id,
   mount,
   path,
+  required = false,
 }: {
   project_id: string;
   mount: string;
   path: string;
+  required?: boolean;
 }): Promise<void> {
-  if (btrfsQuotasDisabled() || refused()) return;
+  if (btrfsQuotasDisabled() || (refused() && !required)) return;
   await unlessRefused(
     async () =>
       await addToQuotaGroup({
