@@ -484,8 +484,8 @@ again with `--update` to keep the same card. Times are local to `timezone`:
 `status` is `scheduled`, `pending`, `done` or `cancelled`. A recurring
 event's deadline is `due_offset_days` (days after each occurrence), not `due`. An item with a
 `due` (or `due_offset_days`) is overdue once that day has ended, until it is
-marked `done` or `cancelled`; a `pending` item without one, once its time has
-passed. `recurrence` takes `freq`
+marked `done` or `cancelled`; a one-off `pending` item without one, once its
+time has passed. A recurring `pending` event needs `due_offset_days`. `recurrence` takes `freq`
 (`daily`, `weekly`, `monthly`, `yearly`), `interval`, `bymonthday`,
 `bymonth`, `byweekday` (`"MO"`...), `until` and `count`. A day after the
 28th falls on the last day of shorter months (the 31st is Feb 28); a rule

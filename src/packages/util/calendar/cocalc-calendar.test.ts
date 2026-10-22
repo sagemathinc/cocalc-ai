@@ -775,6 +775,36 @@ describe("iCalendar export", () => {
     ]);
   });
 
+  it("a recurring pending event needs its deadline after each occurrence", () => {
+    const problems = (extra: object) =>
+      parseCalendar(
+        text({
+          ...ACCOUNTING,
+          events: [
+            {
+              id: "r",
+              title: "R",
+              start: "2027-01-06",
+              all_day: true,
+              status: "pending",
+              recurrence: { freq: "monthly" },
+              ...extra,
+            },
+          ],
+        }),
+      ).problems.map((p) => p.path);
+    expect(problems({})).toEqual(["events[0].status"]);
+    expect(problems({ due_offset_days: 5 })).toEqual([]);
+  });
+
+  it("only version 1 is read as version 1", () => {
+    for (const version of [2, undefined]) {
+      const parsed = parseCalendar(text({ ...ACCOUNTING, version }));
+      expect(parsed.calendar).toBeUndefined();
+      expect(parsed.problems.map((p) => p.path)).toContain("version");
+    }
+  });
+
   it("an event has one deadline: due or due_offset_days", () => {
     const parsed = parseCalendar(
       text({

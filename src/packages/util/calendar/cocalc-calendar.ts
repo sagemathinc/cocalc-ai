@@ -257,6 +257,8 @@ export function parseCalendar(text: string): {
   }
   const showable =
     value.format === CALENDAR_FORMAT &&
+    // Another version may mean something else: never read it as this one.
+    value.version === CALENDAR_VERSION &&
     validZone(timezone) &&
     Array.isArray(value.events);
   return {
@@ -345,6 +347,17 @@ function parseEvent(
     )
   )
     bad("due_offset_days", "must be a whole number of days, 0 to 366");
+  // A status is the event's, not each occurrence's: a recurring task is
+  // overdue by its deadline after each occurrence, so it needs one.
+  if (
+    e.status === "pending" &&
+    e.recurrence != null &&
+    e.due_offset_days == null
+  )
+    bad(
+      "status",
+      "a recurring pending event needs due_offset_days (its deadline after each occurrence)",
+    );
   if (e.status != null && !STATUSES.includes(e.status))
     bad("status", `must be one of ${STATUSES.join(", ")}`);
   // Own keys only: "constructor" or "toString" is not a category.
