@@ -35,7 +35,8 @@ const scans = () =>
     ([opts]) => opts.args[1] === "show" && opts.args[0] === "qgroup",
   ).length;
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import("./operation-cache")).clearBtrfsOperationCachesForTest();
   resetQgroupScansForTest();
   btrfsMock.mockReset();
   ids = { [`${MOUNT}/project-a`]: 300, [`${MOUNT}/project-a-persist`]: 302 };
@@ -240,5 +241,35 @@ describe("forgetSubvolumePaths", () => {
     ).toMatch(/Subvolume ID:\s*400/);
     await getQgroupScan(MOUNT);
     expect(scans()).toBe(2);
+  });
+});
+
+describe("a subvolume id being read when its path is swapped", () => {
+  it("goes to no one asking afterwards, and is never kept", async () => {
+    const { cachedBtrfsSubvolumeShow, forgetSubvolumePaths } =
+      await import("./operation-cache");
+    const path = `${MOUNT}/project-a`;
+    let finish!: () => void;
+    btrfsMock.mockImplementationOnce(
+      async () =>
+        await new Promise((resolve) => {
+          finish = () =>
+            resolve({ stdout: "Subvolume ID:\t300\n", stderr: "" });
+        }),
+    );
+    // a read of the old home's id, under way
+    const old = cachedBtrfsSubvolumeShow(path);
+    await new Promise((r) => setImmediate(r));
+    // a restore swaps in another home
+    ids[path] = 400;
+    forgetSubvolumePaths(path);
+    const fresh = await cachedBtrfsSubvolumeShow(path);
+    expect(fresh.stdout).toMatch(/Subvolume ID:\s*400/);
+    finish();
+    expect((await old).stdout).toMatch(/Subvolume ID:\s*300/);
+    // the old read never replaced the new one
+    expect((await cachedBtrfsSubvolumeShow(path)).stdout).toMatch(
+      /Subvolume ID:\s*400/,
+    );
   });
 });
