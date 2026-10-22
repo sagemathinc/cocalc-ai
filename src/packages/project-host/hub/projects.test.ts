@@ -1,3 +1,5 @@
+// what each start asked usage to be counted against
+const projectHomeQuotaOpts: any[] = [];
 import { hubApi } from "@cocalc/lite/hub/api";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 
@@ -173,8 +175,10 @@ jest.mock("../file-server", () => ({
   resolveProjectContainerPath: (...args: any[]) =>
     resolveProjectContainerPath(...args),
   // (the home's own quota: no history counted with it here)
-  projectHomeQuota: async (_project_id: string, vol: any) =>
-    await vol.quota.get(),
+  projectHomeQuota: async (_project_id: string, vol: any, opts?: any) => {
+    projectHomeQuotaOpts.push(opts);
+    return await vol.quota.get();
+  },
 }));
 jest.mock("@cocalc/project-runner/run/sandbox-exec", () => ({
   sandboxExec: (...args: any[]) => sandboxExec(...args),
@@ -823,6 +827,10 @@ describe("project host start ordering", () => {
       reportProvisioned: false,
     });
     expect(order).toEqual(["ensure-volume", "read-quota"]);
+    // usage with the history counted against the quota it is about to get
+    expect(projectHomeQuotaOpts).toContainEqual({
+      forQuota: 10_000 * 1_000_000,
+    });
     expect(runnerApi.start).toHaveBeenCalledTimes(1);
     expect(queueProjectProvisioned).toHaveBeenCalledWith(project_id, true);
   });
