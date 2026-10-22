@@ -128,3 +128,29 @@ describe("read state", () => {
     expect(findItem(items, -1, 1, (item) => item.id === "p3")).toBe(2);
   });
 });
+
+describe("agent replies without ACP metadata", () => {
+  it("join their prompt when a language model wrote them", () => {
+    const failure = {
+      message_id: "f1",
+      sender_id: "openai-gpt-4o",
+      history: [{ author_id: "openai-gpt-4o", content: "failed" }],
+    } as any;
+    const legacy = {
+      message_id: "l1",
+      sender_id: "someone",
+      history: [
+        { author_id: "anthropic-claude-3-5-sonnet", content: "old reply" },
+      ],
+    } as any;
+    expect(
+      readerItems([person("p1"), failure, person("p2"), legacy]).map((item) => [
+        item.id,
+        item.lastId,
+      ]),
+    ).toEqual([
+      ["p1", "f1"],
+      ["p2", "l1"],
+    ]);
+  });
+});
