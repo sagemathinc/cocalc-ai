@@ -64,6 +64,7 @@ import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
 import { requestThreadSearch } from "./thread-search-request";
+import { useChatReaderMode } from "./reader-view";
 import {
   ChatRoomThreadPanel,
   resolveSelectedThreadRunningCodexMessage,
@@ -1822,8 +1823,16 @@ function ChatPanelContent({
 
   const selectedThreadReadSignatureRef = useRef<string | null>(null);
 
+  const [readerMode, setReaderMode] = useChatReaderMode(project_id, path);
+
   useEffect(() => {
-    if (!singleThreadView || !selectedThreadKey || !actions?.markThreadRead) {
+    // The reader marks what is opened in it, not the whole thread.
+    if (
+      readerMode ||
+      !singleThreadView ||
+      !selectedThreadKey ||
+      !actions?.markThreadRead
+    ) {
       selectedThreadReadSignatureRef.current = null;
       return;
     }
@@ -1842,10 +1851,12 @@ function ChatPanelContent({
       return;
     }
     const ok = actions.markThreadRead(thread.key, messageCount);
+    // All of it read: what the reader marked unread is read now too.
+    if (ok !== false) actions.clearReaderReadExceptions?.(thread.key);
     if (ok !== false) {
       selectedThreadReadSignatureRef.current = signature;
     }
-  }, [singleThreadView, selectedThreadKey, threads, actions]);
+  }, [readerMode, singleThreadView, selectedThreadKey, threads, actions]);
 
   const mark_as_read = useCallback(() => {
     if (readOnly) return;
@@ -2694,6 +2705,9 @@ function ChatPanelContent({
           narrow
         }
         mobile={narrow}
+        readerMode={readerMode}
+        onReaderModeChange={setReaderMode}
+        readStateVersion={effectiveReadStateVersion}
         onMobileToolsAction={() => setMobileToolsOpen(false)}
         allowSidebarToggle={
           !embeddingOptions.agentWorkspace &&
