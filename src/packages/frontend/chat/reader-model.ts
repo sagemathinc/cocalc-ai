@@ -21,6 +21,7 @@ import {
   field,
   historyArray,
   isAcpAssistantMessage,
+  parentMessageId,
 } from "./access";
 import type { ChatMessageTyped } from "./types";
 
@@ -33,6 +34,8 @@ export interface ReaderItem {
   /** Index of its first and last message in the thread. */
   firstIndex: number;
   lastIndex: number;
+  /** Indexes of all its messages: a late reply need not follow its prompt. */
+  indexes: number[];
 }
 
 export type ReaderState = Omit<ChatReaderStateEntry, "kind" | "t">;
@@ -73,23 +76,35 @@ export function isAgentReply(message: ChatMessageTyped): boolean {
 
 export function readerItems(messages: ChatMessageTyped[]): ReaderItem[] {
   const items: ReaderItem[] = [];
+  // Every message's item, by message id: a reply joins its parent's item.
+  const byMessage = new Map<string, ReaderItem>();
   messages.forEach((message, index) => {
     const id = readerMessageId(message);
     if (!id) return;
-    const last = items[items.length - 1];
-    if (last && isAgentReply(message)) {
-      last.messages.push(message);
-      last.lastId = id;
-      last.lastIndex = index;
-      return;
+    if (isAgentReply(message)) {
+      // Its prompt's item (histories can interleave), else the one before.
+      const parent = parentMessageId(message);
+      const item =
+        (parent ? byMessage.get(parent) : undefined) ?? items[items.length - 1];
+      if (item) {
+        item.messages.push(message);
+        item.lastId = id;
+        item.lastIndex = index;
+        item.indexes.push(index);
+        byMessage.set(id, item);
+        return;
+      }
     }
-    items.push({
+    const item: ReaderItem = {
       id,
       messages: [message],
       lastId: id,
       firstIndex: index,
       lastIndex: index,
-    });
+      indexes: [index],
+    };
+    items.push(item);
+    byMessage.set(id, item);
   });
   return items;
 }
@@ -167,19 +182,26 @@ export function markItemRead(
   if (item.lastIndex > watermark) {
     next.r = withEntry(next.r, item.id, item.lastId, READER_STATE_LIMITS.read);
   }
-  // Move the watermark over the read items that now follow it.
+  // Move the watermark message by message while each one's item is read
+  // (items can interleave, so not item by item).
+  const itemAt: (ReaderItem | undefined)[] = [];
+  for (const candidate of items)
+    for (const index of candidate.indexes) itemAt[index] = candidate;
+  const readNow = (candidate: ReaderItem) =>
+    next.r?.[candidate.id] === candidate.lastId &&
+    !next.u?.includes(candidate.id);
   let advanced = watermark;
-  const covered = new Set<string>();
-  for (const candidate of items) {
-    if (candidate.lastIndex <= watermark) continue;
-    if (
-      next.r?.[candidate.id] !== candidate.lastId ||
-      next.u?.includes(candidate.id)
-    )
-      break;
-    advanced = candidate.lastIndex;
-    covered.add(candidate.id);
+  for (let index = watermark + 1; index < itemAt.length; index++) {
+    const candidate = itemAt[index];
+    if (!candidate || !readNow(candidate)) break;
+    advanced = index;
   }
+  // Wholly covered now: read in order, so no longer an exception.
+  const covered = new Set(
+    items
+      .filter((candidate) => candidate.lastIndex <= advanced)
+      .map((candidate) => candidate.id),
+  );
   if (advanced > watermark) {
     next = { ...next, r: without(next.r, covered) };
     return { state: compact(next), watermarkCount: advanced + 1 };
