@@ -40,24 +40,30 @@ import { newest_content } from "./utils";
 
 const READER_MODE_KEY = "cocalc-chat-reader-mode";
 
+function readReaderMode(key: string): boolean {
+  try {
+    return !!JSON.parse(localStorage.getItem(READER_MODE_KEY) ?? "{}")[key];
+  } catch {
+    return false;
+  }
+}
+
 /** Whether this chat shows the reader instead of the log; kept per chat. */
 export function useChatReaderMode(
   project_id?: string,
   path?: string,
 ): [boolean, (on: boolean) => void] {
   const key = `${project_id ?? ""}:${path ?? ""}`;
-  const read = () => {
-    try {
-      return !!JSON.parse(localStorage.getItem(READER_MODE_KEY) ?? "{}")[key];
-    } catch {
-      return false;
-    }
-  };
-  const [on, setOn] = useState(read);
-  useEffect(() => setOn(read()), [key]);
+  // Read for the current chat in the same render: a panel reused for
+  // another chat must not act on the previous chat's setting even once.
+  const [stored, setStored] = useState(() => ({
+    key,
+    on: readReaderMode(key),
+  }));
+  const on = stored.key === key ? stored.on : readReaderMode(key);
   const set = useCallback(
     (next: boolean) => {
-      setOn(next);
+      setStored({ key, on: next });
       try {
         const all = JSON.parse(localStorage.getItem(READER_MODE_KEY) ?? "{}");
         if (next) all[key] = true;
@@ -213,6 +219,8 @@ export function ChatReaderView({
         findItem(visible, selectedIndex, 1) ??
         findItem(visible, selectedIndex, -1);
       setSelectedId(next == null ? undefined : visible[next].id);
+      // The pane (and its Archive button) is replaced: keep the keys working.
+      focusKeys();
     }
   };
   const markUnread = (item: ReaderItem) =>
