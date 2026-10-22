@@ -171,26 +171,29 @@ describe("interleaved histories", () => {
   };
   const messages = [person("pa"), person("pb"), lateReply];
   const items = readerItems(messages);
+  const itemA = items.find((item) => item.id === "pa")!;
+  const itemB = items.find((item) => item.id === "pb")!;
 
-  it("a reply joins its prompt's item, not the latest one", () => {
+  it("a reply joins its prompt's item, which moves on to its time", () => {
+    // In the order of each item's latest message: A's reply is the newest.
     expect(
       items.map(({ id, lastId, indexes }) => [id, lastId, indexes]),
     ).toEqual([
-      ["pa", "ra", [0, 2]],
       ["pb", "pb", [1]],
+      ["pa", "ra", [0, 2]],
     ]);
   });
 
   it("the watermark moves only over messages whose items are read", () => {
     // Reading A (both its messages) leaves B's message unread between them.
-    const a = markItemRead(items, items[0], -1, {});
+    const a = markItemRead(items, itemA, -1, {});
     expect(a).toEqual({
       state: { r: { pa: "ra" } },
       watermarkCount: 1,
       unmoved: expect.any(Object),
     });
     // Then B: everything is read, in order.
-    expect(markItemRead(items, items[1], 0, a.state)).toEqual({
+    expect(markItemRead(items, itemB, 0, a.state)).toEqual({
       state: {},
       watermarkCount: 3,
       unmoved: expect.any(Object),

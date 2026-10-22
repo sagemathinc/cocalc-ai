@@ -2493,6 +2493,18 @@ export class ChatActions extends Actions<ChatState> {
     ).length;
   };
 
+  /**
+   * The whole thread was read (in the log): the reader's read and unread
+   * exceptions say nothing more; archives stay.
+   */
+  clearReaderReadExceptions = (threadKey: string): void => {
+    const state = this.getReaderState(threadKey);
+    if (!state.u?.length && !Object.keys(state.r ?? {}).length) return;
+    this.updateReaderState(threadKey, (current) => ({
+      state: current.a ? { a: current.a } : {},
+    }));
+  };
+
   /** The reader view's state for a thread: {} until there is any. */
   getReaderState = (threadKey: string): ReaderState => {
     const threadId = this.normalizeThreadId(threadKey);

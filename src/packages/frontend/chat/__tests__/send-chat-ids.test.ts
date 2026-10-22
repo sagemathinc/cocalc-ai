@@ -2189,6 +2189,28 @@ describe("reader state when the watermark cannot move", () => {
   });
 });
 
+describe("reading a whole thread in the log", () => {
+  it("drops the reader's read and unread exceptions, keeping archives", () => {
+    const actions = makeActions();
+    actions.getReaderState = jest.fn(() => ({
+      r: { p3: "p3" },
+      u: ["p1"],
+      a: { p2: "p2" },
+    }));
+    actions.updateReaderState = jest.fn();
+    actions.clearReaderReadExceptions("thread-1");
+    const change = actions.updateReaderState.mock.calls[0][1];
+    expect(change({ r: { x: "x" }, u: ["y"], a: { p2: "p2" } }, 5)).toEqual({
+      state: { a: { p2: "p2" } },
+    });
+    // Nothing to clear: nothing is written.
+    actions.updateReaderState.mockClear();
+    actions.getReaderState = jest.fn(() => ({ a: { p2: "p2" } }));
+    actions.clearReaderReadExceptions("thread-1");
+    expect(actions.updateReaderState).not.toHaveBeenCalled();
+  });
+});
+
 describe("unread totals and the reader", () => {
   it("count items marked unread again at or before the watermark", () => {
     const actions = makeActions();

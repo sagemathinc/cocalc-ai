@@ -170,6 +170,7 @@ describe("ChatPanel selected thread read tracking", () => {
   function renderPanel() {
     const actions = {
       markThreadRead: jest.fn(),
+      clearReaderReadExceptions: jest.fn(),
       scrollToIndex: jest.fn(),
       getCodexConfig: jest.fn(),
       getThreadMetadata: jest.fn(() => currentThreadMetadata),
@@ -348,6 +349,12 @@ describe("ChatPanel selected thread read tracking", () => {
     expect(
       screen.getByRole("button", { name: "Back to the chat log" }),
     ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("reading the whole thread in the log clears the reader's read exceptions", () => {
+    const { actions } = renderPanel();
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 2);
+    expect(actions.clearReaderReadExceptions).toHaveBeenCalledWith("thread-1");
   });
 
   it("a panel reused for a chat in reader mode never marks its thread read", () => {

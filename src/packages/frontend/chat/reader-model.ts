@@ -111,7 +111,8 @@ export function readerItems(messages: ChatMessageTyped[]): ReaderItem[] {
     items.push(item);
     byMessage.set(id, item);
   });
-  return items;
+  // In the order of their latest message: a late reply moves its item on.
+  return items.sort((a, b) => a.lastIndex - b.lastIndex);
 }
 
 /** watermark: the index of the last message read in order (-1 for none). */

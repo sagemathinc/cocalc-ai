@@ -1851,6 +1851,8 @@ function ChatPanelContent({
       return;
     }
     const ok = actions.markThreadRead(thread.key, messageCount);
+    // All of it read: what the reader marked unread is read now too.
+    if (ok !== false) actions.clearReaderReadExceptions?.(thread.key);
     if (ok !== false) {
       selectedThreadReadSignatureRef.current = signature;
     }
