@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { PersistStreamInfo } from "@cocalc/conat/project/persist-storage";
-import { cleanupActions, selectStreams } from "./edit-history";
+import { cleanupActions, selectStreams, trimActions } from "./edit-history";
 
 const stream = (s: Partial<PersistStreamInfo>): PersistStreamInfo => ({
   name: "x",
@@ -83,4 +83,34 @@ test("cleanupActions drops archived history of every document", () => {
     { op: "trim", name: "patchflow/home/user/gone.md", archived: true },
     { op: "trim", name: "patchflow/home/user/a.chat", archived: true },
   ]);
+});
+
+test("trimActions applies each flag only where it means something", () => {
+  const chat = selectStreams({ streams, targets: ["/home/user/a.chat"] });
+  assert.deepEqual(trimActions({ selected: chat, before: 1000 }), [
+    { op: "trim", name: "acp-log/home/user/a.chat", before: 1000 },
+  ]);
+  assert.deepEqual(trimActions({ selected: chat, archived: true }), [
+    { op: "trim", name: "patchflow/home/user/a.chat", archived: true },
+  ]);
+  assert.deepEqual(
+    trimActions({ selected: chat, before: 1000, archived: true }),
+    [
+      { op: "trim", name: "acp-log/home/user/a.chat", before: 1000 },
+      { op: "trim", name: "patchflow/home/user/a.chat", archived: true },
+    ],
+  );
+});
+
+test("trimActions refuses when nothing selected can be trimmed that way", () => {
+  const md = selectStreams({ streams, targets: ["/home/user/a.md"] });
+  assert.throws(
+    () => trimActions({ selected: md, before: 1000 }),
+    /--older-than applies to logs/,
+  );
+  const log = selectStreams({ streams, targets: ["project-log"] });
+  assert.throws(
+    () => trimActions({ selected: log, archived: true }),
+    /--archived applies to edit histories/,
+  );
 });

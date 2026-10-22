@@ -243,6 +243,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // A document's edit history (TimeTravel) lives with its project.
   "sync.history": projectFromOpts,
   "sync.purgeHistory": projectFromOpts,
+  // a project's edit history and logs (conat/project/persist-storage.ts)
+  "projects.listProjectPersistStorage": projectFromOpts,
+  "projects.applyProjectPersistStorage": projectFromOpts,
   // Admin overrides apply where the project is; isAdmin asks the admin's
   // home bay (#904).
   "projects.getAdminProjectEntitlementOverride": projectFromOpts,

@@ -12,6 +12,7 @@ project's "Storage history" setting), with a fresh sign-in, as for snapshots.
 
 import {
   MAX_PERSIST_STORAGE_ACTIONS,
+  PERSIST_STORAGE_APPLY_TIMEOUT_MS,
   type PersistStorageAction,
   type PersistStorageApplyResult,
   type PersistStorageList,
@@ -118,8 +119,12 @@ export async function applyProjectPersistStorage({
   const client = await getProjectFileServerClient({
     project_id,
     account_id,
-    // while the project's streams are closed, a large trim compacts
-    timeout: timeout ?? 15 * 60_000,
+    // a large trim compacts; a minute less than the client waits, so this
+    // answers first
+    timeout: Math.max(
+      60_000,
+      (timeout ?? PERSIST_STORAGE_APPLY_TIMEOUT_MS) - 60_000,
+    ),
   });
   return await client.persistStorageApply({ project_id, actions: valid });
 }

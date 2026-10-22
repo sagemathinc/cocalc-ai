@@ -111,6 +111,8 @@ describe("EditHistoryStorage", () => {
             before: expect.any(Number),
           },
         ],
+        // compacting a large log takes a while
+        timeout: 15 * 60_000,
       }),
     );
     expect(await screen.findByText(/^Freed /)).toBeTruthy();

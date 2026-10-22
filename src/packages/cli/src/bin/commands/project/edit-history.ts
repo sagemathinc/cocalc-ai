@@ -10,11 +10,13 @@ files: what they take, and deleting or trimming them to free space.
 */
 
 import { Command } from "commander";
-import type {
-  PersistStorageAction,
-  PersistStorageList,
-  PersistStreamInfo,
-  PersistStreamKind,
+import {
+  applyPersistStorageInChunks,
+  PERSIST_STORAGE_APPLY_TIMEOUT_MS,
+  type PersistStorageAction,
+  type PersistStorageList,
+  type PersistStreamInfo,
+  type PersistStreamKind,
 } from "@cocalc/conat/project/persist-storage";
 import { humanSize } from "@cocalc/util/misc";
 import type { ProjectCommandDeps } from "../project";
@@ -85,6 +87,36 @@ export function selectStreams({
     }
   }
   return selected;
+}
+
+// What `trim` does to `selected`: drops entries before `before` from logs
+// (never from an edit history), and the archived history of edit histories;
+// a stream the request doesn't apply to is left out.
+export function trimActions({
+  selected,
+  before,
+  archived,
+}: {
+  selected: PersistStreamInfo[];
+  before?: number;
+  archived?: boolean;
+}): PersistStorageAction[] {
+  const actions: PersistStorageAction[] = [];
+  for (const s of selected) {
+    if (s.kind === "edit-history") {
+      if (archived) actions.push({ op: "trim", name: s.name, archived: true });
+    } else if (before != null) {
+      actions.push({ op: "trim", name: s.name, before });
+    }
+  }
+  if (actions.length === 0) {
+    throw new Error(
+      before != null
+        ? "nothing to trim: --older-than applies to logs, not to edit histories (use --archived for those)"
+        : "nothing to trim: --archived applies to edit histories",
+    );
+  }
+  return actions;
 }
 
 // What `cleanup` does: deletes the streams of documents that no longer exist,
@@ -164,10 +196,15 @@ export function registerProjectEditHistoryCommands(
     if (dryRun || actions.length === 0) {
       return { project_id, dry_run: !!dryRun, would_apply: actions };
     }
-    const result = await ctx.hub.projects.applyProjectPersistStorage({
-      project_id,
+    const result = await applyPersistStorageInChunks(
       actions,
-    });
+      async (chunk) =>
+        await ctx.hub.projects.applyProjectPersistStorage({
+          project_id,
+          actions: chunk,
+          timeout: PERSIST_STORAGE_APPLY_TIMEOUT_MS,
+        }),
+    );
     return {
       project_id,
       freed: humanSize(result.freed),
@@ -306,16 +343,7 @@ export function registerProjectEditHistoryCommands(
           return await apply(
             ctx,
             ws.project_id,
-            selected.map((s) => ({
-              op: "trim" as const,
-              name: s.name,
-              ...(before != null && s.kind !== "edit-history"
-                ? { before }
-                : {}),
-              ...(opts.archived && s.kind === "edit-history"
-                ? { archived: true }
-                : {}),
-            })),
+            trimActions({ selected, before, archived: opts.archived }),
             opts.dryRun,
           );
         });

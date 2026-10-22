@@ -29,11 +29,13 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { human_readable_size } from "@cocalc/util/misc";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import type {
-  PersistStorageAction,
-  PersistStorageList,
-  PersistStreamInfo,
-  PersistStreamKind,
+import {
+  applyPersistStorageInChunks,
+  PERSIST_STORAGE_APPLY_TIMEOUT_MS,
+  type PersistStorageAction,
+  type PersistStorageList,
+  type PersistStreamInfo,
+  type PersistStreamKind,
 } from "@cocalc/conat/project/persist-storage";
 
 const { Text } = Typography;
@@ -124,14 +126,18 @@ export default function EditHistoryStorage({
       setNotice("");
       try {
         await runFreshAuthAction(async () => {
-          const result =
-            await webapp_client.conat_client.hub.projects.applyProjectPersistStorage(
-              {
-                browser_id: webapp_client.browser_id,
-                project_id,
-                actions,
-              },
-            );
+          const result = await applyPersistStorageInChunks(
+            actions,
+            async (chunk) =>
+              await webapp_client.conat_client.hub.projects.applyProjectPersistStorage(
+                {
+                  browser_id: webapp_client.browser_id,
+                  project_id,
+                  actions: chunk,
+                  timeout: PERSIST_STORAGE_APPLY_TIMEOUT_MS,
+                },
+              ),
+          );
           const failed = result.results.filter((r) => !r.ok);
           setNotice(
             `Freed ${human_readable_size(result.freed)}.` +

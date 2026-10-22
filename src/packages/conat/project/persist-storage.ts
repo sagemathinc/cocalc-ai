@@ -84,3 +84,25 @@ export interface PersistStorageApplyResult {
 // At most this many actions in one request (they run while the project's
 // streams are closed).
 export const MAX_PERSIST_STORAGE_ACTIONS = 1000;
+
+// How long a client waits for a request to apply actions: a trim compacts the
+// database, which takes a while for a large log.  (The hub gives the
+// project-host a minute less, so it can answer first.)
+export const PERSIST_STORAGE_APPLY_TIMEOUT_MS = 15 * 60_000;
+
+// Applies `actions` in requests of at most MAX_PERSIST_STORAGE_ACTIONS, one
+// after another, with one result for them all.
+export async function applyPersistStorageInChunks(
+  actions: PersistStorageAction[],
+  apply: (chunk: PersistStorageAction[]) => Promise<PersistStorageApplyResult>,
+): Promise<PersistStorageApplyResult> {
+  const result: PersistStorageApplyResult = { results: [], freed: 0 };
+  for (let i = 0; i < actions.length; i += MAX_PERSIST_STORAGE_ACTIONS) {
+    const chunk = await apply(
+      actions.slice(i, i + MAX_PERSIST_STORAGE_ACTIONS),
+    );
+    result.results.push(...chunk.results);
+    result.freed += chunk.freed;
+  }
+  return result;
+}
