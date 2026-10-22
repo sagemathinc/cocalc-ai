@@ -608,7 +608,8 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(output.statuses.open, /actively investigating/);
   assert.match(output.statuses.pending, /waiting for the requester/);
   assert.match(output.statuses.solved, /complete and verified/);
-  assert.equal(output.version, 4);
+  assert.equal(output.version, 5);
+  assert.match(output.workflow.join("\n"), /admin support create/);
   const handling = output.handling.join("\n");
   assert.match(handling, /Project file URLs contain an absolute path/);
   assert.match(handling, /\/projects\/<project_id>\/files\/home\/user\/<name>/);
@@ -1074,6 +1075,66 @@ test("admin support reply commit reads the approved file and supplies idempotenc
     reason: "approved response",
     timeout: 60_000,
   });
+});
+
+test("admin support create plans, then commits with the reviewed payload hash", async () => {
+  const calls: { plan?: any; create?: any } = {};
+  const dir = await mkdtemp(join(tmpdir(), "cocalc-support-create-"));
+  const bodyFile = join(dir, "note.txt");
+  await writeFile(bodyFile, "Hello,\n\nThe host was removed.\n", "utf8");
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminSupport: {
+        planCreate: async (opts: any) => {
+          calls.plan = opts;
+          return { operation: "create", commit: false, payload_hash: "h1" };
+        },
+        create: async (opts: any) => {
+          calls.create = opts;
+          return { operation: "create", commit: true };
+        },
+      },
+    }) as any,
+  );
+  const args = [
+    "node",
+    "test",
+    "admin",
+    "support",
+    "create",
+    "--email",
+    "Lee@korea.ac.kr",
+    "--subject",
+    "Your dedicated host",
+    "--file",
+    bodyFile,
+    "--reason",
+    "approved note",
+  ];
+
+  await program.parseAsync(args);
+  assert.deepEqual(calls.plan, {
+    requester_email: "Lee@korea.ac.kr",
+    subject: "Your dedicated host",
+    public_reply: "Hello,\n\nThe host was removed.",
+    status: "pending",
+    add_tags: [],
+    reason: "approved note",
+  });
+  assert.equal(calls.create, undefined);
+
+  await assert.rejects(
+    program.parseAsync([...args, "--commit"]),
+    /--payload-hash is required with --commit/,
+  );
+
+  await program.parseAsync([...args, "--commit", "--payload-hash", "h1"]);
+  const committed: any = calls.create;
+  assert.match(committed.idempotency_key, /^support-create-[0-9a-f]{40}$/);
+  assert.equal(committed.payload_hash, "h1");
+  assert.equal(committed.requester_email, "Lee@korea.ac.kr");
 });
 
 test("admin support merge commit forwards explicit target and source versions", async () => {
