@@ -9,11 +9,11 @@
 // unread again; j and k move, u goes to the next unread one. The list never
 // scrolls by itself: new items wait behind an "N new" button.
 
-import { Button, Checkbox, Empty, Space } from "antd";
+import { Button, Checkbox, Empty, Modal, Space } from "antd";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { dateValue, field, isAcpAssistantMessage } from "./access";
 import type { ChatActions } from "./actions";
@@ -151,6 +151,7 @@ export function ChatReaderView({
     [actions, threadId, readStateVersion],
   );
   const [showArchived, setShowArchived] = useState(false);
+  const [showKeys, setShowKeys] = useState(false);
   // Newest first, as in an inbox: j goes down the list, to older items.
   const visible = useMemo(
     () =>
@@ -262,6 +263,9 @@ export function ChatReaderView({
         case "m":
           if (selected) markUnread(selected);
           return !!selected;
+        case "?":
+          setShowKeys(true);
+          return true;
       }
       return false;
     })();
@@ -576,10 +580,17 @@ export function ChatReaderView({
           flexWrap: "wrap",
         }}
       >
-        <span>
+        {/* Status, not a control: how much is left to read. */}
+        <span
+          style={
+            unread
+              ? { fontWeight: 600 }
+              : { color: UI_COLORS.muted, fontSize: 13 }
+          }
+        >
           {unread
             ? `${unread} unread${hiddenUnread ? ` (${hiddenUnread} archived)` : ""}`
-            : "All read"}
+            : "No unread messages"}
         </span>
         <Button
           size="small"
@@ -594,16 +605,53 @@ export function ChatReaderView({
         >
           Show archived
         </Checkbox>
-        <Tooltip title="j/k: next and previous · u: next unread · y: archive · m: mark unread">
-          <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
-            <Icon name="keyboard" /> Keys
-          </span>
-        </Tooltip>
+        <Button
+          size="small"
+          type="text"
+          icon={<Icon name="keyboard" />}
+          onClick={() => setShowKeys(true)}
+        >
+          Keys
+        </Button>
       </div>
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {narrow && selected ? null : list}
         {pane}
       </div>
+      <Modal
+        title="Reader keyboard shortcuts"
+        open={showKeys}
+        footer={null}
+        onCancel={() => {
+          setShowKeys(false);
+          focusKeys();
+        }}
+      >
+        <table aria-label="Keyboard shortcuts">
+          <tbody>
+            {READER_KEYS.map(([keys, what]) => (
+              <tr key={keys}>
+                <td style={{ padding: "4px 16px 4px 0", whiteSpace: "nowrap" }}>
+                  <kbd>{keys}</kbd>
+                </td>
+                <td style={{ padding: "4px 0" }}>{what}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p style={{ color: UI_COLORS.muted, marginTop: 12, marginBottom: 0 }}>
+          Click a message in the list first, so the keys go to the reader.
+        </p>
+      </Modal>
     </div>
   );
 }
+
+const READER_KEYS: [string, string][] = [
+  ["j or \u2193", "Older message (down the list)"],
+  ["k or \u2191", "Newer message (up the list)"],
+  ["u", "Next unread message"],
+  ["y", "Archive the open message (again: back to the inbox)"],
+  ["m", "Mark the open message unread"],
+  ["?", "Show these shortcuts"],
+];

@@ -2163,6 +2163,32 @@ describe("reader state", () => {
   });
 });
 
+describe("reader state when the watermark cannot move", () => {
+  it("keeps the reader's record that the item was read", () => {
+    const actions = makeActions();
+    const store: any = {
+      set: jest.fn(),
+      get: jest.fn(() => undefined),
+      getChatThread: jest.fn(() => undefined),
+      isClosed: () => false,
+    };
+    actions.projectReadStateKey = "proj-1:00000000-1000-4000-8000-000000000001";
+    actions.projectReadState = store;
+    actions.getThreadReadCount = jest.fn(() => 0);
+    // E.g. the last message has no message_id, so no watermark is written.
+    actions.markThreadRead = jest.fn(() => false);
+    const items = readerItems([{ message_id: "p1", sender_id: "u" }] as any);
+    actions.updateReaderState("thread-1", (state: any, watermark: number) =>
+      markItemRead(items, items[0], watermark, state),
+    );
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 1);
+    expect(store.set).toHaveBeenCalledWith(
+      "chat-reader:thread-1:x.chat",
+      expect.objectContaining({ r: { p1: "p1" } }),
+    );
+  });
+});
+
 describe("unread totals and the reader", () => {
   it("count items marked unread again at or before the watermark", () => {
     const actions = makeActions();

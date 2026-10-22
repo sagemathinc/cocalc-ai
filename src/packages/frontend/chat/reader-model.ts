@@ -48,7 +48,12 @@ export type ReaderState = Omit<ChatReaderStateEntry, "kind" | "t">;
 export type ReaderChange = (
   state: ReaderState,
   watermark: number,
-) => { state: ReaderState; watermarkCount?: number };
+) => {
+  state: ReaderState;
+  watermarkCount?: number;
+  /** The state to keep if the watermark cannot be moved after all. */
+  unmoved?: ReaderState;
+};
 
 /** How many ids each list keeps; the oldest go first. */
 export const READER_STATE_LIMITS = { read: 1000, unread: 1000, archived: 2000 };
@@ -174,7 +179,7 @@ export function markItemRead(
   item: ReaderItem,
   watermark: number,
   state: ReaderState,
-): { state: ReaderState; watermarkCount?: number } {
+): ReturnType<ReaderChange> {
   let next: ReaderState = {
     ...state,
     u: state.u?.filter((id) => id !== item.id),
@@ -203,8 +208,11 @@ export function markItemRead(
       .map((candidate) => candidate.id),
   );
   if (advanced > watermark) {
-    next = { ...next, r: without(next.r, covered) };
-    return { state: compact(next), watermarkCount: advanced + 1 };
+    return {
+      state: compact({ ...next, r: without(next.r, covered) }),
+      watermarkCount: advanced + 1,
+      unmoved: compact(next),
+    };
   }
   return { state: compact(next) };
 }
@@ -238,11 +246,12 @@ export function setItemArchived(
 export function markAllRead(
   items: ReaderItem[],
   state: ReaderState,
-): { state: ReaderState; watermarkCount: number } {
+): { state: ReaderState; watermarkCount: number; unmoved: ReaderState } {
   const last = items[items.length - 1];
   return {
     state: compact({ a: state.a }),
     watermarkCount: last ? last.lastIndex + 1 : 0,
+    unmoved: state,
   };
 }
 

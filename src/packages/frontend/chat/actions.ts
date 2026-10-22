@@ -2526,14 +2526,17 @@ export class ChatActions extends Actions<ChatState> {
   ): void => {
     const watermark = this.readerWatermark(threadId);
     const next = change(readerStateFrom(store, path, threadId), watermark);
+    // The watermark first: if it cannot move (e.g. a message without an
+    // id), the reader keeps its own record of what was read.
+    const moved =
+      next.watermarkCount == null ||
+      next.watermarkCount <= watermark + 1 ||
+      this.markThreadRead(threadId, next.watermarkCount) !== false;
     store.set(chatReaderStateKey(path, threadId), {
       kind: "chat-reader",
       t: new Date(),
-      ...next.state,
+      ...(moved ? next.state : (next.unmoved ?? next.state)),
     });
-    if (next.watermarkCount != null && next.watermarkCount > watermark + 1) {
-      this.markThreadRead(threadId, next.watermarkCount);
-    }
   };
 
   /**

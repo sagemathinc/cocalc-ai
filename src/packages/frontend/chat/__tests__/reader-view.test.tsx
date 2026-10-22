@@ -187,7 +187,7 @@ test("showing archived items is not new items", () => {
 
 test("new items wait behind a button; mark all read", () => {
   const { setMessages, count } = setup(thread, 4);
-  expect(screen.getByText("All read")).toBeInTheDocument();
+  expect(screen.getByText("No unread messages")).toBeInTheDocument();
   // Scrolled away from the top, where new items appear.
   const list = screen.getByRole("listbox");
   Object.defineProperty(list, "scrollTop", { value: 500, writable: true });
@@ -201,7 +201,7 @@ test("new items wait behind a button; mark all read", () => {
   expect(screen.getByText("2 unread")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
   expect(count()).toBe(6);
-  expect(screen.getByText("All read")).toBeInTheDocument();
+  expect(screen.getByText("No unread messages")).toBeInTheDocument();
 });
 
 test("unread archived items still count while hidden", async () => {
@@ -283,4 +283,27 @@ test("archiving the open item with the pane's button keeps the keys working", as
   expect(document.activeElement).toBe(screen.getByRole("listbox"));
   await keys.keyboard("k");
   expect(screen.getByRole("article")).toHaveTextContent("third question");
+});
+
+test("Keys, or ?, shows the keyboard shortcuts", async () => {
+  setup(thread, 4, { autoFocus: true });
+  const keys = user();
+  await keys.click(screen.getByRole("button", { name: "Keys" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("Reader keyboard shortcuts");
+  expect(dialog).toHaveTextContent("Next unread message");
+  expect(dialog).toHaveTextContent("Mark the open message unread");
+});
+
+test("? shows them too", async () => {
+  setup(thread, 4, { autoFocus: true });
+  await user().keyboard("?");
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Reader keyboard shortcuts",
+  );
+});
+
+test("the unread status says what it is", () => {
+  setup(thread, 2);
+  expect(screen.getByText("2 unread")).toBeInTheDocument();
 });
