@@ -252,6 +252,28 @@ test("two external agents with one handle are ambiguous, not a guess", () => {
   );
 });
 
+test("a UUID selector that is both a member id and another peer's label is ambiguous", () => {
+  // The registered reviewer's id is also, as free text, an external label.
+  const { value } = withExternal(target.agent_id);
+  assert.throws(() => resolveAgentName(target.agent_id, value), /Ambiguous/);
+  for (const selector of [target.agent_id, `@${target.agent_id}`])
+    assert.throws(
+      () => resolveBroadcastTargets([selector], value),
+      /ambiguous peer/,
+      selector,
+    );
+  // Without the collision, the id still names its member.
+  assert.deepEqual(
+    resolveBroadcastTargets([target.agent_id], directory()).targets,
+    [target],
+  );
+  // An explicit {member_id} object is an id only.
+  assert.deepEqual(
+    resolveBroadcastTargets([{ member_id: target.agent_id }], value).targets,
+    [target],
+  );
+});
+
 test("a full label that starts with @ is matched as typed", () => {
   const label = "@ops0 on alpha";
   const { value, external } = withExternal(label);
