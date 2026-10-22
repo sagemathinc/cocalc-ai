@@ -344,6 +344,22 @@ describe("prepareProjectPersistVolume", () => {
     expect(ops.calls).toHaveLength(3);
   });
 
+  it("limits the group only once the volume is ready and the old copy is gone", async () => {
+    // (with both copies, the group may be over its limit: the ready marker
+    // could not be written)
+    const ops = fakeOps();
+    ops.quotas.set(home, 10 * GiB);
+    const seen: { ready: boolean; legacy: boolean }[] = [];
+    ops.limitQuotaGroup = async () => {
+      seen.push({
+        ready: existsSync(join(root, READY_MARKER)),
+        legacy: existsSync(join(home, LEGACY)),
+      });
+    };
+    await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
+    expect(seen).toEqual([{ ready: true, legacy: false }]);
+  });
+
   it("is ready even if the quota group can't be limited (the audit does it)", async () => {
     const ops = fakeOps();
     ops.quotas.set(home, 10 * GiB);
