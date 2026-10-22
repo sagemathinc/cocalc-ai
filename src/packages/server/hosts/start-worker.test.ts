@@ -1045,48 +1045,27 @@ describe("hosts start-worker heartbeat wait", () => {
 });
 
 describe("hosts start-worker billing rescue start", () => {
-  function deps() {
-    return {
+  test("starts the stopped host without a billing session and waits for it", async () => {
+    const d = {
       startHost: jest.fn(async () => ({})) as any,
       waitStatus: jest.fn(async () => ({})) as any,
       waitHeartbeat: jest.fn(async () => ({})) as any,
     };
-  }
-
-  test("drains a source that was still running as it is", async () => {
-    // Its status is "draining" by now, and its heartbeats are dropped, so
-    // nothing may wait for a new heartbeat.
-    const d = deps();
     await __test__.startBillingBlockedHostForRescue({
       account_id: "a",
       host_id: "h",
-      source_status: "running",
       deps: d,
     });
-    expect(d.startHost).not.toHaveBeenCalled();
-    expect(d.waitStatus).not.toHaveBeenCalled();
-    expect(d.waitHeartbeat).not.toHaveBeenCalled();
+    expect(d.startHost).toHaveBeenCalledWith({
+      account_id: "a",
+      id: "h",
+      billing_rescue: true,
+    });
+    expect(d.waitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ desired: ["running"] }),
+    );
+    expect(d.waitHeartbeat).toHaveBeenCalledWith(
+      expect.objectContaining({ failOn: ["error", "off", "deprovisioned"] }),
+    );
   });
-
-  test.each(["off", "error", undefined])(
-    "starts a %s source without a billing session",
-    async (source_status) => {
-      const d = deps();
-      await __test__.startBillingBlockedHostForRescue({
-        account_id: "a",
-        host_id: "h",
-        source_status,
-        deps: d,
-      });
-      expect(d.startHost).toHaveBeenCalledWith({
-        account_id: "a",
-        id: "h",
-        billing_rescue: true,
-      });
-      expect(d.waitStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ desired: ["running"] }),
-      );
-      expect(d.waitHeartbeat).toHaveBeenCalled();
-    },
-  );
 });

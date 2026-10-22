@@ -2050,24 +2050,16 @@ function billingEnforcementDrainFailureAdminAlert({
 
 // A billing-blocked host whose projects have no confirmed final backup is
 // started once, without a billing session, so the drain below can back up and
-// move its projects before its disk is deleted (spend-maintenance.ts).
-//
-// A host whose billing stop failed may still be running. The rescue request
-// has set its status to "draining" (and a draining host's heartbeats are
-// dropped), so it records the status the host had: a running source is
-// drained as it is, like a normal billing drain. Starting a running VM fails
-// on some providers and restarts it on others. Any other source (off, error)
-// is started; starting is also how a host in error is recovered.
+// move its projects before its disk is deleted. spend-maintenance.ts requests
+// this only for a host that is off (never for one whose billing stop failed).
 async function startBillingBlockedHostForRescue({
   account_id,
   host_id,
-  source_status,
   helpers,
   deps = {},
 }: {
   account_id: string;
   host_id: string;
-  source_status?: string;
   helpers?: {
     shouldCancel?: () => Promise<boolean>;
     progressStep?: (
@@ -2088,19 +2080,10 @@ async function startBillingBlockedHostForRescue({
     waitStatus = waitForHostStatus,
     waitHeartbeat = waitForHostHeartbeat,
   } = deps;
-  if (source_status === "running") {
-    await helpers?.progressStep?.(
-      "starting",
-      "billing-blocked host is still running; draining it to take final backups",
-      { host_id },
-      5,
-    );
-    return;
-  }
   await helpers?.progressStep?.(
     "starting",
     "starting billing-blocked host to take final backups",
-    { host_id, source_status },
+    { host_id },
     5,
   );
   const startedAt = Date.now();
@@ -2167,7 +2150,6 @@ async function runHostAction(
         await startBillingBlockedHostForRescue({
           account_id,
           host_id,
-          source_status: input?.billing_rescue_source_status,
           helpers,
         });
       }

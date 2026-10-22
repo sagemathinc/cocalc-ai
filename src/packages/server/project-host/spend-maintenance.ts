@@ -569,7 +569,7 @@ async function retryBillingEnforcementStop({
         `Host ID: ${row.id}`,
         `Host name: ${row.name}`,
         `Status: ${row.status}`,
-        "Billing enforcement stopped this host, but it is still running or in error. The stop was requested again; it is retried every 30 minutes, and the host is not billed to its owner meanwhile.",
+        "Billing enforcement stopped this host, but it is still running or in error. The stop was requested again; it is retried every 30 minutes, and the host is not billed to its owner meanwhile. If its projects lack a final backup, their rescue drain waits until the host is off: check the VM with the provider.",
       ].join("\n"),
       dedupMinutes: 24 * 60,
       dedupBySubject: true,
@@ -944,16 +944,7 @@ async function requestHostDrainForBilling({
       force: false,
       managed_egress_override: "admin-host-drain",
       billing_enforcement: true,
-      // The status is "draining" by the time the worker runs, and a draining
-      // host's heartbeats are dropped, so record whether the VM was running.
-      ...(rescue
-        ? {
-            billing_rescue: true,
-            billing_rescue_source_status: `${row.status ?? ""}`
-              .trim()
-              .toLowerCase(),
-          }
-        : {}),
+      ...(rescue ? { billing_rescue: true } : {}),
     },
     dedupe_key: `${HOST_DRAIN_LRO_KIND}:billing:${row.id}`,
     status: "queued",
@@ -1108,8 +1099,11 @@ async function maybeSendDeprovisionReminder({
 
 async function maybeProgressInactiveEnforcement({
   row,
+  allowRescueRequest = true,
 }: {
   row: CandidateHostRow;
+  // False for a host whose billing stop failed (see runPass).
+  allowRescueRequest?: boolean;
 }): Promise<boolean> {
   const metadata = row.metadata ?? {};
   const enforcement = currentEnforcement(metadata);
@@ -1149,7 +1143,11 @@ async function maybeProgressInactiveEnforcement({
     return false;
   }
   if (enforcement.final_backup_status !== "succeeded") {
-    return await maybeRescueUnbackedBillingBlockedHost({ row, enforcement });
+    return await maybeRescueUnbackedBillingBlockedHost({
+      row,
+      enforcement,
+      allowRescueRequest,
+    });
   }
   if (!enforcement.deprovision_after) {
     return false;
@@ -1175,10 +1173,12 @@ async function maybeProgressInactiveEnforcement({
 async function maybeRescueUnbackedBillingBlockedHost({
   row,
   enforcement,
+  allowRescueRequest = true,
   now = Date.now(),
 }: {
   row: CandidateHostRow;
   enforcement: DedicatedHostBillingEnforcementMetadata;
+  allowRescueRequest?: boolean;
   now?: number;
 }): Promise<boolean> {
   const stoppedAt = Date.parse(`${enforcement.stopped_at ?? ""}`);
@@ -1189,6 +1189,7 @@ async function maybeRescueUnbackedBillingBlockedHost({
     return false;
   }
   if (!enforcement.rescue_requested_at) {
+    if (!allowRescueRequest) return false;
     await requestHostDrainForBilling({
       row,
       enforcement: {
@@ -1432,11 +1433,17 @@ async function runPass(): Promise<void> {
       // Billing enforcement stopped this host after a drain or a rescue drain.
       // Do not reprice it as running while its provider stop is pending, or if
       // that stop failed; a rescue run is site-paid. If the stop failed, the
-      // rescue and deprovision deadlines still apply (deprovisioning deletes
-      // the VM too); until one is due, the stop is retried.
+      // deprovision deadlines still apply (deprovisioning deletes the VM too);
+      // until one is due, the stop is retried. A rescue is requested only once
+      // the host is off: a failed stop leaves status "error" whether or not
+      // the VM still runs, and starting a running VM restarts it or fails on
+      // some providers, which would lose the only rescue attempt.
       if (
         status !== "stopping" &&
-        !(await maybeProgressInactiveEnforcement({ row }))
+        !(await maybeProgressInactiveEnforcement({
+          row,
+          allowRescueRequest: false,
+        }))
       ) {
         await retryBillingEnforcementStop({ row, provider, enforcement });
       }

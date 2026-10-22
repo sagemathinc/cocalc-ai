@@ -1169,66 +1169,67 @@ describe("dedicated host spend maintenance", () => {
           allow_offline: false,
           billing_enforcement: true,
           billing_rescue: true,
-          billing_rescue_source_status: "off",
         }),
       }),
     );
   });
 
-  it("records that the source of a rescue was still running", async () => {
-    const now = Date.now();
-    queryMock = jest.fn(async (sql: string) => {
-      if (sql.includes("pg_try_advisory_lock")) {
-        return { rows: [{ locked: true }] };
-      }
-      if (sql.includes("FROM project_hosts")) {
-        return {
-          rows: [
-            {
-              // The billing stop failed and the VM kept running.
-              ...blockedHostRow({
-                final_backup_status: "failed",
-                stopped_at: new Date(now - 4 * 24 * 3600_000).toISOString(),
-                deprovision_after: new Date(now - 3600_000).toISOString(),
-                final_backup_failed_at: new Date(
-                  now - 4 * 24 * 3600_000,
-                ).toISOString(),
-              }),
-              status: "running",
-            },
-          ],
-        };
-      }
-      if (
-        sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET status=$2")
-      ) {
-        return { rows: [], rowCount: 1 };
-      }
-      if (sql.includes("pg_advisory_unlock")) {
-        return { rows: [] };
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
+  it.each(["error", "running"])(
+    "never requests a rescue for a host whose billing stop failed (%s); retries the stop",
+    async (status) => {
+      const now = Date.now();
+      queryMock = jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("pg_try_advisory_lock")) {
+          return { rows: [{ locked: true }] };
+        }
+        if (sql.includes("FROM project_hosts")) {
+          return {
+            rows: [
+              {
+                // The first drain failed and so did its stop: the VM may
+                // still be running.
+                ...blockedHostRow({
+                  final_backup_status: "failed",
+                  stopped_at: new Date(now - 4 * 24 * 3600_000).toISOString(),
+                  deprovision_after: new Date(now - 3600_000).toISOString(),
+                  final_backup_failed_at: new Date(
+                    now - 4 * 24 * 3600_000,
+                  ).toISOString(),
+                }),
+                status,
+              },
+            ],
+          };
+        }
+        if (
+          sql.includes("UPDATE project_hosts") &&
+          sql.includes("SET status=$2")
+        ) {
+          expect(params?.[1]).toBe("stopping");
+          expect(params?.[3].billing.enforcement).not.toHaveProperty(
+            "rescue_requested_at",
+          );
+          return { rows: [{ desired_state_generation: 3 }], rowCount: 1 };
+        }
+        if (sql.includes("pg_advisory_unlock")) {
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
 
-    const { runDedicatedHostSpendMaintenancePass } =
-      await import("./spend-maintenance");
-    await runDedicatedHostSpendMaintenancePass();
+      const { runDedicatedHostSpendMaintenancePass } =
+        await import("./spend-maintenance");
+      await runDedicatedHostSpendMaintenancePass();
 
-    expect(createLroMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "host-drain",
-        input: expect.objectContaining({
-          billing_rescue: true,
-          billing_rescue_source_status: "running",
-        }),
-      }),
-    );
-    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
-    expect(
-      reconcileDedicatedHostPurchaseSessionForAccountMock,
-    ).not.toHaveBeenCalled();
-  });
+      expect(createLroMock).not.toHaveBeenCalled();
+      expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith(
+        expect.objectContaining({ vm_id: "host-1", action: "stop" }),
+      );
+      expect(
+        reconcileDedicatedHostPurchaseSessionForAccountMock,
+      ).not.toHaveBeenCalled();
+    },
+  );
 
   it("waits after a failed rescue before deleting the disk", async () => {
     const now = Date.now();
