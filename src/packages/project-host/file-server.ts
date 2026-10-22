@@ -2353,6 +2353,37 @@ export async function projectHomeQuota(
   }
 }
 
+// Runs fn with room for `bytes` more in the project's disk quota: a temporary
+// override, released afterwards (e.g., while a restore holds an extra copy of
+// the history, persist-volume.ts restoreBackupWithHistory).
+async function withProjectQuotaRoom<T>(
+  project_id: string,
+  bytes: number,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const { size } = await getQuota({ project_id });
+  if (!(size > 0) || !(bytes > 0)) return await fn();
+  const handle = await projectVolumeQuotaManager.beginTemporaryOverride({
+    project_id,
+    kind: "restore_history",
+    minimum_bytes: size + bytes,
+    expires_at: Date.now() + PROJECT_QUOTA_OVERRIDE_DEFAULT_TTL_MS,
+    operation_class: "restore_backup",
+    priority: "lifecycle",
+  });
+  try {
+    return await fn();
+  } finally {
+    // (if this fails, the override scavenger releases it when it expires)
+    await handle.release().catch((err) =>
+      logger.warn("unable to release a restore's quota room", {
+        project_id,
+        err: `${err}`,
+      }),
+    );
+  }
+}
+
 async function applyManagedProjectVolumeQuotaRaw({
   project_id,
   volume_kind,
@@ -4573,6 +4604,8 @@ async function restoreBackup({
         });
       },
       restoreFiles: runRestore,
+      withRoom: async (bytes, fn) =>
+        await withProjectQuotaRoom(project_id, bytes, fn),
     });
   } else {
     // In the old layout (history in the home), a restore that can write the

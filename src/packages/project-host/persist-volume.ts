@@ -333,6 +333,19 @@ async function joinQuotaGroup(
   }
 }
 
+// The volume at `path`, which writes data that will be part of the project's
+// history, counts against the project's quota from now on.  Required: btrfs
+// simple quotas charge data to the subvolume that wrote it for as long as
+// anything uses it, even after that subvolume is deleted, so one outside the
+// project's group would leave that data uncounted for good.
+async function requireQuotaGroup(
+  ops: PersistVolumeOps,
+  project_id: string,
+  path: string,
+): Promise<void> {
+  await ops.joinQuotaGroup(project_id, path);
+}
+
 const preparing = new Map<string, Promise<void>>();
 
 // Right after an upgrade every active project imports at once; a few at a
@@ -817,6 +830,7 @@ export async function restoreBackupWithHistory({
   listDirectory,
   restoreInto,
   restoreFiles,
+  withRoom,
   env = process.env,
   ops = btrfsOps,
 }: {
@@ -828,6 +842,11 @@ export async function restoreBackupWithHistory({
   restoreInto: (path: string, dest: string) => Promise<void>;
   // the restore itself, of files into the home
   restoreFiles: () => Promise<void>;
+  // Runs fn with room for `bytes` more in the project's quota (a temporary
+  // override, file-server.ts): the restored history passes through the home
+  // with the files (until cleanRestoredHome), and is in the old and the new
+  // history at once until the old is deleted.
+  withRoom?: <T>(bytes: number, fn: () => Promise<T>) => Promise<T>;
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<boolean> {
@@ -838,42 +857,81 @@ export async function restoreBackupWithHistory({
     await restoreFiles();
     return false;
   }
-  let previous: string | undefined;
   try {
+    // the project's limits as they are, before any room for the restore
+    const homeQuota = await homeQuotaOf(project_id, env, ops);
     await restoreInto(from, source);
-    await withPersistLock(project_id, async () => {
-      await withProjectPersistFenced(
-        { project_id, reason: "restore-backup", requires: "persist-volume" },
-        async () => {
-          // all of the merge that can fail first, so it never fails after
-          // the files changed
-          const merged = await prepareMergedVolume({
-            project_id,
-            source,
-            env,
-            ops,
-          });
-          try {
-            await restoreFiles();
-          } catch (err) {
-            if (merged != null) await ops.removeTree(merged).catch(() => {});
-            throw err;
-          }
-          if (merged != null) {
-            previous = await swapInVolume(project_id, merged, env, ops);
-          }
-        },
-      );
-      // still holding the lock (see replaceProjectHome)
-      await cleanRestoredHome({ project_id, from, env, ops });
+    const restored = await databaseBytes(source);
+    const room = withRoom ?? (async (_bytes, fn) => await fn());
+    await room(restoreRoom(restored), async () => {
+      // what the backup's history was restored into is where its data is
+      // charged, also once it is merged and this is deleted
+      await requireQuotaGroup(ops, project_id, source);
+      let previous: string | undefined;
+      await withPersistLock(project_id, async () => {
+        await withProjectPersistFenced(
+          { project_id, reason: "restore-backup", requires: "persist-volume" },
+          async () => {
+            // all of the merge that can fail first, so it never fails after
+            // the files changed
+            const merged = await prepareMergedVolume({
+              project_id,
+              source,
+              homeQuota,
+              env,
+              ops,
+            });
+            try {
+              await restoreFiles();
+            } catch (err) {
+              if (merged != null) await ops.removeTree(merged).catch(() => {});
+              throw err;
+            }
+            if (merged != null) {
+              previous = await swapInVolume(project_id, merged, env, ops);
+            }
+          },
+        );
+        // still holding the lock (see replaceProjectHome)
+        await cleanRestoredHome({ project_id, from, env, ops });
+      });
+      // what the restore staged goes before its room does
+      await ops.removeTree(source).catch(() => {});
+      if (previous != null) {
+        await ops.removeTree(previous).catch(() => {});
+      }
     });
   } finally {
     await ops.removeTree(source).catch(() => {});
   }
-  if (previous != null) {
-    await ops.removeTree(previous).catch(() => {});
-  }
   return true;
+}
+
+// The room a restore of `bytes` of history needs in the project's quota
+// beyond what it has (see restoreBackupWithHistory's withRoom), with some to
+// spare for the databases' write-ahead logs and metadata.
+export function restoreRoom(bytes: number): number {
+  // the copy restored into the home, and the staged history (charged to the
+  // project's group from when it joins), both until the restore is done
+  return 2 * Math.max(0, bytes) + 64 * MiB;
+}
+
+// The databases in `root` (a host-only volume or staging directory), with
+// their write-ahead logs, in bytes.
+export async function databaseBytes(root: string): Promise<number> {
+  let bytes = 0;
+  const walk = async (dir: string, depth: number) => {
+    for await (const entry of await opendir(dir)) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory() && depth < MAX_IMPORT_DEPTH) {
+        await walk(path, depth + 1);
+      } else if (entry.isFile() && DATABASE_FILE.test(entry.name)) {
+        bytes += (await lstat(path)).size;
+      }
+    }
+  };
+  await walk(root, 0);
+  return bytes;
 }
 
 // Where the backup holds the history a restore covers, if it does.
@@ -916,13 +974,16 @@ async function backupHistory({
 }
 
 // A new host-only volume for restored history, limited like the project's
-// persist volume could be: what a restore puts there is bounded.
+// persist volume: what a restore puts there is bounded.  With `join`, it is
+// in the project's quota group from the start (requireQuotaGroup); else the
+// caller adds it before anything it wrote is kept.
 async function newRestoreDirectory(
   project_id: string,
   env: NodeJS.ProcessEnv,
   ops: PersistVolumeOps,
-  kind: "restore" = "restore",
+  { join: joinGroup = false }: { join?: boolean } = {},
 ): Promise<string | undefined> {
+  const kind = "restore";
   const { legacy } = projectPersistTemplates(env);
   const volume = persistVolumePath(project_id, env);
   if (volume == null || legacy == null) return;
@@ -933,10 +994,15 @@ async function newRestoreDirectory(
   await sudo({ command: "mkdir", args: ["-p", staging] });
   await ops.createVolume(path);
   try {
+    // as much as the history may take (Q + R)
     await ops.setQuota(
       path,
-      persistVolumeCeiling(await homeQuotaOf(project_id, env, ops), env),
+      persistVolumeQuota({
+        homeQuota: await homeQuotaOf(project_id, env, ops),
+        env,
+      }),
     );
+    if (joinGroup) await requireQuotaGroup(ops, project_id, path);
   } catch (err) {
     await ops.removeTree(path).catch(() => {});
     throw err;
@@ -1012,7 +1078,12 @@ export async function stageRestoredVolume({
     });
     return;
   }
-  const staged = await newRestoreDirectory(project_id, env, ops);
+  // (in the project's group from the start: they hold reflinks of the
+  // restored home, which is charged where it was written, unless the copy
+  // has to write data of its own)
+  const staged = await newRestoreDirectory(project_id, env, ops, {
+    join: true,
+  });
   if (staged == null) return;
   try {
     let imported = { files: 0, bytes: 0, skipped: 0 };
@@ -1020,7 +1091,9 @@ export async function stageRestoredVolume({
       // Copied by the root helper first (it never follows symlinks, and can
       // read whatever the restore put there), then imported: only regular
       // database files.
-      const copy = await newRestoreDirectory(project_id, env, ops);
+      const copy = await newRestoreDirectory(project_id, env, ops, {
+        join: true,
+      });
       try {
         await sudo({
           command: "copy-tree-reflink",
@@ -1338,11 +1411,15 @@ async function mergeIntoVolume(opts: {
 async function prepareMergedVolume({
   project_id,
   source,
+  homeQuota: steadyHomeQuota,
   env,
   ops,
 }: {
   project_id: string;
   source: string;
+  // the project's disk quota without any room for the restore (undefined:
+  // as it is now)
+  homeQuota?: number;
   env: NodeJS.ProcessEnv;
   ops: PersistVolumeOps;
 }): Promise<string | undefined> {
@@ -1359,6 +1436,8 @@ async function prepareMergedVolume({
   );
   await btrfs({ args: ["subvolume", "snapshot", volume, staged] });
   try {
+    // what the merge writes counts against the project's quota
+    await requireQuotaGroup(ops, project_id, staged);
     const homeQuota = await homeQuotaOf(project_id, env, ops);
     // a snapshot doesn't keep the limit
     await ops.setQuota(staged, persistVolumeQuota({ homeQuota, env }));
@@ -1368,6 +1447,24 @@ async function prepareMergedVolume({
       dest: staged,
       merge: true,
     });
+    // The merged history is what the volume keeps and what it restored: it
+    // must fit, after the restore, within the history's limit (the project's
+    // quota group's, Q + R), and the volume's limit is never below what it
+    // already holds.
+    const total = await databaseBytes(staged);
+    const ceiling = persistVolumeQuota({
+      homeQuota: steadyHomeQuota ?? homeQuota,
+      env,
+    });
+    if (total > ceiling) {
+      throw new Error(
+        `the restored edit history (${total} bytes) does not fit in this project's limit for it (${ceiling} bytes)`,
+      );
+    }
+    await ops.setQuota(
+      staged,
+      Math.max(persistVolumeQuota({ homeQuota, env }), total),
+    );
     // on disk before it is the project's history
     await syncTree(staged);
     return staged;
