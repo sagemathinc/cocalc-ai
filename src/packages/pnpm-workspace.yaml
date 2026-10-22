@@ -91,7 +91,7 @@ overrides:
   "@grpc/grpc-js@>=1.14.0 <1.14.5": "^1.14.5"
   "esbuild@>=0.17.0 <0.28.1": ">=0.28.1"
   "form-data@>=4.0.0 <4.0.6": ">=4.0.6"
-  "markdown-it@<14.3.1": "^14.3.1"
+  "markdown-it@<14.3.3": "^14.3.3"
   "tar@>=7.0.0 <7.5.21": "^7.5.21"
   "body-parser@>=2.0.0 <2.3.0": "^2.3.0"
   # Upstream image-size is archived; this audited fork fixes CVE-2025-71329
