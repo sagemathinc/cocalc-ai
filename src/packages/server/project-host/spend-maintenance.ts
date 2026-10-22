@@ -1257,7 +1257,7 @@ async function sendRescueFailureDeletionAlert({
   enforcement: DedicatedHostBillingEnforcementMetadata;
   stoppedAt: number;
   now: number;
-}): Promise<void> {
+}): Promise<boolean> {
   const deletion = new Date(
     billingRescueDiskDeletionTime({ stoppedAt, failedAt: now }),
   ).toISOString();
@@ -1281,10 +1281,10 @@ async function sendRescueFailureDeletionAlert({
       host_id: row.id,
       err: `${err}`,
     });
-    return;
+    return false;
   }
   const metadata = row.metadata ?? {};
-  await updateHostBillingMetadata({
+  return await updateHostBillingMetadata({
     row,
     metadata: {
       ...metadata,
@@ -1348,8 +1348,14 @@ async function maybeRescueUnbackedBillingBlockedHost({
     `${enforcement.rescue_failure_alerted_at ?? ""}`,
   );
   if (!Number.isFinite(alertedAt)) {
-    await sendRescueFailureDeletionAlert({ row, enforcement, stoppedAt, now });
-    return true;
+    // On failure, fall through (false) so a host whose stop failed still gets
+    // its stop retried.
+    return await sendRescueFailureDeletionAlert({
+      row,
+      enforcement,
+      stoppedAt,
+      now,
+    });
   }
   if (now < billingRescueDiskDeletionTime({ stoppedAt, failedAt: alertedAt })) {
     return false;
@@ -1613,14 +1619,23 @@ async function runPass(): Promise<void> {
       // running-rate session opened before the block would keep accruing until
       // the host is off, so close it; stopped pricing starts once it is off.
       await closeBlockedHostPurchaseSession(row, owner);
-      // Restored funding ends the block here too, before any deadline.
-      if (
-        await maybeClearRecoveredInactiveEnforcement({
+      // Restored funding ends the block here too, before any deadline. Like
+      // the close, this probe is best-effort: a billing-authority outage must
+      // not block the stop retry or a due deprovision.
+      let recovered = false;
+      try {
+        recovered = await maybeClearRecoveredInactiveEnforcement({
           row,
           provider,
           snapshot: await getSnapshot(owner, currentFundingMode(metadata)),
-        })
-      ) {
+        });
+      } catch (err) {
+        logger.warn(
+          "failed to check whether a billing-blocked host's funding recovered",
+          { host_id: row.id, err: `${err}` },
+        );
+      }
+      if (recovered) {
         deleteSnapshotCacheForAccount(owner);
         continue;
       }
