@@ -17,6 +17,8 @@ import type {
   StreamCheckpoint,
   ResetHistoryOptions,
   ResetHistoryResult,
+  HistoryInclusion,
+  ArchivedHistoryEpoch,
 } from "./storage";
 export { StoredMessage, StorageOptions };
 import { persistSubject, SERVICE, type User } from "./util";
@@ -1027,6 +1029,56 @@ class PersistStreamClient extends EventEmitter {
     );
   };
 
+  // which of these msg ids the server accepted, and whether the current
+  // history includes them; see PersistentStream.historyInclusion
+  historyInclusion = async (
+    opts: { epoch: number; ids: string[] },
+    { timeout }: { timeout?: number } = {},
+  ): Promise<HistoryInclusion> => {
+    return this.checkForError(
+      await this.socket.request(opts, {
+        headers: {
+          cmd: "historyInclusion",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  historyArchives = async ({ timeout }: { timeout?: number } = {}): Promise<
+    ArchivedHistoryEpoch[]
+  > => {
+    return this.checkForError(
+      await this.socket.request(null, {
+        headers: {
+          cmd: "historyArchives",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  // irreversibly delete archived history; the current history is kept
+  purgeArchivedHistory = async ({
+    timeout,
+  }: { timeout?: number } = {}): Promise<{
+    records: number;
+    bytes: number;
+    done: boolean;
+  }> => {
+    return this.checkForError(
+      await this.socket.request(null, {
+        headers: {
+          cmd: "purgeArchivedHistory",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
   getCheckpoints = async ({
     timeout,
   }: {
@@ -1546,13 +1598,17 @@ const assertHasWritePermission = ({ user, storage, service }) => {
 };
 
 // An error response from the persist server.  oversized_seq says which stored
-// message was too large to read (code 413).
+// message was too large to read (code 413), oversized_epoch in which history.
 function errorFromHeaders(headers): ConatError {
   const err = new ConatError(`${headers.error ?? "error"}`, {
     code: headers.code as string | number,
   });
   if (typeof headers.oversized_seq == "number") {
     (err as any).oversizedSeq = headers.oversized_seq;
+  }
+  // the history epoch it was read in
+  if (typeof headers.oversized_epoch == "number") {
+    (err as any).oversizedEpoch = headers.oversized_epoch;
   }
   return err;
 }

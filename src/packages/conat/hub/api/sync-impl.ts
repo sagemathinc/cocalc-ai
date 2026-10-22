@@ -5,6 +5,8 @@ import {
   type PurgeHistoryResult,
 } from "@cocalc/conat/hub/api/sync";
 import { client_db } from "@cocalc/util/db-schema/client-db";
+import { retryWhileResetBusy } from "@cocalc/conat/persist/reset-busy";
+import type { ResetHistoryResult } from "@cocalc/conat/persist/storage";
 
 type AssertAccessFn = (opts: {
   account_id?: string;
@@ -167,18 +169,21 @@ export async function purgeHistory({
   try {
     const history_purged_at = Date.now();
     const history_purged_by = account_id ?? null;
-    const result = await stream.resetHistory({
-      // an epoch recorded only in the legacy syncstrings table still counts
-      minEpoch:
-        typeof settings.history_epoch === "number" &&
-        Number.isFinite(settings.history_epoch)
-          ? settings.history_epoch
-          : 0,
-      settings: { history_purged_at, history_purged_by },
-      ...(oversized_seq != null
-        ? { ifOversizedSeq: oversized_seq, archive: true }
-        : {}),
-    });
+    // while another reset of this history is in progress, wait for it
+    const result: ResetHistoryResult = await retryWhileResetBusy(() =>
+      stream.resetHistory({
+        // an epoch recorded only in the legacy syncstrings table still counts
+        minEpoch:
+          typeof settings.history_epoch === "number" &&
+          Number.isFinite(settings.history_epoch)
+            ? settings.history_epoch
+            : 0,
+        settings: { history_purged_at, history_purged_by },
+        ...(oversized_seq != null
+          ? { ifOversizedSeq: oversized_seq, archive: true }
+          : {}),
+      }),
+    );
     if (result.reset) {
       syncstrings.set({
         ...current,

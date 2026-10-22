@@ -71,6 +71,14 @@ import {
   storedRowToMessage,
 } from "./storage";
 import { getStream, SERVICE, MAX_PER_USER, MAX_GLOBAL, RESOURCE } from "./util";
+import {
+  assertBoardCommandAllowed,
+  boardStreamAccess,
+  BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
+  BOARD_WRITE_RECEIVE_LIMITS,
+  BOARD_WRITE_SERVICE,
+  type BoardStreamAccess,
+} from "./board-policy";
 import { throttle } from "lodash";
 import { type SetOptions } from "./client";
 import { once } from "@cocalc/util/async-utils";
@@ -172,9 +180,18 @@ export function server({
     throw Error("client must be specified");
   }
   const subject = `${service}.*`;
+  // The board write service is always bounded before reassembly; no caller
+  // can start it without these limits.
+  const boardWrite = service === BOARD_WRITE_SERVICE;
   const server: ConatSocketServer = client.socket.listen(subject, {
     id,
     keepAlive: 0,
+    ...(boardWrite
+      ? {
+          receiveLimits: BOARD_WRITE_RECEIVE_LIMITS,
+          statusReceiveLimits: BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
+        }
+      : {}),
   });
   log("server listening", { subject, id });
   if (!clusterMode) {
@@ -195,6 +212,17 @@ export function server({
     usage.close();
   });
 
+  // At most one resetHistory request per stream is held on this server at a
+  // time, with its payload (a seed of up to 40 MiB): bounded history plan
+  // H1b-3 r4, LIMIT-H1B3P-2.  A request takes its stream's slot as it
+  // arrives, before any await (the only place a received request waits is
+  // the stream's initialization); another one is answered at once and its
+  // payload dropped.  Keyed by storage path; a reset that arrives before its
+  // socket said which stream it is (the path is not known yet) is refused at
+  // once as well, so one stream never has two keys (LIMIT-H1B3A-1).  The
+  // value identifies the holder.
+  const resetSlots = new Map<string, object>();
+
   server.on("connection", (socket: ServerSocket) => {
     log("server: got new connection", {
       id,
@@ -210,6 +238,10 @@ export function server({
     let changefeed = false;
     let stopChangefeed: (() => void) | undefined;
     let storage: undefined | StorageOptions = undefined;
+    // What this socket may do with a board stream (board-policy.ts).
+    let boardAccess: BoardStreamAccess = { board: false, readOnly: false };
+    // The policy refused this socket's stream: never open it (no retry).
+    let policyRefused = false;
     let stream: undefined | PersistentStream = undefined;
     let user = "";
     let added = false;
@@ -224,6 +256,9 @@ export function server({
     // quota are usually transient, and a long-lived client may keep using this
     // socket for hours, so requests retry the open (see retryInit).
     const initStream = (): Promise<void> => {
+      if (policyRefused) {
+        return Promise.reject(new ConatError(error, { code: errorCode }));
+      }
       if (initializing != null) {
         return initializing;
       }
@@ -295,6 +330,7 @@ export function server({
     const retryInit = async (): Promise<void> => {
       if (
         storage == null ||
+        policyRefused ||
         errorCode == 403 ||
         Date.now() - lastInitAttemptAt < INIT_RETRY_INTERVAL_MS
       ) {
@@ -312,6 +348,27 @@ export function server({
       if (stream == null && initializing == null) {
         storage = data.storage;
         changefeed = data.changefeed;
+        try {
+          // Before the stream is opened or cached: a board stream is read-only
+          // here unless this is the host's board write service, and always
+          // durable.
+          boardAccess = boardStreamAccess({
+            service,
+            subject: socket.subject,
+            storage,
+          });
+          if (boardAccess.storage != null) {
+            // Never the client's options for a board stream.
+            storage = boardAccess.storage as StorageOptions;
+          }
+        } catch (err) {
+          policyRefused = true;
+          error = `${err}`;
+          errorCode = (err as any)?.code ?? 403;
+          socket.write(null, { headers: { error, code: errorCode } });
+          socket.emit("stream-initialized");
+          return;
+        }
         try {
           await initStream();
         } catch {
@@ -341,6 +398,43 @@ export function server({
       const request = mesg.headers;
       // log("got request", request);
 
+      let resetSlot: { key: string; holder: object } | undefined;
+      if (request.cmd == "resetHistory") {
+        if (storage?.path == null) {
+          // the client retries busy (retryWhileResetBusy)
+          mesg.respondSync(null, {
+            headers: {
+              error:
+                "resetHistory: busy -- this connection has not said which stream it is yet; try again",
+              code: 409,
+            },
+          });
+          return;
+        }
+        const key = `path:${storage.path}`;
+        if (resetSlots.has(key)) {
+          if (stream != null) {
+            mesg.respondSync({
+              reset: false,
+              refused: "busy",
+              history_epoch: stream.historyEpochNow(),
+              count: 0,
+            });
+          } else {
+            mesg.respondSync(null, {
+              headers: {
+                error:
+                  "resetHistory: busy -- another reset of this history is in progress; try again later",
+                code: 409,
+              },
+            });
+          }
+          return;
+        }
+        resetSlot = { key, holder: {} };
+        resetSlots.set(key, resetSlot.holder);
+      }
+
       try {
         if (stream == null && initializing == null && !error) {
           await once(socket, "stream-initialized", request.timeout ?? 30000);
@@ -356,6 +450,7 @@ export function server({
         if (stream == null) {
           throw Error("bug");
         }
+        assertBoardCommandAllowed(boardAccess, request);
         if (request.cmd == "set") {
           mesg.respondSync(
             stream.set({
@@ -405,6 +500,12 @@ export function server({
           mesg.respondSync(stream.patchMetadata(mesg.data));
         } else if (request.cmd == "resetHistory") {
           mesg.respondSync(stream.resetHistory(mesg.data ?? {}));
+        } else if (request.cmd == "historyInclusion") {
+          mesg.respondSync(stream.historyInclusion(mesg.data ?? {}));
+        } else if (request.cmd == "historyArchives") {
+          mesg.respondSync(stream.historyArchives());
+        } else if (request.cmd == "purgeArchivedHistory") {
+          mesg.respondSync(stream.purgeArchivedHistory());
         } else if (request.cmd == "checkpoints") {
           mesg.respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {
@@ -490,6 +591,10 @@ export function server({
         }
       } catch (err) {
         const oversizedSeq = (err as any)?.oversizedSeq;
+        const oversizedEpoch =
+          typeof oversizedSeq != "number"
+            ? undefined
+            : ((err as any)?.oversizedEpoch ?? stream?.historyEpochNow?.());
         mesg.respondSync(null, {
           headers: {
             error: `${err}`,
@@ -497,8 +602,19 @@ export function server({
             ...(typeof oversizedSeq == "number"
               ? { oversized_seq: oversizedSeq }
               : {}),
+            ...(typeof oversizedEpoch == "number"
+              ? { oversized_epoch: oversizedEpoch }
+              : {}),
           },
         });
+      } finally {
+        // answered, applied, refused or failed alike
+        if (
+          resetSlot != null &&
+          resetSlots.get(resetSlot.key) === resetSlot.holder
+        ) {
+          resetSlots.delete(resetSlot.key);
+        }
       }
     });
   });
@@ -765,6 +881,7 @@ export async function replay({
           size: oversized.size,
           limit: sizeLimit,
           seq: oversized.seq,
+          epoch: stream.historyEpochNow?.(),
         });
       }
       const last_seq = plan[plan.length - 1].seq;

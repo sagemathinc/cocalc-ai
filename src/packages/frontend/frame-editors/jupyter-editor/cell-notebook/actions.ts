@@ -315,7 +315,18 @@ export class NotebookFrameActions {
 
   public shift_enter_run_current_cell(): void {
     this.save_input_editor();
+    if (this.jupyter_actions.store.get_cell_list().size === 0) {
+      // An empty notebook has no cell to run: start its first one, once it
+      // has loaded (until then no cells may just mean not loaded yet).
+      if (this.jupyter_actions.store.get("initial_source_settled")) {
+        this.activate_cell(this.jupyter_actions.createFirstCell(), {
+          mode: "edit",
+        });
+      }
+      return;
+    }
     const cur_id = this.store.get("cur_id");
+    if (cur_id == null) return;
     this.run_cell(cur_id);
     const cell_list = this.jupyter_actions.store.get_cell_list();
     if (cell_list.get(cell_list.size - 1) === cur_id) {
@@ -792,15 +803,16 @@ export class NotebookFrameActions {
       - pos = {x:?, y:?} coordinates in a cell
      use y=-1 for last line.
 
-     No-op if no input editor for this cell.
+     No-op if no input editor for this cell; returns whether there was one.
   */
   public set_input_editor_cursor(
     id: string,
     pos: { x: number; y: number },
-  ): void {
+  ): boolean {
     this.validate({ id });
-    if (this.input_editors[id] == null) return;
+    if (this.input_editors[id] == null) return false;
     this.call_input_editor_method(id, "set_cursor", pos);
+    return true;
   }
 
   // Call this to save the state of the current (or specified)

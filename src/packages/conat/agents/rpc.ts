@@ -1,4 +1,5 @@
 import { requireUuid } from "./protocol";
+import { validateAgentRpcTurnState } from "./rpc-turn";
 import {
   validateExternalAgentSource,
   type ExternalAgentSource,
@@ -60,6 +61,9 @@ export interface AgentRpcAttempt {
 
 export interface AgentRpcSend extends AgentRpcAttempt {
   body: string;
+  /** Tell the sender if the recipient's turn ends without a reply to it
+   * (a delivery report of kind "completed"). Errors are reported anyway. */
+  report_no_reply?: true;
   file_references?: AgentFileReference[];
   snapshot_manifest?: AgentSnapshotMetadata[];
   attachment_reservation?: string;
@@ -79,6 +83,8 @@ export interface AgentRpcOutcome extends AgentRpcAttempt {
   code?: AgentRpcFailureCode;
   chat_effect?: "none" | "saved" | "unknown";
   operation?: { id: string; disposition: "queued" | "running" | "steered" };
+  /** inspect: what became of the turn it started, if the recipient knows. */
+  turn?: import("./rpc-turn").AgentRpcTurnState;
 }
 
 export interface AgentRpcBroadcast {
@@ -163,6 +169,8 @@ export type AgentRpcRequest =
   | (AgentRpcSend & { action: "send"; snapshot_payload?: AgentSnapshot[] })
   | (AgentRpcSend & { action: "prepare-attachments" | "cancel-attachments" })
   | (AgentRpcAttempt & { action: "inspect" })
+  /** Take back a message whose turn has not started (queued or held). */
+  | (AgentRpcAttempt & { action: "withdraw" })
   | { version: 3; action: "destinations" }
   | { version: 3; action: "inbox"; limit?: number }
   | { version: 3; action: "ack-inbox"; message_id: string }
@@ -205,23 +213,34 @@ export function validateAgentRpcRequest(
   if (value?.version !== 3) throw new Error("agent RPC version 3 required");
   const keys = ["version", "action"];
   if (
-    ["send", "inspect", "prepare-attachments", "cancel-attachments"].includes(
-      value.action,
-    )
+    [
+      "send",
+      "inspect",
+      "withdraw",
+      "prepare-attachments",
+      "cancel-attachments",
+    ].includes(value.action)
   ) {
     if (!("attempt_id" in value)) throw new Error("attempt required");
     keys.push("attempt_id", "agent_network_id", "target");
     requireUuid(value.attempt_id, "attempt_id");
     requireUuid(value.agent_network_id, "agent_network_id");
     validateAgentRpcTarget(value.target);
-    if (value.action !== "inspect") {
+    if (value.action !== "inspect" && value.action !== "withdraw") {
       keys.push(
         "body",
         "file_references",
         "snapshot_manifest",
         "attachment_reservation",
       );
-      if (value.action === "send") keys.push("snapshot_payload");
+      if (value.action === "send") {
+        keys.push("snapshot_payload", "report_no_reply");
+        if (
+          (value as AgentRpcSend).report_no_reply !== undefined &&
+          (value as AgentRpcSend).report_no_reply !== true
+        )
+          throw new Error("invalid report_no_reply");
+      }
       if (value.snapshot_manifest !== undefined) {
         if (value.file_references !== undefined)
           throw new Error("cannot mix snapshot and reference attachments");
@@ -383,6 +402,7 @@ export function validateAgentRpcOutcome(
         )))
   )
     throw new Error("Recipient acknowledgment is invalid or mismatched");
+  if (value.turn !== undefined) validateAgentRpcTurnState(value.turn);
 }
 
 export function validateAgentRpcBroadcastOutcome(

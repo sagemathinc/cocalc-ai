@@ -17,7 +17,23 @@ export async function resolveHumanTurnMentions(
 ) {
   // Never bind history, model-authored content, or an old turn's map.
   if (request.chat?.agent_message) return [];
-  const text = request.chat?.user_message_content ?? "";
+  return await resolveHumanAgentMentions(
+    request.chat?.user_message_content ?? "",
+    {
+      account_id: request.account_id,
+      project_id: request.chat?.project_id ?? request.project_id!,
+    },
+    api,
+  );
+}
+
+/** The agent references a person wrote (a message, or an answer to an
+ * agent's question), each checked under that person. */
+export async function resolveHumanAgentMentions(
+  text: string,
+  { account_id, project_id }: { account_id?: string; project_id: string },
+  api: Pick<AgentApi, "getMentionIdentity">,
+) {
   const references = Object.values(
     agentMentionReferenceMap(extractAgentMentions(text)),
   );
@@ -27,8 +43,8 @@ export async function resolveHumanTurnMentions(
     // Validate copied references under the submitting human, not the naming
     // account embedded in the markup. Exact owner routing starts no target.
     const identity = await api.getMentionIdentity({
-      account_id: request.account_id,
-      project_id: request.chat?.project_id ?? request.project_id!,
+      account_id,
+      project_id,
       target: reference.target,
     });
     if (
@@ -40,6 +56,45 @@ export async function resolveHumanTurnMentions(
     }
   }
   return references;
+}
+
+/**
+ * What the agent is told when this runtime has no artifact catalog (a
+ * project-host's agent worker): the person's @artifact chips are named, and
+ * not bound. They grant nothing either way.
+ */
+export function unresolvedArtifactMentionsNote(request: AcpRequest): string {
+  if (request.chat?.agent_message) return "";
+  const names = [
+    ...new Set(
+      extractArtifactMentions(request.chat?.user_message_content ?? "").map(
+        (reference) => `@${reference.name}`,
+      ),
+    ),
+  ];
+  if (names.length === 0) return "";
+  return `The person's message references artifacts (${names.join(", ")}) that this runtime cannot resolve. Treat them as names only: find the artifact with the project chat artifact tools, or ask the person which one they mean.`;
+}
+
+/**
+ * A human turn's @artifact chips: bound through the catalog where this
+ * runtime has one; otherwise (a project-host's agent worker) named to the
+ * agent in a note, never a failed turn.
+ */
+export async function humanTurnArtifacts(
+  request: AcpRequest,
+  api: Partial<Pick<ArtifactCatalogApi, "getEntry">> | undefined,
+): Promise<{
+  references: Awaited<ReturnType<typeof resolveHumanTurnArtifactMentions>>;
+  note: string;
+}> {
+  const getEntry = api?.getEntry;
+  if (typeof getEntry !== "function")
+    return { references: [], note: unresolvedArtifactMentionsNote(request) };
+  return {
+    references: await resolveHumanTurnArtifactMentions(request, { getEntry }),
+    note: "",
+  };
 }
 
 export async function resolveHumanTurnArtifactMentions(

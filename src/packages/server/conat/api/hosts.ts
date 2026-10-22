@@ -95,6 +95,13 @@ import {
 import { recordProjectMaintenanceStatus } from "@cocalc/server/projects/maintenance-status";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getCurrentAuthSessionForSessionHash } from "@cocalc/server/auth/auth-sessions";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import {
+  issueProjectContentUrlLocal,
+  revokeProjectContentLinksLocal,
+  type ProjectContentUrl,
+  type RevokedProjectContentLinks,
+} from "./project-content-url";
 import centralLog from "@cocalc/database/postgres/central-log";
 import {
   recordServiceAdmissionDenialLocal as recordServiceAdmissionDenialCentralLog,
@@ -119,6 +126,8 @@ import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/proje
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
+import { releaseHostContentDns } from "@cocalc/server/cloud/host-content-dns";
+import adminAlert from "@cocalc/server/messages/admin-alert";
 import {
   enqueueCloudVmWork,
   listCloudVmLog,
@@ -1257,6 +1266,10 @@ async function markHostDeprovisioned(row: any, action: string) {
     deleteCloudflareTunnel,
     hasDns,
     deleteHostDns,
+    releaseHostContentDns,
+    alertAdmin: async ({ subject, body }) => {
+      await adminAlert({ subject, body, dedupMinutes: 60, dedupBySubject: true });
+    },
     logWarn: (message, payload) => logger.warn(message, payload),
     updateHostDeprovisionedRecord: async ({ row, nextMetadata }) => {
       await pool().query(
@@ -2698,6 +2711,45 @@ export async function issueProjectHostAuthToken({
     public_directory_share_id,
     ttl_seconds,
     browser_session_exp_s,
+  });
+}
+
+export async function issueProjectContentUrl({
+  account_id,
+  session_hash,
+  project_id,
+  path,
+}: {
+  account_id?: string;
+  session_hash?: string;
+  project_id: string;
+  path: string;
+}): Promise<ProjectContentUrl> {
+  const owner = requireAccount(account_id);
+  const browser_session_exp_s = await restrictedBrowserSessionExpiration({
+    account_id: owner,
+    session_hash,
+  });
+  return await issueProjectContentUrlLocal({
+    account_id: owner,
+    project_id,
+    path,
+    browser_session_exp_s,
+  });
+}
+
+export async function revokeProjectContentLinks({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<RevokedProjectContentLinks> {
+  return await revokeProjectContentLinksLocal({
+    account_id: requireAccount(account_id),
+    project_id,
+    syncHost: async (project_id) =>
+      await syncProjectUsersOnHost({ project_id }),
   });
 }
 
@@ -8954,10 +9006,14 @@ export async function reconcileHostSoftware({
 
 export async function setHostPublicRouteMode({
   account_id,
+  browser_id,
+  session_hash,
   id,
   mode,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   mode: HostPublicRouteMode;
 }): Promise<HostLroResponse> {
@@ -8966,6 +9022,13 @@ export async function setHostPublicRouteMode({
       "public route mode must be cloudflare-tunnel or cloudflare-proxy",
     );
   }
+  // Changes the host's public ingress and DNS routing.
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
+  });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);

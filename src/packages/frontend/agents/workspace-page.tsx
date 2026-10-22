@@ -126,7 +126,7 @@ import {
 import { NewAgentPeople } from "./new-agent-people";
 import { ShareAgentModal } from "./share-agent-modal";
 import { useMobileSearchNavigation } from "./use-mobile-search-navigation";
-import { lite } from "@cocalc/frontend/lite";
+import { lite, project_id as liteProjectId } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
 import {
   ProjectContext,
@@ -338,6 +338,20 @@ import {
 } from "./agent-subscription-selection";
 import { copyPaymentSelection } from "@cocalc/frontend/chat/payment-selection-store";
 import { WithAgentRuntimeMark } from "./agent-runtime-mark";
+import {
+  AgentStatusMark,
+  agentRowLabel,
+  useAgentStatusNow,
+} from "./agent-status-mark";
+import { RecentAgentsCountMenu } from "./recent-agents-count-menu";
+import {
+  SIDEBAR_RECENT_AGENTS_SETTING,
+  sidebarRecentAgents,
+  sidebarRecentAgentsCount,
+  waitingKey,
+  waitingThreads,
+} from "./sidebar-recent";
+import { useLiteWaitingThreads } from "./use-lite-waiting";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -3570,7 +3584,6 @@ function AgentWorkspace({
 }
 
 const SIDEBAR_SECTIONS_STORAGE_KEY = "cocalc-sidebar-sections-v1";
-const SIDEBAR_RECENT_AGENTS = 3;
 
 interface SidebarSections {
   agents: boolean;
@@ -3732,6 +3745,26 @@ export function MyAgentsWorkspacePage({
   const aiDisabled = !!useTypedRedux("account", "other_settings")?.get(
     "openai_disabled",
   );
+  // How many recent agents the sidebar shows (a per-account setting), and
+  // those waiting for this person's answer, always shown until answered.
+  const recentAgentsCount = sidebarRecentAgentsCount(
+    useTypedRedux("account", "other_settings")?.get(
+      SIDEBAR_RECENT_AGENTS_SETTING,
+    ),
+  );
+  const mentions = useTypedRedux("mentions", "mentions");
+  // Lite has no notifications: its project's attention records instead.
+  const liteWaiting = useLiteWaitingThreads({
+    active: lite,
+    project_id: liteProjectId,
+    account_id: webapp_client.account_id ?? undefined,
+  });
+  const waiting = useMemo(
+    () => (lite ? liteWaiting : waitingThreads(mentions)),
+    [mentions, liteWaiting],
+  );
+  const isWaiting = (agent: NamedAgent) =>
+    waiting.has(waitingKey(agent.endpoint.project_id, agent.thread_id));
   // The sidebar's sections (Agents, Projects, Artifacts, People) stay where
   // they are: navigating never expands, collapses or swaps one. A collapsed
   // section still shows the item that is open.
@@ -3909,6 +3942,8 @@ export function MyAgentsWorkspacePage({
       ?.focus();
   }, [agentSidebarHidden, mobileList, isNarrow]);
   const agents = directory?.agents ?? [];
+  // Rows (label and mark together) re-render when a status expires.
+  const statusNow = useAgentStatusNow(agents.map((agent) => agent.status));
   // Each agent's identity record keeps a copy of its theme, so badges and
   // titles are right before its chat loads; a loaded chat's theme wins.
   const agentAppearances = useMemo(
@@ -4678,7 +4713,11 @@ export function MyAgentsWorkspacePage({
           <button
             type="button"
             aria-current={active ? "page" : undefined}
-            aria-label={`${theme.title}, @${agent.name}, ${projectTitle}`}
+            aria-label={`${agentRowLabel(
+              { title: theme.title, name: agent.name, project: projectTitle },
+              agent.status,
+              statusNow,
+            )}${isWaiting(agent) ? ", waiting for your answer" : ""}`}
             title={`${theme.title} · @${agent.name}${showProjectTitle ? ` · ${projectTitle}` : ""}`}
             onClick={() => selectAgent(agent)}
             style={{
@@ -4707,6 +4746,18 @@ export function MyAgentsWorkspacePage({
                 </Text>
               )}
             </Text>
+            <AgentStatusMark status={agent.status} now={statusNow} />
+            {isWaiting(agent) && (
+              <Tooltip title="Waiting for your answer">
+                <Tag
+                  color="orange"
+                  aria-hidden
+                  style={{ marginInlineEnd: 0, fontWeight: 600 }}
+                >
+                  ?
+                </Tag>
+              </Tooltip>
+            )}
           </button>
         </div>
         {!hidden && (
@@ -4954,14 +5005,11 @@ export function MyAgentsWorkspacePage({
           // recent few and the open agent; "All agents" shows the rest.
           const unpinnedAgents = visibleGroups.unpinned;
           if (!search) {
-            const shown = unpinnedAgents.slice(0, SIDEBAR_RECENT_AGENTS);
-            if (
-              selected &&
-              unpinnedAgents.includes(selected) &&
-              !shown.includes(selected)
-            )
-              shown.push(selected);
-            visibleGroups.unpinned = shown;
+            visibleGroups.unpinned = sidebarRecentAgents(unpinnedAgents, {
+              count: recentAgentsCount,
+              isWaiting,
+              selected,
+            });
             // Hidden agents are on the Agents page (and found by a search).
             visibleGroups.hidden = [];
           }
@@ -5247,12 +5295,27 @@ export function MyAgentsWorkspacePage({
                         ) : (
                           recencySections.map((section) => (
                             <div key={section.key}>
-                              <Text
-                                type="secondary"
-                                style={{ display: "block", padding: 6 }}
-                              >
-                                {section.title}
-                              </Text>
+                              {search ? (
+                                <Text
+                                  type="secondary"
+                                  style={{ display: "block", padding: 6 }}
+                                >
+                                  {section.title}
+                                </Text>
+                              ) : (
+                                <RecentAgentsCountMenu
+                                  title={section.title}
+                                  count={recentAgentsCount}
+                                  onChange={(count) =>
+                                    void redux
+                                      .getActions("account")
+                                      .set_other_settings(
+                                        SIDEBAR_RECENT_AGENTS_SETTING,
+                                        count,
+                                      )
+                                  }
+                                />
+                              )}
                               {renderSortableAgentGroup(
                                 section.agents,
                                 false,

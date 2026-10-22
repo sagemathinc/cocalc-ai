@@ -6,6 +6,7 @@ import {
   type AgentEndpoint,
   type AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
+import { externalAgentHandle } from "@cocalc/conat/agents/external";
 import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import { readIdentityCredential, sendIdentityMessage } from "./agent-message";
 
@@ -21,6 +22,10 @@ export interface ResolvedAgentDestination {
   delivery_mode?: AgentNetworkDiscovery["peers"][number]["networks"][number]["delivery_mode"];
   project_title?: string;
 }
+
+const isUuid = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
 export function matchesAgentNetwork(
   network: AgentNetworkDiscovery["peers"][number]["networks"][number],
@@ -49,28 +54,66 @@ export function selectAgentNetwork(
   )[0];
 }
 
+/**
+ * The peers in the requested network, when one is requested and any are: an
+ * explicit network disambiguates peers sharing a name in different networks
+ * (external labels need not be unique). Otherwise all of them, so the
+ * network check reports the mismatch.
+ */
+function inRequestedNetwork<
+  T extends { networks: AgentNetworkDiscovery["peers"][number]["networks"] },
+>(peers: T[], requestedNetwork?: string): T[] {
+  if (requestedNetwork === undefined) return peers;
+  const inside = peers.filter(({ networks }) =>
+    networks.some((network) => matchesAgentNetwork(network, requestedNetwork)),
+  );
+  return inside.length ? inside : peers;
+}
+
 export function resolveAgentName(
   input: string,
   directory: AgentNetworkDiscovery,
   references: AgentNameBinding[] = [],
   requestedNetwork?: string,
 ): ResolvedAgentDestination {
-  const name = input.trim().replace(/^@/, "");
-  if (!/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name))
+  // An external label is free text and may itself start with "@": it is
+  // compared as typed; "@" is only dropped for names, handles and ids.
+  const raw = input.trim();
+  const name = raw.replace(/^@/, "");
+  const isLabel = (label: string) => {
+    const value = label.trim().toLowerCase();
+    return value === raw.toLowerCase() || value === name.toLowerCase();
+  };
+  // A peer's member id, or an external agent's full label (what discovery
+  // shows for it), name it too.
+  const byId: boolean = isUuid(name as unknown);
+  const byLabel =
+    !byId &&
+    directory.peers.some(
+      ({ member }) => member.kind === "external" && isLabel(member.label),
+    );
+  if (!byId && !byLabel && !/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name))
     throw new Error("Use an exact lowercase agent name, such as reviewer");
   // A selected mention remains pinned even if the account directory changes.
   const selected = references.filter((ref) => ref.name === name);
   if (!selected.length) {
     // Names are resolved from the current account-home network directory.
   }
+  // Every peer the input could name, by any of these: two different ones
+  // are ambiguous below, never a silent pick.
   const peers = directory.peers.filter(({ member }) =>
     member.kind === "registered"
-      ? member.name === name
-      : member.label.trim().toLowerCase() === name,
+      ? member.name === name ||
+        (byId &&
+          (member.member_id === name || member.endpoint.agent_id === name))
+      : externalAgentHandle(member.label) === name ||
+        isLabel(member.label) ||
+        (byId && member.member_id === name),
   );
   const pinned = selected.map((ref) => ref.target);
+  const candidates = inRequestedNetwork(peers, requestedNetwork);
   const matches = pinned.length
-    ? peers.filter(
+    ? candidates.filter(
         ({ member }) =>
           member.kind === "registered" &&
           pinned.some(
@@ -79,7 +122,7 @@ export function resolveAgentName(
               target.project_id === member.endpoint.project_id,
           ),
       )
-    : peers;
+    : candidates;
   if (!matches.length)
     throw new Error(
       `No approved destination or current-turn mention named @${name}. Discover destinations or select the agent in the human composer; no message was sent.`,
@@ -160,9 +203,12 @@ function peerName({ member }: Peer): string {
   return (member.kind === "registered" ? member.name : member.label) ?? "";
 }
 
-const isUuid = (value: unknown): value is string =>
-  typeof value === "string" &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+/** The @name to send to: a registered agent's name, an external's handle. */
+export function peerHandle({ member }: Peer): string | undefined {
+  return member.kind === "registered"
+    ? member.name
+    : externalAgentHandle(member.label);
+}
 
 /**
  * Read one --targets entry: a peer name, or the target in any of the shapes
@@ -175,8 +221,10 @@ export function parseBroadcastTarget(
 ): { name: string } | { member_id: string } | { target: AgentRpcTarget } {
   const where = `--targets[${index}]`;
   if (typeof entry === "string") {
-    const name = entry.trim().replace(/^@/, "");
-    return isUuid(name) ? { member_id: name } : { name };
+    // Kept as typed: a full external label may start with "@".
+    const name = entry.trim();
+    const bare = name.replace(/^@/, "");
+    return isUuid(bare) ? { member_id: bare } : { name };
   }
   if (!entry || typeof entry !== "object" || Array.isArray(entry))
     throw new Error(
@@ -238,15 +286,19 @@ export function resolveBroadcastTargets(
   }
   const peers = parsed.map((p, index) => {
     const where = `--targets[${index}]`;
-    const matches = directory.peers.filter((peer) =>
+    const named = directory.peers.filter((peer) =>
       "target" in p
         ? agentRpcSourceKey(peerTarget(peer)) === agentRpcSourceKey(p.target)
         : "member_id" in p
           ? peer.member.member_id === p.member_id ||
             (peer.member.kind === "registered" &&
               peer.member.endpoint.agent_id === p.member_id)
-          : peerName(peer).trim().toLowerCase() === p.name.toLowerCase(),
+          : [p.name, p.name.replace(/^@/, "")].some(
+              (name) =>
+                peerName(peer).trim().toLowerCase() === name.toLowerCase(),
+            ) || peerHandle(peer) === p.name.replace(/^@/, "").toLowerCase(),
     );
+    const matches = inRequestedNetwork(named, requestedNetwork);
     if (matches.length === 0)
       throw new Error(
         `${where}: no network peer ${"name" in p ? `named @${p.name}` : "matches this target"}; run agent destinations. No message was sent.`,

@@ -17,7 +17,10 @@ import { EventEmitter } from "events";
 import { dstream, DStream } from "./dstream";
 import { fromJS, Map } from "immutable";
 import type { Configuration } from "@cocalc/conat/sync/core-stream";
-import type { CoreStreamInitPhaseReporter } from "@cocalc/conat/sync/core-stream";
+import type {
+  CoreStreamInitPhaseReporter,
+  User,
+} from "@cocalc/conat/sync/core-stream";
 import type { Client } from "@cocalc/conat/core/client";
 import type { Headers } from "@cocalc/conat/core/client";
 import type { CheckpointUpdate } from "@cocalc/conat/persist/storage";
@@ -53,6 +56,8 @@ export class SyncTableStream extends EventEmitter {
   private ephemeral?: boolean;
   private writeHeaders?: Headers;
   private initPhaseReporter?: CoreStreamInitPhaseReporter;
+  private service?: string;
+  private persistUser?: User;
 
   constructor({
     query,
@@ -67,6 +72,8 @@ export class SyncTableStream extends EventEmitter {
     ephemeral,
     noAutosave,
     initPhaseReporter,
+    service,
+    persistUser,
   }: {
     query;
     client: Client;
@@ -80,8 +87,13 @@ export class SyncTableStream extends EventEmitter {
     ephemeral?: boolean;
     noAutosave?: boolean;
     initPhaseReporter?: CoreStreamInitPhaseReporter;
+    // The persist service, and the identity to ask it as (see CoreStream).
+    service?: string;
+    persistUser?: User;
   }) {
     super();
+    this.service = service;
+    this.persistUser = persistUser;
     this.client = client;
     this.noInventory = noInventory;
     this.noAutosave = noAutosave;
@@ -126,6 +138,8 @@ export class SyncTableStream extends EventEmitter {
       ephemeral: this.ephemeral,
       noAutosave: this.noAutosave,
       initPhaseReporter: this.initPhaseReporter,
+      service: this.service,
+      persistUser: this.persistUser,
     });
     this.dstream.on("change", (mesg) => {
       this.handle(mesg, true);

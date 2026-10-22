@@ -690,9 +690,19 @@ export interface AccountDirectoryTouchRequest {
   account_id: string;
 }
 
+// Who started an account deletion; recorded in the account audit log.
+export type AccountDeletionInitiator =
+  | "self"
+  | "admin"
+  | "ephemeral-expiry"
+  | "system";
+
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
   only_if_tag?: string;
+  initiator?: AccountDeletionInitiator;
+  // the account that asked for the deletion: the account itself or an admin
+  actor_account_id?: string;
 }
 
 export interface AccountDirectoryDeleteResult {

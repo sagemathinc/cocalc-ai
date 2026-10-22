@@ -1309,6 +1309,69 @@ Merge comments are private unless their corresponding --*-comment-public flag is
   }
 
   adminPurchase
+    .command("credits")
+    .description(
+      "list admin balance adjustments with the admin who created each one and the internal reason",
+    )
+    .option("--since <iso>", "only adjustments at or after this time")
+    .option("--until <iso>", "only adjustments before this time")
+    .option("--missing", "only adjustments with no recorded creator", false)
+    .option("--limit <n>", "maximum adjustments (at most 1000)", "200")
+    .action(async (opts: any, command: Command) => {
+      await withContext(command, "admin purchase credits", async (ctx) => {
+        const limit = Number(opts.limit);
+        if (!Number.isInteger(limit) || limit < 1) {
+          throw new Error("--limit must be a positive integer");
+        }
+        return await ctx.hub.purchases.adminListCreditAttribution({
+          account_id: ctx.accountId,
+          since: opts.since
+            ? parseAdminPackageDate(opts.since, "--since")
+            : undefined,
+          until: opts.until
+            ? parseAdminPackageDate(opts.until, "--until")
+            : undefined,
+          missing_only: !!opts.missing,
+          limit,
+        });
+      });
+    });
+
+  adminPurchase
+    .command("credit-attribute <purchase-id>")
+    .description(
+      "preview or record which admin created a balance adjustment that has no recorded creator (an admin audit entry; the purchase is unchanged)",
+    )
+    .requiredOption("--admin <user>", "admin who created the adjustment")
+    .requiredOption("--reason <text>", "why this attribution is known")
+    .option("--commit", "record the attribution", false)
+    .action(async (purchaseId: string, opts: any, command: Command) => {
+      await withContext(
+        command,
+        "admin purchase credit-attribute",
+        async (ctx) => {
+          const purchase_id = Number(purchaseId);
+          if (!Number.isSafeInteger(purchase_id) || purchase_id <= 0) {
+            throw new Error("<purchase-id> must be a positive integer");
+          }
+          const reason = `${opts.reason ?? ""}`.trim();
+          if (!reason) throw new Error("--reason must be non-empty");
+          const attributed_admin_account_id = await resolveTargetAccountId(
+            ctx,
+            opts.admin,
+          );
+          return await ctx.hub.purchases.adminAttachCreditAttribution({
+            account_id: ctx.accountId,
+            purchase_id,
+            attributed_admin_account_id,
+            reason,
+            commit: !!opts.commit,
+          });
+        },
+      );
+    });
+
+  adminPurchase
     .command("membership-package <user>")
     .description(
       "preview or create a custom-price membership package for an account",

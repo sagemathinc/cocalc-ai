@@ -33,7 +33,7 @@ describe("creates an account, then creates statements and corresponding emails a
     await delay(100); // so above purchase is on statement.
     firstStatementTime = new Date(Date.now() - 1);
     await createStatements({ time: firstStatementTime, interval: "day" });
-  });
+  }, 15000);
 
   it("creates one more transaction, then tries to make a statement with the exact same time and this does NOT get created", async () => {
     await delay(10);

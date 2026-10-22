@@ -91,7 +91,7 @@ async function deleteExpiredAccounts(): Promise<void> {
   );
   for (const { account_id } of rows ?? []) {
     try {
-      await deleteAccount(account_id);
+      await deleteAccount(account_id, { initiator: "ephemeral-expiry" });
       log.info("deleted expired ephemeral account", { account_id });
     } catch (err) {
       log.error("failed to delete ephemeral account", { account_id, err });

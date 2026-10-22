@@ -128,6 +128,7 @@ describe("resetHistory", () => {
       reset: false,
       history_epoch: 0,
       count: 0,
+      refused: "not-oversized",
     });
     expect(stream.length).toBe(2);
 
@@ -137,7 +138,12 @@ describe("resetHistory", () => {
     // a second reset for the same message changes nothing, so it cannot
     // remove what was written since
     const second = stream.resetHistory({ ifOversizedSeq: big, archive: true });
-    expect(second).toEqual({ reset: false, history_epoch: 1, count: 0 });
+    expect(second).toEqual({
+      reset: false,
+      history_epoch: 1,
+      count: 0,
+      refused: "not-oversized",
+    });
     expect(stream.length).toBe(1);
     expect(archives()).toHaveLength(1);
     expect(write(10, 1).seq).toBeGreaterThan(big);
