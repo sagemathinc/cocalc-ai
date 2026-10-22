@@ -514,6 +514,10 @@ test("GCP worker parses a bounded result and always deletes the VM", async () =>
       }),
     }),
   );
+  expect(insert.mock.calls[0][0].instanceResource.labels).toMatchObject({
+    "cocalc-role": "bay-restore-drill",
+    application: "bay-restore-drill",
+  });
   const startupScript =
     insert.mock.calls[0][0].instanceResource.metadata.items.find(
       (item: { key: string }) => item.key === "startup-script",
@@ -859,4 +863,43 @@ test("the production engine runs host binaries as the bay user and never on the 
   expect(workerSource).toContain(
     '"Database cluster state:               shut down"',
   );
+});
+
+test("GCP restore worker applies COCALC_GCP_DEFAULT_LABELS without overriding its own labels", async () => {
+  const worker = passedWorker();
+  const marker = `COCALC_BAY_RESTORE_DRILL_RESULT_V1_nonce-1=${Buffer.from(
+    JSON.stringify(worker),
+  ).toString("base64")}\n`;
+  const insert = jest.fn(async () => [{ name: "insert-1", status: "DONE" }]);
+  const prev = process.env.COCALC_GCP_DEFAULT_LABELS;
+  process.env.COCALC_GCP_DEFAULT_LABELS =
+    "environment=production,owner=ops,application=ignored";
+  try {
+    await runDisposableGcpRestoreWorker({
+      service_account_json: serviceAccount,
+      zone: "us-west1-b",
+      boot_disk_gb: 50,
+      config: config(),
+      clients: {
+        instances: {
+          insert,
+          delete: jest.fn(async () => [{ name: "delete-1", status: "DONE" }]),
+          get: jest.fn(),
+          getSerialPortOutput: jest.fn(async () => [
+            { contents: marker, next: "100" },
+          ]),
+        } as any,
+        operations: { wait: jest.fn() } as any,
+      },
+    });
+  } finally {
+    if (prev === undefined) delete process.env.COCALC_GCP_DEFAULT_LABELS;
+    else process.env.COCALC_GCP_DEFAULT_LABELS = prev;
+  }
+  expect(insert.mock.calls[0][0].instanceResource.labels).toMatchObject({
+    environment: "production",
+    owner: "ops",
+    "cocalc-role": "bay-restore-drill",
+    application: "bay-restore-drill",
+  });
 });
