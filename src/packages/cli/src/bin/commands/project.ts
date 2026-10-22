@@ -17,6 +17,7 @@ import { registerProjectBrowserCommands } from "./project/browser";
 import { registerProjectChatCommands } from "./project/chat";
 import { registerProjectJupyterCommands } from "./project/jupyter";
 import { registerProjectStorageCommands } from "./project/storage";
+import { registerProjectEditHistoryCommands } from "./project/edit-history";
 import { registerProjectTerminalCommands } from "./project/terminal";
 import { registerProjectEnvSecretCommands } from "./project/env-secrets";
 import { registerProjectPublishCommands } from "./project/publish";
@@ -167,6 +168,7 @@ export function registerProjectCommand(
   registerProjectCollabCommands(project, deps);
   registerProjectFileCommands(project, dataDeps);
   registerProjectStorageCommands(project, deps);
+  registerProjectEditHistoryCommands(project, deps);
   registerProjectPublishCommands(project, deps);
   registerProjectRootfsCommands(project, deps);
   registerProjectCourseCommands(project, deps);
