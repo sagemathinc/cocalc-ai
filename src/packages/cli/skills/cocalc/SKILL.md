@@ -666,7 +666,14 @@ cocalc sensor watch ci --repo owner/name --pr 123      # PR checks finished
 cocalc sensor watch file --path build.log --match 'BUILD DONE'
 cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123 merged"
 cocalc sensor watch exit -- make test   # runs it in a project terminal
+cocalc sensor watch agent worker --until failed   # a peer's turn fails
 ```
+
+`watch agent` wakes you when a peer in your Agent Networks finishes a turn,
+whoever started it: `--until ended` (any turn, the default), `failed` (a turn
+ends without completing) or `idle` (a turn ends and nothing is running or
+waiting). It reads the status peers see, checked every few minutes, so a turn
+that fails and is followed by a completed one within that time can be missed.
 
 `watch ci` needs this agent's GitHub connector and is refused without it.
 Without it, watch the checks with the project's own `gh` login instead:
