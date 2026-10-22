@@ -3,12 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { publicPath } from "../routes";
 import accessibilityPolicy from "./accessibility";
 import copyrightPolicy from "./copyright";
 import dpaPolicy from "./dpa";
 import ferpaPolicy from "./ferpa";
-import { getPolicyNavLabel, type PublicPolicy } from "./policy";
+import { getPolicyNavLabel, policyHref, type PublicPolicy } from "./policy";
 import privacyPolicy from "./privacy";
 import termsPolicy from "./terms";
 import trustPolicy from "./trust";
@@ -34,7 +33,7 @@ export function getBuiltinPolicy(slug?: string): PublicPolicy | undefined {
 
 export function getBuiltinPolicyNavItems() {
   return BUILTIN_POLICIES.map((policy) => ({
-    href: publicPath(`policies/${policy.slug}`),
+    href: policyHref(`/policies/${policy.slug}`),
     key: policy.slug,
     label: getPolicyNavLabel(policy),
   }));

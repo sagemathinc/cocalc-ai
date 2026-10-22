@@ -5,7 +5,7 @@
 
 // /llms.txt (https://llmstxt.org) is an index of public pages for AI
 // assistants. It is generated from the "CoCalc at a glance" docs page and the
-// docs and feature registries, so it can say no more than those pages: the
+// docs, feature, and policy registries, so it can say no more than those pages: the
 // quote is the page's first paragraph, the sections are its headings, and each
 // link uses the linked page's own title and summary. It describes cocalc.ai,
 // so it is served only on that host; other deployments return 404.
@@ -27,6 +27,11 @@ import {
   isCanonicalPublicSiteHost,
 } from "@cocalc/util/public-site-policy";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import type { PolicyMarkdownDocument } from "@cocalc/util/public-policy-markdown";
+import {
+  builtinPolicyMarkdownEnabled,
+  getPolicyMarkdownDocuments,
+} from "./public-policy-markdown";
 
 const logger = getLogger("hub:servers:public-llms-txt");
 
@@ -93,9 +98,11 @@ function linkLine({ description, label, status, url }: LlmsTxtLink): string {
 export function renderLlmsTxt({
   product,
   siteName,
+  policies = [],
 }: {
   product: string;
   siteName: string;
+  policies?: readonly PolicyMarkdownDocument[];
 }): string | undefined {
   const page = getDocsEntry(LLMS_TXT_PAGE_ID, ACCESS);
   if (page == null) return;
@@ -119,6 +126,14 @@ export function renderLlmsTxt({
       ),
     );
   }
+  addSection(
+    "Policies",
+    policies.map((policy) => ({
+      label: policy.title,
+      description: policy.description,
+      url: absoluteUrl(`/policies/${policy.slug}.md`),
+    })),
+  );
   const definition = page.body
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
@@ -137,6 +152,9 @@ export function serveLlmsTxt(req: Request, res: Response): void {
     const product = getCocalcProduct();
     const text = renderLlmsTxt({
       product,
+      policies: builtinPolicyMarkdownEnabled(customize)
+        ? await getPolicyMarkdownDocuments()
+        : [],
       // The same brand inputs as the public pages' titles (public-shell.ts),
       // so a site still on the default Launchpad name is titled the same way.
       siteName: getPublicMarketingSiteName({

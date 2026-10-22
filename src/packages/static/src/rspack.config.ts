@@ -51,6 +51,7 @@ import chunkStatsPlugin from "./plugins/chunk-stats";
 import cleanPlugin from "./plugins/clean";
 import defineConstantsPlugin from "./plugins/define-constants";
 import frontendBuildManifestPlugin from "./plugins/frontend-build-manifest";
+import policyMarkdownPlugin from "./plugins/policy-markdown";
 import serverOnlyTablesPlugin from "./plugins/server-only-tables";
 import { javascriptOutputFilenames } from "./output-filenames";
 
@@ -135,6 +136,7 @@ export default function getConfig(): Configuration {
   cleanPlugin(registerPlugin, OUTPUT);
 
   appLoaderPlugin(registerPlugin, PRODMODE);
+  policyMarkdownPlugin(registerPlugin);
 
   frontendBuildManifestPlugin(registerPlugin, {
     schema: 1,

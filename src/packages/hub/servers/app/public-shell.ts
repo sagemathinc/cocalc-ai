@@ -4,7 +4,6 @@
  */
 
 import type { Request, Response } from "express";
-import { existsSync } from "fs";
 import { readFile, stat } from "fs/promises";
 import { join } from "path";
 
@@ -21,7 +20,8 @@ import {
 } from "@cocalc/util/public-pricing";
 import { isCanonicalPublicSiteHost } from "@cocalc/util/public-site-policy";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { path as STATIC_PATH } from "@cocalc/static";
+import { resolveStaticPath } from "./public-static-path";
+export { resolveStaticPath } from "./public-static-path";
 import {
   getPublicImageDimensions,
   getPublicMarketingSiteName,
@@ -633,37 +633,6 @@ async function publicHtml(): Promise<string> {
   } catch {
     return FALLBACK_PUBLIC_HTML;
   }
-}
-
-// The resolved directory cannot change for the lifetime of the process, so
-// resolve it once; a miss (no built static assets yet) is not memoized so a
-// build that finishes after hub startup is still picked up.
-let resolvedStaticPath: string | undefined;
-
-export function resolveStaticPath(): string {
-  if (resolvedStaticPath != null) {
-    return resolvedStaticPath;
-  }
-  const candidates: string[] = [];
-  if (process.env.COCALC_STATIC_PATH) {
-    candidates.push(process.env.COCALC_STATIC_PATH);
-  }
-  if (process.env.COCALC_BUNDLE_DIR) {
-    candidates.push(join(process.env.COCALC_BUNDLE_DIR, "static"));
-  }
-  candidates.push(
-    STATIC_PATH,
-    join(process.cwd(), "static"),
-    join(process.cwd(), "packages", "static", "dist"),
-    join(__dirname, "..", "static"),
-  );
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "app.html"))) {
-      resolvedStaticPath = candidate;
-      return candidate;
-    }
-  }
-  return STATIC_PATH;
 }
 
 let warnedAboutMissingPlaceholder = false;

@@ -16,7 +16,23 @@ jest.mock("@cocalc/server/launchpad/mode", () => ({
 
 jest.mock("@cocalc/database/settings/customize", () => ({
   __esModule: true,
-  default: jest.fn(async () => ({ siteName: "CoCalc" })),
+  default: jest.fn(async () => ({
+    siteName: "CoCalc",
+    policy_pages: "sagemathinc",
+  })),
+}));
+
+jest.mock("./public-policy-markdown", () => ({
+  ...jest.requireActual("./public-policy-markdown"),
+  getPolicyMarkdownDocuments: jest.fn(async () => [
+    {
+      slug: "terms",
+      title: "Terms of Service",
+      description: "Terms for CoCalc.",
+      updated: "October 1, 2026",
+      markdown: "# Terms of Service\n",
+    },
+  ]),
 }));
 
 import getCustomize from "@cocalc/database/settings/customize";
@@ -66,6 +82,9 @@ describe("/llms.txt", () => {
     expect(body).toMatch(/^# CoCalc\n\n> CoCalc is made by SageMath, Inc\. /);
     expect(body).toContain(
       `## Start here\n\n- [${page.title}](https://cocalc.ai/docs/${page.slug}): ${page.summary}\n`,
+    );
+    expect(body).toContain(
+      "## Policies\n\n- [Terms of Service](https://cocalc.ai/policies/terms.md): Terms for CoCalc.",
     );
   });
 
