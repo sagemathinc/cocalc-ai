@@ -74,6 +74,20 @@ const BILLING_STOP_RETRY_MS = 30 * 60_000;
 // A billing deprovision whose operation is gone (failed, or never created)
 // is queued again at most this often.
 const BILLING_DEPROVISION_RETRY_MS = 60 * 60_000;
+// A billing stop still "stopping" after this long is retried as if it had
+// failed: its work may never have been queued (the enqueue failed after the
+// status was written) or may be stuck.
+const BILLING_STOPPING_STALE_MS = 2 * 60 * 60_000;
+
+function billingStopLooksStuck(
+  enforcement: DedicatedHostBillingEnforcementMetadata,
+  now = Date.now(),
+): boolean {
+  const since = Date.parse(
+    `${enforcement.stop_retry_requested_at ?? enforcement.stopped_at ?? ""}`,
+  );
+  return Number.isFinite(since) && now - since >= BILLING_STOPPING_STALE_MS;
+}
 
 let started = false;
 
@@ -1650,7 +1664,7 @@ async function runPass(): Promise<void> {
           row,
           allowRescueRequest: false,
         })) &&
-        status !== "stopping"
+        (status !== "stopping" || billingStopLooksStuck(enforcement))
       ) {
         await retryBillingEnforcementStop({ row, provider, enforcement });
       }

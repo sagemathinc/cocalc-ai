@@ -2016,6 +2016,54 @@ describe("dedicated host spend maintenance", () => {
     },
   );
 
+  it.each([
+    ["retries a stop stuck in stopping for hours", 3 * 3600_000, true],
+    ["leaves a recent stop in stopping alone", 30 * 60_000, false],
+  ])("%s", async (_name, age, retried) => {
+    const now = Date.now();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              ...blockedHostRow({
+                final_backup_status: "succeeded",
+                stopped_at: new Date(now - age).toISOString(),
+                deprovision_after: new Date(now + 70 * 3600_000).toISOString(),
+              }),
+              status: "stopping",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET status=$2")
+      ) {
+        return { rows: [{ desired_state_generation: 3 }], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    if (retried) {
+      expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith(
+        expect.objectContaining({ vm_id: "host-1", action: "stop" }),
+      );
+    } else {
+      expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+    }
+  });
+
   it("waits between stop retries of a billing-blocked host", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("pg_try_advisory_lock")) {
