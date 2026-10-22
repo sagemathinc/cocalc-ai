@@ -72,6 +72,11 @@ export interface Patch {
     // have a prev_seq, etc., making it possible to incremental load
     // patches back in time.
     prev_seq?: number;
+    // The snapshotted patch was a clean cut for its writer: every patch the
+    // writer had loaded was an ancestor or a descendant of it. A client that
+    // loads from such a snapshot can ignore older snapshot records (see
+    // isSnapshotRecordBeforeLoadedRange in sync-doc.ts).
+    cut?: boolean;
   };
 
   // The set of all patches forms a directed acyclic graph.

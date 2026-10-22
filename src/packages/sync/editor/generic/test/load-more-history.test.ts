@@ -156,8 +156,20 @@ describe("isSnapshotRecordBeforeLoadedRange", () => {
       isSnapshotRecordBeforeLoadedRange(
         { is_snapshot: true, seq_info: { seq: 42836 } },
         43137,
+        true,
       ),
     ).toBe(true);
+  });
+
+  it("is not ignored unless the loaded range starts at a clean cut", () => {
+    // it may be the snapshot of a concurrent head nothing loaded builds on
+    expect(
+      isSnapshotRecordBeforeLoadedRange(
+        { is_snapshot: true, seq_info: { seq: 42836 } },
+        43137,
+        false,
+      ),
+    ).toBe(false);
   });
 
   it("keeps the loaded snapshot, patches, seeds and records without a seq", () => {
@@ -169,12 +181,13 @@ describe("isSnapshotRecordBeforeLoadedRange", () => {
       { is_snapshot: true, seq_info: null },
     ];
     for (const patch of keep) {
-      expect(isSnapshotRecordBeforeLoadedRange(patch, 43137)).toBe(false);
+      expect(isSnapshotRecordBeforeLoadedRange(patch, 43137, true)).toBe(false);
     }
     expect(
       isSnapshotRecordBeforeLoadedRange(
         { is_snapshot: true, seq_info: { seq: 42836 } },
         undefined,
+        true,
       ),
     ).toBe(false);
   });

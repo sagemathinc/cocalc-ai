@@ -426,13 +426,19 @@ export function prevSeqForMoreHistoryFromHistory(
 // its whole history (43,623 versions) on every open. Its patch is an
 // ancestor of the loaded snapshot's patch, so it says nothing the loaded
 // snapshot does not. Once more history loads its patch, it is used again.
+// Only an ancestor, though: that is known only if the loaded snapshot is a
+// clean cut (seq_info.cut, recorded by its writer). Otherwise the record may
+// be of a concurrent head that nothing loaded builds on, and ignoring it
+// would drop that head's edits.
 // (A restarted history's seed has seq 0: it is the start, with no patch.)
 export function isSnapshotRecordBeforeLoadedRange(
   patch: { is_snapshot?: boolean; seq_info?: { seq?: number } | null },
   firstLoadedSeq: number | undefined,
+  loadedFromCut: boolean,
 ): boolean {
   const seq = patch.seq_info?.seq;
   return (
+    loadedFromCut &&
     !!patch.is_snapshot &&
     typeof seq === "number" &&
     seq > 0 &&
@@ -3458,7 +3464,12 @@ export class SyncDoc extends EventEmitter {
     if (snapshot == null) {
       throw Error("unable to compute snapshot");
     }
-    const seq_info = this.conatSnapshotSeqInfo(time);
+    const seq_info: NonNullable<Patch["seq_info"]> = {
+      ...this.conatSnapshotSeqInfo(time),
+    };
+    if ((this.patchflowSession as any).isCut?.(time) === true) {
+      seq_info.cut = true;
+    }
     const wall = p.wall ?? decodePatchId(time).timeMs;
     const obj = {
       size: snapshot.length,
@@ -3970,6 +3981,9 @@ export class SyncDoc extends EventEmitter {
     }
     const envs: PatchEnvelope[] = [];
     const firstLoadedSeq = this.firstLoadedSeq();
+    let cut: boolean | undefined;
+    const loadedFromCut = () =>
+      (cut ??= this.loadedFromCutSnapshot(firstLoadedSeq));
     for (const key of keys ?? []) {
       let x = this.patches_table.get(key);
       if (x == null) {
@@ -3980,7 +3994,10 @@ export class SyncDoc extends EventEmitter {
       }
       const p = this.processPatch({ x });
       if (p == null) continue;
-      if (isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)) {
+      if (
+        isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, true) &&
+        loadedFromCut()
+      ) {
         this.snapshotRecordsBeforeLoadedRange.add(key);
       } else {
         this.snapshotRecordsBeforeLoadedRange.delete(key);
@@ -4000,7 +4017,10 @@ export class SyncDoc extends EventEmitter {
       const p = this.processPatch({ x });
       if (p == null) {
         this.snapshotRecordsBeforeLoadedRange.delete(key);
-      } else if (!isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)) {
+      } else if (
+        // ignored as an ancestor of a cut loaded before: it still is one
+        !isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, true)
+      ) {
         this.snapshotRecordsBeforeLoadedRange.delete(key);
         envs.push(this.toPatchflowEnvelope(p));
       }
@@ -4089,11 +4109,17 @@ export class SyncDoc extends EventEmitter {
     }
     const v: Patch[] = [];
     const firstLoadedSeq = this.firstLoadedSeq();
+    let cut: boolean | undefined;
+    const loadedFromCut = () =>
+      (cut ??= this.loadedFromCutSnapshot(firstLoadedSeq));
     m.forEach((x, key) => {
       try {
         const p = this.processPatch({ x });
         if (p == null) return;
-        if (isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq)) {
+        if (
+          isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, true) &&
+          loadedFromCut()
+        ) {
           this.snapshotRecordsBeforeLoadedRange.add(key);
         } else {
           return v.push(p);
@@ -4115,6 +4141,24 @@ export class SyncDoc extends EventEmitter {
     } catch {
       return undefined;
     }
+  };
+
+  // Whether the loaded range starts at the patch of a snapshot whose writer
+  // recorded it as a clean cut (seq_info.cut).
+  private loadedFromCutSnapshot = (firstLoadedSeq?: number): boolean => {
+    if (firstLoadedSeq == null) return false;
+    try {
+      for (const mesg of this.dstream()?.getAll?.() ?? []) {
+        if (
+          mesg?.is_snapshot &&
+          mesg.seq_info?.seq === firstLoadedSeq &&
+          mesg.seq_info?.cut === true
+        ) {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
   };
 
   private patchesHaveFullHistory = (patches: Patch[]): boolean => {
