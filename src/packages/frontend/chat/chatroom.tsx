@@ -1824,14 +1824,15 @@ function ChatPanelContent({
   const selectedThreadReadSignatureRef = useRef<string | null>(null);
 
   const [readerMode, setReaderMode] = useChatReaderMode(project_id, path);
-  // The reader takes the keys when the person turns it on (from any of its
-  // buttons), never when a chat simply opens in it.
-  const [readerAutoFocus, setReaderAutoFocus] = useState(false);
-  const [previousReaderMode, setPreviousReaderMode] = useState(readerMode);
-  if (previousReaderMode !== readerMode) {
-    setPreviousReaderMode(readerMode);
-    setReaderAutoFocus(readerMode);
-  }
+  // The reader takes the keys when the person turns it on with one of its
+  // buttons, in this chat; never when a chat simply opens in it.
+  const readerChatKey = `${project_id ?? ""}:${path ?? ""}`;
+  const [readerTurnedOnIn, setReaderTurnedOnIn] = useState<string>();
+  const readerAutoFocus = readerMode && readerTurnedOnIn === readerChatKey;
+  const toggleReaderMode = (on: boolean) => {
+    setReaderTurnedOnIn(on ? readerChatKey : undefined);
+    setReaderMode(on);
+  };
 
   useEffect(() => {
     // The reader marks what is opened in it, not the whole thread.
@@ -2660,7 +2661,7 @@ function ChatPanelContent({
         aria-label={readerMode ? "Back to the chat log" : "Reader"}
         aria-pressed={readerMode}
         icon={<Icon name="mail" />}
-        onClick={() => setReaderMode(!readerMode)}
+        onClick={() => toggleReaderMode(!readerMode)}
         style={{
           color: readerMode ? UI_COLORS.primary : "inherit",
         }}
@@ -2730,7 +2731,7 @@ function ChatPanelContent({
         }
         mobile={narrow}
         readerMode={readerMode}
-        onReaderModeChange={setReaderMode}
+        onReaderModeChange={toggleReaderMode}
         readerAutoFocus={readerAutoFocus}
         readStateVersion={effectiveReadStateVersion}
         onMobileToolsAction={() => setMobileToolsOpen(false)}

@@ -387,4 +387,29 @@ describe("ChatPanel selected thread read tracking", () => {
     expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
     expect(actions.markThreadRead).not.toHaveBeenCalledWith("thread-9", 5);
   });
+
+  it("a chat that opens in the reader does not take the focus, also when switched to", () => {
+    localStorage.setItem(
+      "cocalc-chat-reader-mode",
+      JSON.stringify({ "project-1:chat/other.chat": true }),
+    );
+    const { actions, rerender } = renderPanel();
+    expect(latestThreadPanelProps.readerMode).toBe(false);
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/other.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(false);
+    // Turned on by the person: it does.
+    act(() => latestThreadPanelProps.onReaderModeChange(false));
+    act(() => latestThreadPanelProps.onReaderModeChange(true));
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(true);
+  });
 });
