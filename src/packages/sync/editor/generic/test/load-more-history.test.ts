@@ -6,6 +6,7 @@
 import { legacyPatchId } from "patchflow";
 import {
   isSnapshotRecordBeforeLoadedRange,
+  loadedStartSnapshotFromMessages,
   patchesHaveFullHistoryFromPatches,
   prevSeqForMoreHistoryFromHistory,
 } from "../sync-doc";
@@ -150,45 +151,86 @@ describe("prevSeqForMoreHistoryFromHistory with where the loaded history starts"
 });
 
 describe("isSnapshotRecordBeforeLoadedRange", () => {
-  it("is a snapshot record of a patch before the loaded range", () => {
-    // the sagebrush chat: loaded from 43137, record of 42836 at 43138
-    expect(
-      isSnapshotRecordBeforeLoadedRange(
-        { is_snapshot: true, seq_info: { seq: 42836 } },
-        43137,
-        true,
-      ),
-    ).toBe(true);
+  const record = (time: string, seq: number) => ({
+    time,
+    is_snapshot: true,
+    seq_info: { seq },
   });
 
-  it("is not ignored unless the loaded range starts at a clean cut", () => {
-    // it may be the snapshot of a concurrent head nothing loaded builds on
+  it("ignores a record its loaded snapshot's writer proved to be an ancestor", () => {
+    // the sagebrush chat: loaded from 43137, record of 42836 at 43138
+    const start = { prev_seq: 42836, ancestors: new Set(["t42836"]) };
     expect(
-      isSnapshotRecordBeforeLoadedRange(
-        { is_snapshot: true, seq_info: { seq: 42836 } },
-        43137,
-        false,
-      ),
+      isSnapshotRecordBeforeLoadedRange(record("t42836", 42836), 43137, start),
+    ).toBe(true);
+    // not proved: maybe a concurrent head nothing loaded builds on
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t42900", 42900), 43137, start),
+    ).toBe(false);
+  });
+
+  it("for a legacy snapshot, ignores records at or before its prev_seq", () => {
+    const start = { prev_seq: 42836 };
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t42836", 42836), 43137, start),
+    ).toBe(true);
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t42900", 42900), 43137, start),
     ).toBe(false);
   });
 
   it("keeps the loaded snapshot, patches, seeds and records without a seq", () => {
+    const start = { prev_seq: 42836, ancestors: new Set(["t1"]) };
     const keep = [
-      { is_snapshot: true, seq_info: { seq: 43137 } },
-      { is_snapshot: false, seq_info: { seq: 1 } },
-      { is_snapshot: true, seq_info: { seq: 0 } },
-      { is_snapshot: true },
-      { is_snapshot: true, seq_info: null },
+      { time: "t1", is_snapshot: true, seq_info: { seq: 43137 } },
+      { time: "t1", is_snapshot: false, seq_info: { seq: 1 } },
+      { time: "t1", is_snapshot: true, seq_info: { seq: 0 } },
+      { time: "t1", is_snapshot: true },
+      { time: "t1", is_snapshot: true, seq_info: null },
     ];
     for (const patch of keep) {
-      expect(isSnapshotRecordBeforeLoadedRange(patch, 43137, true)).toBe(false);
+      expect(isSnapshotRecordBeforeLoadedRange(patch, 43137, start)).toBe(
+        false,
+      );
     }
     expect(
-      isSnapshotRecordBeforeLoadedRange(
-        { is_snapshot: true, seq_info: { seq: 42836 } },
-        undefined,
-        true,
-      ),
+      isSnapshotRecordBeforeLoadedRange(record("t1", 2), undefined, start),
     ).toBe(false);
+    expect(
+      isSnapshotRecordBeforeLoadedRange(record("t1", 2), 43137, undefined),
+    ).toBe(false);
+  });
+});
+
+describe("loadedStartSnapshotFromMessages", () => {
+  const snap = (time: string, seq_info: any) => ({
+    time,
+    is_snapshot: true,
+    seq_info,
+  });
+
+  it("follows the ancestors of listed snapshots whose records are loaded", () => {
+    const start = loadedStartSnapshotFromMessages(
+      [
+        { time: "p", parents: [] },
+        snap("b", { seq: 20, prev_seq: 10, snapshot_ancestors: ["a"] }),
+        snap("c", { seq: 30, prev_seq: 20, snapshot_ancestors: ["b"] }),
+      ],
+      30,
+    );
+    expect(start?.prev_seq).toBe(20);
+    expect([...(start?.ancestors ?? [])].sort()).toEqual(["a", "b"]);
+  });
+
+  it("is legacy without a list, and undefined without the start snapshot", () => {
+    expect(
+      loadedStartSnapshotFromMessages(
+        [snap("c", { seq: 30, prev_seq: 20 })],
+        30,
+      ),
+    ).toEqual({ prev_seq: 20 });
+    expect(
+      loadedStartSnapshotFromMessages([snap("c", { seq: 30 })], 31),
+    ).toBeUndefined();
   });
 });

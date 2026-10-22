@@ -112,7 +112,7 @@ describe("opening a document whose snapshot records each follow the next snapsho
     expect(s3.to_str()).toBe(expected);
   });
 
-  it("an existing chain without cut flags recovers after one new snapshot", async () => {
+  it("an existing chain from before snapshot_ancestors opens from its latest snapshot too", async () => {
     const path2 = "snapshot-chain-legacy.txt";
     const open2 = async () => {
       const doc = connect().sync.string({
@@ -128,10 +128,8 @@ describe("opening a document whose snapshot records each follow the next snapsho
       return doc;
     };
     const s1 = await open2();
-    // snapshots written before seq_info.cut existed
-    const session1 = (s1 as any).patchflowSession;
-    const isCut = session1.isCut;
-    session1.isCut = () => false;
+    // snapshots written before seq_info.snapshot_ancestors existed
+    (s1 as any).snapshotAncestors = () => undefined;
     const lines: string[] = [];
     const edit = async (line: string) => {
       lines.push(line);
@@ -147,25 +145,15 @@ describe("opening a document whose snapshot records each follow the next snapsho
         await (s1 as any).snapshot(s1.versions()[i - interval]);
       }
     }
-    const total = s1.versions().length;
-    const legacy = await open2();
-    // the old behavior: everything
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(legacy.versions().length).toBe(total);
-    expect(legacy.to_str()).toBe(s1.to_str());
-
-    // a client with seq_info.cut writes the next snapshot
-    session1.isCut = isCut;
-    for (let i = 0; i < interval; i++) {
-      await edit(`more ${i}`);
-    }
-    await (s1 as any).snapshot(s1.versions()[s1.versions().length - 2]);
     await edit("last");
+    const total = s1.versions().length;
     const expected = s1.to_str();
-    const fresh = await open2();
+    const legacy = await open2();
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(fresh.to_str()).toBe(expected);
-    expect(fresh.hasFullHistory()).toBe(false);
-    expect(fresh.versions().length).toBeLessThan(10);
+    expect(legacy.to_str()).toBe(expected);
+    expect(legacy.hasFullHistory()).toBe(false);
+    expect(legacy.versions().length).toBeLessThan(total / 2);
+    expect(await legacy.loadMoreHistory()).toBe(true);
+    expect(legacy.to_str()).toBe(expected);
   }, 60_000);
 });

@@ -331,6 +331,9 @@ export function snapshotCandidateFromHistory({
   return;
 }
 
+// Max patches snapshotAncestors visits.
+const SNAPSHOT_ANCESTOR_WALK_LIMIT = 100_000;
+
 // Max later patches snapshotTimeAvoidingMismatch checks.
 const SNAPSHOT_MISMATCH_SCAN = 200;
 
@@ -426,25 +429,91 @@ export function prevSeqForMoreHistoryFromHistory(
 // its whole history (43,623 versions) on every open. Its patch is an
 // ancestor of the loaded snapshot's patch, so it says nothing the loaded
 // snapshot does not. Once more history loads its patch, it is used again.
-// Only an ancestor, though: that is known only if the loaded snapshot is a
-// clean cut (seq_info.cut, recorded by its writer). Otherwise the record may
-// be of a concurrent head that nothing loaded builds on, and ignoring it
-// would drop that head's edits.
+// Only an ancestor, though, which a client that loaded part of the history
+// cannot check: the record may be of a concurrent head that nothing loaded
+// builds on, and ignoring it would drop that head's edits. So the writer of
+// each snapshot records the older snapshots it found to be ancestors
+// (seq_info.snapshot_ancestors, by following parents), and only those are
+// ignored, also through the records of listed snapshots in the loaded range.
+// A snapshot written before that list existed (legacy) has no list: then
+// only records at or before its own previous snapshot (prev_seq) are
+// ignored.
 // (A restarted history's seed has seq 0: it is the start, with no patch.)
-export function isSnapshotRecordBeforeLoadedRange(
-  patch: { is_snapshot?: boolean; seq_info?: { seq?: number } | null },
+function isBeforeLoadedRange(
+  patch: { seq_info?: { seq?: number } | null },
   firstLoadedSeq: number | undefined,
-  loadedFromCut: boolean,
 ): boolean {
   const seq = patch.seq_info?.seq;
   return (
-    loadedFromCut &&
-    !!patch.is_snapshot &&
     typeof seq === "number" &&
     seq > 0 &&
     typeof firstLoadedSeq === "number" &&
     seq < firstLoadedSeq
   );
+}
+
+export interface LoadedStartSnapshot {
+  prev_seq?: number;
+  // patch times proven to be ancestors of the loaded snapshot's patch;
+  // undefined for a legacy snapshot
+  ancestors?: Set<string>;
+}
+
+export function isSnapshotRecordBeforeLoadedRange(
+  patch: {
+    time?: string;
+    is_snapshot?: boolean;
+    seq_info?: { seq?: number } | null;
+  },
+  firstLoadedSeq: number | undefined,
+  start: LoadedStartSnapshot | undefined,
+): boolean {
+  const seq = patch.seq_info?.seq;
+  if (
+    !patch.is_snapshot ||
+    typeof seq !== "number" ||
+    seq <= 0 ||
+    typeof firstLoadedSeq !== "number" ||
+    seq >= firstLoadedSeq ||
+    start == null
+  ) {
+    return false;
+  }
+  if (start.ancestors != null) {
+    return patch.time != null && start.ancestors.has(patch.time);
+  }
+  return start.prev_seq != null && seq <= start.prev_seq;
+}
+
+// The snapshot the loaded range starts at (whose patch is at
+// firstLoadedSeq), with the ancestors its writer proved, followed through the
+// records of the listed snapshots that are loaded.
+export function loadedStartSnapshotFromMessages(
+  messages: any[],
+  firstLoadedSeq: number | undefined,
+): LoadedStartSnapshot | undefined {
+  if (firstLoadedSeq == null) return;
+  const byTime = new globalThis.Map<string, any>();
+  let start: any;
+  for (const mesg of messages) {
+    if (!mesg?.is_snapshot || mesg.seq_info == null) continue;
+    byTime.set(`${mesg.time}`, mesg.seq_info);
+    if (mesg.seq_info.seq === firstLoadedSeq) start = mesg.seq_info;
+  }
+  if (start == null) return;
+  if (!Array.isArray(start.snapshot_ancestors)) {
+    return { prev_seq: start.prev_seq };
+  }
+  const ancestors = new Set<string>();
+  const queue: string[] = [...start.snapshot_ancestors];
+  while (queue.length > 0) {
+    const time = `${queue.pop()}`;
+    if (ancestors.has(time)) continue;
+    ancestors.add(time);
+    const more = byTime.get(time)?.snapshot_ancestors;
+    if (Array.isArray(more)) queue.push(...more);
+  }
+  return { prev_seq: start.prev_seq, ancestors };
 }
 
 // Whether the loaded patches are the whole history. Loading starts at the
@@ -3466,10 +3535,8 @@ export class SyncDoc extends EventEmitter {
     }
     const seq_info: NonNullable<Patch["seq_info"]> = {
       ...this.conatSnapshotSeqInfo(time),
+      snapshot_ancestors: this.snapshotAncestors(time),
     };
-    if ((this.patchflowSession as any).isCut?.(time) === true) {
-      seq_info.cut = true;
-    }
     const wall = p.wall ?? decodePatchId(time).timeMs;
     const obj = {
       size: snapshot.length,
@@ -3981,9 +4048,11 @@ export class SyncDoc extends EventEmitter {
     }
     const envs: PatchEnvelope[] = [];
     const firstLoadedSeq = this.firstLoadedSeq();
-    let cut: boolean | undefined;
-    const loadedFromCut = () =>
-      (cut ??= this.loadedFromCutSnapshot(firstLoadedSeq));
+    let start: LoadedStartSnapshot | undefined | null = null;
+    const loadedStart = () =>
+      start === null
+        ? (start = this.loadedStartSnapshot(firstLoadedSeq))
+        : start;
     for (const key of keys ?? []) {
       let x = this.patches_table.get(key);
       if (x == null) {
@@ -3994,10 +4063,7 @@ export class SyncDoc extends EventEmitter {
       }
       const p = this.processPatch({ x });
       if (p == null) continue;
-      if (
-        isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, true) &&
-        loadedFromCut()
-      ) {
+      if (isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, loadedStart())) {
         this.snapshotRecordsBeforeLoadedRange.add(key);
       } else {
         this.snapshotRecordsBeforeLoadedRange.delete(key);
@@ -4018,8 +4084,9 @@ export class SyncDoc extends EventEmitter {
       if (p == null) {
         this.snapshotRecordsBeforeLoadedRange.delete(key);
       } else if (
-        // ignored as an ancestor of a cut loaded before: it still is one
-        !isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, true)
+        // ignored as an ancestor of a snapshot loaded before: it still is
+        // one, until its patch is loaded
+        !isBeforeLoadedRange(p, firstLoadedSeq)
       ) {
         this.snapshotRecordsBeforeLoadedRange.delete(key);
         envs.push(this.toPatchflowEnvelope(p));
@@ -4109,16 +4176,17 @@ export class SyncDoc extends EventEmitter {
     }
     const v: Patch[] = [];
     const firstLoadedSeq = this.firstLoadedSeq();
-    let cut: boolean | undefined;
-    const loadedFromCut = () =>
-      (cut ??= this.loadedFromCutSnapshot(firstLoadedSeq));
+    let start: LoadedStartSnapshot | undefined | null = null;
+    const loadedStart = () =>
+      start === null
+        ? (start = this.loadedStartSnapshot(firstLoadedSeq))
+        : start;
     m.forEach((x, key) => {
       try {
         const p = this.processPatch({ x });
         if (p == null) return;
         if (
-          isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, true) &&
-          loadedFromCut()
+          isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, loadedStart())
         ) {
           this.snapshotRecordsBeforeLoadedRange.add(key);
         } else {
@@ -4143,22 +4211,54 @@ export class SyncDoc extends EventEmitter {
     }
   };
 
-  // Whether the loaded range starts at the patch of a snapshot whose writer
-  // recorded it as a clean cut (seq_info.cut).
-  private loadedFromCutSnapshot = (firstLoadedSeq?: number): boolean => {
-    if (firstLoadedSeq == null) return false;
+  private loadedStartSnapshot = (
+    firstLoadedSeq?: number,
+  ): LoadedStartSnapshot | undefined => {
+    try {
+      return loadedStartSnapshotFromMessages(
+        this.dstream()?.getAll?.() ?? [],
+        firstLoadedSeq,
+      );
+    } catch {
+      return;
+    }
+  };
+
+  // Older snapshots whose patches are ancestors of time, found by following
+  // parents through the loaded patches. A path is a proof even when only
+  // part of the history is loaded.
+  private snapshotAncestors = (time: PatchId): PatchId[] => {
+    const session = this.patchflowSession as any;
+    if (typeof session?.getPatch !== "function") return [];
+    const snapshotTimes = new Set<string>();
     try {
       for (const mesg of this.dstream()?.getAll?.() ?? []) {
-        if (
-          mesg?.is_snapshot &&
-          mesg.seq_info?.seq === firstLoadedSeq &&
-          mesg.seq_info?.cut === true
-        ) {
-          return true;
+        if (mesg?.is_snapshot && (mesg.seq_info?.seq ?? 0) > 0) {
+          snapshotTimes.add(`${mesg.time}`);
         }
       }
     } catch {}
-    return false;
+    snapshotTimes.delete(time);
+    const found: PatchId[] = [];
+    if (snapshotTimes.size === 0) return found;
+    // (a parent before the loaded history is not known: the path ends)
+    const parents = (t: string): string[] => {
+      try {
+        return session.getPatch(t)?.parents ?? [];
+      } catch {
+        return [];
+      }
+    };
+    const seen = new Set<string>([time]);
+    const stack: string[] = [...parents(time)];
+    while (stack.length > 0 && seen.size < SNAPSHOT_ANCESTOR_WALK_LIMIT) {
+      const t = stack.pop()!;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      if (snapshotTimes.has(t)) found.push(t);
+      stack.push(...parents(t));
+    }
+    return found;
   };
 
   private patchesHaveFullHistory = (patches: Patch[]): boolean => {
