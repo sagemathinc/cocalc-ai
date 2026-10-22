@@ -86,115 +86,57 @@ describe("SubvolumeQuota.get", () => {
     }
   });
 
-  it("warns when btrfs reports no enforced limit", async () => {
-    btrfsMock.mockResolvedValueOnce({
-      stdout: `
-Qgroupid Referenced Exclusive Max referenced Max exclusive Path
--------- ---------- --------- -------------- ------------- ----
-0/123    456        456       none           none          project-1
-`,
-      stderr: "",
-    });
-    const quota = new SubvolumeQuota({
-      path: "/mnt/test/project-1",
-      getSubvolumeId: async () => 123,
-      filesystem: {
-        opts: {
-          mount: "/mnt/test",
-        },
-      },
-    } as any);
+  // what `btrfs qgroup show -prc --raw <mount>` prints
+  const SCAN = `
+Qgroupid Referenced Exclusive Max referenced Parent Child Path
+-------- ---------- --------- -------------- ------ ----- ----
+0/5      16384      16384     none           -      -     <toplevel>
+0/123    456        456       1000           -      -     project-1
+0/124    789        789       2000           -      -     project-2
+0/125    1          1         none           -      -     project-3
+`;
 
-    await expect(quota.get()).resolves.toEqual({
+  function quotaFor(n: number) {
+    return new SubvolumeQuota({
+      path: `/mnt/test/project-${n}`,
+      getSubvolumeId: async () => 122 + n,
+      filesystem: { opts: { mount: "/mnt/test" } },
+    } as any);
+  }
+
+  it("warns when btrfs reports no enforced limit", async () => {
+    btrfsMock.mockResolvedValueOnce({ stdout: SCAN, stderr: "" });
+    await expect(quotaFor(3).get()).resolves.toEqual({
       size: 0,
-      used: 456,
-      qgroupid: "0/123",
+      used: 1,
+      qgroupid: "0/125",
       scope: "subvolume",
       warning: "No btrfs quota limit is currently enforced on this subvolume.",
     });
   });
 
-  it("uses path-filtered qgroup reads for each subvolume", async () => {
-    btrfsMock.mockImplementation(async ({ args }: { args: string[] }) => ({
-      stdout:
-        args.at(-1) === "/mnt/test/project-1"
-          ? `
-Qgroupid Referenced Exclusive Max referenced Max exclusive Path
--------- ---------- --------- -------------- ------------- ----
-0/123    456        456       1000           none          project-1
-`
-          : `
-Qgroupid Referenced Exclusive Max referenced Max exclusive Path
--------- ---------- --------- -------------- ------------- ----
-0/124    789        789       2000           none          project-2
-`,
-      stderr: "",
-    }));
-    const quota1 = new SubvolumeQuota({
-      path: "/mnt/test/project-1",
-      getSubvolumeId: async () => 123,
-      filesystem: {
-        opts: {
-          mount: "/mnt/test",
-        },
-      },
-    } as any);
-    const quota2 = new SubvolumeQuota({
-      path: "/mnt/test/project-2",
-      getSubvolumeId: async () => 124,
-      filesystem: {
-        opts: {
-          mount: "/mnt/test",
-        },
-      },
-    } as any);
-
-    await expect(Promise.all([quota1.get(), quota2.get()])).resolves.toEqual([
-      {
-        size: 1000,
-        used: 456,
-        qgroupid: "0/123",
-        scope: "subvolume",
-      },
-      {
-        size: 2000,
-        used: 789,
-        qgroupid: "0/124",
-        scope: "subvolume",
-      },
+  it("reads the filesystem's quotas once for all its subvolumes", async () => {
+    btrfsMock.mockResolvedValue({ stdout: SCAN, stderr: "" });
+    await expect(
+      Promise.all([quotaFor(1).get(), quotaFor(2).get()]),
+    ).resolves.toEqual([
+      { size: 1000, used: 456, qgroupid: "0/123", scope: "subvolume" },
+      { size: 2000, used: 789, qgroupid: "0/124", scope: "subvolume" },
     ]);
-    expect(btrfsMock).toHaveBeenCalledTimes(2);
-    expect(btrfsMock).toHaveBeenNthCalledWith(1, {
+    // and again, later
+    await quotaFor(1).get();
+    expect(btrfsMock).toHaveBeenCalledTimes(1);
+    expect(btrfsMock).toHaveBeenCalledWith({
       verbose: false,
-      args: ["qgroup", "show", "-prcf", "--raw", "/mnt/test/project-1"],
-    });
-    expect(btrfsMock).toHaveBeenNthCalledWith(2, {
-      verbose: false,
-      args: ["qgroup", "show", "-prcf", "--raw", "/mnt/test/project-2"],
+      args: ["qgroup", "show", "-prc", "--raw", "/mnt/test"],
     });
   });
 
-  it("collapses concurrent reads for the same subvolume", async () => {
+  it("passes on what btrfs says about its accounting", async () => {
     btrfsMock.mockResolvedValueOnce({
-      stdout: `
-Qgroupid Referenced Exclusive Max referenced Max exclusive Path
--------- ---------- --------- -------------- ------------- ----
-0/123    456        456       1000           none          project-1
-`,
-      stderr: "",
+      stdout: SCAN,
+      stderr: "WARNING: qgroup data inconsistent, rescan recommended",
     });
-    const quota = new SubvolumeQuota({
-      path: "/mnt/test/project-1",
-      getSubvolumeId: async () => 123,
-      filesystem: {
-        opts: {
-          mount: "/mnt/test",
-        },
-      },
-    } as any);
-
-    await Promise.all([quota.get(), quota.get()]);
-
-    expect(btrfsMock).toHaveBeenCalledTimes(1);
+    expect((await quotaFor(1).get()).warning).toMatch(/inconsistent/);
   });
 });

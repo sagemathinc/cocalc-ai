@@ -107,6 +107,9 @@ describe("hub API routes", () => {
     "hosts.removeSelfHostConnector",
     "hosts.setHostDeletionProtection",
     "hosts.relocateHost",
+    "hosts.upgradeHostSoftware",
+    "hosts.rolloutHostManagedComponents",
+    "hosts.getHostRuntimeDeploymentStatus",
   ];
 
   it.each(HOST_ROUTED)("routes %s by its host id", (name) => {
