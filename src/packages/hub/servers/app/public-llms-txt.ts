@@ -7,7 +7,8 @@
 // assistants. It is generated from the "CoCalc at a glance" docs page and the
 // docs and feature registries, so it can say no more than those pages: the
 // quote is the page's first paragraph, the sections are its headings, and each
-// link uses the linked page's own title and summary. It describes cocalc.ai,
+// link uses the linked page's own title and summary. A last section links the
+// Markdown version of each policy the site serves. It describes cocalc.ai,
 // so it is served only on that host; other deployments return 404.
 
 import type { Request, Response, Router } from "express";
@@ -27,6 +28,8 @@ import {
   isCanonicalPublicSiteHost,
 } from "@cocalc/util/public-site-policy";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import type { PublicPolicyMarkdown } from "@cocalc/util/public-policies-markdown.generated";
+import { builtinPolicies, policyMarkdownPath } from "./public-policies";
 
 const logger = getLogger("hub:servers:public-llms-txt");
 
@@ -91,9 +94,12 @@ function linkLine({ description, label, status, url }: LlmsTxtLink): string {
 }
 
 export function renderLlmsTxt({
+  policies = [],
   product,
   siteName,
 }: {
+  // The built-in policies this site serves; each is linked as Markdown.
+  policies?: readonly PublicPolicyMarkdown[];
   product: string;
   siteName: string;
 }): string | undefined {
@@ -119,6 +125,14 @@ export function renderLlmsTxt({
       ),
     );
   }
+  addSection(
+    "Policies",
+    policies.map((policy) => ({
+      description: policy.description,
+      label: policy.title,
+      url: absoluteUrl(policyMarkdownPath(policy.slug)),
+    })),
+  );
   const definition = page.body
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
@@ -136,6 +150,10 @@ export function serveLlmsTxt(req: Request, res: Response): void {
     const customize = await getCustomize();
     const product = getCocalcProduct();
     const text = renderLlmsTxt({
+      policies: builtinPolicies({
+        policy_pages: customize?.policy_pages,
+        terms_of_service_url: customize?.termsOfServiceURL,
+      }),
       product,
       // The same brand inputs as the public pages' titles (public-shell.ts),
       // so a site still on the default Launchpad name is titled the same way.
