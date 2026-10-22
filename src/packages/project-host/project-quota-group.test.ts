@@ -294,6 +294,32 @@ describe("the project's quota group", () => {
   });
 });
 
+describe("usage with a history volume outside the group", () => {
+  it("counts the history volume's own usage too", async () => {
+    existing.add(HISTORY);
+    // its join failed: the group has only the home (3 GiB), the history
+    // (8 GiB) is outside it
+    filesystem({
+      home: { own: 3 * GiB, limit: 10 * GiB },
+      history: { own: 8 * GiB, member: false },
+      groupLimit: 11 * GiB,
+    });
+    const usage = await projectQuotaWithHistory({
+      project_id: PROJECT,
+      home: HOME,
+      history: HISTORY,
+      quota: { size: 10 * GiB, used: 3 * GiB },
+      env: {},
+    });
+    // full: 3 + 8 GiB fill 10 GiB and its 1 GiB of room
+    expect(usage).toMatchObject({
+      used: 10 * GiB,
+      files_used: 3 * GiB,
+      history_used: 8 * GiB,
+    });
+  });
+});
+
 describe("usage for a start with a lower quota", () => {
   it("is counted against the requested quota, not the current limits", async () => {
     existing.add(HISTORY);
