@@ -246,6 +246,41 @@ describe("the project's quota group", () => {
       history_reserve: GiB,
     });
   });
+
+  it("never takes more room for the history than configured", async () => {
+    existing.add(HISTORY);
+    // the quota was lowered from 50 to 10 GiB, but the group's limit didn't
+    // follow (yet): R is still about 1 GiB, not 45 GiB
+    filesystem({
+      home: { own: 3 * GiB },
+      history: { own: 8 * GiB },
+      groupLimit: 55 * GiB,
+    });
+    expect(
+      await projectQuotaWithHistory({
+        project_id: PROJECT,
+        home: HOME,
+        history: HISTORY,
+        quota: { size: 10 * GiB, used: 3 * GiB },
+        env: {},
+      }),
+    ).toMatchObject({ used: 10 * GiB, history_reserve: GiB });
+    // and a group limit not yet raised leaves less room
+    filesystem({
+      home: { own: 3 * GiB },
+      history: { own: 8 * GiB },
+      groupLimit: 10.5 * GiB,
+    });
+    expect(
+      await projectQuotaWithHistory({
+        project_id: PROJECT,
+        home: HOME,
+        history: HISTORY,
+        quota: { size: 10 * GiB, used: 3 * GiB },
+        env: {},
+      }),
+    ).toMatchObject({ used: 10.5 * GiB, history_reserve: 0.5 * GiB });
+  });
 });
 
 describe("deleteEmptyQuotaGroups", () => {
