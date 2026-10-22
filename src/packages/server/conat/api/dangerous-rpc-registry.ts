@@ -443,6 +443,16 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "merges Zendesk tickets and can add customer-visible comments",
   },
+  "adminSupport.create": {
+    decision: "fresh-auth-required",
+    reason:
+      "opens a new customer-visible Zendesk ticket that emails a customer from the shared support identity",
+  },
+  "adminSupport.createOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed-local helper is only reached from the fresh-auth-checked adminSupport.create RPC or the trusted CRM seed channel",
+  },
   "adminSupport.spam": {
     decision: "fresh-auth-required",
     reason: "deletes a Zendesk ticket as spam and suspends its requester",

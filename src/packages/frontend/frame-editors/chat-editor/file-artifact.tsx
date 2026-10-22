@@ -39,6 +39,15 @@ const BoardArtifact = lazyWithRetry(
   () => import("./board-artifact"),
   "board artifact",
 );
+const CalendarArtifact = lazyWithRetry(
+  () => import("./calendar-artifact"),
+  "calendar artifact",
+);
+
+/** A calendar in the cocalc-calendar format, shown as an agenda. */
+export function isCalendarPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".cal.json");
+}
 
 const TEXT_EXTENSIONS = new Set([
   "md",
@@ -188,6 +197,17 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
           key={`${path}\n${boardFrameUrl}`}
           path={path}
           frameUrl={boardFrameUrl}
+          historical={props.historical}
+          onToolbarActions={props.onToolbarActions}
+        />
+      </Suspense>
+    );
+  if (isCalendarPath(path))
+    return (
+      <Suspense fallback={<div role="status">Loading calendar...</div>}>
+        <CalendarArtifact
+          key={path}
+          path={path}
           historical={props.historical}
           onToolbarActions={props.onToolbarActions}
         />

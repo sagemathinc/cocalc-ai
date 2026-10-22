@@ -1197,6 +1197,12 @@ Reply example:
   cocalc admin support reply 20437 --file /tmp/reply.txt --status solved \\
     --expected-updated-at <timestamp-from-plan> --reason "approved response" --commit
 
+New outgoing ticket (to contact a customer who has no open ticket; sent from the
+shared support identity, so everyone sees the conversation):
+  cocalc admin support create --account <account> --subject "..." --file /tmp/note.txt --reason "approved note"
+  cocalc admin support create --account <account> --subject "..." --file /tmp/note.txt \\
+    --payload-hash <hash-from-plan> --reason "approved note" --commit
+
 Merge comments are private unless their corresponding --*-comment-public flag is set.
 `,
     );
@@ -1607,7 +1613,7 @@ Merge comments are private unless their corresponding --*-comment-public flag is
   }
 
   function supportIdempotencyKey(
-    operation: "update" | "merge" | "spam",
+    operation: "update" | "merge" | "spam" | "create",
     request: Record<string, unknown>,
     explicit: string | undefined,
   ): string {
@@ -2429,6 +2435,87 @@ Merge comments are private unless their corresponding --*-comment-public flag is
           timeout: 60_000,
           idempotency_key: supportIdempotencyKey(
             "spam",
+            request,
+            opts.idempotencyKey,
+          ),
+        });
+      });
+    });
+
+  adminSupport
+    .command("create")
+    .description(
+      "plan or open a new outgoing Zendesk ticket to a customer, from the shared support identity",
+    )
+    .option(
+      "--account <account>",
+      "the customer's CoCalc account (account id or email address)",
+    )
+    .option(
+      "--email <email>",
+      "the customer's email address, when they have no CoCalc account",
+    )
+    .option("--name <name>", "the customer's name (defaults from the account)")
+    .requiredOption("--subject <subject>", "ticket subject")
+    .requiredOption("--file <path>", "read the message body from this file")
+    .option(
+      "--status <status>",
+      `ticket status after sending (${ADMIN_SUPPORT_MUTABLE_TICKET_STATUSES.join(", ")})`,
+      "pending",
+    )
+    .option("--add-tags <tags>", "comma-separated extra tags")
+    .option(
+      "--payload-hash <hash>",
+      "payload_hash returned by the dry-run; required with --commit",
+    )
+    .option("--idempotency-key <key>", "stable logical request key")
+    .option(
+      "--commit",
+      "open the ticket and email the customer; otherwise only show a dry-run",
+      false,
+    )
+    .requiredOption("--reason <reason>", "human-readable audit reason")
+    .action(async (opts: any, command: Command) => {
+      await withContext(command, "admin support create", async (ctx) => {
+        if (!!opts.account === !!opts.email) {
+          throw new Error("specify exactly one of --account or --email");
+        }
+        const body = await readSupportComment({
+          file: opts.file,
+          textOption: "--body",
+          fileOption: "--file",
+        });
+        if (!body) throw new Error("message body file must be non-empty");
+        const request = {
+          ...(opts.account
+            ? {
+                requester_account_id: await resolveTargetAccountId(
+                  ctx,
+                  opts.account,
+                ),
+              }
+            : { requester_email: `${opts.email}`.trim() }),
+          ...(opts.name ? { requester_name: `${opts.name}` } : {}),
+          subject: `${opts.subject}`,
+          public_reply: body,
+          status: parseSupportStatus(opts.status),
+          add_tags: parseSupportTags(opts.addTags) ?? [],
+          reason: opts.reason,
+        };
+        if (!opts.commit) {
+          return await ctx.hub.adminSupport.planCreate(request);
+        }
+        if (!opts.payloadHash?.trim()) {
+          throw new Error(
+            "--payload-hash is required with --commit; use the value returned by the dry-run",
+          );
+        }
+        return await ctx.hub.adminSupport.create({
+          ...request,
+          payload_hash: opts.payloadHash.trim(),
+          timeout: 60_000,
+          idempotency_key: supportIdempotencyKey(
+            "create",
             request,
             opts.idempotencyKey,
           ),
