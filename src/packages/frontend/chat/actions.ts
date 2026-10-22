@@ -93,7 +93,7 @@ import {
   openProjectReadState,
   type ProjectReadStateStore,
 } from "@cocalc/conat/project/read-state";
-import type { ReaderState } from "./reader-model";
+import type { ReaderChange, ReaderState } from "./reader-model";
 import {
   field,
   historyArray,
@@ -563,10 +563,7 @@ export class ChatActions extends Actions<ChatState> {
   private codexAttentionOpenToken = 0;
   // Reader changes made before the read-state store opened: applied, in
   // order, to what it holds once it opens.
-  private pendingReaderUpdates = new Map<
-    string,
-    ((state: ReaderState) => ReaderState)[]
-  >();
+  private pendingReaderUpdates = new Map<string, ReaderChange[]>();
   private pendingThreadReads: Map<
     string,
     { count: number; messageId: string; at: Date }
@@ -781,18 +778,13 @@ export class ChatActions extends Actions<ChatState> {
     store: ProjectReadStateStore,
     path: string,
   ): void => {
-    for (const [threadId, updates] of this.pendingReaderUpdates) {
-      const state = updates.reduce(
-        (current, update) => update(current),
-        readerStateFrom(store, path, threadId),
-      );
-      store.set(chatReaderStateKey(path, threadId), {
-        kind: "chat-reader",
-        t: new Date(),
-        ...state,
-      });
-    }
+    const pendingReader = [...this.pendingReaderUpdates];
     this.pendingReaderUpdates.clear();
+    for (const [threadId, changes] of pendingReader) {
+      for (const change of changes) {
+        this.applyReaderChange(store, path, threadId, change);
+      }
+    }
     if (this.pendingThreadReads.size === 0) {
       return;
     }
@@ -2486,20 +2478,46 @@ export class ChatActions extends Actions<ChatState> {
     const store = this.ensureProjectReadState();
     // Not open yet: what the queued changes make of nothing, meanwhile.
     const pending = this.pendingReaderUpdates.get(threadId) ?? [];
+    const watermark = this.readerWatermark(threadId);
     return pending.reduce(
-      (current, update) => update(current),
+      (current, change) => change(current, watermark).state,
       store ? readerStateFrom(store, path, threadId) : {},
     );
+  };
+
+  // The index of the last message read in order (-1 for none).
+  private readerWatermark = (threadId: string): number => {
+    const accountStore =
+      this.redux?.getStore?.("account") ?? redux.getStore("account");
+    const account_id = accountStore?.get_account_id?.();
+    return (account_id ? this.getThreadReadCount(threadId, account_id) : 0) - 1;
+  };
+
+  // Both the reader state and the watermark come from this one transition,
+  // on the stored state and the watermark as they are now.
+  private applyReaderChange = (
+    store: ProjectReadStateStore,
+    path: string,
+    threadId: string,
+    change: ReaderChange,
+  ): void => {
+    const watermark = this.readerWatermark(threadId);
+    const next = change(readerStateFrom(store, path, threadId), watermark);
+    store.set(chatReaderStateKey(path, threadId), {
+      kind: "chat-reader",
+      t: new Date(),
+      ...next.state,
+    });
+    if (next.watermarkCount != null && next.watermarkCount > watermark + 1) {
+      this.markThreadRead(threadId, next.watermarkCount);
+    }
   };
 
   /**
    * Change a thread's reader state. Before the read state opens, the change
    * waits and is applied to what it holds then, not to a guess.
    */
-  updateReaderState = (
-    threadKey: string,
-    update: (state: ReaderState) => ReaderState,
-  ): boolean => {
+  updateReaderState = (threadKey: string, change: ReaderChange): boolean => {
     const threadId = this.normalizeThreadId(threadKey);
     const path = this.store?.get("path");
     if (!threadId || !path) return false;
@@ -2508,16 +2526,12 @@ export class ChatActions extends Actions<ChatState> {
     if (store == null) {
       this.pendingReaderUpdates.set(threadId, [
         ...(this.pendingReaderUpdates.get(threadId) ?? []),
-        update,
+        change,
       ]);
       this.touchReadStateVersion();
       return true;
     }
-    store.set(chatReaderStateKey(path, threadId), {
-      kind: "chat-reader",
-      t: new Date(),
-      ...update(readerStateFrom(store, path, threadId)),
-    });
+    this.applyReaderChange(store, path, threadId, change);
     this.touchReadStateVersion();
     return true;
   };

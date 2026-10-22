@@ -27,6 +27,7 @@ import {
   markItemUnread,
   readerItems,
   setItemArchived,
+  type ReaderChange,
   type ReaderItem,
   type ReaderState,
 } from "./reader-model";
@@ -170,24 +171,16 @@ export function ChatReaderView({
   // A change is applied to the stored state, which may differ from what is
   // shown here (another device, or not loaded yet).
   const save = useCallback(
-    (
-      change: (state: ReaderState) => {
-        state: ReaderState;
-        watermarkCount?: number;
-      },
-    ) => {
-      actions.updateReaderState(threadId, (current) => change(current).state);
-      const { watermarkCount } = change(state);
-      if (watermarkCount != null && watermarkCount > watermark + 1)
-        actions.markThreadRead(threadId, watermarkCount);
-    },
-    [actions, threadId, watermark, state],
+    (change: ReaderChange) => actions.updateReaderState(threadId, change),
+    [actions, threadId],
   );
 
   // Opening an item, or a new reply arriving while it is open, reads it.
   useEffect(() => {
     if (!selected || isItemRead(selected, watermark, state)) return;
-    save((current) => markItemRead(items, selected, watermark, current));
+    save((current, watermark) =>
+      markItemRead(items, selected, watermark, current),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id, selected?.lastId]);
 
@@ -402,26 +395,33 @@ export function ChatReaderView({
           );
         })}
       </div>
-      {newCount > 0 ? (
-        <Button
-          size="small"
-          shape="round"
-          type="primary"
-          style={{
-            position: "absolute",
-            bottom: 12,
-            left: "50%",
-            transform: "translateX(-50%)",
-          }}
-          onClick={() => {
-            const list = listRef.current;
-            list?.scrollTo?.({ top: list.scrollHeight });
-            setSeenCount(visible.length);
-          }}
-        >
-          {newCount} new
-        </Button>
-      ) : null}
+      {/* Always present, so screen readers announce what appears in it. */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-label="New messages"
+        style={{
+          position: "absolute",
+          bottom: 12,
+          left: "50%",
+          transform: "translateX(-50%)",
+        }}
+      >
+        {newCount > 0 ? (
+          <Button
+            size="small"
+            shape="round"
+            type="primary"
+            onClick={() => {
+              const list = listRef.current;
+              list?.scrollTo?.({ top: list.scrollHeight });
+              setSeenCount(visible.length);
+            }}
+          >
+            {newCount} new
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 

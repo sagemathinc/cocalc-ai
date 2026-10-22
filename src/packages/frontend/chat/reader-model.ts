@@ -31,6 +31,16 @@ export interface ReaderItem {
 
 export type ReaderState = Omit<ChatReaderStateEntry, "kind" | "t">;
 
+/**
+ * A change to a thread's reader state, applied to the stored state and the
+ * watermark (the index of the last message read in order) as they are when
+ * it is saved. watermarkCount: the new number of messages read in order.
+ */
+export type ReaderChange = (
+  state: ReaderState,
+  watermark: number,
+) => { state: ReaderState; watermarkCount?: number };
+
 /** How many ids each list keeps; the oldest go first. */
 export const READER_STATE_LIMITS = { read: 1000, unread: 1000, archived: 2000 };
 

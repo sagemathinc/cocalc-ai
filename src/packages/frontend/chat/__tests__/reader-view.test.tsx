@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { ChatReaderView } from "../reader-view";
-import type { ReaderState } from "../reader-model";
+import type { ReaderChange, ReaderState } from "../reader-model";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => undefined,
@@ -49,8 +49,11 @@ function setup(initial: any[], readCount = 0, props: object = {}) {
     const [version, setVersion] = useState(0);
     setMessages = set;
     actions.updateReaderState = jest.fn(
-      (_thread: string, update: (s: ReaderState) => ReaderState) => {
-        state = update(state);
+      (_thread: string, change: ReaderChange) => {
+        const next = change(state, count - 1);
+        state = next.state;
+        if (next.watermarkCount != null && next.watermarkCount > count)
+          count = next.watermarkCount;
         setVersion((v) => v + 1);
         return true;
       },
@@ -157,7 +160,12 @@ test("new items wait behind a button; mark all read", () => {
   Object.defineProperty(list, "scrollHeight", { value: 1000 });
   Object.defineProperty(list, "clientHeight", { value: 100 });
   setMessages([...thread, person("p4", "fourth", 5), person("p5", "fifth", 6)]);
-  expect(screen.getByRole("button", { name: "2 new" })).toBeInTheDocument();
+  // Announced: it appears in a live region that was already there.
+  const status = screen.getByRole("status", { name: "New messages" });
+  expect(status).toHaveAttribute("aria-live", "polite");
+  expect(
+    within(status).getByRole("button", { name: "2 new" }),
+  ).toBeInTheDocument();
   expect(screen.getByText("2 unread")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
   expect(count()).toBe(6);
