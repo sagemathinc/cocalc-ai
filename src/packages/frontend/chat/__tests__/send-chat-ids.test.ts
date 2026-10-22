@@ -2101,15 +2101,20 @@ describe("deleteMessage rewiring", () => {
 });
 
 describe("reader state", () => {
-  it("is kept until the read-state store opens, then saved", async () => {
+  it("changes made before the read state opens are applied to what it holds", async () => {
     const actions = makeActions();
     let resolveClient!: (client: unknown) => void;
     (webapp_client.conat_client as any).projectConat = jest.fn(
       () => new Promise((resolve) => (resolveClient = resolve)),
     );
+    // Saved earlier, on another device: an archive.
     const store: any = {
       set: jest.fn(),
-      get: jest.fn(() => undefined),
+      get: jest.fn(() => ({
+        kind: "chat-reader",
+        t: new Date(1),
+        a: { old: "old" },
+      })),
       onChange: () => () => {},
       markChatThreadRead: jest.fn(),
       isClosed: () => false,
@@ -2119,25 +2124,38 @@ describe("reader state", () => {
       .spyOn(readStateModule, "openProjectReadState")
       .mockResolvedValue(store);
     try {
-      const state = { u: ["m1"], a: { m2: "m3" } };
-      expect(actions.setReaderState("thread-1", state)).toBe(true);
-      // Not open yet: nothing saved, but the reader sees it.
+      const markUnread = (state: any) => ({
+        ...state,
+        u: [...(state.u ?? []), "m1"],
+      });
+      expect(actions.updateReaderState("thread-1", markUnread)).toBe(true);
+      // Not open yet: nothing saved, but the reader sees the change.
       expect(store.set).not.toHaveBeenCalled();
-      expect(actions.getReaderState("thread-1")).toEqual(state);
+      expect(actions.getReaderState("thread-1")).toEqual({ u: ["m1"] });
       resolveClient({});
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(open).toHaveBeenCalled();
+      // The earlier archive survives.
       expect(store.set).toHaveBeenCalledWith(
         "chat-reader:thread-1:x.chat",
-        expect.objectContaining({ kind: "chat-reader", ...state }),
+        expect.objectContaining({
+          kind: "chat-reader",
+          a: { old: "old" },
+          u: ["m1"],
+        }),
       );
-      // Saved: now read from the store.
+      // Open: later changes apply to the store directly.
       store.get.mockReturnValue({
         kind: "chat-reader",
         t: new Date(),
         u: ["x"],
       });
       expect(actions.getReaderState("thread-1")).toEqual({ u: ["x"] });
+      actions.updateReaderState("thread-1", markUnread);
+      expect(store.set).toHaveBeenLastCalledWith(
+        "chat-reader:thread-1:x.chat",
+        expect.objectContaining({ u: ["x", "m1"] }),
+      );
     } finally {
       open.mockRestore();
     }

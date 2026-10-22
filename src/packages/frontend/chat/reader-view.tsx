@@ -146,27 +146,48 @@ export function ChatReaderView({
         : items.filter((item) => !isItemArchived(item, state)),
     [items, state, showArchived],
   );
+  // Counted over every item, as Mark all read reads every item; archived
+  // ones are named apart while hidden.
   const unread = useMemo(
-    () => visible.filter((item) => !isItemRead(item, watermark, state)).length,
-    [visible, watermark, state],
+    () => items.filter((item) => !isItemRead(item, watermark, state)).length,
+    [items, watermark, state],
+  );
+  const hiddenUnread = useMemo(
+    () =>
+      showArchived
+        ? 0
+        : items.filter(
+            (item) =>
+              isItemArchived(item, state) &&
+              !isItemRead(item, watermark, state),
+          ).length,
+    [items, watermark, state, showArchived],
   );
   const [selectedId, setSelectedId] = useState<string>();
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
   const selected: ReaderItem | undefined = visible[selectedIndex];
 
+  // A change is applied to the stored state, which may differ from what is
+  // shown here (another device, or not loaded yet).
   const save = useCallback(
-    (next: { state: ReaderState; watermarkCount?: number }) => {
-      actions.setReaderState(threadId, next.state);
-      if (next.watermarkCount != null && next.watermarkCount > watermark + 1)
-        actions.markThreadRead(threadId, next.watermarkCount);
+    (
+      change: (state: ReaderState) => {
+        state: ReaderState;
+        watermarkCount?: number;
+      },
+    ) => {
+      actions.updateReaderState(threadId, (current) => change(current).state);
+      const { watermarkCount } = change(state);
+      if (watermarkCount != null && watermarkCount > watermark + 1)
+        actions.markThreadRead(threadId, watermarkCount);
     },
-    [actions, threadId, watermark],
+    [actions, threadId, watermark, state],
   );
 
   // Opening an item, or a new reply arriving while it is open, reads it.
   useEffect(() => {
     if (!selected || isItemRead(selected, watermark, state)) return;
-    save(markItemRead(items, selected, watermark, state));
+    save((current) => markItemRead(items, selected, watermark, current));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id, selected?.lastId]);
 
@@ -179,7 +200,9 @@ export function ChatReaderView({
   };
   const archive = (item: ReaderItem) => {
     const archived = !isItemArchived(item, state);
-    save({ state: setItemArchived(item, archived, state) });
+    save((current) => ({
+      state: setItemArchived(item, archived, current),
+    }));
     if (archived && !showArchived && item.id === selectedId) {
       const next =
         findItem(visible, selectedIndex, 1) ??
@@ -188,7 +211,7 @@ export function ChatReaderView({
     }
   };
   const markUnread = (item: ReaderItem) =>
-    save({ state: markItemUnread(item, state) });
+    save((current) => ({ state: markItemUnread(item, current) }));
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -238,6 +261,13 @@ export function ChatReaderView({
   // New items wait behind a button instead of moving the list.
   const listRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Back to the list (narrow): the keys stay with it once it is shown again.
+  const focusListRef = useRef(false);
+  useEffect(() => {
+    if (!focusListRef.current || !listRef.current) return;
+    focusListRef.current = false;
+    listRef.current.focus({ preventScroll: true });
+  }, [selected?.id]);
   // Narrow, the open item replaces the list: the whole reader takes the keys.
   const focusKeys = () =>
     (narrow ? rootRef : listRef).current?.focus({ preventScroll: true });
@@ -408,7 +438,13 @@ export function ChatReaderView({
     >
       <Space wrap style={{ marginBottom: 8 }}>
         {narrow ? (
-          <Button size="small" onClick={() => setSelectedId(undefined)}>
+          <Button
+            size="small"
+            onClick={() => {
+              focusListRef.current = true;
+              setSelectedId(undefined);
+            }}
+          >
             <Icon name="arrow-left" /> All messages
           </Button>
         ) : null}
@@ -506,11 +542,15 @@ export function ChatReaderView({
           flexWrap: "wrap",
         }}
       >
-        <span>{unread ? `${unread} unread` : "All read"}</span>
+        <span>
+          {unread
+            ? `${unread} unread${hiddenUnread ? ` (${hiddenUnread} archived)` : ""}`
+            : "All read"}
+        </span>
         <Button
           size="small"
           disabled={!unread}
-          onClick={() => save(markAllRead(items, state))}
+          onClick={() => save((current) => markAllRead(items, current))}
         >
           Mark all read
         </Button>

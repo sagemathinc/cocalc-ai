@@ -423,6 +423,17 @@ function showChatNotificationSuccessToast(
   });
 }
 
+function readerStateFrom(
+  store: ProjectReadStateStore,
+  path: string,
+  threadId: string,
+): ReaderState {
+  const entry = store.get(chatReaderStateKey(path, threadId));
+  if (entry?.kind !== "chat-reader") return {};
+  const { kind: _kind, t: _t, ...state } = entry;
+  return state;
+}
+
 export function collectThreadMessages({
   messages,
   threadId,
@@ -550,8 +561,12 @@ export class ChatActions extends Actions<ChatState> {
   private projectReadStateInit?: Promise<ProjectReadStateStore | undefined>;
   private projectReadStateCleanup?: () => void;
   private codexAttentionOpenToken = 0;
-  // Reader state written before the read-state store opened; saved then.
-  private pendingReaderStates = new Map<string, ReaderState>();
+  // Reader changes made before the read-state store opened: applied, in
+  // order, to what it holds once it opens.
+  private pendingReaderUpdates = new Map<
+    string,
+    ((state: ReaderState) => ReaderState)[]
+  >();
   private pendingThreadReads: Map<
     string,
     { count: number; messageId: string; at: Date }
@@ -759,21 +774,25 @@ export class ChatActions extends Actions<ChatState> {
     this.projectReadStateKey = undefined;
     this.projectReadStateInit = undefined;
     this.pendingThreadReads.clear();
-    this.pendingReaderStates.clear();
+    this.pendingReaderUpdates.clear();
   };
 
   private flushPendingThreadReads = (
     store: ProjectReadStateStore,
     path: string,
   ): void => {
-    for (const [threadId, state] of this.pendingReaderStates) {
+    for (const [threadId, updates] of this.pendingReaderUpdates) {
+      const state = updates.reduce(
+        (current, update) => update(current),
+        readerStateFrom(store, path, threadId),
+      );
       store.set(chatReaderStateKey(path, threadId), {
         kind: "chat-reader",
         t: new Date(),
         ...state,
       });
     }
-    this.pendingReaderStates.clear();
+    this.pendingReaderUpdates.clear();
     if (this.pendingThreadReads.size === 0) {
       return;
     }
@@ -2464,32 +2483,40 @@ export class ChatActions extends Actions<ChatState> {
     const threadId = this.normalizeThreadId(threadKey);
     const path = this.store?.get("path");
     if (!threadId || !path) return {};
-    const pending = this.pendingReaderStates.get(threadId);
-    if (pending) return pending;
-    const entry = this.ensureProjectReadState()?.get(
-      chatReaderStateKey(path, threadId),
+    const store = this.ensureProjectReadState();
+    // Not open yet: what the queued changes make of nothing, meanwhile.
+    const pending = this.pendingReaderUpdates.get(threadId) ?? [];
+    return pending.reduce(
+      (current, update) => update(current),
+      store ? readerStateFrom(store, path, threadId) : {},
     );
-    if (entry?.kind !== "chat-reader") return {};
-    const { kind: _kind, t: _t, ...state } = entry;
-    return state;
   };
 
-  /** Saved once the read state opens, if it is not open yet. */
-  setReaderState = (threadKey: string, state: ReaderState): boolean => {
+  /**
+   * Change a thread's reader state. Before the read state opens, the change
+   * waits and is applied to what it holds then, not to a guess.
+   */
+  updateReaderState = (
+    threadKey: string,
+    update: (state: ReaderState) => ReaderState,
+  ): boolean => {
     const threadId = this.normalizeThreadId(threadKey);
     const path = this.store?.get("path");
     if (!threadId || !path) return false;
-    // Opening it first: a new store starts with no pending writes.
+    // Opening it first: a new store starts with no pending changes.
     const store = this.ensureProjectReadState();
     if (store == null) {
-      this.pendingReaderStates.set(threadId, state);
+      this.pendingReaderUpdates.set(threadId, [
+        ...(this.pendingReaderUpdates.get(threadId) ?? []),
+        update,
+      ]);
       this.touchReadStateVersion();
       return true;
     }
     store.set(chatReaderStateKey(path, threadId), {
       kind: "chat-reader",
       t: new Date(),
-      ...state,
+      ...update(readerStateFrom(store, path, threadId)),
     });
     this.touchReadStateVersion();
     return true;

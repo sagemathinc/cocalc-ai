@@ -48,11 +48,13 @@ function setup(initial: any[], readCount = 0, props: object = {}) {
     const [messages, set] = useState(initial);
     const [version, setVersion] = useState(0);
     setMessages = set;
-    actions.setReaderState = jest.fn((_thread: string, next: ReaderState) => {
-      state = next;
-      setVersion((v) => v + 1);
-      return true;
-    });
+    actions.updateReaderState = jest.fn(
+      (_thread: string, update: (s: ReaderState) => ReaderState) => {
+        state = update(state);
+        setVersion((v) => v + 1);
+        return true;
+      },
+    );
     actions.markThreadRead = jest.fn((_thread: string, next: number) => {
       count = next;
       setVersion((v) => v + 1);
@@ -160,4 +162,26 @@ test("new items wait behind a button; mark all read", () => {
   fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
   expect(count()).toBe(6);
   expect(screen.getByText("All read")).toBeInTheDocument();
+});
+
+test("unread archived items still count while hidden", async () => {
+  setup(thread, 4, { autoFocus: true });
+  const keys = user();
+  await keys.click(screen.getByText(/second question/));
+  await keys.keyboard("m");
+  await keys.keyboard("y");
+  expect(options()).toHaveLength(2);
+  expect(screen.getByText("1 unread (1 archived)")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Mark all read" })).toBeEnabled();
+});
+
+test("narrow: back to the list keeps the keys working", async () => {
+  setup(thread, 0, { narrow: true });
+  const keys = user();
+  await keys.click(screen.getByText(/second question/));
+  expect(screen.queryByRole("listbox")).toBeNull();
+  await keys.click(screen.getByRole("button", { name: "All messages" }));
+  expect(document.activeElement).toBe(screen.getByRole("listbox"));
+  await keys.keyboard("j");
+  expect(screen.getByRole("article")).toHaveTextContent("first question");
 });
