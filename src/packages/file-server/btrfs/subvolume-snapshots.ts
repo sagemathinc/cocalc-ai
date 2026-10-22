@@ -9,7 +9,8 @@ import { ConatError } from "@cocalc/conat/core/client";
 import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { getSubvolumeField, invalidateSubvolumeMetadata } from "./subvolume";
-import { parsePlainQgroupShow } from "./subvolume-quota";
+import { subvolumeMount } from "./subvolume-quota";
+import { lookupQgroup } from "./qgroup-scan";
 import { btrfsQuotasDisabled } from "./config";
 import {
   captureSnapshotData,
@@ -608,36 +609,24 @@ export class SubvolumeSnapshots {
       return { name, used: 0, quota: 0, exclusive: 0 };
     }
     const snapshotPath = this.snapshotAbsolutePath(name);
-    let row;
-    try {
-      const { stdout } = await btrfs({
-        args: [
-          "--format=json",
-          "qgroup",
-          "show",
-          "-ref",
-          "--raw",
-          snapshotPath,
-        ],
-      });
-      const x = JSON.parse(stdout);
-      row = x["qgroup-show"]?.[0];
-    } catch (err: any) {
-      const stderr =
-        typeof err?.stderr === "string" ? err.stderr : `${err?.message ?? err}`;
-      if (!stderr.includes("unrecognized option '--format=json'")) {
-        throw err;
-      }
-      const { stdout } = await btrfs({
-        args: ["qgroup", "show", "-ref", "--raw", snapshotPath],
-      });
-      row = parsePlainQgroupShow(stdout)[0];
-    }
+    // (one read of the filesystem's quotas for all of them, qgroup-scan.ts)
+    const found = await lookupQgroup({
+      mount: subvolumeMount(this.subvolume),
+      path: snapshotPath,
+      getSubvolumeId: async () =>
+        parseInt(await getSubvolumeField(snapshotPath, "Subvolume ID")),
+    });
+    const row = found?.row;
     if (!row) {
       throw new Error(`no qgroup info for snapshot ${snapshotPath}`);
     }
     const { referenced, max_referenced, exclusive } = row;
-    return { name, used: referenced, quota: max_referenced, exclusive };
+    return {
+      name,
+      used: referenced,
+      quota: max_referenced === "none" ? 0 : max_referenced,
+      exclusive,
+    };
   };
 
   allUsage = async (): Promise<SnapshotUsage[]> => {
