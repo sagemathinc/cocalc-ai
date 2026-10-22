@@ -99,6 +99,21 @@ jest.mock("@cocalc/file-server/btrfs/util", () => {
     ),
   };
 });
+// what was read about subvolumes and quotas (file-server qgroup-scan.ts)
+const forgotten: string[][] = [];
+const notedLimits: any[] = [];
+jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
+  ...jest.requireActual("@cocalc/file-server/btrfs/operation-cache"),
+  forgetSubvolumePaths: (...paths: string[]) => {
+    forgotten.push(paths);
+  },
+}));
+jest.mock("@cocalc/file-server/btrfs/qgroup-scan", () => ({
+  ...jest.requireActual("@cocalc/file-server/btrfs/qgroup-scan"),
+  noteQgroupLimit: async (opts: any) => {
+    notedLimits.push(opts);
+  },
+}));
 jest.mock("@cocalc/file-server/btrfs/quota-group", () => ({
   ...jest.requireActual("@cocalc/file-server/btrfs/quota-group"),
   addToQuotaGroup: jest.fn(),
@@ -926,8 +941,15 @@ describe("in the project-host", () => {
       mergedWhileFenced ||= fenced;
       return await getQuota(path);
     };
+    forgotten.length = 0;
     await mergeRestoredHistory({ project_id: PROJECT, source, env, ops });
     expect(mergedWhileFenced).toBe(true);
+    // another subvolume at the volume's path: what was read about the paths
+    // no longer holds
+    expect(forgotten).toEqual([
+      [root, expect.stringMatching(/\/\.persist-import\/replaced-/)],
+      [expect.stringMatching(/\/\.persist-import\/restore-/), root],
+    ]);
     // the merge counts against the project's quota before it is used
     expect(joins(ops)).toEqual([
       `${PROJECT}:${mount}/staged (required)`,
@@ -1799,5 +1821,19 @@ describe("in the project-host", () => {
     } finally {
       delete process.env.COCALC_PERSIST_PROJECT_VOLUME;
     }
+  });
+});
+
+describe("btrfsOps.setQuota", () => {
+  it("updates what's read of the filesystem's quotas too", async () => {
+    notedLimits.length = 0;
+    const path = join(mount, `project-${PROJECT}-persist`);
+    await mkdir(path, { recursive: true });
+    await btrfsOps.setQuota(path, 1234);
+    expect(btrfs).toHaveBeenCalledWith({
+      args: ["qgroup", "limit", "1234", path, mount],
+      verbose: false,
+    });
+    expect(notedLimits).toEqual([{ mount, path, size: 1234 }]);
   });
 });

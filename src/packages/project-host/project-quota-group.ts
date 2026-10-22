@@ -199,7 +199,7 @@ export async function syncProjectQuotaGroup({
   // read again (one project after another, e.g., when they all join)
   const members = [home];
   if (history != null && (await exists(history))) members.push(history);
-  noteQgroupGroup({ mount, group, members, size });
+  await noteQgroupGroup({ mount, group, members, size });
 }
 
 // Puts a home or persist volume the project gets (e.g., by a restore) in its
@@ -225,7 +225,7 @@ export async function joinProjectQuotaGroup({
   await unlessRefused(
     async () => await addToQuotaGroup({ mount, group, path }),
   );
-  noteQgroupGroup({ mount, group, members: [path] });
+  await noteQgroupGroup({ mount, group, members: [path] });
 }
 
 // Destroys the quota groups of deleted projects: those with no members (the

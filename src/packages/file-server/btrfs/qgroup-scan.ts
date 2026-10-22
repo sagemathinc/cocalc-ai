@@ -253,9 +253,10 @@ export async function noteQgroupLimit({
 
 // This host put the subvolumes at `members` (all existing) in `group`, with
 // `size` as its limit if given: the cached scan says so too (or is dropped,
-// if it can't place one).  With simple quotas a subvolume's usage counts in
+// if it can't place one).  Members are found by their ids as they are now
+// (as for noteQgroupLimit).  With simple quotas a subvolume's usage counts in
 // a group as soon as it joins.
-export function noteQgroupGroup({
+export async function noteQgroupGroup({
   mount,
   group,
   members,
@@ -265,15 +266,26 @@ export function noteQgroupGroup({
   group: string;
   members: string[];
   size?: number;
-}): void {
-  if (inflight.has(mount)) {
+}): Promise<void> {
+  const generation = generations.get(mount) ?? 0;
+  if (inflight.has(mount) || !scans.has(mount)) {
+    invalidateQgroupScan(mount);
+    return;
+  }
+  let ids: number[];
+  try {
+    ids = await Promise.all(members.map(currentSubvolumeId));
+  } catch {
     invalidateQgroupScan(mount);
     return;
   }
   const s = scans.get(mount);
-  if (s == null) return;
-  const rows = members.map((path) => s.byPath.get(relative(mount, path)));
-  if (rows.some((row) => row == null)) {
+  const rows = ids.map((id) => s?.rows.get(`0/${id}`));
+  if (
+    s == null ||
+    (generations.get(mount) ?? 0) !== generation ||
+    rows.some((row) => row == null)
+  ) {
     invalidateQgroupScan(mount);
     return;
   }
