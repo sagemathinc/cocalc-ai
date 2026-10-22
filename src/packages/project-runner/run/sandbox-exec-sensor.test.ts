@@ -127,4 +127,60 @@ describe("sandboxExec for sensors", () => {
       }),
     ).rejects.toThrow(/tmpfs/);
   });
+
+  it("names each run's container uniquely, even in the same millisecond", async () => {
+    const now = jest.spyOn(Date, "now").mockReturnValue(1792637287987);
+    try {
+      const run = () =>
+        sandboxExec({
+          project_id: PROJECT,
+          script: "",
+          useEphemeral: true,
+          argv: ["/bin/true"],
+        });
+      await Promise.all([run(), run(), run()]);
+    } finally {
+      now.mockRestore();
+    }
+    const names = execFileMock.mock.calls.map((call) => {
+      const args = call[1] as string[];
+      return args[args.indexOf("--name") + 1];
+    });
+    expect(names).toHaveLength(3);
+    expect(new Set(names).size).toBe(3);
+    for (const name of names)
+      expect(name).toMatch(
+        new RegExp(`^sandbox-${PROJECT}-1792637287987-[0-9a-f]{8}$`),
+      );
+  });
+
+  it("removes a run's container when the run is killed at its deadline", async () => {
+    execFileMock.mockImplementation((_c, args, _o, callback) => {
+      if ((args as string[])[0] === "rm") callback(undefined, "", "");
+      else callback({ killed: true, signal: "SIGKILL", code: null }, "", "");
+    });
+    const result = await sandboxExec({
+      project_id: PROJECT,
+      script: "",
+      useEphemeral: true,
+      argv: ["/bin/sleep", "1000"],
+      timeoutMs: 10,
+    });
+    expect(result.signal).toBe("SIGKILL");
+    const [run, rm] = execFileMock.mock.calls;
+    const runArgs = run[1] as string[];
+    const name = runArgs[runArgs.indexOf("--name") + 1];
+    expect(rm[0]).toBe("podman");
+    expect(rm[1]).toEqual(["rm", "--force", "--time", "0", name]);
+  });
+
+  it("leaves a run that ended by itself to --rm", async () => {
+    await sandboxExec({
+      project_id: PROJECT,
+      script: "",
+      useEphemeral: true,
+      argv: ["/bin/true"],
+    });
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
 });
