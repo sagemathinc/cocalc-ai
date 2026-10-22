@@ -233,6 +233,54 @@ export function noteQgroupLimit({
   row.max_referenced = bytes;
 }
 
+// This host put the subvolumes at `members` (all existing) in `group`, with
+// `size` as its limit if given: the cached scan says so too (or is dropped,
+// if it can't place one).  With simple quotas a subvolume's usage counts in
+// a group as soon as it joins.
+export function noteQgroupGroup({
+  mount,
+  group,
+  members,
+  size,
+}: {
+  mount: string;
+  group: string;
+  members: string[];
+  size?: number;
+}): void {
+  if (inflight.has(mount)) {
+    invalidateQgroupScan(mount);
+    return;
+  }
+  const s = scans.get(mount);
+  if (s == null) return;
+  const rows = members.map((path) => s.byPath.get(relative(mount, path)));
+  if (rows.some((row) => row == null)) {
+    invalidateQgroupScan(mount);
+    return;
+  }
+  let row = s.rows.get(group);
+  if (row == null) {
+    row = {
+      qgroupid: group,
+      referenced: 0,
+      exclusive: 0,
+      max_referenced: "none",
+      parents: [],
+      children: [],
+    };
+    s.rows.set(group, row);
+  }
+  for (const member of rows as QgroupScanRow[]) {
+    if (member.parents.includes(group)) continue;
+    member.parents.push(group);
+    row.children.push(member.qgroupid);
+    row.referenced += member.referenced;
+    row.exclusive += member.exclusive;
+  }
+  if (size != null) row.max_referenced = size;
+}
+
 export function resetQgroupScansForTest(): void {
   scans.clear();
   inflight.clear();

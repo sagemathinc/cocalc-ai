@@ -31,22 +31,25 @@ total is exact; how it splits into files and history is approximate.
 */
 
 import {
-  cachedBtrfsQgroupShowRawForPath,
-  invalidateBtrfsQgroupShowRaw,
-} from "@cocalc/file-server/btrfs/operation-cache";
+  getQgroupScan,
+  invalidateQgroupScan,
+  lookupQgroup,
+  noteQgroupGroup,
+} from "@cocalc/file-server/btrfs/qgroup-scan";
+import { cachedBtrfsSubvolumeShow } from "@cocalc/file-server/btrfs/operation-cache";
 import {
   addToQuotaGroup,
   destroyQuotaGroup,
-  parseQgroupRelations,
 } from "@cocalc/file-server/btrfs/quota-group";
 import { queueSyncQuotaGroup } from "@cocalc/file-server/btrfs/quota-queue";
 import type { BtrfsMutationPriority } from "@cocalc/file-server/btrfs/mutation-context";
 import { btrfsQuotasDisabled } from "@cocalc/file-server/btrfs/config";
-import { btrfs, refusedByStorageWrapper } from "@cocalc/file-server/btrfs/util";
+import { refusedByStorageWrapper } from "@cocalc/file-server/btrfs/util";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import getLogger from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import { randomInt } from "node:crypto";
+import { dirname } from "node:path";
 
 const logger = getLogger("project-host:project-quota-group");
 
@@ -177,12 +180,14 @@ export async function syncProjectQuotaGroup({
   ) {
     return;
   }
+  const group = projectQuotaGroup(project_id);
+  const size = projectQuotaGroupLimit(quota, env);
   await unlessRefused(async () => {
     await queueSyncQuotaGroup({
       mount,
-      group: projectQuotaGroup(project_id),
+      group,
       members: history ? [home, history] : [home],
-      size: projectQuotaGroupLimit(quota, env),
+      size,
       wait: true,
       project_id,
       operation_id,
@@ -190,7 +195,11 @@ export async function syncProjectQuotaGroup({
       priority,
     });
   });
-  invalidateBtrfsQgroupShowRaw(mount);
+  // what's read of the filesystem's quotas says so too, rather than being
+  // read again (one project after another, e.g., when they all join)
+  const members = [home];
+  if (history != null && (await exists(history))) members.push(history);
+  noteQgroupGroup({ mount, group, members, size });
 }
 
 // Puts a home or persist volume the project gets (e.g., by a restore) in its
@@ -212,15 +221,11 @@ export async function joinProjectQuotaGroup({
   required?: boolean;
 }): Promise<void> {
   if (btrfsQuotasDisabled() || (refused() && !required)) return;
+  const group = projectQuotaGroup(project_id);
   await unlessRefused(
-    async () =>
-      await addToQuotaGroup({
-        mount,
-        group: projectQuotaGroup(project_id),
-        path,
-      }),
+    async () => await addToQuotaGroup({ mount, group, path }),
   );
-  invalidateBtrfsQgroupShowRaw(mount);
+  noteQgroupGroup({ mount, group, members: [path] });
 }
 
 // Destroys the quota groups of deleted projects: those with no members (the
@@ -236,12 +241,8 @@ export async function deleteEmptyQuotaGroups({
   limit?: number;
 }): Promise<string[]> {
   if (btrfsQuotasDisabled() || refused()) return [];
-  const { stdout } = await btrfs({
-    args: ["qgroup", "show", "-prc", "--raw", mount],
-    verbose: false,
-  });
   const destroyed: string[] = [];
-  for (const row of parseQgroupRelations(stdout)) {
+  for (const row of (await getQgroupScan(mount)).rows.values()) {
     if (destroyed.length >= limit) break;
     if (!row.qgroupid.startsWith("1/") || row.children.length > 0) continue;
     if (row.referenced !== 0) continue;
@@ -259,7 +260,7 @@ export async function deleteEmptyQuotaGroups({
     }
   }
   if (destroyed.length > 0) {
-    invalidateBtrfsQgroupShowRaw(mount);
+    invalidateQgroupScan(mount);
     logger.info("destroyed empty project quota groups", {
       count: destroyed.length,
     });
@@ -288,18 +289,26 @@ export async function readProjectQuotaGroup({
 }): Promise<ProjectQuotaGroupState | undefined> {
   if (btrfsQuotasDisabled()) return;
   const group = projectQuotaGroup(project_id);
-  const rows = parseQgroupRelations(
-    (await cachedBtrfsQgroupShowRawForPath(path)).stdout,
-  );
-  const row = rows.find((r) => r.qgroupid === group);
-  if (row == null) return;
-  // (only the subvolume's own level 0 row, and the groups it is in)
-  const own = rows.find((r) => r.qgroupid.startsWith("0/"));
+  // (one read of the filesystem's quotas, shared: qgroup-scan.ts)
+  const found = await lookupQgroup({
+    mount: dirname(path),
+    path,
+    getSubvolumeId: async () => {
+      const { stdout } = await cachedBtrfsSubvolumeShow(path);
+      const id = Number(stdout.match(/^\s*Subvolume ID:\s*(\d+)/m)?.[1]);
+      if (!Number.isSafeInteger(id)) {
+        throw new Error(`no subvolume id for ${path}`);
+      }
+      return id;
+    },
+  });
+  const row = found?.parents.find((r) => r.qgroupid === group);
+  if (found == null || row == null) return;
   return {
     total: row.referenced,
     limit: row.max_referenced === "none" ? undefined : row.max_referenced,
-    member: own?.parents.includes(group) ?? false,
-    own: own?.referenced ?? 0,
+    member: true,
+    own: found.row.referenced,
   };
 }
 
