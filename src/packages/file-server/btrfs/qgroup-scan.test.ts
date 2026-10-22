@@ -279,3 +279,39 @@ describe("a subvolume id being read when its path is swapped", () => {
     expect(subvolumeShowReadsForTest()).toBe(0);
   });
 });
+
+describe("a lookup joining a read that began before it", () => {
+  it("reads again if the subvolume isn't in it", async () => {
+    await getQgroupScan(MOUNT);
+    const now = Date.now();
+    const spy = jest.spyOn(Date, "now").mockReturnValue(now + 5_000);
+    let finish!: () => void;
+    try {
+      // a read for another miss, under way
+      btrfsMock.mockImplementationOnce(
+        async () =>
+          await new Promise((resolve) => {
+            finish = () => resolve({ stdout: SCAN, stderr: "" });
+          }),
+      );
+      const other = lookupQgroup({
+        mount: MOUNT,
+        getSubvolumeId: async () => 999,
+      });
+      await new Promise((r) => setImmediate(r));
+      // then a subvolume is made, and looked up
+      spy.mockReturnValue(now + 6_000);
+      scanText = `${SCAN}0/400 16384 16384 none - - project-new\n`;
+      const lookup = lookupQgroup({
+        mount: MOUNT,
+        getSubvolumeId: async () => 400,
+      });
+      await new Promise((r) => setImmediate(r));
+      finish();
+      expect(await other).toBeUndefined();
+      expect((await lookup)!.row.qgroupid).toBe("0/400");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
