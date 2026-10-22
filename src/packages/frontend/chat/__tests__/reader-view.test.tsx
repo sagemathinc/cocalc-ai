@@ -9,6 +9,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   TimeAgo: () => <span>sometime</span>,
+  Tooltip: ({ children }: any) => children,
 }));
 jest.mock("../bounded-static-markdown", () => ({
   __esModule: true,

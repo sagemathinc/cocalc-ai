@@ -9,11 +9,11 @@
 // unread again; j and k move, u goes to the next unread one. The list never
 // scrolls by itself: new items wait behind an "N new" button.
 
-import { Button, Checkbox, Empty, Space, Tooltip } from "antd";
+import { Button, Checkbox, Empty, Space } from "antd";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { dateValue, field, isAcpAssistantMessage } from "./access";
 import type { ChatActions } from "./actions";
