@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import getPool from "@cocalc/database/pool";
 import { StripeClient } from "@cocalc/server/stripe/client";
 import adminPurchase from "@cocalc/server/purchases/admin-purchase";
 import cancelSubscription from "@cocalc/server/purchases/cancel-subscription";
@@ -267,10 +268,21 @@ export async function dispatchBillingAuthorityCommand(
   switch (command.kind) {
     case "account-local":
       return await dispatchAccountLocal(command.operation, command.input);
-    case "account-stripe-cleanup":
-      return await new StripeClient({
+    case "account-stripe-cleanup": {
+      // Only account deletion sends this command.
+      const result = await new StripeClient({
         account_id: command.account_id,
       }).cancelEverything();
+      // Clear the authoritative copy of the account's transient billing
+      // controls and cached Stripe customer (name, email, address); deletion
+      // clears the account row's own copy. stripe_customer_id and the
+      // financial records are kept.
+      await getPool().query(
+        "UPDATE billing_accounts SET auto_balance=NULL, stripe_checkout_session=NULL, stripe_customer=NULL WHERE account_id=$1",
+        [command.account_id],
+      );
+      return result;
+    }
     case "cancel-usage-subscription":
       return await cancelUsageSubscription(command.account_id);
     case "quarantine-account-stripe-cleanup": {

@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import {
+  agentTurnStatusFor,
+  parseAgentTurnStatus,
+} from "@cocalc/conat/agents/agent-status";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { isActorDenial } from "./actor-denial";
@@ -82,13 +86,28 @@ const REPAIR_INTERVAL_MS = 30 * 60_000;
 const REPAIR_CONCURRENCY = 8;
 const lastRepair = new Map<string, number>();
 
-export function identitySnapshot(identity: AgentIdentity): NamedAgentSnapshot {
+/** A named agent's status for its network peers, if it has one. */
+function memberStatus(metadata: any) {
+  const status = parseAgentTurnStatus(metadata?.status);
+  return status ? { status } : {};
+}
+
+/** The identity as `account_id` sees it (its own unavailability only). */
+export function identitySnapshot(
+  identity: AgentIdentity,
+  account_id: string,
+): NamedAgentSnapshot {
   return {
     path: identity.path,
     thread_id: identity.thread_id,
     appearance: identity.appearance ?? null,
     runtime: identity.runtime ?? null,
     available: !identity.disabled_at,
+    status:
+      agentTurnStatusFor(
+        parseAgentTurnStatus(identity.turn_status),
+        account_id,
+      ) ?? null,
   };
 }
 
@@ -99,6 +118,7 @@ const snapshotKey = (value: Partial<NamedAgentSnapshot>) =>
     value.appearance ?? null,
     value.runtime ?? null,
     value.available !== false,
+    value.status ?? null,
   ]);
 
 export class PersonalAgentStore {
@@ -182,12 +202,15 @@ export class PersonalAgentStore {
       available: snapshotAvailable,
       appearance,
       runtime,
+      status: rawStatus,
       ...metadata
     } = row.metadata ?? {};
+    const status = parseAgentTurnStatus(rawStatus);
     return {
       ...metadata,
       ...(appearance ? { appearance } : {}),
       ...(runtime ? { runtime } : {}),
+      ...(status ? { status } : {}),
       account_id: row.account_id,
       name: row.name,
       endpoint: { project_id: row.project_id, agent_id: row.agent_id },
@@ -249,12 +272,22 @@ export class PersonalAgentStore {
       appearance: snapshot.appearance ?? null,
       runtime: snapshot.runtime ?? null,
       available: snapshot.available !== false,
+      // Only this account's view is stored (never another's).
+      status:
+        agentTurnStatusFor(parseAgentTurnStatus(snapshot.status), account) ??
+        null,
     };
     if (!value.path || !value.thread_id)
       throw new Error("invalid agent identity snapshot");
+    // Pushes can arrive out of order (they are not awaited, and may cross
+    // bays): a status older than the stored one never replaces it.
     const rows = (
       await this.db.query(
-        `UPDATE agent_personal_names SET metadata=COALESCE(metadata,'{}'::jsonb) || $4::jsonb
+        `UPDATE agent_personal_names
+            SET metadata = (COALESCE(metadata,'{}'::jsonb) || $4::jsonb) ||
+              CASE WHEN (metadata->'status'->>'at')::double precision > $5::double precision
+                   THEN jsonb_build_object('status', metadata->'status')
+                   ELSE '{}'::jsonb END
           WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL
           RETURNING *`,
         [
@@ -262,6 +295,7 @@ export class PersonalAgentStore {
           endpoint.project_id,
           endpoint.agent_id,
           JSON.stringify(value),
+          value.status?.at ?? -1,
         ],
       )
     ).rows;
@@ -295,7 +329,10 @@ export class PersonalAgentStore {
         const endpoint = { project_id: row.project_id, agent_id: row.agent_id };
         let snapshot: NamedAgentSnapshot | undefined;
         try {
-          snapshot = identitySnapshot(await this.identity(account, endpoint));
+          snapshot = identitySnapshot(
+            await this.identity(account, endpoint),
+            account,
+          );
           // Make sure future changes reach this account.
           await this.hooks
             .watch?.(account, endpoint, true)
@@ -323,6 +360,7 @@ export class PersonalAgentStore {
             appearance: row.metadata?.appearance ?? null,
             runtime: row.metadata?.runtime ?? null,
             available: false,
+            status: row.metadata?.status ?? null,
           };
         }
         if (snapshotKey(snapshot) !== snapshotKey(row.metadata ?? {}))
@@ -377,7 +415,7 @@ export class PersonalAgentStore {
       )
         throw new Error(`invalid ${key}`);
     const metadata = {
-      ...identitySnapshot(identity),
+      ...identitySnapshot(identity, account),
       description: opts.description,
       project_title: opts.project_title,
       thread_title: opts.thread_title,
@@ -1038,6 +1076,7 @@ export class PersonalAgentStore {
         name: namedRow?.name,
         project_title: namedRow?.metadata?.project_title,
         thread_title: namedRow?.metadata?.thread_title,
+        ...memberStatus(namedRow?.metadata),
         available,
         added_at: iso(row.added_at),
         removed_at: row.removed_at ? iso(row.removed_at) : null,
@@ -1496,6 +1535,7 @@ export class PersonalAgentStore {
           name: row.registered_name,
           project_title: row.registered_metadata?.project_title,
           thread_title: row.registered_metadata?.thread_title,
+          ...memberStatus(row.registered_metadata),
           available: !!row.registered_name,
           added_at: iso(row.added_at),
           removed_at: null,

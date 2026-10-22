@@ -13,6 +13,7 @@ import type { Application } from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
 import {
   connect as connectToConat,
@@ -164,6 +165,9 @@ export async function startStandaloneProjectHostConatPersist({
   httpServer: HttpServer;
   id: string;
   persistServer: ConatSocketServer;
+  // The board write service (conat/persist/board-policy.ts): the host's board
+  // managers write board streams only through it.
+  boardPersistServer: ConatSocketServer;
   maintenance?: PersistMaintenanceCoordinator;
   port: number;
 }> {
@@ -198,10 +202,19 @@ export async function startStandaloneProjectHostConatPersist({
       logger.error("failed starting persist maintenance coordinator", err);
     }
   }
+  // Both services share this process's stream cache, and so its maintenance
+  // hooks.
+  const maintenanceHooks = maintenance?.createLocalHooks(id);
   const persistServer = createPersistServer({
     client,
     id,
-    maintenance: maintenance?.createLocalHooks(id),
+    maintenance: maintenanceHooks,
+  });
+  const boardPersistServer = createPersistServer({
+    client,
+    id,
+    service: BOARD_WRITE_SERVICE,
+    maintenance: maintenanceHooks,
   });
   maintenance?.start();
 
@@ -290,6 +303,7 @@ export async function startStandaloneProjectHostConatPersist({
     id,
     maintenance,
     persistServer,
+    boardPersistServer,
     port: bindPort,
   };
 }

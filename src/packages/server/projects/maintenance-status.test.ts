@@ -295,6 +295,20 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("course-sponsor");
   });
 
+  it("classifies a project whose payer account was deleted as free", async () => {
+    resolveRuntimeMembershipMock.mockRejectedValue(
+      Object.assign(new Error("account 'gone' not found"), {
+        name: "AccountNotFoundError",
+      }),
+    );
+    const status = await statusFor({
+      changedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+      reconciledAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+      ownerAccountId: "gone",
+    });
+    expect(status.storage_service_class).toBe("free");
+  });
+
   it("classifies an overdue paying project at its customer objective", async () => {
     resolveRuntimeMembershipMock.mockResolvedValue({
       class: "member",
@@ -612,6 +626,83 @@ describe("project recovery status after unchanged-content reconciliation", () =>
         repeated_failures: 0,
       }),
     ]);
+  });
+
+  describe("health classification of payers that cannot be resolved", () => {
+    const old = new Date(Date.now() - 4 * 60 * 60_000);
+    function mockOverdueProject() {
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+          return {
+            rows: [
+              {
+                project_id: "project-1",
+                host_id: "host-1",
+                owner_account_id: "payer",
+                last_changed: old,
+                last_backup: null,
+                host_last_seen: new Date(),
+                snapshots: { disabled: true },
+                backups: { daily: 1 },
+                backup_observed_at: new Date(),
+                backup_class: "free",
+              },
+            ],
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+    }
+
+    it("counts a deleted payer's overdue project as free, without warning on every pass", async () => {
+      const { getProjectRecoveryHealth } = await import("./maintenance-status");
+      const getLogger = (await import("@cocalc/backend/logger")).default;
+      const warn = jest.spyOn(
+        getLogger("server:projects:maintenance-status"),
+        "warn",
+      );
+      resolveRuntimeMembershipMock.mockRejectedValue(
+        Object.assign(new Error("account 'payer' not found"), {
+          name: "AccountNotFoundError",
+        }),
+      );
+      mockOverdueProject();
+      const first = await getProjectRecoveryHealth();
+      const second = await getProjectRecoveryHealth();
+      for (const health of [first, second]) {
+        expect(health.unclassified_backup_overdue).toBe(0);
+        expect(health.paying_backup_overdue).toBe(0);
+        expect(health.by_host_class).toEqual([
+          expect.objectContaining({
+            storage_service_class: "free",
+            kind: "backup",
+            overdue_count: 1,
+          }),
+        ]);
+      }
+      // Cached like any resolved class, so the next pass asks again only
+      // after the cache expires.
+      expect(resolveRuntimeMembershipMock).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalledWith(
+        "unable to classify recovery health funding",
+        expect.anything(),
+      );
+      warn.mockRestore();
+    });
+
+    it("still reports a payer lookup that failed for another reason as unclassified", async () => {
+      const { getProjectRecoveryHealth } = await import("./maintenance-status");
+      resolveRuntimeMembershipMock.mockRejectedValue(new Error("timeout"));
+      mockOverdueProject();
+      const health = await getProjectRecoveryHealth();
+      expect(health.by_host_class).toEqual([
+        expect.objectContaining({
+          storage_service_class: "unclassified",
+          kind: "backup",
+          overdue_count: 1,
+        }),
+      ]);
+    });
   });
 
   it("bounds the oldest overdue projects separately by funding class and kind", async () => {

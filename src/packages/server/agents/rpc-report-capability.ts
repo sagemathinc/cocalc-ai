@@ -11,6 +11,7 @@
 // generation, and only for a while: the one turn a report may start is
 // recorded until well after its capability expired (rpc-report-executions.ts).
 
+import { AGENT_RPC_REPORT_CAPABILITY_MAX_AGE_MS } from "@cocalc/conat/agents/rpc-reports";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { conatPassword } from "@cocalc/backend/data";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
@@ -21,7 +22,8 @@ import {
 } from "@cocalc/conat/agents/rpc-reports";
 
 /** A message older than this is no longer reported. */
-export const AGENT_RPC_REPORT_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+export const AGENT_RPC_REPORT_MAX_AGE_MS =
+  AGENT_RPC_REPORT_CAPABILITY_MAX_AGE_MS;
 // Tolerated clock skew between the bays that mint and check.
 const SKEW_MS = 5 * 60_000;
 

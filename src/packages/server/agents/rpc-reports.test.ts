@@ -42,11 +42,26 @@ const remoteDeliverReport = jest.fn();
 const enqueueExternal = jest.fn();
 const claimExecution = jest.fn();
 let remoteSender = false;
+// The delivery report version A's host advertises (undefined: none).
+let senderReportVersion: number | undefined;
+// The build A's host runs now (it advertised its version for "build-2").
+let senderBuild = "build-2";
 
 jest.mock("./store", () => ({
   agentStore: () => ({
     get: async (agent_id: string) => identities.get(agent_id),
-    query: async () => ({ rows: [{ host_id: host, state: "running" }] }),
+    query: async (sql: string) =>
+      sql.includes("agent_rpc_report")
+        ? {
+            rows: [
+              {
+                version: senderReportVersion?.toString() ?? null,
+                for_build: "build-2",
+                build: senderBuild,
+              },
+            ],
+          }
+        : { rows: [{ host_id: host, state: "running" }] },
   }),
 }));
 jest.mock("./access", () => ({
@@ -163,6 +178,9 @@ function report(overrides: any = {}) {
 
 beforeEach(() => {
   remoteSender = false;
+  // A's host is current unless a test says otherwise.
+  senderReportVersion = 2;
+  senderBuild = "build-2";
   claimExecution.mockReset().mockResolvedValue(true);
   assertHost.mockClear();
   enqueueExternal.mockReset();
@@ -215,6 +233,64 @@ describe("B's host reports the failed turn", () => {
       thread_id: "thread-a",
       target_label: "@reviewer",
     });
+  });
+
+  test("only as A's host can render it truthfully", async () => {
+    const stopped = report({ kind: "stopped", tool_ran: true });
+    // A host that advertises version 2 gets it as it is.
+    senderReportVersion = 2;
+    await reportRpcTurnFailure(fromHost(stopped));
+    expect(deliverAgentRpcReport.mock.calls[0][0].report).toEqual(stopped);
+    // A host rolled back to an older build keeps the newer build's value
+    // (heartbeats are merged): it counts as the old version.
+    senderBuild = "build-1";
+    deliverAgentRpcReport.mockClear();
+    await expect(reportRpcTurnFailure(fromHost(stopped))).rejects.toThrow(
+      /must be upgraded/,
+    );
+    expect(deliverAgentRpcReport).not.toHaveBeenCalled();
+    senderBuild = "build-2";
+    // An older host would tell A that B "did not act": it is held, and B's
+    // host tries again later.
+    senderReportVersion = undefined;
+    deliverAgentRpcReport.mockClear();
+    await expect(reportRpcTurnFailure(fromHost(stopped))).rejects.toThrow(
+      /must be upgraded/,
+    );
+    expect(deliverAgentRpcReport).not.toHaveBeenCalled();
+    // Unless that is true: nothing ran, so it can have the old shape.
+    const canceled = report({ kind: "canceled", tool_ran: false });
+    await reportRpcTurnFailure(fromHost(canceled));
+    const sent = deliverAgentRpcReport.mock.calls[0][0].report;
+    expect(sent.kind).toBe("error");
+    expect(sent.detail).toMatch(/canceled your message before it ran/);
+    expect(sent).not.toHaveProperty("tool_ran");
+    // Any kind is held once B ran tools, an old one too.
+    deliverAgentRpcReport.mockClear();
+    await expect(
+      reportRpcTurnFailure(
+        fromHost(report({ kind: "limit", resets_at: 123, tool_ran: true })),
+      ),
+    ).rejects.toThrow(/must be upgraded/);
+    expect(deliverAgentRpcReport).not.toHaveBeenCalled();
+    // An old kind is sent without the new fields when nothing ran.
+    deliverAgentRpcReport.mockClear();
+    await reportRpcTurnFailure(
+      fromHost(report({ kind: "limit", resets_at: 123, tool_ran: false })),
+    );
+    const old = deliverAgentRpcReport.mock.calls[0][0].report;
+    expect(old.kind).toBe("limit");
+    expect(old).not.toHaveProperty("resets_at");
+    expect(old).not.toHaveProperty("tool_ran");
+    // Held when that is not known, even an old kind (an older recipient
+    // host never says; the old text would claim B did not act).
+    await expect(
+      reportRpcTurnFailure(fromHost(report({ kind: "limit" }))),
+    ).rejects.toThrow(/must be upgraded/);
+    // A new kind whose tool use is not known is held.
+    await expect(
+      reportRpcTurnFailure(fromHost(report({ kind: "host-lost" }))),
+    ).rejects.toThrow(/must be upgraded/);
   });
 
   test("through A's project bay when A is elsewhere", async () => {
@@ -354,6 +430,23 @@ describe("the turn the report starts for A", () => {
       path: "/home/user/a.chat",
       thread_id: "thread-a",
     });
+  });
+
+  test("a held report and the final one each get their one turn", async () => {
+    const held = {
+      ...report(),
+      phase: "held" as const,
+      kind: "limit" as const,
+    };
+    await authorizeRpcReportExecution(execution(signed(held)));
+    const heldKey = claimExecution.mock.calls.at(-1)[0].attempt_id;
+    // Its own key, stable, and not the message's.
+    expect(heldKey).not.toBe(attempt);
+    expect(heldKey).toMatch(/^[0-9a-f-]{36}$/);
+    await authorizeRpcReportExecution(execution(signed({ ...held })));
+    expect(claimExecution.mock.calls.at(-1)[0].attempt_id).toBe(heldKey);
+    await authorizeRpcReportExecution(execution());
+    expect(claimExecution.mock.calls.at(-1)[0].attempt_id).toBe(attempt);
   });
 
   test("runs once: a report cannot be replayed into another turn", async () => {

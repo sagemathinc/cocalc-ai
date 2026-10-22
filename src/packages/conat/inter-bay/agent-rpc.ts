@@ -171,6 +171,10 @@ export interface AgentRpcControlApi {
   inspect(
     opts: RpcRoute & RpcSubmissionSource & { request: RegisteredRpcAttempt },
   ): Promise<AgentRpcOutcome>;
+  /** The sender takes back its message, if its turn has not started. */
+  withdraw(
+    opts: RpcRoute & RpcSubmissionSource & { request: RegisteredRpcAttempt },
+  ): Promise<AgentRpcOutcome>;
   /**
    * Trusted fabric only, at the message sender's project bay: write a
    * delivery report into the sender's chat (the reporting bay rechecked it).

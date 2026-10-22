@@ -298,15 +298,15 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       label: "Active watchers per account",
       unit: "watchers",
       adminDescription:
-        "Most built-in watchers (one-shot checks such as CI, file and reminder watchers) all of one account's agents may have active at once. Unset: 5.",
+        "Most built-in watchers (one-shot checks such as CI, file and exit watchers) all of one account's agents may have active at once. Unset: 5. Reminders (`sensor watch at`) are not counted here: they check nothing until they fire, so each account may have up to 200 pending (50 per agent), and each wake they cause counts against the wakes per 24 hours like any other.",
       userDescription:
-        "Most watchers all of your agents may have active at once.",
+        "Most watchers all of your agents may have active at once (reminders are counted separately).",
     },
     sensor_max_active_watchers_per_agent: {
       label: "Active watchers per agent",
       unit: "watchers",
       adminDescription:
-        "Most built-in watchers one agent may have active at once, so a busy agent cannot use up the account's watchers. Unset: no separate limit (the account limit applies).",
+        "Most built-in watchers one agent may have active at once, so a busy agent cannot use up the account's watchers. Unset: no separate limit (the account limit applies). Reminders are counted separately (50 pending per agent).",
       userDescription:
         "Most watchers one of your agents may have active at once.",
     },

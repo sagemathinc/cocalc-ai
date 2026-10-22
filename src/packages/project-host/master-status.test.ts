@@ -2,6 +2,8 @@ const reportHostProvisionedInventoryMock = jest.fn();
 const reportProjectProvisionedMock = jest.fn();
 const reportProjectStateMock = jest.fn();
 const markProjectStateReportedMock = jest.fn();
+const syncAccountRevocationsMock = jest.fn();
+const upsertAccountRevocationMock = jest.fn();
 
 const loggerFactory = jest.fn(() => ({
   debug: jest.fn(),
@@ -24,6 +26,8 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
       reportHostProvisionedInventoryMock(...args),
     reportProjectProvisioned: (...args: any[]) =>
       reportProjectProvisionedMock(...args),
+    syncAccountRevocations: (...args: any[]) =>
+      syncAccountRevocationsMock(...args),
   })),
 }));
 
@@ -51,7 +55,8 @@ jest.mock("./sqlite/account-revocations", () => ({
   __esModule: true,
   getRevocationSyncCursor: jest.fn(() => ({ updated_ms: 0, account_id: "" })),
   setRevocationSyncCursor: jest.fn(),
-  upsertAccountRevocation: jest.fn(),
+  upsertAccountRevocation: (...args: any[]) =>
+    upsertAccountRevocationMock(...args),
 }));
 
 jest.mock("./last-edited", () => ({
@@ -283,5 +288,32 @@ describe("master-status project state reporting", () => {
       "running",
       undefined,
     );
+  });
+});
+
+describe("master-status account revocations", () => {
+  afterEach(async () => {
+    const { resetMasterStatusForTests } = await import("./master-status");
+    resetMasterStatusForTests();
+  });
+
+  it("stores every cutoff the hub sends, the browser one included", async () => {
+    const { setMasterStatusClient, syncAccountRevocationsFromMaster } =
+      await import("./master-status");
+    setMasterStatusClient({ client: {} as any, host_id: "host-1" });
+    const row = {
+      account_id: "00000000-0000-4000-8000-000000000001",
+      revoked_before_ms: 0,
+      content_revoked_before_ms: 5000,
+      browser_revoked_before_ms: 5000,
+      updated_ms: 9,
+    };
+    syncAccountRevocationsMock.mockResolvedValueOnce({
+      rows: [row],
+      next_cursor_updated_ms: 9,
+      next_cursor_account_id: row.account_id,
+    });
+    await syncAccountRevocationsFromMaster();
+    expect(upsertAccountRevocationMock).toHaveBeenCalledWith(row);
   });
 });

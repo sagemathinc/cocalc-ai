@@ -1309,6 +1309,44 @@ test(
 );
 
 test(
+  "a viewer coming back (reconnect, reload) never takes the browser from the agent",
+  needsChrome,
+  async () => {
+    const shared = await sharedBrowser({ humanFirst: true });
+    try {
+      // Opened by its person: they drive, then hand back to the agent.
+      const viewer = new TestViewer(shared.server, {
+        view: "frame:a",
+        client: "me",
+      });
+      await viewer.resize(800, 500);
+      assert.equal(viewer.state?.driver, "human");
+      await viewer.handBack();
+      assert.equal(shared.server.getState().driver, "agent");
+      // The laptop sleeps: the viewer goes away and comes back, the same
+      // view, while no agent command happens to be running.
+      viewer.close();
+      const back = new TestViewer(shared.server, {
+        view: "frame:a",
+        client: "me",
+      });
+      assert.equal(back.state?.driver, "agent");
+      assert.equal(shared.server.getState().driver, "agent");
+      // Someone opening it anew (a view it has not seen) still drives.
+      const fresh = new TestViewer(shared.server, {
+        view: "frame:b",
+        client: "me",
+      });
+      assert.equal(fresh.state?.driver, "human");
+      back.close();
+      fresh.close();
+    } finally {
+      await shared.close();
+    }
+  },
+);
+
+test(
   "two viewers (split frames) show their own tabs of one browser",
   needsChrome,
   async () => {

@@ -10,6 +10,7 @@ import {
 import { readProjectHostActivitySnapshot } from "./health-progress";
 import { getProjectHostProcessTitle } from "./process-role";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
+import { siteFundedCodexProxyPorts } from "./codex/site-funded-proxy-port";
 
 type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
 
@@ -619,6 +620,11 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
   env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT =
     env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? String(basePort + 100);
   env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = `http://${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST}:${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT}`;
+  // Derived here from the env files' PORT, as the host egress block derives
+  // it: the project-host child runs with PORT rewritten to the app port.
+  env.COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT = String(
+    siteFundedCodexProxyPorts(env)[0],
+  );
   if (!`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS ?? ""}`.trim()) {
     env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS = "1";
   }

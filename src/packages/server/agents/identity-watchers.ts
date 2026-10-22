@@ -114,7 +114,6 @@ export async function notifyIdentityWatchers(agent_id: string): Promise<void> {
       )
     ).rows.map((row) => row.account_id);
     if (accounts.length === 0) return;
-    const snapshot = identitySnapshot(identity);
     const endpoint = { project_id: identity.project_id, agent_id };
     const { withPersonalHome } = await import("./personal");
     await Promise.all(
@@ -131,7 +130,11 @@ export async function notifyIdentityWatchers(agent_id: string): Promise<void> {
         }
         await withPersonalHome(account_id, {
           action: "identityChanged",
-          options: { endpoint, snapshot },
+          // Each watcher's own view: limits and sign-ins are per account.
+          options: {
+            endpoint,
+            snapshot: identitySnapshot(identity, account_id),
+          },
         }).catch((err) =>
           logger.debug("could not notify an agent's watcher", {
             agent_id,

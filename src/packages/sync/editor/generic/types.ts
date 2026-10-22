@@ -9,6 +9,12 @@
 
 // A Patch is an entry in the patches table, as represented in memory locally here.
 
+import type {
+  HistoryInclusion,
+  ResetHistoryOptions,
+  ResetHistoryResult,
+} from "@cocalc/conat/persist/storage";
+import type { HistoryResetState, SavedFileRead } from "./history-restart";
 import { SyncTable } from "@cocalc/sync/table/synctable";
 import { type CompressedPatch } from "@cocalc/util/dmp";
 export { type CompressedPatch };
@@ -209,8 +215,74 @@ export interface Client extends ProjectClient {
     project_id: string;
     path: string;
     oversized_seq: number;
+    // How the document's patches are written (SyncDoc's patchesPersist): a
+    // board's go through the board write service, and so must its reset.
+    persist?: { service: string; persistUser: Record<string, never> };
   }) => Promise<{ history_epoch: number; reset: boolean }>;
+
+  // What restarting a history from its saved file judges: the history's
+  // newest seq, message count and epoch, and the saved file proof.
+  historyResetState?: (opts: {
+    project_id: string;
+    path: string;
+    persist?: { service: string; persistUser: Record<string, never> };
+  }) => Promise<HistoryResetState>;
+
+  // Read at most maxBytes of a file in the project; never more.
+  readFileBounded?: (opts: {
+    project_id: string;
+    path: string;
+    maxBytes: number;
+  }) => Promise<SavedFileRead>;
+
+  // Which of these msg ids the server accepted in history epoch `epoch`, and
+  // whether the current history includes them (PersistentStream.
+  // historyInclusion).
+  historyInclusion?: (opts: {
+    project_id: string;
+    path: string;
+    persist?: { service: string; persistUser: Record<string, never> };
+    epoch: number;
+    ids: string[];
+  }) => Promise<HistoryInclusion>;
+
+  // The seeded, conditional reset of a document's history (see
+  // PersistentStream.resetHistory).
+  resetHistory?: (opts: {
+    project_id: string;
+    path: string;
+    persist?: { service: string; persistUser: Record<string, never> };
+    options: ResetHistoryOptions;
+    busyAttempts?: number;
+  }) => Promise<ResetHistoryResult>;
+
+  // Ask the project's live writer of this document (a notebook's backend) to
+  // seed a new history from its live value (bounded history plan H1b-3,
+  // option A).  Answers {seeded: false, reason} rather than throwing for any
+  // refusal; a timeout or error means "no answer".
+  askLiveWriterToSeed?: (opts: {
+    project_id: string;
+    path: string;
+    epoch: number;
+    oversizedSeq: number;
+  }) => Promise<LiveSeedResult>;
 }
+
+export type LiveSeedRefusal =
+  | "not-running"
+  | "not-ready"
+  | "epoch"
+  | "not-caught-up"
+  | "busy"
+  | "too-large"
+  | "moved"
+  | "deadline"
+  | "invalid"
+  | "failed";
+
+export type LiveSeedResult =
+  | { seeded: true; history_epoch: number; repeated?: boolean }
+  | { seeded: false; reason: LiveSeedRefusal; message?: string };
 
 export interface DocType {
   type: string;

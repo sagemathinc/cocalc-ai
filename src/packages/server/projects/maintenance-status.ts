@@ -22,6 +22,7 @@ import {
   recoveryDelayExceeds,
 } from "@cocalc/util/consts/project-recovery";
 import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
+import { isAccountNotFoundError } from "@cocalc/server/bay-directory";
 import {
   storageFundingAccountId,
   storageServiceClassFromMembership,
@@ -628,9 +629,7 @@ export async function getProjectRecoveryStatusLocal(
     const payer = storageFundingAccountId(project);
     if (payer) {
       try {
-        status.storage_service_class = storageServiceClassFromMembership(
-          await resolveRuntimeMembership(payer),
-        );
+        status.storage_service_class = await payerServiceClass(payer);
       } catch (err) {
         logger.warn("unable to classify recovery service funding", {
           project_id,
@@ -891,6 +890,22 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
   };
 }
 
+// A deleted funding account pays for nothing: its projects are free class,
+// not a classification failure. They stay provisioned until hard deletion,
+// so health passes meet this case routinely.
+async function payerServiceClass(
+  accountId: string,
+): Promise<ProjectRecoveryStatus["storage_service_class"]> {
+  try {
+    return storageServiceClassFromMembership(
+      await resolveRuntimeMembership(accountId),
+    );
+  } catch (err) {
+    if (isAccountNotFoundError(err)) return "free";
+    throw err;
+  }
+}
+
 // Health is queried by several operator paths. Share short-lived payer lookups
 // across them while bounding both the number of account-home RPCs and memory.
 const HEALTH_PAYER_CLASS_TTL_MS = 5 * 60_000;
@@ -916,9 +931,7 @@ async function currentHealthPayerClass(
   if (pending) return pending;
   const lookup = (async () => {
     try {
-      const serviceClass = storageServiceClassFromMembership(
-        await resolveRuntimeMembership(accountId),
-      );
+      const serviceClass = await payerServiceClass(accountId);
       healthPayerClassCache.delete(accountId);
       healthPayerClassCache.set(accountId, {
         serviceClass,

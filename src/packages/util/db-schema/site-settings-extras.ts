@@ -402,6 +402,7 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
   | "project_hosts_cloudflare_tunnel_api_token"
+  | "project_content_cloudflare_api_token"
   | "cloudflare_automation_token_id"
   | "cloudflare_zone_id"
   | "cloudflare_zone_name"
@@ -2319,6 +2320,19 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Cloud", "Cloudflare"],
     group: "Cloudflare",
+    hidden: true,
+  },
+  project_content_cloudflare_api_token: {
+    name: "Project Content Domain: Cloudflare API Token",
+    desc: "Cloudflare API token used only for the Project Content Domain's DNS records (one wildcard per project host). Give it Zone:DNS:Edit on that zone and nothing else. Leave empty to use the Project Hosts Cloudflare Tunnel API token.",
+    default: "",
+    password: true,
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "Cloud", "Cloudflare", "Security"],
+    group: "Cloudflare",
+    subgroup: "Cloudflare Tunnel",
+    order: 31,
+    show: cloudflare_self_mode,
     hidden: true,
   },
   project_hosts_cloudflare_tunnel_api_token: {

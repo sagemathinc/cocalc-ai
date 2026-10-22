@@ -1,5 +1,8 @@
 import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
-import { resolveHumanTurnArtifactMentions } from "./turn-mentions";
+import {
+  humanTurnArtifacts,
+  resolveHumanTurnArtifactMentions,
+} from "../turn-mentions";
 
 const project_id = "756629fd-ce98-4596-8595-1071d6c019a6";
 const account_id = "ca35aaf2-a22d-482b-a846-199bf58f3477";
@@ -68,4 +71,40 @@ test("missing entries and non-human turns are not bound", async () => {
       { getEntry },
     ),
   ).resolves.toEqual([]);
+});
+
+test("without an artifact catalog (a project-host worker) the turn still runs, the chips named", async () => {
+  // Was: TypeError "Cannot read properties of undefined (reading 'getEntry')".
+  for (const api of [undefined, {}]) {
+    const result = await humanTurnArtifacts(request, api);
+    expect(result.references).toEqual([]);
+    expect(result.note).toContain("@nb1");
+    expect(result.note).toContain("cannot resolve");
+  }
+  // No chips: no note.
+  expect(
+    await humanTurnArtifacts(
+      { ...request, chat: { ...request.chat, user_message_content: "hi" } },
+      undefined,
+    ),
+  ).toEqual({ references: [], note: "" });
+  // An agent's own message never binds or names chips.
+  expect(
+    (
+      await humanTurnArtifacts(
+        { ...request, chat: { ...request.chat, agent_message: true } },
+        undefined,
+      )
+    ).note,
+  ).toBe("");
+  // With a catalog: bound as before.
+  const getEntry = jest.fn(async () => ({
+    project_id,
+    entry_id,
+    chat_path: "a.chat",
+    item: { thread_id: "thread", artifact_id: "artifact" },
+  }));
+  const bound = await humanTurnArtifacts(request, { getEntry } as any);
+  expect(bound.note).toBe("");
+  expect(bound.references).toHaveLength(1);
 });

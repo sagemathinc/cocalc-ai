@@ -131,6 +131,7 @@ function adminOperation(
       membership_class: tier,
       interval: "month",
       source,
+      comment: "Funding integration test",
     });
 }
 
@@ -471,6 +472,7 @@ describe("sponsored backing versus ordinary purchases", () => {
       admin_account_id: admin,
       user_account_id: f.payer,
       product: "balance",
+      balance_admin_note: "test adjustment",
       source: "credit",
       price: -120,
     });
@@ -488,6 +490,7 @@ describe("sponsored backing versus ordinary purchases", () => {
       admin_account_id: admin,
       user_account_id: f.payer,
       product: "balance" as const,
+      balance_admin_note: "test adjustment",
       source: "free" as const,
       price: 20,
     };

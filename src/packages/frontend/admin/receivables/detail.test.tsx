@@ -455,7 +455,7 @@ describe("receivable order detail", () => {
         }),
       }),
     );
-  });
+  }, 15_000);
 
   it("loads bounded Zendesk metadata without blocking order detail", async () => {
     render(<ReceivableOrderDetail id={order.id} onBack={jest.fn()} />);

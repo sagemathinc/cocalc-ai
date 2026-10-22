@@ -83,6 +83,18 @@ function isFastOpenSyncstringEnabled(): boolean {
   return true;
 }
 
+// Saves text through the browser's download, without the server.
+function downloadText(text: string, filename: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 export function isFileServerNotInitializedError(err: unknown): boolean {
   const message =
     typeof err === "string"
@@ -1037,7 +1049,12 @@ export class BaseEditorActions<
       this.setState({ rtc_status: "loading" });
     }
     const sessionStart = Date.now();
-    const closeSyncdocAndFile = () => {
+    // Closes the document and every tab showing it; returns those tabs and
+    // which one was in front.
+    const closeSyncdocAndFile = (): {
+      paths: string[];
+      active?: string;
+    } => {
       this._syncstring.close();
       const projectActions = this._get_project_actions();
       const store = projectActions?.get_store?.();
@@ -1058,13 +1075,30 @@ export class BaseEditorActions<
       if (toClose.size === 0) {
         toClose.add(syncPath);
       }
+      let active: string | undefined;
       for (const displayPath of toClose) {
         if (activeTab === path_to_tab(displayPath)) {
+          active = displayPath;
           projectActions.close_tab(displayPath);
         } else {
           projectActions.close_file(displayPath);
         }
       }
+      return { paths: [...toClose], active };
+    };
+    // Reopens the file in the same tabs, with one new session (bounded
+    // history plan H1b-2: the old session is closed first).
+    const reopenSyncdocAndFile = () => {
+      const { paths, active } = closeSyncdocAndFile();
+      const projectActions = this._get_project_actions();
+      setTimeout(() => {
+        for (const displayPath of paths) {
+          projectActions?.open_file?.({
+            path: displayPath,
+            foreground: displayPath === active,
+          });
+        }
+      }, 0);
     };
     this._syncstring.on("deleted", () => {
       // the file was deleted -- if we get this right when
@@ -1089,16 +1123,90 @@ export class BaseEditorActions<
         })();
       }
     });
-    this._syncstring.on("history-reset", () => {
-      // Another session purged TimeTravel history for this file.
-      // Close this file so stale editors don't remain visible.
-      alert_message({
-        type: "warning",
-        title: "Edit history was purged",
-        message: `${this.path} was closed because its edit history was purged in another session.`,
-      });
-      closeSyncdocAndFile();
+    this._syncstring.on("history-unloadable", ({ restart } = {} as any) => {
+      // The edit history holds an entry too large to load, and the saved
+      // file does not provably include every edit, so nothing was reset
+      // automatically.  Let the user choose (bounded history plan r3, §2.3).
+      if (restart != null && restart != "file") {
+        // no restart from a saved file is possible (e.g., a board)
+        alert_message({
+          type: "error",
+          title: "The edit history cannot be loaded",
+          message: `The edit history of ${this.path} contains an entry too large to load.`,
+          block: true,
+        });
+        return;
+      }
+      (async () => {
+        const page = this.redux.getActions("page");
+        const restart = await page.popconfirm({
+          title: `The edit history of ${this.path} cannot be loaded`,
+          description:
+            "Its edit history (TimeTravel) contains an entry too large to load, most likely a huge output. The file on disk is unchanged, but edits made after it was last saved are only in the edit history. You can restart the edit history from the saved file, or close the file and download it from the file explorer first.",
+          okText: "Restart history from the saved file…",
+          cancelText: "Close the file",
+        });
+        if (!restart) {
+          closeSyncdocAndFile();
+          return;
+        }
+        const confirmed = await page.popconfirm({
+          title: "Restart the edit history from the saved file?",
+          description:
+            "Edits made after the file was last saved will be removed from the live document. They are moved to the archived history, which keeps only what can be loaded and is limited in size, so some of them may not be recoverable.",
+          okText: "Restart history",
+          cancelText: "Cancel and close the file",
+        });
+        if (!confirmed) {
+          closeSyncdocAndFile();
+          return;
+        }
+        try {
+          const result = await this._syncstring.restartHistoryFromSavedFile();
+          const lost =
+            (result.dropped?.records ?? 0) +
+            (result.droppedArchived?.records ?? 0);
+          alert_message({
+            type: "info",
+            title: "Edit history restarted",
+            message: `The edit history of ${this.path} was restarted from the saved file, which is opening now. Newer edits were moved to the archived history.${lost > 0 ? ` ${lost} history entries could not be kept in the archive.` : ""}`,
+            block: true,
+          });
+        } catch (err) {
+          alert_message({
+            type: "error",
+            title: "The edit history was not restarted",
+            message: `${err}`,
+          });
+          closeSyncdocAndFile();
+        }
+      })();
     });
+    this._syncstring.on(
+      "history-reset",
+      ({ copies }: { copies?: string[] } = {}) => {
+        // The edit history was reset in another session.  Everything this
+        // tab had is in the new history or in the recovery copies; reopen.
+        alert_message({
+          type: copies?.length ? "warning" : "info",
+          title: "Edit history was reset",
+          message: copies?.length
+            ? `The edit history of ${this.path} was reset in another session, which removed edits made here. They are saved in ${copies.join(", ")}. ${this.path} is opening again.`
+            : `The edit history of ${this.path} was reset in another session; it is opening again.`,
+          block: !!copies?.length,
+        });
+        reopenSyncdocAndFile();
+      },
+    );
+    this._syncstring.on(
+      "history-reset-unsaved",
+      ({ reason, copies }: { reason: string; copies?: string[] }) => {
+        // NOT SAVED: the edit history was reset in another session, and the
+        // edits made here could not be saved to a recovery copy.  They are
+        // only in this tab: offer a download, then retry or reload.
+        void this.handleHistoryResetUnsaved({ reason, copies });
+      },
+    );
 
     const handleReady = (err?: Error) => {
       if (this._syncstring_init) {
@@ -2510,6 +2618,48 @@ export class BaseEditorActions<
   _get_project_actions() {
     return this.redux.getProjectActions(this.project_id);
   }
+
+  private handleHistoryResetUnsaved = async ({
+    reason,
+    copies,
+  }: {
+    reason: string;
+    copies?: string[];
+  }): Promise<void> => {
+    const syncdoc: any = this._syncstring;
+    if (syncdoc == null || syncdoc.isClosed?.()) return;
+    const why =
+      reason == "too-large"
+        ? "the document is too large to save a recovery copy (over 32 MiB, or too complex to measure)"
+        : reason == "still-changing"
+          ? "it kept changing while a recovery copy was saved"
+          : "a recovery copy could not be written";
+    const page = this.redux.getActions("page");
+    const download = await page.popconfirm({
+      title: `NOT SAVED: edits to ${this.path}`,
+      description: `The edit history of ${this.path} was reset in another session. Edits made in this tab are not in the new history and were not saved, because ${why}.${copies?.length ? ` Earlier copies: ${copies.join(", ")}.` : ""} Download them before reloading, or try again.`,
+      okText: "Download a copy",
+      cancelText: "Try again",
+    });
+    if (syncdoc.isClosed?.()) return;
+    if (!download) {
+      syncdoc.retryHistoryTransition?.();
+      return;
+    }
+    const { value, generation } = syncdoc.valueForDownload();
+    downloadText(value, `${path_split(this.path).tail}.unsaved`);
+    const reload = await page.popconfirm({
+      title: `Reload ${this.path}?`,
+      description:
+        "Reload only after the download has finished. Edits made here after the download are not in it; then the file stays open and nothing is reloaded.",
+      okText: "Reload",
+      cancelText: "Keep this tab",
+    });
+    if (syncdoc.isClosed?.()) return;
+    if (!reload || !syncdoc.reloadAfterDownload(generation)) {
+      syncdoc.retryHistoryTransition?.();
+    }
+  };
 
   time_travel(opts: { path?: string; frame?: boolean }): void {
     const path = opts?.path ?? this.path;

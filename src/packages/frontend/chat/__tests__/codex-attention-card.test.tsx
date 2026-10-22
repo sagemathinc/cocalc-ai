@@ -24,6 +24,7 @@ jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
   __esModule: true,
   default: (props: any) => {
     mockMarkdownInput(props);
+    if (props.controlRef) props.controlRef.current = { focus: mockFocus };
     return (
       <textarea
         aria-label={props.placeholder}
@@ -45,6 +46,24 @@ beforeEach(() => {
 });
 jest.mock("@cocalc/frontend/agents/api", () => ({
   useNamedAgents: () => mockNamedAgents(),
+}));
+const mockPreflight = jest.fn(
+  async (_value: string, send: () => void | Promise<void>) => {
+    await send();
+  },
+);
+let mockRestoreFocus: (() => void) | undefined;
+const mockFocus = jest.fn();
+jest.mock("@cocalc/frontend/agents/use-agent-mentions", () => ({
+  useAgentMentions: (opts: any) => (
+    (mockRestoreFocus = opts.restoreFocus),
+    {
+      context: { allowAgentMentions: true, onSelect: jest.fn(), states: {} },
+      preflight: (value: string, send: () => void | Promise<void>) =>
+        mockPreflight(value, send),
+      ui: null,
+    }
+  ),
 }));
 jest.mock("@cocalc/frontend/misc/open-browser-tab", () => ({
   open_new_tab: jest.fn(),
@@ -822,6 +841,130 @@ describe("Codex question attention", () => {
         }),
       ),
     );
+    view.unmount();
+  });
+
+  it("offers @agents in a custom answer and checks them like the composer before sending", async () => {
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [{ ...questionRecord.questions[0], isOther: true }],
+        }}
+      />,
+    );
+    expect(mockMarkdownInput).toHaveBeenLastCalledWith(
+      expect.objectContaining({ enableMentions: true }),
+    );
+    const answer =
+      'Ask <span class="agent-mention" data-agent-reference="x">@reviewer</span> first';
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Custom answer for Region" }),
+      { target: { value: answer } },
+    );
+    // The check holds the answer back (an Agent Network still needs approval).
+    mockPreflight.mockImplementationOnce(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Send response" }));
+    await waitFor(() =>
+      expect(mockPreflight).toHaveBeenCalledWith(answer, expect.any(Function)),
+    );
+    expect(webapp_client.conat_client.attentionAcp).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "respond" }),
+    );
+    // Once it passes, the answer goes out with its reference as written.
+    fireEvent.click(screen.getByRole("button", { name: "Send response" }));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          answers: { region: [answer] },
+        }),
+      ),
+    );
+    view.unmount();
+  });
+
+  it("checks only what the person wrote, never an agent's own choices", async () => {
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [
+            {
+              ...questionRecord.questions[0],
+              options: [{ label: "Ask @reviewer" }, { label: "US" }],
+            },
+          ],
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Ask @reviewer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send response" }));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          answers: { region: ["Ask @reviewer"] },
+        }),
+      ),
+    );
+    expect(mockPreflight).toHaveBeenCalledWith("", expect.any(Function));
+    view.unmount();
+  });
+
+  it("puts focus back in the custom answer after the approval dialog", () => {
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [{ ...questionRecord.questions[0], isOther: true }],
+        }}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Custom answer for Region" }),
+      { target: { value: "Ask @" } },
+    );
+    mockFocus.mockClear();
+    mockRestoreFocus?.();
+    expect(mockFocus).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("after approval that Send asked for, focus returns to Send, not the last answer", async () => {
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [
+            { ...questionRecord.questions[0], isOther: true },
+            {
+              ...questionRecord.questions[0],
+              id: "size",
+              header: "Size",
+              isOther: true,
+            },
+          ],
+        }}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Custom answer for Size" }),
+      { target: { value: "Ask @reviewer" } },
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Custom answer for Region" }),
+      { target: { value: "EU" } },
+    );
+    // Send opens the approval dialog (and waits there).
+    mockPreflight.mockImplementationOnce(async () => {});
+    const send = screen.getByRole("button", { name: "Send response" });
+    fireEvent.click(send);
+    await waitFor(() => expect(mockPreflight).toHaveBeenCalled());
+    mockFocus.mockClear();
+    mockRestoreFocus?.();
+    expect(send).toHaveFocus();
+    expect(mockFocus).not.toHaveBeenCalled();
     view.unmount();
   });
 });

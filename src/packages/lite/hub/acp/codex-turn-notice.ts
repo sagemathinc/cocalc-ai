@@ -84,6 +84,61 @@ export function buildCodexTurnNoticeOptions(opts: {
   };
 }
 
+/**
+ * A turn paused by a usage limit (I3-B): not an error that needs someone,
+ * and never one notice per agent. One notice per account, limit and reset
+ * time says agents are paused and resume on their own (I4).
+ */
+export function buildAgentLimitNoticeOptions(opts: {
+  account_id: string;
+  source_project_id: string;
+  source_path: string;
+  source_fragment_id?: string;
+  thread_id: string;
+  thread_label?: string | null;
+  failure: {
+    scope: "credential" | "cocalc";
+    credential_id?: string;
+    resets_at?: number;
+  };
+  agent_label?: string;
+}): CreateCodexTurnNoticeOptions {
+  const threadLabel = normalizeThreadLabel(opts.thread_label);
+  const agent = `${opts.agent_label ?? ""}`.trim() || "Agent";
+  const { failure } = opts;
+  const resets = failure.resets_at
+    ? `${new Date(failure.resets_at).toISOString().slice(0, 16).replace("T", " ")} UTC`
+    : undefined;
+  const whose =
+    failure.scope === "cocalc"
+      ? "CoCalc's usage limit for your membership"
+      : `the usage limit of your ${agent} subscription`;
+  return {
+    account_id: opts.account_id,
+    source_project_id: opts.source_project_id,
+    source_path: opts.source_path,
+    source_fragment_id: opts.source_fragment_id,
+    thread_id: opts.thread_id,
+    thread_label: threadLabel,
+    title: `${agent} agents paused: usage limit reached`,
+    body_markdown: [
+      `Agents reached ${whose}, starting with **${threadLabel}**.`,
+      `Their turns are paused, not lost: each resumes automatically ${resets ? `when the limit resets (about ${resets})` : "when the limit resets"}, and is told what happened.`,
+      "To run one sooner (for example after switching subscriptions) or cancel it, open its conversation.",
+    ].join("\n\n"),
+    severity: "info",
+    paused: true,
+    group_key: [
+      "usage-limit",
+      failure.scope,
+      failure.credential_id ?? "default",
+      failure.resets_at
+        ? Math.round(failure.resets_at / 3_600_000)
+        : new Date().toISOString().slice(0, 10),
+    ].join(":"),
+  };
+}
+
 export async function publishCodexTurnNotice(opts: {
   client: ConatClient;
   project_id: string;
