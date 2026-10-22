@@ -202,6 +202,42 @@ export async function syncProjectQuotaGroup({
   await noteQgroupGroup({ mount, group, members, size });
 }
 
+// The group of a project just made from another (a copy): its home and
+// history joined as they were made, and the group gets the limit for the
+// home's quota now, not at its first quota check (until then, each is bounded
+// only by its own limit, together more than the project's quota allows).
+export async function limitNewProjectQuotaGroup({
+  project_id,
+  mount,
+  home,
+  history,
+  env = process.env,
+}: {
+  project_id: string;
+  mount: string;
+  home: string;
+  history?: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<void> {
+  if (btrfsQuotasDisabled() || refused()) return;
+  const found = await lookupQgroup({
+    mount: dirname(home),
+    getSubvolumeId: async () => await subvolumeIdOf(home),
+  });
+  const quota = found?.row.max_referenced;
+  if (typeof quota !== "number" || !(quota > 0)) return;
+  await syncProjectQuotaGroup({ project_id, mount, home, history, quota, env });
+}
+
+async function subvolumeIdOf(path: string): Promise<number> {
+  const { stdout } = await cachedBtrfsSubvolumeShow(path);
+  const id = Number(stdout.match(/^\s*Subvolume ID:\s*(\d+)/m)?.[1]);
+  if (!Number.isSafeInteger(id)) {
+    throw new Error(`no subvolume id for ${path}`);
+  }
+  return id;
+}
+
 // Puts a home or persist volume the project gets (e.g., by a restore) in its
 // group, at once (its limit is set by the project's next quota change).
 //
@@ -293,14 +329,7 @@ export async function readProjectQuotaGroup({
   const found = await lookupQgroup({
     mount: dirname(path),
     path,
-    getSubvolumeId: async () => {
-      const { stdout } = await cachedBtrfsSubvolumeShow(path);
-      const id = Number(stdout.match(/^\s*Subvolume ID:\s*(\d+)/m)?.[1]);
-      if (!Number.isSafeInteger(id)) {
-        throw new Error(`no subvolume id for ${path}`);
-      }
-      return id;
-    },
+    getSubvolumeId: async () => await subvolumeIdOf(path),
   });
   const row = found?.parents.find((r) => r.qgroupid === group);
   if (found == null || row == null) return;

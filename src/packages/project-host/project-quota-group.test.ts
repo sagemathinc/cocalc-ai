@@ -55,6 +55,7 @@ import {
   effectiveQuotaUsage,
   historyReserve,
   joinProjectQuotaGroup,
+  limitNewProjectQuotaGroup,
   projectQuotaGroup,
   projectQuotaGroupInSync,
   projectQuotaGroupLimit,
@@ -82,8 +83,8 @@ function filesystem({
   history,
   groupLimit = "none",
 }: {
-  home?: { own: number; member?: boolean };
-  history?: { own: number; member?: boolean; id?: number };
+  home?: { own: number; member?: boolean; limit?: number };
+  history?: { own: number; member?: boolean; id?: number; limit?: number };
   groupLimit?: number | "none";
 }): void {
   const rows: string[] = [`0/5 16384 16384 none - - <toplevel>`];
@@ -101,7 +102,7 @@ function filesystem({
       total += v.own;
     }
     rows.push(
-      `0/${id} ${v.own} ${v.own} none ${member ? GROUP : "-"} - ${path}`,
+      `0/${id} ${v.own} ${v.own} ${v.limit ?? "none"} ${member ? GROUP : "-"} - ${path}`,
     );
   }
   if (members.length > 0) {
@@ -290,6 +291,42 @@ describe("the project's quota group", () => {
         env: {},
       }),
     ).toMatchObject({ used: 10.5 * GiB, history_reserve: 0.5 * GiB });
+  });
+});
+
+describe("a copied project's group", () => {
+  it("gets the limit for the copied home's quota at once", async () => {
+    existing.add(HISTORY);
+    // the copy's home (quota 10 GiB) and history joined, the group unlimited
+    filesystem({
+      home: { own: GiB, limit: 10 * GiB },
+      history: { own: GiB },
+    });
+    await limitNewProjectQuotaGroup({
+      project_id: PROJECT,
+      mount: "/mnt/cocalc",
+      home: HOME,
+      history: HISTORY,
+      env: {},
+    });
+    expect(queued).toEqual([
+      expect.objectContaining({
+        group: GROUP,
+        members: [HOME, HISTORY],
+        size: 11 * GiB,
+      }),
+    ]);
+    // no limit on the home: nothing to go by (its quota check sets it)
+    queued.length = 0;
+    filesystem({ home: { own: GiB }, history: { own: GiB } });
+    await limitNewProjectQuotaGroup({
+      project_id: PROJECT,
+      mount: "/mnt/cocalc",
+      home: HOME,
+      history: HISTORY,
+      env: {},
+    });
+    expect(queued).toEqual([]);
   });
 });
 
