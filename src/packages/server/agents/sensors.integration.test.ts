@@ -110,7 +110,8 @@ import {
   setSensorIssueHookForTests,
   startSensorScheduler,
 } from "./sensor-scheduler";
-import { WATCHERS_PER_WAKE } from "./sensor-budget";
+import { pruneSensorEvents, WATCHERS_PER_WAKE } from "./sensor-budget";
+import { SENSOR_LIMITS } from "@cocalc/conat/agents/sensors";
 
 const HOST = "44444444-4444-4444-8444-444444444444";
 
@@ -1144,6 +1145,12 @@ describeDb("agent sensors", () => {
     );
     limits.sensor_max_active_watchers = 0;
     await expect(fileWatch()).rejects.toThrow(/does not include agent sensors/);
+    // Reminders are counted apart: still allowed, while the tier has wakes.
+    await reminder(30);
+    limits.sensor_max_wakes_per_day = 0;
+    await expect(reminder(31)).rejects.toThrow(
+      /does not include agent sensors/,
+    );
   });
 
   test("a per-agent limit keeps one agent from using all of the account's watchers", async () => {
@@ -1577,6 +1584,98 @@ describeDb("agent sensors", () => {
     expect(host.runAgentSensor).not.toHaveBeenCalled();
     expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toMatch(
       /^\[Reminder\] You set this reminder for .*Check that PR 992 merged/,
+    );
+  });
+
+  const reminder = (days: number, r: any = run, a: any = agent) =>
+    agentSensorRequest(r, a, {
+      action: "sensor",
+      op: "watch",
+      watch: {
+        type: "at",
+        at: new Date(Date.now() + days * 86_400_000).toISOString(),
+        note: `in ${days} days`,
+      },
+    }) as any;
+
+  test("a reminder may be months ahead, and takes no watcher's place", async () => {
+    limits.sensor_max_active_watchers = 2;
+    await fileWatch();
+    await fileWatch();
+    // Both watcher places taken: a reminder still fits, 300 days out.
+    const far = (await reminder(300)).sensor;
+    expect(Date.parse(far.next_run_at)).toBeGreaterThan(
+      Date.now() + 299 * 86_400_000,
+    );
+    await expect(fileWatch()).rejects.toThrow(
+      /at most 2 watchers may be active at once for this account/,
+    );
+    // It is listed (and deletable) like any of the agent's sensors.
+    const listed = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "list",
+    })) as any;
+    expect(listed.sensors.map((sensor: any) => sensor.sensor_id)).toContain(
+      far.sensor_id,
+    );
+    await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "delete",
+      sensor_id: far.sensor_id,
+    });
+  });
+
+  test("reminders have their own cap per agent", async () => {
+    // Enough wakes that the daily cap on new watchers is not what stops it.
+    limits.sensor_max_wakes_per_day = 100;
+    for (let i = 0; i < SENSOR_LIMITS.maxRemindersPerAgent; i++)
+      await reminder(30 + i);
+    await expect(reminder(200)).rejects.toThrow(
+      new RegExp(
+        `at most ${SENSOR_LIMITS.maxRemindersPerAgent} reminders may be pending at once for this agent`,
+      ),
+    );
+    // Another agent of the account still may set one.
+    const { otherAgent, otherRun } = await secondAgent();
+    await reminder(200, otherRun, otherAgent);
+  });
+
+  test("a reminder is set even when today's wakes are used up (it fires another day)", async () => {
+    limits.sensor_max_wakes_per_day = 2;
+    for (let i = 0; i < 2; i++)
+      await getPool().query(
+        `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id,
+           agent_id, sensor_id) VALUES ($1, 'wake', $2, $3, $4, $1)`,
+        [randomUUID(), owner, project_id, agent_id],
+      );
+    await expect(fileWatch()).rejects.toThrow(/used all 2 wakes/);
+    await reminder(10);
+    // But one due within those 24 hours could not wake its agent either.
+    await expect(reminder(0.5)).rejects.toThrow(/used all 2 wakes/);
+  });
+
+  test("a deleted long reminder's budget row is pruned after the daily window, not its far deadline", async () => {
+    const row = async (released: string | null) => {
+      const id = randomUUID();
+      await getPool().query(
+        `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id,
+           agent_id, sensor_id, expires_at, created, released_at)
+         VALUES ($1, 'reminder', $2, $3, $4, $1, now() + interval '300 days',
+           now() - interval '3 days', ${released ?? "NULL"})`,
+        [id, owner, project_id, agent_id],
+      );
+      return id;
+    };
+    const deleted = await row("now() - interval '2 days'");
+    const pending = await row(null);
+    const releasedToday = await row("now() - interval '1 hour'");
+    await pruneSensorEvents();
+    const { rows } = await getPool().query(
+      "SELECT event_id FROM agent_sensor_events WHERE event_id = ANY($1)",
+      [[deleted, pending, releasedToday]],
+    );
+    expect(rows.map((r) => r.event_id).sort()).toEqual(
+      [pending, releasedToday].sort(),
     );
   });
 

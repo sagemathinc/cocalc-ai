@@ -6282,6 +6282,8 @@ export async function deleteAccount({
   return await deleteClusterAccount({
     account_id: targetAccountId,
     only_if_tag: `${only_if_tag ?? ""}`.trim() || undefined,
+    initiator: targetAccountId === account_id ? "self" : "admin",
+    actor_account_id: account_id,
   });
 }
 
