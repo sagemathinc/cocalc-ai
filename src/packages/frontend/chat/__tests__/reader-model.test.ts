@@ -154,3 +154,33 @@ describe("agent replies without ACP metadata", () => {
     ]);
   });
 });
+
+describe("interleaved histories", () => {
+  // prompt-A, prompt-B, then a late reply to A.
+  const lateReply = {
+    ...agent("ra"),
+    parent_message_id: "pa",
+  };
+  const messages = [person("pa"), person("pb"), lateReply];
+  const items = readerItems(messages);
+
+  it("a reply joins its prompt's item, not the latest one", () => {
+    expect(
+      items.map(({ id, lastId, indexes }) => [id, lastId, indexes]),
+    ).toEqual([
+      ["pa", "ra", [0, 2]],
+      ["pb", "pb", [1]],
+    ]);
+  });
+
+  it("the watermark moves only over messages whose items are read", () => {
+    // Reading A (both its messages) leaves B's message unread between them.
+    const a = markItemRead(items, items[0], -1, {});
+    expect(a).toEqual({ state: { r: { pa: "ra" } }, watermarkCount: 1 });
+    // Then B: everything is read, in order.
+    expect(markItemRead(items, items[1], 0, a.state)).toEqual({
+      state: {},
+      watermarkCount: 3,
+    });
+  });
+});
