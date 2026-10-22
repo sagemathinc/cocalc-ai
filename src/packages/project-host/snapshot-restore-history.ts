@@ -1,7 +1,18 @@
 import { lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
+import { forgetSubvolumePaths } from "@cocalc/file-server/btrfs/operation-cache";
 import { assertValidSnapshotName } from "@cocalc/util/snapshot-name";
+
+// Moves a subvolume; what was read about the paths no longer holds (another
+// subvolume may be at them now: file-server qgroup-scan.ts).
+async function move(source: string, destination: string): Promise<void> {
+  try {
+    await sudo({ command: "mv", args: [source, destination] });
+  } finally {
+    forgetSubvolumePaths(source, destination);
+  }
+}
 
 export async function replaceSnapshotHome({
   home,
@@ -14,19 +25,19 @@ export async function replaceSnapshotHome({
   retired: string;
   record: () => Promise<unknown>;
 }): Promise<void> {
-  await sudo({ command: "mv", args: [home, retired] });
+  await move(home, retired);
   let installed = false;
   try {
-    await sudo({ command: "mv", args: [replacement, home] });
+    await move(replacement, home);
     installed = true;
     await record();
   } catch (err) {
     let restored = false;
     try {
       if (installed) {
-        await sudo({ command: "mv", args: [home, replacement] });
+        await move(home, replacement);
       }
-      await sudo({ command: "mv", args: [retired, home] });
+      await move(retired, home);
       restored = true;
       await record();
     } catch (rollbackError) {
