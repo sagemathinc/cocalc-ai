@@ -46,6 +46,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { indexedBackupState } from "@cocalc/frontend/projects/host-operational";
 import { ProjectDiskQuotaRemediation } from "./quota-remediation";
+import EditHistoryStorage from "./edit-history-storage";
 import { isProjectDiskQuotaStartBlocked } from "@cocalc/util/project-start-errors";
 
 const { Text } = Typography;
@@ -679,9 +680,9 @@ export default function DiskUsage({
     [lastBackup],
   );
   const [expand, setExpand] = useState<boolean>(false);
-  const [activePanel, setActivePanel] = useState<"overview" | "history">(
-    "overview",
-  );
+  const [activePanel, setActivePanel] = useState<
+    "overview" | "history" | "edit-history"
+  >("overview");
   const {
     visible,
     live,
@@ -1150,14 +1151,17 @@ export default function DiskUsage({
               options={[
                 { label: "Overview", value: "overview" },
                 { label: "History", value: "history" },
+                { label: "Edit history & logs", value: "edit-history" },
               ]}
               onChange={(value) =>
-                setActivePanel(value as "overview" | "history")
+                setActivePanel(value as "overview" | "history" | "edit-history")
               }
               value={activePanel}
             />
           </div>
-          {activePanel === "history" ? (
+          {activePanel === "edit-history" ? (
+            <EditHistoryStorage project_id={project_id} />
+          ) : activePanel === "history" ? (
             <>
               <div style={{ marginBottom: "14px" }}>
                 <Space size={12} wrap>

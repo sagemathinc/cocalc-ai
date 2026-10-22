@@ -306,10 +306,10 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
           title="Storage history"
           summary={
             storageHistoryChecked
-              ? "Collaborators may delete recovery history and move or archive the project."
-              : "Only owners can delete recovery history or move/archive the project."
+              ? "Collaborators may delete recovery history (snapshots, backups, edit history) and move or archive the project."
+              : "Only owners can delete recovery history (snapshots, backups, edit history) or move/archive the project."
           }
-          details="Collaborators can still edit and delete ordinary files. This protects snapshots, backups, archive, and move actions because those can remove recovery history."
+          details="Collaborators can still edit and delete ordinary files. This protects snapshots, backups, the edit history (TimeTravel) and agent logs, archive, and move actions because those can remove recovery history."
           action={
             <Switch
               checked={storageHistoryChecked}

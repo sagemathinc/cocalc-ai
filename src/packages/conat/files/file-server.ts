@@ -41,6 +41,11 @@ import { type CopyOptions } from "./fs";
 export { type CopyOptions };
 import { type LroScopeType } from "@cocalc/conat/hub/api/lro";
 import { isValidUUID } from "@cocalc/util/misc";
+import type {
+  PersistStorageAction,
+  PersistStorageApplyResult,
+  PersistStorageList,
+} from "@cocalc/conat/project/persist-storage";
 
 const SUBJECT = "file-server";
 
@@ -268,6 +273,17 @@ export interface Fileserver {
     used: number;
     free: number;
   }>;
+
+  // A project's edit history and logs, which its users can't reach
+  // (conat/project/persist-storage.ts); the hub checks who may.
+  persistStorageList: (opts: {
+    project_id: string;
+    limit?: number;
+  }) => Promise<PersistStorageList>;
+  persistStorageApply: (opts: {
+    project_id: string;
+    actions: PersistStorageAction[];
+  }) => Promise<PersistStorageApplyResult>;
 
   getQuota: (opts: {
     project_id: string;

@@ -248,6 +248,7 @@ import {
   syncPersistVolumeQuota,
   persistVolumePath,
 } from "./persist-volume";
+import { applyPersistStorage, listPersistStorage } from "./persist-storage";
 import {
   deleteEmptyQuotaGroups,
   joinProjectQuotaGroup,
@@ -6004,6 +6005,10 @@ export async function initFileServer({
     getUsage: reuseInFlight(getUsage),
     getQuota: reuseInFlight(getQuota),
     setQuota,
+    persistStorageList: async ({ project_id, limit }) =>
+      await listPersistStorage({ project_id, limit }),
+    persistStorageApply: async ({ project_id, actions }) =>
+      await applyPersistStorage({ project_id, actions }),
     cp,
     getCopyCapabilities: async () => ({ exact_replace: true }),
     flushJupyterNotebooksToDisk: reuseInFlight((opts) =>
