@@ -252,6 +252,7 @@ import { applyPersistStorage, listPersistStorage } from "./persist-storage";
 import {
   deleteEmptyQuotaGroups,
   joinProjectQuotaGroup,
+  limitNewProjectQuotaGroup,
   projectQuotaGroupInSync,
   projectQuotaGroupsPermitted,
   projectQuotaWithHistory,
@@ -2266,6 +2267,19 @@ async function clone({
       // made outside any group, like its history (which joins by itself)
       await joinHomeToQuotaGroup(project_id);
     },
+  });
+  // the group's limit now, not at the copy's first quota check
+  await limitNewProjectQuotaGroup({
+    project_id,
+    mount: getMountPoint(),
+    home: projectMountpoint(project_id),
+    history: persistVolumePath(project_id),
+  }).catch((err) => {
+    // (its next quota check sets it)
+    logger.warn("unable to limit a copied project's quota group", {
+      project_id,
+      err: `${err}`,
+    });
   });
   await recordManagedProjectVolume({
     project_id,
