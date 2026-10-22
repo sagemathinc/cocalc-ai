@@ -27,6 +27,8 @@ type CacheEntry<T> = {
 
 const subvolumeShowCache = new Map<string, CacheEntry<BtrfsOutput>>();
 const subvolumeShowInflight = new Map<string, Promise<BtrfsOutput>>();
+// bumped when a key is invalidated: a read under way then is never stored
+const subvolumeShowGenerations = new Map<string, number>();
 const DEFAULT_MUTATION_LOCK_WAIT_MS = 2 * 60_000;
 
 type MutationLockHolder = {
@@ -112,12 +114,14 @@ async function cached<T>({
   key,
   ttlMs,
   run,
+  generations,
 }: {
   cache: Map<string, CacheEntry<T>>;
   inflight: Map<string, Promise<T>>;
   key: string;
   ttlMs: number;
   run: () => Promise<T>;
+  generations?: Map<string, number>;
 }): Promise<T> {
   const now = Date.now();
   const cached = cache.get(key);
@@ -128,9 +132,10 @@ async function cached<T>({
   if (pending) {
     return await pending;
   }
+  const generation = generations?.get(key) ?? 0;
   const promise = (async () => {
     const value = await run();
-    if (ttlMs > 0) {
+    if (ttlMs > 0 && (generations?.get(key) ?? 0) === generation) {
       cache.set(key, { value, expires: Date.now() + ttlMs });
     }
     return value;
@@ -171,6 +176,7 @@ export async function cachedBtrfsSubvolumeShow(
     inflight: subvolumeShowInflight,
     key: `${errOnExit ? "strict" : "lenient"}:${path}`,
     ttlMs: subvolumeShowCacheMs(),
+    generations: subvolumeShowGenerations,
     run: async () =>
       await btrfs({
         args: ["subvolume", "show", path],
@@ -180,9 +186,18 @@ export async function cachedBtrfsSubvolumeShow(
   });
 }
 
+// What was read about the subvolume at `path` no longer holds (e.g., another
+// one is there now): dropped, and so is a read under way, which is never
+// stored nor given to anyone asking from now on.
 export function invalidateBtrfsSubvolumeShow(path: string): void {
-  subvolumeShowCache.delete(`strict:${path}`);
-  subvolumeShowCache.delete(`lenient:${path}`);
+  for (const key of [`strict:${path}`, `lenient:${path}`]) {
+    subvolumeShowCache.delete(key);
+    subvolumeShowInflight.delete(key);
+    subvolumeShowGenerations.set(
+      key,
+      (subvolumeShowGenerations.get(key) ?? 0) + 1,
+    );
+  }
 }
 
 export async function withBtrfsMutationLock<T>({
@@ -406,6 +421,7 @@ export function clearBtrfsOperationCachesForTest(): void {
   resetQgroupScansForTest();
   subvolumeShowCache.clear();
   subvolumeShowInflight.clear();
+  subvolumeShowGenerations.clear();
   for (const state of mutationLocks.values()) {
     for (const waiter of state.waiters) {
       clearTimeout(waiter.timeout);
