@@ -103,21 +103,22 @@ trust:
 
 1. Stop the project right away. Removing someone does not end an SSH session
    or a program they already started, and stopping the project ends both.
-2. In **Settings -> People**, remove any collaborator you do not recognize: the
+2. Keep it stopped while you check it. In **Settings -> Runtime**, set
+   **Automatic starts** to **Blocked**, so SSH, terminals, Jupyter, apps and
+   agents cannot wake the project. Only the project owner can change this.
+3. In **Settings -> People**, remove any collaborator you do not recognize: the
    person you removed may have invited another account of their own. Under
    **Collaborator Management**, consider turning off **Allow other users to
    manage collaborators**, so only the owner can add people.
-3. Start the project, but do not open a terminal yet: a new terminal runs
-   \`~/.bashrc\`. In the file explorer, choose **Show hidden files**, then open
-   these files in the editor and remove anything you did not expect:
-   \`~/.local/share/cocalc/startup.sh\` (which runs every time the project
-   starts), \`~/.ssh/authorized_keys\` (delete any key you do not recognize),
-   and the shell startup files \`~/.bashrc\`, \`~/.bash_profile\`,
+4. With the project still stopped, check the files that run code. You can open
+   and edit files without starting the project. In the file explorer, choose
+   **Show hidden files**, then open these files and remove anything you did not
+   expect: \`~/.local/share/cocalc/startup.sh\` (which runs every time the
+   project starts), \`~/.ssh/authorized_keys\` (delete any key you do not
+   recognize), and the shell startup files \`~/.bashrc\`, \`~/.bash_profile\`,
    \`~/.profile\`, and any others your shells read, such as \`~/.zshrc\`.
-4. Review any other scripts or scheduled jobs the project runs, and remove
+5. Review any other scripts or scheduled jobs the project runs, and remove
    anything you did not expect.
-5. Restart the project once more, so nothing those files started keeps
-   running, then check the running processes in a terminal with \`ps aux\`.
 6. Revoke, at their source, every credential the collaborator could read:
    passwords, API keys, tokens, certificates, SSH private keys (remove the
    matching public key wherever it is authorized), and
@@ -125,12 +126,15 @@ trust:
    with the service that issued it. A running project sees a changed secret
    right away, so add replacements only to a project you trust, as explained
    below.
+7. When you are done, start the project, check the running processes in a
+   terminal with \`ps aux\`, and set **Automatic starts** back to **Allowed** if
+   you want.
 
 These steps catch the usual ways access is left behind, but they cannot prove a
-project is clean: the startup script, for example, has already run once by the
-time you can open it. If you need that certainty, create a new project, copy in
-only the files you need after reviewing them, and add the replacement
-credentials there instead of in the old project.
+project is clean: code can be hidden in any file the project runs later. If you
+need that certainty, create a new project, copy in only the files you need after
+reviewing them, and add the replacement credentials there instead of in the old
+project.
 
 Keep the paths to the report, saved results, and next steps in the
 [research handoff](/docs/projects/research-handoff). For coauthors editing
