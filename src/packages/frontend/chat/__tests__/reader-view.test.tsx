@@ -307,3 +307,30 @@ test("the unread status says what it is", () => {
   setup(thread, 2);
   expect(screen.getByText("2 unread")).toBeInTheDocument();
 });
+
+test("an agent message is shown as the log shows it: its From card", async () => {
+  setup(
+    [
+      {
+        message_id: "rpc1",
+        sender_id: "acct",
+        date: new Date(1),
+        history: [{ content: "Acknowledged", author_id: "acct" }],
+        agent_rpc: {
+          source: {
+            agent_id: "22222222-2222-4222-8222-222222222222",
+            project_id: "p1",
+          },
+          source_label: "@agent-1",
+          agent_network_id: "88888888-8888-4888-8888-888888888888",
+          attempt_id: "55555555-5555-4555-8555-555555555555",
+        },
+      },
+    ],
+    1,
+  );
+  await user().click(screen.getByRole("option"));
+  expect(screen.getByRole("article")).toHaveTextContent(
+    /```agent-message .*direction=incoming/,
+  );
+});
