@@ -3436,6 +3436,8 @@ describe("admin credit attribution across bays", () => {
          missing: missing.map((row) => row.purchase_id),
          after: attached.after,
        };`,
+      // Its own process: it switches on billing-authority mode.
+      { fresh: true },
     );
     assert.ok(result.missing.includes(result.purchase_id));
     assert.equal(result.after.source, "attached");

@@ -154,8 +154,9 @@ const SERVER_DIST = path.join(SRC, "packages/server/dist");
  *
  * Snippets run in one long-lived worker process per bay, since starting a
  * process that loads the server package takes about 1.5 s. Pass
- * `fresh: true` for a process of its own: for a snippet that must not share
- * module state, or runs long (e.g. a fake host serving for a while).
+ * `fresh: true` for a process of its own: for a snippet that changes process
+ * or module state (process.env, a patched module), which would otherwise
+ * leak into later snippets, or one that runs long (e.g. a fake host).
  */
 export async function runInBay(
   cluster,
@@ -182,13 +183,18 @@ const server = (p) => require(${JSON.stringify(SERVER_DIST)} + "/" + p);
   let err = "";
   child.stdout.on("data", (d) => (out += d));
   child.stderr.on("data", (d) => (err += d));
+  // An ordinary timer, cleared once the child exits: a pending sleep() would
+  // keep the test process alive for the rest of timeoutMs.
+  let timer;
   const code = await Promise.race([
     new Promise((resolve) => child.once("exit", resolve)),
-    sleep(timeoutMs).then(() => {
-      child.kill("SIGKILL");
-      return "timeout";
+    new Promise((resolve) => {
+      timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        resolve("timeout");
+      }, timeoutMs);
     }),
-  ]);
+  ]).finally(() => clearTimeout(timer));
   const line = out.split("\n").find((l) => l.startsWith(MARKER));
   if (!line) {
     throw new Error(

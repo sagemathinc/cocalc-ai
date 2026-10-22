@@ -38,10 +38,14 @@ function installLifecycleHandlers() {
       }
       // Let the children close their sqlite files, then die of the same
       // signal: with a handler installed, Node no longer exits on it.
+      let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         Promise.all(exited),
-        new Promise((resolve) => setTimeout(resolve, CHILD_EXIT_GRACE_MS)),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, CHILD_EXIT_GRACE_MS);
+        }),
       ]);
+      clearTimeout(timer);
       process.kill(process.pid, sig as NodeJS.Signals);
     });
   });
