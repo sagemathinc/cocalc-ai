@@ -843,7 +843,7 @@ export function ChatLog({
       scrollToBottomRef?.current?.(true);
     } else {
       keepBottomAnchoredRef.current = false;
-      journalScroll("jump", { kind: "scroll-to-index" });
+      journalScroll("jump", { reason: "scroll-to-index" });
       virtuosoRef.current?.scrollToIndex({
         index: rowLookupRef.current.forMessageIndex(scrollToIndex),
         behavior: INSTANT_SCROLL_BEHAVIOR,
@@ -876,7 +876,7 @@ export function ChatLog({
       return;
     }
     keepBottomAnchoredRef.current = false;
-    journalScroll("jump", { kind: "scroll-to-date" });
+    journalScroll("jump", { reason: "scroll-to-date" });
     virtuosoRef.current?.scrollToIndex({
       index: rowLookupRef.current.forMessageIndex(index),
       behavior: INSTANT_SCROLL_BEHAVIOR,
@@ -891,7 +891,7 @@ export function ChatLog({
     if (index < 0) return;
     keepBottomAnchoredRef.current = false;
     if (USE_VIRTUOSO) {
-      journalScroll("jump", { kind: "search-jump" });
+      journalScroll("jump", { reason: "search-jump" });
       virtuosoRef.current?.scrollToIndex({
         index: rowLookupRef.current.forMessageIndex(index),
         align: "center",
@@ -2278,7 +2278,7 @@ export function MessageList({
     if (index < 0) return;
     pendingActivityScrollRef.current = undefined;
     markManualScrollAway();
-    journalScroll("jump", { kind: "activity-jump" });
+    journalScroll("jump", { reason: "activity-jump" });
     listVirtuosoRef.current?.scrollToIndex({
       index,
       align: "start",
@@ -2300,7 +2300,7 @@ export function MessageList({
     if (appliedAttentionJumpRef.current === jump) return;
     appliedAttentionJumpRef.current = jump;
     if (useVirtuoso) {
-      journalScroll("jump", { kind: "activity-jump-2" });
+      journalScroll("jump", { reason: "activity-jump-2" });
       listVirtuosoRef.current?.scrollToIndex({
         index: rowCountRef.current,
         align: "center",

@@ -46,3 +46,11 @@ test("an element with its own fixed scrollTop is left alone", () => {
   expect(() => journalScrollWrites(element)()).not.toThrow();
   expect(element.scrollTop).toBe(7);
 });
+
+test("an entry's kind is never replaced by its data", () => {
+  journalScroll("jump", { kind: "search-jump", reason: "search-jump" });
+  expect(scrollJournal()[0]).toMatchObject({
+    kind: "jump",
+    reason: "search-jump",
+  });
+});

@@ -27,7 +27,8 @@ export function journalScroll(
   kind: string,
   data: Record<string, unknown> = {},
 ): void {
-  entries.push({ t: now(), kind, ...data });
+  // The kind wins over a same-named field in the data.
+  entries.push({ ...data, t: now(), kind });
   if (entries.length > MAX_ENTRIES)
     entries.splice(0, entries.length - MAX_ENTRIES);
 }
