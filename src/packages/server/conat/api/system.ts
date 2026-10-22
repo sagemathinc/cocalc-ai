@@ -232,6 +232,12 @@ import {
   getBackupPurgeHealth,
 } from "@cocalc/server/projects/backup-purge-health";
 import {
+  billingExposureHealthDetails,
+  billingExposureHealthLevel,
+  billingExposureHealthSummary,
+  getBillingExposureHealth,
+} from "@cocalc/server/purchases/billing-exposure-health";
+import {
   getProjectRecoveryCustomerWarningScanStatus,
   projectRecoveryCustomerWarningScanProblem,
   type ProjectRecoveryCustomerWarningScanStatus,
@@ -2254,6 +2260,7 @@ export async function getLaunchHealth({
     adminAlertsResult,
     intrusionObservationsResult,
     backupPurgeResult,
+    billingExposureResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2275,6 +2282,7 @@ export async function getLaunchHealth({
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
     getHostIntrusionObservationSummary(),
     getBackupPurgeHealth(),
+    getBillingExposureHealth({ bay_id: currentBay.bay_id }),
   ]);
 
   const settings =
@@ -2597,6 +2605,24 @@ export async function getLaunchHealth({
                 ? `Oldest overdue purge was due ${backupPurgeResult.value.oldest_overdue_due_at}`
                 : "",
             ],
+    }),
+    launchHealthCheck({
+      id: "billing-exposure",
+      label: "Billing exposure",
+      // An unreadable check warns rather than pages: the full purchases scan
+      // can hit its statement timeout on a busy database.
+      level:
+        billingExposureResult.status === "rejected"
+          ? "warning"
+          : billingExposureHealthLevel(billingExposureResult.value),
+      summary:
+        billingExposureResult.status === "rejected"
+          ? "Unable to read billing exposure."
+          : billingExposureHealthSummary(billingExposureResult.value),
+      details:
+        billingExposureResult.status === "rejected"
+          ? [`${billingExposureResult.reason}`]
+          : billingExposureHealthDetails(billingExposureResult.value),
     }),
     launchHealthCheck({
       id: "project-recovery",
