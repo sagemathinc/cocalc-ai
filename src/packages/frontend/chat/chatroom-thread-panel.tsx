@@ -28,6 +28,7 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { ChatReaderView } from "./reader-view";
 import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -553,6 +554,10 @@ interface ChatRoomThreadPanelProps {
   }) => void;
   readOnly?: boolean;
   mobile?: boolean;
+  /** Show the selected thread in the reader instead of the log. */
+  readerMode?: boolean;
+  onReaderModeChange?: (on: boolean) => void;
+  readStateVersion?: number;
   onMobileToolsAction?: () => void;
 }
 
@@ -603,6 +608,9 @@ export function ChatRoomThreadPanel({
   onOpenGitBrowser,
   readOnly = false,
   mobile = false,
+  readerMode = false,
+  onReaderModeChange,
+  readStateVersion,
   onMobileToolsAction,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
@@ -800,6 +808,15 @@ export function ChatRoomThreadPanel({
     selectedThreadMessageCount: number;
   } | null>(null);
   const selectedThreadLookup = selectedThreadId;
+  const showReader = readerMode && !!selectedThreadId;
+  const readerMessages = useMemo(
+    () =>
+      showReader && selectedThreadId
+        ? (actions.getMessagesInThread(selectedThreadId) ?? [])
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showReader, actions, selectedThreadId, messages, docVersion],
+  );
   const selectedThreadMessages = useMemo(
     () =>
       selectedThreadLookup != null
@@ -2174,6 +2191,36 @@ export function ChatRoomThreadPanel({
         threadId={selectedThreadId}
         compact={compactTopRightControls && !mobile}
       />
+      {onReaderModeChange && selectedThreadId ? (
+        <Tooltip
+          title={
+            readerMode
+              ? "Back to the chat log"
+              : "Read this thread as an inbox: unread items in bold, j/k to move, y to archive"
+          }
+        >
+          <Button
+            size="small"
+            type={
+              readerMode
+                ? "primary"
+                : compactTopRightControls
+                  ? "text"
+                  : "default"
+            }
+            aria-label="Reader"
+            aria-pressed={readerMode}
+            onClick={() => {
+              onMobileToolsAction?.();
+              onReaderModeChange(!readerMode);
+            }}
+            icon={<Icon name="mail" />}
+            style={compactTopRightButtonStyle}
+          >
+            {compactTopRightControls ? null : "Reader"}
+          </Button>
+        </Tooltip>
+      ) : null}
       <Tooltip title="Search thread (Ctrl/Cmd+F)">
         <Button
           size="small"
@@ -3038,39 +3085,55 @@ export function ChatRoomThreadPanel({
             {archivedLoadError}
           </div>
         ) : null}
-        <ChatLog
-          actions={actions}
-          project_id={project_id ?? ""}
-          path={path ?? ""}
-          messages={messages}
-          threadIndex={threadIndex}
-          docVersion={docVersion}
-          acpState={acpState}
-          scrollToBottomRef={scrollToBottomRef}
-          scrollCacheId={scrollCacheId}
-          isVisible={isVisible}
-          mode={variant === "compact" ? "sidechat" : "standalone"}
-          fontSize={fontSize}
-          selectedThread={selectedThreadForLog}
-          scrollToIndex={scrollToIndex}
-          scrollToDate={scrollToDate}
-          selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
-          searchJumpDate={activeSearchMatchDate}
-          searchJumpToken={threadSearchJumpToken}
-          searchQuery={threadSearchHighlightQuery}
-          onAtTopStateChange={setThreadNearTop}
-          activityJumpDate={activityJumpDate}
-          activityJumpToken={activityJumpToken}
-          activityJumpAttentionId={activityJumpAttentionId}
-          onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
-          suppressInlineCodexStatusDate={
-            selectedRunningCodexDate != null
-              ? `${selectedRunningCodexDate}`
-              : undefined
-          }
-          attentionRecords={attentionRecords}
-          readOnly={readOnly}
-        />
+        {showReader ? (
+          <ChatReaderView
+            actions={actions}
+            threadId={selectedThreadId}
+            messages={readerMessages}
+            accountId={accountId}
+            readStateVersion={readStateVersion}
+            fontSize={fontSize}
+            narrow={mobile || variant === "compact"}
+            onShowInChat={(date) => {
+              onReaderModeChange?.(false);
+              setTimeout(() => actions.scrollToDate(date), 0);
+            }}
+          />
+        ) : (
+          <ChatLog
+            actions={actions}
+            project_id={project_id ?? ""}
+            path={path ?? ""}
+            messages={messages}
+            threadIndex={threadIndex}
+            docVersion={docVersion}
+            acpState={acpState}
+            scrollToBottomRef={scrollToBottomRef}
+            scrollCacheId={scrollCacheId}
+            isVisible={isVisible}
+            mode={variant === "compact" ? "sidechat" : "standalone"}
+            fontSize={fontSize}
+            selectedThread={selectedThreadForLog}
+            scrollToIndex={scrollToIndex}
+            scrollToDate={scrollToDate}
+            selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
+            searchJumpDate={activeSearchMatchDate}
+            searchJumpToken={threadSearchJumpToken}
+            searchQuery={threadSearchHighlightQuery}
+            onAtTopStateChange={setThreadNearTop}
+            activityJumpDate={activityJumpDate}
+            activityJumpToken={activityJumpToken}
+            activityJumpAttentionId={activityJumpAttentionId}
+            onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
+            suppressInlineCodexStatusDate={
+              selectedRunningCodexDate != null
+                ? `${selectedRunningCodexDate}`
+                : undefined
+            }
+            attentionRecords={attentionRecords}
+            readOnly={readOnly}
+          />
+        )}
       </div>
     </div>
   );

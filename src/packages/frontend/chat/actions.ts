@@ -89,9 +89,11 @@ import {
 } from "./utils";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import {
+  chatReaderStateKey,
   openProjectReadState,
   type ProjectReadStateStore,
 } from "@cocalc/conat/project/read-state";
+import type { ReaderState } from "./reader-model";
 import {
   field,
   historyArray,
@@ -2444,6 +2446,34 @@ export class ChatActions extends Actions<ChatState> {
       return parsedCfg;
     }
     return 0;
+  };
+
+  /** The reader view's state for a thread: {} until there is any. */
+  getReaderState = (threadKey: string): ReaderState => {
+    const threadId = this.normalizeThreadId(threadKey);
+    const path = this.store?.get("path");
+    if (!threadId || !path) return {};
+    const entry = this.ensureProjectReadState()?.get(
+      chatReaderStateKey(path, threadId),
+    );
+    if (entry?.kind !== "chat-reader") return {};
+    const { kind: _kind, t: _t, ...state } = entry;
+    return state;
+  };
+
+  /** False when the read state is not open yet (nothing is saved). */
+  setReaderState = (threadKey: string, state: ReaderState): boolean => {
+    const threadId = this.normalizeThreadId(threadKey);
+    const path = this.store?.get("path");
+    const store = this.ensureProjectReadState();
+    if (!threadId || !path || store == null) return false;
+    store.set(chatReaderStateKey(path, threadId), {
+      kind: "chat-reader",
+      t: new Date(),
+      ...state,
+    });
+    this.touchReadStateVersion();
+    return true;
   };
 
   isProjectReadStateReady = (): boolean => {
