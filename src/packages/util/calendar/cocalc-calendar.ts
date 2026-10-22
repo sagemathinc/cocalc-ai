@@ -45,6 +45,8 @@ export const CALENDAR_LIMITS = {
   maxLinks: 20,
   /** Occurrences of one event expanded for any range. */
   maxOccurrences: 1_000,
+  /** Occurrences of the whole calendar expanded for one range. */
+  maxRangeOccurrences: 5_000,
 } as const;
 
 export type CalendarStatus = "scheduled" | "pending" | "done" | "cancelled";
@@ -864,11 +866,29 @@ export function calendarOccurrences(
   fromMs: number,
   toMs: number,
 ): CalendarOccurrence[] {
+  return expandOccurrences(calendar, fromMs, toMs).occurrences;
+}
+
+/** The same, within a budget for the whole calendar shared equally by its
+ * events, each keeping its earliest occurrences; `truncated` when an event
+ * had more in the range than its share. */
+function expandOccurrences(
+  calendar: CocalcCalendar,
+  fromMs: number,
+  toMs: number,
+  budget: number = CALENDAR_LIMITS.maxRangeOccurrences,
+  events: CalendarEvent[] = calendar.events,
+): { occurrences: CalendarOccurrence[]; truncated: boolean } {
+  let truncated = false;
+  const share = Math.min(
+    CALENDAR_LIMITS.maxOccurrences,
+    Math.max(1, Math.floor(budget / Math.max(1, events.length))),
+  );
   const tz = calendar.timezone;
   const lastDate = calendarLocalDate(toMs, tz);
   const rangeStart = calendarLocalDate(fromMs, tz);
   const out: CalendarOccurrence[] = [];
-  for (const event of calendar.events) {
+  for (const event of events) {
     const allDay = event.all_day === true;
     const startMs = calendarInstant(event.start, tz);
     const p = zonedParts(startMs, tz);
@@ -896,7 +916,12 @@ export function calendarOccurrences(
         : DATE.test(event.due)
           ? endOfDay(event.due)
           : calendarInstant(event.due, tz);
-    occurrenceDates(event, tz, fromDate, lastDate).forEach((date, index) => {
+    const dates = occurrenceDates(event, tz, fromDate, lastDate, share + 1);
+    if (dates.length > share) {
+      truncated = true;
+      dates.length = share;
+    }
+    dates.forEach((date, index) => {
       const [y, m, d] = date.split("-").map(Number);
       // A one-off keeps its exact instant (in a repeated DST hour its wall
       // clock time names two); a recurrence repeats the local time of day.
@@ -927,9 +952,12 @@ export function calendarOccurrences(
       });
     });
   }
-  return out.sort(
-    (a, b) => a.start - b.start || a.event.title.localeCompare(b.event.title),
-  );
+  return {
+    occurrences: out.sort(
+      (a, b) => a.start - b.start || a.event.title.localeCompare(b.event.title),
+    ),
+    truncated,
+  };
 }
 
 /**
@@ -1146,6 +1174,8 @@ export interface CalendarAgenda {
   overdue: CalendarOccurrence[];
   /** What is on or still to come, by local date in the calendar's zone. */
   days: { date: string; occurrences: CalendarOccurrence[] }[];
+  /** The calendar has more in this window than an agenda expands. */
+  truncated: boolean;
 }
 
 /**
@@ -1171,11 +1201,34 @@ export function calendarAgenda(
       );
   }
   const historyStart = nowMs - pastDays * DAY_MS;
-  const occurrences = calendarOccurrences(
+  // Two windows: what is to come, for every event; and history, only for
+  // events that can be overdue (most recurring events never are). Each
+  // keeps its earliest occurrences within its share, so a calendar too big
+  // to expand still shows what is nearest.
+  const canBeOverdue = (e: CalendarEvent) =>
+    e.status !== "done" &&
+    e.status !== "cancelled" &&
+    (e.due != null || e.due_offset_days != null || e.status === "pending");
+  const upcoming = expandOccurrences(calendar, nowMs, nowMs + days * DAY_MS);
+  const history = expandOccurrences(
     calendar,
     historyStart - dueReach,
-    nowMs + days * DAY_MS,
+    nowMs,
+    CALENDAR_LIMITS.maxRangeOccurrences,
+    calendar.events.filter(canBeOverdue),
   );
+  const seen = new Set<string>();
+  const occurrences = [...history.occurrences, ...upcoming.occurrences]
+    .filter((o) => {
+      const key = `${o.event.id}\n${o.date}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort(
+      (a, b) => a.start - b.start || a.event.title.localeCompare(b.event.title),
+    );
+  const truncated = upcoming.truncated || history.truncated;
   const overdue: CalendarOccurrence[] = [];
   const byDate = new Map<string, CalendarOccurrence[]>();
   for (const o of occurrences) {
@@ -1201,5 +1254,6 @@ export function calendarAgenda(
       date,
       occurrences,
     })),
+    truncated,
   };
 }

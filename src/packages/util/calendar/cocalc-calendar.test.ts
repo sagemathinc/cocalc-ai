@@ -451,6 +451,29 @@ describe("long-running recurrences", () => {
     expect(agenda.days[0].occurrences).toHaveLength(50);
   });
 
+  it("expands at most a budget for the whole calendar, and says so", () => {
+    // 2,000 daily events over 150 days would be 300,000 occurrences.
+    const cal = recurring({ freq: "daily" }, "2026-01-01", 2_000);
+    const started = Date.now();
+    const agenda = calendarAgenda(cal, Date.parse("2026-10-21T15:00:00Z"));
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(agenda.truncated).toBe(true);
+    const shown =
+      agenda.overdue.length +
+      agenda.days.reduce((n, d) => n + d.occurrences.length, 0);
+    expect(shown).toBeLessThanOrEqual(5_000);
+    // What is nearest is kept for every event: today's 2,000 items.
+    expect(agenda.days[0].date).toBe("2026-10-21");
+    expect(agenda.days[0].occurrences).toHaveLength(2_000);
+    // A calendar within the budget is complete.
+    expect(
+      calendarAgenda(
+        recurring({ freq: "daily" }, "2026-01-01", 3),
+        Date.parse("2026-10-21T15:00:00Z"),
+      ).truncated,
+    ).toBe(false);
+  });
+
   it("is expanded at most 200 years after its start", () => {
     expect(datesIn2026(recurring({ freq: "daily" }, "1800-01-01"))).toEqual([]);
     expect(datesIn2026(recurring({ freq: "monthly" }, "1800-01-01"))).toEqual(

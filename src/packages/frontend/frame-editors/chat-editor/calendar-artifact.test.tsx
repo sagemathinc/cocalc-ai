@@ -294,3 +294,29 @@ test("a light category gets dark text", async () => {
   const [tag] = await screen.findAllByText("Tax filing");
   expect(tag).toHaveStyle({ color: "#000000" });
 });
+
+test("a huge calendar draws a bounded agenda and says so", async () => {
+  readFile.mockResolvedValue(
+    JSON.stringify({
+      ...calendar,
+      events: Array.from({ length: 400 }, (_, i) => ({
+        id: `e${i}`,
+        title: `Daily ${i}`,
+        start: "2026-12-01",
+        all_day: true,
+        recurrence: { freq: "daily" },
+      })),
+    }),
+  );
+  render(
+    <CalendarArtifact
+      path="/home/user/a.cal.json"
+      historical={false}
+      now={NOW}
+    />,
+  );
+  expect(
+    await screen.findByText(/more in these dates than the card shows/),
+  ).toBeInTheDocument();
+  expect(screen.getAllByText(/^Daily \d+$/).length).toBeLessThanOrEqual(300);
+});

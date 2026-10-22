@@ -28,6 +28,8 @@ import {
 import type { FileArtifactAction } from "./file-artifact";
 
 const PREVIEW_LIMIT = 1024 * 1024;
+// Rows the agenda draws at most; the rest are named, not drawn.
+const MAX_ROWS = 300;
 
 /** Black or white text, whichever reads better on a #rrggbb background
  * (WCAG relative luminance). */
@@ -208,7 +210,29 @@ function Agenda({
     return () => clearInterval(timer);
   }, [nowOverride]);
   const now = nowOverride ?? clock;
-  const agenda = useMemo(() => calendarAgenda(calendar, now), [calendar, now]);
+  const agenda = useMemo(() => {
+    // At most MAX_ROWS rows are drawn: overdue first, then by day.
+    const full = calendarAgenda(calendar, now);
+    let room = MAX_ROWS;
+    const overdue = full.overdue.slice(0, room);
+    room -= overdue.length;
+    const days: typeof full.days = [];
+    for (const day of full.days) {
+      if (room <= 0) break;
+      const occurrences = day.occurrences.slice(0, room);
+      room -= occurrences.length;
+      days.push({ date: day.date, occurrences });
+    }
+    const total =
+      full.overdue.length +
+      full.days.reduce((n, day) => n + day.occurrences.length, 0);
+    return {
+      overdue,
+      days,
+      hidden: total - (MAX_ROWS - room),
+      truncated: full.truncated,
+    };
+  }, [calendar, now]);
   const dayLabel = (date: string) =>
     new Intl.DateTimeFormat(undefined, {
       weekday: "short",
@@ -251,6 +275,14 @@ function Agenda({
           ))}
         </section>
       ))}
+      {(agenda.hidden > 0 || agenda.truncated) && (
+        <div role="note" style={{ color: UI_COLORS.secondary, marginTop: 12 }}>
+          {agenda.truncated
+            ? "This calendar has more in these dates than the card shows."
+            : `${agenda.hidden} more not shown.`}{" "}
+          Download the .ics or open the file to see everything.
+        </div>
+      )}
     </div>
   );
 }
