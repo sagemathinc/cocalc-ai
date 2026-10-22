@@ -34,3 +34,20 @@ test("estimates grow with text and with images", () => {
   expect(estimateMessageRowHeight(undefined)).toBe(short - 0);
   expect(estimateMessageRowHeight("x\n".repeat(100_000))).toBe(20_000);
 });
+
+test("a remembered height counts only for the same content and layout", () => {
+  rememberRowHeight("chat", "row", 900, { content: "1200", layout: "14|20" });
+  expect(
+    rememberedRowHeight("chat", "row", { content: "1200", layout: "14|20" }),
+  ).toBe(900);
+  // Edited: another length.
+  expect(
+    rememberedRowHeight("chat", "row", { content: "40", layout: "14|20" }),
+  ).toBeUndefined();
+  // Wider, or another font size.
+  expect(
+    rememberedRowHeight("chat", "row", { content: "1200", layout: "14|30" }),
+  ).toBeUndefined();
+  // Layout not known yet (the list is not laid out): content alone.
+  expect(rememberedRowHeight("chat", "row", { content: "1200" })).toBe(900);
+});

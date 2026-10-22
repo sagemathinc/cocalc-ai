@@ -57,4 +57,15 @@ describe("StaticMarkdown images", () => {
     render(<StaticMarkdown value="![Screenshot](/blobs/shot.png?uuid=shot)" />);
     expect(screen.getByAltText("Screenshot").style.height).toBe("");
   });
+
+  it("in an image box, generated images keep their width cap", () => {
+    render(
+      <FileContext.Provider value={{ imageBoxHeight: 320 }}>
+        <StaticMarkdown value="![Generated image](/blobs/g.png?uuid=g)" />
+      </FileContext.Provider>,
+    );
+    const image = screen.getByAltText("Generated image");
+    expect(image.style.height).toBe("320px");
+    expect(image.style.maxWidth).toBe("480px");
+  });
 });

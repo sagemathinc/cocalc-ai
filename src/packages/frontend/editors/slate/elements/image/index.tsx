@@ -111,7 +111,7 @@ register({
                 display: "block",
                 height: imageBoxHeight,
                 width: "100%",
-                maxWidth: "100%",
+                maxWidth: imageMaxWidth({ alt, width: node.width }),
                 objectFit: "scale-down",
                 objectPosition: "left center",
               }

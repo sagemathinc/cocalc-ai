@@ -2034,6 +2034,22 @@ export function MessageList({
     lastMessageRow,
   };
 
+  // What a row's measured height depends on: its content (message rows are
+  // keyed by their date) and the log's width and font size.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const rowContentIdentity = (key: string): string => {
+    if (key.includes("#")) return "";
+    const message = getMessageAtDate({
+      messages: messagesRef.current,
+      date: parseFloat(key),
+    });
+    return message ? `${newest_content(message)?.length ?? 0}` : "";
+  };
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
+  const logLayout = (): string =>
+    `${fontSizeRef.current ?? ""}|${Math.round((scrollerRef.current?.clientWidth ?? 0) / 40)}`;
   const undoScrollWritesRef = useRef<(() => void) | undefined>(undefined);
   const handleVirtuosoScrollerRef = useCallback(
     (node: HTMLElement | Window | null) => {
@@ -2067,7 +2083,10 @@ export function MessageList({
       }
       virtuosoHeightsRef.current[key] = height;
       // Opening this chat again starts from real heights.
-      rememberRowHeight(cacheIdRef.current, key, height);
+      rememberRowHeight(cacheIdRef.current, key, height, {
+        content: rowContentIdentity(key),
+        layout: logLayout(),
+      });
     }
     return height;
   }, []);
@@ -2085,7 +2104,10 @@ export function MessageList({
   const heightEstimates = useMemo(
     () => [
       ...listRows.map((listRow) => {
-        const remembered = rememberedRowHeight(cacheId, listRow.key);
+        const remembered = rememberedRowHeight(cacheId, listRow.key, {
+          content: rowContentIdentity(listRow.key),
+          layout: scrollerRef.current ? logLayout() : undefined,
+        });
         if (remembered != null) return remembered;
         if (listRow.kind !== "message") return 48;
         const message = getMessageAtDate({

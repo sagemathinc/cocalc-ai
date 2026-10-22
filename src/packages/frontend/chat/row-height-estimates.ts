@@ -14,13 +14,25 @@
 export const CHAT_IMAGE_BOX_HEIGHT = 320;
 
 const MAX_CHATS = 50;
-// cacheId (a chat) -> row key -> measured height in px, most recent chat last.
-const measured = new Map<string, Map<string, number>>();
+type Measured = {
+  height: number;
+  /** What it was measured with: its content and the log's layout. */
+  content: string;
+  layout: string;
+};
+// cacheId (a chat) -> row key -> measurement, most recent chat last.
+const measured = new Map<string, Map<string, Measured>>();
 
+/**
+ * content: identifies the row's content (e.g., its text's length), so an
+ * edited row is not given its old height; layout: the log's width and font
+ * size when measured.
+ */
 export function rememberRowHeight(
   cacheId: string,
   key: string,
   height: number,
+  { content = "", layout = "" }: { content?: string; layout?: string } = {},
 ): void {
   if (!(height > 0)) return;
   let rows = measured.get(cacheId);
@@ -34,14 +46,19 @@ export function rememberRowHeight(
     measured.delete(cacheId);
   }
   measured.set(cacheId, rows);
-  rows.set(key, height);
+  rows.set(key, { height, content, layout });
 }
 
+/** Only while the row's content, and the layout if known, are the same. */
 export function rememberedRowHeight(
   cacheId: string,
   key: string,
+  { content = "", layout }: { content?: string; layout?: string } = {},
 ): number | undefined {
-  return measured.get(cacheId)?.get(key);
+  const row = measured.get(cacheId)?.get(key);
+  if (row == null || row.content !== content) return undefined;
+  if (layout != null && row.layout !== layout) return undefined;
+  return row.height;
 }
 
 const IMAGE = /!\[[^\]]*\]\(|<img\b/gi;
