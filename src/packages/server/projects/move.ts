@@ -762,7 +762,11 @@ async function buildMoveProjectContext(
     }
     contextSourceHostName = source_host_name;
   }
+  const project_region = parseR2Region(projectRow.region) ?? DEFAULT_R2_REGION;
   let dest_host_id = input.dest_host_id;
+  // Without an explicit destination, pick a host in the project's backup
+  // region: the check below rejects any other region unless this is a backup
+  // region cutover.
   const destHost =
     dest_host_id != null
       ? await resolveHostConnection({
@@ -773,12 +777,14 @@ async function buildMoveProjectContext(
           exclude_host_id: source_host_id ?? undefined,
           bay_id: projectRow.project_owning_bay_id,
           account_id,
+          project_region,
+          allow_region_fallback: !!input.backup_region_cutover,
         });
   if (!destHost) {
     throw new Error(
       dest_host_id
         ? `host ${dest_host_id} not found`
-        : "no running project-host available",
+        : `no running project-host available in region ${project_region}`,
     );
   }
   if (
@@ -799,7 +805,6 @@ async function buildMoveProjectContext(
       : undefined;
   const dest_host_name =
     destHost?.name ?? destHostRegistryRow?.name ?? dest_host_id;
-  const project_region = parseR2Region(projectRow.region) ?? DEFAULT_R2_REGION;
   const dest_region = mapCloudRegionToR2Region(destHost.region);
   if (!input.backup_region_cutover && project_region !== dest_region) {
     throw new Error(
