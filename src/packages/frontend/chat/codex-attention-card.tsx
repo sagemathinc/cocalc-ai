@@ -356,6 +356,20 @@ function RuntimeCodexAttentionCard({
       ),
   );
 
+  // Send the response, from the Send button or Shift+Enter in an answer:
+  // `origin` is where focus returns if a network approval opens first.
+  const send = (origin: string) => {
+    lastAnswer.current = origin;
+    void agentMentions.preflight(
+      // Only what the person wrote: an agent's own choices may name agents,
+      // with no picker to bind them.
+      Object.values(draft.other)
+        .filter((value) => value?.trim())
+        .join("\n"),
+      () => respond(false),
+    );
+  };
+
   const selectedCredentialId = () =>
     readCodexSubscriptionSelection({
       accountId: record.account_id,
@@ -738,6 +752,18 @@ function RuntimeCodexAttentionCard({
                               setUploads((n) => Math.max(0, n - 1))
                             }
                             controlRef={answerControl(question.id)}
+                            // Shift+Enter sends, as in chat, once the
+                            // response can be sent.
+                            onShiftEnter={() => {
+                              if (
+                                answerable &&
+                                !pendingFreshAuth &&
+                                canSubmit &&
+                                uploads === 0 &&
+                                !submitting
+                              )
+                                send(question.id);
+                            }}
                             value={draft.other[question.id] ?? ""}
                             onChange={(value) => {
                               lastAnswer.current = question.id;
@@ -813,17 +839,7 @@ function RuntimeCodexAttentionCard({
                   type="primary"
                   disabled={!canSubmit || uploads > 0}
                   loading={submitting}
-                  onClick={() => {
-                    lastAnswer.current = SEND_FOCUS;
-                    void agentMentions.preflight(
-                      // Only what the person wrote: an agent's own choices may
-                      // name agents, with no picker to bind them.
-                      Object.values(draft.other)
-                        .filter((value) => value?.trim())
-                        .join("\n"),
-                      () => respond(false),
-                    );
-                  }}
+                  onClick={() => send(SEND_FOCUS)}
                 >
                   {lateQuestion ? "Send as new message" : "Send response"}
                 </Button>

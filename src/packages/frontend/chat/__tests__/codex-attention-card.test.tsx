@@ -30,6 +30,12 @@ jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
         aria-label={props.placeholder}
         value={props.value}
         onChange={(event) => props.onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && event.shiftKey) {
+            event.preventDefault();
+            props.onShiftEnter?.(props.value);
+          }
+        }}
       />
     );
   },
@@ -965,6 +971,70 @@ describe("Codex question attention", () => {
     mockRestoreFocus?.();
     expect(send).toHaveFocus();
     expect(mockFocus).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("Shift+Enter in a custom answer sends once the response can be sent", async () => {
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        ...(request.action === "respond"
+          ? { record: { ...questionRecord, state: "answered" as const } }
+          : { records: [] }),
+      }));
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [{ ...questionRecord.questions[0], isOther: true }],
+        }}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Custom answer for Region",
+    });
+    const responded = () =>
+      jest
+        .mocked(webapp_client.conat_client.attentionAcp)
+        .mock.calls.filter(([request]: any) => request.action === "respond");
+    // Nothing to send yet: Shift+Enter does nothing.
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(mockPreflight).not.toHaveBeenCalled();
+    // Over the limit: still nothing.
+    fireEvent.change(input, { target: { value: "a".repeat(32_001) } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(mockPreflight).not.toHaveBeenCalled();
+    // A valid answer: sent, as Send would.
+    fireEvent.change(input, { target: { value: "EU" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(responded()).toHaveLength(1));
+    expect(responded()[0][0]).toMatchObject({
+      action: "respond",
+      answers: { region: ["EU"] },
+    });
+    view.unmount();
+  });
+
+  it("an approval that Shift+Enter asked for returns focus to that answer", async () => {
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [{ ...questionRecord.questions[0], isOther: true }],
+        }}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Custom answer for Region",
+    });
+    fireEvent.change(input, { target: { value: "Ask @reviewer" } });
+    mockPreflight.mockImplementationOnce(async () => {});
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(mockPreflight).toHaveBeenCalled());
+    mockFocus.mockClear();
+    mockRestoreFocus?.();
+    expect(mockFocus).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 });
