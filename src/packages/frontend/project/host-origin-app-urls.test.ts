@@ -21,8 +21,8 @@ const ALLOWED = new Set([
   "project/apps/app-state.tsx", // fallback without app origins
   "project/named-server-panel.tsx", // fallback without app origins
   "project/redux/actions.ts", // fallback without app origins
-  "chat/app-artifact.tsx", // framed: moves with the frame bootstrap
-  "frame-editors/x11-editor/blit.tsx", // framed: moves to a postMessage token
+  "chat/app-artifact.tsx", // framed via useAppFrameSrc (host URL only without app origins)
+  "frame-editors/x11-editor/blit.tsx", // framed via useAppFrameSrc (host URL only without app origins)
 ]);
 const PATTERN =
   /addProjectHostAuthToUrl|withProjectHostBase\(|getProjectAppOpenUrl\(/;

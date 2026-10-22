@@ -1928,6 +1928,7 @@ export const hosts = {
   issueProjectHostAuthToken: authFirstRequireAccountWithBoundSession,
   issueProjectContentUrl: authFirstRequireAccountWithBoundSession,
   issueProjectAppUrl: authFirstRequireAccountWithBoundSession,
+  issueProjectAppFrameUrl: authFirstRequireAccountWithBoundSession,
   revokeProjectContentLinks: authFirstRequireAccount,
 };
 
@@ -2534,6 +2535,24 @@ export interface Hosts {
     project_id: string;
     // /<project_id>/port/<n>/..., /proxy/..., /server/<name>/..., /apps/<id>/...
     // or an app's own base path (then app_id is required).
+    path: string;
+    app_id?: string;
+  }) => Promise<
+    | { url: string; expires_at: number }
+    | {
+        unavailable:
+          | "off"
+          | "no-host"
+          | "host-not-ready"
+          | "other-bay"
+          | "no-access";
+      }
+  >;
+  // The same for the app framed by the site (a chat card): a single-use
+  // link to the app's /_af/, which sets a partitioned frame session.
+  issueProjectAppFrameUrl: (opts: {
+    account_id?: string;
+    project_id: string;
     path: string;
     app_id?: string;
   }) => Promise<

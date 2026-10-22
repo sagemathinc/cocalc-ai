@@ -248,11 +248,15 @@ export async function issueProjectAppUrlLocal({
   path,
   app_id,
   browser_session_exp_s,
+  frame = false,
   now_ms = Date.now(),
 }: {
   account_id: string;
   project_id: string;
   path: string;
+  // A link for the app framed by the site (/_af/, a frame session) rather
+  // than opened on its own (/_a/).
+  frame?: boolean;
   // For apps mounted at their own base_path (not /port, /proxy, /server or
   // /apps), the app's id; the host checks the path belongs to it.
   app_id?: string;
@@ -279,11 +283,12 @@ export async function issueProjectAppUrlLocal({
     epoch,
     private_key: getProjectHostAuthTokenPrivateKey(),
     browser_session_exp_s,
+    scope: frame ? "app-frame" : "app",
     now_ms,
   });
   const hostname = `${projectAppHostLabel({ project_id, key })}.${hostContentLabel(host_id)}.${domain}`;
   return {
-    url: `https://${hostname}/_a/${token}?next=${encodeURIComponent(next)}`,
+    url: `https://${hostname}/${frame ? "_af" : "_a"}/${token}?next=${encodeURIComponent(next)}`,
     expires_at,
   };
 }

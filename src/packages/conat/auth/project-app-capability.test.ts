@@ -156,6 +156,15 @@ describe("app capabilities", () => {
     expect(() => verify(file)).toThrow("invalid capability claims");
   });
 
+  it("frame capabilities and top-level ones are never accepted as each other", () => {
+    const frame = issue({ scope: "app-frame" }).token;
+    const top = issue().token;
+    expect(verify(frame, { scope: "app-frame" })).toMatchObject({ scope: "app-frame" });
+    expect(() => verify(frame)).toThrow();
+    expect(() => verify(top, { scope: "app-frame" })).toThrow();
+    expect(() => issue({ scope: "other" as any })).toThrow("scope");
+  });
+
   it("refuse tampering and a wrong key", () => {
     const { token } = issue();
     const [h, c] = token.split(".");
