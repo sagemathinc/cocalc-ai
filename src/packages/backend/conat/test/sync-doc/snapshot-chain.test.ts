@@ -111,4 +111,61 @@ describe("opening a document whose snapshot records each follow the next snapsho
     expect(s3.versions().length).toBe(total);
     expect(s3.to_str()).toBe(expected);
   });
+
+  it("an existing chain without cut flags recovers after one new snapshot", async () => {
+    const path2 = "snapshot-chain-legacy.txt";
+    const open2 = async () => {
+      const doc = connect().sync.string({
+        project_id,
+        path: path2,
+        service: server.service,
+        noAutosave: true,
+        noBackendFsWatch: true,
+        firstReadLockTimeout: 1,
+      });
+      docs.push(doc);
+      await once(doc, "ready");
+      return doc;
+    };
+    const s1 = await open2();
+    // snapshots written before seq_info.cut existed
+    const session1 = (s1 as any).patchflowSession;
+    const isCut = session1.isCut;
+    session1.isCut = () => false;
+    const lines: string[] = [];
+    const edit = async (line: string) => {
+      lines.push(line);
+      s1.from_str(lines.join("\n") + "\n");
+      s1.commit();
+      await s1.save();
+    };
+    const interval = 5;
+    const snapshots = 8;
+    for (let i = 0; i <= interval * (snapshots + 1); i++) {
+      await edit(`line ${i}`);
+      if (i >= 2 * interval && i % interval === 0) {
+        await (s1 as any).snapshot(s1.versions()[i - interval]);
+      }
+    }
+    const total = s1.versions().length;
+    const legacy = await open2();
+    // the old behavior: everything
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(legacy.versions().length).toBe(total);
+    expect(legacy.to_str()).toBe(s1.to_str());
+
+    // a client with seq_info.cut writes the next snapshot
+    session1.isCut = isCut;
+    for (let i = 0; i < interval; i++) {
+      await edit(`more ${i}`);
+    }
+    await (s1 as any).snapshot(s1.versions()[s1.versions().length - 2]);
+    await edit("last");
+    const expected = s1.to_str();
+    const fresh = await open2();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(fresh.to_str()).toBe(expected);
+    expect(fresh.hasFullHistory()).toBe(false);
+    expect(fresh.versions().length).toBeLessThan(10);
+  }, 60_000);
 });
