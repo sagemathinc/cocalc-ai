@@ -155,6 +155,18 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.reconcileHostRuntimeDeployments": hostFromOpts,
   "hosts.rollbackHostRuntimeDeployments": hostFromOpts,
   "hosts.reconcileHostSoftware": hostFromOpts,
+  // Host lifecycle runs on the host's owning bay.
+  "hosts.startHost": hostFromOpts,
+  "hosts.stopHost": hostFromOpts,
+  "hosts.restartHost": hostFromOpts,
+  "hosts.drainHost": hostFromOpts,
+  "hosts.backupHostProjects": hostFromOpts,
+  "hosts.deleteHost": hostFromOpts,
+  "hosts.forceDeprovisionHost": hostFromOpts,
+  "hosts.refreshHostCloudState": hostFromOpts,
+  "hosts.removeSelfHostConnector": hostFromOpts,
+  "hosts.setHostDeletionProtection": hostFromOpts,
+  "hosts.relocateHost": hostFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,

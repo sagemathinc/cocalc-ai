@@ -3744,7 +3744,7 @@ describe("hosts browser fresh auth gating", () => {
     }
   });
 
-  it("forwards relocation for a remote host to its owning bay, and refuses its notices", async () => {
+  it("refuses relocation and notices for a host owned by another bay", async () => {
     // Later tests in this file rely on the shared query/admin mocks.
     const previousQueryMock = queryMock;
     const previousIsAdminMock = isAdminMock;
@@ -3758,19 +3758,10 @@ describe("hosts browser fresh auth gating", () => {
       });
       const { relocateHost, setHostMaintenanceNotice } =
         await import("./hosts");
-      const op = await relocateHost({
-        account_id: ACCOUNT_ID,
-        browser_id: "browser-1",
-        id: HOST_ID,
-        zone: "us-west2-a",
-        expected_minutes: 12,
-        skip_backups: true,
-      });
-      expect(op.op_id).toBe("remote-relocate-op");
-      // Checked here first (second factor, admin), then again on the owner.
-      expect(requireFreshAuthForSessionHashMock).toHaveBeenCalled();
-      expect(hostConnectionRelocateHostMock).toHaveBeenCalledWith(
-        expect.objectContaining({
+      // Relocation and notices are routed to the host's bay: refused on any
+      // other, after the checks that run first (second factor, admin).
+      await expect(
+        relocateHost({
           account_id: ACCOUNT_ID,
           browser_id: "browser-1",
           id: HOST_ID,
@@ -3778,8 +3769,9 @@ describe("hosts browser fresh auth gating", () => {
           expected_minutes: 12,
           skip_backups: true,
         }),
-      );
-      // Notices are routed to the host's bay: refused on any other.
+      ).rejects.toMatchObject({ code: 409 });
+      expect(requireFreshAuthForSessionHashMock).toHaveBeenCalled();
+      expect(hostConnectionRelocateHostMock).not.toHaveBeenCalled();
       await expect(
         setHostMaintenanceNotice({
           account_id: ACCOUNT_ID,
@@ -5000,45 +4992,11 @@ describe("hosts.authoritative remote host actions", () => {
     });
   });
 
-  it("routes lro-backed host actions to the authoritative remote bay", async () => {
-    const {
-      startHost,
-      stopHost,
-      restartHost,
-      drainHost,
-      upgradeHostSoftware,
-      rolloutHostManagedComponents,
-      deleteHost,
-      forceDeprovisionHost,
-      removeSelfHostConnector,
-    } = await import("./hosts");
-
-    await startHost({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-    });
-    await stopHost({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      skip_backups: true,
-    });
-    await restartHost({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      mode: "hard",
-    });
-    await drainHost({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      dest_host_id: "dest-host",
-      force: true,
-      allow_offline: true,
-      parallel: 3,
-    });
+  it("routes fleet-rollout host actions to the authoritative remote bay", async () => {
+    // Still forwarded: the fleet-rollout worker calls these directly for
+    // hosts on any bay (step 3b).
+    const { upgradeHostSoftware, rolloutHostManagedComponents } =
+      await import("./hosts");
     await upgradeHostSoftware({
       account_id: ACCOUNT_ID,
       id: HOST_ID,
@@ -5051,49 +5009,6 @@ describe("hosts.authoritative remote host actions", () => {
       id: HOST_ID,
       components: ["project-host"],
       reason: "test rollout",
-    });
-    await deleteHost({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      skip_backups: true,
-    });
-    await forceDeprovisionHost({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-    });
-    await removeSelfHostConnector({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-    });
-
-    expect(hostConnectionStartHostMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-    });
-    expect(hostConnectionStopHostMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      skip_backups: true,
-    });
-    expect(hostConnectionRestartHostMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      mode: "hard",
-    });
-    expect(hostConnectionDrainHostMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      dest_host_id: "dest-host",
-      force: true,
-      allow_offline: true,
-      parallel: 3,
     });
     expect(hostConnectionUpgradeHostSoftwareMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
@@ -5110,22 +5025,72 @@ describe("hosts.authoritative remote host actions", () => {
         reason: "test rollout",
       },
     );
-    expect(hostConnectionDeleteHostMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      skip_backups: true,
-    });
-    expect(hostConnectionForceDeprovisionHostMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-    });
-    expect(hostConnectionRemoveSelfHostConnectorMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-    });
+  });
+
+  it("refuses host lifecycle actions for a host owned by another bay", async () => {
+    const hosts = await import("./hosts");
+    const session = { account_id: ACCOUNT_ID, session_hash: "session-hash" };
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ["startHost", () => hosts.startHost({ ...session, id: HOST_ID })],
+      [
+        "stopHost",
+        () => hosts.stopHost({ ...session, id: HOST_ID, skip_backups: true }),
+      ],
+      [
+        "restartHost",
+        () => hosts.restartHost({ ...session, id: HOST_ID, mode: "hard" }),
+      ],
+      [
+        "drainHost",
+        () =>
+          hosts.drainHost({
+            ...session,
+            id: HOST_ID,
+            dest_host_id: "dest-host",
+            force: true,
+          }),
+      ],
+      [
+        "deleteHost",
+        () => hosts.deleteHost({ ...session, id: HOST_ID, skip_backups: true }),
+      ],
+      [
+        "forceDeprovisionHost",
+        () => hosts.forceDeprovisionHost({ ...session, id: HOST_ID }),
+      ],
+      [
+        "removeSelfHostConnector",
+        () => hosts.removeSelfHostConnector({ ...session, id: HOST_ID }),
+      ],
+      [
+        "backupHostProjects",
+        () => hosts.backupHostProjects({ account_id: ACCOUNT_ID, id: HOST_ID }),
+      ],
+      [
+        "setHostDeletionProtection",
+        () =>
+          hosts.setHostDeletionProtection({
+            ...session,
+            id: HOST_ID,
+            enabled: false,
+          }),
+      ],
+    ];
+    for (const [, call] of calls) {
+      await expect(call()).rejects.toMatchObject({ code: 409 });
+    }
+    for (const mock of [
+      hostConnectionStartHostMock,
+      hostConnectionStopHostMock,
+      hostConnectionRestartHostMock,
+      hostConnectionDrainHostMock,
+      hostConnectionDeleteHostMock,
+      hostConnectionForceDeprovisionHostMock,
+      hostConnectionRemoveSelfHostConnectorMock,
+      hostConnectionBackupHostProjectsMock,
+    ]) {
+      expect(mock).not.toHaveBeenCalled();
+    }
   });
 
   it("refuses routed lro-backed host changes for a host owned by another bay", async () => {
@@ -5164,23 +5129,15 @@ describe("hosts.authoritative remote host actions", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("routes cloud refresh to the authoritative remote bay", async () => {
+  it("refuses cloud refresh for a host owned by another bay", async () => {
     const { refreshHostCloudState } = await import("./hosts");
-    const result = await refreshHostCloudState({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
-
-    expect(hostConnectionRefreshHostCloudStateMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-    });
-    expect(result).toEqual(
-      expect.objectContaining({
-        host_id: HOST_ID,
-        provider: "gcp",
+    await expect(
+      refreshHostCloudState({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
       }),
-    );
+    ).rejects.toMatchObject({ code: 409 });
+    expect(hostConnectionRefreshHostCloudStateMock).not.toHaveBeenCalled();
   });
 
   it("checks exam fresh auth, then refuses a host owned by another bay", async () => {

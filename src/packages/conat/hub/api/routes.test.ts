@@ -96,6 +96,17 @@ describe("hub API routes", () => {
     "hosts.reconcileHostRuntimeDeployments",
     "hosts.rollbackHostRuntimeDeployments",
     "hosts.reconcileHostSoftware",
+    "hosts.startHost",
+    "hosts.stopHost",
+    "hosts.restartHost",
+    "hosts.drainHost",
+    "hosts.backupHostProjects",
+    "hosts.deleteHost",
+    "hosts.forceDeprovisionHost",
+    "hosts.refreshHostCloudState",
+    "hosts.removeSelfHostConnector",
+    "hosts.setHostDeletionProtection",
+    "hosts.relocateHost",
   ];
 
   it.each(HOST_ROUTED)("routes %s by its host id", (name) => {

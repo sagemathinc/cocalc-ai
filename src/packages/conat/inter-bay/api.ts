@@ -2598,20 +2598,9 @@ export type HostConnectionMethod =
   | "update-api-relay-usage"
   | "update-api-relay-account-usage"
   | "list"
-  | "set-host-deletion-protection"
   | "get-host-runtime-deployment-status"
-  | "start-host"
-  | "stop-host"
-  | "restart-host"
-  | "backup-host-projects"
-  | "drain-host"
-  | "refresh-host-cloud-state"
   | "upgrade-host-software"
-  | "relocate-host"
   | "rollout-host-managed-components"
-  | "delete-host"
-  | "force-deprovision-host"
-  | "remove-self-host-connector"
   | "list-host-operations"
   | "get-project-start-metadata"
   | "get-backup-config"
@@ -3295,48 +3284,15 @@ export interface InterBayHostConnectionApi {
   }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
-  setHostDeletionProtection: (
-    opts: Parameters<Hosts["setHostDeletionProtection"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostDeletionProtection"]>>>;
   getHostRuntimeDeploymentStatus: (
     opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
-  startHost: (
-    opts: Parameters<Hosts["startHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["startHost"]>>>;
-  stopHost: (
-    opts: Parameters<Hosts["stopHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["stopHost"]>>>;
-  restartHost: (
-    opts: Parameters<Hosts["restartHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["restartHost"]>>>;
-  backupHostProjects: (
-    opts: Parameters<Hosts["backupHostProjects"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["backupHostProjects"]>>>;
-  drainHost: (
-    opts: Parameters<Hosts["drainHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["drainHost"]>>>;
-  refreshHostCloudState: (
-    opts: Parameters<Hosts["refreshHostCloudState"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["refreshHostCloudState"]>>>;
   upgradeHostSoftware: (
     opts: Parameters<Hosts["upgradeHostSoftware"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["upgradeHostSoftware"]>>>;
-  relocateHost: (
-    opts: Parameters<Hosts["relocateHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["relocateHost"]>>>;
   rolloutHostManagedComponents: (
     opts: Parameters<Hosts["rolloutHostManagedComponents"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["rolloutHostManagedComponents"]>>>;
-  deleteHost: (
-    opts: Parameters<Hosts["deleteHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["deleteHost"]>>>;
-  forceDeprovisionHost: (
-    opts: Parameters<Hosts["forceDeprovisionHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["forceDeprovisionHost"]>>>;
-  removeSelfHostConnector: (
-    opts: Parameters<Hosts["removeSelfHostConnector"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["removeSelfHostConnector"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -3477,28 +3433,14 @@ const HOST_CONNECTION_METHOD_SPECS = [
   },
   { name: "list", method: "list" },
   {
-    name: "setHostDeletionProtection",
-    method: "set-host-deletion-protection",
-  },
-  {
     name: "getHostRuntimeDeploymentStatus",
     method: "get-host-runtime-deployment-status",
   },
-  { name: "startHost", method: "start-host" },
-  { name: "stopHost", method: "stop-host" },
-  { name: "restartHost", method: "restart-host" },
-  { name: "backupHostProjects", method: "backup-host-projects" },
-  { name: "drainHost", method: "drain-host" },
-  { name: "refreshHostCloudState", method: "refresh-host-cloud-state" },
   { name: "upgradeHostSoftware", method: "upgrade-host-software" },
-  { name: "relocateHost", method: "relocate-host" },
   {
     name: "rolloutHostManagedComponents",
     method: "rollout-host-managed-components",
   },
-  { name: "deleteHost", method: "delete-host" },
-  { name: "forceDeprovisionHost", method: "force-deprovision-host" },
-  { name: "removeSelfHostConnector", method: "remove-self-host-connector" },
   { name: "listHostOperations", method: "list-host-operations" },
   {
     name: "getProjectStartMetadata",
