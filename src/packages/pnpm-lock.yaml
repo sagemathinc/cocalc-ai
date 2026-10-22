@@ -1487,8 +1487,8 @@ importers:
         specifier: ^3.5.4
         version: 3.5.4
       http-proxy-3:
-        specifier: ^1.23.2
-        version: 1.23.2
+        specifier: ^2.0.2
+        version: 2.0.2
       lodash:
         specifier: ^4.18.1
         version: 4.18.1
@@ -1943,8 +1943,8 @@ importers:
         specifier: ^5.1.1
         version: 5.1.1
       http-proxy-3:
-        specifier: ^1.23.2
-        version: 1.23.2
+        specifier: ^2.0.2
+        version: 2.0.2
       lodash:
         specifier: ^4.18.1
         version: 4.18.1
@@ -2092,8 +2092,8 @@ importers:
         specifier: ^5.2.1
         version: 5.2.1
       http-proxy-3:
-        specifier: ^1.23.2
-        version: 1.23.2
+        specifier: ^2.0.2
+        version: 2.0.2
       micro-key-producer:
         specifier: ^0.8.2
         version: 0.8.2
@@ -8642,9 +8642,9 @@ packages:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
     engines: {node: '>= 0.8'}
 
-  http-proxy-3@1.23.2:
-    resolution: {integrity: sha512-vZks1dLliM0w7aQDT9eFYLO8PUuQ9Cm67y7kn+kgkLtvKP0HZ6Thb3+MCGFFNCnKMCkLXY6rvIH1d7jQITryxA==}
-    engines: {node: '>=18'}
+  http-proxy-3@2.0.2:
+    resolution: {integrity: sha512-JUeHVBJl3JhVvnXBi3JEcXpQaeAteidEwdeMQlp32d2o76/6trHtIz/rByB7DHsDOtUqG4QPZlW6zV9nIGjgkg==}
+    engines: {node: '>=22'}
 
   http-proxy-agent@7.0.2:
     resolution: {integrity: sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==}
@@ -19254,7 +19254,7 @@ snapshots:
       statuses: 2.0.2
       toidentifier: 1.0.1
 
-  http-proxy-3@1.23.2:
+  http-proxy-3@2.0.2:
     dependencies:
       debug: 4.4.3
       follow-redirects: 1.16.1(debug@4.4.3)

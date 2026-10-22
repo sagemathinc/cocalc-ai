@@ -128,6 +128,8 @@ patchedDependencies:
 
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
+  # Maintainer-approved CoCalc-owned release, validated via upstream CI and npm provenance.
+  - "http-proxy-3@2.0.2"
   # Maintainer-approved exact-version exception; review in .agents/git-review-modernization.md.
   - "@pierre/diffs@1.4.1"
   # CoCalc-owned upstream package; fresh releases are reviewed here before use.
