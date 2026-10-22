@@ -143,6 +143,20 @@ describe("where balances are checked", () => {
   it("says where balances are checked when not here", () => {
     const health = { ...clean, balances_checked_on_bay: "bay-0" };
     expect(billingExposureHealthLevel(health)).toBe("healthy");
+    // The default admin health output shows only the summary.
+    expect(billingExposureHealthSummary(health)).toBe(
+      "No stuck billing-blocked host or idle dedicated host on this bay; account balances are checked on the billing seed bay bay-0.",
+    );
+    expect(
+      billingExposureHealthSummary({
+        ...health,
+        idle_hosts: [
+          { host_id: "h", name: null, owner: null, last_busy_at: null },
+        ],
+      }),
+    ).toBe(
+      "1 running dedicated host with no running project for 3 days; account balances are checked on the billing seed bay bay-0.",
+    );
     expect(billingExposureHealthDetails(health)).toEqual([
       "Account balances are checked by admin health on the billing seed bay bay-0.",
     ]);

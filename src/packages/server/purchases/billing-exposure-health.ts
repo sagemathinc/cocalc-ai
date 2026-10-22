@@ -135,6 +135,13 @@ export function billingExposureHealthSummary(
       `${plural(health.idle_hosts.length, "running dedicated host")} with no running project for ${IDLE_HOST_DAYS} days`,
     );
   }
+  if (health.balances_checked_on_bay) {
+    const delegated = `account balances are checked on the billing seed bay ${health.balances_checked_on_bay}`;
+    if (parts.length === 0) {
+      return `No stuck billing-blocked host or idle dedicated host on this bay; ${delegated}.`;
+    }
+    return `${parts.join("; ")}; ${delegated}.`;
+  }
   if (parts.length === 0) {
     return "No unpaid balance, unfunded metered usage, stuck billing-blocked host or idle dedicated host.";
   }
