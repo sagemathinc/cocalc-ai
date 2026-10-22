@@ -325,8 +325,10 @@ const surfaces = [
     // 330.9 KiB; keep a narrow margin for other guides. The CoCalc access
     // guide's "Read and manage my notifications" entry brings it to 332.1 KiB
     // (2026-10-17). The six guide corrections and the LaTeX build
-    // explanation (#1128) add about 1.3 KiB.
-    max: 336 * KiB,
+    // explanation (#1128) add about 1.3 KiB. The "After removing a
+    // collaborator" guide (#1243) brings it to 335.8 KiB, and markdown-it
+    // 14.3.3 (#1291, a security fix) to 336.0 KiB.
+    max: 340 * KiB,
   },
   {
     label: "minimal project settings",
