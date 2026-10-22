@@ -4510,18 +4510,8 @@ export async function setHostAccess({
   target_email_address?: string;
   role: HostAccessRole;
 }): Promise<HostAccessEntry> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).setHostAccess({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-      target_account_id,
-      target_email_address,
-      role,
-    });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   if (role === "manager") {
     await maybeRequireFreshAuthForInteractiveHostAction({
       account_id,
@@ -4560,18 +4550,8 @@ export async function removeHostAccess({
     browser_id,
     session_hash,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .removeHostAccess({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-        target_account_id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   return serializeHostAccessEntry(
     await removeHostAccessEntry({
       host_id: id,
@@ -4656,18 +4636,8 @@ export async function setHostProjectRamLimit({
   id: string;
   project_ram_limit_mb?: number | null;
 }): Promise<Host> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostProjectRamLimit({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        project_ram_limit_mb,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForView(id, account_id);
   await requireLoadedHostPermission({
     row,
@@ -4718,19 +4688,8 @@ export async function setHostOwnerSpendLimits(opts: {
   owner_spend_limit_7d_usd?: number | null;
 }): Promise<Host> {
   const { account_id, id } = opts;
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostOwnerSpendLimits({
-        account_id,
-        browser_id: opts.browser_id,
-        session_hash: opts.session_hash,
-        id,
-        owner_spend_limit_5h_usd: opts.owner_spend_limit_5h_usd,
-        owner_spend_limit_7d_usd: opts.owner_spend_limit_7d_usd,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForView(id, account_id);
   await requireLoadedHostPermission({
     row,
@@ -4806,18 +4765,8 @@ export async function setHostPoolAccess({
   id: string;
   tier?: number | null;
 }): Promise<Host> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostPoolAccess({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        tier,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const actor = requireAccount(account_id);
   if (!(await isAdmin(actor))) {
     throw new Error("only admins can configure public host pool access");
@@ -5697,21 +5646,8 @@ export async function annotateHostAvailabilityEvent({
   planned?: boolean;
   summary?: string | null;
 }): Promise<HostAvailabilityEvent> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .annotateHostAvailabilityEvent({
-        account_id,
-        id,
-        event_id,
-        admin_note,
-        admin_note_visibility,
-        category,
-        planned,
-        summary,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForView(id, account_id);
   if (account_id) {
     await requireLoadedHostPermission({
@@ -6490,18 +6426,8 @@ export async function addHostSshAuthorizedKey({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .addHostSshAuthorizedKey({
-        account_id,
-        session_hash,
-        id,
-        public_key,
-        user,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.addHostSshAuthorizedKey({ public_key, user });
@@ -6540,17 +6466,8 @@ export async function removeHostSshAuthorizedKey({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .removeHostSshAuthorizedKey({
-        account_id,
-        session_hash,
-        id,
-        public_key,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.removeHostSshAuthorizedKey({ public_key });
@@ -9106,24 +9023,14 @@ export async function setHostPublicRouteMode({
     );
   }
   // Changes the host's public ingress and DNS routing.
-  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+  await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
     session_hash,
     required: true,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostPublicRouteMode({
-        account_id,
-        browser_id,
-        session_hash: auth.session_hash ?? session_hash,
-        id,
-        mode,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -9312,21 +9219,8 @@ export async function setHostMaintenanceNotice({
   clear?: boolean;
 }): Promise<HostMaintenanceNotice | null> {
   await requireHostMaintenanceAdmin(account_id);
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostMaintenanceNotice({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        scheduled_for,
-        expected_minutes,
-        message,
-        clear,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await requireAdminForHostMaintenance(account_id, id);
   const current = row.maintenance;
   if (hostLifecycleFenced(current)) {

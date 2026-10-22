@@ -130,6 +130,17 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.listHostAccess": hostFromOpts,
   "hosts.listHostRuntimeDeployments": hostDeploymentScope,
   "hosts.getHostManagedComponentStatus": hostFromOpts,
+  // Host changes run on the host's owning bay too.
+  "hosts.setHostAccess": hostFromOpts,
+  "hosts.removeHostAccess": hostFromOpts,
+  "hosts.setHostProjectRamLimit": hostFromOpts,
+  "hosts.setHostOwnerSpendLimits": hostFromOpts,
+  "hosts.setHostPoolAccess": hostFromOpts,
+  "hosts.annotateHostAvailabilityEvent": hostFromOpts,
+  "hosts.addHostSshAuthorizedKey": hostFromOpts,
+  "hosts.removeHostSshAuthorizedKey": hostFromOpts,
+  "hosts.setHostPublicRouteMode": hostFromOpts,
+  "hosts.setHostMaintenanceNotice": hostFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,

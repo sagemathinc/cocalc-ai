@@ -1673,6 +1673,51 @@ describe("host reads across bays", () => {
       await db.end();
     }
   });
+
+  it("changes a host's access on the host's bay, with fresh auth from home", async () => {
+    // Granting manager access needs fresh auth: the host's bay asks alice's
+    // home bay (the seed) to vouch for her session. Removing access also
+    // needs a second factor, which alice has not enrolled: the host's bay
+    // refuses, and the caller gets its reason.
+    const forwarded = async (name) =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND account_id=$3 AND finished IS NOT NULL",
+           [${JSON.stringify(name)}, ${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const bobsRoles = async () =>
+      (await alice.client.call("hosts.listHostAccess", { id: host_id }))
+        .filter((entry) => entry.account_id === bob.account_id)
+        .map(({ role }) => role);
+    const grant = async (role) =>
+      await alice.client.call("hosts.setHostAccess", {
+        id: host_id,
+        target_account_id: bob.account_id,
+        role,
+      });
+
+    const setBefore = await forwarded("hosts.setHostAccess");
+    assert.equal((await grant("manager")).role, "manager");
+    assert.deepEqual(await bobsRoles(), ["manager"]);
+    assert.equal((await grant("user")).role, "user");
+    assert.deepEqual(await bobsRoles(), ["user"]);
+    assert.equal(await forwarded("hosts.setHostAccess"), setBefore + 2);
+
+    const removeBefore = await forwarded("hosts.removeHostAccess");
+    await assert.rejects(
+      alice.client.call("hosts.removeHostAccess", {
+        id: host_id,
+        target_account_id: bob.account_id,
+      }),
+      (err) => err.code === "two_factor_required",
+    );
+    assert.equal(await forwarded("hosts.removeHostAccess"), removeBefore + 1);
+    assert.deepEqual(await bobsRoles(), ["user"]);
+  });
 });
 
 describe("course reconfiguration across bays", () => {

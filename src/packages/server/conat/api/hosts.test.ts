@@ -30,11 +30,9 @@ let hostConnectionGetHostRuntimeDeploymentStatusMock: jest.Mock;
 let hostConnectionStartHostMock: jest.Mock;
 let hostConnectionStopHostMock: jest.Mock;
 let hostConnectionRelocateHostMock: jest.Mock;
-let hostConnectionSetHostMaintenanceNoticeMock: jest.Mock;
 let hostConnectionRestartHostMock: jest.Mock;
 let hostConnectionBackupHostProjectsMock: jest.Mock;
 let hostConnectionDrainHostMock: jest.Mock;
-let hostConnectionRemoveHostAccessMock: jest.Mock;
 let hostConnectionRefreshHostCloudStateMock: jest.Mock;
 let hostConnectionUpgradeHostSoftwareMock: jest.Mock;
 let hostConnectionReconcileHostSoftwareMock: jest.Mock;
@@ -65,7 +63,6 @@ let hostConnectionGetProjectBackupIndexesMock: jest.Mock;
 let hostConnectionSyncProjectBackupIndexesMock: jest.Mock;
 let hostConnectionDeleteProjectBackupIndexMock: jest.Mock;
 let hostConnectionListHostProjectsMock: jest.Mock;
-let hostConnectionSetHostPoolAccessMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let resolveProjectReferenceAllowRemoteMock: jest.Mock;
@@ -443,14 +440,10 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       startHost: (...args: any[]) => hostConnectionStartHostMock(...args),
       stopHost: (...args: any[]) => hostConnectionStopHostMock(...args),
       relocateHost: (...args: any[]) => hostConnectionRelocateHostMock(...args),
-      setHostMaintenanceNotice: (...args: any[]) =>
-        hostConnectionSetHostMaintenanceNoticeMock(...args),
       restartHost: (...args: any[]) => hostConnectionRestartHostMock(...args),
       backupHostProjects: (...args: any[]) =>
         hostConnectionBackupHostProjectsMock(...args),
       drainHost: (...args: any[]) => hostConnectionDrainHostMock(...args),
-      removeHostAccess: (...args: any[]) =>
-        hostConnectionRemoveHostAccessMock(...args),
       refreshHostCloudState: (...args: any[]) =>
         hostConnectionRefreshHostCloudStateMock(...args),
       upgradeHostSoftware: (...args: any[]) =>
@@ -510,8 +503,6 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionDeleteProjectBackupIndexMock(...args),
       listHostProjects: (...args: any[]) =>
         hostConnectionListHostProjectsMock(...args),
-      setHostPoolAccess: (...args: any[]) =>
-        hostConnectionSetHostPoolAccessMock(...args),
     })),
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
@@ -1046,7 +1037,6 @@ beforeEach(() => {
     stream_name: "lro:remote-relocate-op",
     kind: "host-relocate",
   }));
-  hostConnectionSetHostMaintenanceNoticeMock = jest.fn(async () => null);
   hostConnectionStopHostMock = jest.fn(async () => ({
     op_id: "remote-stop-op",
     scope_type: "host",
@@ -1078,12 +1068,6 @@ beforeEach(() => {
     service: "persist",
     stream_name: "lro:remote-drain-op",
     kind: "host-drain",
-  }));
-  hostConnectionRemoveHostAccessMock = jest.fn(async () => ({
-    host_id: HOST_ID,
-    account_id: "target-account",
-    role: "manager",
-    revoked_at: new Date("2026-05-24T12:00:00.000Z"),
   }));
   hostConnectionRefreshHostCloudStateMock = jest.fn(async () => ({
     host_id: HOST_ID,
@@ -1224,7 +1208,6 @@ beforeEach(() => {
       provisioned_needs_backup: 0,
     },
   }));
-  hostConnectionSetHostPoolAccessMock = jest.fn();
   getBackupConfigLocalInternalMock = jest.fn();
   getProjectBackupIndexesLocalInternalMock = jest.fn(async () => []);
   syncProjectBackupIndexesLocalInternalMock = jest.fn(async () => undefined);
@@ -3761,7 +3744,7 @@ describe("hosts browser fresh auth gating", () => {
     }
   });
 
-  it("forwards relocation and maintenance notices for a remote host to its owning bay", async () => {
+  it("forwards relocation for a remote host to its owning bay, and refuses its notices", async () => {
     // Later tests in this file rely on the shared query/admin mocks.
     const previousQueryMock = queryMock;
     const previousIsAdminMock = isAdminMock;
@@ -3796,20 +3779,15 @@ describe("hosts browser fresh auth gating", () => {
           skip_backups: true,
         }),
       );
-      await setHostMaintenanceNotice({
-        account_id: ACCOUNT_ID,
-        browser_id: "browser-1",
-        id: HOST_ID,
-        clear: true,
-      });
-      expect(hostConnectionSetHostMaintenanceNoticeMock).toHaveBeenCalledWith(
-        expect.objectContaining({
+      // Notices are routed to the host's bay: refused on any other.
+      await expect(
+        setHostMaintenanceNotice({
           account_id: ACCOUNT_ID,
           browser_id: "browser-1",
           id: HOST_ID,
           clear: true,
         }),
-      );
+      ).rejects.toMatchObject({ code: 409 });
       expect(createLroMock).not.toHaveBeenCalled();
 
       // Not an admin: refused before anything is forwarded.
@@ -4922,7 +4900,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     );
   });
 
-  it("routes SSH authorized key operations to the authoritative remote bay", async () => {
+  it("refuses SSH authorized key operations for a host owned by another bay", async () => {
     resolveHostBayMock = jest.fn(async () => ({
       bay_id: "bay-1",
       epoch: 2,
@@ -4936,40 +4914,33 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       addHostSshAuthorizedKey,
       removeHostSshAuthorizedKey,
     } = await import("./hosts");
-    // Listing is routed: refused on a non-owning bay.
+    // All three are routed to the host's bay: refused on any other.
     await expect(
       listHostSshAuthorizedKeys({
         account_id: ACCOUNT_ID,
         id: HOST_ID,
       }),
     ).rejects.toMatchObject({ code: 409 });
-    await addHostSshAuthorizedKey({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      public_key: "ssh-ed25519 AAAATEST test",
-    });
-    await removeHostSshAuthorizedKey({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      public_key: "ssh-ed25519 AAAATEST test",
-    });
+    await expect(
+      addHostSshAuthorizedKey({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        public_key: "ssh-ed25519 AAAATEST test",
+      }),
+    ).rejects.toMatchObject({ code: 409 });
+    await expect(
+      removeHostSshAuthorizedKey({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        public_key: "ssh-ed25519 AAAATEST test",
+      }),
+    ).rejects.toMatchObject({ code: 409 });
 
     expect(hostConnectionListHostSshAuthorizedKeysMock).not.toHaveBeenCalled();
-    expect(hostConnectionAddHostSshAuthorizedKeyMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      public_key: "ssh-ed25519 AAAATEST test",
-      user: undefined,
-    });
-    expect(hostConnectionRemoveHostSshAuthorizedKeyMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      public_key: "ssh-ed25519 AAAATEST test",
-    });
+    expect(hostConnectionAddHostSshAuthorizedKeyMock).not.toHaveBeenCalled();
+    expect(hostConnectionRemoveHostSshAuthorizedKeyMock).not.toHaveBeenCalled();
   });
 
   it("ignores missing host-agent status support on older hosts", async () => {
