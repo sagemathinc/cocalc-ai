@@ -1016,6 +1016,41 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
+  it("Shift+Enter sends the editor's live value, even before it renders", async () => {
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        ...(request.action === "respond"
+          ? { record: { ...questionRecord, state: "answered" as const } }
+          : { records: [] }),
+      }));
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [{ ...questionRecord.questions[0], isOther: true }],
+        }}
+      />,
+    );
+    // As the rich-text editor does: the change and Shift+Enter in one go,
+    // with no render between them.
+    const props = mockMarkdownInput.mock.lastCall![0];
+    act(() => {
+      props.onChange("EU");
+      props.onShiftEnter("EU");
+    });
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          answers: { region: ["EU"] },
+        }),
+      ),
+    );
+    view.unmount();
+  });
+
   it("an approval that Shift+Enter asked for returns focus to that answer", async () => {
     const view = render(
       <CodexAttentionCard

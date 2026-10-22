@@ -334,39 +334,41 @@ function RuntimeCodexAttentionCard({
     record.state,
   ]);
 
-  const answers = useMemo(
-    () =>
-      Object.fromEntries(
-        record.questions.map((question) => [
-          question.id,
-          answersForQuestion({
-            question,
-            selected: draft.selected[question.id],
-            other: draft.other[question.id] ?? "",
-          }),
-        ]),
-      ),
-    [draft, record.questions],
-  );
-  const canSubmit = record.questions.every(
-    ({ id }) =>
-      (answers[id]?.length ?? 0) > 0 &&
-      answers[id].every(
-        (answer) => answer.length <= CODEX_ATTENTION_ANSWER_MAX_LENGTH,
-      ),
-  );
+  const answersFor = (value: CodexAttentionDraft) =>
+    Object.fromEntries(
+      record.questions.map((question) => [
+        question.id,
+        answersForQuestion({
+          question,
+          selected: value.selected[question.id],
+          other: value.other[question.id] ?? "",
+        }),
+      ]),
+    );
+  const submittable = (value: Record<string, string[]>) =>
+    record.questions.every(
+      ({ id }) =>
+        (value[id]?.length ?? 0) > 0 &&
+        value[id].every(
+          (answer) => answer.length <= CODEX_ATTENTION_ANSWER_MAX_LENGTH,
+        ),
+    );
+  const answers = useMemo(() => answersFor(draft), [draft, record.questions]);
+  const canSubmit = submittable(answers);
 
   // Send the response, from the Send button or Shift+Enter in an answer:
   // `origin` is where focus returns if a network approval opens first.
-  const send = (origin: string) => {
+  // `from` is the draft to send: the rendered one, or, for Shift+Enter, the
+  // editor's live value, which may not have rendered yet.
+  const send = (origin: string, from: CodexAttentionDraft = draft) => {
     lastAnswer.current = origin;
     void agentMentions.preflight(
       // Only what the person wrote: an agent's own choices may name agents,
       // with no picker to bind them.
-      Object.values(draft.other)
+      Object.values(from.other)
         .filter((value) => value?.trim())
         .join("\n"),
-      () => respond(false),
+      () => respond(false, answersFor(from)),
     );
   };
 
@@ -377,7 +379,7 @@ function RuntimeCodexAttentionCard({
       threadKey: record.thread_id,
     });
 
-  const respond = async (decline = false) => {
+  const respond = async (decline = false, submitted = answers) => {
     setSubmitting(true);
     setError(undefined);
     const focusedControl = document.activeElement;
@@ -388,7 +390,7 @@ function RuntimeCodexAttentionCard({
         project_id: record.project_id,
         attention_id: record.attention_id,
         response_id: responseIdRef.current,
-        answers: decline ? undefined : answers,
+        answers: decline ? undefined : submitted,
         decline,
       });
       if (result.state === "already_submitted") {
@@ -754,15 +756,27 @@ function RuntimeCodexAttentionCard({
                             controlRef={answerControl(question.id)}
                             // Shift+Enter sends, as in chat, once the
                             // response can be sent.
-                            onShiftEnter={() => {
+                            onShiftEnter={(value) => {
+                              // The editor's live value: its onChange may not
+                              // have rendered into the draft yet.
+                              const live = `${value ?? draft.other[question.id] ?? ""}`;
+                              const from: CodexAttentionDraft = {
+                                other: { ...draft.other, [question.id]: live },
+                                selected: live
+                                  ? {
+                                      ...draft.selected,
+                                      [question.id]: undefined,
+                                    }
+                                  : draft.selected,
+                              };
                               if (
                                 answerable &&
                                 !pendingFreshAuth &&
-                                canSubmit &&
+                                submittable(answersFor(from)) &&
                                 uploads === 0 &&
                                 !submitting
                               )
-                                send(question.id);
+                                send(question.id, from);
                             }}
                             value={draft.other[question.id] ?? ""}
                             onChange={(value) => {
