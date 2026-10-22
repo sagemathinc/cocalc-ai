@@ -40,11 +40,35 @@ export interface TasksReadStateEntry {
   p?: string;
 }
 
+/**
+ * A chat thread's reader view (the email-like one), under
+ * chatReaderStateKey: what the person read out of order, marked unread
+ * again, or archived. The thread's watermark (ChatReadStateEntry) says what
+ * is read in order. Items are named by their first message's id and pinned
+ * to their last message's id, so a new reply makes an item unread again and
+ * brings it back from the archive.
+ */
+export interface ChatReaderStateEntry {
+  kind: "chat-reader";
+  t: Date;
+  /** Read past the watermark: item id -> its last message id then. */
+  r?: Record<string, string>;
+  /** Marked unread again (at or before the watermark too). */
+  u?: string[];
+  /** Archived: item id -> its last message id then. */
+  a?: Record<string, string>;
+}
+
+export function chatReaderStateKey(path: string, thread_id: string): string {
+  return `chat-reader:${thread_id}:${path}`;
+}
+
 export type ProjectReadStateEntry =
   | ChatReadStateEntry
   | NotebookReadStateEntry
   | TextReadStateEntry
-  | TasksReadStateEntry;
+  | TasksReadStateEntry
+  | ChatReaderStateEntry;
 
 export type ProjectReadStateKind = ProjectReadStateEntry["kind"];
 

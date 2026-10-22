@@ -195,6 +195,22 @@ describe("computeAnchoredThreads", () => {
     expect(info.threads[1].label).toBe("First");
   });
 
+  it("counts items the reader marked unread in a fully read thread", () => {
+    const actions = {
+      ...fakeActions({ rows, index, readCounts: { t1: 3, t2: 2 } }),
+      getReaderUnreadBeforeWatermark: jest.fn((threadId: string) =>
+        threadId === "t2" ? 1 : 0,
+      ),
+    };
+    const info = computeAnchoredThreads({
+      actions,
+      anchorId: "cell-a",
+      accountId: "acct",
+      resolved: false,
+    });
+    expect(info.totalUnread).toBe(1);
+  });
+
   it("never counts unread before read state is ready", () => {
     const info = computeAnchoredThreads({
       actions: fakeActions({ rows, index, readStateReady: false }),

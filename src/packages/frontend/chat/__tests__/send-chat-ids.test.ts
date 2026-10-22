@@ -2,7 +2,9 @@
 
 import { CHAT_THREAD_META_ROW_DATE, threadConfigRecordKey } from "@cocalc/chat";
 import { from_str } from "@cocalc/sync/editor/immer-db/doc";
+import * as readStateModule from "@cocalc/conat/project/read-state";
 import { ChatActions } from "../actions";
+import { markItemRead, readerItems } from "../reader-model";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -2096,6 +2098,193 @@ describe("deleteMessage rewiring", () => {
           row?.event === "chat-thread-state" && row?.thread_id === threadId,
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("reader state", () => {
+  it("changes made before the read state opens are applied to what it holds", async () => {
+    const actions = makeActions();
+    let resolveClient!: (client: unknown) => void;
+    (webapp_client.conat_client as any).projectConat = jest.fn(
+      () => new Promise((resolve) => (resolveClient = resolve)),
+    );
+    // Saved earlier, on another device: an archive.
+    const store: any = {
+      set: jest.fn(),
+      get: jest.fn(() => ({
+        kind: "chat-reader",
+        t: new Date(1),
+        a: { old: "old" },
+      })),
+      getChatThread: jest.fn(() => undefined),
+      onChange: () => () => {},
+      markChatThreadRead: jest.fn(),
+      isClosed: () => false,
+      close: jest.fn(),
+    };
+    const open = jest
+      .spyOn(readStateModule, "openProjectReadState")
+      .mockResolvedValue(store);
+    try {
+      const markUnread = (state: any) => ({
+        state: { ...state, u: [...(state.u ?? []), "m1"] },
+      });
+      expect(actions.updateReaderState("thread-1", markUnread)).toBe(true);
+      // Not open yet: nothing saved, but the reader sees the change.
+      expect(store.set).not.toHaveBeenCalled();
+      expect(actions.getReaderState("thread-1")).toEqual({ u: ["m1"] });
+      resolveClient({});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(open).toHaveBeenCalled();
+      // The earlier archive survives.
+      expect(store.set).toHaveBeenCalledWith(
+        "chat-reader:thread-1:x.chat",
+        expect.objectContaining({
+          kind: "chat-reader",
+          a: { old: "old" },
+          u: ["m1"],
+        }),
+      );
+      // Open: later changes apply to the store directly.
+      store.get.mockReturnValue({
+        kind: "chat-reader",
+        t: new Date(),
+        u: ["x"],
+      });
+      expect(actions.getReaderState("thread-1")).toEqual({ u: ["x"] });
+      actions.updateReaderState("thread-1", markUnread);
+      expect(store.set).toHaveBeenLastCalledWith(
+        "chat-reader:thread-1:x.chat",
+        expect.objectContaining({ u: ["x", "m1"] }),
+      );
+    } finally {
+      open.mockRestore();
+    }
+  });
+});
+
+describe("reader state when the watermark cannot move", () => {
+  it("keeps the reader's record that the item was read", () => {
+    const actions = makeActions();
+    const store: any = {
+      set: jest.fn(),
+      get: jest.fn(() => undefined),
+      getChatThread: jest.fn(() => undefined),
+      isClosed: () => false,
+    };
+    actions.projectReadStateKey = "proj-1:00000000-1000-4000-8000-000000000001";
+    actions.projectReadState = store;
+    actions.getThreadReadCount = jest.fn(() => 0);
+    // E.g. the last message has no message_id, so no watermark is written.
+    actions.markThreadRead = jest.fn(() => false);
+    const items = readerItems([{ message_id: "p1", sender_id: "u" }] as any);
+    actions.updateReaderState("thread-1", (state: any, watermark: number) =>
+      markItemRead(items, items[0], watermark, state),
+    );
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 1);
+    expect(store.set).toHaveBeenCalledWith(
+      "chat-reader:thread-1:x.chat",
+      expect.objectContaining({ r: { p1: "p1" } }),
+    );
+  });
+});
+
+describe("reading a whole thread in the log", () => {
+  it("drops the reader's read and unread exceptions, keeping archives", () => {
+    const actions = makeActions();
+    actions.getReaderState = jest.fn(() => ({
+      r: { p3: "p3" },
+      u: ["p1"],
+      a: { p2: "p2" },
+    }));
+    actions.isProjectReadStateReady = jest.fn(() => true);
+    actions.updateReaderState = jest.fn();
+    actions.clearReaderReadExceptions("thread-1");
+    const change = actions.updateReaderState.mock.calls[0][1];
+    expect(change({ r: { x: "x" }, u: ["y"], a: { p2: "p2" } }, 5)).toEqual({
+      state: { a: { p2: "p2" } },
+    });
+    // Nothing to clear: nothing is written.
+    actions.isProjectReadStateReady = jest.fn(() => true);
+    actions.updateReaderState.mockClear();
+    actions.getReaderState = jest.fn(() => ({ a: { p2: "p2" } }));
+    actions.clearReaderReadExceptions("thread-1");
+    expect(actions.updateReaderState).not.toHaveBeenCalled();
+    // Not loaded yet: the saved exceptions are unknown, so the clear waits.
+    actions.isProjectReadStateReady = jest.fn(() => false);
+    actions.getReaderState = jest.fn(() => ({}));
+    actions.clearReaderReadExceptions("thread-1");
+    expect(actions.updateReaderState).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("unread totals and the reader", () => {
+  it("count items marked unread again at or before the watermark", () => {
+    const actions = makeActions();
+    const messages = ["p1", "p2", "p3"].map((id) => ({
+      message_id: id,
+      sender_id: "u",
+    }));
+    actions.getMessagesInThread = jest.fn(() => messages);
+    // Read in order through p2; p1 and p3 marked unread.
+    actions.getThreadReadCount = jest.fn(() => 2);
+    actions.getReaderState = jest.fn(() => ({ u: ["p1", "p3"] }));
+    // p3 is past the watermark, so already counted: only p1 is added.
+    expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(1);
+    actions.getReaderState = jest.fn(() => ({}));
+    expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(0);
+  });
+});
+
+describe("reader state and the watermark", () => {
+  it("a queued open moves the watermark over what the stored state had read", async () => {
+    const actions = makeActions();
+    let resolveClient!: (client: unknown) => void;
+    (webapp_client.conat_client as any).projectConat = jest.fn(
+      () => new Promise((resolve) => (resolveClient = resolve)),
+    );
+    // p3 was read out of order on another device; p1 is read in order.
+    const store: any = {
+      set: jest.fn(),
+      get: jest.fn(() => ({
+        kind: "chat-reader",
+        t: new Date(1),
+        r: { p3: "p3" },
+      })),
+      onChange: () => () => {},
+      markChatThreadRead: jest.fn(),
+      isClosed: () => false,
+      close: jest.fn(),
+    };
+    const open = jest
+      .spyOn(readStateModule, "openProjectReadState")
+      .mockResolvedValue(store);
+    actions.getThreadReadCount = jest.fn(() => 1);
+    actions.markThreadRead = jest.fn(() => true);
+    const items = readerItems(
+      ["p1", "p2", "p3"].map((id) => ({
+        message_id: id,
+        sender_id: "u",
+      })) as any,
+    );
+    try {
+      // Opening p2 before the read state opens.
+      actions.updateReaderState("thread-1", (state: any, watermark: number) =>
+        markItemRead(items, items[1], watermark, state),
+      );
+      expect(actions.markThreadRead).not.toHaveBeenCalled();
+      resolveClient({});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(open).toHaveBeenCalled();
+      // Read in order through p3 now: the watermark covers it, r is empty.
+      expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 3);
+      expect(store.set).toHaveBeenCalledWith(
+        "chat-reader:thread-1:x.chat",
+        expect.not.objectContaining({ r: expect.anything() }),
+      );
+    } finally {
+      open.mockRestore();
+    }
   });
 });
 

@@ -59,6 +59,25 @@ describe("chat unread helpers", () => {
     ).toBe(true);
   });
 
+  it("counts a thread read to its end as unread when the reader marked an item unread", () => {
+    const actions = {
+      isProjectReadStateReady: jest.fn(() => true),
+      getThreadIndex: jest.fn(
+        () => new Map([["thread-1", { key: "thread-1", messageCount: 2 }]]),
+      ),
+      getThreadMetadata: jest.fn(() => undefined),
+      getThreadReadCount: jest.fn(() => 2),
+      getReaderUnreadBeforeWatermark: jest.fn(() => 1),
+    } as any;
+    expect(listUnreadChatThreads({ actions, account_id: "acct-1" })).toEqual([
+      { key: "thread-1", messageCount: 2 },
+    ]);
+    expect(actions.getReaderUnreadBeforeWatermark).toHaveBeenCalledWith(
+      "thread-1",
+      "acct-1",
+    );
+  });
+
   it("suppresses unread threads while read state is still loading", () => {
     const actions = {
       isProjectReadStateReady: jest.fn(() => false),

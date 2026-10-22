@@ -214,3 +214,25 @@ describe("project read state", () => {
     });
   });
 });
+
+describe("chat reader state", () => {
+  it("lives under its own key per thread, and the newest write wins", () => {
+    const { chatReaderStateKey } = require("./read-state");
+    expect(chatReaderStateKey("a.chat", "t1")).toBe("chat-reader:t1:a.chat");
+    expect(chatReaderStateKey("a.chat", "t1")).not.toBe(
+      chatReaderStateKey("a.chat", "t2"),
+    );
+    const older = {
+      kind: "chat-reader" as const,
+      t: new Date(1),
+      u: ["m1"],
+    };
+    const newer = {
+      kind: "chat-reader" as const,
+      t: new Date(2),
+      a: { m2: "m3" },
+    };
+    expect(mergeProjectReadStateEntries(older, newer)).toEqual(newer);
+    expect(mergeProjectReadStateEntries(newer, older)).toEqual(newer);
+  });
+});
