@@ -1252,6 +1252,9 @@ describe("dedicated host spend maintenance", () => {
               final_backup_failed_at: new Date(
                 now - 24 * 3600_000,
               ).toISOString(),
+              rescue_failure_alerted_at: new Date(
+                now - 24 * 3600_000,
+              ).toISOString(),
             }),
           ],
         };
@@ -1286,6 +1289,9 @@ describe("dedicated host spend maintenance", () => {
                 now - 9 * 24 * 3600_000,
               ).toISOString(),
               final_backup_failed_at: new Date(
+                now - 8 * 24 * 3600_000,
+              ).toISOString(),
+              rescue_failure_alerted_at: new Date(
                 now - 8 * 24 * 3600_000,
               ).toISOString(),
             }),
@@ -1494,6 +1500,9 @@ describe("dedicated host spend maintenance", () => {
                   final_backup_failed_at: new Date(
                     now - 8 * 24 * 3600_000,
                   ).toISOString(),
+                  rescue_failure_alerted_at: new Date(
+                    now - 8 * 24 * 3600_000,
+                  ).toISOString(),
                 }),
                 status,
               },
@@ -1599,6 +1608,9 @@ describe("dedicated host spend maintenance", () => {
                 final_backup_failed_at: new Date(
                   now - 8 * 24 * 3600_000,
                 ).toISOString(),
+                rescue_failure_alerted_at: new Date(
+                  now - 8 * 24 * 3600_000,
+                ).toISOString(),
               }),
               status: "error",
             },
@@ -1686,6 +1698,233 @@ describe("dedicated host spend maintenance", () => {
       ).toBe(false);
     },
   );
+
+  function failedRescueRow(now: number, extra: Record<string, any> = {}) {
+    return blockedHostRow({
+      final_backup_status: "failed",
+      stopped_at: new Date(now - 31 * 24 * 3600_000).toISOString(),
+      deprovision_after: new Date(now - 3600_000).toISOString(),
+      rescue_requested_at: new Date(now - 9 * 24 * 3600_000).toISOString(),
+      final_backup_failed_at: new Date(now - 8 * 24 * 3600_000).toISOString(),
+      ...extra,
+    });
+  }
+
+  it("alerts (and records it) before deleting the disk of a failed rescue", async () => {
+    const now = Date.now();
+    const writes: any[] = [];
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return { rows: [failedRescueRow(now)] };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=(")
+      ) {
+        writes.push(params?.[1].billing.enforcement);
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(adminAlertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: expect.stringContaining("disk deletion scheduled"),
+        errorOnFail: true,
+      }),
+    );
+    expect(writes).toEqual([
+      expect.objectContaining({
+        state: "stopped_billing_blocked",
+        rescue_failure_alerted_at: expect.any(String),
+      }),
+    ]);
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes nothing while the deletion alert cannot be delivered", async () => {
+    adminAlertMock = jest.fn(async () => {
+      throw new Error("messages unavailable");
+    });
+    const now = Date.now();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return { rows: [failedRescueRow(now)] };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it("waits 7 days after the delivered alert before deleting the disk", async () => {
+    const now = Date.now();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            failedRescueRow(now, {
+              rescue_failure_alerted_at: new Date(
+                now - 2 * 24 * 3600_000,
+              ).toISOString(),
+            }),
+          ],
+        };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(adminAlertMock).not.toHaveBeenCalled();
+  });
+
+  it("clears the block of a host whose stop failed once funding recovers, before any deadline", async () => {
+    isDedicatedHostLaneCurrentlyAllowedMock = jest.fn(() => true);
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
+      account_id: "acc-1",
+      membership_class: "member",
+      can_create_hosts: true,
+      funding_mode: "account-prepaid",
+      effective_limits: {
+        prepaid_host_usage_limit_5h_usd: 300,
+        prepaid_host_usage_limit_7d_usd: 1000,
+      },
+      has_active_second_factor: true,
+      has_payment_method: true,
+      has_usage_subscription: false,
+      balance: "250",
+      postpaid_unbilled_exposure_usd: "0",
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "10",
+        prepaid_7d_usd: "20",
+        credit_5h_usd: "0",
+        credit_7d_usd: "0",
+      },
+    }));
+    const now = Date.now();
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              ...failedRescueRow(now, {
+                rescue_failure_alerted_at: new Date(
+                  now - 8 * 24 * 3600_000,
+                ).toISOString(),
+              }),
+              status: "error",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=(")
+      ) {
+        expect(params?.[1].billing.enforcement).toEqual({ state: "ok" });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+  });
+
+  it("queues a billing deprovision again when it has had no operation for an hour", async () => {
+    const now = Date.now();
+    let wrote: any;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              ...blockedHostRow({
+                state: "deprovision_pending",
+                final_backup_status: "succeeded",
+                deprovision_requested_at: new Date(
+                  now - 2 * 3600_000,
+                ).toISOString(),
+              }),
+              status: "error",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=(")
+      ) {
+        wrote = params?.[1].billing.enforcement;
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(wrote).toMatchObject({
+      state: "deprovision_pending",
+      deprovision_retry_requested_at: expect.any(String),
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-deprovision",
+        dedupe_key: "host-deprovision:billing:host-1",
+      }),
+    );
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).not.toHaveBeenCalled();
+  });
 
   it("waits between stop retries of a billing-blocked host", async () => {
     queryMock = jest.fn(async (sql: string) => {

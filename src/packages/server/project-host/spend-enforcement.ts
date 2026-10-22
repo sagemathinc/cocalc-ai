@@ -77,6 +77,10 @@ export interface DedicatedHostBillingEnforcementMetadata {
   deprovision_requested_at?: string;
   // Why the disk was deleted without a confirmed final backup, if it was.
   deprovision_reason?: string;
+  // When the admin alert naming the deletion time of a host whose rescue
+  // failed was delivered; the disk is deleted only after it.
+  rescue_failure_alerted_at?: string;
+  deprovision_retry_requested_at?: string;
   deprovisioned_at?: string;
   recovery_actions?: DedicatedHostBillingRecoveryAction[];
   hourly_cost_usd?: MoneyValue;
