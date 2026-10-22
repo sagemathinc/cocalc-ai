@@ -335,7 +335,7 @@ async function getStuckHosts(
             metadata#>>'{billing,enforcement,final_backup_status}' AS final_backup_status
        FROM project_hosts
       WHERE deleted IS NULL
-        AND bay_id = $1
+        AND COALESCE(NULLIF(BTRIM(bay_id), ''), $1) = $1
         AND metadata#>>'{billing,enforcement,state}' = 'stopped_billing_blocked'
         AND COALESCE(metadata#>>'{billing,enforcement,final_backup_status}', '') <> 'succeeded'`,
     [bay_id],
@@ -376,7 +376,7 @@ async function getIdleHosts(
           WHERE host_id = h.id
        ) s ON TRUE
       WHERE h.deleted IS NULL
-        AND h.bay_id = $4
+        AND COALESCE(NULLIF(BTRIM(h.bay_id), ''), $4) = $4
         AND h.status = 'running'
         AND h.tier IS NULL
         AND h.metadata->>'owner' IS NOT NULL
@@ -431,7 +431,8 @@ const NO_BALANCE_EXPOSURE: Pick<
 };
 
 // Host checks cover only hosts this bay is responsible for: a rehomed host's
-// row stays behind in the source bay's database.
+// row stays behind in the source bay's database. A legacy row without a bay_id
+// belongs to the local bay, as elsewhere (host-dns-reconciliation.ts).
 export async function getBillingExposureHealth({
   bay_id,
 }: {

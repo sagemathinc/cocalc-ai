@@ -175,6 +175,8 @@ describe("getBillingExposureHealth", () => {
   const deleted = uuid();
   const fenced = uuid();
   const stuckHost = uuid();
+  const legacyStuckHost = uuid();
+  const legacyIdleHost = uuid();
   const backedUpHost = uuid();
   const notYetDueHost = uuid();
   const idleHost = uuid();
@@ -222,7 +224,7 @@ describe("getBillingExposureHealth", () => {
       status?: string;
       tier?: number | null;
       metadata?: any;
-      bay_id?: string;
+      bay_id?: string | null;
     },
   ) {
     await getPool().query(
@@ -421,6 +423,17 @@ describe("getBillingExposureHealth", () => {
       metadata: enforcement(past, "failed"),
       bay_id: OTHER_BAY,
     });
+    // Legacy rows without a bay_id belong to the local bay.
+    await host(legacyStuckHost, "legacy-stuck", {
+      status: "off",
+      metadata: enforcement(new Date(now - 2 * DAY).toISOString(), "failed"),
+      bay_id: null,
+    });
+    await host(legacyIdleHost, "legacy-idle", { bay_id: null });
+    await samples(legacyIdleHost, [
+      [3 * DAY - HOUR, 0],
+      [HOUR, 0],
+    ]);
     await host(rehomedIdleHost, "rehomed-idle", { bay_id: OTHER_BAY });
     await samples(rehomedIdleHost, [
       [3 * DAY - HOUR, 0],
@@ -469,6 +482,13 @@ describe("getBillingExposureHealth", () => {
 
     expect(health.stuck_hosts).toEqual([
       {
+        host_id: legacyStuckHost,
+        name: "legacy-stuck",
+        owner: prepaid,
+        deprovision_after: new Date(now - 2 * DAY).toISOString(),
+        final_backup_status: "failed",
+      },
+      {
         host_id: stuckHost,
         name: "theta_congruent",
         owner: prepaid,
@@ -476,12 +496,14 @@ describe("getBillingExposureHealth", () => {
         final_backup_status: "failed",
       },
     ]);
-    expect(health.idle_hosts.map(({ host_id }) => host_id)).toEqual([idleHost]);
+    expect(health.idle_hosts.map(({ host_id }) => host_id).sort()).toEqual(
+      [idleHost, legacyIdleHost].sort(),
+    );
     expect(health.idle_hosts[0].last_busy_at).toBeNull();
 
     expect(billingExposureHealthLevel(health)).toBe("critical");
     expect(billingExposureHealthSummary(health)).toBe(
-      "6 accounts below -$20.00 ($260.00 owed); 1 open metered purchase with a negative owner balance ($2.00/hour); 1 billing-blocked host past deprovision without a successful final backup; 1 running dedicated host with no running project for 3 days.",
+      "6 accounts below -$20.00 ($260.00 owed); 1 open metered purchase with a negative owner balance ($2.00/hour); 2 billing-blocked hosts past deprovision without a successful final backup; 2 running dedicated hosts with no running project for 3 days.",
     );
     const details = billingExposureHealthDetails(health);
     expect(details[0]).toMatch(
@@ -502,10 +524,11 @@ describe("getBillingExposureHealth", () => {
     await getPool().query(
       `UPDATE project_hosts
           SET metadata = jsonb_set(metadata, '{billing,enforcement,final_backup_status}', '"succeeded"')
-        WHERE id=$1`,
-      [stuckHost],
+        WHERE id = ANY($1)`,
+      [[stuckHost, legacyStuckHost]],
     );
     await samples(idleHost, [[HOUR / 2, 1]]);
+    await samples(legacyIdleHost, [[HOUR / 2, 1]]);
     const health = await getBillingExposureHealth({ bay_id: BAY });
     expect(health.negative.count).toBe(0);
     expect(health.open_metered.count).toBe(0);
