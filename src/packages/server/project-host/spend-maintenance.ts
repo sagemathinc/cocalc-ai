@@ -569,7 +569,7 @@ async function retryBillingEnforcementStop({
         `Host ID: ${row.id}`,
         `Host name: ${row.name}`,
         `Status: ${row.status}`,
-        "Billing enforcement stopped this host, but it is still running or in error. The stop was requested again; it is retried every 30 minutes, and the host is not billed to its owner meanwhile. If its projects lack a final backup, their rescue drain waits until the host is off: check the VM with the provider.",
+        "Billing enforcement stopped this host, but it is still running or in error. The stop was requested again; it is retried every 30 minutes. Its running-rate purchase session is closed, so the owner is not billed for it meanwhile. If its projects lack a final backup, their rescue drain waits until the host is off: check the VM with the provider.",
       ].join("\n"),
       dedupMinutes: 24 * 60,
       dedupBySubject: true,
@@ -1439,6 +1439,14 @@ async function runPass(): Promise<void> {
       // status "error" whether or not the VM still runs, and starting a
       // running VM restarts it or fails on some providers, which would lose
       // the only rescue attempt.
+      //
+      // The running-rate session opened before the block would keep accruing
+      // until a stop succeeds, so close it now; stopped pricing starts once
+      // the host is off.
+      await closeDedicatedHostPurchaseSessionForAccount({
+        account_id: owner,
+        host_id: row.id,
+      });
       if (
         !(await maybeProgressInactiveEnforcement({
           row,

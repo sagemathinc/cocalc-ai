@@ -1228,6 +1228,9 @@ describe("dedicated host spend maintenance", () => {
       expect(
         reconcileDedicatedHostPurchaseSessionForAccountMock,
       ).not.toHaveBeenCalled();
+      expect(
+        closeDedicatedHostPurchaseSessionForAccountMock,
+      ).toHaveBeenCalledWith({ account_id: "acc-1", host_id: "host-1" });
     },
   );
 
@@ -1407,6 +1410,10 @@ describe("dedicated host spend maintenance", () => {
     expect(
       reconcileDedicatedHostPurchaseSessionForAccountMock,
     ).not.toHaveBeenCalled();
+    // The running-rate session from before the block stops accruing.
+    expect(
+      closeDedicatedHostPurchaseSessionForAccountMock,
+    ).toHaveBeenCalledWith({ account_id: "acc-1", host_id: "host-1" });
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
