@@ -197,7 +197,10 @@ describe("host resolver single-flight at the outbound RPC boundary", () => {
         timeout: 15_000,
       });
       expect(request).toHaveBeenCalledTimes(1);
-      expect(request).toHaveBeenCalledWith(subject, data, { timeout: 15_000 });
+      expect(request).toHaveBeenCalledWith(subject, data, {
+        timeout: 15_000,
+        headers: { "CN-Egress-Label": "hosts.resolveHostConnection" },
+      });
       await jest.advanceTimersByTimeAsync(4_000);
       expect(await short).toMatchObject({ code: 408 });
       await jest.advanceTimersByTimeAsync(3_000);
@@ -387,6 +390,40 @@ describe("annotateCallHubError", () => {
   it("gives an undefined rejection a useful fallback", () => {
     expect(annotateCallHubError({ err: undefined, ...context }).message).toBe(
       "hub request failed - callHub: subject='hub.account.account-1.api', name='projects.getProjectRootfs', code='unknown'",
+    );
+  });
+});
+
+describe("egress label header", () => {
+  it("labels every hub request with its method name, including single-flight lookups", async () => {
+    const request = jest.fn(async () => ({ data: "ok" }));
+    const client = { request, info: { user: {} } } as unknown as Client;
+    await requestHub(
+      client,
+      "hub.account.a.api",
+      { name: "projects.listAccountProjectWindow", args: [] },
+      { timeout: 1000 },
+    );
+    expect(request).toHaveBeenLastCalledWith(
+      "hub.account.a.api",
+      { name: "projects.listAccountProjectWindow", args: [] },
+      {
+        timeout: 1000,
+        headers: { "CN-Egress-Label": "projects.listAccountProjectWindow" },
+      },
+    );
+    await requestHub(
+      client,
+      "hub.account.a.api",
+      { name: "hosts.resolveHostConnection", args: [{ host_id: "h" }] },
+      { timeout: 1000 },
+    );
+    expect(request).toHaveBeenLastCalledWith(
+      "hub.account.a.api",
+      expect.objectContaining({ name: "hosts.resolveHostConnection" }),
+      expect.objectContaining({
+        headers: { "CN-Egress-Label": "hosts.resolveHostConnection" },
+      }),
     );
   });
 });

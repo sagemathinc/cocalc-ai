@@ -1,5 +1,6 @@
 import { Map as ImmutableMap } from "immutable";
 import { EventEmitter } from "events";
+import { REPLY_HEADER } from "@cocalc/conat/core/message-headers";
 
 jest.mock("./store", () => ({
   store: { get: jest.fn(), getIn: jest.fn(), get_state: jest.fn() },
@@ -50,7 +51,7 @@ it("expired normal host-info retries never publish after reconnect", async () =>
   const published: unknown[] = [];
   client._publish = jest.fn((_subject, data, options) => {
     published.push(data);
-    inbox.emit(Object.values(options.headers)[0] as string, {
+    inbox.emit(options.headers[REPLY_HEADER] as string, {
       data: { host_id: "host-1" },
     });
     return { bytes: 1, getCount: () => 1, promise: Promise.resolve() };

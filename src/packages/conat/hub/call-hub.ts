@@ -1,4 +1,5 @@
 import { type Client } from "@cocalc/conat/core/client";
+import { EGRESS_LABEL_HEADER } from "@cocalc/conat/core/message-headers";
 import { ConatError } from "@cocalc/conat/util";
 import { resolveHostConnectionSingleFlight } from "./resolve-host-singleflight";
 const DEFAULT_TIMEOUT = 15000;
@@ -14,7 +15,10 @@ export function requestHub(
   data: { name: string; args: any[]; auth_session_hash?: string },
   options: { timeout: number },
 ) {
-  const request = () => client.request(subject, data, options);
+  // The method name labels the reply for egress attribution on the server
+  // ("reply:hub.account.*.api#<name>").
+  const headers = { [EGRESS_LABEL_HEADER]: data.name };
+  const request = () => client.request(subject, data, { ...options, headers });
   if (data.name !== "hosts.resolveHostConnection") return request();
   const flight = resolveHostConnectionSingleFlight(
     client,
@@ -24,7 +28,11 @@ export function requestHub(
       client.info?.user,
     ],
     data.args,
-    () => client.request(subject, data, { timeout: RESOLVER_FLIGHT_TIMEOUT }),
+    () =>
+      client.request(subject, data, {
+        timeout: RESOLVER_FLIGHT_TIMEOUT,
+        headers,
+      }),
   );
   // A joiner has its own deadline, but timing out its wait must not evict or
   // cancel the underlying RPC. Only the single-flight helper owns that entry.
