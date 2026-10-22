@@ -194,12 +194,21 @@ function run(command, args, cwd) {
   return result.stdout.trim();
 }
 
-function changedFilesSince(base) {
+// Deleted paths count: removing code from a package changes that package.
+// Without rename detection a move lists both its old and new path, so the
+// package it left counts as changed too.
+export function changedFilesSince(base, cwd = REPO_ROOT) {
   if (!base) return [];
   return run(
     "git",
-    ["diff", "--name-only", "--diff-filter=ACMR", `${base}...HEAD`],
-    REPO_ROOT,
+    [
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "--diff-filter=ACDMT",
+      `${base}...HEAD`,
+    ],
+    cwd,
   )
     .split("\n")
     .filter(Boolean);
