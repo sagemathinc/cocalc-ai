@@ -450,15 +450,12 @@ import {
 } from "@cocalc/server/inter-bay/project-secrets";
 import {
   getBackupConfigLocal,
-  getHostRuntimeDeploymentStatus,
   getAccountEffectiveLimitsLocal,
   getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
   recordAcpAdmissionDenialLocal,
   recordServiceAdmissionDenialLocal,
   recordServiceAdmissionNearLimitLocal,
-  rolloutHostManagedComponents,
-  upgradeHostSoftware,
   listHostProjects,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
@@ -2710,45 +2707,6 @@ async function startHostConnectionService(): Promise<void> {
         // The source bay has already authenticated and authorized the user
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
-      }),
-    getHostRuntimeDeploymentStatus: async ({ account_id, id }) =>
-      await getHostRuntimeDeploymentStatus({
-        account_id,
-        id,
-      }),
-    upgradeHostSoftware: async ({
-      account_id,
-      id,
-      targets,
-      base_url,
-      align_runtime_stack,
-      record_runtime_deployments,
-    }) =>
-      await upgradeHostSoftware({
-        account_id,
-        id,
-        targets,
-        base_url,
-        align_runtime_stack,
-        record_runtime_deployments,
-      }),
-    rolloutHostManagedComponents: async ({
-      account_id,
-      id,
-      components,
-      desired_version,
-      record_runtime_deployments,
-      base_url,
-      reason,
-    }) =>
-      await rolloutHostManagedComponents({
-        account_id,
-        id,
-        components,
-        desired_version,
-        record_runtime_deployments,
-        base_url,
-        reason,
       }),
     getProjectStartMetadata: async ({ host_id, project_id }) => {
       const metadata = await getProjectStartMetadataLocal({

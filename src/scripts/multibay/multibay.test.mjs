@@ -1788,6 +1788,43 @@ describe("host reads across bays", () => {
     );
     assert.equal(queuedOn, 1, "the operation is recorded on the host's bay");
   });
+
+  it("stops a host as the system, from another bay, with no session", async () => {
+    // Trusted server code (quarantine) stops hosts with no user session: the
+    // seed sends the allow-listed system action to the host's bay.
+    const forwarded = async () =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.stopHost' AND source_bay_id=$1 AND finished IS NOT NULL",
+           [${JSON.stringify(SEED)}]);
+         return rows[0].n;`,
+      );
+    const before = await forwarded();
+    const op = await runInBay(
+      cluster,
+      SEED,
+      `const { runHostActionAsSystem } = server("conat/api/system-host-actions.js");
+       return await runHostActionAsSystem("hosts.stopHost", {
+         account_id: ${JSON.stringify(alice.account_id)},
+         id: ${JSON.stringify(host_id)},
+       });`,
+    );
+    assert.ok(op?.op_id, "a stop operation was queued");
+    assert.equal(await forwarded(), before + 1);
+    const queuedOn = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT kind FROM long_running_operations WHERE op_id=$1",
+         [${JSON.stringify(op.op_id)}]);
+       return rows[0]?.kind ?? null;`,
+    );
+    assert.equal(queuedOn, "host-stop");
+  });
 });
 
 describe("course reconfiguration across bays", () => {

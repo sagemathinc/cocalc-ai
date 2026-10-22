@@ -38,6 +38,11 @@ export interface ForwardedHubApiCall {
    * the default 30 s; the owning bay lets a repeat wait accordingly.
    */
   budget_ms?: number;
+  /**
+   * A system host action (server/conat/api/system-host-actions) sent by
+   * trusted server code on the receiving bay, not a user's hub API call.
+   */
+  system?: true;
 }
 
 export interface InterBayHubApi {

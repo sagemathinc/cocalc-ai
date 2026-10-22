@@ -6675,6 +6675,23 @@ export async function stopHost({
     session_hash,
     required: true,
   });
+  return await queueHostStop({ account_id, id, skip_backups });
+}
+
+/**
+ * Queue a stop of a host owned by this bay, as `account_id` (who must be
+ * allowed to stop it). No fresh-auth check: stopHost does that for users,
+ * and trusted server code calls this as a system action.
+ */
+export async function queueHostStop({
+  account_id,
+  id,
+  skip_backups,
+}: {
+  account_id?: string;
+  id: string;
+  skip_backups?: boolean;
+}): Promise<HostLroResponse> {
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, account_id);
@@ -8722,19 +8739,8 @@ export async function upgradeHostSoftware({
   align_runtime_stack?: boolean;
   record_runtime_deployments?: boolean;
 }): Promise<HostLroResponse> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .upgradeHostSoftware({
-        account_id,
-        id,
-        targets,
-        base_url,
-        align_runtime_stack,
-        record_runtime_deployments,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -9155,15 +9161,8 @@ export async function getHostRuntimeDeploymentStatus({
   account_id?: string;
   id: string;
 }): Promise<HostRuntimeDeploymentStatus> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .getHostRuntimeDeploymentStatus({
-        account_id,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForListing(id, account_id);
   return await getHostRuntimeDeploymentStatusInternal({
     id,
@@ -9558,20 +9557,8 @@ export async function rolloutHostManagedComponents({
   base_url?: string;
   reason?: string;
 }): Promise<HostLroResponse> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .rolloutHostManagedComponents({
-        account_id,
-        id,
-        components,
-        desired_version,
-        record_runtime_deployments,
-        base_url,
-        reason,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({

@@ -25,7 +25,10 @@ jest.mock("@cocalc/database/pool", () => ({
 
 jest.mock("@cocalc/server/conat/api/hosts", () => ({
   listHosts: (...args: any[]) => listHostsMock(...args),
-  stopHost: (...args: any[]) => stopHostMock(...args),
+}));
+
+jest.mock("@cocalc/server/conat/api/system-host-actions", () => ({
+  runHostActionAsSystem: (...args: any[]) => stopHostMock(...args),
 }));
 
 jest.mock("@cocalc/server/bay-config", () => ({
@@ -318,7 +321,8 @@ describe("account resource quarantine", () => {
       kind: "quarantine-account-stripe-cleanup",
       account_id: ACCOUNT_ID,
     });
-    expect(stopHostMock).toHaveBeenCalledWith({
+    // Stopped as the system, on the host's own bay: there is no session.
+    expect(stopHostMock).toHaveBeenCalledWith("hosts.stopHost", {
       account_id: "22222222-2222-4222-8222-222222222222",
       id: "host-1",
     });

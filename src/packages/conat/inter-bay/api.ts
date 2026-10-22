@@ -2598,9 +2598,6 @@ export type HostConnectionMethod =
   | "update-api-relay-usage"
   | "update-api-relay-account-usage"
   | "list"
-  | "get-host-runtime-deployment-status"
-  | "upgrade-host-software"
-  | "rollout-host-managed-components"
   | "list-host-operations"
   | "get-project-start-metadata"
   | "get-backup-config"
@@ -3284,15 +3281,6 @@ export interface InterBayHostConnectionApi {
   }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
-  getHostRuntimeDeploymentStatus: (
-    opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
-  upgradeHostSoftware: (
-    opts: Parameters<Hosts["upgradeHostSoftware"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["upgradeHostSoftware"]>>>;
-  rolloutHostManagedComponents: (
-    opts: Parameters<Hosts["rolloutHostManagedComponents"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rolloutHostManagedComponents"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -3432,15 +3420,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "update-api-relay-account-usage",
   },
   { name: "list", method: "list" },
-  {
-    name: "getHostRuntimeDeploymentStatus",
-    method: "get-host-runtime-deployment-status",
-  },
-  { name: "upgradeHostSoftware", method: "upgrade-host-software" },
-  {
-    name: "rolloutHostManagedComponents",
-    method: "rollout-host-managed-components",
-  },
   { name: "listHostOperations", method: "list-host-operations" },
   {
     name: "getProjectStartMetadata",
