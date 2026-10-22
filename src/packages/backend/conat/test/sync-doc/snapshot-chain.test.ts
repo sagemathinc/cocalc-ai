@@ -112,7 +112,7 @@ describe("opening a document whose snapshot records each follow the next snapsho
     expect(s3.to_str()).toBe(expected);
   });
 
-  it("an existing chain from before snapshot_ancestors opens from its latest snapshot too", async () => {
+  it("an existing chain from before snapshot_ancestors loads one snapshot more, not everything", async () => {
     const path2 = "snapshot-chain-legacy.txt";
     const open2 = async () => {
       const doc = connect().sync.string({
