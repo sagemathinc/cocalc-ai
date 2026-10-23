@@ -204,6 +204,24 @@ test("new items wait behind a button; mark all read", () => {
   expect(screen.getByText("No unread messages")).toBeInTheDocument();
 });
 
+test("archive all: a clean slate, after confirming", async () => {
+  const { count, setMessages } = setup(thread, 0);
+  expect(options()).toHaveLength(3);
+  fireEvent.click(screen.getByRole("button", { name: "Archive all" }));
+  // Nothing happens until it is confirmed.
+  expect(options()).toHaveLength(3);
+  expect(await screen.findByText("Archive all 3 messages?")).toBeInTheDocument();
+  const [, confirm] = screen.getAllByRole("button", { name: "Archive all" });
+  fireEvent.click(confirm);
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
+  expect(screen.getByText("No unread messages")).toBeInTheDocument();
+  expect(count()).toBe(4);
+  expect(screen.getAllByRole("button", { name: "Archive all" })[0]).toBeDisabled();
+  // A new message is in the inbox.
+  setMessages([...thread, person("p4", "fourth question", 5)]);
+  expect(options()).toHaveLength(1);
+});
+
 test("unread archived items still count while hidden", async () => {
   setup(thread, 4, { autoFocus: true });
   const keys = user();

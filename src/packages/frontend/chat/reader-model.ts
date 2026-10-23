@@ -65,7 +65,12 @@ export type ReaderChange = (
 };
 
 /** How many ids each list keeps; the oldest go first. */
-export const READER_STATE_LIMITS = { read: 1000, unread: 1000, archived: 2000 };
+export const READER_STATE_LIMITS = {
+  read: 1000,
+  unread: 1000,
+  archived: 2000,
+  unarchived: 1000,
+};
 
 export function readerMessageId(message: ChatMessageTyped): string {
   const id = `${field<string>(message, "message_id") ?? ""}`.trim();
@@ -215,8 +220,25 @@ export function isItemRead(
   return item.lastIndex <= watermark || state.r?.[item.id] === item.lastId;
 }
 
+/** When its newest message was written (ms), or -Infinity if unknown. */
+export function itemLastDate(item: ReaderItem): number {
+  let last = -Infinity;
+  for (const message of item.messages) {
+    const date = dateValue(message)?.valueOf();
+    if (date != null && date > last) last = date;
+  }
+  return last;
+}
+
 export function isItemArchived(item: ReaderItem, state: ReaderState): boolean {
-  return state.a?.[item.id] === item.lastId;
+  if (state.a?.[item.id] === item.lastId) return true;
+  // Archive all: up to its time, unless moved back since; a newer reply
+  // brings an item back, as for one archived alone.
+  return (
+    state.aw != null &&
+    !state.ax?.includes(item.id) &&
+    itemLastDate(item) <= state.aw
+  );
 }
 
 function capRecord(
@@ -257,6 +279,8 @@ function compact(state: ReaderState): ReaderState {
     ...(state.r && Object.keys(state.r).length ? { r: state.r } : {}),
     ...(state.u?.length ? { u: state.u } : {}),
     ...(state.a && Object.keys(state.a).length ? { a: state.a } : {}),
+    ...(state.aw != null ? { aw: state.aw } : {}),
+    ...(state.ax?.length ? { ax: state.ax } : {}),
   };
 }
 
@@ -325,12 +349,45 @@ export function setItemArchived(
   archived: boolean,
   state: ReaderState,
 ): ReaderState {
+  const ax = (state.ax ?? []).filter((id) => id !== item.id);
+  // Back to the inbox from under Archive all: remembered as an exception.
+  if (!archived && state.aw != null && itemLastDate(item) <= state.aw)
+    ax.push(item.id);
   return compact({
     ...state,
     a: archived
       ? withEntry(state.a, item.id, item.lastId, READER_STATE_LIMITS.archived)
       : without(state.a, new Set([item.id])),
+    ax: ax.slice(Math.max(0, ax.length - READER_STATE_LIMITS.unarchived)),
   });
+}
+
+/**
+ * A clean slate: every item is archived and read. Kept as a time, not a list
+ * of items, so it holds for any number of them; a newer reply brings an item
+ * back.
+ */
+export function archiveAll(
+  items: ReaderItem[],
+  state: ReaderState,
+): ReturnType<ReaderChange> {
+  const newest = items.reduce(
+    (last, item) => Math.max(last, itemLastDate(item)),
+    state.aw ?? -Infinity,
+  );
+  const archived = (from: ReaderState): ReaderState =>
+    compact({
+      ...from,
+      a: undefined,
+      ax: undefined,
+      ...(Number.isFinite(newest) ? { aw: newest } : {}),
+    });
+  const read = markAllRead(items, state);
+  return {
+    ...read,
+    state: archived(read.state),
+    unmoved: archived(read.unmoved ?? state),
+  };
 }
 
 /** Everything read: the watermark covers every message; archives stay. */
@@ -340,7 +397,7 @@ export function markAllRead(
 ): { state: ReaderState; watermarkCount: number; unmoved: ReaderState } {
   const last = items[items.length - 1];
   return {
-    state: compact({ a: state.a }),
+    state: compact({ a: state.a, aw: state.aw, ax: state.ax }),
     watermarkCount: last ? last.lastIndex + 1 : 0,
     unmoved: state,
   };
