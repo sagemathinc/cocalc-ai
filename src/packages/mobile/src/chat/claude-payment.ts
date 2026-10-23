@@ -10,7 +10,27 @@ import {
   harnessCredentialFromSelection,
   type ClaudePaymentSelection,
 } from "@cocalc/util/ai/agent-payment-selection";
-import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
+import {
+  ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
+  CLAUDE_SUBSCRIPTION_KIND,
+} from "@cocalc/util/ai/external-credential-profiles";
+
+// As the web picker names them (claudeSubscriptionName): the label, else
+// the plan and the provider account the subscription signed in with.
+function credentialName(row: any): string | undefined {
+  const label = `${row?.metadata?.label ?? ""}`.trim();
+  if (label) return label;
+  if (row?.kind !== CLAUDE_SUBSCRIPTION_KIND) return;
+  const identity = row?.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY];
+  if (typeof identity !== "string" || !identity) return;
+  const plan = String(row.metadata?.plan || "Pro/Max")
+    .replace(/^claude\s+/i, "")
+    .replace(
+      /^(pro|max)$/i,
+      (value) => value[0].toUpperCase() + value.slice(1).toLowerCase(),
+    );
+  return `${plan} - ${identity}`;
+}
 
 export interface ClaudeCredential {
   id: string;
@@ -68,12 +88,7 @@ export async function loadClaudePayment(
       .map((row) => ({
         id: row.id,
         kind: row.kind,
-        label:
-          typeof row.metadata?.label === "string"
-            ? row.metadata.label
-            : typeof row.metadata?.email === "string"
-              ? row.metadata.email
-              : undefined,
+        label: credentialName(row),
       })),
     selection: claude(
       result?.selections?.find(

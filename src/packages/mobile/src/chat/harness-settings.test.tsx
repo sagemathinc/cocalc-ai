@@ -383,3 +383,34 @@ describe("HarnessSettings accessibility", () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 });
+
+it("names unlabeled subscriptions by account and keeps same-named credentials apart", async () => {
+  session();
+  const current = await (getActiveSiteSession as jest.Mock)();
+  current.hubApi.system.listExternalCredentials = async () => [
+    {
+      id: "aaaaaaaa-1",
+      kind: "claude-subscription-home-v1",
+      metadata: { cocalc_provider_identity: "ann@example.com", plan: "max" },
+    },
+    { id: "bbbbbbbb-2", kind: "anthropic-api-key", metadata: {} },
+    { id: "cccccccc-3", kind: "anthropic-api-key", metadata: {} },
+  ];
+  jest.mocked(getActiveSiteSession).mockResolvedValue(current);
+  await act(async () => {
+    renderer = create(
+      <HarnessSettings
+        profile="p"
+        project="project"
+        thread="t"
+        runtime={runtime}
+        controls={controls}
+        client={{ updateHarnessSettings: jest.fn() }}
+        onClose={() => {}}
+      />,
+    );
+  });
+  expect(find("Claude subscription: Max - ann@example.com")).toBeDefined();
+  expect(find("Anthropic API key (bbbbbbbb)")).toBeDefined();
+  expect(find("Anthropic API key (cccccccc)")).toBeDefined();
+});

@@ -27,6 +27,7 @@ import { isClaudeCode } from "./agent-name";
 import {
   credentialLabel,
   loadClaudePayment,
+  type ClaudeCredential,
   type ClaudePayment,
 } from "./claude-payment";
 
@@ -171,9 +172,14 @@ export function HarnessSettings({
     }
   };
 
-  const choice = (label: string, selected: boolean, onPress: () => void) => (
+  const choice = (
+    label: string,
+    selected: boolean,
+    onPress: () => void,
+    key: string = label,
+  ) => (
     <Pressable
-      key={label}
+      key={key}
       accessibilityRole="radio"
       accessibilityLabel={label}
       accessibilityState={{ selected, disabled: saving }}
@@ -208,6 +214,15 @@ export function HarnessSettings({
       {text}
     </Text>
   );
+  // Two credentials with the same name stay distinguishable, so it is
+  // always clear which one will pay.
+  const paymentLabel = (credential: ClaudeCredential) => {
+    const label = credentialLabel(credential);
+    const same = (payment?.credentials ?? []).filter(
+      (other) => credentialLabel(other) === label,
+    );
+    return same.length > 1 ? `${label} (${credential.id.slice(0, 8)})` : label;
+  };
   const pickPayment = (key: string) => {
     paymentEdited.current = true;
     setPaymentKey(key);
@@ -256,18 +271,20 @@ export function HarnessSettings({
                 .filter((c) => c.kind === CLAUDE_SUBSCRIPTION_KIND)
                 .map((c) =>
                   choice(
-                    credentialLabel(c),
+                    paymentLabel(c),
                     paymentKey === `account-subscription:${c.id}`,
                     () => pickPayment(`account-subscription:${c.id}`),
+                    c.id,
                   ),
                 )}
               {payment.credentials
                 .filter((c) => c.kind !== CLAUDE_SUBSCRIPTION_KIND)
                 .map((c) =>
                   choice(
-                    credentialLabel(c),
+                    paymentLabel(c),
                     paymentKey === `account-api-key:${c.id}`,
                     () => pickPayment(`account-api-key:${c.id}`),
+                    c.id,
                   ),
                 )}
               {choice(
