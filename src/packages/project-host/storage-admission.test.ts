@@ -906,6 +906,37 @@ describe("storage admission controller", () => {
     ).toMatchObject({ admitted: true });
   });
 
+  it("ends the quiet window when the clock is set back", () => {
+    // (cocalc-star hosts run on laptops, whose clocks jump)
+    const controller = create("enforce");
+    starting = 1;
+    controller.sample();
+    starting = 0;
+    now -= 60_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }),
+    ).toMatchObject({ admitted: true });
+  });
+
+  it("keeps the recovery pace when the clock is set back", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    expect(controller.sample().pressure_state).toBe("recovery");
+    controller.admit({ operation_kind: "scheduled_snapshot" }).release();
+    now -= 60_000;
+    // (not blocked until the clock is back at the last start)
+    const next = controller.admit({ operation_kind: "scheduled_snapshot" });
+    expect(next).toMatchObject({ admitted: true, recovery_paced: true });
+    next.release();
+    now += 1_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).admitted,
+    ).toBe(false);
+  });
+
   it("reports would-defer decisions without blocking in observe mode", () => {
     const controller = create("observe");
     stopping = 1;

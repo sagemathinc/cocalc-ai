@@ -261,6 +261,13 @@ function maintenanceStallOnIdleDisks(
   return used > 0;
 }
 
+// Time from `since` to `at` for interval checks: a clock set back (`since`
+// in the future) counts as the interval having passed, rather than as a
+// wait until the clock catches up.
+function elapsedMs(since: number, at: number): number {
+  return at >= since ? at - since : Infinity;
+}
+
 let lastDiskActivity: DiskActivity | undefined;
 let lastDisksIdle = false;
 
@@ -268,7 +275,7 @@ function readMaintenanceDisksIdle(): boolean {
   const at = Date.now();
   if (
     lastDiskActivity != null &&
-    at - lastDiskActivity.at_ms < MIN_DISK_ACTIVITY_INTERVAL_MS
+    elapsedMs(lastDiskActivity.at_ms, at) < MIN_DISK_ACTIVITY_INTERVAL_MS
   ) {
     return lastDisksIdle;
   }
@@ -708,7 +715,8 @@ export function createStorageAdmissionController(
       pressureState === "recovery"
         ? {
             recovery_snapshot_next_at: iso(
-              lastRecoverySnapshotAt == null
+              lastRecoverySnapshotAt == null ||
+                lastRecoverySnapshotAt > lastInputs.sampled_at_ms
                 ? lastInputs.sampled_at_ms
                 : lastRecoverySnapshotAt + recoverySnapshotIntervalMs,
             ),
@@ -757,7 +765,7 @@ export function createStorageAdmissionController(
     }
     if (
       lastLifecycleActiveAt != null &&
-      now() - lastLifecycleActiveAt < backgroundQuietMs
+      elapsedMs(lastLifecycleActiveAt, now()) < backgroundQuietMs
     ) {
       return "lifecycle_settle";
     }
@@ -822,7 +830,8 @@ export function createStorageAdmissionController(
     const recoverySnapshotDue =
       allow_recovery_pace &&
       (lastRecoverySnapshotAt == null ||
-        decidedAtMs - lastRecoverySnapshotAt >= recoverySnapshotIntervalMs);
+        elapsedMs(lastRecoverySnapshotAt, decidedAtMs) >=
+          recoverySnapshotIntervalMs);
     const starvationOverride =
       mode === "enforce" &&
       background &&
