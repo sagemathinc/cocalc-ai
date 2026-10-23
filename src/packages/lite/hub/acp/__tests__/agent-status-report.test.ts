@@ -572,4 +572,33 @@ describe("a sweep that could not read the jobs", () => {
     await sweepAgentStatus(now + 60_000);
     expect(reports).toHaveLength(1);
   });
+
+  it("says since when it is busy, and why its last turn failed", async () => {
+    const now = Date.now();
+    const done = job();
+    set(done.op_id, {
+      state: "error",
+      started_at: now - 120_000,
+      finished_at: now - 60_000,
+      updated_at: now - 60_000,
+      outcome_json: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "error" },
+        detail: "The tool crashed.",
+      },
+    });
+    const running = job();
+    set(running.op_id, {
+      state: "running",
+      started_at: now - 30_000,
+      updated_at: now - 30_000,
+    });
+    await sweepAgentStatus(now);
+    expect(reports.at(-1).status).toMatchObject({
+      running: 1,
+      running_since: now - 30_000,
+      last: { state: "failed", kind: "error", detail: "The tool crashed." },
+    });
+  });
 });
