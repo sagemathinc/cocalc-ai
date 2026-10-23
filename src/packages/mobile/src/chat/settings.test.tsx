@@ -469,3 +469,90 @@ it("falls back to the account's default subscription when the agent has none", a
     expect.objectContaining({ credential_id: "account-default" }),
   );
 });
+
+it("drops a stale shared pin when the hub reports no stored choice, and saving the account default follows it", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: "subscription",
+    hasSubscription: true,
+    credentialId: credential_id ?? "designated",
+    subscriptions: [
+      { id: "account-default", label: "Personal Pro" },
+      { id: "pinned", label: "Team plan" },
+    ],
+  }));
+  let selections: any[] = [];
+  let defaults: any = {};
+  const setPaymentSelections = jest.fn().mockResolvedValue({ updated: 1 });
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      agent: {
+        getPaymentSelections: async () => ({ selections, defaults }),
+        setPaymentSelections,
+      },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: "test",
+              displayName: "Test",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
+      },
+    },
+  } as any);
+  const render = async () =>
+    await act(async () => {
+      renderer = create(
+        <ChatSettings
+          profile="p"
+          project="project"
+          thread="t"
+          config={{
+            model: "test",
+            paymentSource: "subscription",
+            credentialId: "removed",
+          }}
+          client={{ updateCodexThreadConfig: jest.fn() } as any}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+  await render();
+  expect(lookup).toHaveBeenLastCalledWith(
+    expect.objectContaining({ credential_id: undefined }),
+  );
+  await act(async () => renderer.unmount());
+
+  // An agent pinned to another plan, switched back to the account default.
+  const credential = (credential_id: string) => ({
+    version: 1,
+    provider: "codex",
+    mode: "credential",
+    credential_id,
+  });
+  selections = [
+    {
+      project_id: "project",
+      thread_id: "t",
+      provider: "codex",
+      selection: credential("pinned"),
+    },
+  ];
+  defaults = { codex: credential("account-default") };
+  await render();
+  expect(find("ChatGPT: Team plan").props.accessibilityState.selected).toBe(
+    true,
+  );
+  await act(async () => find("ChatGPT: Personal Pro").props.onPress());
+  await act(async () => find("Save agent settings").props.onPress());
+  expect(setPaymentSelections).toHaveBeenLastCalledWith({
+    targets: [{ project_id: "project", thread_id: "t" }],
+    provider: "codex",
+    selection: null,
+  });
+});

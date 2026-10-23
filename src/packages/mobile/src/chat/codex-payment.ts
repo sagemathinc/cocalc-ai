@@ -20,15 +20,23 @@ const codex = (value: any): CodexPaymentSelection | undefined =>
 /**
  * The ChatGPT subscription this account pays for the agent with, as
  * admission resolves it: the agent's own selection, else the account's
- * chosen default. Undefined when neither names one (the hub then uses the
- * designated default subscription) or the hub predates the API.
+ * chosen default. `resolved` with no credentialId means neither names one,
+ * so the hub uses the designated default subscription; a credential saved
+ * in shared thread config must not be used then. Only when the hub cannot
+ * answer (`resolved: false`) is that saved credential the best guess.
+ * `defaultCredentialId` is the account's chosen default subscription.
  */
 export async function storedCodexCredential(
   agent: AgentApi | undefined,
   project: string,
   thread: string,
-): Promise<string | undefined> {
-  if (typeof agent?.getPaymentSelections !== "function") return;
+): Promise<{
+  resolved: boolean;
+  credentialId?: string;
+  defaultCredentialId?: string;
+}> {
+  if (typeof agent?.getPaymentSelections !== "function")
+    return { resolved: false };
   try {
     const result = await agent.getPaymentSelections({
       targets: [{ project_id: project, thread_id: thread }],
@@ -38,12 +46,31 @@ export async function storedCodexCredential(
         (row) => row?.thread_id === thread && row?.provider === "codex",
       )?.selection,
     );
-    return (
-      codexCredentialFromSelection(selection) ??
-      codexCredentialFromSelection(codex(result?.defaults?.codex))
+    const defaultCredentialId = codexCredentialFromSelection(
+      codex(result?.defaults?.codex),
     );
+    const credentialId =
+      codexCredentialFromSelection(selection) ?? defaultCredentialId;
+    return {
+      resolved: true,
+      ...(credentialId ? { credentialId } : {}),
+      ...(defaultCredentialId ? { defaultCredentialId } : {}),
+    };
   } catch {
-    // An older hub: fall back to the thread's saved choice.
-    return;
+    return { resolved: false };
   }
+}
+
+/** The credential_id to check a Codex agent's payment with, as admission would. */
+export async function codexPaymentCredential(
+  agent: AgentApi | undefined,
+  project: string,
+  thread: string | undefined,
+  config?: { paymentSource?: string; credentialId?: string },
+): Promise<string | undefined> {
+  if (config?.paymentSource !== "subscription") return;
+  const stored = thread
+    ? await storedCodexCredential(agent, project, thread)
+    : { resolved: false };
+  return stored.resolved ? stored.credentialId : config.credentialId;
 }

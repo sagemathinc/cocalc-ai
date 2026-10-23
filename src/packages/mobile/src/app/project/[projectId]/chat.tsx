@@ -301,6 +301,7 @@ export default function ChatScreen() {
   const generation = useRef(0);
   const listRef = useRef<FlatList<ConversationMessage>>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paymentRevision, setPaymentRevision] = useState(0);
   const [draft, setDraft] = useState<ChatDraft>({ text: "", attachments: [] });
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -767,7 +768,11 @@ export default function ChatScreen() {
           thread={threadId}
           config={selectedThread?.acp_config}
           client={client}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => {
+            setSettingsOpen(false);
+            // The payment selection is account state: show its new value.
+            setPaymentRevision((value) => value + 1);
+          }}
         />
       )}
       <Modal
@@ -848,6 +853,7 @@ export default function ChatScreen() {
             project={projectId}
             thread={threadId}
             config={selectedThread?.acp_config}
+            revision={paymentRevision}
             onPress={() => setSettingsOpen(true)}
           />
         )}

@@ -83,12 +83,14 @@ export function ChatSettings({
     let active = true;
     void (async () => {
       const session = await getActiveSiteSession(profile);
-      const credentialId = await storedCodexCredential(
+      const stored = await storedCodexCredential(
         session.hubApi.agent,
         project,
         thread,
       );
-      if (!active || edited.current || !credentialId) return;
+      // Unresolved (older hub): keep the thread's saved choice.
+      if (!active || edited.current || !stored.resolved) return;
+      const credentialId = stored.credentialId;
       setDraft((current) =>
         current.paymentSource === "subscription"
           ? { ...current, credentialId }
@@ -193,11 +195,20 @@ export function ChatSettings({
       // specific subscription clears it, so it cannot come back later.
       if (!isPreviewProfile(profile) && paymentEdited.current) {
         const session = await getActiveSiteSession(profile);
+        // Like the web app, choosing the account's default subscription
+        // keeps following it rather than pinning it to this agent.
+        const { defaultCredentialId } = await storedCodexCredential(
+          session.hubApi.agent,
+          project,
+          thread,
+        );
         await session.hubApi.agent.setPaymentSelections({
           targets: [{ project_id: project, thread_id: thread }],
           provider: "codex",
           selection:
-            draft.paymentSource === "subscription" && credentialId
+            draft.paymentSource === "subscription" &&
+            credentialId &&
+            credentialId !== defaultCredentialId
               ? {
                   version: 1,
                   provider: "codex",

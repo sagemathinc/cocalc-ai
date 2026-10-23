@@ -9,7 +9,7 @@ import type { CodexThreadConfig } from "@cocalc/chat-client";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile } from "../preview/fixtures";
 import { usePalette } from "../ui/palette";
-import { storedCodexCredential } from "./codex-payment";
+import { codexPaymentCredential } from "./codex-payment";
 
 const labels = {
   subscription: "ChatGPT plan",
@@ -25,12 +25,16 @@ export function PaymentSummary({
   project,
   thread,
   config,
+  revision = 0,
   onPress,
 }: {
   profile: string;
   project: string;
   thread?: string;
   config?: CodexThreadConfig;
+  /** Changes when settings may have changed the agent's payment selection,
+   * which is account state that the shared config does not reflect. */
+  revision?: number;
   onPress: () => void;
 }) {
   const colors = usePalette();
@@ -46,17 +50,14 @@ export function PaymentSummary({
       void (async () => {
         const site = await getActiveSiteSession(profile);
         // The subscription is the account's choice for this agent, as at
-        // admission; an older thread may still name one in its config.
-        const credential_id =
-          config?.paymentSource === "subscription"
-            ? ((thread
-                ? await storedCodexCredential(
-                    site.hubApi.agent,
-                    project,
-                    thread,
-                  )
-                : undefined) ?? config.credentialId)
-            : undefined;
+        // admission; a thread's saved credential counts only when the hub
+        // cannot answer.
+        const credential_id = await codexPaymentCredential(
+          site.hubApi.agent,
+          project,
+          thread,
+          config,
+        );
         const source = await site.hubApi.system.getCodexPaymentSource({
           project_id: project,
           preference: config?.paymentSource ?? "auto",
@@ -76,7 +77,14 @@ export function PaymentSummary({
       return () => {
         active = false;
       };
-    }, [profile, project, thread, config?.paymentSource, config?.credentialId]),
+    }, [
+      profile,
+      project,
+      thread,
+      revision,
+      config?.paymentSource,
+      config?.credentialId,
+    ]),
   );
   return (
     <Pressable

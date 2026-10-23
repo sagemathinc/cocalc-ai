@@ -115,3 +115,64 @@ it("shows the subscription the account chose for the agent, else its default", a
     credential_id: "account-default",
   });
 });
+
+it("refreshes when settings may have changed the agent's private selection", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: "subscription",
+    credentialId: credential_id,
+    subscriptions: [
+      { id: "a", label: "Plan A" },
+      { id: "b", label: "Plan B" },
+    ],
+  }));
+  let chosen = "a";
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      agent: {
+        getPaymentSelections: async () => ({
+          selections: [
+            {
+              project_id: "project",
+              thread_id: "t",
+              provider: "codex",
+              selection: {
+                version: 1,
+                provider: "codex",
+                mode: "credential",
+                credential_id: chosen,
+              },
+            },
+          ],
+          defaults: {},
+        }),
+      },
+    },
+  } as any);
+  // The shared config does not change when the private selection does.
+  const config = { paymentSource: "subscription" as const };
+  const element = (revision: number) => (
+    <PaymentSummary
+      profile="p"
+      project="project"
+      thread="t"
+      config={config}
+      revision={revision}
+      onPress={() => {}}
+    />
+  );
+  let view: any;
+  await act(async () => {
+    view = create(element(0));
+  });
+  const label = () =>
+    view.root.findAll(
+      (n: any) =>
+        n.type === "Pressable" && n.props.accessibilityRole === "button",
+    )[0].props.accessibilityLabel;
+  expect(label()).toContain("Plan A");
+  chosen = "b";
+  await act(async () => view.update(element(1)));
+  expect(label()).toContain("Plan B");
+  await act(async () => view.unmount());
+});
