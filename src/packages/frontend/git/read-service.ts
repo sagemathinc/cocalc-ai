@@ -251,9 +251,12 @@ export class GitReadService {
           "core.quotePath=false",
           "-c",
           "core.warnAmbiguousRefs=true",
-          // Has no flag; see PINNED_DIFF_FLAGS.
+          // Have no flags; see PINNED_DIFF_FLAGS. The threshold is Git's
+          // default: past it a file is shown as binary, not diffed.
           "-c",
           "diff.suppressBlankEmpty=false",
+          "-c",
+          "core.bigFileThreshold=512m",
           ...args,
         ],
         bash: false,

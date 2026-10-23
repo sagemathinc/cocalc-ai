@@ -397,3 +397,18 @@ test("grafts, which can be edited, don't change parents or history", async () =>
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("core.bigFileThreshold doesn't make a cached patch binary", async () => {
+  git(dir, ["config", "core.bigFileThreshold", "1"]);
+  try {
+    const reader = new GitReadService(execute);
+    const { repository } = await reader.discover("p14", dir);
+    const target = await reader.pinCommit(
+      repository,
+      git(dir, ["rev-parse", "HEAD"]).trim(),
+    );
+    expect(await reader.patch(target)).toContain("+two");
+  } finally {
+    git(dir, ["config", "--unset", "core.bigFileThreshold"]);
+  }
+});
