@@ -1103,7 +1103,9 @@ provide saved file copies; they do not include separately stored edit history.
 Recover files to a comparison path before replacing current work.
 
 Whole-HOME or combined HOME-and-rootfs snapshot restoration may be refused.
-Use a completed backup for whole-HOME recovery, or copy the files you need.
+Recover HOME files from a completed backup, or copy the files you need. A
+backup restore can overwrite existing files and keeps files absent from the
+backup. It does not return HOME to an exact earlier state.
 Rootfs-only snapshot restoration remains available where the runtime supports
 it. Follow [Recover research files and environments](/docs/research/recover-work)
 to choose the appropriate operation.

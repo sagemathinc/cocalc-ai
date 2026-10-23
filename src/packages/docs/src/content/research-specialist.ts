@@ -14,9 +14,9 @@ exercise uses disposable data; do it before you need to recover important work.
 | --- | --- | --- |
 | A notebook or text file contains an unwanted edit. | Open the file's **TimeTravel**, inspect an earlier version, then **Restore This Version**. | Changes this document and records the restoration as a new version. Other project files are not restored. |
 | A file was deleted, or the version you need is in a filesystem checkpoint. | **Files -> Recovery -> Open Snapshots** or **Open Backups**. Browse to the file and restore a temporary copy first. | Recover the selected file, then compare it with current work. |
-| Many files in HOME need to return to a known checkpoint. | Recover checked file copies through **Open Snapshots** or **Open Backups**. For whole-HOME recovery, use a completed backup. | Whole-HOME snapshot restoration may be refused. Preserve newer research work before replacing HOME. |
+| Many files in HOME are missing or damaged. | Recover checked file copies through **Open Snapshots** or **Open Backups**, or restore the needed files from a completed backup. | Whole-HOME snapshot restoration may be refused. Backup restore overlays saved files onto HOME and keeps files absent from the backup; it is not an exact rewind. |
 | A systemwide software change broke the project, but current research files must stay. | **Restore Snapshot**, then **Restore rootfs only**. | Restores the root filesystem image and preserves HOME. It does not repair a virtual environment installed inside HOME. |
-| Research files and the system environment must return together. | Check a completed backup for the required HOME and rootfs state. | Do not rely on combined snapshot restoration being available. Verify what the backup contains before restoring. |
+| Research files and the system environment both need recovery. | Check a completed backup for the required HOME files and rootfs state. | Do not rely on combined snapshot restoration being available. Verify the backup contents; restoring HOME files can leave newer files in place. |
 | You want a separate workspace before experimenting. | **Settings -> Recovery -> Clone**, then **Create Clone**. | Copies the current HOME, root filesystem customizations, TimeTravel history, and project secrets. Snapshots and collaborators are not copied. |
 
 A clone is a copy of the current state, not a selection of an older checkpoint.
@@ -150,8 +150,11 @@ distinguish a HOME virtual environment from system software.
 
 HOME-only and combined snapshot restoration may be refused. When refused,
 the project is not stopped for that restore. Recover individual files using
-the workflow above, or use a completed backup for whole-HOME recovery. The
-procedure below restores only the root filesystem.
+the workflow above, or restore HOME files from a completed backup. Backup
+restore can overwrite existing HOME files and keeps files absent from the
+backup. Preserve useful current work, then check the recovered files
+and any newer files before continuing. The procedure below restores only the
+root filesystem.
 
 1. Save current work and coordinate with project collaborators. Rootfs
    snapshot restoration stops and restarts the project; running processes do
