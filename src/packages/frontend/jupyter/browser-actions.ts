@@ -57,7 +57,7 @@ import { parseHeadings } from "./contents";
 import { CursorManager } from "./cursor-manager";
 import { NBGraderActions } from "./nbgrader/actions";
 import * as parsing from "./parsing";
-import { WidgetManager } from "./widgets/manager";
+import { WidgetRelay } from "./widgets/frame/relay";
 import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
@@ -226,7 +226,7 @@ function normalizePortableIpynbForComparison(ipynb: any): any {
 let jupyter_kernels = Map<string, Kernels>();
 
 export class JupyterActions extends JupyterActions0 {
-  public widget_manager?: WidgetManager;
+  private widget_relay?: WidgetRelay;
   public nbgrader_actions: NBGraderActions;
   private cursor_manager: CursorManager;
   private account_change_editor_settings: any;
@@ -330,8 +330,7 @@ export class JupyterActions extends JupyterActions0 {
     newCell?: Map<string, any>,
   ) => {
     const overlays = this.store?.get("runCellOverlays") as
-      | Map<string, Map<string, any>>
-      | undefined;
+      Map<string, Map<string, any>> | undefined;
     const overlay = overlays?.get(id);
     if (newCell == null) {
       this.clearRunCellOverlay(id);
@@ -1711,8 +1710,6 @@ export class JupyterActions extends JupyterActions0 {
           "bug -- ipywidgets_state must be defined (browser-actions)",
         );
       }
-      this.syncWidgetManagerWithTrust();
-      this.store.on("change", this.syncWidgetManagerWithTrust);
       const rtcLastChangedMsAtReady = this.getRtcLastChangedMs();
 
       // Start watch/bootstrap decision before local user heartbeat writes a
@@ -1930,14 +1927,11 @@ export class JupyterActions extends JupyterActions0 {
     await this.format_cells(this.store.get_cell_ids_list(), sync);
   }
 
-  // Widgets run code from the notebook's saved widget state (built-in views
-  // insert HTML, custom widgets load modules), so they are active output like
-  // trusted HTML and JavaScript: the widget manager exists only while the
-  // notebook is trusted, and is torn down if trust is lost.
-  private syncWidgetManagerWithTrust = (): void => {
+  // Widgets render in opaque frames (widgets/frame/), which talk only to
+  // this notebook's relay.  Created when the first widget is shown.
+  widgetRelay = (): WidgetRelay | undefined => {
     if (this.isClosed()) return;
-    const trusted = !!this.store?.get("trust");
-    if (trusted && this.widget_manager == null) {
+    if (this.widget_relay == null) {
       const ipywidgets_state = this.syncdb?.ipywidgets_state;
       if (
         ipywidgets_state == null ||
@@ -1945,23 +1939,22 @@ export class JupyterActions extends JupyterActions0 {
       ) {
         return;
       }
-      this.widget_manager = new WidgetManager({
+      this.widget_relay = new WidgetRelay(
         ipywidgets_state,
-        actions: this,
-      });
-    } else if (!trusted && this.widget_manager != null) {
-      const widget_manager = this.widget_manager;
-      this.widget_manager = undefined;
-      widget_manager.close();
+        this.sendCommMessageToKernel,
+        // Only a user who can write the notebook changes widget state or
+        // messages the kernel.
+        () => !this.store?.get("read_only"),
+      );
     }
+    return this.widget_relay;
   };
 
   public async close(): Promise<void> {
     try {
       if (this.isClosed()) return;
-      this.store?.removeListener?.("change", this.syncWidgetManagerWithTrust);
-      this.widget_manager?.close();
-      this.widget_manager = undefined;
+      this.widget_relay?.close();
+      this.widget_relay = undefined;
       this.exportStartup?.abort();
       this.exportStartup = undefined;
       this.recordJupyterOpenIncomplete("editor_closed");

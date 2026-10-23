@@ -18,8 +18,8 @@ jest.mock("@cocalc/frontend/monitoring/ux-latency-trace", () => ({
   },
 }));
 
-jest.mock("../widgets/manager", () => ({
-  WidgetManager: class WidgetManager {},
+jest.mock("../widgets/frame/relay", () => ({
+  WidgetRelay: class WidgetRelay {},
 }));
 
 import { JupyterActions } from "../browser-actions";

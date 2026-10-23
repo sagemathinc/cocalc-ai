@@ -59,7 +59,7 @@ describe("Blit graphical application setup", () => {
     getProjectAppFrameUrlMock.mockReset();
     let n = 0;
     getProjectAppFrameUrlMock.mockImplementation(async () => ({
-      url: `https://app.example.test/_af/CAP${++n}?next=x`,
+      url: `https://app.example.test/.cocalc/af/CAP${++n}?next=x`,
     }));
     stopAppMock.mockReset();
     upsertAppSpecMock.mockReset();
@@ -93,7 +93,7 @@ describe("Blit graphical application setup", () => {
       const src = iframe.getAttribute("src");
       // On the app's own origin, never the project host's.
       expect(src).toBe(
-        "https://app.example.test/_af/CAP1?next=x#psk=project-id",
+        "https://app.example.test/.cocalc/af/CAP1?next=x#psk=project-id",
       );
       expect(iframe).toHaveAttribute("sandbox");
       iframe.focus();
@@ -116,7 +116,7 @@ describe("Blit graphical application setup", () => {
       // A fresh single-use frame link each time it is shown.
       expect(reconnected).toHaveAttribute(
         "src",
-        "https://app.example.test/_af/CAP2?next=x#psk=project-id",
+        "https://app.example.test/.cocalc/af/CAP2?next=x#psk=project-id",
       );
       expect(stopAppMock).not.toHaveBeenCalled();
       expect(ensureRunningMock).toHaveBeenCalledTimes(1);

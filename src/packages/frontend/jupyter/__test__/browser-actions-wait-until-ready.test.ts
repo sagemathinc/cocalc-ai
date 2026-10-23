@@ -15,8 +15,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: { conat_client: {} },
 }));
 
-jest.mock("../widgets/manager", () => ({
-  WidgetManager: class WidgetManager {},
+jest.mock("../widgets/frame/relay", () => ({
+  WidgetRelay: class WidgetRelay {},
 }));
 
 import { JupyterActions } from "../browser-actions";

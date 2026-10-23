@@ -31,6 +31,7 @@ import {
   buildPrivateHostnameOpenUrl,
   getPrivateProjectAppOpenUrl,
   appOpenURL,
+  appRunsAtRoot,
   getProjectAppOpenUrl,
   openProjectAppStatus,
 } from "./app-server-open";
@@ -288,7 +289,7 @@ describe("openProjectAppStatus", () => {
     expect(open).toHaveBeenCalledWith("", "_blank");
     expect(tab.opener).toBeNull();
     resolve({
-      url: "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
+      url: "https://ap8000-x.h-y.content.test/.cocalc/a/CAP?next=%2F",
       expires_at: 0,
     });
     await pending;
@@ -296,9 +297,10 @@ describe("openProjectAppStatus", () => {
       project_id: PROJECT,
       path: `/${PROJECT}/proxy/8000/`,
       app_id: "my-server",
+      root: false,
     });
     expect(tab.location.href).toBe(
-      "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
+      "https://ap8000-x.h-y.content.test/.cocalc/a/CAP?next=%2F",
     );
   });
 
@@ -337,14 +339,51 @@ describe("appOpenURL", () => {
       `/app-open/${P}/port/8000/a?b=1`,
     );
     expect(appOpenURL(P, `/${P}/myapp/`, "my app")).toBe(
-      `/app-open/${P}/myapp/?app=my%20app`,
+      `/app-open/${P}/myapp/?cocalc_app=my%20app`,
     );
     expect(appOpenURL(P, `/${P}/x/?q=1`, "a")).toBe(
-      `/app-open/${P}/x/?q=1&app=a`,
+      `/app-open/${P}/x/?q=1&cocalc_app=a`,
     );
   });
   it("is undefined for anything else", () => {
     expect(appOpenURL(P, "/other/port/8000/")).toBeUndefined();
     expect(appOpenURL(P, "https://h.example/x")).toBeUndefined();
+  });
+});
+
+describe("root mode (phase 7c)", () => {
+  const P = "11111111-1111-4111-8111-111111111111";
+  it("opens apps that run without a base URL at the root of their origin", async () => {
+    expect(appOpenURL(P, `/${P}/proxy/8000/`, "a", { root: true })).toBe(
+      `/app-open/${P}/proxy/8000/?cocalc_app=a&cocalc_root=1`,
+    );
+    expect(appRunsAtRoot({ base_url: "/" })).toBe(true);
+    expect(appRunsAtRoot({ base_url: `/${P}/proxy/8000/` })).toBe(false);
+    expect(appRunsAtRoot(undefined)).toBe(false);
+    mockIssueProjectAppUrl.mockReset();
+    mockIssueProjectAppUrl.mockResolvedValue({
+      url: "https://x/.cocalc/a/C",
+      expires_at: 0,
+    });
+    const tab: any = {
+      opener: window,
+      location: { href: "" },
+      close: jest.fn(),
+    };
+    const open = jest.spyOn(window, "open").mockImplementation(() => tab);
+    await openProjectAppStatus({
+      project_id: P,
+      status: {
+        id: "s",
+        kind: "service",
+        state: "running",
+        url: `/${P}/proxy/8000/`,
+        base_url: "/",
+      },
+    });
+    expect(mockIssueProjectAppUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ root: true }),
+    );
+    open.mockRestore();
   });
 });

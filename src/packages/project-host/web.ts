@@ -1,3 +1,8 @@
+import {
+  setStaticFontCorsHeaders,
+  setWidgetHostHeaders,
+  WIDGET_HOST_FILENAME,
+} from "@cocalc/util/jupyter/widget-host";
 import express from "express";
 import getLogger from "@cocalc/backend/logger";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
@@ -669,10 +674,15 @@ export async function initHttp({
       if (req.path === "/app.html") {
         res.setHeader("Cache-Control", "no-cache");
       }
+      if (req.path === `/${WIDGET_HOST_FILENAME}`) {
+        res.setHeader("Cache-Control", "no-cache");
+        setWidgetHostHeaders(res);
+      }
       express.static(staticPath, {
         immutable: true,
         maxAge: "1y",
         index: false,
+        setHeaders: setStaticFontCorsHeaders,
       })(req, res, next);
     });
   } else {

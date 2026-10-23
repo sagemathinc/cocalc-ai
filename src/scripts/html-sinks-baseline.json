@@ -137,8 +137,8 @@
   "src/packages/frontend/jupyter/trust-fidelity.browser-test.mjs": {
     "noSanitize": 1
   },
-  "src/packages/frontend/jupyter/widgets/manager.ts": {
-    "noSanitize": 1
+  "src/packages/frontend/jupyter/widgets/frame/outputs.ts": {
+    "innerHTML assignment": 1
   },
   "src/packages/frontend/lib/file-context.ts": {
     "noSanitize": 1

@@ -9,6 +9,7 @@ import TTL from "@isaacs/ttlcache";
 import { getMountPoint } from "./file-server";
 import type { AppStaticIntegrationSpec } from "./public-viewer";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
+import { projectAppKey } from "@cocalc/conat/auth/project-app-capability";
 
 const SUPPORT_FILES = new Set([
   "runtime-state.json",
@@ -121,6 +122,31 @@ export async function matchAppRequest({
         ? `${localPath}${parsed.search ?? ""}`
         : `${suffix || "/"}${parsed.search ?? ""}`;
     return { spec, localPath, requestPath };
+  }
+}
+
+// The project-internal mount of the app whose app-origin key is `key` (an
+// app at its own base path), for serving it at the root of its origin
+// (phase 7c), or undefined (no such app, or it keeps its prefix).
+export async function appRootMountForKey({
+  project_id,
+  key,
+}: {
+  project_id: string;
+  key: string;
+}): Promise<{ mount: string; app_id: string } | undefined> {
+  for (const spec of await getAppSpecs(project_id)) {
+    let specKey: string;
+    try {
+      specKey = projectAppKey({ kind: "app", id: spec.id });
+    } catch {
+      continue;
+    }
+    if (specKey !== key) continue;
+    if (spec.proxy?.strip_prefix === false) return;
+    const base = normalizePrefix(spec.proxy?.base_path ?? "/");
+    if (base === "/" || /[?#\\]/.test(base) || base.includes("//")) return;
+    return { mount: `/${project_id}${base}`, app_id: spec.id };
   }
 }
 

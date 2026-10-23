@@ -241,7 +241,7 @@ export async function issueProjectContentUrlLocal({
 
 // A link that opens a project's web server or app on its own app origin
 // (project-host/content-app-origin.ts): a short-lived, single-use app
-// capability for that origin, redeemed by the host at /_a/ for a session.
+// capability for that origin, redeemed by the host at /.cocalc/a/ for a session.
 export async function issueProjectAppUrlLocal({
   account_id,
   project_id,
@@ -249,14 +249,18 @@ export async function issueProjectAppUrlLocal({
   app_id,
   browser_session_exp_s,
   frame = false,
+  root = false,
   now_ms = Date.now(),
 }: {
   account_id: string;
   project_id: string;
   path: string;
-  // A link for the app framed by the site (/_af/, a frame session) rather
-  // than opened on its own (/_a/).
+  // A link for the app framed by the site (/.cocalc/af/, a frame session) rather
+  // than opened on its own (/.cocalc/a/).
   frame?: boolean;
+  // Open the app at the root of its origin (it runs without a base URL);
+  // the host then redirects to the root form of the path.
+  root?: boolean;
   // For apps mounted at their own base_path (not /port, /proxy, /server or
   // /apps), the app's id; the host checks the path belongs to it.
   app_id?: string;
@@ -288,7 +292,7 @@ export async function issueProjectAppUrlLocal({
   });
   const hostname = `${projectAppHostLabel({ project_id, key })}.${hostContentLabel(host_id)}.${domain}`;
   return {
-    url: `https://${hostname}/${frame ? "_af" : "_a"}/${token}?next=${encodeURIComponent(next)}`,
+    url: `https://${hostname}/.cocalc/${frame ? "af" : "a"}/${token}?next=${encodeURIComponent(next)}${root ? "&root=1" : ""}`,
     expires_at,
   };
 }

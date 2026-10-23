@@ -393,7 +393,7 @@ describe("issueProjectAppUrlLocal", () => {
     expect(url.hostname).toBe(
       `ap8000-22222222222242228222222222222222.h-33333333333343338333333333333333.${DOMAIN}`,
     );
-    const match = url.pathname.match(/^\/_a\/([^/]+)$/);
+    const match = url.pathname.match(/^\/\.cocalc\/a\/([^/]+)$/);
     expect(url.searchParams.get("next")).toBe(`/${PROJECT}/port/8000/a/?x=1`);
     const claims = verifyProjectAppCapability({
       token: match![1],
@@ -434,11 +434,11 @@ describe("issueProjectAppUrlLocal", () => {
     )).toBe(true);
   });
 
-  it("issues frame links: /_af/, a frame-scoped capability", async () => {
+  it("issues frame links: /.cocalc/af/, a frame-scoped capability", async () => {
     const result = await issueApp({ frame: true });
     if (!("url" in result)) throw new Error("unavailable");
     const url = new URL(result.url);
-    const match = url.pathname.match(/^\/_af\/([^/]+)$/);
+    const match = url.pathname.match(/^\/\.cocalc\/af\/([^/]+)$/);
     expect(match).not.toBeNull();
     const verifyAs = (scope: "app" | "app-frame") =>
       verifyProjectAppCapability({
@@ -478,7 +478,7 @@ describe("issueProjectAppUrlLocal", () => {
   it("bounds the session by a restricted browser session", async () => {
     const result = await issueApp({ browser_session_exp_s: NOW / 1000 + 600 });
     if (!("url" in result)) throw new Error("unavailable");
-    const token = new URL(result.url).pathname.split("/")[2];
+    const token = new URL(result.url).pathname.split("/")[3];
     const claims = verifyProjectAppCapability({
       token,
       project_id: PROJECT,

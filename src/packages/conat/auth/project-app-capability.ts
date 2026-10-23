@@ -16,7 +16,7 @@ the content domain, one origin per app:
   collected student HTML) never shares an origin with the same project's
   JupyterLab.
 - The browser gets there through a short-lived, single-use app capability
-  (this file), redeemed by the host at /_a/<capability> for a session cookie
+  (this file), redeemed by the host at /.cocalc/a/<capability> for a session cookie
   on that origin.
 
 The capability is its own token type: a different version, audience and
@@ -106,7 +106,14 @@ export function projectAppRouteFromPath(
     }
     return;
   }
-  if (kind === "server") return { kind: "server", name: decoded };
+  if (kind === "server") {
+    // /server/<N> is the project proxy's route for port N (like /proxy/N).
+    if (/^[1-9][0-9]{0,4}$/.test(decoded)) {
+      const port = Number(decoded);
+      return port <= 65535 ? { kind: "port", port } : undefined;
+    }
+    return { kind: "server", name: decoded };
+  }
   if (kind === "apps") return { kind: "app", id: decoded };
   return;
 }
@@ -163,8 +170,8 @@ export function parseProjectAppHostLabel(
   return isValidUUID(project_id) ? { project_id, key: m[1] } : undefined;
 }
 
-// "app": a top-level session on the app's origin (/_a/); "app-frame": a
-// session for the app framed by the site (/_af/).  Each scope has its own
+// "app": a top-level session on the app's origin (/.cocalc/a/); "app-frame": a
+// session for the app framed by the site (/.cocalc/af/).  Each scope has its own
 // audience, so neither capability is ever accepted as the other.
 export type ProjectAppScope = "app" | "app-frame";
 

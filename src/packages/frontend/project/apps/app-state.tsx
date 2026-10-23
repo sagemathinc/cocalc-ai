@@ -4,7 +4,10 @@ import ShowError from "@cocalc/frontend/components/error";
 import { useEffect } from "react";
 import AppStatus from "./app-status";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
-import { appOpenURL } from "@cocalc/frontend/project/app-server-open";
+import {
+  appOpenURL,
+  appRunsAtRoot,
+} from "@cocalc/frontend/project/app-server-open";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -38,7 +41,9 @@ export default function AppState({
     void (async () => {
       const open =
         status?.state == "running" && status?.ready === true && status?.url
-          ? appOpenURL(project_id, status.url, name)
+          ? appOpenURL(project_id, status.url, name, {
+              root: appRunsAtRoot(status),
+            })
           : undefined;
       if (open) {
         if (!canceled) setUrl(open);

@@ -23,8 +23,8 @@ jest.mock("@cocalc/conat/project/jupyter/run-code", () => ({
   jupyterClient: jest.fn(),
 }));
 
-jest.mock("../widgets/manager", () => ({
-  WidgetManager: class WidgetManager {},
+jest.mock("../widgets/frame/relay", () => ({
+  WidgetRelay: class WidgetRelay {},
 }));
 
 import { JupyterActions } from "../browser-actions";

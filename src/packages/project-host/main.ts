@@ -186,7 +186,7 @@ import { configureProjectHostAcpAdmissionDenialRecorder } from "./hub/acp/admiss
 import { configureProjectHostServiceAdmissionDenialRecorder } from "./hub/service-admission-denials";
 import { startProjectHostConatAdmissionSettingsRefresh } from "./hub/admission-settings";
 import { main as runHostAgentMain } from "./host-agent";
-import { matchAppRequest } from "./app-request-match";
+import { appRootMountForKey, matchAppRequest } from "./app-request-match";
 import { maybeHandleStaticAppRequest } from "./static-apps";
 import { runPrivilegedRmHelper } from "./privileged-rm-helper";
 import { initProjectTouchService } from "./touch-service";
@@ -507,8 +507,13 @@ export async function main(
   {
     // Outermost: runs before the guard and every upgrade listener.
     const emit = httpServer.emit;
-    httpServer.emit = function (this: any, event: string | symbol, ...args: any[]) {
-      if (event === "upgrade") delete args[0]?.headers?.[PRIVATE_APP_HOST_HEADER];
+    httpServer.emit = function (
+      this: any,
+      event: string | symbol,
+      ...args: any[]
+    ) {
+      if (event === "upgrade")
+        delete args[0]?.headers?.[PRIVATE_APP_HOST_HEADER];
       return emit.apply(this, [event, ...args] as any);
     } as typeof httpServer.emit;
   }
@@ -1589,6 +1594,8 @@ export async function main(
         return cutoffs.length ? Math.max(...cutoffs) : undefined;
       },
       consumeCapability: consumeAppCapability,
+      appRootMount: async ({ project_id, key }) =>
+        await appRootMountForKey({ project_id, key }),
       matchApp: async ({ project_id, url }) =>
         await matchAppRequest({ project_id, url }),
       proxy: async (req, res, auth) => {
