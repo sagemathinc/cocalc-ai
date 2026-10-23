@@ -25,8 +25,13 @@ export interface TurnMeta {
 /** One line, at most TURN_SUBJECT_MAX characters; empty clears it. */
 export function normalizeTurnSubject(value: string): string {
   const line = value.replace(/\s+/g, " ").trim();
-  return line.length > TURN_SUBJECT_MAX
-    ? `${line.slice(0, TURN_SUBJECT_MAX - 1).trimEnd()}…`
+  // By code points, not UTF-16 units: never half an emoji.
+  const chars = Array.from(line);
+  return chars.length > TURN_SUBJECT_MAX
+    ? `${chars
+        .slice(0, TURN_SUBJECT_MAX - 1)
+        .join("")
+        .trimEnd()}…`
     : line;
 }
 
