@@ -539,10 +539,14 @@ falls back to ambient account/project credentials. The external identity can
 send to and receive from every member of its approved session through a bounded
 authenticated inbox. Acknowledge received messages with `agent ack-inbox`.
 External attachments are not supported. My Agents lists installations and
-supports immediate revocation. Inspect an attempt without retrying it:
+supports immediate revocation.
+
+Inspect an attempt without retrying it. For an external recipient, which
+starts no turn, this says whether it has read (acknowledged) the message:
 
 ```sh
 cocalc project chat agent rpc inspect ATTEMPT_ID --external-agent security --to-agent TARGET_AGENT_ID --target-project TARGET_PROJECT_ID --json
+cocalc agent rpc inspect ATTEMPT_ID --agent-network NETWORK_ID --to-agent EXTERNAL_AGENT_ID --target-account ACCOUNT_ID --target-installation INSTALLATION_ID
 ```
 
 This is a login to one site's session service, not site federation.

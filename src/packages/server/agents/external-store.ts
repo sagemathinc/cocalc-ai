@@ -3,6 +3,7 @@ import {
   parseExternalAgentToken,
   validateExternalAgentApproval,
   validateExternalAgentLabel,
+  type ExternalAgentDelivery,
   type ExternalAgentInboxMessage,
   type ExternalAgentInstallation,
 } from "@cocalc/conat/agents/external";
@@ -363,9 +364,11 @@ export class ExternalAgentStore {
     agent_network_id: string;
     network_generation: string;
     source: AgentRpcSource;
+    source_account_id: string;
     body: string;
   }): Promise<ExternalAgentInboxMessage> {
     requireUuid(opts.attempt_id, "attempt_id");
+    requireUuid(opts.source_account_id, "source_account_id");
     requireUuid(opts.agent_network_id, "agent_network_id");
     requireUuid(opts.network_generation, "network_generation");
     if (
@@ -395,6 +398,8 @@ export class ExternalAgentStore {
           existing.agent_network_id !== opts.agent_network_id ||
           existing.network_generation !== opts.network_generation ||
           existing.body !== opts.body ||
+          (existing.source_account_id != null &&
+            existing.source_account_id !== opts.source_account_id) ||
           agentRpcSourceKey(existing.source) !== agentRpcSourceKey(opts.source)
         )
           throw new Error("external_inbox_idempotency_conflict");
@@ -412,8 +417,8 @@ export class ExternalAgentStore {
         await db.query(
           `INSERT INTO agent_external_inbox
            (message_id,attempt_id,account_id,installation_id,agent_network_id,
-            network_generation,source,body,expires_at)
-           VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,now()+interval '7 days') RETURNING *`,
+            network_generation,source,source_account_id,body,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,now()+interval '7 days') RETURNING *`,
           [
             randomUUID(),
             opts.attempt_id,
@@ -422,6 +427,7 @@ export class ExternalAgentStore {
             opts.agent_network_id,
             opts.network_generation,
             JSON.stringify(opts.source),
+            opts.source_account_id,
             opts.body,
           ],
         )
@@ -475,6 +481,47 @@ export class ExternalAgentStore {
       if (!result.rows.length)
         throw new Error("external_inbox_message_not_found");
       return { acknowledged: true as const, message_id };
+    });
+  }
+
+  /**
+   * For the sender: whether its message is still unread (pending) or was
+   * read (acknowledged), and when. Null when no such unexpired message is
+   * held, or it is not this sender's (the same source and the same
+   * authenticated account): never tells one sender about another's.
+   */
+  async delivery(
+    account: string,
+    installation: string,
+    attempt_id: string,
+    source: AgentRpcSource,
+    source_account_id: string,
+  ): Promise<ExternalAgentDelivery | null> {
+    requireUuid(attempt_id, "attempt_id");
+    requireUuid(source_account_id, "source_account_id");
+    return this.locked(account, async (db) => {
+      const row = (
+        await db.query(
+          `SELECT * FROM agent_external_inbox
+           WHERE account_id=$1 AND attempt_id=$2 AND expires_at>now()`,
+          [account, attempt_id],
+        )
+      ).rows[0];
+      if (
+        !row ||
+        row.installation_id !== installation ||
+        row.source_account_id !== source_account_id ||
+        agentRpcSourceKey(row.source) !== agentRpcSourceKey(source)
+      )
+        return null;
+      return {
+        state: row.state === "acknowledged" ? "acknowledged" : "pending",
+        created_at: new Date(row.created_at).toISOString(),
+        expires_at: new Date(row.expires_at).toISOString(),
+        ...(row.acknowledged_at
+          ? { acknowledged_at: new Date(row.acknowledged_at).toISOString() }
+          : {}),
+      };
     });
   }
 }

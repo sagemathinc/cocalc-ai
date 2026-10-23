@@ -69,6 +69,7 @@ import {
   externalControl,
   enqueueExternalAgentMessage,
   externalStore,
+  inspectExternalAgentMessage,
 } from "./external";
 import { personalControl, withPersonalHome } from "./personal";
 
@@ -997,6 +998,78 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
       throw new Error("this delivery report already started a turn");
   };
 
+/**
+ * For the sender: whether the external member has read its message. Only
+ * the same source, run by the same authenticated account, learns anything.
+ */
+async function inspectExternalInbox(
+  account_id: string,
+  source: AgentRpcSource,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt,
+) {
+  const target = request.target;
+  if (!isExternalAgentSource(target))
+    throw new Error("external inbox target required");
+  try {
+    const delivery = await inspectExternalAgentMessage({
+      account_id: target.account_id,
+      installation_id: target.installation_id,
+      attempt_id: request.attempt_id,
+      source,
+      source_account_id: account_id,
+    });
+    if (!delivery)
+      return rpcOutcome(request, "unknown", {
+        reason:
+          "The external inbox holds no such message from you (never admitted, or expired)",
+      });
+    return {
+      ...rpcOutcome(request, "accepted", {
+        chat_effect: "saved",
+        reason:
+          delivery.state === "acknowledged"
+            ? `Read by the external agent at ${delivery.acknowledged_at}`
+            : `Not read yet by the external agent; it expires at ${delivery.expires_at}`,
+      }),
+      inbox: delivery,
+    };
+  } catch (error) {
+    return rpcOutcome(request, "unknown", {
+      reason: `External inbox could not be checked: ${error}`,
+    });
+  }
+}
+
+/** A request about a message to an external network member's inbox. */
+function externalTargetRequest(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: Extract<
+    AgentRpcRequest,
+    {
+      action:
+        | "send"
+        | "prepare-attachments"
+        | "cancel-attachments"
+        | "inspect"
+        | "withdraw";
+    }
+  >,
+) {
+  if (request.action === "send")
+    return submitExternalInbox(account_id, source, run_id, request);
+  if (request.action === "inspect")
+    return inspectExternalInbox(account_id, source, request);
+  return rpcOutcome(request, "rejected", {
+    chat_effect: "none",
+    reason:
+      request.action === "withdraw"
+        ? "A message in an external inbox cannot be withdrawn: no turn starts there"
+        : "External inbox attachments are not available",
+  });
+}
+
 async function submitExternalInbox(
   account_id: string,
   source: AgentRpcSource,
@@ -1046,6 +1119,8 @@ async function submitExternalInbox(
       agent_network_id: checked.agent_network_id,
       network_generation: checked.network_generation,
       source,
+      // The sender's authenticated account: only it may inspect later.
+      source_account_id: account_id,
       body: request.body,
     });
     const outcome = rpcOutcome(request, "accepted", {
@@ -1126,14 +1201,8 @@ export async function acceptAgentRpc(
     );
   if (request.action === "inbox" || request.action === "ack-inbox")
     throw new Error("native agents do not have an external inbox");
-  if (isExternalAgentSource(request.target)) {
-    if (request.action !== "send")
-      return rpcOutcome(request, "rejected", {
-        chat_effect: "none",
-        reason: "External inbox supports direct send only",
-      });
-    return submitExternalInbox(run.account_id, source, run_id, request);
-  }
+  if (isExternalAgentSource(request.target))
+    return externalTargetRequest(run.account_id, source, run_id, request);
   const target = request.target;
   if (
     request.action === "prepare-attachments" ||
@@ -1242,14 +1311,8 @@ export async function acceptExternalAgentRpc(
       installation_id,
       request.message_id,
     );
-  if (isExternalAgentSource(request.target)) {
-    if (request.action !== "send")
-      return rpcOutcome(request, "rejected", {
-        chat_effect: "none",
-        reason: "External inbox supports direct send only",
-      });
-    return submitExternalInbox(account_id, source, undefined, request);
-  }
+  if (isExternalAgentSource(request.target))
+    return externalTargetRequest(account_id, source, undefined, request);
   const target = request.target;
   if (request.action === "inspect" || request.action === "withdraw") {
     const { action, ...attempt } = request;

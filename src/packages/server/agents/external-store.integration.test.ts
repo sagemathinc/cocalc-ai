@@ -184,6 +184,7 @@ describeDb("network-bound external agents", () => {
       agent_network_id: network,
       network_generation: generation,
       source,
+      source_account_id: account,
       body: "Please inspect this result.",
     };
     const message = await store.enqueue(input);
@@ -214,5 +215,72 @@ describeDb("network-bound external agents", () => {
     expect(await store.inbox(account, installation.installation_id)).toEqual(
       [],
     );
+  });
+
+  test("the sender, and only the sender, learns whether its message was read", async () => {
+    const { options } = enrollment();
+    const installation = await store.enroll(account, "human-session", options);
+    const sender = randomUUID();
+    const source = {
+      kind: "registered" as const,
+      account_id: sender,
+      project_id: randomUUID(),
+      agent_id: randomUUID(),
+      run_id: randomUUID(),
+    };
+    const input = {
+      account_id: account,
+      installation_id: installation.installation_id,
+      attempt_id: randomUUID(),
+      agent_network_id: network,
+      network_generation: generation,
+      source,
+      source_account_id: sender,
+      body: "Did you read this?",
+    };
+    const message = await store.enqueue(input);
+    // A retry by another account cannot claim the attempt.
+    await expect(
+      store.enqueue({ ...input, source_account_id: randomUUID() }),
+    ).rejects.toThrow("external_inbox_idempotency_conflict");
+    const delivery = (
+      over: Partial<{
+        installation: string;
+        attempt_id: string;
+        source: typeof source;
+        source_account_id: string;
+      }> = {},
+    ) =>
+      store.delivery(
+        account,
+        over.installation ?? installation.installation_id,
+        over.attempt_id ?? input.attempt_id,
+        over.source ?? source,
+        over.source_account_id ?? sender,
+      );
+    expect(await delivery()).toMatchObject({ state: "pending" });
+    expect((await delivery())?.acknowledged_at).toBeUndefined();
+    await store.acknowledge(
+      account,
+      installation.installation_id,
+      message.message_id,
+    );
+    const read = await delivery();
+    expect(read).toMatchObject({ state: "acknowledged" });
+    expect(read?.acknowledged_at).toEqual(expect.any(String));
+    // Another sender, another account presenting the same source, another
+    // inbox or another attempt learns nothing.
+    expect(
+      await delivery({ source: { ...source, agent_id: randomUUID() } }),
+    ).toBeNull();
+    expect(await delivery({ source_account_id: randomUUID() })).toBeNull();
+    expect(await delivery({ installation: randomUUID() })).toBeNull();
+    expect(await delivery({ attempt_id: randomUUID() })).toBeNull();
+    // Nor does anyone once the message has expired.
+    await db.query(
+      "UPDATE agent_external_inbox SET expires_at=now()-interval '1 second' WHERE message_id=$1",
+      [message.message_id],
+    );
+    expect(await delivery()).toBeNull();
   });
 });

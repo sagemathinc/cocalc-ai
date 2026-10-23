@@ -4,6 +4,7 @@ import {
   externalControl,
   externalEnrollmentStatus,
   enqueueExternalAgentMessage,
+  inspectExternalAgentMessage,
 } from "./external";
 import { createAgentRpcControlClient } from "@cocalc/conat/inter-bay/agent-rpc";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
@@ -12,6 +13,7 @@ import { claimExternalAgentLoginChallenge } from "@cocalc/server/auth/cli-auth";
 
 const mockEnroll = jest.fn(),
   mockEnqueue = jest.fn(),
+  mockDelivery = jest.fn(),
   mockStatus = jest.fn(),
   mockRevoke = jest.fn(),
   mockUpdateNetwork = jest.fn(),
@@ -20,6 +22,7 @@ jest.mock("./external-store", () => ({
   ExternalAgentStore: jest.fn().mockImplementation(() => ({
     enroll: (...args) => mockEnroll(...args),
     enqueue: (...args) => mockEnqueue(...args),
+    delivery: (...args) => mockDelivery(...args),
     enrollmentStatus: (...args) => mockStatus(...args),
     revoke: (...args) => mockRevoke(...args),
   })),
@@ -224,6 +227,7 @@ test("inbox delivery routes to account home, never the source bay database", asy
     agent_network_id,
     network_generation: randomUUID(),
     source: { project_id: randomUUID(), agent_id: randomUUID() },
+    source_account_id: randomUUID(),
     body: "hello",
   };
   await expect(enqueueExternalAgentMessage(delivery)).resolves.toEqual(message);
@@ -257,4 +261,52 @@ test("inbox delivery routes to account home, never the source bay database", asy
   mockEnqueue.mockResolvedValueOnce(message);
   await expect(enqueueExternalAgentMessage(delivery)).resolves.toEqual(message);
   expect(mockEnqueue).toHaveBeenCalledTimes(1);
+});
+
+test("a sender's inspection is answered by the account home's inbox", async () => {
+  const source = { project_id: randomUUID(), agent_id: randomUUID() };
+  const inspection = {
+    account_id,
+    installation_id: challenge_id,
+    attempt_id: randomUUID(),
+    source,
+    source_account_id: randomUUID(),
+  };
+  jest
+    .mocked(resolveAccountHomeBay)
+    .mockResolvedValue({ home_bay_id: "remote-home" } as any);
+  mockRemote.mockResolvedValueOnce({ delivery: null });
+  await expect(inspectExternalAgentMessage(inspection)).resolves.toBeNull();
+  expect(mockRemote).toHaveBeenLastCalledWith({
+    ...inspection,
+    action: "inspect",
+    home_bay_id: "remote-home",
+  });
+  expect(mockDelivery).not.toHaveBeenCalled();
+  await expect(
+    externalControl({
+      ...inspection,
+      action: "inspect",
+      home_bay_id: "remote-home",
+    }),
+  ).rejects.toThrow("requires account home");
+  jest
+    .mocked(resolveAccountHomeBay)
+    .mockResolvedValue({ home_bay_id: "home" } as any);
+  const delivery = {
+    state: "pending",
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 1000).toISOString(),
+  };
+  mockDelivery.mockResolvedValueOnce(delivery);
+  await expect(inspectExternalAgentMessage(inspection)).resolves.toEqual(
+    delivery,
+  );
+  expect(mockDelivery).toHaveBeenCalledWith(
+    account_id,
+    challenge_id,
+    inspection.attempt_id,
+    source,
+    inspection.source_account_id,
+  );
 });

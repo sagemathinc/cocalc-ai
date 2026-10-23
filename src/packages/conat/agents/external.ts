@@ -46,6 +46,15 @@ export interface ExternalAgentInboxMessage {
   expires_at: string;
 }
 
+/** What became of a message sent to an external inbox (for its sender). */
+export interface ExternalAgentDelivery {
+  /** pending: not acknowledged (read) yet; acknowledged: the agent read it. */
+  state: "pending" | "acknowledged";
+  created_at: string;
+  expires_at: string;
+  acknowledged_at?: string;
+}
+
 export type ExternalAgentControlRequest =
   | ({ action: "enqueue"; home_bay_id: string } & ExternalAgentEnqueueOptions)
   | {
@@ -61,13 +70,25 @@ export type ExternalAgentControlRequest =
       home_bay_id: string;
       installation_id: string;
       secret_hash: string;
+    }
+  | {
+      /** The sender asks what became of its message. */
+      action: "inspect";
+      account_id: string;
+      home_bay_id: string;
+      installation_id: string;
+      attempt_id: string;
+      source: import("./rpc").AgentRpcSource;
+      /** The sender's authenticated account (with source, who sent it). */
+      source_account_id: string;
     };
 export type ExternalAgentControlResult =
   | { message: ExternalAgentInboxMessage }
   | {
       challenge: { label: string; secret_hash: string; expires_at: string };
     }
-  | { installation: ExternalAgentInstallation | null };
+  | { installation: ExternalAgentInstallation | null }
+  | { delivery: ExternalAgentDelivery | null };
 
 /** Authorized, bounded inbox delivery over the sealed inter-bay control API. */
 export interface ExternalAgentEnqueueOptions {
@@ -77,6 +98,8 @@ export interface ExternalAgentEnqueueOptions {
   agent_network_id: string;
   network_generation: string;
   source: import("./rpc").AgentRpcSource;
+  /** The sender's authenticated account: only it may later inspect. */
+  source_account_id: string;
   body: string;
 }
 
