@@ -20,6 +20,7 @@ import {
   type PreviewScenario,
 } from "./preview";
 import { connectLive, type LiveConnection } from "./native";
+import { storedCodexCredential } from "../chat/codex-payment";
 
 export function useLiveVoice(
   profile: string,
@@ -177,9 +178,14 @@ export function useLiveVoice(
           const payment = await site.hubApi.system.getCodexPaymentSource({
             project_id: project,
             preference: config?.paymentSource ?? "auto",
+            // The account's choice for this agent, as admission uses it.
             credential_id:
               config?.paymentSource === "subscription"
-                ? config.credentialId
+                ? ((await storedCodexCredential(
+                    site.hubApi.agent,
+                    project,
+                    thread,
+                  )) ?? config.credentialId)
                 : undefined,
           });
           if (payment.source === "none" || payment.unavailableReason)

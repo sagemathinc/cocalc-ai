@@ -11,18 +11,14 @@ jest.mock("expo-router", () => ({
 }));
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 it("shows the resolved named payment source and opens settings", async () => {
-  const lookup = jest
-    .fn()
-    .mockResolvedValue({
-      source: "subscription",
-      credentialId: "c",
-      subscriptions: [{ id: "c", label: "Personal Pro" }],
-    });
-  jest
-    .mocked(getActiveSiteSession)
-    .mockResolvedValue({
-      hubApi: { system: { getCodexPaymentSource: lookup } },
-    } as any);
+  const lookup = jest.fn().mockResolvedValue({
+    source: "subscription",
+    credentialId: "c",
+    subscriptions: [{ id: "c", label: "Personal Pro" }],
+  });
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: { system: { getCodexPaymentSource: lookup } },
+  } as any);
   const open = jest.fn();
   let view: any;
   await act(async () => {
@@ -50,4 +46,72 @@ it("shows the resolved named payment source and opens settings", async () => {
   await act(async () => button.props.onPress());
   expect(open).toHaveBeenCalled();
   await act(async () => view.unmount());
+});
+
+it("shows the subscription the account chose for the agent, else its default", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: "subscription",
+    credentialId: credential_id,
+    subscriptions: [
+      { id: "agent-choice", label: "Team plan" },
+      { id: "account-default", label: "Personal Pro" },
+    ],
+  }));
+  const getPaymentSelections = jest.fn();
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      agent: { getPaymentSelections },
+    },
+  } as any);
+  const label = async () => {
+    let view: any;
+    await act(async () => {
+      view = create(
+        <PaymentSummary
+          profile="p"
+          project="project"
+          thread="t"
+          config={{ paymentSource: "subscription" }}
+          onPress={() => {}}
+        />,
+      );
+    });
+    const text = view.root.findAll(
+      (n: any) =>
+        n.type === "Pressable" && n.props.accessibilityRole === "button",
+    )[0].props.accessibilityLabel;
+    await act(async () => view.unmount());
+    return text;
+  };
+  const credential = (credential_id: string) => ({
+    version: 1,
+    provider: "codex",
+    mode: "credential",
+    credential_id,
+  });
+
+  getPaymentSelections.mockResolvedValue({
+    selections: [
+      {
+        project_id: "project",
+        thread_id: "t",
+        provider: "codex",
+        selection: credential("agent-choice"),
+      },
+    ],
+    defaults: { codex: credential("account-default") },
+  });
+  expect(await label()).toContain("ChatGPT plan · Team plan");
+
+  getPaymentSelections.mockResolvedValue({
+    selections: [],
+    defaults: { codex: credential("account-default") },
+  });
+  expect(await label()).toContain("ChatGPT plan · Personal Pro");
+  expect(lookup).toHaveBeenLastCalledWith({
+    project_id: "project",
+    preference: "subscription",
+    credential_id: "account-default",
+  });
 });

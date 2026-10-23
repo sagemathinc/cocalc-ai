@@ -412,3 +412,60 @@ it("clears the stored subscription when another payment source is chosen, and ke
   });
   expect(save2).toHaveBeenCalled();
 });
+
+it("falls back to the account's default subscription when the agent has none", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: "subscription",
+    hasSubscription: true,
+    credentialId: credential_id,
+    subscriptions: [{ id: "account-default", label: "Personal Pro" }],
+  }));
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      agent: {
+        getPaymentSelections: async () => ({
+          selections: [],
+          defaults: {
+            codex: {
+              version: 1,
+              provider: "codex",
+              mode: "credential",
+              credential_id: "account-default",
+            },
+          },
+        }),
+      },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: "test",
+              displayName: "Test",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
+      },
+    },
+  } as any);
+  await act(async () => {
+    renderer = create(
+      <ChatSettings
+        profile="p"
+        project="project"
+        thread="t"
+        config={{ model: "test", paymentSource: "subscription" }}
+        client={{ updateCodexThreadConfig: jest.fn() } as any}
+        onClose={() => {}}
+      />,
+    );
+  });
+  expect(find("ChatGPT: Personal Pro").props.accessibilityState.selected).toBe(
+    true,
+  );
+  expect(lookup).toHaveBeenLastCalledWith(
+    expect.objectContaining({ credential_id: "account-default" }),
+  );
+});

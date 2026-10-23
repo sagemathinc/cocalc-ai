@@ -25,6 +25,7 @@ import { getProjectCodexModels } from "../cocalc/codex-models";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile, type ConversationClient } from "../preview/fixtures";
 import { usePalette } from "../ui/palette";
+import { storedCodexCredential } from "./codex-payment";
 
 const catalog: CodexModelCapabilityInfo[] = DEFAULT_CODEX_MODELS.map((m) => ({
   model: m.name,
@@ -82,16 +83,11 @@ export function ChatSettings({
     let active = true;
     void (async () => {
       const session = await getActiveSiteSession(profile);
-      const result = await session.hubApi.agent?.getPaymentSelections?.({
-        targets: [{ project_id: project, thread_id: thread }],
-      });
-      const selection = result?.selections?.find(
-        (row) => row.thread_id === thread && row.provider === "codex",
-      )?.selection;
-      const credentialId =
-        selection?.provider === "codex" && selection.mode === "credential"
-          ? selection.credential_id
-          : undefined;
+      const credentialId = await storedCodexCredential(
+        session.hubApi.agent,
+        project,
+        thread,
+      );
       if (!active || edited.current || !credentialId) return;
       setDraft((current) =>
         current.paymentSource === "subscription"

@@ -9,6 +9,7 @@ import type { CodexThreadConfig } from "@cocalc/chat-client";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile } from "../preview/fixtures";
 import { usePalette } from "../ui/palette";
+import { storedCodexCredential } from "./codex-payment";
 
 const labels = {
   subscription: "ChatGPT plan",
@@ -22,11 +23,13 @@ const labels = {
 export function PaymentSummary({
   profile,
   project,
+  thread,
   config,
   onPress,
 }: {
   profile: string;
   project: string;
+  thread?: string;
   config?: CodexThreadConfig;
   onPress: () => void;
 }) {
@@ -42,13 +45,22 @@ export function PaymentSummary({
       }
       void (async () => {
         const site = await getActiveSiteSession(profile);
+        // The subscription is the account's choice for this agent, as at
+        // admission; an older thread may still name one in its config.
+        const credential_id =
+          config?.paymentSource === "subscription"
+            ? ((thread
+                ? await storedCodexCredential(
+                    site.hubApi.agent,
+                    project,
+                    thread,
+                  )
+                : undefined) ?? config.credentialId)
+            : undefined;
         const source = await site.hubApi.system.getCodexPaymentSource({
           project_id: project,
           preference: config?.paymentSource ?? "auto",
-          credential_id:
-            config?.paymentSource === "subscription"
-              ? config.credentialId
-              : undefined,
+          credential_id,
         });
         const credential = source.subscriptions?.find(
           (c) => c.id === source.credentialId,
@@ -64,7 +76,7 @@ export function PaymentSummary({
       return () => {
         active = false;
       };
-    }, [profile, project, config?.paymentSource, config?.credentialId]),
+    }, [profile, project, thread, config?.paymentSource, config?.credentialId]),
   );
   return (
     <Pressable

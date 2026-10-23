@@ -846,6 +846,7 @@ export default function ChatScreen() {
           <PaymentSummary
             profile={profileId}
             project={projectId}
+            thread={threadId}
             config={selectedThread?.acp_config}
             onPress={() => setSettingsOpen(true)}
           />
