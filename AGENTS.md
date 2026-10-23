@@ -158,8 +158,9 @@ EOF
   where you run instead, e.g. ``Owner: `claude-code` on <machine>, for
   <GitHub handle>``; site and project are optional then.
 - If you run in a project that belongs to a customer rather than to CoCalc's
-  own team, leave its title and ID out:
-  ``Owner: `@<agent-name>` on <site>, customer project (details omitted)``.
+  own team, or on a site dedicated to one customer, leave out the site and
+  the project: ``Owner: `@<agent-name>`, customer environment (details
+  omitted)``.
 - If you take over another agent's PR, update its owner line.
 - A PR opened by a person may say `Owner: <GitHub handle>`.
 
@@ -173,8 +174,9 @@ fixtures and docs.
 - Leave out customer names, email addresses, institutions, courses,
   customer-identifying locations, ticket numbers, customer project and account
   IDs, hostnames tied to one customer, and file or assignment names from their
-  projects. An owner line that names CoCalc's own team project is not
-  customer data; one in a customer's project omits it (see Pull Requests).
+  projects. An owner line that names CoCalc's own site and team project is
+  not customer data; in a customer's environment it omits both (see Pull
+  Requests).
 - Describe the problem generically: "a customer report", "a course notebook",
   "a project on a busy host". Reproduce it with synthetic data.
 - Keep the identifying details where the support work happens, not in the
