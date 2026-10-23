@@ -65,7 +65,7 @@ fi
   echo "| Package | Files | What it is |"
   echo "|---|---|---|"
   # every workspace package, nested ones (e.g. packages/apps/notebook) too
-  find "$OUT/packages" -name package.json -not -path "*/node_modules/*" | sort |
+  find "$OUT/packages" -mindepth 2 -name package.json -not -path "*/node_modules/*" | sort |
   while read -r pj; do
     dir="$(dirname "$pj")"
     name="${dir#"$OUT"/packages/}"
