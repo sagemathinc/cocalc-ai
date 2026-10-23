@@ -125,7 +125,14 @@ export function HarnessSettings({
     setSaving(true);
     setError(undefined);
     try {
-      if (paymentEdited.current && payment && !isPreviewProfile(profile)) {
+      // Re-choosing the stored option writes nothing, so preferences this
+      // screen does not show (claude_ai_connectors) are kept.
+      if (
+        paymentEdited.current &&
+        payment &&
+        paymentKey !== selectionKey(payment.selection) &&
+        !isPreviewProfile(profile)
+      ) {
         const session = await getActiveSiteSession(profile);
         const [mode, credential_id] = paymentKey.split(/:(.*)/s);
         // "Account default" clears this agent's own choice.

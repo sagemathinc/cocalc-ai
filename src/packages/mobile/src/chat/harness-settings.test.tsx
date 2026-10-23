@@ -241,3 +241,45 @@ it("describes payment as admission resolves it, including the project-secret fal
     }),
   ).toBe("Disconnected credential");
 });
+
+it("keeps a stored connectors preference when the same subscription is chosen again", async () => {
+  const setPaymentSelections = session();
+  const get = jest.fn(async () => ({
+    selections: [
+      {
+        project_id: "project",
+        thread_id: "t",
+        provider: "claude-code",
+        selection: {
+          version: 1,
+          provider: "claude-code",
+          mode: "account-subscription",
+          credential_id: "sub-1",
+          claude_ai_connectors: false,
+        },
+      },
+    ],
+    defaults: {},
+  }));
+  const current = await (getActiveSiteSession as jest.Mock)();
+  current.hubApi.agent.getPaymentSelections = get;
+  jest.mocked(getActiveSiteSession).mockResolvedValue(current);
+  await act(async () => {
+    renderer = create(
+      <HarnessSettings
+        profile="p"
+        project="project"
+        thread="t"
+        runtime={runtime}
+        controls={controls}
+        client={{ updateHarnessSettings: jest.fn() }}
+        onClose={() => {}}
+      />,
+    );
+  });
+  // Switch away and back, then save.
+  await act(async () => find("Anthropic API key").props.onPress());
+  await act(async () => find("Claude subscription: Max plan").props.onPress());
+  await act(async () => find("Save agent settings").props.onPress());
+  expect(setPaymentSelections).not.toHaveBeenCalled();
+});
