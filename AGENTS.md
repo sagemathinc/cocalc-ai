@@ -160,6 +160,25 @@ EOF
 - If you take over another agent's PR, update its owner line.
 - A PR opened by a person may say `Owner: <GitHub handle>`.
 
+## Customer Data Stays Out of GitHub
+
+This repository is public. Work prompted by a support ticket or user report
+must not identify the customer anywhere on GitHub: PR and issue titles and
+bodies, review comments, commit messages, branch names, code comments, test
+fixtures and docs.
+
+- Leave out names, email addresses, institutions, courses, locations, ticket
+  numbers, project and account IDs, hostnames tied to one customer, and file
+  or assignment names from their projects.
+- Describe the problem generically: "a customer report", "a course notebook",
+  "a project on a busy host". Reproduce it with synthetic data.
+- Keep the identifying details where the support work happens, not in the
+  repository.
+- GitHub keeps every revision of a PR body, issue or comment. Editing it
+  later does not remove the earlier text: a maintainer has to delete those
+  revisions. A pushed commit message has to be reworded and force-pushed
+  before merge. So get it right before posting.
+
 ## Docs
 
 - Architecture/docs: `docs/`
