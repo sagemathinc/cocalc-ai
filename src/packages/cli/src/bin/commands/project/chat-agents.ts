@@ -9,6 +9,9 @@ import { constants } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
 import { sendIdentityMessage } from "../../core/agent-message";
 import { sendExternalAgentMessage } from "../../core/external-agent-message";
+import { saveInboxAttachments } from "../../core/agent-inbox-attachments";
+import type { ExternalAgentInboxAttachment } from "@cocalc/conat/agents/external";
+import { join } from "node:path";
 import { resolveBroadcastTargets } from "../../core/agent-destination";
 import {
   createAgentFromCopy,
@@ -266,6 +269,37 @@ export function registerAgentCommands(
       );
     });
   agent
+    .command("inbox-attachments <message-id>")
+    .requiredOption(
+      "--external-agent <profile>",
+      "enrolled external-agent profile",
+    )
+    .option(
+      "--dir <dir>",
+      "where to save them (default: ./inbox-attachments/<message-id>)",
+    )
+    .description(
+      "save the files sent with an external-agent inbox message (checked against their SHA-256; existing files are never overwritten)",
+    )
+    .action(async (message_id, opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      emitSuccess(
+        { globals },
+        `${prefix} inbox-attachments`,
+        await saveInboxAttachments({
+          message_id,
+          dir: opts.dir ?? join("inbox-attachments", message_id),
+          fetch: (index) =>
+            sendExternalAgentMessage(opts.externalAgent, {
+              version: 3,
+              action: "inbox-attachment",
+              message_id,
+              index,
+            }) as unknown as Promise<ExternalAgentInboxAttachment>,
+        }),
+      );
+    });
+  agent
     .command("ack-inbox <message-id>")
     .requiredOption(
       "--external-agent <profile>",
@@ -326,16 +360,46 @@ export function registerAgentCommands(
     .option("--external-agent <profile>", "use an enrolled external agent")
     .requiredOption("--agent-network <uuid>", "exact Agent Network")
     .requiredOption("--to-agent <uuid>", "target from the original outcome")
-    .requiredOption("--target-project <uuid>", "target project")
-    .description("inspect an exact attempt without retrying or starting work")
+    .option("--target-project <uuid>", "target project (a project agent)")
+    .option(
+      "--target-account <uuid>",
+      "an external member's account (with --target-installation)",
+    )
+    .option(
+      "--target-installation <uuid>",
+      "an external member's installation (with --target-account)",
+    )
+    .description(
+      "inspect an exact attempt without retrying or starting work; for an external member, whether it has read the message",
+    )
     .action(async (attempt_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
+      const external =
+        opts.targetAccount !== undefined ||
+        opts.targetInstallation !== undefined;
+      if (
+        external
+          ? opts.targetProject !== undefined ||
+            !opts.targetAccount ||
+            !opts.targetInstallation
+          : !opts.targetProject
+      )
+        throw new Error(
+          "give --target-project, or --target-account and --target-installation for an external member",
+        );
       const request = {
         version: 3 as const,
         action: "inspect" as const,
         attempt_id,
         agent_network_id: opts.agentNetwork,
-        target: { project_id: opts.targetProject, agent_id: opts.toAgent },
+        target: external
+          ? {
+              kind: "external" as const,
+              account_id: opts.targetAccount,
+              agent_id: opts.toAgent,
+              installation_id: opts.targetInstallation,
+            }
+          : { project_id: opts.targetProject, agent_id: opts.toAgent },
       };
       const outcome = (
         opts.externalAgent

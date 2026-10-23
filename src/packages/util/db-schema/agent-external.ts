@@ -160,3 +160,50 @@ Table({
     acknowledged_at: time("Explicit external acknowledgment time."),
   },
 });
+
+// Files sent with an external inbox message: kept, like the message, at the
+// account's home bay until the message expires. Only the installation's own
+// credential reads them (inbox-attachment).
+Table({
+  name: "agent_external_inbox_attachments",
+  rules: {
+    primary_key: ["message_id", "idx"],
+    pg_constraints: [
+      {
+        name: "agent_external_inbox_attachments_idx_check",
+        type: "check",
+        expression: "idx BETWEEN 0 AND 15",
+      },
+      {
+        name: "agent_external_inbox_attachments_size_check",
+        type: "check",
+        expression: "size BETWEEN 0 AND 33554432 AND octet_length(data)=size",
+      },
+    ],
+    pg_custom_indexes: [
+      {
+        name: "agent_external_inbox_attachments_installation",
+        query: "(account_id,installation_id,expires_at)",
+      },
+      {
+        name: "agent_external_inbox_attachments_expiry",
+        query: "(expires_at)",
+      },
+    ],
+  },
+  fields: {
+    message_id: required("uuid", "The inbox message it was sent with."),
+    idx: required("integer", "Its position among the message's files."),
+    account_id: required("uuid", "Account-home authority."),
+    installation_id: required("uuid", "Exact external installation inbox."),
+    name: required("string", "File name, without any path."),
+    size: required("integer", "Size in bytes."),
+    sha256: required("string", "SHA-256 of the content, hex."),
+    data: required("Buffer", "The file's content."),
+    created_at: created,
+    expires_at: {
+      ...time("The message's retention deadline."),
+      not_null: true,
+    },
+  },
+});

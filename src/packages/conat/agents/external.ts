@@ -1,3 +1,4 @@
+import type { AgentSnapshot, AgentSnapshotMetadata } from "./attachments";
 import { requireUuid } from "./protocol";
 
 export const EXTERNAL_AGENT_TOKEN_PREFIX = "cocalc_external_agent_v1.";
@@ -44,6 +45,25 @@ export interface ExternalAgentInboxMessage {
   body: string;
   created_at: string;
   expires_at: string;
+  /** The files sent with it, in order; fetch each with inbox-attachment. */
+  attachments?: AgentSnapshotMetadata[];
+}
+
+/** One attachment of an inbox message, with its content. */
+export interface ExternalAgentInboxAttachment extends AgentSnapshot {
+  message_id: string;
+  index: number;
+  /** How many attachments the message has. */
+  count: number;
+}
+
+/** What became of a message sent to an external inbox (for its sender). */
+export interface ExternalAgentDelivery {
+  /** pending: not acknowledged (read) yet; acknowledged: the agent read it. */
+  state: "pending" | "acknowledged";
+  created_at: string;
+  expires_at: string;
+  acknowledged_at?: string;
 }
 
 export type ExternalAgentControlRequest =
@@ -61,13 +81,23 @@ export type ExternalAgentControlRequest =
       home_bay_id: string;
       installation_id: string;
       secret_hash: string;
+    }
+  | {
+      /** The sender asks what became of its message. */
+      action: "inspect";
+      account_id: string;
+      home_bay_id: string;
+      installation_id: string;
+      attempt_id: string;
+      source: import("./rpc").AgentRpcSource;
     };
 export type ExternalAgentControlResult =
   | { message: ExternalAgentInboxMessage }
   | {
       challenge: { label: string; secret_hash: string; expires_at: string };
     }
-  | { installation: ExternalAgentInstallation | null };
+  | { installation: ExternalAgentInstallation | null }
+  | { delivery: ExternalAgentDelivery | null };
 
 /** Authorized, bounded inbox delivery over the sealed inter-bay control API. */
 export interface ExternalAgentEnqueueOptions {
@@ -78,6 +108,8 @@ export interface ExternalAgentEnqueueOptions {
   network_generation: string;
   source: import("./rpc").AgentRpcSource;
   body: string;
+  /** Files sent with it (at most 16 and 32 MiB, as to any network member). */
+  attachments?: AgentSnapshot[];
 }
 
 export function externalAgentSubject(
