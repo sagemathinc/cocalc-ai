@@ -1971,8 +1971,8 @@ describe("host reads across bays", () => {
     assert.equal(read?.op_id, startOp.op_id);
     // Not named, the scope is unknown: the seed has no such operation.
     assert.equal(
-      await alice.client.call("lro.get", { op_id: startOp.op_id }),
-      undefined,
+      (await alice.client.call("lro.get", { op_id: startOp.op_id })) ?? null,
+      null,
     );
     const listed = await alice.client.call("lro.list", {
       ...scope,
