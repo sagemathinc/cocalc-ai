@@ -1376,16 +1376,19 @@ export async function deleteVolume(
     reportProvisioned?: boolean;
     expected_archive_backup_id?: string;
     expected_archive_generation?: number;
+    // Asked under the project's lifecycle lock, so no start or restore can
+    // come between: why the deletion no longer applies, if it doesn't
+    // (then nothing is deleted, and that reason is returned).
+    superseded?: () => string | undefined;
   } = {},
-) {
+): Promise<{ superseded?: string }> {
   if (fs == null) {
     throw Error("file server not initialized");
   }
-  invalidateProjectVolumeLifecycle(project_id);
-  await withProjectVolumeLifecycleLock(project_id, async () =>
-    // Nothing may have the project's history open while its storage goes
-    // (persist-volume.ts): streams of it close, and clients start over if
-    // it comes back (e.g., restored from an archive).
+  // Nothing may have the project's history open while its storage goes
+  // (persist-volume.ts): streams of it close, and clients start over if
+  // it comes back (e.g., restored from an archive).
+  const deleteFenced = () =>
     withProjectStorageFenced({ project_id, reason: "delete" }, async () => {
       const deleteIfExists = async ({
         name,
@@ -1492,12 +1495,27 @@ export async function deleteVolume(
       deleteProjectVolumeQuotas(project_id);
       deleteProjectVolumeQuotaOverrides(project_id);
       invalidateProjectFsServer(project_id);
-    }),
-  );
+    });
+  if (opts.superseded == null) {
+    invalidateProjectVolumeLifecycle(project_id);
+  }
+  let superseded: string | undefined;
+  await withProjectVolumeLifecycleLock(project_id, async () => {
+    if (opts.superseded != null) {
+      superseded = opts.superseded();
+      if (superseded != null) return;
+      invalidateProjectVolumeLifecycle(project_id);
+    }
+    await deleteFenced();
+  });
+  if (superseded != null) {
+    return { superseded };
+  }
   if (opts.reportProvisioned !== false) {
     queueProjectProvisioned(project_id, false);
   }
   await deleteBackupIndexCache(project_id);
+  return {};
 }
 
 export async function releaseProjectArchiveFreeze(

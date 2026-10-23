@@ -691,8 +691,13 @@ export async function initHostStatusService() {
             logger.debug("ignoring provisioned from non-owner host", {
               project_id,
               host_id,
+              provisioned,
             });
-            return { action: "delete" as const };
+            // Only data the host has is worth deleting.  A host reporting
+            // that it has none is often the destination of a move whose
+            // placement hasn't switched yet (its pre-restore cleanup), and a
+            // delete then may run after the restore (6f6a2389, 2026-10-23).
+            return provisioned ? { action: "delete" as const } : undefined;
           }
         }
         const checkedAt = checked_at ? new Date(checked_at) : new Date();
