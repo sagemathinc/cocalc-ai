@@ -113,6 +113,10 @@ export class GitReadService {
 
   private readonly recent: MemoryGitCache;
   private immutableRequests = new Map<string, Promise<string>>();
+  private shallowChecks = new Map<
+    string,
+    { expires: number; promise: Promise<boolean> }
+  >();
 
   constructor(
     private readonly exec: GitReadExecutor,
@@ -128,11 +132,17 @@ export class GitReadService {
    * A read named only by full object ids: its output never changes, so it
    * is answered from the caches when it can (this tab's, then this
    * browser's) and stored after it runs. Anything else runs every time.
+   *
+   * `walksHistory`: the output depends on the commits' parents (history,
+   * ranges, parents). In a shallow clone a boundary commit looks parentless
+   * until it is deepened, so such a read is stored only if the clone is not
+   * shallow just before it runs and just after.
    */
   private async runImmutable(
     repository: RepositoryContext,
     args: string[],
     objectIds: string[],
+    { walksHistory = false }: { walksHistory?: boolean } = {},
   ): Promise<string> {
     if (!objectIds.length || !objectIds.every(isFullObjectId))
       return this.run(repository.projectId, repository.locator, args);
@@ -146,22 +156,52 @@ export class GitReadService {
     const pending = this.immutableRequests.get(key);
     if (pending) return pending;
     const promise = (async () => {
+      // Only complete results are stored, so a stored one is still right.
       const stored = await this.persistent?.get(key);
       if (stored !== undefined) {
         await this.recent.set(key, stored);
         return stored;
       }
+      if (walksHistory && (await this.isShallow(repository)))
+        return this.run(repository.projectId, repository.locator, args);
       const output = await this.run(
         repository.projectId,
         repository.locator,
         args,
       );
+      // It may have been read while the clone was shallow.
+      if (walksHistory && (await this.isShallow(repository, true)))
+        return output;
       await this.recent.set(key, output);
       void this.persistent?.set(key, output);
       return output;
     })().finally(() => this.immutableRequests.delete(key));
     this.immutableRequests.set(key, promise);
     return promise;
+  }
+
+  private isShallow(
+    repository: RepositoryContext,
+    fresh = false,
+  ): Promise<boolean> {
+    const key = repositoryKey(repository);
+    const cached = this.shallowChecks.get(key);
+    if (!fresh && cached && cached.expires > this.now()) return cached.promise;
+    const entry = {
+      expires: this.now() + DISCOVERY_TTL,
+      promise: this.run(repository.projectId, repository.locator, [
+        "rev-parse",
+        "--is-shallow-repository",
+      ]).then((output) => outputLine(output) !== "false"),
+    };
+    this.shallowChecks.delete(key);
+    this.shallowChecks.set(key, entry);
+    if (this.shallowChecks.size > 64)
+      this.shallowChecks.delete(this.shallowChecks.keys().next().value!);
+    void entry.promise.catch(() => {
+      if (this.shallowChecks.get(key) === entry) this.shallowChecks.delete(key);
+    });
+    return entry.promise;
   }
 
   private async run(
@@ -358,6 +398,7 @@ export class GitReadService {
         repository,
         ["rev-list", "--parents", "-n1", commit, "--"],
         [commit],
+        { walksHistory: true },
       ),
     ).split(" ");
     if (
@@ -386,6 +427,8 @@ export class GitReadService {
       repository,
       ["show", "--no-patch", "--no-color", "--format=fuller", commit, "--"],
       [commit],
+      // A merge's parents are in its header.
+      { walksHistory: true },
     );
   }
 
@@ -465,6 +508,7 @@ export class GitReadService {
           "--",
         ],
         [commit],
+        { walksHistory: true },
       ),
     );
   }
@@ -488,6 +532,7 @@ export class GitReadService {
           "--",
         ],
         [target.head, target.base],
+        { walksHistory: true },
       )
     )
       .split("\n")

@@ -105,5 +105,36 @@ test("failures are not cached, and the same read in flight runs once", async () 
     reader.commitSummary(repository, head),
     reader.commitSummary(repository, head),
   ]);
-  expect(calls).toHaveLength(1);
+  // (Besides checking the clone isn't shallow.)
+  expect(calls.filter((args) => args.includes("show"))).toHaveLength(1);
+});
+
+test("a shallow clone's parents and history are not kept: deepening it shows the real ones", async () => {
+  const clone = mkdtempSync(join(tmpdir(), "git-cache-shallow-"));
+  try {
+    git(clone, ["clone", "-q", "--depth=1", `file://${dir}`, "."]);
+    const head = git(clone, ["rev-parse", "HEAD"]).trim();
+    const persistent = new MemoryGitCache(50_000_000);
+    const first = new GitReadService(execute, Date.now, 16_000_000, persistent);
+    const { repository } = await first.discover("p", clone);
+    // The boundary looks parentless.
+    expect((await first.pinCommit(repository, head)).parent).toBeNull();
+    expect(await first.history(repository, head)).toHaveLength(1);
+
+    git(clone, ["fetch", "-q", "--unshallow"]);
+    const parent = git(clone, ["rev-parse", "HEAD^"]).trim();
+    // The same tab, and a reload sharing the browser's cache.
+    const second = new GitReadService(
+      execute,
+      Date.now,
+      16_000_000,
+      persistent,
+    );
+    for (const reader of [first, second]) {
+      expect((await reader.pinCommit(repository, head)).parent).toBe(parent);
+      expect(await reader.history(repository, head)).toHaveLength(2);
+    }
+  } finally {
+    rmSync(clone, { recursive: true, force: true });
+  }
 });
