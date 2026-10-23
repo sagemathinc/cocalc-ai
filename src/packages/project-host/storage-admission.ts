@@ -560,10 +560,25 @@ export function createStorageAdmissionController(
       resetEscalation();
       return;
     }
+    // The 60 s average too: pressure made of bursts that never stay above a
+    // threshold for consecutive 10 s averages is still sustained pressure.
+    // It also holds contended/emergency until it is down too, so the gate
+    // does not bounce between recovery and contended while it decays.
+    const pressure = Math.max(full, effectiveIoFullAvg60(inputs) ?? 0);
+    // Any fresh reading below a threshold ends that run, also between
+    // state samples: a run must be unbroken.
+    if (pressure < emergencyFullAvg10) {
+      consecutiveEmergency = 0;
+      emergencySince = undefined;
+    }
+    if (pressure < contendedFullAvg10) {
+      consecutiveContended = 0;
+      contendedSince = undefined;
+    }
     // Admission checks sample as often as operations come (for fresh
     // lifecycle counts), so consecutive samples could be milliseconds apart
     // and read the same 10 s average: only samples at least
-    // minStateSampleMs apart count.
+    // minStateSampleMs apart count, or move the state.
     if (
       lastStateSampleAt != null &&
       at - lastStateSampleAt < minStateSampleMs
@@ -571,24 +586,13 @@ export function createStorageAdmissionController(
       return;
     }
     lastStateSampleAt = at;
-    // The 60 s average too: pressure made of bursts that never stay above a
-    // threshold for consecutive 10 s averages is still sustained pressure.
-    // It also holds contended/emergency until it is down too, so the gate
-    // does not bounce between recovery and contended while it decays.
-    const pressure = Math.max(full, effectiveIoFullAvg60(inputs) ?? 0);
     if (pressure >= emergencyFullAvg10) {
       consecutiveEmergency += 1;
       emergencySince ??= at;
-    } else {
-      consecutiveEmergency = 0;
-      emergencySince = undefined;
     }
     if (pressure >= contendedFullAvg10) {
       consecutiveContended += 1;
       contendedSince ??= at;
-    } else {
-      consecutiveContended = 0;
-      contendedSince = undefined;
     }
     const sustained = (count: number, since: number | undefined) =>
       count >= contendedSamples && since != null && at - since >= escalationMs;

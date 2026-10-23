@@ -233,6 +233,26 @@ describe("storage admission controller", () => {
       expect(tick(controller)).toBe("emergency");
     });
 
+    it("ends a run on a low reading between state samples", () => {
+      // Codex on #1341: a dip seen by an admission check 2 s after a state
+      // sample was discarded with the duplicates, so the run kept its start.
+      const controller = gate();
+      full = 12;
+      now += 4_000;
+      expect(controller.sample().pressure_state).toBe("normal");
+      full = 0;
+      now += 2_000;
+      controller.admit({ operation_kind: "interactive_backup" });
+      full = 12;
+      for (const step of [2_000, 4_000, 4_000]) {
+        now += step;
+        expect(controller.sample().pressure_state).toBe("normal");
+      }
+      // 10 s since the run restarted at the first sample after the dip
+      now += 4_000;
+      expect(controller.sample().pressure_state).toBe("emergency");
+    });
+
     it("keeps lifecycle gating fresh between state samples", () => {
       const controller = gate();
       controller.sample();
