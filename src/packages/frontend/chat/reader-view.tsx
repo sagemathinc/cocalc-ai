@@ -462,11 +462,12 @@ export function ChatReaderView({
             description={
               !items.length
                 ? "No messages yet"
-                : view === "for-you" && items.some((item) => !inView(item))
-                  ? "Nothing for you here: the rest is filed"
-                  : view === "filed"
-                    ? "Nothing filed"
-                    : "Everything here is archived"
+                : items.some((item) => inView(item))
+                  ? // This view has items: all archived.
+                    "Everything here is archived"
+                  : view === "for-you"
+                    ? "Nothing for you here: the rest is filed"
+                    : "Nothing filed"
             }
           />
         ) : null}

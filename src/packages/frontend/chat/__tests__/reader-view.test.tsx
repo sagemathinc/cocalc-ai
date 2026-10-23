@@ -518,8 +518,7 @@ test("items show their subject; high ones are marked for you, and the open one i
   expect(within(top).getByLabelText("For you")).toBeTruthy();
   expect(next).toHaveTextContent("About p2");
   expect(within(next).queryByLabelText("For you")).toBeNull();
-  // Low is named, not shown by color alone.
-  expect(within(next).getByLabelText("Low priority")).toBeTruthy();
+  expect(within(next).queryByLabelText("Low priority")).toBeNull();
   fireEvent.click(top);
   expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
     "Needs your decision",
@@ -572,6 +571,42 @@ describe("views: for you, all, filed", () => {
     unmount();
     show();
     expect(options()).toHaveLength(3);
+  });
+
+  test("the switcher is a labelled group of choices the keyboard reaches", async () => {
+    const keys = user();
+    show();
+    const group = screen.getByRole("radiogroup", { name: "Which messages" });
+    const forYou = within(group).getByRole("radio", { name: /For you/ });
+    expect(forYou).toBeChecked();
+    // Tab reaches the checked choice; the arrow keys move between them.
+    forYou.focus();
+    await keys.keyboard("{ArrowRight}");
+    const all = within(group).getByRole("radio", { name: "All" });
+    expect(all).toBeChecked();
+    expect(options()).toHaveLength(3);
+  });
+
+  test("filed items that are archived are said to be archived", () => {
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({
+              a: { p1: "a1", p2: "p2" },
+            })),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={info}
+      />,
+    );
+    fireEvent.click(screen.getByText(/^Filed/));
+    expect(screen.getByText("Everything here is archived")).toBeTruthy();
   });
 
   test("nothing for you says where the rest is", () => {
