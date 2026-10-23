@@ -1,4 +1,3 @@
-import { turnMetaKey } from "@cocalc/chat";
 import { readerItems } from "../reader-model";
 import {
   firstLine,
@@ -6,7 +5,6 @@ import {
   itemPriority,
   itemSubject,
   itemTurnMeta,
-  threadTurnMeta,
 } from "../reader-turn-meta";
 
 const msg = (id: string, content: string, extra: object = {}) =>
@@ -57,35 +55,17 @@ test("priority: an open question is high; else the agent's; else by who started 
   expect(itemPriority(mine, { priority: "low" } as any, true)).toBe("high");
 });
 
-test("records are read from the chat document, newest per item", () => {
-  const rows = [
-    {
-      ...turnMetaKey({ thread_id: "t1", message_id: "a" }),
-      message_id: "a",
-      schema_version: 1,
-      subject: "older",
-      updated_at: "2026-01-01",
-    },
-    {
-      ...turnMetaKey({ thread_id: "t1", message_id: "p" }),
-      message_id: "p",
-      schema_version: 1,
-      subject: "newer",
-      updated_at: "2026-02-01",
-    },
-    { event: "chat-turn-meta", junk: true },
-  ];
-  const syncdb = {
-    get_state: () => "ready",
-    get: jest.fn(() => rows),
-  };
-  const metas = threadTurnMeta(syncdb, "t1");
-  expect(syncdb.get).toHaveBeenCalledWith({
-    event: "chat-turn-meta",
-    thread_id: "t1",
-  });
-  expect([...metas.keys()]).toEqual(["a", "p"]);
+test("what the agent said is read from the turn's messages", () => {
   const [item] = readerItems([msg("p", "x"), reply("a", "p", "y")]);
-  expect(itemTurnMeta(item, metas)?.subject).toBe("newer");
-  expect(threadTurnMeta({ get_state: () => "init" }, "t1").size).toBe(0);
+  expect(itemTurnMeta(item)).toEqual({});
+  const [said] = readerItems([
+    msg("p", "x"),
+    {
+      ...reply("a", "p", "y"),
+      acp_turn_subject: "Done",
+      acp_turn_priority: "high",
+    },
+  ]);
+  expect(itemTurnMeta(said)).toEqual({ subject: "Done", priority: "high" });
+  expect(itemSubject(said, itemTurnMeta(said))).toBe("Done");
 });

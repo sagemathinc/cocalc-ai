@@ -4,51 +4,27 @@
  */
 
 // Each reader item's subject and priority: what the agent said with
-// `cocalc agent turn` (a chat-turn-meta record), else a default. Pure.
+// `cocalc agent turn` (fields of the turn's message), else a default. Pure.
 
 import {
   normalizeTurnSubject,
   readTurnMeta,
-  TURN_META_EVENT,
-  type TurnMetaRecord,
+  type TurnMeta,
   type TurnPriority,
 } from "@cocalc/chat";
 import { field, isAcpAssistantMessage } from "./access";
 import type { ReaderItem } from "./reader-model";
-import { readerMessageId } from "./reader-model";
 import type { ChatMessageTyped } from "./types";
 import { newest_content } from "./utils";
 
-export type { TurnPriority };
+export type { TurnMeta, TurnPriority };
 
-/** The turn records of a thread, by the message they belong to. */
-export function threadTurnMeta(
-  syncdb: any,
-  threadId: string,
-): Map<string, TurnMetaRecord> {
-  const byMessage = new Map<string, TurnMetaRecord>();
-  if (!syncdb || (syncdb.get_state && syncdb.get_state() !== "ready"))
-    return byMessage;
-  const found = syncdb.get({ event: TURN_META_EVENT, thread_id: threadId });
-  const rows = found?.toJS?.() ?? found ?? [];
-  for (const row of rows) {
-    const meta = readTurnMeta(row);
-    if (meta) byMessage.set(meta.message_id, meta);
-  }
-  return byMessage;
-}
-
-/** The newest record of any of the item's messages. */
-export function itemTurnMeta(
-  item: ReaderItem,
-  metas: ReadonlyMap<string, TurnMetaRecord>,
-): TurnMetaRecord | undefined {
-  let best: TurnMetaRecord | undefined;
-  for (const message of item.messages) {
-    const meta = metas.get(readerMessageId(message));
-    if (meta && (!best || meta.updated_at > best.updated_at)) best = meta;
-  }
-  return best;
+/** What the agent said about the item's turn, from any of its messages. */
+export function itemTurnMeta(item: ReaderItem): TurnMeta {
+  const meta: TurnMeta = {};
+  for (const message of item.messages)
+    Object.assign(meta, readTurnMeta(message));
+  return meta;
 }
 
 /** A message from an agent, a sensor or a schedule, not a person. */
@@ -89,7 +65,7 @@ export function firstLine(message: ChatMessageTyped | undefined): string {
  */
 export function itemSubject(
   item: ReaderItem,
-  meta: TurnMetaRecord | undefined,
+  meta: TurnMeta | undefined,
 ): string {
   if (meta?.subject) return meta.subject;
   const replies = item.messages.filter(isAcpAssistantMessage);
@@ -107,7 +83,7 @@ export function itemSubject(
  */
 export function itemPriority(
   item: ReaderItem,
-  meta: TurnMetaRecord | undefined,
+  meta: TurnMeta | undefined,
   openQuestion = false,
 ): TurnPriority {
   if (openQuestion) return "high";

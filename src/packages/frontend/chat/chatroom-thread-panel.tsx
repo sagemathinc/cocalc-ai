@@ -36,13 +36,7 @@ import {
   readerItemWorking,
 } from "./reader-item-log";
 import { readerItems, type ReaderItem } from "./reader-model";
-import {
-  itemPriority,
-  itemSubject,
-  itemTurnMeta,
-  threadTurnMeta,
-} from "./reader-turn-meta";
-import { useArtifactChanges } from "./artifacts";
+import { itemPriority, itemSubject, itemTurnMeta } from "./reader-turn-meta";
 import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -852,19 +846,6 @@ export function ChatRoomThreadPanel({
           )
         : new Map<string, readonly AcpAttentionRecord[]>(),
     [showReader, attentionRecords, readerMessages, acpState],
-  );
-  // What agents said about their turns (cocalc agent turn); re-read when
-  // the chat document changes.
-  const turnMetaVersion = useArtifactChanges(
-    showReader ? actions.syncdb : undefined,
-  );
-  const readerTurnMeta = useMemo(
-    () =>
-      showReader && selectedThreadId
-        ? threadTurnMeta(actions.syncdb, selectedThreadId)
-        : new Map(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showReader, actions, selectedThreadId, turnMetaVersion],
   );
   const selectedThreadMessages = useMemo(
     () =>
@@ -3150,7 +3131,7 @@ export function ChatRoomThreadPanel({
             isVisible={isVisible}
             acpState={acpState}
             itemInfo={(item: ReaderItem) => {
-              const meta = itemTurnMeta(item, readerTurnMeta);
+              const meta = itemTurnMeta(item);
               return {
                 subject: itemSubject(item, meta),
                 priority: itemPriority(
