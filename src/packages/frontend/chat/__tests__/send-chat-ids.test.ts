@@ -2234,6 +2234,31 @@ describe("unread totals and the reader", () => {
     actions.getReaderState = jest.fn(() => ({}));
     expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(0);
   });
+
+  it("use the reader's items: a running turn takes what arrives while it runs", () => {
+    const actions = makeActions();
+    const messages = [
+      { message_id: "p1", sender_id: "u", date: new Date(1000) },
+      {
+        message_id: "a1",
+        sender_id: "codex",
+        acp_thread_id: "t",
+        parent_message_id: "p1",
+        date: new Date(1100),
+      },
+      { message_id: "steer", sender_id: "u", date: new Date(2000) },
+    ];
+    actions.getMessagesInThread = jest.fn(() => messages);
+    // Read in order through a1; the turn marked unread again.
+    actions.getThreadReadCount = jest.fn(() => 2);
+    actions.getReaderState = jest.fn(() => ({ u: ["p1"] }));
+    // Running only by the live state: the steer joins the turn's item, which
+    // is then past the watermark (counted there), not before it.
+    const get = actions.store.get.bind(actions.store);
+    actions.store.get = (key: string) =>
+      key === "acpState" ? new Map([["message:a1", "running"]]) : get(key);
+    expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(0);
+  });
 });
 
 describe("reader state and the watermark", () => {
