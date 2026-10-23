@@ -270,6 +270,24 @@ describe("master-status stale project data deletion", () => {
     expect(deleted).toEqual([]);
   });
 
+  it("dates a deletion from its request, not from a late answer", async () => {
+    // an old "not provisioned" report is answered (delete) only after a
+    // restore here was reported and accepted
+    const { queueProjectProvisioned } = await import("./master-status");
+    let answer: (value: any) => void = () => {};
+    reportProjectProvisionedMock.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    queueProjectProvisioned("p", false);
+    await new Promise(setImmediate);
+    // restored, started and stopped here meanwhile
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    localProject = { state: "opened", state_updated_at: Date.now() };
+    answer({ action: "delete" });
+    await retry();
+    expect(deleted).toEqual([]);
+  });
+
   it("drops a pending deletion once the master accepts the project as provisioned here", async () => {
     const { queueProjectProvisioned } = await import("./master-status");
     reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
