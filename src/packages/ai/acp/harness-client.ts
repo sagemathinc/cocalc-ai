@@ -23,6 +23,7 @@ import {
   harnessSessionGuidance,
 } from "./harness-context";
 import type { Readable, Writable } from "node:stream";
+import { createHash } from "node:crypto";
 import {
   parseAcpHarnessCredential,
   parseAcpHarnessProfile,
@@ -69,6 +70,15 @@ function unsupportedCallback(method: string): () => Promise<never> {
 export interface HarnessProcess {
   /** Trusted launcher-owned instructions, never a user-supplied session option. */
   systemPromptAppend?: string;
+  /**
+   * Which version of the session instructions each saved session last
+   * received. A resumed Claude Code session keeps the system prompt it
+   * started with, so the client sends newer instructions with its next turn.
+   */
+  sessionInstructions?: {
+    get(sessionId: string): string | undefined | Promise<string | undefined>;
+    set(sessionId: string, version: string): void | Promise<void>;
+  };
   projectToolServerName?: string;
   stdout: Readable;
   stdin: Writable;
@@ -192,6 +202,20 @@ export const CLAUDE_CONTROLLER_TOOLS = [
   "TaskList",
   "TaskGet",
 ] as const;
+
+/**
+ * Sent with the first turn of a resumed session whose system prompt holds
+ * older CoCalc instructions: the current ones, replacing those.
+ */
+export function instructionsUpdatePrompt(instructions: string): string {
+  return `[CoCalc session instructions update]
+CoCalc's session instructions changed after this session started, and your system prompt still holds the older copy. The current instructions follow. From now on they replace the older ones, including the CoCalc skill.
+
+${instructions}
+[/CoCalc session instructions update]
+
+`;
+}
 
 export function claudeSubscriptionSessionMeta(
   systemPromptAppend?: string,
@@ -331,6 +355,8 @@ export class AcpHarnessClient {
   private readonly binding: HarnessBinding;
   private readonly timeoutMs: number;
   private authStatus?: unknown;
+  /** Newer session instructions for a resumed session's next turn. */
+  private instructionsUpdate?: { text: string; version: string };
   private finishAuthWait?: () => void;
 
   private constructor(
@@ -803,6 +829,13 @@ export class AcpHarnessClient {
     try {
       const projectToolServerName =
         this.process.projectToolServerName ?? "cocalc_project";
+      const instructions =
+        this.sessionPolicy === "claude-subscription-controller"
+          ? [this.process.systemPromptAppend, harnessSessionGuidance(true)]
+              .filter(Boolean)
+              .join("\n\n")
+          : "";
+      this.instructionsUpdate = undefined;
       const params = {
         cwd:
           this.sessionPolicy === "claude-subscription-controller"
@@ -821,12 +854,9 @@ export class AcpHarnessClient {
             : [],
         ...(this.sessionPolicy === "claude-subscription-controller"
           ? {
-              _meta: claudeSubscriptionSessionMeta(
-                [this.process.systemPromptAppend, harnessSessionGuidance(true)]
-                  .filter(Boolean)
-                  .join("\n\n"),
-                { projectToolServerName },
-              ),
+              _meta: claudeSubscriptionSessionMeta(instructions, {
+                projectToolServerName,
+              }),
             }
           : this.binding.credential.mode === "account-api-key"
             ? {
@@ -876,9 +906,33 @@ export class AcpHarnessClient {
           "session/new",
         );
       }
+      await this.checkInstructions(instructions, !!sessionId);
       return structuredClone(this.session);
     } finally {
       this.opening = false;
+    }
+  }
+
+  /**
+   * A resumed Claude Code session keeps the system prompt it started with,
+   * so CoCalc's instructions (and its skill) there can be out of date. Note
+   * whether they are, to send the current ones with the next turn.
+   */
+  private async checkInstructions(instructions: string, resumed: boolean) {
+    const store = this.process.sessionInstructions;
+    const sessionId = this.session?.sessionId;
+    if (!store || !instructions || !sessionId) return;
+    const version = createHash("sha256").update(instructions).digest("hex");
+    try {
+      if (!resumed) {
+        // A new session starts with the current instructions.
+        await store.set(sessionId, version);
+      } else if ((await store.get(sessionId)) !== version) {
+        // Unknown (a session from before this was recorded) or older.
+        this.instructionsUpdate = { text: instructions, version };
+      }
+    } catch {
+      // Best effort: the session works with the instructions it has.
     }
   }
 
@@ -898,9 +952,17 @@ export class AcpHarnessClient {
     )
       throw Error("Invalid ACP prompt size");
     assertValidImages(images);
+    const update = this.instructionsUpdate;
+    // Not before a native command (e.g. /compact), which must come first.
+    const updated =
+      update && !/^\s*\/\w+/.test(text)
+        ? `${instructionsUpdatePrompt(update.text)}${text}`
+        : text;
+    const sent =
+      Buffer.byteLength(updated) <= ACP_MAX_PROMPT_BYTES ? updated : text;
     const params = {
       sessionId: this.session.sessionId,
-      prompt: promptBlocks(text, images),
+      prompt: promptBlocks(sent, images),
     };
     // Reject before handing the request to the SDK or granting tool execution.
     // Reserve space for the SDK's JSON-RPC method, ID and envelope.
@@ -931,6 +993,18 @@ export class AcpHarnessClient {
         true,
       );
       await this.request(this.output, "session/prompt", true);
+      if (update && sent !== text) {
+        // The session has them now; a failed turn sends them again.
+        this.instructionsUpdate = undefined;
+        try {
+          await this.process.sessionInstructions?.set(
+            params.sessionId,
+            update.version,
+          );
+        } catch {
+          // Best effort: they are sent again on a later resume.
+        }
+      }
       if (this.failure)
         throw new HarnessError(
           "outcome_unknown",
