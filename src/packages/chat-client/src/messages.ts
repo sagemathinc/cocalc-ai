@@ -11,7 +11,49 @@ import type {
   ChatThreadStateRecord,
 } from "@cocalc/chat/core";
 
+import {
+  parseHarnessSessionControls,
+  type HarnessSessionControls,
+} from "@cocalc/util/ai/harness-controls";
+import {
+  parseAcpHarnessProfile,
+  parseAcpHarnessRuntime,
+  type AcpHarnessRuntime,
+} from "@cocalc/util/ai/runtime";
+
 import type { ProjectedChatMessage, ProjectedChatThread } from "./types";
+
+function harnessRuntime(value: unknown): AcpHarnessRuntime | undefined {
+  if (value == null) return;
+  try {
+    return parseAcpHarnessRuntime(value);
+  } catch {
+    // Sending rejects an unknown runtime; it is never treated as Codex.
+    return;
+  }
+}
+
+// The catalog describes the profile that reported it; one from a superseded
+// harness pin lists other models, so it is not offered.
+function harnessControls(
+  runtime: AcpHarnessRuntime | undefined,
+  reported: unknown,
+): HarnessSessionControls | undefined {
+  if (!runtime || reported == null) return;
+  try {
+    const snapshot = reported as { profile?: unknown; controls?: unknown };
+    if (
+      (snapshot.profile as { revision?: unknown })?.revision !==
+        runtime.profile.revision ||
+      JSON.stringify(parseAcpHarnessProfile(snapshot.profile)) !==
+        JSON.stringify(runtime.profile)
+    )
+      return;
+    return parseHarnessSessionControls(snapshot.controls);
+  } catch {
+    return;
+  }
+}
 
 function isoDate(value: unknown): string | undefined {
   const date = value instanceof Date ? value : new Date(`${value ?? ""}`);
@@ -123,6 +165,12 @@ export function projectChatRows(
     const thread = threadRows.get(thread_id);
     const config = configs.get(thread_id);
     const state = states.get(thread_id);
+    const runtime = harnessRuntime(config?.agent_runtime);
+    const controls = harnessControls(
+      runtime,
+      (config as { agent_runtime_controls?: unknown } | undefined)
+        ?.agent_runtime_controls,
+    );
     return {
       thread_id,
       root_message_id: id(thread?.root_message_id),
@@ -130,6 +178,8 @@ export function projectChatRows(
       agent_kind: config?.agent_kind,
       agent_model: id(config?.agent_model),
       acp_config: config?.acp_config,
+      ...(runtime ? { agent_runtime: runtime } : {}),
+      ...(controls ? { agent_runtime_controls: controls } : {}),
       state: (state?.state ?? "idle") as ChatThreadRuntimeState,
       active_message_id: id(state?.active_message_id),
       updated_at: isoDate(state?.updated_at ?? config?.updated_at),

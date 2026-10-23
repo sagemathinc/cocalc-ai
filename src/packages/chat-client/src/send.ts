@@ -8,8 +8,13 @@ import {
   buildChatMessageRecordV2,
   buildCodexAcpConfig,
   buildThreadStateRecord,
+  contextStamp,
+  messagesSinceContextCleared,
   normalizeCodexMention,
+  resolveHarnessSessionId,
   sharedCodexThreadConfig,
+  storedSessionInContext,
+  threadContext,
   type ChatMessage,
   type ChatThreadConfigRecord,
 } from "@cocalc/chat/core";
@@ -25,6 +30,11 @@ import type {
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
 import { uuid } from "@cocalc/util/misc";
+import { normalizeCodexSessionId } from "@cocalc/util/ai/codex";
+import {
+  parseAcpHarnessRuntime,
+  type AcpHarnessRuntime,
+} from "@cocalc/util/ai/runtime";
 import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import { resolveCodexCompletionNotificationEnabled } from "@cocalc/util/notification-preferences";
 
@@ -92,21 +102,92 @@ function threadConfig(
   ) as ChatThreadConfigRecord | undefined;
 }
 
-function inferSessionId(
+function agentThreadConfig(
   allRows: readonly Record<string, any>[],
   threadId: string,
-): string | undefined {
-  const configured =
-    `${threadConfig(allRows, threadId)?.acp_config?.sessionId ?? ""}`.trim();
-  if (configured) return configured;
-  const candidates = allRows
-    .filter((row) => row.event === "chat" && row.thread_id === threadId)
-    .sort((a, b) => `${b.date}`.localeCompare(`${a.date}`));
-  for (const row of candidates) {
-    const sessionId = `${row.acp_thread_id ?? ""}`.trim();
-    if (sessionId) return sessionId;
+): ChatThreadConfigRecord {
+  const configRow = threadConfig(allRows, threadId);
+  if (
+    !configRow ||
+    (configRow.agent_kind !== "acp" &&
+      configRow.acp_config == null &&
+      configRow.agent_runtime == null)
+  ) {
+    throw new Error("The selected thread is not an existing agent thread.");
   }
-  return undefined;
+  return configRow;
+}
+
+/**
+ * How a turn in this thread runs: Codex, or an ACP harness such as Claude
+ * Code. The same rules as prepareChatSend in @cocalc/chat/send, which only
+ * runs on the server: nothing before a "Context cleared" line counts.
+ */
+function agentTurn(
+  allRows: readonly Record<string, any>[],
+  configRow: ChatThreadConfigRecord,
+  path: string,
+): {
+  runtime?: AcpHarnessRuntime;
+  config?: AcpRequest["config"];
+  session_id?: string;
+  sender_id: string;
+  context: ReturnType<typeof contextStamp>;
+} {
+  const threadId = configRow.thread_id;
+  // An unknown runtime is an error, never a fallback to Codex.
+  const runtime =
+    configRow.agent_runtime == null
+      ? undefined
+      : parseAcpHarnessRuntime(configRow.agent_runtime);
+  const messages = allRows
+    .filter((row) => row.event === "chat" && row.thread_id === threadId)
+    .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`));
+  const context = threadContext(configRow, messages);
+  const sinceCleared = messagesSinceContextCleared(
+    messages,
+    context.clearedAtMs,
+  );
+  // A session saved by a turn from before the latest clear does not count.
+  const stored = storedSessionInContext(configRow, context);
+  const inferred = [...sinceCleared.messages]
+    .reverse()
+    .find(
+      (row: any) =>
+        !row.acp_automation_id && normalizeCodexSessionId(row.acp_thread_id),
+    )?.acp_thread_id;
+  if (runtime) {
+    return {
+      runtime,
+      session_id: resolveHarnessSessionId(
+        stored ? configRow.agent_session_id : undefined,
+        inferred,
+      ),
+      sender_id: "acp-harness",
+      context: contextStamp(context),
+    };
+  }
+  const sessionId =
+    (stored
+      ? normalizeCodexSessionId(configRow.acp_config?.sessionId)
+      : undefined) ?? inferred;
+  return {
+    config: buildCodexAcpConfig({
+      path,
+      config: { ...sharedCodexThreadConfig(configRow.acp_config), sessionId },
+      model: normalizeCodexMention(configRow.agent_model),
+    }),
+    session_id: sessionId ?? (context.generation || threadId),
+    sender_id: configRow.agent_model || "openai-codex-agent",
+    context: contextStamp(context),
+  };
+}
+
+function agentName(runtime?: AcpHarnessRuntime): string {
+  if (!runtime) return "Codex";
+  return runtime.profile.version === 2 && runtime.profile.id === "claude-code"
+    ? "Claude"
+    : "The agent";
 }
 
 function isRetryableAcpAckError(error: unknown): boolean {
@@ -253,7 +334,11 @@ export class ChatSendPipeline {
       )
       .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
       .at(-1) as MutableChatMessage | undefined;
-    const sessionId = inferSessionId(allRows, threadId) ?? threadId;
+    const configRow = threadConfig(allRows, threadId);
+    const turn = configRow
+      ? agentTurn(allRows, configRow, this.options.path)
+      : undefined;
+    const sessionId = turn?.session_id ?? threadId;
     if (
       expected &&
       (!target ||
@@ -281,7 +366,9 @@ export class ChatSendPipeline {
     });
     if (result.state === "stale") return false;
     if (!result.ok && result.state !== "missing") {
-      throw new Error(`Codex interrupt was not accepted (${result.state}).`);
+      throw new Error(
+        `${agentName(turn?.runtime)} interrupt was not accepted (${result.state}).`,
+      );
     }
     if (
       target &&
@@ -328,13 +415,8 @@ export class ChatSendPipeline {
       throw new Error("Chat is not ready.");
     }
     const allRows = rows(this.options.db);
-    const configRow = threadConfig(allRows, threadId);
-    if (
-      !configRow ||
-      (configRow.agent_kind !== "acp" && configRow.acp_config == null)
-    ) {
-      throw new Error("The selected thread is not an existing Codex thread.");
-    }
+    const configRow = agentThreadConfig(allRows, threadId);
+    const turn = agentTurn(allRows, configRow, this.options.path);
     const previous = latestThreadMessage(allRows, threadId);
     const date = this.nextDate(allRows);
     const messageId = this.id();
@@ -357,29 +439,20 @@ export class ChatSendPipeline {
     this.commitOrThrow();
     await this.options.db.save();
 
-    const sessionId = inferSessionId(allRows, threadId) ?? threadId;
+    const sessionId = turn.session_id ?? threadId;
     const assistantMessageId = this.id();
     const assistantDate = this.nextDate([...allRows, message]);
-    const senderId = configRow.agent_model || "openai-codex-agent";
     const request: AcpRequest = {
       project_id: this.options.project_id,
       account_id: this.options.account_id,
       prompt: text,
-      session_id: sessionId,
-      config: buildCodexAcpConfig({
-        path: this.options.path,
-        config: {
-          ...sharedCodexThreadConfig(configRow.acp_config),
-          ...(inferSessionId(allRows, threadId)
-            ? { sessionId: inferSessionId(allRows, threadId) }
-            : {}),
-        },
-        model: normalizeCodexMention(configRow.agent_model),
-      }),
+      session_id: turn.session_id,
+      // Admission picks the account's payment selection for either runtime.
+      ...(turn.runtime ? { runtime: turn.runtime } : { config: turn.config }),
       chat: buildAcpChatContext({
         project_id: this.options.project_id,
         path: this.options.path,
-        sender_id: senderId,
+        sender_id: turn.sender_id,
         user_message_date: date.toISOString(),
         user_message_content: text,
         user_parent_message_id: previous?.message_id,
@@ -397,6 +470,8 @@ export class ChatSendPipeline {
           }),
       }),
     };
+    // Which context the turn belongs to, so a clear made meanwhile is honored.
+    Object.assign(request.chat!, turn.context);
 
     let acknowledged = false;
     try {
@@ -429,7 +504,9 @@ export class ChatSendPipeline {
           }
           break;
         } catch (error) {
+          // Like the web app, a harness turn is never resubmitted blindly.
           if (
+            turn.runtime ||
             attempt >= this.options.ackMaxAttempts ||
             !isRetryableAcpAckError(error)
           ) {
@@ -471,13 +548,8 @@ export class ChatSendPipeline {
   }): Promise<{ message_id: string; thread_id: string }> {
     if (!this.options.db.isReady()) throw new Error("Chat is not ready.");
     const allRows = rows(this.options.db);
-    const configRow = threadConfig(allRows, threadId);
-    if (
-      !configRow ||
-      (configRow.agent_kind !== "acp" && configRow.acp_config == null)
-    ) {
-      throw new Error("The selected thread is not an existing Codex thread.");
-    }
+    const configRow = agentThreadConfig(allRows, threadId);
+    const turn = agentTurn(allRows, configRow, this.options.path);
     const active = [...allRows]
       .filter(
         (row) =>
@@ -488,7 +560,9 @@ export class ChatSendPipeline {
       .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
       .at(-1) as MutableChatMessage | undefined;
     if (!active) {
-      throw new Error("Codex is no longer running; send a new turn instead.");
+      throw new Error(
+        `${agentName(turn.runtime)} is no longer running; send a new turn instead.`,
+      );
     }
 
     const date = this.nextDate(allRows);
@@ -513,27 +587,18 @@ export class ChatSendPipeline {
     this.commitOrThrow();
     await this.options.db.save();
 
-    const sessionId = inferSessionId(allRows, threadId) ?? threadId;
     const assistantMessageId = this.id();
     const assistantDate = this.nextDate([...allRows, message]);
-    const senderId = configRow.agent_model || "openai-codex-agent";
     const request: AcpSteerRequest = {
       project_id: this.options.project_id,
       account_id: this.options.account_id,
       prompt: text,
-      session_id: sessionId,
-      config: buildCodexAcpConfig({
-        path: this.options.path,
-        config: {
-          ...sharedCodexThreadConfig(configRow.acp_config),
-          sessionId,
-        },
-        model: normalizeCodexMention(configRow.agent_model),
-      }),
+      session_id: turn.session_id,
+      ...(turn.runtime ? { runtime: turn.runtime } : { config: turn.config }),
       chat: buildAcpChatContext({
         project_id: this.options.project_id,
         path: this.options.path,
-        sender_id: senderId,
+        sender_id: turn.sender_id,
         user_message_date: date.toISOString(),
         user_message_content: text,
         user_parent_message_id: active.message_id,
@@ -552,11 +617,14 @@ export class ChatSendPipeline {
           }),
       }),
     };
+    Object.assign(request.chat!, turn.context);
 
     try {
       const response = await this.transport.steer(request);
       if (!response.ok || response.state === "missing") {
-        throw new Error(`Codex guidance was not accepted (${response.state}).`);
+        throw new Error(
+          `${agentName(turn.runtime)} guidance was not accepted (${response.state}).`,
+        );
       }
       this.updateMessageState(
         message,

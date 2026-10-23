@@ -390,4 +390,119 @@ describe("ChatSendPipeline", () => {
       }),
     );
   });
+
+  describe("Claude Code agents", () => {
+    const claudeRuntime = {
+      version: 1,
+      kind: "acp",
+      profile: {
+        version: 2,
+        kind: "acp",
+        id: "claude-code",
+        revision: "0.93.0",
+        cwd: "/home/user",
+        executionPolicy: "full-access",
+        credentialMode: "project-managed",
+      },
+    };
+    function claudeDb(events: string[]) {
+      const db = fakeDb(events);
+      Object.assign(db.rows[0], {
+        agent_model: "acp-harness",
+        acp_config: undefined,
+        agent_runtime: claudeRuntime,
+        agent_session_id: "claude-session-1",
+      });
+      db.rows[1].sender_id = "acp-harness";
+      return db;
+    }
+
+    it("sends the harness runtime and its native session, never Codex config", async () => {
+      let request: any;
+      const transport: ChatSendTransport = {
+        stream: async function* (value) {
+          request = value;
+          yield { seq: 0, type: "status", state: "queued" };
+        },
+        interrupt: jest.fn(),
+        steer: jest.fn(),
+      };
+      await pipeline({ db: claudeDb([]), transport }).send({
+        thread_id: "thread-1",
+        text: "hello Claude",
+      });
+      expect(request.runtime.profile.id).toBe("claude-code");
+      expect(request.config).toBeUndefined();
+      // The account's payment selection is applied at admission.
+      expect(request.harness_credential).toBeUndefined();
+      expect(request.session_id).toBe("claude-session-1");
+      expect(request.chat.sender_id).toBe("acp-harness");
+    });
+
+    it("does not resubmit a harness turn whose acknowledgement is missing", async () => {
+      let attempts = 0;
+      const transport: ChatSendTransport = {
+        stream: async function* () {
+          attempts += 1;
+        },
+        interrupt: jest.fn(async () => ({ ok: true, state: "missing" })),
+        steer: jest.fn(),
+      };
+      const db = claudeDb([]);
+      await expect(
+        pipeline({ db, transport, sleep: async () => undefined }).send({
+          thread_id: "thread-1",
+          text: "only once",
+        }),
+      ).rejects.toThrow("without acknowledgement");
+      expect(attempts).toBe(1);
+      expect(transport.interrupt).not.toHaveBeenCalled();
+      expect(
+        db.rows.find((row) => row.message_id === "user-message")?.acp_state,
+      ).toBe("not-sent");
+    });
+
+    it("steers a running Claude turn with its runtime", async () => {
+      const db = claudeDb([]);
+      db.rows.push({
+        event: "chat",
+        sender_id: "acp-harness",
+        date: "2026-01-01T00:00:03.000Z",
+        message_id: "running-message",
+        thread_id: "thread-1",
+        generating: true,
+        history: [],
+      });
+      let request: any;
+      const transport: ChatSendTransport = {
+        stream: async function* () {},
+        interrupt: jest.fn(),
+        steer: jest.fn(async (value) => {
+          request = value;
+          return { ok: true, state: "steered" };
+        }),
+      };
+      await pipeline({ db, transport }).sendGuidance({
+        thread_id: "thread-1",
+        text: "also check the tests",
+      });
+      expect(request.runtime.profile.id).toBe("claude-code");
+      expect(request.config).toBeUndefined();
+      expect(request.session_id).toBe("claude-session-1");
+    });
+
+    it("rejects an unknown runtime instead of running it as Codex", async () => {
+      const db = claudeDb([]);
+      db.rows[0].agent_runtime = { version: 1, kind: "acp", profile: {} };
+      const transport: ChatSendTransport = {
+        stream: jest.fn() as any,
+        interrupt: jest.fn(),
+        steer: jest.fn(),
+      };
+      await expect(
+        pipeline({ db, transport }).send({ thread_id: "thread-1", text: "hi" }),
+      ).rejects.toThrow();
+      expect(transport.stream).not.toHaveBeenCalled();
+    });
+  });
 });
