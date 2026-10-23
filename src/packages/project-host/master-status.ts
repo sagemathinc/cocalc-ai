@@ -405,8 +405,12 @@ async function sendProjectStateToMaster(
 
 setProjectStateReporter(reportProjectStateToMaster);
 
-export function queueProvisionedInventory(project_ids: string[]) {
-  const checked_at = Date.now();
+// `checked_at`: when the listing of `project_ids` began (a project restored
+// while it ran is newer than what the master answers about it).
+export function queueProvisionedInventory(
+  project_ids: string[],
+  checked_at = Date.now(),
+) {
   pendingInventory = { project_ids, checked_at };
   reportProvisionedInventory().catch((err) =>
     logger.debug("reportProvisionedInventory failed", { err }),
@@ -431,6 +435,7 @@ export function startProvisionedInventoryReporter({
     if (closed || running) return;
     running = true;
     try {
+      const checked_at = Date.now();
       const listed = await bootstrapProjectIds();
       if (listed == null) return;
       const project_ids = Array.from(
@@ -440,7 +445,7 @@ export function startProvisionedInventoryReporter({
             .filter(Boolean),
         ),
       );
-      queueProvisionedInventory(project_ids);
+      queueProvisionedInventory(project_ids, checked_at);
     } catch (err) {
       logger.warn("provisioned inventory bootstrap skipped", {
         err: `${err}`,
