@@ -38,6 +38,7 @@ describe("assertSnapshotRestoreAllowed", () => {
     // (it can't tell a files-only snapshot from one with the history)
     for (const message of [
       "unknown service method 'checkSnapshotRestore'",
+      "checkSnapshotRestore not defined",
       "impl[mesg.name] is not a function",
     ]) {
       const c = client(async () => {
