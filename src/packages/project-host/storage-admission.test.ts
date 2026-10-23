@@ -9,10 +9,15 @@ describe("storage admission controller", () => {
   // Most tests here are about how pressure is classified and what each
   // state admits, so they take every sample as a state sample and escalate
   // on one (the hysteresis has its own tests below, with the defaults).
-  const immediate = { contendedSamples: 1, minStateSampleMs: 0 };
+  const immediate = {
+    contendedSamples: 1,
+    minStateSampleMs: 0,
+    escalationMs: 0,
+  };
   let now = 1_000_000;
   let full = 0;
   let full60: number | undefined = undefined;
+  let failRead = false;
   let starting = 0;
   let stopping = 0;
 
@@ -25,16 +30,19 @@ describe("storage admission controller", () => {
       ...extra,
       mode,
       now: () => now,
-      readInputs: () => ({
-        sampled_at_ms: now,
-        host_io_full_avg10: full,
-        project_pool_io_full_avg10: full / 2,
-        ...(full60 == null ? {} : { host_io_full_avg60: full60 }),
-        starting_projects: starting,
-        stopping_projects: stopping,
-        btrfs_mutation_locks: 0,
-        btrfs_mutation_waiters: 0,
-      }),
+      readInputs: () => {
+        if (failRead) throw new Error("PSI read failed");
+        return {
+          sampled_at_ms: now,
+          host_io_full_avg10: full,
+          project_pool_io_full_avg10: full / 2,
+          ...(full60 == null ? {} : { host_io_full_avg60: full60 }),
+          starting_projects: starting,
+          stopping_projects: stopping,
+          btrfs_mutation_locks: 0,
+          btrfs_mutation_waiters: 0,
+        };
+      },
       recoveryMs: 60_000,
     });
 
@@ -42,6 +50,7 @@ describe("storage admission controller", () => {
     now = 1_000_000;
     full = 0;
     full60 = undefined;
+    failRead = false;
     starting = 0;
     stopping = 0;
   });
@@ -64,7 +73,11 @@ describe("storage admission controller", () => {
   describe("hysteresis (the defaults)", () => {
     // what prod runs: samples >= 4 s apart, 2 of them per escalation
     const gate = () =>
-      create("enforce", { contendedSamples: 2, minStateSampleMs: 4_000 });
+      create("enforce", {
+        contendedSamples: 2,
+        minStateSampleMs: 4_000,
+        escalationMs: 10_000,
+      });
 
     it("does not flip on a single burst, however many operations ask meanwhile", () => {
       // 2026-10-23: montreal-2 flipped 128 times in 30 min on SQLite
@@ -93,7 +106,9 @@ describe("storage admission controller", () => {
 
     it("still gates sustained pressure: contended, then emergency", () => {
       const controller = gate();
+      // seen at 0, 5 and 10 s: escalates at 10 s
       full = 6;
+      expect(tick(controller)).toBe("normal");
       expect(tick(controller)).toBe("normal");
       expect(tick(controller)).toBe("contended");
       expect(
@@ -101,12 +116,14 @@ describe("storage admission controller", () => {
       ).toMatchObject({ admitted: false, reason: "io_pressure_contended" });
       full = 12;
       expect(tick(controller)).toBe("contended");
+      expect(tick(controller)).toBe("contended");
       expect(tick(controller)).toBe("emergency");
     });
 
     it("escalates again from recovery only on sustained pressure", () => {
       const controller = gate();
       full = 6;
+      tick(controller);
       tick(controller);
       expect(tick(controller)).toBe("contended");
       full = 1;
@@ -119,6 +136,7 @@ describe("storage admission controller", () => {
       // sustained: contended
       full = 8;
       expect(tick(controller)).toBe("recovery");
+      expect(tick(controller)).toBe("recovery");
       expect(tick(controller)).toBe("contended");
     });
 
@@ -129,12 +147,54 @@ describe("storage admission controller", () => {
       full = 8;
       expect(tick(controller)).toBe("normal");
       full = 0;
+      expect(tick(controller)).toBe("normal");
+      full = 8;
       expect(tick(controller)).toBe("contended");
+      full = 0;
       // held while the 60 s average is still up
       expect(tick(controller)).toBe("contended");
       full60 = 3;
       expect(tick(controller)).toBe("recovery");
       expect(tick(controller)).toBe("recovery");
+    });
+
+    it("needs 10 s of pressure whatever the phase of the samples", () => {
+      // @review: pressure starting just before an eligible sample, with
+      // admission checks every 4 s, escalated after ~4 s on sample count
+      // alone.
+      const controller = gate();
+      full = 12;
+      now += 4_000;
+      expect(controller.sample().pressure_state).toBe("normal");
+      for (const at of [4_000, 8_000]) {
+        now = 1_004_000 + at;
+        controller.admit({ operation_kind: "interactive_backup" });
+        expect(controller.getStatus().pressure_state).toBe("normal");
+      }
+      now = 1_004_000 + 10_000;
+      // (not a state sample yet: 2 s after the last one)
+      expect(controller.sample().pressure_state).toBe("normal");
+      now = 1_004_000 + 12_000;
+      expect(controller.sample().pressure_state).toBe("emergency");
+    });
+
+    it("does not count a failed read as a sample", () => {
+      const controller = gate();
+      full = 12;
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      // (were it counted, with the previous values, this would be the
+      // third sample, 10 s on: emergency)
+      failRead = true;
+      expect(tick(controller)).toBe("normal");
+      // background work stays deferred meanwhile
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, reason: "io_pressure_unavailable" });
+      failRead = false;
+      full = 1;
+      expect(tick(controller)).toBe("normal");
+      expect(controller.getStatus().transition_count).toBe(0);
     });
 
     it("keeps lifecycle gating fresh between state samples", () => {

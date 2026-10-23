@@ -59,6 +59,9 @@ const DEFAULT_CONTENDED_SAMPLES = 2;
 // least this far apart move the pressure state. Below the 5 s timer, for its
 // jitter.
 const DEFAULT_MIN_STATE_SAMPLE_MS = 4_000;
+// And at least this long since the first of those samples: the count alone
+// depends on when the samples fall (the timer's phase, admission checks).
+const DEFAULT_ESCALATION_MS = 10_000;
 // Disk activity is compared over at least this long (maintenance stalls on
 // idle disks), not over the milliseconds between two admission checks.
 const MIN_DISK_ACTIVITY_INTERVAL_MS = 1_000;
@@ -125,6 +128,7 @@ type StorageAdmissionControllerOptions = {
   recoverySnapshotIntervalMs?: number;
   contendedSamples?: number;
   minStateSampleMs?: number;
+  escalationMs?: number;
   backgroundQuietMs?: number;
   onPressureStateChange?: (state: HostStoragePressureState) => void;
 };
@@ -458,6 +462,12 @@ export function createStorageAdmissionController(
       process.env.COCALC_PROJECT_HOST_STORAGE_IO_MIN_STATE_SAMPLE_MS,
       DEFAULT_MIN_STATE_SAMPLE_MS,
     );
+  const escalationMs =
+    options.escalationMs ??
+    finiteNonNegative(
+      process.env.COCALC_PROJECT_HOST_STORAGE_IO_ESCALATION_MS,
+      DEFAULT_ESCALATION_MS,
+    );
   const backgroundQuietMs =
     options.backgroundQuietMs ??
     positiveInteger(
@@ -469,6 +479,9 @@ export function createStorageAdmissionController(
   let stateSince = now();
   let consecutiveContended = 0;
   let consecutiveEmergency = 0;
+  // when the current run of samples at/above each threshold began
+  let contendedSince: number | undefined;
+  let emergencySince: number | undefined;
   let lastStateSampleAt: number | undefined;
   let recoveryHealthySince: number | undefined;
   let transitionCount = 0;
@@ -552,17 +565,31 @@ export function createStorageAdmissionController(
     // It also holds contended/emergency until it is down too, so the gate
     // does not bounce between recovery and contended while it decays.
     const pressure = Math.max(full, effectiveIoFullAvg60(inputs) ?? 0);
-    consecutiveEmergency =
-      pressure >= emergencyFullAvg10 ? consecutiveEmergency + 1 : 0;
-    consecutiveContended =
-      pressure >= contendedFullAvg10 ? consecutiveContended + 1 : 0;
-    if (consecutiveEmergency >= contendedSamples) {
+    if (pressure >= emergencyFullAvg10) {
+      consecutiveEmergency += 1;
+      emergencySince ??= at;
+    } else {
+      consecutiveEmergency = 0;
+      emergencySince = undefined;
+    }
+    if (pressure >= contendedFullAvg10) {
+      consecutiveContended += 1;
+      contendedSince ??= at;
+    } else {
+      consecutiveContended = 0;
+      contendedSince = undefined;
+    }
+    const sustained = (count: number, since: number | undefined) =>
+      count >= contendedSamples && since != null && at - since >= escalationMs;
+    const emergencySustained = sustained(consecutiveEmergency, emergencySince);
+    const contendedSustained = sustained(consecutiveContended, contendedSince);
+    if (emergencySustained) {
       recoveryHealthySince = undefined;
       transition("emergency", "io_full_emergency", at);
       return;
     }
     if (pressureState === "normal") {
-      if (consecutiveContended >= contendedSamples) {
+      if (contendedSustained) {
         transition("contended", "io_full_contended", at);
       }
       return;
@@ -576,7 +603,7 @@ export function createStorageAdmissionController(
       }
       return;
     }
-    if (consecutiveContended >= contendedSamples) {
+    if (contendedSustained) {
       recoveryHealthySince = undefined;
       transition("contended", "io_pressure_recurred", at);
       return;
@@ -672,16 +699,20 @@ export function createStorageAdmissionController(
   };
 
   const sample = (): HostStorageAdmissionMetrics => {
+    let read = true;
     try {
       lastInputs = readInputs();
     } catch (err) {
+      // (background work stays deferred on the error; the previous
+      // pressure values must not count as a new sample)
+      read = false;
       lastInputs = {
         ...lastInputs,
         sampled_at_ms: now(),
         error: `${err}`,
       };
     }
-    updateState(lastInputs);
+    if (read) updateState(lastInputs);
     if (lastInputs.starting_projects + lastInputs.stopping_projects > 0) {
       lastLifecycleActiveAt = lastInputs.sampled_at_ms;
     }

@@ -1684,6 +1684,7 @@ describe("snapshot-backup-maintenance", () => {
         // hysteresis is storage-admission.test.ts's)
         contendedSamples: 1,
         minStateSampleMs: 0,
+        escalationMs: 0,
         recoveryFullAvg10: 1,
         recoveryRequiresQuietLifecycle: true,
         recoverySnapshotIntervalMs: 0,
@@ -1789,6 +1790,7 @@ describe("snapshot-backup-maintenance", () => {
         mode: "enforce",
         contendedSamples: 1,
         minStateSampleMs: 0,
+        escalationMs: 0,
         readInputs: () => ({
           sampled_at_ms: Date.now(),
           host_io_full_avg10: full,
