@@ -11,6 +11,7 @@ import {
   getProjectFileServerClient,
 } from "@cocalc/server/conat/file-server-client";
 import { getProject } from "@cocalc/server/projects/control";
+import { assertSnapshotRestoreAllowed } from "@cocalc/server/projects/snapshot-restore-check";
 import {
   assertCanStartUsingRuntimeSponsor,
   loadProjectRuntimeSponsor,
@@ -314,6 +315,8 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
       if (!["both", "home", "rootfs"].includes(mode)) {
         throw new Error(`invalid snapshot restore mode: ${mode}`);
       }
+      // before the project is stopped
+      await assertSnapshotRestoreAllowed({ client, project_id, mode });
       const safetySnapshotName =
         input.safety_snapshot_name ?? defaultSafetySnapshotName(snapshot);
       const restoreImage = await getSnapshotRestoreImage({

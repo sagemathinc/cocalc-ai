@@ -7,6 +7,29 @@ import {
   type AgentIdentity,
 } from "@cocalc/conat/agents/protocol";
 
+// Runs an agent may hold at once. Ended and expired runs do not count: a
+// busy agent starts thousands of turns a day and must not be locked out by
+// its past.
+export const MAX_LIVE_RUNS_PER_AGENT = 10_000;
+// Run history kept for an agent (maintenance removes runs 30 days after they
+// end). This bounds rows from issuing and ending runs in a loop, far above
+// the ~60k a month of the busiest real agent.
+export const MAX_RETAINED_RUNS_PER_AGENT = 250_000;
+const RUN_COUNTS_SQL = `SELECT count(*) FILTER (WHERE ended_at IS NULL AND expires_at>now()) AS live,
+  count(*) AS retained FROM agent_identity_runs WHERE agent_id=$1`;
+
+function runCapacity(row: {
+  live: string | number;
+  retained: string | number;
+}) {
+  const liveFull = +row.live >= MAX_LIVE_RUNS_PER_AGENT;
+  return {
+    liveFull,
+    // A new run adds a live row and a retained row.
+    full: liveFull || +row.retained >= MAX_RETAINED_RUNS_PER_AGENT,
+  };
+}
+
 export function agentMessagingEnabled(): boolean {
   return true;
 }
@@ -127,32 +150,31 @@ export class AgentStore {
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           `agent-runs:${agent.agent_id}`,
         ]);
+        const capacity = runCapacity(
+          (await db.query(RUN_COUNTS_SQL, [agent.agent_id])).rows[0],
+        );
         // A recovery may have committed even if its response was lost. Retrying
         // the exact old/new run pair renews that replacement instead of
-        // permanently wedging the worker on an unknown outcome.
+        // permanently wedging the worker on an unknown outcome. A replacement
+        // that has itself expired is no longer live: reviving it needs a live
+        // slot, but no retained one, since its row already exists.
         const retried = await db.query(
           `UPDATE agent_identity_runs replacement
            SET token_hash=$4,expires_at=$5,
              thread_id=COALESCE(replacement.thread_id,$7)
            WHERE replacement.agent_id=$1 AND replacement.run_id=$2
              AND replacement.account_id=$3 AND replacement.ended_at IS NULL
+             AND (replacement.expires_at>now() OR NOT $8::boolean)
              AND EXISTS (
                SELECT 1 FROM agent_identity_runs expired
                WHERE expired.agent_id=$1 AND expired.run_id=$6
                  AND expired.account_id=$3 AND expired.ended_at IS NOT NULL
              )
            RETURNING replacement.run_id`,
-          [...values, recoverExpiredRunId, agent.thread_id],
+          [...values, recoverExpiredRunId, agent.thread_id, capacity.liveFull],
         );
         if (retried.rows[0]) return 1;
-        const count = (
-          await db.query(
-            "SELECT count(*) AS count FROM agent_identity_runs WHERE agent_id=$1",
-            [agent.agent_id],
-          )
-        ).rows[0];
-        if (+count.count >= 10_000)
-          throw new Error("agent_identity_run_capacity");
+        if (capacity.full) throw new Error("agent_identity_run_capacity");
         const recovered = await db.query(
           `UPDATE agent_identity_runs SET ended_at=now()
            WHERE agent_id=$1 AND run_id=$2 AND account_id=$3
@@ -189,13 +211,11 @@ export class AgentStore {
           )
         ).rows[0];
         if (!existing) {
-          const count = (
-            await db.query(
-              "SELECT count(*) AS count FROM agent_identity_runs WHERE agent_id=$1",
-              [agent.agent_id],
-            )
-          ).rows[0];
-          if (+count.count >= 10_000)
+          if (
+            runCapacity(
+              (await db.query(RUN_COUNTS_SQL, [agent.agent_id])).rows[0],
+            ).full
+          )
             throw new Error("agent_identity_run_capacity");
         }
         return (

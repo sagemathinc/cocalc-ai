@@ -409,6 +409,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         );
         return result(message.id, { stopReason: "end_turn" });
       }
+      if (process.argv.includes("--echo-prompt-start")) {
+        // What the prompt starts with, as sent (before any stripping).
+        update(rawText.split("\n")[0]);
+        return result(message.id, { stopReason: "end_turn" });
+      }
       if (text === "turn-context") {
         const contextLine = rawText
           .split("\n")

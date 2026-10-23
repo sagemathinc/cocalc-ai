@@ -111,7 +111,7 @@ type LegacyProjectArchiveDeps = {
   projectMountpoint: (project_id: string) => string;
   createWritableSnapshot: (source: string, dest: string) => Promise<void>;
   // a read-only snapshot in the project's ~/.snapshots of its home or a
-  // snapshot of it, with its edit history as in every snapshot there
+  // snapshot of it (the files only, as every snapshot there)
   createProjectSnapshot: (opts: {
     project_id: string;
     source: string;

@@ -28,6 +28,10 @@ import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
 import { CLAUDE_CODE_INSTALL_ROOT } from "@cocalc/util/ai/qualified-harnesses";
 import { claudeCodeToolsDir } from "./claude-code-tools";
+import {
+  getSessionInstructionsVersion,
+  setSessionInstructionsVersion,
+} from "@cocalc/lite/hub/sqlite/acp-session-instructions";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getNodeRuntimeMounts } from "@cocalc/project-runner/run/mounts";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
@@ -633,6 +637,12 @@ ${skill}
       );
     return {
       systemPromptAppend,
+      // A resumed session keeps the instructions it started with; this
+      // records which, so newer ones go with its next turn.
+      sessionInstructions: {
+        get: getSessionInstructionsVersion,
+        set: setSessionInstructionsVersion,
+      },
       projectToolServerName: CLAUDE_PROJECT_MCP_NAME,
       releaseToolWaits: toolBridge
         ? () => toolBridge!.releaseWaits()

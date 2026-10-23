@@ -1739,6 +1739,7 @@ describe("host reads across bays", () => {
   // A host on the attached bay, owned by alice (homed on the seed): reading
   // its log runs on the host's bay, which records the forwarded call.
   const host_id = randomUUID();
+  let startOp; // the start queued below, on the host's bay
   const forwardedReads = async () =>
     await runInBay(
       cluster,
@@ -1906,6 +1907,7 @@ describe("host reads across bays", () => {
     const before = await forwarded();
     const op = await alice.client.call("hosts.startHost", { id: host_id });
     assert.ok(op?.op_id, "a start operation was queued");
+    startOp = op;
     assert.equal(await forwarded(), before + 1);
     const queuedOn = await runInBay(
       cluster,
@@ -1954,6 +1956,50 @@ describe("host reads across bays", () => {
        return rows[0]?.kind ?? null;`,
     );
     assert.equal(queuedOn, "host-stop");
+  });
+
+  it("reads and waits for a host's operation on the host's bay", async () => {
+    // The fleet rollout queues operations on hosts of any bay and waits for
+    // them: their summaries are read on the host's bay (lro.get and lro.list
+    // naming the host are routed there).
+    assert.ok(startOp, "needs the start queued above");
+    const scope = { scope_type: "host", scope_id: host_id };
+    const read = await alice.client.call("lro.get", {
+      op_id: startOp.op_id,
+      ...scope,
+    });
+    assert.equal(read?.op_id, startOp.op_id);
+    // Not named, the scope is unknown: the seed has no such operation.
+    assert.equal(
+      (await alice.client.call("lro.get", { op_id: startOp.op_id })) ?? null,
+      null,
+    );
+    const listed = await alice.client.call("lro.list", {
+      ...scope,
+      include_completed: true,
+    });
+    assert.ok(listed.some(({ op_id }) => op_id === startOp.op_id));
+    // A wait from the seed sees it finish (or be canceled by the stop above:
+    // this host has no cloud provider, so it cannot succeed).
+    const done = await runInBay(
+      cluster,
+      SEED,
+      `const { conat } = require("@cocalc/backend/conat");
+       const { waitForHostLro } = server("conat/api/hosts-routed.js");
+       const summary = await waitForHostLro({
+         account_id: ${JSON.stringify(alice.account_id)},
+         op: ${JSON.stringify({ op_id: startOp.op_id, scope_type: "host", scope_id: host_id })},
+         client: conat(),
+         timeout_ms: 90_000,
+       });
+       return { op_id: summary.op_id, status: summary.status };`,
+      { timeoutMs: 120_000 },
+    );
+    assert.equal(done.op_id, startOp.op_id);
+    assert.ok(
+      ["succeeded", "failed", "canceled", "expired"].includes(done.status),
+      JSON.stringify(done),
+    );
   });
 });
 

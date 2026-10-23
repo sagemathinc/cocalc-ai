@@ -243,8 +243,8 @@ import {
   withProjectStorageFenced,
   restoreBackupWithHistory,
   restoredHistoryCandidates,
+  assertHomeSnapshotRestoreAllowed,
   snapshotNeedsPersistVolume,
-  snapshotWithHistory,
   syncPersistVolumeQuota,
   persistVolumePath,
 } from "./persist-volume";
@@ -467,7 +467,10 @@ const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
   projectMountpoint,
   createWritableSnapshot: async (source, dest) =>
     await btrfsSnapshotWritable({ source, dest }),
-  createProjectSnapshot: snapshotWithHistory,
+  // the files only, as every snapshot in ~/.snapshots (subvolume-snapshots.ts)
+  createProjectSnapshot: async ({ source, dest }) => {
+    await btrfs({ args: ["subvolume", "snapshot", "-r", source, dest] });
+  },
   deleteSubvolumeTree,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -1373,17 +1376,27 @@ export async function deleteVolume(
     reportProvisioned?: boolean;
     expected_archive_backup_id?: string;
     expected_archive_generation?: number;
+    // Asked once every lock the deletion takes is held (the lifecycle lock,
+    // then the persist lock a restore installs a home under), so no restore
+    // can come between: why the deletion no longer applies, if it doesn't
+    // (then nothing is deleted, and that reason is returned).
+    superseded?: () => string | undefined;
   } = {},
-) {
+): Promise<{ superseded?: string }> {
   if (fs == null) {
     throw Error("file server not initialized");
   }
-  invalidateProjectVolumeLifecycle(project_id);
-  await withProjectVolumeLifecycleLock(project_id, async () =>
-    // Nothing may have the project's history open while its storage goes
-    // (persist-volume.ts): streams of it close, and clients start over if
-    // it comes back (e.g., restored from an archive).
+  // Nothing may have the project's history open while its storage goes
+  // (persist-volume.ts): streams of it close, and clients start over if
+  // it comes back (e.g., restored from an archive).
+  let superseded: string | undefined;
+  const deleteFenced = () =>
     withProjectStorageFenced({ project_id, reason: "delete" }, async () => {
+      if (opts.superseded != null) {
+        superseded = opts.superseded();
+        if (superseded != null) return;
+        invalidateProjectVolumeLifecycle(project_id);
+      }
       const deleteIfExists = async ({
         name,
         volume_kind,
@@ -1489,12 +1502,23 @@ export async function deleteVolume(
       deleteProjectVolumeQuotas(project_id);
       deleteProjectVolumeQuotaOverrides(project_id);
       invalidateProjectFsServer(project_id);
-    }),
-  );
+    });
+  if (opts.superseded == null) {
+    invalidateProjectVolumeLifecycle(project_id);
+  }
+  await withProjectVolumeLifecycleLock(project_id, async () => {
+    // (first without the fence, which would disturb a project running here)
+    superseded = opts.superseded?.();
+    if (superseded == null) await deleteFenced();
+  });
+  if (superseded != null) {
+    return { superseded };
+  }
   if (opts.reportProvisioned !== false) {
     queueProjectProvisioned(project_id, false);
   }
   await deleteBackupIndexCache(project_id);
+  return {};
 }
 
 export async function releaseProjectArchiveFreeze(
@@ -2989,11 +3013,8 @@ async function createPathCopyArchive({
   let uncompressed_bytes = 0;
   let snapshotCreated = false;
   try {
-    // only read from, then deleted: no edit history needed
-    await volume.snapshots.create(snapshot, {
-      quotaMode: "skip",
-      includePreparedData: false,
-    });
+    // only read from, then deleted
+    await volume.snapshots.create(snapshot, { quotaMode: "skip" });
     snapshotCreated = true;
     for (const root of roots) {
       // The source path is the project user's, and so is the .snapshots
@@ -3363,6 +3384,7 @@ async function restoreSnapshot({
   if (!["both", "home", "rootfs"].includes(mode)) {
     throw new Error(`invalid snapshot restore mode: ${mode}`);
   }
+  assertHomeSnapshotRestoreAllowed({ project_id, mode });
   const home = projectMountpoint(project_id);
   const rootfsPath = join(home, PROJECT_IMAGE_PATH);
   const staged = await createSnapshotRestoreClone({ project_id, snapshot });
@@ -6052,6 +6074,8 @@ export async function initFileServer({
     allSnapshotUsage,
     getSnapshotFileText: reuseInFlight(getSnapshotFileText),
     restoreSnapshot: reuseInFlight(restoreSnapshot),
+    checkSnapshotRestore: async ({ project_id, mode = "both" }) =>
+      assertHomeSnapshotRestoreAllowed({ project_id, mode }),
     publishRootfsImage: reuseInFlight(publishRootfsImage),
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });

@@ -158,6 +158,13 @@ export function create_key_handler(
 
     if (cmd != null) {
       last_evt = undefined;
+      // Like the menus: a read-only notebook runs only read-only safe
+      // commands.  This includes a notebook whose initial source has not
+      // settled (a customer report), where e.g. undo would change the
+      // live notebook before its file is loaded.
+      if (jupyter_actions.store.get("read_only") && !cmd.val.r) {
+        return false;
+      }
       cmd.val.f();
       return false;
     }

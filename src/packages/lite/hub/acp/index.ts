@@ -132,6 +132,7 @@ import {
   CONTEXT_NOT_SYNCED_ERROR,
   contextStamp,
   preferredThreadConfigRecord,
+  sharedCodexThreadConfig,
   threadConfigRowRank,
   storedSessionInContext,
   threadContext,
@@ -12421,6 +12422,9 @@ async function deliverAsyncAttentionAnswer(
       if (typeof config?.toJS === "function") {
         config = config.toJS();
       }
+      // The account's payment selection picks the subscription, not shared
+      // thread config.
+      config = sharedCodexThreadConfig(config);
       // A session an old-context turn saved after the latest clear is not this
       // context's: the generation keys a fresh one.
       if (!storedSession) config = { ...config, sessionId: undefined };
