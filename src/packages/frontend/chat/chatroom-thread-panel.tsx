@@ -30,9 +30,9 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ChatReaderView } from "./reader-view";
 import {
-  isOpenAttention,
   readerItemAttention,
   readerItemThreadIndex,
+  readerItemWaitsFor,
   readerItemWorking,
 } from "./reader-item-log";
 import { readerItems, type ReaderItem } from "./reader-model";
@@ -3132,8 +3132,8 @@ export function ChatRoomThreadPanel({
             itemBadges={(item: ReaderItem) => (
               <ReaderItemBadges
                 working={readerItemWorking(item, readerRunningMessage)}
-                question={(readerAttention.get(item.id) ?? []).some(
-                  isOpenAttention,
+                waitsFor={readerItemWaitsFor(
+                  readerAttention.get(item.id) ?? [],
                 )}
               />
             )}
@@ -3297,16 +3297,20 @@ function renderOptionWithDescription({
 /** The list row's marks for an item: its turn is running, or asks you. */
 function ReaderItemBadges({
   working,
-  question,
+  waitsFor,
 }: {
   working: boolean;
-  question: boolean;
+  waitsFor?: "answer" | "action";
 }) {
   return (
     <>
-      {question ? (
+      {waitsFor ? (
         <span
-          aria-label="Waiting for your answer"
+          aria-label={
+            waitsFor === "answer"
+              ? "Waiting for your answer"
+              : "Waiting for your action"
+          }
           style={{
             color: UI_COLORS.warning,
             background: UI_COLORS.warningBg,
@@ -3318,7 +3322,7 @@ function ReaderItemBadges({
             flex: "none",
           }}
         >
-          Question
+          {waitsFor === "answer" ? "Question" : "Needs you"}
         </span>
       ) : null}
       {working ? (
