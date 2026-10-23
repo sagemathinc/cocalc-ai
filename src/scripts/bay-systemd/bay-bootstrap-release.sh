@@ -27,7 +27,7 @@ PUBLIC_URL=""
 PROJECT_HOST_SOFTWARE_BASE_URL=""
 DAEMON_RELOAD=1
 SITE_MASTER_KEY_PATH="/etc/cocalc/site-master-key"
-NODE_VERSION="26.2.0"
+NODE_VERSION="26.12.1"
 NVM_DIR="/opt/cocalc/nvm"
 RETAIN_RELEASES="${COCALC_BAY_RETAIN_RELEASES:-3}"
 NEEDRESTART_POLICY_PATH="${COCALC_BAY_NEEDRESTART_POLICY_PATH:-/etc/needrestart/conf.d/cocalc-bay.conf}"
@@ -70,7 +70,7 @@ Options:
   --overlay <mode>         overlay mode passed to install-scaffold
                            (default: current-cocalc for --source, rocket-bundle for --bundle)
   --no-daemon-reload       skip daemon-reload during scaffold install
-  --node-version <v>       Node.js runtime version for generated bay env (default: 26.2.0)
+  --node-version <v>       Node.js runtime version for generated bay env (default: 26.12.1)
   --nvm-dir <dir>          nvm directory for generated bay env (default: /opt/cocalc/nvm)
   --retain-releases <n>    keep newest n extracted releases after staging (default: 3)
   -h, --help               show help
