@@ -79,6 +79,23 @@ export function isOpenAttention(record: AcpAttentionRecord): boolean {
 }
 
 /**
+ * What the item waits for from the person, if anything: an answer (a
+ * question) or an action (an approval, an authorization, a login...).
+ */
+export function readerItemWaitsFor(
+  records: readonly AcpAttentionRecord[],
+): "answer" | "action" | undefined {
+  const open = records.filter(isOpenAttention);
+  if (!open.length) return undefined;
+  return open.some(
+    (record) =>
+      record.attention_kind === "question" || record.questions?.length > 0,
+  )
+    ? "answer"
+    : "action";
+}
+
+/**
  * The item holds the thread's running turn: the one the thread panel finds
  * (resolveSelectedThreadRunningCodexMessage), which sees past a stale
  * `generating` flag on a turn that has ended.
