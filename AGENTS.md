@@ -179,8 +179,8 @@ fixtures and docs.
   later does not remove the earlier text: a maintainer has to delete those
   revisions. A pushed commit message has to be reworded and force-pushed
   before merge. So get it right before posting.
-- This rule does not relax the Security Issues rules above: security-sensitive
-  findings still go through the private process.
+- This rule does not relax the Security Issues rules above: security findings
+  still follow that section.
 
 ## Docs
 
