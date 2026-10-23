@@ -52,6 +52,12 @@ beforeEach(() => {
 });
 jest.mock("@cocalc/frontend/agents/api", () => ({
   useNamedAgents: () => mockNamedAgents(),
+  namedAgentReference: (agent: any) => ({
+    version: 1,
+    naming_account_id: agent.account_id,
+    target: agent.endpoint,
+    name: agent.name,
+  }),
 }));
 const mockPreflight = jest.fn(
   async (_value: string, send: () => void | Promise<void>) => {
@@ -60,11 +66,14 @@ const mockPreflight = jest.fn(
 );
 let mockRestoreFocus: (() => void) | undefined;
 const mockFocus = jest.fn();
+let mockMentionAgents: any[] = [];
+const mockOnSelect = jest.fn();
 jest.mock("@cocalc/frontend/agents/use-agent-mentions", () => ({
   useAgentMentions: (opts: any) => (
     (mockRestoreFocus = opts.restoreFocus),
     {
-      context: { allowAgentMentions: true, onSelect: jest.fn(), states: {} },
+      agents: mockMentionAgents,
+      context: { allowAgentMentions: true, onSelect: mockOnSelect, states: {} },
       preflight: (value: string, send: () => void | Promise<void>) =>
         mockPreflight(value, send),
       ui: null,
@@ -888,6 +897,61 @@ describe("Codex question attention", () => {
       ),
     );
     view.unmount();
+  });
+
+  it("offers to resolve a typed @name, as the composer does, so the answer can be sent", async () => {
+    const sagebrush = {
+      account_id: "00000000-1000-4000-8000-000000000001",
+      name: "sagebrush",
+      endpoint: {
+        project_id: "00000000-5000-4000-8000-000000000005",
+        agent_id: "00000000-6000-4000-8000-000000000006",
+      },
+      thread_title: "Coordinator",
+      project_title: "Sagebrush",
+    };
+    mockMentionAgents = [sagebrush];
+    try {
+      const view = render(
+        <CodexAttentionCard
+          initialRecord={{
+            ...questionRecord,
+            questions: [{ ...questionRecord.questions[0], isOther: true }],
+          }}
+        />,
+      );
+      const box = screen.getByRole("textbox", {
+        name: "Custom answer for Region",
+      });
+      expect(screen.queryByRole("button", { name: /Resolve @sagebrush/ })).toBe(
+        null,
+      );
+      fireEvent.change(box, {
+        target: { value: "Yes, send it to @sagebrush." },
+      });
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Resolve @sagebrush to named agent (Coordinator / Sagebrush)",
+        }),
+      );
+      const value = (box as HTMLTextAreaElement).value;
+      expect(value).toMatch(
+        /^Yes, send it to <span class="agent-mention" data-agent-reference="[^"]+">@sagebrush<\/span>\.$/,
+      );
+      expect(mockOnSelect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "sagebrush",
+          target: sagebrush.endpoint,
+        }),
+      );
+      // Resolved, it is no longer offered.
+      expect(screen.queryByRole("button", { name: /Resolve @sagebrush/ })).toBe(
+        null,
+      );
+      view.unmount();
+    } finally {
+      mockMentionAgents = [];
+    }
   });
 
   it("checks only what the person wrote, never an agent's own choices", async () => {
