@@ -211,6 +211,8 @@ describe("master-status stale project data deletion", () => {
     reportProjectProvisionedMock.mockResolvedValue({});
     localProject = undefined;
     localProvisioning = undefined;
+    // (a deferral a previous test never used must not carry over)
+    deleteVolumeMock.mockReset();
     deleteVolumeMock.mockImplementation(async (project_id, opts) => {
       const superseded = opts?.superseded?.();
       if (superseded != null) return { superseded };
@@ -306,6 +308,30 @@ describe("master-status stale project data deletion", () => {
     await retry();
     stop();
     expect(deleted).toEqual([]);
+  });
+
+  it("keeps a deletion requested after a provisioned report the master answered late", async () => {
+    const { queueProjectProvisioned, startProvisionedInventoryReporter } =
+      await import("./master-status");
+    let answer: (value: any) => void = () => {};
+    reportProjectProvisionedMock.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    queueProjectProvisioned("p", true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    // a newer verdict: the project is not ours (e.g. it moved away)
+    reportHostProvisionedInventoryMock.mockResolvedValueOnce({
+      delete_project_ids: ["p"],
+    });
+    const stop = startProvisionedInventoryReporter({
+      bootstrapProjectIds: () => ["p"],
+    });
+    await new Promise(setImmediate);
+    // the old report's answer arrives only now
+    answer({});
+    await retry();
+    stop();
+    expect(deleted).toEqual(["p"]);
   });
 
   it("dates a deletion from its request, not from a late answer", async () => {

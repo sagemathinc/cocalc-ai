@@ -162,8 +162,19 @@ function staleDeletionSuperseded(
 }
 
 // A project now provisioned here (and accepted by the master as ours) must
-// not lose its data to a deletion requested before.
-function cancelProjectDataDeletion(project_id: string, reason: string): void {
+// not lose its data to a deletion requested before.  `requested_before`:
+// only a deletion requested before then (a late answer must not cancel a
+// newer verdict).
+function cancelProjectDataDeletion(
+  project_id: string,
+  reason: string,
+  requested_before?: number,
+): void {
+  const pending = pendingProjectDeletions.get(project_id);
+  if (pending == null) return;
+  if (requested_before != null && pending.queued_at > requested_before) {
+    return;
+  }
   if (pendingProjectDeletions.delete(project_id)) {
     logger.info("stale project data deletion canceled", {
       project_id,
@@ -594,6 +605,7 @@ async function reportProjectProvisionedToMaster(
       cancelProjectDataDeletion(
         project_id,
         "master accepted it as provisioned",
+        started,
       );
       for (const listener of projectProvisionedReportedListeners) {
         try {
