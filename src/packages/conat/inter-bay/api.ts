@@ -2598,7 +2598,6 @@ export type HostConnectionMethod =
   | "update-api-relay-usage"
   | "update-api-relay-account-usage"
   | "list"
-  | "list-host-operations"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -3274,11 +3273,6 @@ export interface InterBayHostConnectionApi {
     target_host_id: string;
     target_project_id: string;
   }) => ReturnType<Hosts["resolveProjectApiRelayTarget"]>;
-  listHostOperations: (opts: {
-    account_id?: string;
-    host_id: string;
-    include_completed?: boolean;
-  }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
   getProjectStartMetadata: (
@@ -3420,7 +3414,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "update-api-relay-account-usage",
   },
   { name: "list", method: "list" },
-  { name: "listHostOperations", method: "list-host-operations" },
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",
