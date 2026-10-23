@@ -7,8 +7,11 @@
 // which are read and archived. Pure, so the rules are tested apart from the
 // view.
 //
-// An item is an incoming message (from a person, another agent, a sensor or a
-// scheduled prompt) with the agent replies that follow it. It is read when its
+// An item is one agent turn: the incoming message that started it (from a
+// person, another agent, a sensor or a scheduled prompt), what arrived while
+// it ran (steering, other agents' messages, answers to its questions: as the
+// log places them, with the turn they arrived during) and its replies. A
+// message no turn answers or ran through is an item of its own. It is read when its
 // last message is at or before the thread's watermark (what the person has
 // read in order), or when it was opened since its last message arrived; and
 // not when it was marked unread again. Archived works the same way: a new
@@ -23,6 +26,8 @@ import {
   isAcpAssistantMessage,
   parentMessageId,
 } from "./access";
+import { canMovePostedMessageToAgent } from "./post-to-agent";
+import { assistantFinishedAt } from "./turn-span";
 import type { ChatMessageTyped } from "./types";
 
 export interface ReaderItem {
@@ -79,18 +84,73 @@ export function isAgentReply(message: ChatMessageTyped): boolean {
   return typeof author === "string" && isLanguageModelService(author);
 }
 
-export function readerItems(messages: ChatMessageTyped[]): ReaderItem[] {
+type AcpStateMap = { get?: (key: string) => unknown };
+
+function acpStateOf(
+  message: ChatMessageTyped,
+  acpState?: AcpStateMap,
+): string {
+  const id = readerMessageId(message);
+  return `${(id ? acpState?.get?.(`message:${id}`) : undefined) ?? field<string>(message, "acp_state") ?? ""}`;
+}
+
+/**
+ * The turn a message arrived during, as the log places it: the latest turn
+ * that started before it and was still going (running now, or its reply was
+ * last written after the message came). Not a message waiting to be sent
+ * (queued, not sent, a note posted for people only): that isn't part of any
+ * turn yet.
+ */
+function midTurnOwner(
+  message: ChatMessageTyped,
+  turns: readonly ChatMessageTyped[],
+  acpState?: AcpStateMap,
+): ChatMessageTyped | undefined {
+  const date = dateValue(message)?.valueOf();
+  if (date == null) return undefined;
+  if (canMovePostedMessageToAgent(message)) return undefined;
+  if (["queue", "queued", "not-sent"].includes(acpStateOf(message, acpState)))
+    return undefined;
+  let owner: ChatMessageTyped | undefined;
+  for (const turn of turns) {
+    const start = dateValue(turn)?.valueOf();
+    if (start == null || start >= date) continue;
+    const running =
+      field<boolean>(turn, "generating") === true ||
+      acpStateOf(turn, acpState) === "running";
+    if (running || date <= assistantFinishedAt(turn)) owner = turn;
+  }
+  return owner;
+}
+
+export function readerItems(
+  messages: ChatMessageTyped[],
+  { acpState }: { acpState?: AcpStateMap } = {},
+): ReaderItem[] {
   const items: ReaderItem[] = [];
   // Every message's item, by message id: a reply joins its parent's item.
   const byMessage = new Map<string, ReaderItem>();
+  // The agent turns (their replies) and the messages they answer.
+  const turns = messages.filter(isAgentReply);
+  const prompts = new Set(
+    turns.map((turn) => parentMessageId(turn)).filter(Boolean),
+  );
   messages.forEach((message, index) => {
     const id = readerMessageId(message);
     if (!id) return;
-    if (isAgentReply(message)) {
+    const reply = isAgentReply(message);
+    // A reply goes with its prompt; what arrived during a turn, with it.
+    const owner = reply
+      ? undefined
+      : prompts.has(id)
+        ? undefined
+        : midTurnOwner(message, turns, acpState);
+    if (reply || owner) {
       // Its prompt's item (histories can interleave), else the one before.
-      const parent = parentMessageId(message);
+      const parent = reply ? parentMessageId(message) : readerMessageId(owner!);
       const item =
-        (parent ? byMessage.get(parent) : undefined) ?? items[items.length - 1];
+        (parent ? byMessage.get(parent) : undefined) ??
+        (reply ? items[items.length - 1] : undefined);
       if (item) {
         item.messages.push(message);
         item.lastId = id;

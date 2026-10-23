@@ -38,7 +38,6 @@ import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DivTempHeight } from "@cocalc/frontend/jupyter/div-temp-height";
 import { cmp } from "@cocalc/util/misc";
-import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
 import type { ChatActions } from "./actions";
 import { type AttachedSteerMessage } from "./agent-message-status";
 import Composing from "./composing";
@@ -60,7 +59,6 @@ import { getMessageAtDate, newest_content } from "./utils";
 import {
   dateValue,
   field,
-  historyArray,
   isAcpAssistantMessage,
   parentMessageId,
 } from "./access";
@@ -99,6 +97,7 @@ import {
   type CodexAttentionDraftUpdater,
 } from "./codex-attention-card";
 import { showAttentionInFooter } from "./attention-response-display";
+import { assistantFinishedAt } from "./turn-span";
 
 export { getSortedDates } from "./sorted-dates";
 
@@ -282,25 +281,6 @@ function resolveSteerAssistantMessageId({
 // When an agent turn last wrote its reply. ACP writes history under the
 // assistant sender's raw model name, not necessarily an openai-* service.
 // Later human edits must not extend the turn and swallow subsequent prompts.
-function assistantFinishedAt(assistant: ChatMessageTyped): number {
-  return Math.max(
-    0,
-    ...historyArray(assistant).map((entry) => {
-      const author =
-        (entry as any)?.author_id ?? (entry as any)?.get?.("author_id");
-      if (
-        typeof author !== "string" ||
-        (author !== field(assistant, "sender_id") &&
-          !isLanguageModelService(author))
-      )
-        return 0;
-      const raw = (entry as any)?.date ?? (entry as any)?.get?.("date");
-      const time = new Date(raw).valueOf();
-      return Number.isFinite(time) ? time : 0;
-    }),
-  );
-}
-
 function isActiveAcpAssistantTurn({
   message,
   acpState,
