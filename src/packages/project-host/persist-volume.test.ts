@@ -16,6 +16,11 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
+  BtrfsMutationDeferredError,
+  configureBtrfsBackgroundMutationGuard,
+} from "@cocalc/file-server/btrfs/operation-cache";
+import { withBtrfsMutationContext } from "@cocalc/file-server/btrfs/mutation-context";
+import {
   HISTORY_IN_SNAPSHOTS,
   READY_MARKER,
   capturePersistVolume,
@@ -541,6 +546,33 @@ describe("in the project-host", () => {
       stagingPath: join(staging, "snap-persist"),
     };
   }
+
+  it("snapshots no history for background work the host defers (I/O pressure)", async () => {
+    await readyVolume();
+    const snapshots = () =>
+      (btrfs as jest.Mock).mock.calls.filter(([{ args }]) =>
+        args.includes("snapshot"),
+      ).length;
+    configureBtrfsBackgroundMutationGuard(() => "io_pressure_recovery");
+    try {
+      // a scheduled backup or snapshot: deferred before it changes anything
+      await expect(
+        withBtrfsMutationContext({ priority: "scheduled" }, async () =>
+          capturePersistVolume({ subvolume: `project-${PROJECT}`, env }),
+        ),
+      ).rejects.toThrow(BtrfsMutationDeferredError);
+      expect(snapshots()).toBe(0);
+      // what a person asked for is never deferred (and the lock was released)
+      const captured = await capturePersistVolume({
+        subvolume: `project-${PROJECT}`,
+        env,
+      });
+      expect(snapshots()).toBe(1);
+      await captured!.release();
+    } finally {
+      configureBtrfsBackgroundMutationGuard(undefined);
+    }
+  });
 
   it("puts the live history in a backup, next to the project's files", async () => {
     await readyVolume();

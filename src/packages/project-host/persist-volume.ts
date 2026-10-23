@@ -61,7 +61,10 @@ import {
 import { SubvolumeQuota } from "@cocalc/file-server/btrfs/subvolume-quota";
 import { btrfsQuotasDisabled } from "@cocalc/file-server/btrfs/config";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
-import { forgetSubvolumePaths } from "@cocalc/file-server/btrfs/operation-cache";
+import {
+  assertBtrfsBackgroundMutationAllowed,
+  forgetSubvolumePaths,
+} from "@cocalc/file-server/btrfs/operation-cache";
 import { noteQgroupLimit } from "@cocalc/file-server/btrfs/qgroup-scan";
 import { setPrepareProjectStore } from "@cocalc/conat/persist/context";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -677,6 +680,16 @@ export async function capturePersistVolume({
   const { legacy } = projectPersistTemplates(env);
   const volume = project_id ? persistVolumePath(project_id, env) : undefined;
   if (project_id == null || volume == null || legacy == null) return;
+  // Background work (a scheduled backup or snapshot) that the host would
+  // defer under I/O pressure must not snapshot the history first: it would
+  // be deleted again at once, and each try is a btrfs transaction commit,
+  // which only adds to the pressure (operation-cache.ts).
+  const assertAllowed = () =>
+    assertBtrfsBackgroundMutationAllowed({
+      mount: dirname(volume),
+      operation: "persist-capture",
+    });
+  assertAllowed();
   const unlock = await acquirePersistLock(project_id);
   let captured: string;
   try {
@@ -685,6 +698,8 @@ export async function capturePersistVolume({
       unlock();
       return;
     }
+    // (again: the lock may have taken a while)
+    assertAllowed();
     // removed by the persist server when it starts, if left over
     captured =
       stagingPath ??
