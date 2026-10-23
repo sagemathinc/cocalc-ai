@@ -22,6 +22,7 @@ import {
   scheduledPromptText,
   sensorKind,
   sensorUses,
+  sensorDelivery,
   sensorWakePrompt,
   sensorWatchScript,
   validateSensorSpec,
@@ -605,6 +606,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     }
     let delivered;
     deliveryStarted = true;
+    const delivery = await wakeDelivery(row.sensor_id, run_id, spec);
     try {
       delivered = await host.api.deliverAgentSensorWake({
         account_id: row.approved_by,
@@ -612,6 +614,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         thread_id: agent.thread_id,
         title: spec.title,
         prompt,
+        delivery,
         authorization: {
           version: 1,
           sensor_id: row.sensor_id,
@@ -653,7 +656,11 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         return;
       }
     }
-    outcome = "wake";
+    outcome =
+      "effective_delivery" in delivered &&
+      delivered.effective_delivery === "live-guidance"
+        ? "wake-guidance"
+        : "wake";
     woke = 1;
     await settleCombined(run_id, true);
   } catch (err) {
@@ -692,14 +699,18 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
 const CURRENT_APPROVAL =
   "sensor_id=$1 AND script_hash=$2 AND started_at >= $3::timestamptz";
 
-/** An earlier wake of this sensor is queued and its turn has not started. */
+/**
+ * An earlier wake of this sensor is queued and its turn has not started, or
+ * it is joining a running turn right now (a claim that is not stale).
+ */
 async function hasQueuedWake(
   row: ClaimedSensor,
   run_id: string,
 ): Promise<boolean> {
   const { rows } = await agentStore().query(
     `SELECT 1 FROM agent_sensor_runs WHERE ${CURRENT_APPROVAL}
-       AND run_id<>$4 AND wake_state='issued'
+       AND run_id<>$4 AND (wake_state='issued'
+         OR (wake_state='claimed' AND wake_claimed_at > now() - interval '10 minutes'))
        AND started_at > now() - make_interval(hours => $5) LIMIT 1`,
     [
       row.sensor_id,
@@ -1029,4 +1040,32 @@ export function startSensorScheduler(pollMs: number = POLL_MS): () => void {
     setSensorSchedulerKick(undefined);
     clearTimeout(timer);
   };
+}
+
+/**
+ * Wakes join the running turn (see sensorDelivery), but at most one per
+ * sensor every GUIDANCE_INTERVAL, counted from when a wake actually joined a
+ * turn (or is joining one now): a sensor that did more recently sends this
+ * one as a turn of its own, after the running one, and wakes after that are
+ * held and combined into it as before. A chatty sensor never floods a turn;
+ * queued wakes do not count.
+ */
+export const GUIDANCE_INTERVAL_MINUTES = 10;
+
+async function wakeDelivery(
+  sensor_id: string,
+  run_id: string,
+  spec: Parameters<typeof sensorDelivery>[0],
+): Promise<"guidance" | "queued"> {
+  if (sensorDelivery(spec) !== "guidance") return "queued";
+  const { rows } = await agentStore().query(
+    `SELECT 1 FROM agent_sensor_runs
+     WHERE sensor_id=$1 AND run_id<>$2
+       AND (wake_guided_at > now() - make_interval(mins => $3)
+         OR (wake_state='claimed'
+             AND wake_claimed_at > now() - make_interval(mins => $3)))
+     LIMIT 1`,
+    [sensor_id, run_id, GUIDANCE_INTERVAL_MINUTES],
+  );
+  return rows.length ? "queued" : "guidance";
 }

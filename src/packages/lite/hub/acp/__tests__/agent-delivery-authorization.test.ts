@@ -178,6 +178,46 @@ test("logs never see a wake permit, and it is dropped once consumed", async () =
   expect(JSON.stringify(value)).not.toContain("secret-permit");
 });
 
+test("a wake joining a running turn is claimed, then consumed or released", async () => {
+  const value = request();
+  delete value.chat!.agent_delivery_id;
+  value.prompt = "wake";
+  value.chat!.user_message_content = "wake";
+  value.chat!.sensor_wake = {
+    version: 1,
+    sensor_id: "s",
+    project_id: "project",
+    agent_id: "a",
+    script_hash: "h",
+    run_id: "r",
+    permit: "secret-permit-value-secret-permit-value-123",
+  };
+  const api = {
+    authorizeRpcExecution: jest.fn(async () => {}),
+    authorizeSensorExecution: jest.fn(async () => {}),
+  };
+  const phaseSent = () =>
+    (api.authorizeSensorExecution.mock.calls.at(-1) as any)[0].delivery.phase;
+  await authorizeAgentDeliveryExecution(value, api, { phase: "claim" });
+  expect(phaseSent()).toBe("claim");
+  // Kept: if it cannot join, it is released for its own turn.
+  expect(value.chat!.sensor_wake!.permit).toContain("secret-permit");
+  await authorizeAgentDeliveryExecution(value, api, { phase: "release" });
+  expect(phaseSent()).toBe("release");
+  expect(value.chat!.sensor_wake!.permit).toContain("secret-permit");
+  // A paused or deleted sensor is refused at the claim: nothing is injected.
+  api.authorizeSensorExecution.mockRejectedValueOnce(
+    new Error("sensor is no longer active as approved"),
+  );
+  await expect(
+    authorizeAgentDeliveryExecution(value, api, { phase: "claim" }),
+  ).rejects.toThrow("no longer active");
+  // Once it joined the turn, the claim is consumed and the secret dropped.
+  await authorizeAgentDeliveryExecution(value, api, { phase: "consume-claim" });
+  expect(phaseSent()).toBe("consume-claim");
+  expect(JSON.stringify(value)).not.toContain("secret-permit");
+});
+
 describe("project membership at execution", () => {
   const api = {
     authorizeRpcExecution: jest.fn(async () => {}),

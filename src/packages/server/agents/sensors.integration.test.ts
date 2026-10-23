@@ -591,6 +591,175 @@ describeDb("agent sensors", () => {
     },
   );
 
+  test("a wake joins the running turn: claimed once, then consumed", async () => {
+    host.deliverAgentSensorWake.mockResolvedValue({
+      message_id: "m",
+      effective_delivery: "live-guidance",
+    });
+    const active = (await approve((await propose()).sensor)).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    const first = host.deliverAgentSensorWake.mock.calls[0][0];
+    // A script sensor's wake joins the running turn by default.
+    expect(first.delivery).toBe("guidance");
+    const binding = {
+      prompt_sha256: sha(first.prompt),
+      path: first.path,
+      thread_id: first.thread_id,
+    };
+    const authorize = (phase?: "claim" | "consume-claim" | "release") =>
+      authorizeSensorExecutionLocal(
+        owner,
+        project_id,
+        HOST,
+        first.authorization,
+        { ...binding, ...(phase ? { phase } : {}) },
+      );
+    const state = async () =>
+      (
+        await getPool().query(
+          "SELECT wake_state, wake_guided_at FROM agent_sensor_runs WHERE run_id=$1",
+          [first.authorization.run_id],
+        )
+      ).rows[0];
+    await authorize("claim");
+    expect((await state()).wake_state).toBe("claimed");
+    // Only one attempt can claim it, and nothing can run it meanwhile.
+    await expect(authorize("claim")).rejects.toThrow();
+    await expect(authorize()).rejects.toThrow();
+    // Could not join: released, so its own turn consumes it.
+    await authorize("release");
+    expect((await state()).wake_state).toBe("issued");
+    // Joined: consumed once, and when is recorded.
+    await authorize("claim");
+    await authorize("consume-claim");
+    expect(await state()).toMatchObject({
+      wake_state: "consumed",
+      wake_guided_at: expect.any(Date),
+    });
+    await expect(authorize("claim")).rejects.toThrow();
+    await expect(authorize()).rejects.toThrow();
+    await expect(authorize("release")).rejects.toThrow();
+    // The run says it woke the agent in its running turn.
+    const { runs } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+      sensor_id: active.sensor_id,
+    })) as any;
+    expect(runs[0].outcome).toBe("wake-guidance");
+    // A second wake within 10 minutes of it is a turn of its own.
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake.mock.calls[1][0].delivery).toBe(
+      "queued",
+    );
+  });
+
+  test("only wakes that joined a turn space later ones", async () => {
+    const roomy = { ...(spec as any), max_wakes_per_day: 5 };
+    const active = (await approve((await propose(roomy)).sensor)).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    // It was queued (say no turn was running): it does not count.
+    await startTurns();
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake.mock.calls[1][0].delivery).toBe(
+      "guidance",
+    );
+    // One that joined 11 minutes ago no longer counts either.
+    await getPool().query(
+      "UPDATE agent_sensor_runs SET wake_state='consumed', wake_guided_at=now() - interval '11 minutes' WHERE sensor_id=$1",
+      [active.sensor_id],
+    );
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake.mock.calls[2][0].delivery).toBe(
+      "guidance",
+    );
+  });
+
+  test("a stale claim holds nothing back, and is never claimed again", async () => {
+    const active = (await approve((await propose()).sensor)).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    const first = host.deliverAgentSensorWake.mock.calls[0][0];
+    const binding = {
+      prompt_sha256: sha(first.prompt),
+      path: first.path,
+      thread_id: first.thread_id,
+    };
+    await authorizeSensorExecutionLocal(
+      owner,
+      project_id,
+      HOST,
+      first.authorization,
+      {
+        ...binding,
+        phase: "claim",
+      },
+    );
+    // Its host went away after claiming (it may have injected it).
+    await getPool().query(
+      "UPDATE agent_sensor_runs SET wake_claimed_at=now() - interval '11 minutes' WHERE run_id=$1",
+      [first.authorization.run_id],
+    );
+    await expect(
+      authorizeSensorExecutionLocal(
+        owner,
+        project_id,
+        HOST,
+        first.authorization,
+        {
+          ...binding,
+          phase: "claim",
+        },
+      ),
+    ).rejects.toThrow();
+    await expect(
+      authorizeSensorExecutionLocal(
+        owner,
+        project_id,
+        HOST,
+        first.authorization,
+        binding,
+      ),
+    ).rejects.toThrow();
+    // The next wake is not held behind it.
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+  });
+
+  test("a paused sensor's wake is refused at the claim, so nothing is injected", async () => {
+    const active = (await approve((await propose()).sensor)).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    const { authorization, prompt, path, thread_id } =
+      host.deliverAgentSensorWake.mock.calls[0][0];
+    await getPool().query(
+      "UPDATE agent_sensors SET status='paused' WHERE sensor_id=$1",
+      [active.sensor_id],
+    );
+    await expect(
+      authorizeSensorExecutionLocal(owner, project_id, HOST, authorization, {
+        prompt_sha256: sha(prompt),
+        path,
+        thread_id,
+        phase: "claim",
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("a sensor with delivery queued keeps its wakes for a turn of their own", async () => {
+    const queued = { ...(spec as any), delivery: "queued" };
+    const active = (await approve((await propose(queued)).sensor)).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake.mock.calls[0][0].delivery).toBe(
+      "queued",
+    );
+  });
+
   test("control: with nothing revoked at that point, the permit is consumed", async () => {
     const active = (await approve((await propose()).sensor)).sensor;
     await makeDue(active.sensor_id);
