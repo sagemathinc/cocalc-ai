@@ -280,6 +280,22 @@ describe("storage admission controller", () => {
       expect(tick(controller)).toBe("normal");
     });
 
+    it("starts over when the clock is set back", () => {
+      // Codex on #1341: with the last sample in the future, the spacing
+      // check skipped every sample until the clock caught up.
+      const controller = gate();
+      full = 12;
+      now = 1_100_000;
+      expect(controller.sample().pressure_state).toBe("normal");
+      now = 1_050_000;
+      for (let i = 0; i < 3; i++) {
+        expect(controller.sample().pressure_state).toBe("normal");
+        now += 4_000;
+      }
+      // 10 s of pressure since the clock was set back
+      expect(controller.sample().pressure_state).toBe("emergency");
+    });
+
     it("keeps lifecycle gating fresh between state samples", () => {
       const controller = gate();
       controller.sample();

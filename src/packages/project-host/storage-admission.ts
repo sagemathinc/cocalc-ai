@@ -560,6 +560,14 @@ export function createStorageAdmissionController(
       resetEscalation();
       return;
     }
+    // The clock was set back: the runs' start times are in the future, and
+    // the spacing check would skip every sample until it caught up. Start
+    // over, with this reading as the first sample.
+    if (lastStateSampleAt != null && at < lastStateSampleAt) {
+      resetEscalation();
+      recoveryHealthySince = undefined;
+      lastStateSampleAt = undefined;
+    }
     // The 60 s average too: pressure made of bursts that never stay above a
     // threshold for consecutive 10 s averages is still sustained pressure.
     // It also holds contended/emergency until it is down too, so the gate
