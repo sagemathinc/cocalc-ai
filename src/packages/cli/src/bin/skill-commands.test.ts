@@ -55,16 +55,18 @@ function skillText(): string {
   ].join("\n");
 }
 
-// `cocalc ...` in code blocks (one per line) and in inline code.
+// `cocalc ...` in code blocks (one per line, with shell continuations joined)
+// and in inline code.
 function commandLines(text: string): string[] {
+  text = text.replace(/\\\n\s*/g, " ");
   const lines = new Set<string>();
   for (const m of text.matchAll(
     /^\s*(?:[A-Z_]+=\S+\s+)*cocalc\s+([^\n#`]*)/gm,
   )) {
-    lines.add(m[1].trim());
+    lines.add(m[1].trim().replace(/\s+/g, " "));
   }
   for (const m of text.matchAll(/`cocalc\s+([^`]+)`/g)) {
-    lines.add(m[1].trim());
+    lines.add(m[1].trim().replace(/\s+/g, " "));
   }
   return [...lines].filter(Boolean);
 }
@@ -87,7 +89,7 @@ function longOptions(cmds: Command[]): Set<string> {
 
 // The problems with one command line, if any.
 function check(line: string): string[] {
-  const words = line.replace(/\\$/, "").split(/\s+/);
+  const words = line.split(/\s+/);
   const chain: Command[] = [program];
   let i = 0;
   // global options before the command, e.g. `cocalc --json exec ...`
@@ -137,6 +139,13 @@ test("every cocalc command in the agent skill exists in the CLI", () => {
     check(line).map((problem) => `${problem}   (from: cocalc ${line})`),
   );
   assert.deepEqual(problems, []);
+});
+
+test("options on continuation lines are checked too", () => {
+  assert.deepEqual(
+    commandLines("cocalc project storage show \\\n  --no-such-option\n"),
+    ["project storage show --no-such-option"],
+  );
 });
 
 test("the check finds made-up commands and options", () => {
