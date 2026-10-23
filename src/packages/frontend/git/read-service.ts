@@ -9,6 +9,7 @@ import type {
   RepositoryContext,
   WorktreeContext,
 } from "../components/diff-viewer/review-model";
+import { sha1 } from "@cocalc/util/misc";
 import { repositoryKey } from "../components/diff-viewer/review-model";
 import {
   isFullObjectId,
@@ -112,6 +113,10 @@ const PINNED_DIFF_FLAGS = [
   "--full-index",
 ];
 
+// More changed files than this, and their patch is not cached: checking
+// their attributes would need too long a command.
+const MAX_ATTRIBUTE_PATHS = 2000;
+
 // The object ids that fully name a comparison.
 function targetObjects(target: ImmutableReviewTarget): string[] {
   return target.kind === "commit"
@@ -159,7 +164,14 @@ export class GitReadService {
     repository: RepositoryContext,
     args: string[],
     objectIds: string[],
-    { walksHistory = false }: { walksHistory?: boolean } = {},
+    {
+      walksHistory = false,
+      settings,
+    }: {
+      walksHistory?: boolean;
+      /** Anything else the output depends on, e.g. attributeState(). */
+      settings?: string;
+    } = {},
   ): Promise<string> {
     if (!objectIds.length || !objectIds.every(isFullObjectId))
       return this.run(repository.projectId, repository.locator, args);
@@ -169,6 +181,7 @@ export class GitReadService {
       IMMUTABLE_CACHE_VERSION,
       repositoryKey(repository),
       args,
+      ...(settings == null ? [] : [settings]),
     ]);
     const recent = await this.recent.get(key);
     if (recent !== undefined) return recent;
@@ -645,6 +658,7 @@ export class GitReadService {
     if (!Number.isInteger(context) || context < 0 || context > 1000)
       throw new GitReadError("invalid", "Invalid diff context");
     const { repository } = target;
+    const settings = await this.attributeState(target);
     const patch = await this.runImmutable(
       repository,
       this.comparisonArgs(target, [
@@ -654,7 +668,9 @@ export class GitReadService {
         "--find-renames",
         `-U${context}`,
       ]),
-      targetObjects(target),
+      // Too many files to check: not cached.
+      settings == null ? [] : targetObjects(target),
+      { settings },
     );
     if (patch.split("\n").length > maxLines)
       throw new GitReadError(
@@ -662,6 +678,52 @@ export class GitReadService {
         `Diff exceeds ${maxLines.toLocaleString("en-US")} lines; narrow the comparison`,
       );
     return patch;
+  }
+
+  /**
+   * What a patch depends on besides its objects: the changed files'
+   * attributes (from .gitattributes, .git/info/attributes and the global
+   * and system files: `-diff` turns a text patch into "Binary files
+   * differ", a diff driver names the function in hunk headers) and the
+   * settings of the drivers they name. Undefined when there are too many
+   * files to check.
+   */
+  private async attributeState(
+    target: ImmutableReviewTarget,
+  ): Promise<string | undefined> {
+    const paths = new Set<string>();
+    for (const file of await this.changedFiles(target)) {
+      if (file.oldPath != null) paths.add(file.oldPath);
+      if (file.newPath != null) paths.add(file.newPath);
+    }
+    if (paths.size === 0) return "";
+    if (paths.size > MAX_ATTRIBUTE_PATHS) return undefined;
+    const { projectId, locator } = target.repository;
+    const attributes = await this.run(projectId, locator, [
+      "check-attr",
+      "-z",
+      "--all",
+      "--",
+      ...paths,
+    ]);
+    const fields = attributes.split("\0");
+    let drivers = false;
+    for (let i = 0; i + 2 < fields.length; i += 3)
+      if (
+        fields[i + 1] === "diff" &&
+        !["set", "unset", "unspecified"].includes(fields[i + 2])
+      )
+        drivers = true;
+    const settings = drivers
+      ? await this.run(
+          projectId,
+          locator,
+          ["config", "-z", "--get-regexp", "^diff\\."],
+          // 1: none set.
+          [0, 1],
+        )
+      : "";
+    return sha1(`${attributes}\0\0${settings}`);
   }
 
   async readFile(

@@ -49,10 +49,14 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 beforeEach(() => (calls.length = 0));
-// Git processes other than the check that the clone isn't shallow, made
-// before parents or history are read from a cache.
+// Git processes other than the checks made before reading from a cache:
+// that the clone isn't shallow (parents, history) and the changed files'
+// attributes (patches).
 const reads = () =>
-  calls.filter((args) => !args.includes("--is-shallow-repository"));
+  calls.filter(
+    (args) =>
+      !args.includes("--is-shallow-repository") && !args.includes("check-attr"),
+  );
 
 test("a commit read once is read again from the browser's cache, also after a reload", async () => {
   const persistent = new MemoryGitCache(50_000_000);
@@ -282,4 +286,29 @@ test("a commit's summary names commits in full and no branches", async () => {
     for (const key of ["core.abbrev", "log.abbrevCommit", "log.decorate"])
       git(dir, ["config", "--unset", key]);
   }
+});
+
+test("a patch follows the attributes of its files, which can change", async () => {
+  const persistent = new MemoryGitCache(50_000_000);
+  const first = new GitReadService(execute, Date.now, 16_000_000, persistent);
+  const { repository } = await first.discover("p10", dir);
+  const target = await first.pinCommit(
+    repository,
+    git(dir, ["rev-parse", "HEAD"]).trim(),
+  );
+  expect(await first.patch(target)).toContain("+two");
+  writeFileSync(join(dir, ".gitattributes"), "a.txt -diff\n");
+  try {
+    const reloaded = new GitReadService(
+      execute,
+      Date.now,
+      16_000_000,
+      persistent,
+    );
+    for (const reader of [first, reloaded])
+      expect(await reader.patch(target)).toContain("Binary files");
+  } finally {
+    rmSync(join(dir, ".gitattributes"));
+  }
+  expect(await first.patch(target)).toContain("+two");
 });
