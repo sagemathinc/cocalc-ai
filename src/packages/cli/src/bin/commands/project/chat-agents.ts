@@ -326,16 +326,46 @@ export function registerAgentCommands(
     .option("--external-agent <profile>", "use an enrolled external agent")
     .requiredOption("--agent-network <uuid>", "exact Agent Network")
     .requiredOption("--to-agent <uuid>", "target from the original outcome")
-    .requiredOption("--target-project <uuid>", "target project")
-    .description("inspect an exact attempt without retrying or starting work")
+    .option("--target-project <uuid>", "target project (a project agent)")
+    .option(
+      "--target-account <uuid>",
+      "an external member's account (with --target-installation)",
+    )
+    .option(
+      "--target-installation <uuid>",
+      "an external member's installation (with --target-account)",
+    )
+    .description(
+      "inspect an exact attempt without retrying or starting work; for an external member, whether it has read the message",
+    )
     .action(async (attempt_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
+      const external =
+        opts.targetAccount !== undefined ||
+        opts.targetInstallation !== undefined;
+      if (
+        external
+          ? opts.targetProject !== undefined ||
+            !opts.targetAccount ||
+            !opts.targetInstallation
+          : !opts.targetProject
+      )
+        throw new Error(
+          "give --target-project, or --target-account and --target-installation for an external member",
+        );
       const request = {
         version: 3 as const,
         action: "inspect" as const,
         attempt_id,
         agent_network_id: opts.agentNetwork,
-        target: { project_id: opts.targetProject, agent_id: opts.toAgent },
+        target: external
+          ? {
+              kind: "external" as const,
+              account_id: opts.targetAccount,
+              agent_id: opts.toAgent,
+              installation_id: opts.targetInstallation,
+            }
+          : { project_id: opts.targetProject, agent_id: opts.toAgent },
       };
       const outcome = (
         opts.externalAgent
