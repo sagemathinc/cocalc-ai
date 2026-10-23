@@ -49,6 +49,7 @@ import {
   uint8ArrayToBase64,
 } from "@cocalc/util/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import { withDeterministicCellIds } from "./deterministic-cell-ids";
 import { JUPYTER_CLASSIC_MODERN } from "@cocalc/util/theme";
 import { cm_options } from "./cm_options";
 import { ConfirmDialogOptions } from "./confirm-dialog";
@@ -244,14 +245,36 @@ export class JupyterActions extends JupyterActions0 {
   // empty notebook may just not have been loaded yet. A failing load from
   // disk is retried and keeps it pending, since a later successful load
   // replaces every cell.
+  private initialSourceDone = false;
   private resolveInitialSource: () => void = () => {};
   private initialSourceSettled: Promise<void> = new Promise((resolve) => {
-    this.resolveInitialSource = resolve;
+    this.resolveInitialSource = () => {
+      this.initialSourceDone = true;
+      resolve();
+    };
   });
   private settleInitialSource = (): void => {
     this.resolveInitialSource();
     if (!this.isClosed() && !this.store?.get("initial_source_settled")) {
       this.setState({ initial_source_settled: true });
+      // Editing waited for the loaded notebook (sync_read_only).
+      if (this.syncdb != null) this.sync_read_only();
+    }
+  };
+
+  // Until the initial source has settled, what the notebook shows may be the
+  // read-only preview of the file (startOptimisticIpynbFastOpen), or nothing
+  // loaded yet.  Typing into it then stored only the typed cell, which became
+  // the whole notebook (a customer report), so the notebook stays
+  // read-only until the file has been loaded or the live notebook chosen.
+  override sync_read_only = (): void => {
+    if (this._state == "closed") return;
+    const read_only =
+      !this.store?.get("initial_source_settled") ||
+      !!this.syncdb?.is_read_only?.();
+    if (this.store?.get("read_only") !== read_only) {
+      this.setState({ read_only });
+      this.set_cm_options();
     }
   };
   private openInitStartedAt?: number;
@@ -4648,9 +4671,16 @@ export class JupyterActions extends JupyterActions0 {
   loadFromDisk = async ({
     diskRead,
     expectedRtcVersion,
+    deterministicCellIds = false,
+    skipIf,
   }: {
     diskRead?: DiskIpynbRead;
     expectedRtcVersion?: string;
+    // Loading into an empty live notebook: see withDeterministicCellIds.
+    deterministicCellIds?: boolean;
+    // Checked after the (slow) import, just before the live cells are
+    // replaced.
+    skipIf?: () => boolean;
   } = {}) => {
     this.runDebug("ipynb.load.start");
     const read = diskRead ?? (await this.readIpynbFromDisk());
@@ -4659,7 +4689,10 @@ export class JupyterActions extends JupyterActions0 {
       this.runDebug("ipynb.load.empty");
       return;
     }
-    const { ipynb } = await this.syncdb.fs.jupyterImportIpynb!(read.ipynb);
+    let { ipynb } = await this.syncdb.fs.jupyterImportIpynb!(read.ipynb);
+    if (deterministicCellIds) {
+      ipynb = withDeterministicCellIds(ipynb);
+    }
     if (
       expectedRtcVersion != null &&
       (this.hasPendingIpynbChanges() ||
@@ -4674,7 +4707,20 @@ export class JupyterActions extends JupyterActions0 {
       }
       return;
     }
-    await this.setToIpynb(ipynb);
+    if (skipIf?.()) {
+      this.runDebug("ipynb.load.skipped.by_predicate");
+      return;
+    }
+    // Checked again at the last moment, inside setToIpynb, after its own
+    // asynchronous step: what arrives in between must not be overwritten.
+    const applied =
+      skipIf == null
+        ? await this.setToIpynb(ipynb)
+        : await this.setToIpynb(ipynb, false, { skipIf });
+    if (applied === false) {
+      this.runDebug("ipynb.load.skipped.by_predicate");
+      return;
+    }
     this.markIpynbSaved();
     this.runDebug("ipynb.load.done", { bytes: read.bytes });
     // good time to refresh status
@@ -4754,6 +4800,12 @@ export class JupyterActions extends JupyterActions0 {
 
   private flushIpynbSaves = async (): Promise<void> => {
     try {
+      // Never write the notebook before its initial load from the file has
+      // settled: until then the live notebook can be empty or partial, and
+      // saving it replaced the file (a 99-byte save over a whole notebook, in
+      // a customer report).  The pending load then found nothing to load.  Once
+      // settled, the save writes what was loaded or chosen.
+      if (!this.initialSourceDone) await this.initialSourceSettled;
       while (this.saveIpynbRequested && !this.isClosed()) {
         this.saveIpynbRequested = false;
         await this.saveIpynbOnce();
@@ -4776,6 +4828,17 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   setIpynbFromRawEditor = async (ipynb: object): Promise<void> => {
+    // setToIpynb replaces the cells directly, without the read_only check of
+    // ordinary edits.  Before the initial source has settled the raw JSON
+    // shows the preview or nothing, so an edit there would become the
+    // notebook (and look like another client's load); it is ignored, not
+    // replayed later from that stale snapshot.
+    if (!this.initialSourceDone || this.store?.get("read_only")) {
+      this.runDebug("raw_editor.change.ignored", {
+        settled: this.initialSourceDone,
+      });
+      return;
+    }
     const imported = await this.syncdb.fs.jupyterImportIpynb!(ipynb);
     await this.setToIpynb(imported.ipynb);
   };
@@ -4822,11 +4885,20 @@ export class JupyterActions extends JupyterActions0 {
     patchSeq,
     diskRead,
     initial = false,
+    intoEmptyRtc = false,
   }: {
     patch?;
     patchSeq?: number;
     diskRead?: DiskIpynbRead;
     initial?: boolean;
+    // The initial load chose the file because the live notebook was empty.
+    // If another client loaded it meanwhile (users may already have edited
+    // it there), importing the older read again would replace their edits,
+    // so this client keeps the live notebook.  Before settling no local
+    // edit can add a cell (every cell write checks read_only), so any cell
+    // is another client's.  Clients that load at the very same moment write
+    // the same cells, by withDeterministicCellIds.
+    intoEmptyRtc?: boolean;
   } = {}) => {
     this.runDebug("watch.load.start", () => ({
       patchSeq,
@@ -4870,9 +4942,21 @@ export class JupyterActions extends JupyterActions0 {
         });
       } else {
         // Initial source selection has already compared disk and RTC mtimes.
+        const hydratedByPeer = () =>
+          intoEmptyRtc && this.syncdb.get_one({ type: "cell" }) != null;
+        if (hydratedByPeer()) {
+          // The file was loaded (by another client): a success, as below.
+          this.isIpynbDeleted = false;
+          this.runDebug("watch.initial_load.skipped.hydrated_by_peer");
+          return;
+        }
         const read = diskRead ?? (await this.readIpynbFromDisk());
         if (await this.diskIsIpynbSave(read, patchSeq)) return;
-        await this.loadFromDisk({ diskRead: read });
+        await this.loadFromDisk({
+          diskRead: read,
+          deterministicCellIds: intoEmptyRtc,
+          skipIf: hydratedByPeer,
+        });
       }
       // Disk notebooks contain native attachment bytes, whereas the live
       // syncdoc contains global blob URLs. Authoritative reload must therefore
@@ -4995,6 +5079,7 @@ export class JupyterActions extends JupyterActions0 {
             await this.watchLoadFromDisk({
               diskRead: preloadedDiskRead,
               initial: true,
+              intoEmptyRtc: decision.reason === "rtc_empty",
             });
             this.runDebug("watch.initial_load.done");
             this.noteOpenInitPhase("initial_load_done", {

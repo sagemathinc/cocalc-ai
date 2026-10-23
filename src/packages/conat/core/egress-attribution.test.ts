@@ -10,6 +10,7 @@ import {
   MAX_REPLY_SUBJECT_LENGTH,
   MAX_REPORTED_TOP_SUBJECTS,
   mergeTopEgressSubjects,
+  normalizeEgressLabel,
   reportedTopEgressSubjects,
   normalizeSubjectForAttribution,
   OTHER_KEY,
@@ -135,6 +136,39 @@ describe("egress attribution", () => {
     // nothing is lost: the reported list (with "(other)") sums to the minute
     expect(reported.reduce((t, { bytes }) => t + bytes, 0)).toBe(
       12 * 10 + 12 * 9 * 100,
+    );
+  });
+
+  it("labels replies with a valid request egress label, ignoring invalid ones", () => {
+    expect(normalizeEgressLabel("projects.listAccountProjectWindow")).toBe(
+      "projects.listAccountProjectWindow",
+    );
+    for (const bad of [
+      "",
+      "a b",
+      "x".repeat(81),
+      "../etc",
+      "a..b",
+      "1abc",
+      42,
+      null,
+      { name: "x" },
+    ]) {
+      expect(normalizeEgressLabel(bad)).toBeUndefined();
+    }
+    const replies = new ReplySubjectAttribution();
+    replies.remember(
+      "_INBOX.abc123def456.1",
+      "hub.account.9f6f3b0e-6f47-4a59-8a8a-0b6d7c1b2a33.api",
+      0,
+      "messages.list",
+    );
+    expect(replies.label("_INBOX.abc123def456.1", 1)).toBe(
+      "reply:hub.account.*.api#messages.list",
+    );
+    replies.remember("_INBOX.abc123def456.2", "hub.account.x.api", 0, "a b");
+    expect(replies.label("_INBOX.abc123def456.2", 1)).toBe(
+      "reply:hub.account.x.api",
     );
   });
 });

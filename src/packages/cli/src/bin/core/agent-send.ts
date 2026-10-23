@@ -130,7 +130,7 @@ export async function sendAgentMessage(
     // signs reports for queued delivery, between project agents).
     const why =
       opts.externalAgent || isExternalAgentSource(target)
-        ? "external network members never get turn reports"
+        ? `external network members never get turn reports (no turn starts there). Send without it; then \`cocalc agent rpc inspect\` with the attempt id says whether they have read it`
         : deliveryMode !== "queued"
           ? `Agent Network "${agent_network_title}" delivers ${deliveryMode ?? "live"}, into the recipient's running turn, so no report can arrive`
           : undefined;
@@ -143,7 +143,7 @@ export async function sendAgentMessage(
   // to learn what happened, without sending again.
   process.stderr.write(
     isExternalAgentSource(target)
-      ? `Sending (attempt ${attempt_id}).\n`
+      ? `Sending (attempt ${attempt_id}). If this is cut off, check without resending: cocalc agent rpc inspect ${attempt_id} --agent-network ${agent_network_id} --to-agent ${target.agent_id} --target-account ${target.account_id} --target-installation ${target.installation_id}${opts.externalAgent ? ` --external-agent ${JSON.stringify(opts.externalAgent)}` : ""}\n`
       : `Sending (attempt ${attempt_id}). If this is cut off, check without resending: cocalc agent rpc inspect ${attempt_id} --agent-network ${agent_network_id} --to-agent ${target.agent_id} --target-project ${target.project_id}${opts.externalAgent ? ` --external-agent ${JSON.stringify(opts.externalAgent)}` : ""}\n`,
   );
   const result = (outcome: AgentRpcOutcome): AgentSendResult => ({
@@ -292,6 +292,11 @@ export function agentRpcWithdrawSummary(outcome: AgentRpcOutcome): string {
 
 export function agentRpcInspectSummary(outcome: AgentRpcOutcome): string {
   if (outcome.turn) return agentRpcTurnSummary(outcome.turn);
+  // An external member: no turn starts; it reads its inbox.
+  if (outcome.inbox)
+    return outcome.inbox.state === "acknowledged"
+      ? `Read: the external agent acknowledged it at ${outcome.inbox.acknowledged_at}. A reply, if it sends one, arrives as a new message in your thread.`
+      : `Not read yet: it is waiting in the external agent's inbox until ${outcome.inbox.expires_at}.`;
   const why = outcome.reason ?? outcome.code ?? "no reason given";
   if (outcome.outcome === "accepted")
     return outcome.operation?.disposition === "steered"

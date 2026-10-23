@@ -69,9 +69,7 @@ export function ProjectEntitlementOverrideButton({
     null,
   );
   const [error, setError] = useState<UserFacingError | null>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    origin: "project disk override",
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const load = useCallback(async () => {
     setLoading(true);
