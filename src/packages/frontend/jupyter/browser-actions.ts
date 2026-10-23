@@ -4711,7 +4711,16 @@ export class JupyterActions extends JupyterActions0 {
       this.runDebug("ipynb.load.skipped.by_predicate");
       return;
     }
-    await this.setToIpynb(ipynb);
+    // Checked again at the last moment, inside setToIpynb, after its own
+    // asynchronous step: what arrives in between must not be overwritten.
+    const applied =
+      skipIf == null
+        ? await this.setToIpynb(ipynb)
+        : await this.setToIpynb(ipynb, false, { skipIf });
+    if (applied === false) {
+      this.runDebug("ipynb.load.skipped.by_predicate");
+      return;
+    }
     this.markIpynbSaved();
     this.runDebug("ipynb.load.done", { bytes: read.bytes });
     // good time to refresh status

@@ -3007,10 +3007,17 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     return ipynb;
   }
 
+  // Resolves to false if opts.skipIf said not to apply, else true.
   setToIpynb = async (
     ipynb: any,
     data_only: boolean = false,
-  ): Promise<void> => {
+    opts?: {
+      // Checked at the last moment before the live notebook is changed (after
+      // the asynchronous attachment step), so a caller can refuse to apply a
+      // read that the live notebook has since moved past.
+      skipIf?: () => boolean;
+    },
+  ): Promise<boolean> => {
     /*
      * set_to_ipynb - set from ipynb object.  This is
      * mainly meant to be run on the backend in the project,
@@ -3027,6 +3034,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     // Project-side implementations use this asynchronous boundary to replace
     // native Jupyter attachments before any live syncdoc state is mutated.
     ipynb = await this.prepareIpynbForSyncdoc(ipynb);
+    if (opts?.skipIf?.()) {
+      return false;
+    }
 
     this._state = "load";
 
@@ -3098,7 +3108,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
     if (data_only) {
       importer.close();
-      return;
+      return true;
     }
 
     // Set all the cells
@@ -3123,6 +3133,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     await this.syncdb.save();
     this.ensure_backend_kernel_setup();
     this._state = "ready";
+    return true;
   };
 }
 

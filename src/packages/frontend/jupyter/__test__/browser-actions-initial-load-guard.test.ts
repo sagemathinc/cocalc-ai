@@ -16,7 +16,9 @@ jest.mock("../widgets/manager", () => ({
 
 import { JupyterActions } from "../browser-actions";
 
-function createActions() {
+function createActions({
+  realSetToIpynb = false,
+}: { realSetToIpynb?: boolean } = {}) {
   const actions: any = new JupyterActions("jupyter-initial-load-guard-test", {
     getStore: jest.fn(() => undefined),
     removeActions: jest.fn(),
@@ -25,7 +27,9 @@ function createActions() {
   actions.path = "lab.ipynb";
   actions.isClosed = jest.fn(() => actions._state === "closed");
   actions.runDebug = jest.fn();
-  actions.setToIpynb = jest.fn(async () => {});
+  if (!realSetToIpynb) {
+    actions.setToIpynb = jest.fn(async () => {});
+  }
   actions.refreshKernelStatus = jest.fn(async () => {});
   const state: Record<string, any> = {};
   actions.store = {
@@ -267,5 +271,53 @@ describe("Jupyter browser actions before the initial load settles", () => {
     actions.setCellId("a", "b");
     expect(del).not.toHaveBeenCalled();
     expect(set).not.toHaveBeenCalled();
+  });
+
+  it("does not apply an older read when another client loads during setToIpynb's own async step", async () => {
+    const actions = createActions({ realSetToIpynb: true });
+    actions.settleInitialSource = jest.fn();
+    let liveCell: any = null;
+    let resumePrepare!: () => void;
+    actions.prepareIpynbForSyncdoc = jest.fn(
+      (ipynb: any) =>
+        new Promise((resolve) => {
+          resumePrepare = () => resolve(ipynb);
+        }),
+    );
+    const syncdbDelete = jest.fn();
+    const syncdbSet = jest.fn();
+    actions.syncdb = {
+      fs: { jupyterImportIpynb: jest.fn(async (ipynb) => ({ ipynb })) },
+      get_one: jest.fn(() => liveCell),
+      delete: syncdbDelete,
+      set: syncdbSet,
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      has_uncommitted_changes: () => false,
+      newestVersion: () => "v1",
+    };
+    actions.diskIsIpynbSave = jest.fn(async () => false);
+    actions.markIpynbSaved = jest.fn();
+
+    const loading = actions.watchLoadFromDisk({
+      diskRead: {
+        bytes: 100,
+        text: "{}",
+        ipynb: { cells: [{ cell_type: "code", source: "from disk" }] },
+      },
+      initial: true,
+      intoEmptyRtc: true,
+    });
+    // The outer checks passed; setToIpynb is in its attachment step.
+    await flush();
+    expect(actions.prepareIpynbForSyncdoc).toHaveBeenCalledTimes(1);
+    // Another client loads the notebook and the user edits it there.
+    liveCell = { type: "cell", id: "peer", input: "edited" };
+    resumePrepare();
+    await loading;
+
+    expect(syncdbDelete).not.toHaveBeenCalled();
+    expect(syncdbSet).not.toHaveBeenCalled();
+    expect(actions.markIpynbSaved).not.toHaveBeenCalled();
   });
 });
