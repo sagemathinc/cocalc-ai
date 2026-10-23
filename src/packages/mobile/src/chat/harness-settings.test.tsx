@@ -283,3 +283,103 @@ it("keeps a stored connectors preference when the same subscription is chosen ag
   await act(async () => find("Save agent settings").props.onPress());
   expect(setPaymentSelections).not.toHaveBeenCalled();
 });
+
+describe("HarnessSettings accessibility", () => {
+  // Controls are found by accessible role and name, as assistive technology
+  // and the iOS/Android hardware-keyboard focus engines do; the native focus
+  // order itself is not exercised by react-test-renderer.
+  const byRole = (role: string, name: string) =>
+    renderer.root.findAll(
+      (n: any) =>
+        typeof n.type === "string" &&
+        n.props.accessibilityRole === role &&
+        n.props.accessibilityLabel === name,
+    );
+
+  it("is a modal with labelled radio groups, named controls and their states", async () => {
+    session();
+    await act(async () => {
+      renderer = create(
+        <HarnessSettings
+          profile="p"
+          project="project"
+          thread="t"
+          runtime={runtime}
+          controls={controls}
+          client={{ updateHarnessSettings: jest.fn() }}
+          onClose={() => {}}
+        />,
+      );
+    });
+    // Screen readers keep focus inside the settings while they are open.
+    expect(
+      renderer.root.findAll(
+        (n: any) =>
+          typeof n.type === "string" && n.props.accessibilityViewIsModal,
+      ),
+    ).toHaveLength(1);
+    expect(
+      renderer.root.findAll(
+        (n: any) =>
+          n.props.accessibilityRole === "header" &&
+          JSON.stringify(n.props.children) === '"Claude Code settings"',
+      ).length,
+    ).toBeGreaterThan(0);
+    for (const group of ["Payment", "Model", "Effort"])
+      expect(byRole("radiogroup", group)).toHaveLength(1);
+    const [opus] = byRole("radio", "Opus");
+    expect(opus.props.accessibilityState).toEqual({
+      selected: false,
+      disabled: false,
+    });
+    const [sonnet] = byRole("radio", "Sonnet");
+    expect(sonnet.props.accessibilityState.selected).toBe(true);
+    await act(async () => opus.props.onPress());
+    expect(byRole("radio", "Opus")[0].props.accessibilityState.selected).toBe(
+      true,
+    );
+    expect(byRole("radio", "Sonnet")[0].props.accessibilityState.selected).toBe(
+      false,
+    );
+    expect(byRole("button", "Save agent settings")).toHaveLength(1);
+    expect(byRole("button", "Cancel agent settings")).toHaveLength(1);
+  });
+
+  it("can be dismissed with the system back action, except while saving", async () => {
+    session();
+    let finish = () => {};
+    const updateHarnessSettings = jest.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    const close = jest.fn();
+    await act(async () => {
+      renderer = create(
+        <HarnessSettings
+          profile="p"
+          project="project"
+          thread="t"
+          runtime={runtime}
+          controls={controls}
+          client={{ updateHarnessSettings }}
+          onClose={close}
+        />,
+      );
+    });
+    const modal = () => renderer.root.findByType("Modal" as any);
+    await act(async () => byRole("radio", "Opus")[0].props.onPress());
+    await act(async () => {
+      byRole("button", "Save agent settings")[0].props.onPress();
+    });
+    // While saving, controls report disabled and back does nothing.
+    expect(
+      byRole("button", "Save agent settings")[0].props.accessibilityState,
+    ).toEqual({ disabled: true });
+    expect(byRole("radio", "Opus")[0].props.accessibilityState.disabled).toBe(
+      true,
+    );
+    await act(async () => modal().props.onRequestClose());
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});

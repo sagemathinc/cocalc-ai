@@ -9,6 +9,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { ClaudePaymentSelection } from "@cocalc/util/ai/agent-payment-selection";
@@ -226,7 +227,10 @@ export function HarnessSettings({
         if (!saving) onClose();
       }}
     >
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.page }}>
+      <SafeAreaView
+        accessibilityViewIsModal
+        style={{ flex: 1, backgroundColor: colors.page }}
+      >
         <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }}>
           {heading(claude ? "Claude Code settings" : "Agent settings")}
           <Text style={{ color: colors.secondary }}>
@@ -238,7 +242,11 @@ export function HarnessSettings({
             <ActivityIndicator accessibilityLabel="Loading Claude credentials" />
           )}
           {claude && payment && (
-            <>
+            <View
+              accessibilityRole="radiogroup"
+              accessibilityLabel="Payment"
+              style={{ gap: 10 }}
+            >
               {choice(
                 "Account default for Claude agents",
                 paymentKey === "default",
@@ -273,7 +281,7 @@ export function HarnessSettings({
                   account settings.
                 </Text>
               )}
-            </>
+            </View>
           )}
           {controlList.length === 0 && (
             <Text style={{ color: colors.secondary }}>
@@ -283,18 +291,25 @@ export function HarnessSettings({
           )}
           {controlList.flatMap(({ control, isMode }) => [
             heading(control.name),
-            ...control.options.map((option) =>
-              choice(
-                option.name,
-                controlValue(settings, control, isMode) === option.value,
-                () => {
-                  settingsEdited.current = true;
-                  setSettings(
-                    withValue(settings, control, isMode, option.value),
-                  );
-                },
-              ),
-            ),
+            <View
+              key={`group-${control.id}`}
+              accessibilityRole="radiogroup"
+              accessibilityLabel={control.name}
+              style={{ gap: 10 }}
+            >
+              {control.options.map((option) =>
+                choice(
+                  option.name,
+                  controlValue(settings, control, isMode) === option.value,
+                  () => {
+                    settingsEdited.current = true;
+                    setSettings(
+                      withValue(settings, control, isMode, option.value),
+                    );
+                  },
+                ),
+              )}
+            </View>,
           ])}
           {error && (
             <Text accessibilityRole="alert" style={{ color: colors.danger }}>
