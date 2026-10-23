@@ -90,13 +90,10 @@ function provisionedInventoryIntervalMs(): number {
 }
 
 // Whether the data was deleted: not if the deletion no longer applies.
-async function deleteProjectDataLocal(
-  project_id: string,
-  queued_at: number,
-): Promise<boolean> {
+async function deleteProjectDataLocal(project_id: string): Promise<boolean> {
   const { superseded } = await deleteVolume(project_id, {
     reportProvisioned: false,
-    superseded: () => staleDeletionSuperseded(project_id, queued_at),
+    superseded: () => pendingDeletionSuperseded(project_id),
   });
   if (superseded != null) {
     cancelProjectDataDeletion(project_id, superseded);
@@ -122,12 +119,13 @@ function queueProjectDataDeletion(
   project_id: string,
   requested_at: number,
 ): void {
-  if (!pendingProjectDeletions.has(project_id)) {
-    pendingProjectDeletions.set(project_id, {
-      attempts: 0,
-      queued_at: requested_at,
-    });
-  }
+  const pending = pendingProjectDeletions.get(project_id);
+  // a newer verdict stands for itself (e.g. after a restore here that
+  // superseded the older one)
+  pendingProjectDeletions.set(project_id, {
+    attempts: pending?.attempts ?? 0,
+    queued_at: Math.max(pending?.queued_at ?? 0, requested_at),
+  });
   void drainProjectDataDeletions();
 }
 
@@ -161,6 +159,14 @@ function staleDeletionSuperseded(
   return undefined;
 }
 
+// The same for the queued deletion as it is now: canceled meanwhile, or
+// requested again (a newer verdict) while an attempt ran.
+function pendingDeletionSuperseded(project_id: string): string | undefined {
+  const pending = pendingProjectDeletions.get(project_id);
+  if (pending == null) return "the deletion was canceled";
+  return staleDeletionSuperseded(project_id, pending.queued_at);
+}
+
 // A project now provisioned here (and accepted by the master as ours) must
 // not lose its data to a deletion requested before.  `requested_before`:
 // only a deletion requested before then (a late answer must not cancel a
@@ -192,8 +198,8 @@ async function drainProjectDataDeletions(): Promise<void> {
         | [string, { attempts: number; queued_at: number }]
         | undefined;
       if (!entry) break;
-      const [project_id, { attempts, queued_at }] = entry;
-      const superseded = staleDeletionSuperseded(project_id, queued_at);
+      const [project_id, { attempts }] = entry;
+      const superseded = pendingDeletionSuperseded(project_id);
       if (superseded != null) {
         cancelProjectDataDeletion(project_id, superseded);
         continue;
@@ -206,15 +212,17 @@ async function drainProjectDataDeletions(): Promise<void> {
             priority: "scavenger",
             operation_class: "stale_project_cleanup",
           },
-          async () => await deleteProjectDataLocal(project_id, queued_at),
+          async () => await deleteProjectDataLocal(project_id),
         );
         pendingProjectDeletions.delete(project_id);
       } catch (err) {
         const nextAttempts = attempts + 1;
-        if (pendingProjectDeletions.has(project_id)) {
+        // (as it is now: it may have been requested again meanwhile)
+        const current = pendingProjectDeletions.get(project_id);
+        if (current != null) {
           pendingProjectDeletions.set(project_id, {
+            ...current,
             attempts: nextAttempts,
-            queued_at,
           });
         }
         logger.warn("stale project data deletion failed", {

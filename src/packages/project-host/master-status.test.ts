@@ -334,6 +334,22 @@ describe("master-status stale project data deletion", () => {
     expect(deleted).toEqual(["p"]);
   });
 
+  it("keeps a newer deletion verdict for a project already queued", async () => {
+    const { queueProjectProvisioned } = await import("./master-status");
+    reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
+    queueProjectProvisioned("p", true);
+    await new Promise(setImmediate);
+    // (the first attempt was deferred) a restore here, then the master
+    // still says it is not ours
+    homeInstalledAt = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
+    queueProjectProvisioned("p", true);
+    await retry();
+    homeInstalledAt = undefined;
+    expect(deleted).toEqual(["p"]);
+  });
+
   it("dates a deletion from its request, not from a late answer", async () => {
     // an old "not provisioned" report is answered (delete) only after a
     // restore here was reported and accepted
