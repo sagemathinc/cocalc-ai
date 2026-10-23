@@ -244,3 +244,42 @@ test("patches show full ids on index lines, whatever core.abbrev is", async () =
     git(dir, ["config", "--unset", "core.abbrev"]);
   }
 });
+
+test("history is read as UTF-8, whatever the log encoding is set to", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "git-cache-encoding-"));
+  try {
+    git(repo, ["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "a.txt"), "a\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "café"]);
+    git(repo, ["config", "i18n.logOutputEncoding", "ISO-8859-1"]);
+    const reader = new GitReadService(execute);
+    const { repository } = await reader.discover("p8", repo);
+    const history = await reader.history(
+      repository,
+      git(repo, ["rev-parse", "HEAD"]).trim(),
+    );
+    expect(history[0].subject).toBe("café");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a commit's summary names commits in full and no branches", async () => {
+  const head = git(dir, ["rev-parse", "HEAD"]).trim();
+  for (const [key, value] of [
+    ["core.abbrev", "5"],
+    ["log.abbrevCommit", "true"],
+    ["log.decorate", "full"],
+  ])
+    git(dir, ["config", key, value]);
+  try {
+    const reader = new GitReadService(execute);
+    const { repository } = await reader.discover("p9", dir);
+    const summary = await reader.commitSummary(repository, head);
+    expect(summary.split("\n")[0]).toBe(`commit ${head}`);
+  } finally {
+    for (const key of ["core.abbrev", "log.abbrevCommit", "log.decorate"])
+      git(dir, ["config", "--unset", key]);
+  }
+});

@@ -433,8 +433,12 @@ export class GitReadService {
         "--no-color",
         "--format=fuller",
         // Output that would otherwise follow files and settings that change
-        // (.mailmap, notes, log.date, log.showSignature, the log encoding).
+        // (.mailmap, notes, log.date, log.showSignature, the log encoding,
+        // log.abbrevCommit and core.abbrev, log.decorate: branch names).
         "--no-use-mailmap",
+        "--no-abbrev-commit",
+        "--no-abbrev",
+        "--no-decorate",
         "--no-notes",
         "--no-show-signature",
         "--date=default",
@@ -516,6 +520,9 @@ export class GitReadService {
           "log",
           "-z",
           "--format=%H%x00%P%x00%ct%x00%s",
+          // Not i18n.logOutputEncoding or log.showSignature, which can change.
+          "--encoding=UTF-8",
+          "--no-show-signature",
           `--skip=${skip}`,
           `-n${count}`,
           ...(firstParent ? ["--first-parent"] : []),
