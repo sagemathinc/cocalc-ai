@@ -111,7 +111,9 @@ export async function get({
   // only an operation of that scope answers it.
   if (
     (scope_type != null && row.scope_type !== scope_type) ||
-    (scope_id != null && row.scope_id !== scope_id)
+    // UUIDs: routing accepts any spelling, the database returns lowercase.
+    (scope_id != null &&
+      `${row.scope_id}`.toLowerCase() !== `${scope_id}`.toLowerCase())
   ) {
     return undefined;
   }

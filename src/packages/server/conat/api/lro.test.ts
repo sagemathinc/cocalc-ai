@@ -173,6 +173,15 @@ describe("lro host authorization", () => {
         scope_id: "host-1",
       }),
     ).resolves.toMatchObject({ op_id: "op-1" });
+    // The same id in another spelling (a UUID in upper case) is the same scope.
+    await expect(
+      get({
+        account_id: "creator",
+        op_id: "op-1",
+        scope_type: "host",
+        scope_id: "HOST-1",
+      }),
+    ).resolves.toMatchObject({ op_id: "op-1" });
     // Another scope's operation does not answer: the call was routed by it.
     await expect(
       get({
