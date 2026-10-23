@@ -42,6 +42,18 @@ test("the subject: the agent's own, else its reply's first line, else the prompt
   expect(itemSubject(waiting, undefined)).toBe("please fix it");
 });
 
+test("an older model reply (no ACP metadata) gives the subject too", () => {
+  const [item] = readerItems([
+    msg("p", "please fix it"),
+    msg("a", "Fixed it.", {
+      sender_id: "openai-gpt-4",
+      parent_message_id: "p",
+    }),
+  ]);
+  expect(item.messages).toHaveLength(2);
+  expect(itemSubject(item, undefined)).toBe("Fixed it.");
+});
+
 test("priority: an open question is high; else the agent's; else by who started it", () => {
   const [mine] = readerItems([msg("p", "hi")]);
   const [agents] = readerItems([msg("p", "hi", { agent_rpc: { x: 1 } })]);
