@@ -253,6 +253,33 @@ describe("storage admission controller", () => {
       expect(controller.sample().pressure_state).toBe("emergency");
     });
 
+    it("restarts recovery's healthy interval on an unhealthy reading between state samples", () => {
+      // Codex on #1341: the reading was discarded with the duplicates, so
+      // recovery ended 60 s after it began despite the interruption.
+      const controller = gate();
+      full = 6;
+      tick(controller);
+      tick(controller);
+      expect(tick(controller)).toBe("contended");
+      full = 1;
+      expect(tick(controller)).toBe("recovery");
+      for (let i = 0; i < 11; i++) {
+        expect(tick(controller)).toBe("recovery");
+      }
+      // 55 s healthy; at 57 s an admission check reads 3%
+      full = 3;
+      now += 2_000;
+      controller.admit({ operation_kind: "interactive_backup" });
+      full = 1;
+      now += 3_000;
+      expect(controller.sample().pressure_state).toBe("recovery");
+      // a full healthy interval from the first sample after it
+      for (let i = 0; i < 11; i++) {
+        expect(tick(controller)).toBe("recovery");
+      }
+      expect(tick(controller)).toBe("normal");
+    });
+
     it("keeps lifecycle gating fresh between state samples", () => {
       const controller = gate();
       controller.sample();

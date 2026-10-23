@@ -575,6 +575,14 @@ export function createStorageAdmissionController(
       consecutiveContended = 0;
       contendedSince = undefined;
     }
+    // (recovery health is the 10 s average, as before: the 60 s one would
+    // keep a host in recovery for minutes after a burst)
+    const healthy =
+      pressure < contendedFullAvg10 && recoveryHealthy(full, lifecycleActive);
+    // Likewise any fresh unhealthy reading ends recovery's healthy interval.
+    if (pressureState === "recovery" && !healthy) {
+      recoveryHealthySince = undefined;
+    }
     // Admission checks sample as often as operations come (for fresh
     // lifecycle counts), so consecutive samples could be milliseconds apart
     // and read the same 10 s average: only samples at least
@@ -623,12 +631,7 @@ export function createStorageAdmissionController(
       transition("contended", "io_pressure_recurred", at);
       return;
     }
-    // (recovery health is the 10 s average, as before: the 60 s one would
-    // keep a host in recovery for minutes after a burst)
-    if (
-      pressure < contendedFullAvg10 &&
-      recoveryHealthy(full, lifecycleActive)
-    ) {
+    if (healthy) {
       recoveryHealthySince ??= at;
       if (at - recoveryHealthySince >= recoveryMs) {
         recoveryHealthySince = undefined;
