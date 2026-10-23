@@ -47,6 +47,11 @@ export const RawEditor: React.FC<Props> = ({
   const cell_list = useRedux([name, "cell_list"]);
   const metadata = useRedux([name, "metadata"]);
   const kernels = useRedux([name, "kernels"]);
+  // Editable only once the notebook is (a customer report): until its
+  // initial source settled, the raw JSON is the preview or nothing.
+  const initial_source_settled = useRedux([name, "initial_source_settled"]);
+  const read_only = useRedux([name, "read_only"]);
+  const editable = !!initial_source_settled && !read_only;
   useEffect(() => {
     actions.set_raw_ipynb();
   }, [cells, cell_list, metadata, kernels]);
@@ -99,8 +104,10 @@ export const RawEditor: React.FC<Props> = ({
         <JSONEditor
           value={raw_ipynb}
           font_size={font_size}
+          // JSONEditor keeps the first on_change; setIpynbFromRawEditor checks
+          // the live state (settled, not read-only) itself.
           on_change={(obj) => actions.setIpynbFromRawEditor(obj)}
-          cm_options={cm_options}
+          cm_options={editable ? cm_options : cm_options.set("readOnly", true)}
           undo={() => actions.undo()}
           redo={() => actions.redo()}
         />
