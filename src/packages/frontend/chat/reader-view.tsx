@@ -221,6 +221,9 @@ export function ChatReaderView({
     // Only once it is shown: a chat restored in a background tab reads nothing.
     if (!shown || !narrow || startedRef.current === threadId || !visible.length)
       return;
+    // Not before the read state loads: until then every message looks unread
+    // and archived ones look like they are in the inbox.
+    if (!(actions.isProjectReadStateReady?.() ?? true)) return;
     startedRef.current = threadId;
     // Kept only if it is in this thread (not one left from the last thread).
     if (selectedId && visible.some((item) => item.id === selectedId)) return;
@@ -228,7 +231,7 @@ export function ChatReaderView({
       visible.find((item) => !isItemRead(item, watermark, state)) ?? visible[0];
     setSelectedId(first.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown, narrow, threadId, visible.length]);
+  }, [shown, narrow, threadId, visible.length, readStateVersion]);
 
   // Opening an item, or a new reply arriving while it is open, reads it.
   // Not while the chat is hidden: then once it is shown.

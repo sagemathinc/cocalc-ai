@@ -440,3 +440,31 @@ test("phone: in a background browser tab nothing opens or is read until it is sh
     hidden.mockRestore();
   }
 });
+
+test("phone: opens nothing until the read state loads", () => {
+  let ready = false;
+  const actions: any = {
+    isProjectReadStateReady: jest.fn(() => ready),
+    getThreadReadCount: jest.fn(() => 0),
+    // Once loaded: the newest is archived.
+    getReaderState: jest.fn(() => (ready ? { a: { p3: "p3" } } : {})),
+    updateReaderState: jest.fn(() => true),
+  };
+  const view = (readStateVersion: number) => (
+    <ChatReaderView
+      actions={actions}
+      threadId="thread-1"
+      messages={thread}
+      accountId="acct"
+      readStateVersion={readStateVersion}
+      narrow
+    />
+  );
+  const { rerender } = render(view(0));
+  expect(screen.queryByRole("article")).toBeNull();
+  expect(actions.updateReaderState).not.toHaveBeenCalled();
+  ready = true;
+  rerender(view(1));
+  // Not the archived one it would have opened before.
+  expect(screen.getByRole("article")).toHaveTextContent("second question");
+});

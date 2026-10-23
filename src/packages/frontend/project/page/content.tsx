@@ -384,7 +384,13 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
             />
           );
         }
-        return <AgentsPanel project_id={project_id} layout="page" />;
+        return (
+          <AgentsPanel
+            project_id={project_id}
+            layout="page"
+            isVisible={is_visible}
+          />
+        );
       case "docs":
         return <ProjectDocsPanel project_id={project_id} layout="page" />;
       case "workspaces":
