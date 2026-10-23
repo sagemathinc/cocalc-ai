@@ -827,6 +827,14 @@ export function ChatRoomThreadPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [showReader, actions, selectedThreadId, messages, docVersion],
   );
+  // The thread's running turn, as the panel finds it (not a stale flag).
+  const readerRunningMessage = useMemo(
+    () =>
+      showReader
+        ? resolveSelectedThreadRunningCodexMessage(readerMessages, acpState)
+        : undefined,
+    [showReader, readerMessages, acpState],
+  );
   // Each item's questions and approvals, for its log and its list row.
   const readerAttention = useMemo(
     () =>
@@ -3119,7 +3127,7 @@ export function ChatRoomThreadPanel({
             isVisible={isVisible}
             itemBadges={(item: ReaderItem) => (
               <ReaderItemBadges
-                working={readerItemWorking(item, acpState)}
+                working={readerItemWorking(item, readerRunningMessage)}
                 question={(readerAttention.get(item.id) ?? []).some(
                   isOpenAttention,
                 )}
@@ -3296,8 +3304,9 @@ function ReaderItemBadges({
         <span
           aria-label="Waiting for your answer"
           style={{
-            color: "#fff",
-            background: "#d46b08",
+            color: UI_COLORS.warning,
+            background: UI_COLORS.warningBg,
+            border: `1px solid ${UI_COLORS.warning}`,
             borderRadius: 4,
             padding: "0 6px",
             fontSize: 11,
@@ -3311,7 +3320,7 @@ function ReaderItemBadges({
       {working ? (
         <span
           aria-label="Working"
-          style={{ color: "#1677ff", fontSize: 11, flex: "none" }}
+          style={{ color: UI_COLORS.info, fontSize: 11, flex: "none" }}
         >
           working…
         </span>
