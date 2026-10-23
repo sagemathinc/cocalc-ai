@@ -243,8 +243,8 @@ import {
   withProjectStorageFenced,
   restoreBackupWithHistory,
   restoredHistoryCandidates,
+  assertHomeSnapshotRestoreAllowed,
   snapshotNeedsPersistVolume,
-  snapshotWithHistory,
   syncPersistVolumeQuota,
   persistVolumePath,
 } from "./persist-volume";
@@ -467,7 +467,10 @@ const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
   projectMountpoint,
   createWritableSnapshot: async (source, dest) =>
     await btrfsSnapshotWritable({ source, dest }),
-  createProjectSnapshot: snapshotWithHistory,
+  // the files only, as every snapshot in ~/.snapshots (subvolume-snapshots.ts)
+  createProjectSnapshot: async ({ source, dest }) => {
+    await btrfs({ args: ["subvolume", "snapshot", "-r", source, dest] });
+  },
   deleteSubvolumeTree,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -2989,11 +2992,8 @@ async function createPathCopyArchive({
   let uncompressed_bytes = 0;
   let snapshotCreated = false;
   try {
-    // only read from, then deleted: no edit history needed
-    await volume.snapshots.create(snapshot, {
-      quotaMode: "skip",
-      includePreparedData: false,
-    });
+    // only read from, then deleted
+    await volume.snapshots.create(snapshot, { quotaMode: "skip" });
     snapshotCreated = true;
     for (const root of roots) {
       // The source path is the project user's, and so is the .snapshots
@@ -3363,6 +3363,7 @@ async function restoreSnapshot({
   if (!["both", "home", "rootfs"].includes(mode)) {
     throw new Error(`invalid snapshot restore mode: ${mode}`);
   }
+  assertHomeSnapshotRestoreAllowed({ project_id, mode });
   const home = projectMountpoint(project_id);
   const rootfsPath = join(home, PROJECT_IMAGE_PATH);
   const staged = await createSnapshotRestoreClone({ project_id, snapshot });
