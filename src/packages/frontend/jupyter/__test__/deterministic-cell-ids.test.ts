@@ -115,6 +115,40 @@ describe("withDeterministicCellIds", () => {
     expect(importedIds(legacy())).not.toEqual(importedIds(legacy()));
   });
 
+  it("ignores worksheets from nbformat 4 on, like the importer", () => {
+    const v4 = () => ({
+      nbformat: 4,
+      nbformat_minor: 4,
+      metadata: {},
+      cells: [],
+      worksheets: [{ cells: [{ cell_type: "code", source: "stale" }] }],
+    });
+    const a = withDeterministicCellIds(v4());
+    const b = withDeterministicCellIds(v4());
+    // The importer uses only the (default) top-level cell, with the same id.
+    expect(importedIds(a)).toHaveLength(1);
+    expect(importedIds(a)).toEqual(importedIds(b));
+  });
+
+  it("never gives a generated id to a cell when a later worksheet cell has it in the file", () => {
+    const top = { cell_type: "code", source: "x = 1", metadata: {} };
+    const generated = withDeterministicCellIds({
+      nbformat: 3,
+      cells: [top],
+      worksheets: [],
+    }).cells[0].id;
+    const result: any = withDeterministicCellIds({
+      nbformat: 3,
+      cells: [{ ...top }],
+      worksheets: [
+        { cells: [{ cell_type: "code", input: "y = 2", id: generated }] },
+      ],
+    });
+    expect(result.worksheets[0].cells[0].id).toBe(generated);
+    expect(result.cells[0].id).not.toBe(generated);
+    expect(importedIds(result)).toEqual([result.cells[0].id, generated].sort());
+  });
+
   it("makes two clients' imports of the same file write the same cells", () => {
     // Without it, each client's import gets random ids: two copies of every
     // cell once both are merged.

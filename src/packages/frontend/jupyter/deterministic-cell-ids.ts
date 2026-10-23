@@ -12,54 +12,53 @@ import { deep_copy, sha1 } from "@cocalc/util/misc";
 // cell (a doubled notebook, a customer report).  Ids derived from each
 // cell's position and content are the same in every client, so concurrent
 // imports write the same cells.  Ids in the file are kept (a repeated id
-// only for its first cell).  Cells of an nbformat 3 file are in its
-// worksheets, which the importer appends after any top-level cells; they are
-// numbered in that order.  Only a file without any cells is given the
-// importer's default cell here, so that cell gets a deterministic id too.
+// only for its first cell).
+//
+// This follows IPynbImporter: the cells of a file before nbformat 4 are in
+// its worksheets, which the importer appends after any top-level cells (it
+// ignores worksheets from nbformat 4 on), and a file without cells gets the
+// importer's default cell, given here so that it gets a deterministic id too.
 export function withDeterministicCellIds<T = any>(ipynb: T): T {
   if (ipynb == null || typeof ipynb != "object") return ipynb;
   const notebook = ipynb as any;
   const topCells: any[] = Array.isArray(notebook.cells) ? notebook.cells : [];
-  const worksheets: any[] = Array.isArray(notebook.worksheets)
-    ? notebook.worksheets
-    : [];
+  const legacy = !(notebook.nbformat >= 4);
+  const worksheets: any[] =
+    legacy && Array.isArray(notebook.worksheets) ? notebook.worksheets : [];
   const worksheetCells: any[][] = worksheets.map((worksheet) =>
     Array.isArray(worksheet?.cells) ? worksheet.cells : [],
   );
-  const total =
-    topCells.length +
-    worksheetCells.reduce((sum, cells) => sum + cells.length, 0);
-  if (total === 0) {
-    return {
-      ...notebook,
-      cells: assignIds(deep_copy(DEFAULT_IPYNB.cells), 0, new Set()),
-    };
-  }
+  // Every cell, in the order the importer reads them.
   const all = [...topCells, ...worksheetCells.flat()];
-  const ids = all.filter(hasId).map((cell) => cell.id);
-  if (all.every(hasId) && new Set(ids).size === ids.length) {
+  if (all.length === 0) {
+    return { ...notebook, cells: assignIds(deep_copy(DEFAULT_IPYNB.cells)) };
+  }
+  const assigned = assignIds(all);
+  if (assigned.every((cell, i) => cell === all[i])) {
     return ipynb;
   }
-  const used = new Set<string>();
-  const cells = assignIds(topCells, 0, used);
   let offset = topCells.length;
-  const newWorksheets = worksheets.map((worksheet, i) => {
-    const assigned = assignIds(worksheetCells[i], offset, used);
-    offset += worksheetCells[i].length;
-    return Array.isArray(worksheet?.cells)
-      ? { ...worksheet, cells: assigned }
-      : worksheet;
-  });
-  return {
-    ...notebook,
-    ...(Array.isArray(notebook.cells) ? { cells } : {}),
-    ...(worksheets.length > 0 ? { worksheets: newWorksheets } : {}),
-  };
+  const result: any = { ...notebook };
+  if (Array.isArray(notebook.cells)) {
+    result.cells = assigned.slice(0, topCells.length);
+  }
+  if (worksheets.length > 0) {
+    result.worksheets = worksheets.map((worksheet, i) => {
+      const cells = assigned.slice(offset, offset + worksheetCells[i].length);
+      offset += worksheetCells[i].length;
+      return Array.isArray(worksheet?.cells)
+        ? { ...worksheet, cells }
+        : worksheet;
+    });
+  }
+  return result;
 }
 
-// The first cell with a given id keeps it (`used` is shared across calls, in
-// import order); other cells get an id from their position and content.
-function assignIds(cells: any[], offset: number, used: Set<string>): any[] {
+// The first cell with a given id keeps it; every such id is reserved before
+// any id is generated, so a generated id never takes a file's id.  Other
+// cells get an id from their position and content.
+function assignIds(cells: any[]): any[] {
+  const used = new Set<string>();
   const kept = cells.map((cell) => {
     if (hasId(cell) && !used.has(cell.id)) {
       used.add(cell.id);
@@ -72,7 +71,7 @@ function assignIds(cells: any[], offset: number, used: Set<string>): any[] {
     const source = cell?.source ?? cell?.input ?? "";
     const text = Array.isArray(source) ? source.join("") : `${source}`;
     const hash = sha1(`${cell?.cell_type ?? ""}\0${text}`).slice(0, 10);
-    let id = `c${offset + i}-${hash}`;
+    let id = `c${i}-${hash}`;
     while (used.has(id)) id += "x";
     used.add(id);
     return { ...cell, id };
