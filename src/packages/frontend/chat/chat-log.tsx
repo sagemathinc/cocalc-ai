@@ -97,7 +97,11 @@ import {
   type CodexAttentionDraftUpdater,
 } from "./codex-attention-card";
 import { showAttentionInFooter } from "./attention-response-display";
-import { assistantFinishedAt } from "./turn-span";
+import {
+  assistantFinishedAt,
+  isImmediateAcpSteerMessage,
+  resolveSteerAssistantMessageId,
+} from "./turn-span";
 
 export { getSortedDates } from "./sorted-dates";
 
@@ -130,10 +134,6 @@ const NARROW_TURN_ROW_INSET: CSSProperties = {
   marginLeft: 13,
   marginRight: 13,
 };
-
-function isImmediateAcpSteerMessage(message: ChatMessageTyped): boolean {
-  return field<string>(message, "acp_send_mode") === "immediate";
-}
 
 function sameInlineCodexActivityBlocks(
   left?: InlineCodexActivityBlock[],
@@ -238,42 +238,6 @@ function resolveSteerAnchorMessageId({
       return assistantParentId || directParentId;
     }
     return directParentId;
-  }
-  return undefined;
-}
-
-function resolveSteerAssistantMessageId({
-  message,
-  byMessageId,
-  includeMidturnMessages = false,
-}: {
-  message: ChatMessageTyped;
-  byMessageId: Map<string, ChatMessageTyped>;
-  includeMidturnMessages?: boolean;
-}): string | undefined {
-  let current: ChatMessageTyped | undefined = message;
-  let guard = 0;
-  while (current != null && guard < 1000) {
-    const directParentId = `${parentMessageId(current) ?? ""}`.trim();
-    if (!directParentId) return undefined;
-    const directParent = byMessageId.get(directParentId);
-    if (directParent == null) return undefined;
-    if (field(message, "thread_id") !== field(directParent, "thread_id"))
-      return;
-    if (
-      isImmediateAcpSteerMessage(directParent) ||
-      (includeMidturnMessages && !isAcpAssistantMessage(directParent))
-    ) {
-      current = directParent;
-      guard += 1;
-      continue;
-    }
-    if (!isAcpAssistantMessage(directParent)) {
-      return undefined;
-    }
-    const assistantMessageId =
-      `${field<string>(directParent, "message_id") ?? ""}`.trim();
-    return assistantMessageId || undefined;
   }
   return undefined;
 }
