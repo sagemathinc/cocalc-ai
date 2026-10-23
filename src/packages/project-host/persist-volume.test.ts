@@ -360,6 +360,17 @@ describe("prepareProjectPersistVolume", () => {
     expect(seen).toEqual([{ ready: true, legacy: false }]);
   });
 
+  it("doesn't limit the group while the old copy is still in the home", async () => {
+    const ops = fakeOps();
+    ops.quotas.set(home, 10 * GiB);
+    ops.removeFromHome = async () => {
+      throw new Error("root helper unavailable");
+    };
+    await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
+    expect(existsSync(join(root, READY_MARKER))).toBe(true);
+    expect(ops.limited).toEqual([]);
+  });
+
   it("is ready even if the quota group can't be limited (the audit does it)", async () => {
     const ops = fakeOps();
     ops.quotas.set(home, 10 * GiB);

@@ -503,14 +503,17 @@ async function prepare({
       project_id,
       err: `${err}`,
     });
+    // (the group is limited at the project's next quota change or audit)
+    return;
   }
   if (homeQuota > 0) {
     // A group just made by the join above has no limit until the project's
     // next quota change or audit: until then the home and history would each
     // have their own allowance, together more than the project's quota.
     // Only now, with the volume ready and the old copy gone: while both
-    // copies are there, the group may be over its limit, and the marker
-    // could not be written (every open would import again, and fail).
+    // copies are there, the group may be over its limit (the marker could
+    // not be written, and every open would import again and fail; or, with
+    // the copy left behind, the project could write nothing).
     await ops
       .limitQuotaGroup(project_id, home, root, homeQuota)
       .catch((err) => {
