@@ -154,6 +154,33 @@ describe("hydrateNotebookFromIpynbIfNeeded", () => {
     } as any;
   }
 
+  it("does not replace cells a client added while the file was read", async () => {
+    const live: any[] = [];
+    const actions = {
+      syncdb: { get: jest.fn(() => live) },
+      // The real setToIpynb checks skipIf at the last moment.
+      setToIpynb: jest.fn(async (_ipynb, _dataOnly, opts) =>
+        opts?.skipIf?.() ? false : true,
+      ),
+    } as any;
+    const hydrated = await hydrateNotebookFromIpynbIfNeeded({
+      actions,
+      fs: {
+        readFile: async () => {
+          // A browser pastes the first cell while the file is being read.
+          live.push({ type: "cell", id: "pasted", input: "import ipywidgets" });
+          return Buffer.from(
+            JSON.stringify({ cells: [{ cell_type: "code", source: [] }] }),
+          );
+        },
+      },
+      path: "/tmp/test.ipynb",
+    });
+    expect(hydrated).toBe(false);
+    expect(actions.setToIpynb).toHaveBeenCalledTimes(1);
+    expect(actions.setToIpynb.mock.calls[0][2].skipIf()).toBe(true);
+  });
+
   it("hydrates an empty live notebook from the ipynb file", async () => {
     const actions = createActions();
     const hydrated = await hydrateNotebookFromIpynbIfNeeded({
