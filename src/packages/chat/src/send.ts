@@ -207,7 +207,7 @@ export async function admitPreparedChatSend({
   client: Client;
   timeoutMs?: number;
   transport?: { stream: typeof streamAcp; steer: typeof steerAcp };
-}): Promise<void> {
+}): Promise<{ state: "steered" | "queued" | "running" }> {
   const { message, request } = prepared;
   try {
     if (request.chat.send_mode === "immediate") {
@@ -218,8 +218,9 @@ export async function admitPreparedChatSend({
       ) {
         throw new Error("guidance submission was not acknowledged");
       }
+      // steered: it joined the running turn; else it is a turn of its own.
+      return { state: response.state as "steered" | "queued" | "running" };
     } else {
-      let accepted = false;
       for await (const response of transport.stream(
         request,
         { timeout: timeoutMs },
@@ -229,13 +230,10 @@ export async function admitPreparedChatSend({
         if (
           response.type === "status" &&
           ["queued", "running"].includes(response.state)
-        ) {
-          accepted = true;
-          break;
-        }
+        )
+          return { state: response.state as "queued" | "running" };
       }
-      if (!accepted)
-        throw new Error("turn submission ended without acknowledgement");
+      throw new Error("turn submission ended without acknowledgement");
     }
   } catch (err) {
     // A lost acknowledgement is ambiguous. In particular, retrying guidance

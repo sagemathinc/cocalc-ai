@@ -11658,10 +11658,12 @@ async function trySteerCandidateIds({
           throw new Error("durable ACP steer claim was lost");
         }
         try {
-          // Authorized RPC guidance inherits the actual live turn's funding,
-          // not next-turn preferences. Keep the original for durable/queue fallback.
+          // Authorized RPC guidance, and a sensor wake joining the turn,
+          // inherit the actual live turn's funding, not next-turn
+          // preferences. Keep the original for durable/queue fallback.
           const steerRequest =
-            request.chat.agent_rpc_execution?.guidance === true
+            request.chat.agent_rpc_execution?.guidance === true ||
+            request.chat.sensor_wake
               ? {
                   ...request,
                   config: {
@@ -13138,7 +13140,12 @@ async function attemptAcpSteerRequest(
   assertRunningJobSteerPrincipal(request);
   // A forwarded steer may outlive its admission authority. Recheck before
   // injecting into any runtime; ordinary human guidance needs no network grant.
-  await authorizeAgentDeliveryExecution(request, hubApi.agent);
+  // A sensor wake's one-time permit is only checked here: if the wake cannot
+  // join the turn, it runs as a turn of its own, which consumes it then.
+  const sensorWake = !!request.chat.sensor_wake;
+  await authorizeAgentDeliveryExecution(request, hubApi.agent, {
+    checkOnly: sensorWake,
+  });
   if (request.runtime) {
     const session = await withChatSyncDB({
       client: conatClient,
@@ -13210,6 +13217,22 @@ async function attemptAcpSteerRequest(
     hostProjectRoot,
   });
   if (result.state === "steered") {
+    if (sensorWake) {
+      // It joined the turn: now it has run, so its permit is spent, and a
+      // later turn of its own (say a retry) is refused.
+      try {
+        await authorizeAgentDeliveryExecution(request, hubApi.agent);
+      } catch (err) {
+        logger.warn(
+          "sensor wake joined a turn, but its permit was not consumed",
+          {
+            sensor_id: request.chat.sensor_wake?.sensor_id,
+            run_id: request.chat.sensor_wake?.run_id,
+            err: `${err}`,
+          },
+        );
+      }
+    }
     await recordAcpGuidanceDelivered(request);
     return result;
   }

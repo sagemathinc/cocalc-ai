@@ -13,17 +13,21 @@ const syncdb = {
 };
 const acquire = jest.fn(async () => syncdb);
 const release = jest.fn(async () => {});
-const admit = jest.fn(async () => {});
+const admit = jest.fn(async () => ({ state: "queued" }));
+const prepare = jest.fn();
 
 jest.mock("@cocalc/chat/server", () => ({
   acquireChatSyncDB: (...args: any[]) => (acquire as any)(...args),
   releaseChatSyncDB: (...args: any[]) => (release as any)(...args),
 }));
 jest.mock("@cocalc/chat/send", () => ({
-  prepareChatSend: () => ({
-    message: { message_id: "m1" },
-    request: { chat: {} },
-  }),
+  prepareChatSend: (opts: any) => (
+    prepare(opts),
+    {
+      message: { message_id: "m1", event: "chat", thread_id: "t1" },
+      request: { chat: {} },
+    }
+  ),
   admitPreparedChatSend: (...args: any[]) => (admit as any)(...args),
 }));
 
@@ -56,9 +60,43 @@ describe("sensor wake delivery", () => {
   it("delivers a wake as an agent-authored turn", async () => {
     await expect(deliverSensorWake({} as any, wake, running)).resolves.toEqual({
       message_id: "m1",
+      effective_delivery: "queued",
     });
-    expect(syncdb.set).toHaveBeenCalledTimes(1);
+    // An older hub sends no delivery: a turn of its own, as before.
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ guidance: false }),
+    );
     expect(admit).toHaveBeenCalledTimes(1);
+  });
+
+  it("as guidance it joins the running turn, and says so", async () => {
+    admit.mockResolvedValueOnce({ state: "steered" });
+    await expect(
+      deliverSensorWake({} as any, { ...wake, delivery: "guidance" }, running),
+    ).resolves.toEqual({
+      message_id: "m1",
+      effective_delivery: "live-guidance",
+    });
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ guidance: true }),
+    );
+    // The message says how it arrived; only its key and that field are set.
+    expect(syncdb.set).toHaveBeenLastCalledWith({
+      event: "chat",
+      message_id: "m1",
+      thread_id: "t1",
+      sensor_wake: {
+        sensor_id: wake.authorization.sensor_id,
+        run_id: wake.authorization.run_id,
+        title: "CI",
+        effective_delivery: "live-guidance",
+      },
+    });
+    // No running turn to join (or it could not): a turn of its own.
+    admit.mockResolvedValueOnce({ state: "queued" });
+    await expect(
+      deliverSensorWake({} as any, { ...wake, delivery: "guidance" }, running),
+    ).resolves.toEqual({ message_id: "m1", effective_delivery: "queued" });
   });
 
   it("reports not_sent only when nothing was written", async () => {

@@ -216,8 +216,16 @@ test("direct guidance retains the steer path after persistence", async () => {
 
 test("queue-only admission never saves or rewrites chat", async () => {
   const f = fixture();
-  await admitPreparedChatSend(f);
+  await expect(admitPreparedChatSend(f)).resolves.toEqual({ state: "queued" });
   expect(f.steps).toEqual(["queue"]);
+});
+
+test("admission says whether guidance joined the running turn", async () => {
+  const f = fixture(true);
+  f.transport.steer.mockResolvedValueOnce({ ok: true, state: "steered" });
+  await expect(admitPreparedChatSend(f)).resolves.toEqual({ state: "steered" });
+  // No running turn to join: a turn of its own.
+  await expect(admitPreparedChatSend(f)).resolves.toEqual({ state: "queued" });
 });
 
 test("failed chat persistence does not attempt admission", async () => {

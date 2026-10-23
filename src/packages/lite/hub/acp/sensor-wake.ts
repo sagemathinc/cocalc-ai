@@ -3,10 +3,12 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// Deliver a sensor wake: a turn in the agent's thread that CoCalc writes on
-// behalf of an approved sensor. It goes through the same preparation and
+// Deliver a sensor wake: a message in the agent's thread that CoCalc writes
+// on behalf of an approved sensor. It goes through the same preparation and
 // admission as a person's message, so it works for Codex, Claude Code and
-// other ACP harnesses, and it queues behind a running turn.
+// other ACP harnesses. As guidance (the default) it joins the running turn,
+// as a person's message does, and starts a turn when none is running or it
+// cannot join; queued, it is a turn of its own after the running one.
 
 import type { Client } from "@cocalc/conat/core/client";
 import type {
@@ -65,6 +67,7 @@ export async function deliverSensorWake(
         thread,
         rows,
         prompt: wake.prompt,
+        guidance: wake.delivery === "guidance",
       });
     } catch (err) {
       return { not_sent: errorText(err) };
@@ -85,8 +88,38 @@ export async function deliverSensorWake(
     db.commit();
     await db.save();
     await db.save_to_disk();
-    await admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 });
-    return { message_id: `${prepared.message.message_id ?? ""}` };
+    const { state } = await admitPreparedChatSend({
+      prepared,
+      client,
+      timeoutMs: 15_000,
+    });
+    const effective_delivery = state === "steered" ? "live-guidance" : "queued";
+    try {
+      // Display only: how it arrived. Only the row's key and this field, so
+      // nothing the hub wrote to the row since is overwritten.
+      const key = Object.fromEntries(
+        ["event", "date", "sender_id", "message_id", "thread_id"]
+          .filter((name) => prepared.message[name] != null)
+          .map((name) => [name, prepared.message[name]]),
+      );
+      db.set({
+        ...key,
+        sensor_wake: {
+          sensor_id: wake.authorization.sensor_id,
+          run_id: wake.authorization.run_id,
+          title: wake.title,
+          effective_delivery,
+        },
+      });
+      db.commit();
+      await db.save();
+    } catch {
+      // Best effort: the wake was delivered either way.
+    }
+    return {
+      message_id: `${prepared.message.message_id ?? ""}`,
+      effective_delivery,
+    };
   } finally {
     await releaseChatSyncDB(project_id, wake.path);
   }

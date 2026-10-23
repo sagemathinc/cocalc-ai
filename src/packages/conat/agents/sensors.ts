@@ -91,10 +91,38 @@ export const SENSOR_CONNECTOR_LABELS: Record<SensorConnector, string> = {
   cloudflare: "Cloudflare",
 };
 
+/**
+ * How a wake reaches the agent. guidance: into its running turn, as a
+ * person's message does (and as a new turn when none is running); queued: as
+ * a turn of its own, after the running one ends.
+ */
+export const SENSOR_DELIVERIES = ["guidance", "queued"] as const;
+export type SensorDelivery = (typeof SENSOR_DELIVERIES)[number];
+
 interface SensorSpecBase {
   title: string;
   schedule: SensorSchedule;
   max_wakes_per_day: number;
+  /** Absent: the default for its kind (see sensorDelivery). */
+  delivery?: SensorDelivery;
+}
+
+/**
+ * A sensor's delivery: a script sensor's or watcher's wake joins the running
+ * turn by default (an agent in a long turn is awake); a scheduled prompt is a
+ * fresh turn of its own.
+ */
+export function sensorDelivery(
+  spec: Pick<SensorSpecBase, "delivery"> & { kind?: string },
+): SensorDelivery {
+  return spec.delivery ?? (spec.kind === "prompt" ? "queued" : "guidance");
+}
+
+function deliveryField(value: unknown): { delivery?: SensorDelivery } {
+  if (value == null) return {};
+  if (!SENSOR_DELIVERIES.includes(value as SensorDelivery))
+    throw new Error('delivery must be "guidance" or "queued"');
+  return { delivery: value as SensorDelivery };
 }
 
 /** A program the agent wrote, run like a command in the agent's turn. */
@@ -221,6 +249,8 @@ export interface AgentSensor {
 export type SensorRunOutcome =
   | "quiet"
   | "wake"
+  /** Woke the agent in its running turn. */
+  | "wake-guidance"
   | "wake-limited"
   | "wake-failed"
   /** Held while an earlier wake was queued; the next wake includes it. */
@@ -262,6 +292,8 @@ export type AgentSensorRequest =
       watch: unknown;
       /** Give up after this many hours (default 24, at most 168). */
       hours?: number;
+      /** How its wake arrives (default guidance). */
+      delivery?: SensorDelivery;
     }
   | { action: "sensor"; op: "pause"; sensor_id: string }
   | { action: "sensor"; op: "delete"; sensor_id: string };
@@ -339,6 +371,8 @@ export interface SensorWakeDelivery {
   prompt: string;
   title: string;
   authorization: SensorExecutionAuthorization;
+  /** Absent (an older hub): queued. */
+  delivery?: SensorDelivery;
 }
 
 /**
@@ -347,7 +381,11 @@ export interface SensorWakeDelivery {
  * ambiguous: the turn may have been queued.
  */
 export type SensorWakeDeliveryResult =
-  | { message_id: string }
+  | {
+      message_id: string;
+      /** What happened: joined the running turn, or a turn of its own. */
+      effective_delivery?: "live-guidance" | "queued";
+    }
   | { not_sent: string };
 
 /** Requests routed to the project's bay. */
@@ -371,6 +409,12 @@ export interface SensorDeliveryBinding {
   prompt_sha256: string;
   path: string;
   thread_id: string;
+  /**
+   * Check everything without consuming the permit: a wake joining a running
+   * turn is checked before it is injected (and again if that is retried),
+   * and consumed once it was. If it cannot join, its turn consumes it.
+   */
+  check_only?: true;
 }
 
 const LINE_CONTROL_RE =
@@ -456,10 +500,18 @@ export function validateSensorSpec(
     ),
   });
   if (kind === "prompt") {
-    onlyFields(s, ["kind", "title", "prompt", "schedule", "max_wakes_per_day"]);
+    onlyFields(s, [
+      "kind",
+      "title",
+      "prompt",
+      "schedule",
+      "max_wakes_per_day",
+      "delivery",
+    ]);
     return {
       kind: "prompt",
       ...common(),
+      ...deliveryField(s.delivery),
       prompt: text(s.prompt, "prompt", SENSOR_LIMITS.maxPromptBytes).trim(),
     };
   }
@@ -479,6 +531,7 @@ export function validateSensorSpec(
     "timeout_seconds",
     "max_wakes_per_day",
     "uses",
+    "delivery",
   ]);
   const { language } = s;
   if (!SENSOR_LANGUAGES.includes(language as SensorLanguage))
@@ -499,6 +552,7 @@ export function validateSensorSpec(
   return {
     kind: "script",
     ...common(),
+    ...deliveryField(s.delivery),
     purpose: text(
       s.purpose,
       "sensor purpose",
@@ -537,7 +591,11 @@ const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
  */
 export function validateSensorWatch(
   input: unknown,
-  { hours, now = Date.now() }: { hours?: unknown; now?: number } = {},
+  {
+    hours,
+    now = Date.now(),
+    delivery,
+  }: { hours?: unknown; now?: number; delivery?: unknown } = {},
 ): WatchSensorSpec {
   const w = input as Record<string, unknown>;
   if (!w || typeof w !== "object" || Array.isArray(w))
@@ -673,6 +731,7 @@ export function validateSensorWatch(
       timezone: "UTC",
     },
     max_wakes_per_day: 1,
+    ...deliveryField(delivery),
     expires_at: new Date(expires).toISOString(),
   };
 }
@@ -859,7 +918,7 @@ export function validateAgentSensorRequest(
     list: ["action", "op"],
     show: ["action", "op", "sensor_id"],
     propose: ["action", "op", "spec", "sensor_id"],
-    watch: ["action", "op", "watch", "hours"],
+    watch: ["action", "op", "watch", "hours", "delivery"],
     pause: ["action", "op", "sensor_id"],
     delete: ["action", "op", "sensor_id"],
   };

@@ -178,6 +178,49 @@ test("logs never see a wake permit, and it is dropped once consumed", async () =
   expect(JSON.stringify(value)).not.toContain("secret-permit");
 });
 
+test("a wake joining a running turn is checked without consuming its permit", async () => {
+  const value = request();
+  delete value.chat!.agent_delivery_id;
+  value.prompt = "wake";
+  value.chat!.user_message_content = "wake";
+  value.chat!.sensor_wake = {
+    version: 1,
+    sensor_id: "s",
+    project_id: "project",
+    agent_id: "a",
+    script_hash: "h",
+    run_id: "r",
+    permit: "secret-permit-value-secret-permit-value-123",
+  };
+  const api = {
+    authorizeRpcExecution: jest.fn(async () => {}),
+    authorizeSensorExecution: jest.fn(async () => {}),
+  };
+  await authorizeAgentDeliveryExecution(value, api, { checkOnly: true });
+  expect(api.authorizeSensorExecution).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      delivery: expect.objectContaining({ check_only: true }),
+    }),
+  );
+  // Kept: it may still run as a turn of its own, which consumes it.
+  expect(value.chat!.sensor_wake!.permit).toContain("secret-permit");
+  // A paused or deleted sensor is refused at the check: nothing is injected.
+  api.authorizeSensorExecution.mockRejectedValueOnce(
+    new Error("sensor is no longer active as approved"),
+  );
+  await expect(
+    authorizeAgentDeliveryExecution(value, api, { checkOnly: true }),
+  ).rejects.toThrow("no longer active");
+  // Once it joined the turn, a normal call consumes it.
+  await authorizeAgentDeliveryExecution(value, api);
+  expect(api.authorizeSensorExecution).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      delivery: expect.not.objectContaining({ check_only: true }),
+    }),
+  );
+  expect(JSON.stringify(value)).not.toContain("secret-permit");
+});
+
 describe("project membership at execution", () => {
   const api = {
     authorizeRpcExecution: jest.fn(async () => {}),

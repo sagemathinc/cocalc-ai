@@ -366,7 +366,10 @@ async function createWatcher(
   // limited by the tier's active watchers (per account and per agent) and
   // the wake budget, not maxActive.
   if (limits.maxWakesPerDay === 0) throw new Error(NO_SENSORS);
-  const spec = validateSensorWatch(request.watch, { hours: request.hours });
+  const spec = validateSensorWatch(request.watch, {
+    hours: request.hours,
+    delivery: request.delivery,
+  });
   if (!(await projectHasInternet(agent.project_id)))
     throw new Error(NO_INTERNET);
   if (
@@ -813,9 +816,17 @@ export async function authorizeSensorExecutionLocal(
   // hash, approver and approval, identity thread, project membership and
   // host) and consumes the permit, so a pause, re-approval, disable, thread
   // change or loss of access committed before it leaves nothing to consume.
+  // check_only (a wake about to join a running turn) runs the same checks
+  // without consuming: the permit is consumed once the wake was injected,
+  // or by its own turn if it could not join one.
   const { rows: consumed } = await agentStore().query(
-    `UPDATE agent_sensor_runs r SET wake_state='consumed'
-     FROM agent_sensors s, agent_identities i, projects p
+    `${
+      delivery.check_only === true
+        ? `SELECT r.run_id FROM agent_sensor_runs r,
+             agent_sensors s, agent_identities i, projects p`
+        : `UPDATE agent_sensor_runs r SET wake_state='consumed'
+             FROM agent_sensors s, agent_identities i, projects p`
+    }
      WHERE r.run_id=$1 AND r.sensor_id=$2 AND r.wake_state='issued'
        AND r.wake_permit_hash=$3 AND r.wake_prompt_sha256=$4
        AND r.wake_account_id=$5 AND r.wake_path=$6 AND r.wake_thread_id=$7
@@ -828,7 +839,7 @@ export async function authorizeSensorExecutionLocal(
        AND p.project_id=s.project_id AND p.deleted IS NOT TRUE
        AND p.host_id=$11
        AND p.users #>> ARRAY[$5::text, 'group'] IN ('owner', 'collaborator')
-     RETURNING r.run_id`,
+     ${delivery.check_only === true ? "" : "RETURNING r.run_id"}`,
     [
       authorization.run_id,
       authorization.sensor_id,
