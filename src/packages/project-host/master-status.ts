@@ -139,7 +139,7 @@ function queueProjectDataDeletion(
 // the moment it was given: a deletion can be deferred (I/O pressure, a
 // lifecycle in progress) for minutes, and meanwhile the project may have
 // been moved or restored here, e.g. by the very move whose pre-restore
-// cleanup made this host report it (6f6a2389, 2026-10-23).  Why a queued
+// cleanup made this host report it (a customer report, 2026-10-23).  Why a queued
 // deletion no longer applies, if it doesn't.
 function staleDeletionSuperseded(
   project_id: string,
