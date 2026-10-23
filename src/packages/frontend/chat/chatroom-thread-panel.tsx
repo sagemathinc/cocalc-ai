@@ -30,6 +30,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ChatReaderView } from "./reader-view";
 import {
+  isOpenAttention,
   readerItemAttention,
   readerItemThreadIndex,
   readerItemWaitsFor,
