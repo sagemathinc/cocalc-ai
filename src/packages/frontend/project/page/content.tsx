@@ -583,6 +583,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
                 project_id={project_id}
                 path={chatMetaFile(path)}
                 desc={sideChatDesc}
+                isVisible={is_visible}
               />
             </Suspense>
           </CocalcErrorBoundary>
