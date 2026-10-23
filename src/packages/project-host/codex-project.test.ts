@@ -2616,6 +2616,36 @@ describe("project skill overrides never follow a project's symlinks", () => {
     ).resolves.toHaveLength(1);
   });
 
+  it("a lease or status directory is never made through a symlink", async () => {
+    const { tmp, projectHome } = await setup();
+    const { makeDirectoryBeneath } = await import("./codex/codex-project");
+    const elsewhere = path.join(tmp, "elsewhere-host");
+    await fs.mkdir(elsewhere);
+    // An ancestor symlink (as for ~/.local/share/cocalc/runtime/...).
+    await fs.symlink(elsewhere, path.join(projectHome, ".local"));
+    await expect(
+      makeDirectoryBeneath(projectHome, [
+        ".local",
+        "share",
+        "cocalc",
+        "runtime",
+        ".cocalc-agent-x",
+      ]),
+    ).rejects.toThrow();
+    await expect(fs.readdir(elsewhere)).resolves.toEqual([]);
+    // The leaf itself planted as a symlink.
+    await fs.mkdir(path.join(projectHome, ".cocalc"));
+    await fs.symlink(elsewhere, path.join(projectHome, ".cocalc", "status"));
+    await expect(
+      makeDirectoryBeneath(projectHome, [".cocalc", "status"]),
+    ).rejects.toThrow();
+    // Real directories are made, with owner-only access.
+    await makeDirectoryBeneath(projectHome, [".cocalc", "a", "b"]);
+    const made = await fs.lstat(path.join(projectHome, ".cocalc", "a", "b"));
+    expect(made.isDirectory()).toBe(true);
+    expect(made.mode & 0o777).toBe(0o700);
+  });
+
   it("creates the skills directory, but never through a symlink", async () => {
     const { projectHome, packagedSkills, tmp } = await setup();
     const { getBuiltinClaudeSkillMount } =

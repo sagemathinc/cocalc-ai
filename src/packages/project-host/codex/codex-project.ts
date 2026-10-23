@@ -669,13 +669,8 @@ export async function createProjectCliTokenLease({
   assertHostWritableRuntimeRoot(scratch, "CLI token lease");
 
   const leaseName = `.cocalc-agent-${randomUUID()}`;
-  const relativeHomeDir = join(
-    ".local",
-    "share",
-    "cocalc",
-    "runtime",
-    leaseName,
-  );
+  const relativeHomeParts = [".local", "share", "cocalc", "runtime", leaseName];
+  const relativeHomeDir = join(...relativeHomeParts);
   const hostDir = scratch
     ? join(scratch, leaseName)
     : join(home, relativeHomeDir);
@@ -687,7 +682,12 @@ export async function createProjectCliTokenLease({
   const connectorHostPath = join(hostDir, "connector-key");
   const connectorContainerPath = join(containerDir, "connector-key");
 
-  await fs.mkdir(hostDir, { recursive: true, mode: 0o700 });
+  // Never through a symlink in the project's home (or scratch): the token
+  // files must not be written anywhere the project points the host at.
+  await makeDirectoryBeneath(
+    scratch ?? home,
+    scratch ? [leaseName] : relativeHomeParts,
+  );
   await fs.chmod(hostDir, 0o700);
   // Connectors are entirely dormant unless the site set one up.
   const cliConnectors = await siteCliConnectors(hubApi.system?.getCustomize);
@@ -1289,25 +1289,42 @@ async function withParentBeneath<T>(
   }
 }
 
-/** Create a directory beneath the project's home, never through a symlink. */
+/**
+ * Create (if needed) a real directory beneath `root` (the project's home or
+ * scratch), never through a symlink the project controls; throws if that is
+ * not possible (a symlink on the way, or the leaf is one).
+ */
+export async function makeDirectoryBeneath(
+  root: string,
+  parts: string[],
+): Promise<void> {
+  await withParentBeneath(
+    root,
+    parts,
+    async (path) => {
+      await fs.mkdir(path, { mode: 0o700 }).catch((err) => {
+        if (err?.code !== "EEXIST") throw err;
+      });
+      // A real directory, not a symlink planted in its place.
+      await (
+        await fs.open(
+          path,
+          fsConstants.O_RDONLY |
+            fsConstants.O_DIRECTORY |
+            fsConstants.O_NOFOLLOW,
+        )
+      ).close();
+    },
+    { create: true },
+  );
+}
+
+/** Best effort, as before: a symlink anywhere is simply left alone. */
 async function ensureDirectoryBeneath(
   root: string,
   parts: string[],
 ): Promise<void> {
-  try {
-    await withParentBeneath(
-      root,
-      parts,
-      async (path) => {
-        await fs.mkdir(path, { mode: 0o700 }).catch((err) => {
-          if (err?.code !== "EEXIST") throw err;
-        });
-      },
-      { create: true },
-    );
-  } catch {
-    // Best effort, as before: a symlink anywhere is simply left alone.
-  }
+  await makeDirectoryBeneath(root, parts).catch(() => {});
 }
 
 /**
@@ -1801,7 +1818,6 @@ async function ensureContainer({
     (authRuntime.source === "shared-home"
       ? resolveSharedCodexHome()
       : undefined);
-  const projectCodexHome = join(home, ".codex");
   const projectRow = getProject(projectId);
   const hasGpu =
     projectRow?.run_quota?.gpu === true ||
@@ -1934,11 +1950,8 @@ async function ensureContainer({
   }
 
   args.push(mountArg({ source: home, target: PROJECT_RUNTIME_HOME }));
-  try {
-    await fs.mkdir(projectCodexHome, { recursive: true, mode: 0o700 });
-  } catch {
-    // best effort: project home mount may already provide this path
-  }
+  // Best effort: the project home mount may already provide this path.
+  await ensureDirectoryBeneath(home, [".codex"]);
   if (scratch) {
     args.push(mountArg({ source: scratch, target: "/tmp" }));
   }
@@ -2519,18 +2532,12 @@ async function spawnCodexAppServerInProjectRuntime({
     if (isolatedCodexHome) {
       // Upstream's file model cache is not account-scoped. Status probes use a
       // fresh home so one project collaborator cannot seed another's catalog.
-      const relativePath = join(
-        ".cocalc",
-        "codex-account-status",
-        randomUUID(),
-      );
+      const relativeParts = [".cocalc", "codex-account-status", randomUUID()];
+      const relativePath = join(...relativeParts);
       assertHostWritableRuntimeRoot(scratch, "isolated Codex home");
       const hostRoot = scratch ?? home;
       isolatedCodexHomeHostPath = join(hostRoot, relativePath);
-      await fs.mkdir(isolatedCodexHomeHostPath, {
-        recursive: true,
-        mode: 0o700,
-      });
+      await makeDirectoryBeneath(hostRoot, relativeParts);
       const containerPath = join(
         scratch ? "/tmp" : PROJECT_RUNTIME_HOME,
         relativePath,

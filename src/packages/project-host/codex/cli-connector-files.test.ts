@@ -213,6 +213,31 @@ describe("sweeping tokens of dead leases", () => {
     }
   });
 
+  it("never sweeps through a symlink the project put on the way", async () => {
+    const target = await fs.mkdtemp(join(tmpdir(), "sweep-target-"));
+    const home = await fs.mkdtemp(join(tmpdir(), "sweep-home-"));
+    try {
+      const stale = join(target, ".cocalc-agent-other", "cli");
+      await fs.mkdir(stale, { recursive: true });
+      const token = join(stale, "github-token");
+      await fs.writeFile(token, "x");
+      const old = new Date(Date.now() - STALE_CLI_TOKEN_MS - 60_000);
+      await fs.utimes(token, old, old);
+      // The project's runtime directory is a symlink to another place.
+      await fs.symlink(target, join(home, "runtime"));
+      await expect(
+        sweepStaleCliConnectorTokens({
+          runtimeDir: join(home, "runtime"),
+          ownLeaseName: ".cocalc-agent-own",
+        }),
+      ).resolves.toBe(0);
+      await expect(fs.readFile(token, "utf8")).resolves.toBe("x");
+    } finally {
+      await fs.rm(target, { recursive: true, force: true });
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("is harmless when the runtime directory does not exist", async () => {
     await expect(
       sweepStaleCliConnectorTokens({

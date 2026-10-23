@@ -10,7 +10,7 @@
 // running; without one, every wrapper just runs the real command unchanged.
 
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   CLI_CONNECTORS,
@@ -282,6 +282,9 @@ export async function sweepStaleCliConnectorTokens({
   let removed = 0;
   let leases: string[];
   try {
+    // runtimeDir is in the project's home: never sweep through a symlink
+    // the project put on the way (it could point at another project's).
+    if ((await fs.realpath(runtimeDir)) !== resolve(runtimeDir)) return 0;
     leases = await fs.readdir(runtimeDir);
   } catch {
     return 0;
