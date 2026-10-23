@@ -1,11 +1,14 @@
-import type {
-  Fileserver,
-  SnapshotRestoreMode,
+import {
+  SNAPSHOT_HOME_RESTORE_UNAVAILABLE,
+  type Fileserver,
+  type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 
 // Throws if the project's host would refuse to restore a snapshot with this
 // mode (file-server checkSnapshotRestore), so the restore is refused before
-// the project is stopped.  A host from before the check doesn't refuse.
+// the project is stopped.  A host from before the check would restore a
+// files-only snapshot (made by a newer host, e.g. before a rollback or a
+// move) as if it held the history: a whole-home restore is refused there too.
 export async function assertSnapshotRestoreAllowed({
   client,
   project_id,
@@ -24,7 +27,8 @@ export async function assertSnapshotRestoreAllowed({
       message.includes("unknown service method 'checkSnapshotRestore'") ||
       message.includes("impl[mesg.name] is not a function")
     ) {
-      return;
+      if (mode === "rootfs") return;
+      throw new Error(SNAPSHOT_HOME_RESTORE_UNAVAILABLE);
     }
     throw err;
   }

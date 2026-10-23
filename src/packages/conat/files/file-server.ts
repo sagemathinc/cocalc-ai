@@ -546,7 +546,7 @@ export interface Fileserver {
   }) => Promise<void>;
   // Throws SNAPSHOT_HOME_RESTORE_UNAVAILABLE if restoreSnapshot would refuse
   // this mode, so that a restore is refused before the project is stopped.
-  // (Hosts from before it don't have it, and don't refuse.)
+  // (Hosts from before it don't have it: the hub then refuses home restores.)
   checkSnapshotRestore: (opts: {
     project_id: string;
     mode?: SnapshotRestoreMode;
