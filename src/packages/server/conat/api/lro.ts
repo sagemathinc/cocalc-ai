@@ -24,7 +24,6 @@ import {
 } from "@cocalc/server/project-host/access";
 import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
-import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 const DISMISSABLE_STATUSES: LroStatus[] = [
   "succeeded",
@@ -98,12 +97,24 @@ async function assertScopeAccess({
 export async function get({
   account_id,
   op_id,
+  scope_type,
+  scope_id,
 }: {
   account_id?: string;
   op_id: string;
+  scope_type?: LroScopeType;
+  scope_id?: string;
 }): Promise<LroSummary | undefined> {
   const row = await getLro(op_id);
   if (!row) return undefined;
+  // A named scope routed this call here (see @cocalc/conat/hub/api/routes):
+  // only an operation of that scope answers it.
+  if (
+    (scope_type != null && row.scope_type !== scope_type) ||
+    (scope_id != null && row.scope_id !== scope_id)
+  ) {
+    return undefined;
+  }
   if (!account_id || account_id !== row.created_by) {
     await assertScopeAccess({
       account_id,
@@ -127,17 +138,17 @@ export async function list({
   include_completed?: boolean;
 }): Promise<LroSummary[]> {
   if (scope_type === "host") {
-    const ownership = await resolveHostBay(scope_id);
-    const bay_id = ownership?.bay_id;
-    if (bay_id && bay_id !== getConfiguredBayId()) {
-      // The owning bay checks access and reads its authoritative operation log.
-      return await getInterBayBridge()
-        .hostConnection(bay_id)
-        .listHostOperations({
-          account_id,
-          host_id: scope_id,
-          include_completed,
-        });
+    // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes),
+    // which keeps the authoritative operation log: refuse anywhere else
+    // rather than answer from a stale local copy.
+    const owner = (await resolveHostBay(scope_id))?.bay_id;
+    if (owner && owner !== getConfiguredBayId()) {
+      throw Object.assign(
+        new Error(
+          `stale route: host ${scope_id} is owned by ${owner}, not ${getConfiguredBayId()}; retry`,
+        ),
+        { code: 409 },
+      );
     }
   }
   await assertScopeAccess({ account_id, scope_type, scope_id, mode: "read" });

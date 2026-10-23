@@ -130,6 +130,22 @@ describe("hub API routes", () => {
     ).toBeUndefined();
   });
 
+  it.each(["lro.get", "lro.list"])(
+    "routes %s by host only for a host's operations",
+    (name) => {
+      const route = getHubApiRoute(name)!;
+      expect(route.owner).toBe("host");
+      expect(
+        hubApiRouteKey(route, [{ scope_type: "host", scope_id: PROJECT }]),
+      ).toBe(PROJECT);
+      // Any other scope, or none, runs where received.
+      expect(
+        hubApiRouteKey(route, [{ scope_type: "project", scope_id: PROJECT }]),
+      ).toBeUndefined();
+      expect(hubApiRouteKey(route, [{ op_id: PROJECT }])).toBeUndefined();
+    },
+  );
+
   it("finds an email invite by id or link token", () => {
     const route = getHubApiRoute("projects.redeemEmailProjectInvite")!;
     expect(route.owner).toBe("collab-invite");
