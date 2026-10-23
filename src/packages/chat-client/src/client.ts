@@ -8,6 +8,7 @@ import {
   buildThreadConfigRecord,
   CHAT_PRIMARY_KEYS,
   CHAT_STRING_COLS,
+  sharedCodexThreadConfig,
   type CodexThreadConfig,
 } from "@cocalc/chat/core";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
@@ -62,7 +63,9 @@ export interface CreateHeadlessChatClientOptions {
   ackBackoffMs?: number;
   codexCompletionNotificationDefault?: boolean;
   activityLoadPolicy?:
-    "recent" | "live-preview-only" | "live-preview-and-guidance-history";
+    | "recent"
+    | "live-preview-only"
+    | "live-preview-and-guidance-history";
 }
 
 export class CoCalcHeadlessChatClient implements HeadlessChatClient {
@@ -245,7 +248,12 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
       event: existing.event,
       message_id: existing.message_id,
       thread_id: existing.thread_id,
-      acp_config: opts.acp_config,
+      // Shared config never names a subscription; null removes a saved one
+      // from the merged record. The account's payment selection picks it.
+      acp_config: {
+        ...sharedCodexThreadConfig(opts.acp_config),
+        credentialId: null,
+      },
       agent_model: opts.acp_config.model ?? existing.agent_model,
       updated_at: new Date().toISOString(),
       updated_by: this.options.account_id,

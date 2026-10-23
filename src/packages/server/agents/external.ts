@@ -56,6 +56,20 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
       ),
     };
   }
+  if (opts.action === "inspect") {
+    if (home_bay_id !== getConfiguredBayId())
+      throw new Error("external inbox requires account home");
+    return {
+      delivery: await externalStore().delivery(
+        opts.account_id,
+        opts.installation_id,
+        opts.attempt_id,
+        opts.agent_network_id,
+        opts.source,
+        opts.source_account_id,
+      ),
+    };
+  }
   if (opts.action === "enrollment-status") {
     if (home_bay_id !== getConfiguredBayId())
       throw new Error("external enrollment requires account home");
@@ -82,6 +96,26 @@ export async function enqueueExternalAgentMessage(
   if (!("message" in result))
     throw new Error("invalid external inbox response");
   return result.message;
+}
+
+/** For the sender: what became of its message to an external inbox. */
+export async function inspectExternalAgentMessage(opts: {
+  account_id: string;
+  installation_id: string;
+  attempt_id: string;
+  agent_network_id: string;
+  source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
+  source_account_id: string;
+}) {
+  const home_bay_id = await home(opts.account_id);
+  const result = await control(home_bay_id).external({
+    ...opts,
+    action: "inspect",
+    home_bay_id,
+  });
+  if (!("delivery" in result))
+    throw new Error("invalid external inbox response");
+  return result.delivery;
 }
 
 export async function approveExternalAgentLogin(opts: {

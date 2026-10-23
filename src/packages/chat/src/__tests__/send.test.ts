@@ -61,6 +61,31 @@ test("generic thread metadata round-trips without inventing Codex funding or a s
   ).toBe("native-pi-session");
 });
 
+test("a subscription saved in shared thread config is not used to pay", () => {
+  for (const paymentSource of ["subscription", "subscription-credential"]) {
+    const prepared = prepareChatSend({
+      projectId: "project",
+      accountId: "account",
+      path: "a.chat",
+      thread: buildThreadConfigRecord({
+        thread_id: "thread",
+        updated_by: "account",
+        agent_kind: "acp",
+        acp_config: {
+          model: "gpt-5.4",
+          paymentSource: paymentSource as any,
+          credentialId: "removed-subscription",
+        },
+      }),
+      rows: [],
+      prompt: "hello",
+    });
+    // Admission resolves the account's own payment selection instead.
+    expect(prepared.request.config?.paymentSource).toBe("subscription");
+    expect(prepared.request.config).not.toHaveProperty("credentialId");
+  }
+});
+
 test("ACP guidance preserves the runtime; unknown runtimes do not fall back to Codex", () => {
   const options = {
     projectId: "project",

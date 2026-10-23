@@ -45,7 +45,7 @@
   "license": "SEE LICENSE.md",
   "dependencies-COMMENT": "We must install react so that react-intl doesn't install the wrong version! See https://github.com/sagemathinc/cocalc/issues/8132",
   "dependencies": {
-    "@cocalc/diff-match-patch": "^1.0.0",
+    "@cocalc/diff-match-patch": "^1.1.1",
     "@cocalc/docs": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@isaacs/ttlcache": "^1.4.1",
