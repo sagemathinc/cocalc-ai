@@ -32,6 +32,7 @@ backend/conat/persist-volume-template.ts).
 - Deleting, copying and archiving a project do the same to its volume.
 */
 
+import { SNAPSHOT_HOME_RESTORE_UNAVAILABLE } from "@cocalc/conat/files/file-server";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -807,54 +808,22 @@ export async function copyPersistVolumeIntoSnapshot(opts: {
   }
 }
 
-// A read-only snapshot at `dest` in the project's ~/.snapshots of `source`,
-// its home or a snapshot of it, with its edit history as in every snapshot
-// there (subvolume-snapshots.ts does the same for the usual ones).  The
-// project can write its home, and the history must never be writable there:
-// the snapshot is completed in host-only staging first.
-export async function snapshotWithHistory({
+// Snapshots in ~/.snapshots are of the files only (subvolume-snapshots.ts),
+// so restoring a whole home from one would keep the project's current edit
+// history, which open documents then write back over the restored files.
+// Until a restore reconciles the two, it is refused with persist volumes;
+// files can still be restored from ~/.snapshots, and a home from a backup.
+export function assertHomeSnapshotRestoreAllowed({
   project_id,
-  source,
-  dest,
+  mode,
   env = process.env,
 }: {
   project_id: string;
-  source: string;
-  dest: string;
+  mode: string;
   env?: NodeJS.ProcessEnv;
-}): Promise<void> {
-  const subvolume = `project-${project_id}`;
-  let captured = await capturePersistVolume({ subvolume, env });
-  try {
-    if (captured == null) {
-      await btrfs({ args: ["subvolume", "snapshot", "-r", source, dest] });
-      // There was nothing to add, but there may be now (the history just
-      // moved out of the home): then take the snapshot again with it.
-      captured = await capturePersistVolume({ subvolume, env });
-      if (captured == null) return;
-      await btrfs({ args: ["subvolume", "delete", dest] });
-    }
-    const staged = join(
-      dirname(persistVolumePath(project_id, env)!),
-      IMPORT_STAGING_DIR,
-      stagingName("snapshot", project_id),
-    );
-    await btrfs({ args: ["subvolume", "snapshot", source, staged] });
-    try {
-      await captured.addTo(staged);
-      await btrfs({ args: ["property", "set", "-ts", staged, "ro", "true"] });
-      await btrfs({ args: ["subvolume", "snapshot", "-r", staged, dest] });
-    } finally {
-      await btrfs({ args: ["subvolume", "delete", staged] }).catch((err) => {
-        logger.warn("unable to delete a staged snapshot", {
-          staged,
-          err: `${err}`,
-        });
-      });
-    }
-  } finally {
-    await captured?.release();
-  }
+}): void {
+  if (mode === "rootfs" || persistVolumePath(project_id, env) == null) return;
+  throw new Error(SNAPSHOT_HOME_RESTORE_UNAVAILABLE);
 }
 
 // Where restoring `path` of a backup to `dest` in the project's home puts

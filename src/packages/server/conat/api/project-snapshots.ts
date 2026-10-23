@@ -3,7 +3,11 @@ import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { type SnapshotRestoreMode } from "@cocalc/conat/files/file-server";
+import {
+  SNAPSHOT_HOME_RESTORE_UNAVAILABLE,
+  type SnapshotRestoreMode,
+} from "@cocalc/conat/files/file-server";
+import { assertSnapshotRestoreAllowed } from "@cocalc/server/projects/snapshot-restore-check";
 import { assertCollab } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import getPool from "@cocalc/database/pool";
@@ -269,6 +273,26 @@ export async function restoreSnapshot({
   const restoreMode = mode ?? "both";
   if (!["both", "home", "rootfs"].includes(restoreMode)) {
     throw new Error(`invalid snapshot restore mode: ${mode}`);
+  }
+  if (restoreMode !== "rootfs") {
+    // A restore the host refuses fails here, not after the restore worker
+    // stopped the project.  Anything else (e.g. the host is unreachable now)
+    // is for the worker, which checks again.
+    try {
+      await assertSnapshotRestoreAllowed({
+        client: await projectClient(project_id, account_id, 15_000),
+        project_id,
+        mode: restoreMode,
+      });
+    } catch (err) {
+      if (
+        `${(err as any)?.message ?? err}`.includes(
+          SNAPSHOT_HOME_RESTORE_UNAVAILABLE,
+        )
+      ) {
+        throw new Error(SNAPSHOT_HOME_RESTORE_UNAVAILABLE);
+      }
+    }
   }
   const op = await createLro({
     kind: "project-restore",

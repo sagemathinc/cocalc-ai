@@ -39,7 +39,7 @@ import {
   replaceProjectHome,
   restoreBackupWithHistory,
   restoredHistoryCandidates,
-  snapshotWithHistory,
+  assertHomeSnapshotRestoreAllowed,
   syncPersistVolumeQuota,
   btrfsOps,
   type PersistVolumeOps,
@@ -698,64 +698,23 @@ describe("in the project-host", () => {
     expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
   });
 
-  describe("snapshotWithHistory", () => {
-    // (in ~/.snapshots on btrfs, which a copy can't do)
-    const dest = () => join(mount, "before-restore");
-    const snapshot = async () => {
-      await snapshotWithHistory({
-        project_id: PROJECT,
-        source: home,
-        dest: dest(),
-        env,
-      });
-    };
-
-    it("adds the history in host-only staging, never in the home", async () => {
-      await readyVolume();
-      await writeFile(join(home, "work.txt"), "work");
-      await snapshot();
-      expect(read(join(dest(), "work.txt"))).toBe("work");
-      const copy = join(dest(), HISTORY_IN_SNAPSHOTS);
-      expect(read(join(copy, "a.db"))).toBe("live");
-      expect(existsSync(join(copy, READY_MARKER))).toBe(true);
-      // made read-only in staging, then snapshotted read-only into the home
-      const ops = (btrfs as jest.Mock).mock.calls.map(([{ args }]) => args);
-      const staged = ops.find(
-        (args) =>
-          args[1] === "snapshot" && args[2] === home && args.length === 4,
-      )?.[3];
-      expect(staged).toContain(join(mount, ".persist-import"));
-      expect(ops).toContainEqual([
-        "property",
-        "set",
-        "-ts",
-        staged,
-        "ro",
-        "true",
-      ]);
-      expect(ops).toContainEqual([
-        "subvolume",
-        "snapshot",
-        "-r",
-        staged,
-        dest(),
-      ]);
-      expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
+  it("refuses to restore a whole home from a snapshot in ~/.snapshots", () => {
+    // (they are of the files only: the history would be written back)
+    for (const mode of ["home", "both"]) {
+      expect(() =>
+        assertHomeSnapshotRestoreAllowed({ project_id: PROJECT, mode, env }),
+      ).toThrow(/temporarily unavailable.*~\/\.snapshots/);
+    }
+    assertHomeSnapshotRestoreAllowed({
+      project_id: PROJECT,
+      mode: "rootfs",
+      env,
     });
-
-    it("is a plain snapshot until the history was imported", async () => {
-      await snapshot();
-      expect(read(join(dest(), LEGACY, "a.db"))).toBe("a");
-      expect(existsSync(join(dest(), HISTORY_IN_SNAPSHOTS))).toBe(false);
-      expect(sudo).not.toHaveBeenCalled();
-    });
-
-    it("fails, leaving no snapshot, rather than replace a project's own .cocalc-persist", async () => {
-      await readyVolume();
-      await writeFile(join(home, HISTORY_IN_SNAPSHOTS), "mine");
-      await expect(snapshot()).rejects.toThrow(/reserved for CoCalc/);
-      expect(existsSync(dest())).toBe(false);
-      expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
+    // without persist volumes, the history is in the snapshot's home
+    assertHomeSnapshotRestoreAllowed({
+      project_id: PROJECT,
+      mode: "both",
+      env: {},
     });
   });
 
