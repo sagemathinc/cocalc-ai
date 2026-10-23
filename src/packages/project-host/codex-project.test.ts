@@ -2506,6 +2506,92 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
   });
 });
 
+describe("project skill overrides never follow a project's symlinks", () => {
+  // Whether the canonical skill mounts must not tell a project whether a
+  // host path exists, and nothing may be created through its symlinks.
+  async function setup() {
+    const tmp = await mkTempDir("skill-symlink-test-");
+    const projectHome = path.join(tmp, "project-home");
+    const packagedSkills = path.join(tmp, "packaged-skills");
+    await fs.mkdir(path.join(packagedSkills, "cocalc"), { recursive: true });
+    await fs.writeFile(
+      path.join(packagedSkills, "cocalc", "SKILL.md"),
+      "# canonical\n",
+    );
+    await fs.mkdir(projectHome, { recursive: true });
+    // A host directory holding a regular SKILL.md, outside the project.
+    const host = path.join(tmp, "host-only");
+    await fs.mkdir(path.join(host, "cocalc"), { recursive: true });
+    await fs.writeFile(path.join(host, "cocalc", "SKILL.md"), "host\n");
+    return { tmp, projectHome, packagedSkills, host };
+  }
+
+  it("a symlinked SKILL.md to a host file is not an override", async () => {
+    const { projectHome, packagedSkills, host } = await setup();
+    const { getBuiltinClaudeSkillMount, getBuiltinLaunchpadSkillMounts } =
+      await import("./codex/codex-project");
+    for (const tool of [".claude", ".codex"]) {
+      const dir = path.join(projectHome, tool, "skills", "cocalc");
+      await fs.mkdir(dir, { recursive: true });
+      await fs.symlink(
+        path.join(host, "cocalc", "SKILL.md"),
+        path.join(dir, "SKILL.md"),
+      );
+    }
+    await expect(
+      getBuiltinClaudeSkillMount(projectHome, packagedSkills),
+    ).resolves.toHaveLength(1);
+    await expect(
+      getBuiltinLaunchpadSkillMounts(projectHome, packagedSkills),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("a symlinked directory on the way is not followed either", async () => {
+    const { projectHome, packagedSkills, host } = await setup();
+    const { getBuiltinClaudeSkillMount } = await import(
+      "./codex/codex-project"
+    );
+    // The skill directory itself, then a higher ancestor.
+    await fs.mkdir(path.join(projectHome, ".claude", "skills"), {
+      recursive: true,
+    });
+    await fs.symlink(
+      path.join(host, "cocalc"),
+      path.join(projectHome, ".claude", "skills", "cocalc"),
+    );
+    await expect(
+      getBuiltinClaudeSkillMount(projectHome, packagedSkills),
+    ).resolves.toHaveLength(1);
+    await fs.rm(path.join(projectHome, ".claude"), { recursive: true });
+    await fs.mkdir(path.join(host, "skills"));
+    await fs.rename(path.join(host, "cocalc"), path.join(host, "skills", "cocalc"));
+    await fs.symlink(host, path.join(projectHome, ".claude"));
+    await expect(
+      getBuiltinClaudeSkillMount(projectHome, packagedSkills),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("creates the skills directory, but never through a symlink", async () => {
+    const { projectHome, packagedSkills, tmp } = await setup();
+    const { getBuiltinClaudeSkillMount } = await import(
+      "./codex/codex-project"
+    );
+    await getBuiltinClaudeSkillMount(projectHome, packagedSkills);
+    expect(
+      (await fs.lstat(path.join(projectHome, ".claude", "skills"))).isDirectory(),
+    ).toBe(true);
+    const elsewhere = path.join(tmp, "elsewhere");
+    await fs.mkdir(elsewhere);
+    const other = path.join(tmp, "other-home");
+    await fs.mkdir(other);
+    await fs.symlink(elsewhere, path.join(other, ".claude"));
+    await expect(
+      getBuiltinClaudeSkillMount(other, packagedSkills),
+    ).resolves.toHaveLength(1);
+    await expect(fs.readdir(elsewhere)).resolves.toEqual([]);
+  });
+});
+
 describe("getBuiltinClaudeSkillMount", () => {
   it("mounts the canonical skill unless the project provides one", async () => {
     const tmp = await mkTempDir("claude-skill-test-");
