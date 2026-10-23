@@ -1011,9 +1011,16 @@ async function inspectExternalInbox(
   run_id: string | undefined,
   request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt,
 ) {
-  const target = request.target;
-  if (!isExternalAgentSource(target))
+  if (!isExternalAgentSource(request.target))
     throw new Error("external inbox target required");
+  // Members and inbox rows hold UUIDs in canonical (lowercase) form; the
+  // caller may spell them otherwise. The outcome still echoes the request.
+  const target = {
+    ...request.target,
+    account_id: request.target.account_id.toLowerCase(),
+    agent_id: request.target.agent_id.toLowerCase(),
+    installation_id: request.target.installation_id.toLowerCase(),
+  };
   const nothing = (why: string) => {
     logger.debug("external inbox inspection found nothing", {
       attempt_id: request.attempt_id,
@@ -1030,7 +1037,7 @@ async function inspectExternalInbox(
       source,
       run_id,
       target,
-      request.agent_network_id,
+      request.agent_network_id.toLowerCase(),
     );
     if ("denied" in checked) return nothing(`network: ${checked.denied}`);
     if (

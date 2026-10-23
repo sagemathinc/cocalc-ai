@@ -214,3 +214,46 @@ test("every inspection that finds nothing gets the same answer, so probing learn
   // The home was asked only when the network proved the target.
   expect(inspect).toHaveBeenCalledTimes(2);
 });
+
+test("a target spelled in uppercase is the same target", async () => {
+  const request = {
+    ...attempt(),
+    agent_network_id: network.toUpperCase(),
+    target: {
+      kind: "external" as const,
+      account_id: targetAccount.toUpperCase(),
+      agent_id: externalAgent.toUpperCase(),
+      installation_id: installation.toUpperCase(),
+    },
+    action: "inspect" as const,
+  };
+  inspect.mockResolvedValueOnce({
+    state: "pending",
+    created_at: "2026-10-23T10:00:00.000Z",
+    expires_at: "2026-10-30T10:00:00.000Z",
+  });
+  const outcome = await acceptAgentRpc(subject, request);
+  expect(outcome).toMatchObject({
+    outcome: "accepted",
+    inbox: { state: "pending" },
+    // The outcome names the target as the caller did.
+    target: request.target,
+  });
+  // The network is checked, and the home asked, in canonical form.
+  expect(checkNetwork).toHaveBeenCalledWith(
+    account,
+    expect.objectContaining({
+      options: expect.objectContaining({
+        agent_network_id: network,
+        target,
+      }),
+    }),
+  );
+  expect(inspect).toHaveBeenCalledWith(
+    expect.objectContaining({
+      account_id: targetAccount,
+      installation_id: installation,
+      agent_network_id: network,
+    }),
+  );
+});
