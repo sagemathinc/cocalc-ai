@@ -6,6 +6,8 @@ import { MarkdownImageContext } from "../../../chat/markdown-image";
 import { createMarkdownImageResolver } from "../../../cocalc/markdown-images";
 import { PaymentSummary } from "../../../chat/payment-summary";
 import { ChatSettings } from "../../../chat/settings";
+import { HarnessSettings } from "../../../chat/harness-settings";
+import { agentName, isClaudeCode } from "../../../chat/agent-name";
 
 import {
   createRemoteHeadlessChatClient,
@@ -165,12 +167,14 @@ function Message({
   read,
   speechBusy,
   viewerAccountId,
+  agent,
 }: {
   item: ProjectedChatMessage;
   guidance: ProjectedChatMessage[];
   read: (item: ProjectedChatMessage) => void;
   speechBusy: boolean;
   viewerAccountId?: string;
+  agent: string;
 }) {
   const colors = usePalette();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -218,7 +222,7 @@ function Message({
         ) : (
           <View
             key={section.key}
-            accessibilityLabel="Codex activity"
+            accessibilityLabel={`${agent} activity`}
             style={styles.activity}
           >
             <Markdown value={section.markdown} />
@@ -229,13 +233,13 @@ function Message({
       item.activity?.state === "loading" &&
       item.generating ? (
         <Text accessibilityLiveRegion="polite" style={styles.activityStatus}>
-          Loading Codex activity…
+          Loading {agent} activity…
         </Text>
       ) : !activitySections.length &&
         item.activity?.state === "error" &&
         item.generating ? (
         <Text accessibilityRole="alert" style={styles.activityError}>
-          Codex activity could not be recovered: {item.activity.error}
+          {agent} activity could not be recovered: {item.activity.error}
         </Text>
       ) : null}
       {thinkingPlaceholder || (item.generating && !item.content) ? null : (
@@ -243,7 +247,7 @@ function Message({
       )}
       {item.generating ? (
         <View
-          accessibilityLabel="Codex running"
+          accessibilityLabel={`${agent} running`}
           accessibilityLiveRegion="polite"
           accessibilityRole="text"
           style={styles.runningBadge}
@@ -627,6 +631,7 @@ export default function ChatScreen() {
   const selectedThread = snapshot.threads.find(
     (thread) => thread.thread_id === threadId,
   );
+  const agent = agentName(selectedThread);
   const canSend =
     !!client &&
     (!speechBusy || speech.state.phase === "speaking") &&
@@ -675,7 +680,9 @@ export default function ChatScreen() {
         setDraft(empty);
       }
       setStatus(
-        guidance ? "Guidance accepted by Codex" : "Prompt accepted by Codex",
+        guidance
+          ? `Guidance accepted by ${agent}`
+          : `Prompt accepted by ${agent}`,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : `${err}`);
@@ -758,23 +765,39 @@ export default function ChatScreen() {
       <Stack.Screen
         options={{
           headerLargeTitle: false,
-          title: `${params.title || "Codex"}`,
+          title: `${params.title || agent}`,
         }}
       />
-      {settingsOpen && client && (
-        <ChatSettings
-          profile={profileId}
-          project={projectId}
-          thread={threadId}
-          config={selectedThread?.acp_config}
-          client={client}
-          onClose={() => {
-            setSettingsOpen(false);
-            // The payment selection is account state: show its new value.
-            setPaymentRevision((value) => value + 1);
-          }}
-        />
-      )}
+      {settingsOpen &&
+        client &&
+        (selectedThread?.agent_runtime ? (
+          <HarnessSettings
+            profile={profileId}
+            project={projectId}
+            thread={threadId}
+            runtime={selectedThread.agent_runtime}
+            controls={selectedThread.agent_runtime_controls}
+            client={client}
+            onClose={() => {
+              setSettingsOpen(false);
+              // The payment selection is account state: show its new value.
+              setPaymentRevision((value) => value + 1);
+            }}
+          />
+        ) : (
+          <ChatSettings
+            profile={profileId}
+            project={projectId}
+            thread={threadId}
+            config={selectedThread?.acp_config}
+            client={client}
+            onClose={() => {
+              setSettingsOpen(false);
+              // The payment selection is account state: show its new value.
+              setPaymentRevision((value) => value + 1);
+            }}
+          />
+        ))}
       <Modal
         transparent
         visible={attachmentMenuOpen}
@@ -854,6 +877,13 @@ export default function ChatScreen() {
             thread={threadId}
             config={selectedThread?.acp_config}
             revision={paymentRevision}
+            harness={
+              !selectedThread?.agent_runtime
+                ? undefined
+                : isClaudeCode(selectedThread.agent_runtime)
+                  ? "claude-code"
+                  : "project-managed"
+            }
             onPress={() => setSettingsOpen(true)}
           />
         )}
@@ -927,6 +957,7 @@ export default function ChatScreen() {
                   guidance={row.guidance}
                   speechBusy={speechBusy}
                   viewerAccountId={viewerAccountId}
+                  agent={agent}
                   read={(item) =>
                     void speech.controller.read(item.content, item.message_id)
                   }
@@ -1042,11 +1073,11 @@ export default function ChatScreen() {
           ) : null}
           {live.phase === "idle" ? (
             <TextInput
-              accessibilityLabel="Message Codex"
+              accessibilityLabel={`Message ${agent}`}
               editable={draftLoaded && !submitting && !attaching}
               multiline
               onChangeText={changeDraft}
-              placeholder="Message Codex"
+              placeholder={`Message ${agent}`}
               placeholderTextColor={colors.muted}
               style={styles.input}
               value={draft.text}
@@ -1106,7 +1137,7 @@ export default function ChatScreen() {
             ) : null}
             {running ? (
               <Pressable
-                accessibilityLabel="Interrupt Codex turn"
+                accessibilityLabel={`Interrupt ${agent} turn`}
                 accessibilityRole="button"
                 disabled={interrupting || !client}
                 onPress={() => void interrupt()}
@@ -1122,7 +1153,7 @@ export default function ChatScreen() {
             ) : null}
             {live.phase === "idle" ? (
               <Pressable
-                accessibilityLabel="Send message to Codex"
+                accessibilityLabel={`Send message to ${agent}`}
                 accessibilityRole="button"
                 disabled={!canSend}
                 onPress={() => void send()}

@@ -24,6 +24,7 @@ import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isValidUUID } from "@cocalc/util/misc";
 import { normalizeAgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
+import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 
 const logger = getLogger("project-host:project-chat-session");
@@ -497,6 +498,23 @@ export async function initProjectChatSessionService(client: Client) {
       await session.backend.updateCodexThreadConfig({
         thread_id: `${opts?.thread_id ?? ""}`,
         acp_config: opts.acp_config,
+      });
+      return null;
+    },
+
+    async updateHarnessSettings(
+      this: { subject?: string },
+      opts: {
+        session_id: string;
+        thread_id: string;
+        settings: unknown;
+      },
+    ): Promise<null> {
+      const session = getSession(this.subject, opts?.session_id);
+      // The backend validates the settings before saving them.
+      await session.backend.updateHarnessSettings({
+        thread_id: `${opts?.thread_id ?? ""}`,
+        settings: opts?.settings as HarnessSessionSettings,
       });
       return null;
     },

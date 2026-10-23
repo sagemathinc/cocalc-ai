@@ -176,3 +176,23 @@ it("refreshes when settings may have changed the agent's private selection", asy
   expect(label()).toContain("Plan B");
   await act(async () => view.unmount());
 });
+
+it("shows project-managed payment for a harness other than Claude Code", async () => {
+  jest.mocked(getActiveSiteSession).mockResolvedValue({ hubApi: {} } as any);
+  let view: any;
+  await act(async () => {
+    view = create(
+      <PaymentSummary
+        profile="p"
+        project="project"
+        thread="t"
+        harness="project-managed"
+        onPress={() => {}}
+      />,
+    );
+  });
+  expect(JSON.stringify(view.toJSON())).toContain(
+    "Project-managed credentials",
+  );
+  await act(async () => view.unmount());
+});
