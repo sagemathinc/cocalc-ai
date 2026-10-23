@@ -1,5 +1,6 @@
 import {
   isOpenAttention,
+  readerItemWaitsFor,
   readerItemAttention,
   readerItemThreadIndex,
   readerItemWorking,
@@ -63,4 +64,21 @@ test("open questions and running turns", () => {
   expect(readerItemWorking(items[1])).toBe(false);
   expect(readerItemWorking(items[1], items[1].messages[1])).toBe(true);
   expect(readerItemWorking(items[0], items[1].messages[1])).toBe(false);
+});
+
+test("what an item waits for: an answer, or an action", () => {
+  const open = (extra: object) => ({ state: "pending", ...extra }) as any;
+  expect(readerItemWaitsFor([])).toBeUndefined();
+  expect(
+    readerItemWaitsFor([open({ attention_kind: "question", questions: [{}] })]),
+  ).toBe("answer");
+  // E.g. an authorization: nothing to answer, something to do.
+  expect(
+    readerItemWaitsFor([open({ attention_kind: "fresh_auth", questions: [] })]),
+  ).toBe("action");
+  expect(
+    readerItemWaitsFor([
+      { attention_kind: "question", state: "answered", questions: [{}] } as any,
+    ]),
+  ).toBeUndefined();
 });
