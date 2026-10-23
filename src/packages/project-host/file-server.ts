@@ -6053,6 +6053,8 @@ export async function initFileServer({
     allSnapshotUsage,
     getSnapshotFileText: reuseInFlight(getSnapshotFileText),
     restoreSnapshot: reuseInFlight(restoreSnapshot),
+    checkSnapshotRestore: async ({ project_id, mode = "both" }) =>
+      assertHomeSnapshotRestoreAllowed({ project_id, mode }),
     publishRootfsImage: reuseInFlight(publishRootfsImage),
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });

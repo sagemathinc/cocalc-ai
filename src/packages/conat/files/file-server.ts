@@ -57,6 +57,11 @@ export const ARCHIVE_BACKUP_SOURCE_RELEASED_ERROR_CODE =
 export type RestoreMode = "none" | "auto" | "recover" | "required";
 export type SnapshotRestoreMode = "home" | "rootfs" | "both";
 
+// The error of a snapshot restore the project's host refuses
+// (checkSnapshotRestore).
+export const SNAPSHOT_HOME_RESTORE_UNAVAILABLE =
+  "Restoring the whole home from a snapshot is temporarily unavailable. Copy the files you need from ~/.snapshots, or restore the home from a backup.";
+
 export interface BackupFindResult {
   id: string;
   time: Date;
@@ -538,6 +543,13 @@ export interface Fileserver {
     mode?: SnapshotRestoreMode;
     safety_snapshot_name?: string;
     lro?: LroRef;
+  }) => Promise<void>;
+  // Throws SNAPSHOT_HOME_RESTORE_UNAVAILABLE if restoreSnapshot would refuse
+  // this mode, so that a restore is refused before the project is stopped.
+  // (Hosts from before it don't have it, and don't refuse.)
+  checkSnapshotRestore: (opts: {
+    project_id: string;
+    mode?: SnapshotRestoreMode;
   }) => Promise<void>;
   publishRootfsImage: (opts: {
     project_id: string;

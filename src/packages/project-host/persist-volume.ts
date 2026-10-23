@@ -32,6 +32,7 @@ backend/conat/persist-volume-template.ts).
 - Deleting, copying and archiving a project do the same to its volume.
 */
 
+import { SNAPSHOT_HOME_RESTORE_UNAVAILABLE } from "@cocalc/conat/files/file-server";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -785,9 +786,7 @@ export function assertHomeSnapshotRestoreAllowed({
   env?: NodeJS.ProcessEnv;
 }): void {
   if (mode === "rootfs" || persistVolumePath(project_id, env) == null) return;
-  throw new Error(
-    "Restoring the whole home from a snapshot is temporarily unavailable. Copy the files you need from ~/.snapshots, or restore the home from a backup.",
-  );
+  throw new Error(SNAPSHOT_HOME_RESTORE_UNAVAILABLE);
 }
 
 // Where restoring `path` of a backup to `dest` in the project's home puts
