@@ -264,12 +264,14 @@ export async function listPersistStorage({
       if (exists != null) info.document_exists = exists;
     }
   }
+  // (more streams than listed: a cleanup planned from the list is partial)
+  const partial = truncated || listed.length < infos.length;
   return {
     supported: true,
     streams: listed,
     total,
     by_kind,
-    ...(truncated ? { truncated } : {}),
+    ...(partial ? { truncated: true } : {}),
   };
 }
 
@@ -460,8 +462,9 @@ async function apply(
           return result;
         }
       }
-      await removeDatabase(path);
-      await removeEmptyParents(ctx.root, path);
+      // the copies first: one left behind would bring the stream back
+      // (storage.ts copies an archive over a missing database), and with the
+      // database still here, deleting it again retries them
       for (const kind of [
         "COCALC_SYNC_ARCHIVE",
         "COCALC_SYNC_BACKUP",
@@ -469,6 +472,8 @@ async function apply(
         const copy = streamCopy(kind, ctx.project_id, action.name, env);
         if (copy) await removeDatabase(copy);
       }
+      await removeDatabase(path);
+      await removeEmptyParents(ctx.root, path);
     } else if (action.op == "trim") {
       result.removed = await trim(ctx, path, action, env);
       compact(path);
