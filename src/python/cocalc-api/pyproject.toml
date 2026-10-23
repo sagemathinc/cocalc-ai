@@ -19,6 +19,10 @@ Documentation = "https://cocalc.ai/api/python"
 Source = "https://github.com/sagemathinc/cocalc/src/python/cocalc-api"
 Issues = "https://github.com/sagemathinc/cocalc/issues"
 
+[tool.uv]
+# Security floor for a transitive dependency of httpx (GHSA-6q48-6c7w-9gw2).
+constraint-dependencies = ["certifi>=2026.10.19"]
+
 [tool.mypy]
 python_version = "3.13"
 # strict = true

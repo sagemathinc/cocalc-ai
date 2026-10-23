@@ -216,20 +216,12 @@ export async function withBtrfsMutationLock<T>({
   wait_ms?: number;
 }): Promise<T> {
   const effectiveContext = effectiveBtrfsMutationContext(context);
-  const priority = mutationPriority(effectiveContext);
-  const assertBackgroundMutationAllowed = () => {
-    if (priority !== "scheduled" && priority !== "scavenger") return;
-    const reason = backgroundMutationGuard?.(effectiveContext);
-    if (reason) {
-      logger.info("deferred background btrfs mutation at lock boundary", {
-        mount,
-        operation,
-        reason,
-        ...effectiveContext,
-      });
-      throw new BtrfsMutationDeferredError(reason);
-    }
-  };
+  const assertBackgroundMutationAllowed = () =>
+    assertBtrfsBackgroundMutationAllowed({
+      mount,
+      operation,
+      context: effectiveContext,
+    });
   // Avoid joining the queue when background work is already ineligible.
   assertBackgroundMutationAllowed();
   const release = await acquireBtrfsMutationLock({
@@ -249,6 +241,34 @@ export async function withBtrfsMutationLock<T>({
     );
   } finally {
     release();
+  }
+}
+
+// Throws BtrfsMutationDeferredError if background (scheduled or scavenger)
+// work may not change the filesystem now, e.g., under I/O pressure.  For a
+// mutation made outside withBtrfsMutationLock: check before starting it, so
+// work that would be deferred anyway changes nothing first.
+export function assertBtrfsBackgroundMutationAllowed({
+  mount,
+  operation,
+  context,
+}: {
+  mount: string;
+  operation: string;
+  context?: BtrfsMutationContext;
+}): void {
+  const effectiveContext = effectiveBtrfsMutationContext(context);
+  const priority = mutationPriority(effectiveContext);
+  if (priority !== "scheduled" && priority !== "scavenger") return;
+  const reason = backgroundMutationGuard?.(effectiveContext);
+  if (reason) {
+    logger.info("deferred background btrfs mutation at lock boundary", {
+      mount,
+      operation,
+      reason,
+      ...effectiveContext,
+    });
+    throw new BtrfsMutationDeferredError(reason);
   }
 }
 

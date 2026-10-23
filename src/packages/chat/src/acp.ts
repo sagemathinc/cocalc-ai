@@ -170,6 +170,22 @@ export function resolveChatWorkingDirectory(chatPath?: string): string {
   return index <= 0 ? "." : chatPath.slice(0, index);
 }
 
+/**
+ * Thread config as shared with project collaborators. Which ChatGPT
+ * subscription pays is the account's own choice (its payment selection), so
+ * a credential saved in shared config is ignored: it may belong to another
+ * collaborator, or name a subscription that was since removed.
+ */
+export function sharedCodexThreadConfig<T extends CodexThreadConfig>(
+  config: T | null | undefined,
+): Omit<T, "credentialId"> {
+  const { credentialId: _credentialId, ...shared } = config ?? ({} as T);
+  if (shared.paymentSource === "subscription-credential") {
+    shared.paymentSource = "subscription";
+  }
+  return shared;
+}
+
 export function buildCodexAcpConfig({
   path,
   config,

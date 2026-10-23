@@ -9,6 +9,7 @@ import {
   normalizeCodexMention,
   messagesSinceContextCleared,
   resolveHarnessSessionId,
+  sharedCodexThreadConfig,
   storedSessionInContext,
   threadContext,
   type ChatThreadConfigRecord,
@@ -73,7 +74,8 @@ export function prepareChatSend({
     )
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   const latest = messages.at(-1);
-  const config = runtime ? {} : (thread.acp_config ?? {});
+  // The account's payment selection picks the subscription at admission.
+  const config = runtime ? {} : sharedCodexThreadConfig(thread.acp_config);
   // Match the browser's recovery of a session whose config has not synced yet.
   const context = threadContext(thread, messages);
   const sinceCleared = messagesSinceContextCleared(
