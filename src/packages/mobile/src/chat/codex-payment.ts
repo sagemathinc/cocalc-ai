@@ -14,6 +14,14 @@ type AgentApi = {
   }) => Promise<{ selections?: any[]; defaults?: Record<string, any> }>;
 };
 
+/** Older threads saved "subscription-credential", the internal wire value
+ * for an explicit credential; it means "a ChatGPT subscription". */
+export function codexPaymentPreference<T extends string | undefined>(
+  source: T,
+): T | "subscription" {
+  return source === "subscription-credential" ? "subscription" : source;
+}
+
 const codex = (value: any): CodexPaymentSelection | undefined =>
   value?.provider === "codex" ? value : undefined;
 
@@ -68,9 +76,9 @@ export async function codexPaymentCredential(
   thread: string | undefined,
   config?: { paymentSource?: string; credentialId?: string },
 ): Promise<string | undefined> {
-  if (config?.paymentSource !== "subscription") return;
+  if (codexPaymentPreference(config?.paymentSource) !== "subscription") return;
   const stored = thread
     ? await storedCodexCredential(agent, project, thread)
     : { resolved: false };
-  return stored.resolved ? stored.credentialId : config.credentialId;
+  return stored.resolved ? stored.credentialId : config?.credentialId;
 }

@@ -9,7 +9,10 @@ import type { CodexThreadConfig } from "@cocalc/chat-client";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile } from "../preview/fixtures";
 import { usePalette } from "../ui/palette";
-import { codexPaymentCredential } from "./codex-payment";
+import {
+  codexPaymentCredential,
+  codexPaymentPreference,
+} from "./codex-payment";
 
 const labels = {
   subscription: "ChatGPT plan",
@@ -60,7 +63,7 @@ export function PaymentSummary({
         );
         const source = await site.hubApi.system.getCodexPaymentSource({
           project_id: project,
-          preference: config?.paymentSource ?? "auto",
+          preference: codexPaymentPreference(config?.paymentSource) ?? "auto",
           credential_id,
         });
         const credential = source.subscriptions?.find(

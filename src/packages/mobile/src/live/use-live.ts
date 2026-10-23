@@ -20,7 +20,10 @@ import {
   type PreviewScenario,
 } from "./preview";
 import { connectLive, type LiveConnection } from "./native";
-import { codexPaymentCredential } from "../chat/codex-payment";
+import {
+  codexPaymentCredential,
+  codexPaymentPreference,
+} from "../chat/codex-payment";
 
 export function useLiveVoice(
   profile: string,
@@ -177,7 +180,7 @@ export function useLiveVoice(
           const site = await getActiveSiteSession(profile);
           const payment = await site.hubApi.system.getCodexPaymentSource({
             project_id: project,
-            preference: config?.paymentSource ?? "auto",
+            preference: codexPaymentPreference(config?.paymentSource) ?? "auto",
             // The account's choice for this agent, as admission uses it.
             credential_id: await codexPaymentCredential(
               site.hubApi.agent,

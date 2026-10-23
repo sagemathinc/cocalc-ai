@@ -5,7 +5,11 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { codexPaymentCredential, storedCodexCredential } from "./codex-payment";
+import {
+  codexPaymentCredential,
+  codexPaymentPreference,
+  storedCodexCredential,
+} from "./codex-payment";
 
 const credential = (credential_id: string) => ({
   version: 1,
@@ -68,5 +72,25 @@ test("falls back to the thread's saved credential only when the hub cannot answe
       "t",
     ),
     { resolved: true, credentialId: "d", defaultCredentialId: "d" },
+  );
+});
+
+test("treats a legacy subscription-credential source as a ChatGPT subscription", async () => {
+  assert.equal(
+    codexPaymentPreference("subscription-credential"),
+    "subscription",
+  );
+  assert.equal(codexPaymentPreference("auto"), "auto");
+  assert.equal(codexPaymentPreference(undefined), undefined);
+  const followsDefault = agentWith({
+    selections: [],
+    defaults: { codex: credential("default") },
+  });
+  assert.equal(
+    await codexPaymentCredential(followsDefault, "p", "t", {
+      paymentSource: "subscription-credential",
+      credentialId: "removed",
+    }),
+    "default",
   );
 });

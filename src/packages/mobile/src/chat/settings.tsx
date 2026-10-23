@@ -25,7 +25,7 @@ import { getProjectCodexModels } from "../cocalc/codex-models";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile, type ConversationClient } from "../preview/fixtures";
 import { usePalette } from "../ui/palette";
-import { storedCodexCredential } from "./codex-payment";
+import { codexPaymentPreference, storedCodexCredential } from "./codex-payment";
 
 const catalog: CodexModelCapabilityInfo[] = DEFAULT_CODEX_MODELS.map((m) => ({
   model: m.name,
@@ -55,7 +55,7 @@ export function ChatSettings({
     model: config?.model,
     reasoning: config?.reasoning,
     serviceTier: config?.serviceTier,
-    paymentSource: config?.paymentSource,
+    paymentSource: codexPaymentPreference(config?.paymentSource),
     credentialId: config?.credentialId,
   }));
   const [source, setSource] = useState<CodexPaymentSourceInfo>();
