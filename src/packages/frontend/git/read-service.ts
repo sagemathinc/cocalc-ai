@@ -92,6 +92,23 @@ function outputLine(output: string): string {
 // Bump when cached output would be read differently (new flags, parsing).
 const IMMUTABLE_CACHE_VERSION = 1;
 
+// Diff output is cached by its arguments, so the arguments decide it, not
+// settings that can change: diff.orderFile (the file list and the patch are
+// paired by position), diff.algorithm, prefixes, the rename limit, colors.
+const PINNED_DIFF_FLAGS = [
+  "-O/dev/null",
+  "--diff-algorithm=myers",
+  "--indent-heuristic",
+  "--inter-hunk-context=0",
+  "--no-relative",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+  "-l1000",
+  "--ignore-submodules=none",
+  "--submodule=short",
+  "--no-color",
+];
+
 // The object ids that fully name a comparison.
 function targetObjects(target: ImmutableReviewTarget): string[] {
   return target.kind === "commit"
@@ -232,6 +249,9 @@ export class GitReadService {
           "core.quotePath=false",
           "-c",
           "core.warnAmbiguousRefs=true",
+          // Has no flag; see PINNED_DIFF_FLAGS.
+          "-c",
+          "diff.suppressBlankEmpty=false",
           ...args,
         ],
         bash: false,
@@ -557,8 +577,9 @@ export class GitReadService {
 
   private comparisonArgs(
     target: ImmutableReviewTarget,
-    flags: string[],
+    requested: string[],
   ): string[] {
+    const flags = [...PINNED_DIFF_FLAGS, ...requested];
     if (target.kind === "commit") {
       requireObject(target.commit);
       if (target.parent === null)
@@ -639,7 +660,6 @@ export class GitReadService {
       repository,
       this.comparisonArgs(target, [
         "--patch",
-        "--no-color",
         "--no-ext-diff",
         "--no-textconv",
         "--find-renames",

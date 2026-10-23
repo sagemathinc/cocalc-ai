@@ -56,6 +56,14 @@ jest.mock("@cocalc/frontend/git/commit-worktree", () => ({
 jest.mock("@cocalc/frontend/git/read-target-diff", () => ({
   readTargetDiff: jest.fn(),
 }));
+const mockPrefetches: Array<{ commit: unknown; cancel: jest.Mock }> = [];
+jest.mock("@cocalc/frontend/git/prefetch", () => ({
+  prefetchCommitDiff: (_reader: unknown, _repo: unknown, commit: unknown) => {
+    const cancel = jest.fn();
+    mockPrefetches.push({ commit, cancel });
+    return cancel;
+  },
+}));
 jest.mock("../git-review-store", () => ({
   normalizeCommitSha: (commit?: string) => commit?.toLowerCase(),
   loadReviewRecord: jest.fn(),
@@ -338,6 +346,32 @@ test.each([true, false])(
     expect(viewport.scrollTop).toBe(456);
     expect(readTargetDiff).toHaveBeenCalledTimes(1);
     expect(mockDiffMount).toHaveBeenCalledTimes(1);
+  },
+);
+
+test.each([commit, commit.slice(0, 8)])(
+  "the previous commit is read ahead, also when %s is canonicalized",
+  async (commitHash) => {
+    mockPrefetches.length = 0;
+    const parent = "c".repeat(40);
+    jest
+      .mocked(projectGitReader.pinCommit)
+      .mockImplementation(async (repository) => ({
+        kind: "commit",
+        repository,
+        commit,
+        parent,
+        parentIndex: 0,
+      }));
+    render(<GitCommitDrawer {...props} commitHash={commitHash} />);
+    await screen.findByRole("region", { name: "Git diff" });
+    await waitFor(() =>
+      expect(
+        mockPrefetches.some(
+          (p) => p.commit === parent && !p.cancel.mock.calls.length,
+        ),
+      ).toBe(true),
+    );
   },
 );
 

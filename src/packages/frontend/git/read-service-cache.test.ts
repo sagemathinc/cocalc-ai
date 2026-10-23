@@ -158,3 +158,35 @@ test("a commit's summary doesn't follow .mailmap or notes, which can change", as
     git(dir, ["notes", "remove", head]);
   }
 });
+
+test("diff settings that can change don't decide cached diffs", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "git-cache-config-"));
+  try {
+    git(repo, ["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "a.txt"), "a\n");
+    writeFileSync(join(repo, "b.txt"), "b\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "first"]);
+    writeFileSync(join(repo, "a.txt"), "a\nmore\n");
+    writeFileSync(join(repo, "b.txt"), "b\nmore\n");
+    git(repo, ["commit", "-q", "-am", "second"]);
+    writeFileSync(join(repo, "order"), "b.txt\na.txt\n");
+    git(repo, ["config", "diff.orderFile", join(repo, "order")]);
+    git(repo, ["config", "diff.noprefix", "true"]);
+    git(repo, ["config", "color.ui", "always"]);
+    const reader = new GitReadService(execute);
+    const { repository } = await reader.discover("p5", repo);
+    const target = await reader.pinCommit(
+      repository,
+      git(repo, ["rev-parse", "HEAD"]).trim(),
+    );
+    const files = await reader.changedFiles(target);
+    expect(files.map((file) => file.newPath)).toEqual(["a.txt", "b.txt"]);
+    const patch = await reader.patch(target);
+    expect(
+      patch.split("\n").filter((line) => line.startsWith("diff --git")),
+    ).toEqual(["diff --git a/a.txt b/a.txt", "diff --git a/b.txt b/b.txt"]);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
