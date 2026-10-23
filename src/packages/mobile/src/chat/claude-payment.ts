@@ -6,7 +6,10 @@
 // How a Claude Code agent is paid for, as in the web app: the account's own
 // payment selection for the agent (provider "claude-code"), else the
 // account's default for Claude agents. Admission applies it to each turn.
-import type { ClaudePaymentSelection } from "@cocalc/util/ai/agent-payment-selection";
+import {
+  harnessCredentialFromSelection,
+  type ClaudePaymentSelection,
+} from "@cocalc/util/ai/agent-payment-selection";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 
 export interface ClaudeCredential {
@@ -89,15 +92,17 @@ export function credentialLabel(credential: ClaudeCredential): string {
   return credential.label ? `${kind}: ${credential.label}` : kind;
 }
 
+// What admission uses, by the same rule: the agent's choice, else the
+// account default, else the project's ANTHROPIC_API_KEY secret.
 export function describeClaudePayment(payment: ClaudePayment): string {
-  const effective =
-    payment.selection?.mode === "default" || !payment.selection
-      ? payment.fallback
-      : payment.selection;
-  if (!effective || effective.mode === "default") return "Not chosen";
-  if (effective.mode === "project-secret") return "Project ANTHROPIC_API_KEY";
+  const effective = harnessCredentialFromSelection(
+    payment.selection,
+    payment.fallback,
+  );
+  if (effective.provider !== "anthropic" || effective.mode === "project-secret")
+    return "Project ANTHROPIC_API_KEY";
   const credential = payment.credentials.find(
-    (row) => row.id === effective.credential_id,
+    (row) => row.id === effective.credentialId,
   );
   return credential ? credentialLabel(credential) : "Disconnected credential";
 }

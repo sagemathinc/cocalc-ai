@@ -22,6 +22,7 @@ import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-pr
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile, type ConversationClient } from "../preview/fixtures";
 import { usePalette } from "../ui/palette";
+import { isClaudeCode } from "./agent-name";
 import {
   credentialLabel,
   loadClaudePayment,
@@ -85,8 +86,7 @@ export function HarnessSettings({
   onClose: () => void;
 }) {
   const colors = usePalette();
-  const claude =
-    runtime.profile.version === 2 && runtime.profile.id === "claude-code";
+  const claude = isClaudeCode(runtime);
   const name = claude ? "Claude" : "This agent";
   const [settings, setSettings] = useState<HarnessSessionSettings>(
     runtime.settings ?? {},

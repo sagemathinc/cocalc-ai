@@ -4,13 +4,17 @@
  */
 import type { ProjectedChatThread } from "@cocalc/chat-client";
 
+/** The qualified Claude Code harness (paid by the claude-code selection). */
+export function isClaudeCode(
+  runtime?: ProjectedChatThread["agent_runtime"],
+): boolean {
+  return runtime?.profile.version === 2 && runtime.profile.id === "claude-code";
+}
+
 /** What to call the agent in this thread in labels and status lines. */
 export function agentName(
   thread?: Pick<ProjectedChatThread, "agent_runtime">,
 ): string {
-  const profile = thread?.agent_runtime?.profile;
-  if (!profile) return "Codex";
-  return profile.version === 2 && profile.id === "claude-code"
-    ? "Claude"
-    : "Agent";
+  if (!thread?.agent_runtime) return "Codex";
+  return isClaudeCode(thread.agent_runtime) ? "Claude" : "Agent";
 }

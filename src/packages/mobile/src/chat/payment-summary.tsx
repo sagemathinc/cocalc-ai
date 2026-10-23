@@ -30,7 +30,7 @@ export function PaymentSummary({
   thread,
   config,
   revision = 0,
-  harness = false,
+  harness,
   onPress,
 }: {
   profile: string;
@@ -40,8 +40,9 @@ export function PaymentSummary({
   /** Changes when settings may have changed the agent's payment selection,
    * which is account state that the shared config does not reflect. */
   revision?: number;
-  /** A harness agent such as Claude Code, paid by its payment selection. */
-  harness?: boolean;
+  /** A harness agent: Claude Code is paid by its claude-code payment
+   * selection; other harnesses by credentials managed in the project. */
+  harness?: "claude-code" | "project-managed";
   onPress: () => void;
 }) {
   const colors = usePalette();
@@ -56,7 +57,11 @@ export function PaymentSummary({
       }
       void (async () => {
         const site = await getActiveSiteSession(profile);
-        if (harness) {
+        if (harness === "project-managed") {
+          if (active) setLabel("Project-managed credentials");
+          return;
+        }
+        if (harness === "claude-code") {
           if (!thread) return;
           const payment = await loadClaudePayment(site.hubApi, project, thread);
           if (active) setLabel(describeClaudePayment(payment));

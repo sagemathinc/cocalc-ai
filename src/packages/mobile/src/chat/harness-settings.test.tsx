@@ -208,3 +208,36 @@ it("explains where the choices come from before Claude has run", async () => {
   const text = JSON.stringify(renderer.toJSON());
   expect(text).toContain("reports its models");
 });
+
+it("describes payment as admission resolves it, including the project-secret fallback", () => {
+  const { describeClaudePayment } = require("./claude-payment");
+  const credentials = [
+    { id: "sub-1", kind: "claude-subscription-home-v1", label: "Max plan" },
+  ];
+  expect(describeClaudePayment({ credentials })).toBe(
+    "Project ANTHROPIC_API_KEY",
+  );
+  expect(
+    describeClaudePayment({
+      credentials,
+      selection: { version: 1, provider: "claude-code", mode: "default" },
+      fallback: {
+        version: 1,
+        provider: "claude-code",
+        mode: "account-subscription",
+        credential_id: "sub-1",
+      },
+    }),
+  ).toBe("Claude subscription: Max plan");
+  expect(
+    describeClaudePayment({
+      credentials,
+      selection: {
+        version: 1,
+        provider: "claude-code",
+        mode: "account-api-key",
+        credential_id: "gone",
+      },
+    }),
+  ).toBe("Disconnected credential");
+});

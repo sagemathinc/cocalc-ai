@@ -7,7 +7,7 @@ import { createMarkdownImageResolver } from "../../../cocalc/markdown-images";
 import { PaymentSummary } from "../../../chat/payment-summary";
 import { ChatSettings } from "../../../chat/settings";
 import { HarnessSettings } from "../../../chat/harness-settings";
-import { agentName } from "../../../chat/agent-name";
+import { agentName, isClaudeCode } from "../../../chat/agent-name";
 
 import {
   createRemoteHeadlessChatClient,
@@ -877,7 +877,13 @@ export default function ChatScreen() {
             thread={threadId}
             config={selectedThread?.acp_config}
             revision={paymentRevision}
-            harness={selectedThread?.agent_runtime != null}
+            harness={
+              !selectedThread?.agent_runtime
+                ? undefined
+                : isClaudeCode(selectedThread.agent_runtime)
+                  ? "claude-code"
+                  : "project-managed"
+            }
             onPress={() => setSettingsOpen(true)}
           />
         )}
