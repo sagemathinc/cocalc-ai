@@ -12,8 +12,8 @@ import {
   type TurnMeta,
   type TurnPriority,
 } from "@cocalc/chat";
-import { field, isAcpAssistantMessage } from "./access";
-import type { ReaderItem } from "./reader-model";
+import { field } from "./access";
+import { isAgentReply, type ReaderItem } from "./reader-model";
 import type { ChatMessageTyped } from "./types";
 import { newest_content } from "./utils";
 
@@ -68,7 +68,8 @@ export function itemSubject(
   meta: TurnMeta | undefined,
 ): string {
   if (meta?.subject) return meta.subject;
-  const replies = item.messages.filter(isAcpAssistantMessage);
+  // As the reader groups them: older model replies too.
+  const replies = item.messages.filter(isAgentReply);
   for (const reply of replies.reverse()) {
     const line = firstLine(reply);
     if (line) return line;

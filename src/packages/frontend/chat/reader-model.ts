@@ -28,7 +28,10 @@ import {
 } from "./access";
 import { hasAcpGuidanceReceipt } from "./message-state";
 import { canMovePostedMessageToAgent } from "./post-to-agent";
-import { assistantFinishedAt } from "./turn-span";
+import {
+  assistantFinishedAt,
+  resolveSteerAssistantMessageId,
+} from "./turn-span";
 import type { ChatMessageTyped } from "./types";
 
 export interface ReaderItem {
@@ -102,6 +105,7 @@ function acpStateOf(message: ChatMessageTyped, acpState?: AcpStateMap): string {
 function midTurnOwner(
   message: ChatMessageTyped,
   turns: readonly ChatMessageTyped[],
+  byMessageId: Map<string, ChatMessageTyped>,
   acpState?: AcpStateMap,
 ): ChatMessageTyped | undefined {
   const date = dateValue(message)?.valueOf();
@@ -113,19 +117,33 @@ function midTurnOwner(
     ["queue", "queued", "not-sent"].includes(acpStateOf(message, acpState))
   )
     return undefined;
-  // The newest by start time: the thread's order can differ from it.
+  // It arrived during the turn: started before it, and running or written
+  // since.
+  const spans = (turn: ChatMessageTyped | undefined) => {
+    const start = turn ? dateValue(turn)?.valueOf() : undefined;
+    if (!turn || start == null || start >= date) return false;
+    return (
+      field<boolean>(turn, "generating") === true ||
+      acpStateOf(turn, acpState) === "running" ||
+      date <= assistantFinishedAt(turn)
+    );
+  };
+  // First the turn its parents lead to, as the log does; else the newest
+  // by start time (the thread's order can differ from it).
+  const chainId = resolveSteerAssistantMessageId({
+    message,
+    byMessageId,
+    includeMidturnMessages: true,
+  });
+  const chain = chainId ? byMessageId.get(chainId) : undefined;
+  if (chain && spans(chain)) return chain;
   let owner: ChatMessageTyped | undefined;
   let ownerStart = -Infinity;
   for (const turn of turns) {
     const start = dateValue(turn)?.valueOf();
-    if (start == null || start >= date || start <= ownerStart) continue;
-    const running =
-      field<boolean>(turn, "generating") === true ||
-      acpStateOf(turn, acpState) === "running";
-    if (running || date <= assistantFinishedAt(turn)) {
-      owner = turn;
-      ownerStart = start;
-    }
+    if (start == null || start <= ownerStart || !spans(turn)) continue;
+    owner = turn;
+    ownerStart = start;
   }
   return owner;
 }
@@ -142,6 +160,11 @@ export function readerItems(
   const prompts = new Set(
     turns.map((turn) => parentMessageId(turn)).filter(Boolean),
   );
+  const byMessageId = new Map<string, ChatMessageTyped>();
+  for (const message of messages) {
+    const id = `${field<string>(message, "message_id") ?? ""}`.trim();
+    if (id) byMessageId.set(id, message);
+  }
   messages.forEach((message, index) => {
     const id = readerMessageId(message);
     if (!id) return;
@@ -151,7 +174,7 @@ export function readerItems(
       ? undefined
       : prompts.has(id)
         ? undefined
-        : midTurnOwner(message, turns, acpState);
+        : midTurnOwner(message, turns, byMessageId, acpState);
     if (reply || owner) {
       // Its prompt's item (histories can interleave), else the one before.
       const parent = reply ? parentMessageId(message) : readerMessageId(owner!);

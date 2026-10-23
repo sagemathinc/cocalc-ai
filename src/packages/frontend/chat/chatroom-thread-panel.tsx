@@ -3170,6 +3170,13 @@ export function ChatRoomThreadPanel({
                 onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
                 attentionRecords={readerAttention.get(item.id) ?? []}
                 readOnly={readOnly}
+                // The panel shows the running turn's status already, as for
+                // the log.
+                suppressInlineCodexStatusDate={
+                  selectedRunningCodexDate != null
+                    ? `${selectedRunningCodexDate}`
+                    : undefined
+                }
               />
             )}
           />

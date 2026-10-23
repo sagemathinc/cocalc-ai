@@ -131,6 +131,20 @@ describe("an item is one turn", () => {
     ).toEqual(["p2", "a2", "steer"]);
   });
 
+  it("an overlapping older turn its parents lead to keeps it, as in the log", () => {
+    // a1 (a recovery) still runs when a2 starts; the message replies into a1.
+    const items = readerItems([
+      said("p1", 1000),
+      turn("a1", "p1", 1100, 9000),
+      said("p2", 1500),
+      turn("a2", "p2", 1600, 9000),
+      said("steer", 3000, { parent_message_id: "a1" }),
+    ]);
+    expect(
+      items.find((item) => item.id === "p1")!.messages.map((m) => m.message_id),
+    ).toEqual(["p1", "a1", "steer"]);
+  });
+
   it("not what waits to be sent, a note for people, or the next turn's prompt", () => {
     expect(
       ids(
