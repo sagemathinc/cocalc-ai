@@ -505,6 +505,7 @@ test("a resumed session gets newer CoCalc instructions with its next turn, once"
     [true, undefined, true], // a session from before versions were recorded
     [true, "an older version", true],
     [true, "current", false],
+    [true, "unreadable", true], // a store that cannot be read: unknown
     [false, undefined, false], // a new session starts with them
   ]) {
     const child = spawn(
@@ -534,7 +535,10 @@ test("a resumed session gets newer CoCalc instructions with its next turn, once"
         systemPromptAppend:
           "CoCalc skill fixture: use project_exec for CLI commands.",
         sessionInstructions: {
-          get: (id) => (stored === "current" ? current : versions.get(id)),
+          get: (id) => {
+            if (stored === "unreadable") throw Error("SQLITE_BUSY");
+            return stored === "current" ? current : versions.get(id);
+          },
           set: (id, version) => {
             sets.push([id, version]);
             versions.set(id, version);
@@ -565,7 +569,8 @@ test("a resumed session gets newer CoCalc instructions with its next turn, once"
         ].join("\n\n"),
       )
       .digest("hex");
-    if (stored && stored !== "current") versions.set("fixture-session", stored);
+    if (stored && stored !== "current" && stored !== "unreadable")
+      versions.set("fixture-session", stored);
     await client.open(resume ? "fixture-session" : undefined);
     const firstLines = async () => {
       const events = [];

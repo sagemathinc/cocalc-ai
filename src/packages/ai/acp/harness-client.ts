@@ -923,17 +923,24 @@ export class AcpHarnessClient {
     const sessionId = this.session?.sessionId;
     if (!store || !instructions || !sessionId) return;
     const version = createHash("sha256").update(instructions).digest("hex");
-    try {
-      if (!resumed) {
-        // A new session starts with the current instructions.
+    if (!resumed) {
+      // A new session starts with the current instructions.
+      try {
         await store.set(sessionId, version);
-      } else if ((await store.get(sessionId)) !== version) {
-        // Unknown (a session from before this was recorded) or older.
-        this.instructionsUpdate = { text: instructions, version };
+      } catch {
+        // Best effort: a later resume just sends them again.
       }
-    } catch {
-      // Best effort: the session works with the instructions it has.
+      return;
     }
+    let stored: string | undefined;
+    try {
+      stored = await store.get(sessionId);
+    } catch {
+      // Unreadable is unknown: sending them again is the safe mistake.
+    }
+    // Unknown (a session from before this was recorded) or older.
+    if (stored !== version)
+      this.instructionsUpdate = { text: instructions, version };
   }
 
   async prompt(
