@@ -542,11 +542,20 @@ export function createStorageAdmissionController(
     options.onPressureStateChange?.(next);
   };
 
+  // No reading is no evidence: a run of high samples must be unbroken.
+  const resetEscalation = () => {
+    consecutiveContended = 0;
+    consecutiveEmergency = 0;
+    contendedSince = undefined;
+    emergencySince = undefined;
+  };
+
   const updateState = (inputs: StorageAdmissionInputs) => {
     const at = inputs.sampled_at_ms;
     const full = effectiveIoFullAvg10(inputs);
     const lifecycleActive = inputs.starting_projects + inputs.stopping_projects;
     if (full == null) {
+      resetEscalation();
       return;
     }
     // Admission checks sample as often as operations come (for fresh
@@ -712,7 +721,11 @@ export function createStorageAdmissionController(
         error: `${err}`,
       };
     }
-    if (read) updateState(lastInputs);
+    if (read) {
+      updateState(lastInputs);
+    } else {
+      resetEscalation();
+    }
     if (lastInputs.starting_projects + lastInputs.stopping_projects > 0) {
       lastLifecycleActiveAt = lastInputs.sampled_at_ms;
     }

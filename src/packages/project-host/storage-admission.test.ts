@@ -197,6 +197,21 @@ describe("storage admission controller", () => {
       expect(controller.getStatus().transition_count).toBe(0);
     });
 
+    it("starts the 10 s over after failed reads", () => {
+      const controller = gate();
+      full = 12;
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      failRead = true;
+      tick(controller);
+      tick(controller);
+      failRead = false;
+      // one high sample after the gap is not sustained pressure
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("emergency");
+    });
+
     it("keeps lifecycle gating fresh between state samples", () => {
       const controller = gate();
       controller.sample();
