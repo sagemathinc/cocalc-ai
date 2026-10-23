@@ -30,6 +30,7 @@ export type ConversationClient = Pick<
   | "getSnapshot"
   | "interrupt"
   | "updateCodexThreadConfig"
+  | "updateHarnessSettings"
   | "loadOlderMessages"
   | "sendToExistingCodexThread"
   | "sendGuidanceToCodexThread"
@@ -183,6 +184,7 @@ export function createPreviewChat(
     return { message_id: sent.message_id, thread_id };
   };
   return {
+    updateHarnessSettings: async () => {},
     updateCodexThreadConfig: async ({ thread_id, acp_config }) => {
       snapshot = {
         ...snapshot,
