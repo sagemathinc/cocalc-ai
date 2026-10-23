@@ -1098,10 +1098,19 @@ the disk again.
 ## Backups and snapshots
 
 Use project backups for portable project recovery, cross-host moves, and
-protection before lifecycle actions. Use provider snapshots or host-local
-snapshots only when the UI or provider explicitly exposes that workflow for the
-host; they are infrastructure recovery tools, not a substitute for project
-backups.
+protection before lifecycle actions. Project-local snapshots in \`~/.snapshots\`
+provide saved file copies; they do not include separately stored edit history.
+Recover files to a comparison path before replacing current work.
+
+Whole-HOME or combined HOME-and-rootfs snapshot restoration may be refused.
+Use a completed backup for whole-HOME recovery, or copy the files you need.
+Rootfs-only snapshot restoration remains available where the runtime supports
+it. Follow [Recover research files and environments](/docs/research/recover-work)
+to choose the appropriate operation.
+
+Provider disk snapshots are separate infrastructure recovery tools. Use them
+only when the UI or provider explicitly exposes that workflow for the host;
+they do not replace project backups.
 
 Project backups can skip files whose apparent size exceeds the backup file-size
 limit, which normally follows the project's disk quota. Sparse or compressed
