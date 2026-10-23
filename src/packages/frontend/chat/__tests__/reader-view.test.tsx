@@ -509,7 +509,7 @@ test("items show their subject; high ones are marked for you, and the open one i
       itemInfo={(item) =>
         item.id === "p3"
           ? { subject: "Needs your decision", priority: "high" }
-          : { subject: `About ${item.id}`, priority: "low" }
+          : { subject: `About ${item.id}`, priority: "normal" }
       }
     />,
   );
@@ -522,4 +522,61 @@ test("items show their subject; high ones are marked for you, and the open one i
   expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
     "Needs your decision",
   );
+});
+
+describe("views: for you, all, filed", () => {
+  beforeEach(() => localStorage.removeItem("cocalc-chat-reader-view"));
+  const info = (item: { id: string }) =>
+    ({
+      subject: `About ${item.id}`,
+      priority: item.id === "p2" || item.id === "p1" ? "low" : "normal",
+    }) as const;
+  const show = (itemInfo = info) =>
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({})),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={itemInfo}
+      />,
+    );
+  const subjects = () => options().map((o) => o.textContent);
+
+  test("for you hides what is filed, and counts only what is for you", () => {
+    show();
+    expect(subjects()).toEqual([expect.stringContaining("About p3")]);
+    expect(screen.getByText("For you (1)")).toBeTruthy();
+    expect(screen.getByText("1 unread")).toBeTruthy();
+    // Filed: the low ones, with their own count.
+    fireEvent.click(screen.getByText("Filed (2)"));
+    expect(subjects()).toEqual([
+      expect.stringContaining("About p2"),
+      expect.stringContaining("About p1"),
+    ]);
+    fireEvent.click(screen.getByText("All"));
+    expect(options()).toHaveLength(3);
+  });
+
+  test("the choice is kept", () => {
+    const { unmount } = show();
+    fireEvent.click(screen.getByText("All"));
+    unmount();
+    show();
+    expect(options()).toHaveLength(3);
+  });
+
+  test("nothing for you says where the rest is", () => {
+    show(((item) => ({ subject: item.id, priority: "low" })) as any);
+    expect(
+      screen.getByText("Nothing for you here: the rest is filed"),
+    ).toBeTruthy();
+    expect(screen.getByText("No unread messages")).toBeTruthy();
+  });
 });
