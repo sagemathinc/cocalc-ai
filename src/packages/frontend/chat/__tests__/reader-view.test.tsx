@@ -386,3 +386,27 @@ test("phone: another thread opens on its own first message", () => {
   rerender(view("thread-2", [person("q1", "other thread", 7)]));
   expect(screen.getByRole("article")).toHaveTextContent("other thread");
 });
+
+test("phone: a hidden chat opens and reads nothing until it is shown", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  const view = (isVisible: boolean) => (
+    <ChatReaderView
+      actions={actions}
+      threadId="thread-1"
+      messages={thread}
+      accountId="acct"
+      narrow
+      isVisible={isVisible}
+    />
+  );
+  const { rerender } = render(view(false));
+  expect(screen.queryByRole("article")).toBeNull();
+  expect(actions.updateReaderState).not.toHaveBeenCalled();
+  rerender(view(true));
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+  expect(actions.updateReaderState).toHaveBeenCalled();
+});

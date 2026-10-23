@@ -121,6 +121,7 @@ export function ChatReaderView({
   projectId,
   path,
   readOnly,
+  isVisible = true,
   fontSize,
   narrow,
   autoFocus,
@@ -136,6 +137,8 @@ export function ChatReaderView({
   path?: string;
   /** A read-only chat: no Reply or Quote, as in the log. */
   readOnly?: boolean;
+  /** Whether the chat is on screen (its tab and the browser's). */
+  isVisible?: boolean;
   fontSize?: number;
   /** Show the list or the open item, not both side by side. */
   narrow?: boolean;
@@ -199,7 +202,14 @@ export function ChatReaderView({
   // top, else the newest); once per thread.
   const startedRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!narrow || startedRef.current === threadId || !visible.length) return;
+    // Only once it is shown: a chat restored in a background tab reads nothing.
+    if (
+      !isVisible ||
+      !narrow ||
+      startedRef.current === threadId ||
+      !visible.length
+    )
+      return;
     startedRef.current = threadId;
     // Kept only if it is in this thread (not one left from the last thread).
     if (selectedId && visible.some((item) => item.id === selectedId)) return;
@@ -207,16 +217,18 @@ export function ChatReaderView({
       visible.find((item) => !isItemRead(item, watermark, state)) ?? visible[0];
     setSelectedId(first.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [narrow, threadId, visible.length]);
+  }, [isVisible, narrow, threadId, visible.length]);
 
   // Opening an item, or a new reply arriving while it is open, reads it.
+  // Not while the chat is hidden: then once it is shown.
   useEffect(() => {
-    if (!selected || isItemRead(selected, watermark, state)) return;
+    if (!isVisible || !selected || isItemRead(selected, watermark, state))
+      return;
     save((current, watermark) =>
       markItemRead(items, selected, watermark, current),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id, selected?.lastId]);
+  }, [isVisible, selected?.id, selected?.lastId]);
 
   const open = (index: number | undefined) => {
     if (index == null) return;

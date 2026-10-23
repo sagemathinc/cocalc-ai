@@ -412,4 +412,25 @@ describe("ChatPanel selected thread read tracking", () => {
     act(() => latestThreadPanelProps.onReaderModeChange(true));
     expect(latestThreadPanelProps.readerAutoFocus).toBe(true);
   });
+
+  it("leaving a chat forgets that the reader was turned on there", () => {
+    const { actions, rerender } = renderPanel();
+    act(() => latestThreadPanelProps.onReaderModeChange(true));
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(true);
+    const at = (path: string) => (
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path={path}
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />
+    );
+    rerender(at("chat/other.chat"));
+    rerender(at("chat/test.chat"));
+    // Still in the reader there, but coming back does not take the focus.
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(false);
+  });
 });

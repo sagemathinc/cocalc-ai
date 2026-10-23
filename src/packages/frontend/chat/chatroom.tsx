@@ -1828,6 +1828,12 @@ function ChatPanelContent({
   // buttons, in this chat; never when a chat simply opens in it.
   const readerChatKey = `${project_id ?? ""}:${path ?? ""}`;
   const [readerTurnedOnIn, setReaderTurnedOnIn] = useState<string>();
+  // Leaving the chat consumes the request: coming back does not focus.
+  const [readerFocusChat, setReaderFocusChat] = useState(readerChatKey);
+  if (readerFocusChat !== readerChatKey) {
+    setReaderFocusChat(readerChatKey);
+    setReaderTurnedOnIn(undefined);
+  }
   const readerAutoFocus = readerMode && readerTurnedOnIn === readerChatKey;
   const toggleReaderMode = (on: boolean) => {
     setReaderTurnedOnIn(on ? readerChatKey : undefined);

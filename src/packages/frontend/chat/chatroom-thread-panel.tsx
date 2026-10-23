@@ -3101,6 +3101,7 @@ export function ChatRoomThreadPanel({
             projectId={project_id}
             path={path}
             readOnly={readOnly}
+            isVisible={isVisible}
           />
         ) : (
           <ChatLog
