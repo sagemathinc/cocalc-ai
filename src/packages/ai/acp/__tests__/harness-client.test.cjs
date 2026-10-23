@@ -500,6 +500,101 @@ test("subscription policy exposes only mediated project tools and refuses unknow
   }
 });
 
+test("a resumed session gets newer CoCalc instructions with its next turn, once", async (t) => {
+  for (const [resume, stored, expectUpdate] of [
+    [true, undefined, true], // a session from before versions were recorded
+    [true, "an older version", true],
+    [true, "current", false],
+    [true, "unreadable", true], // a store that cannot be read: unknown
+    [false, undefined, false], // a new session starts with them
+  ]) {
+    const child = spawn(
+      process.execPath,
+      [
+        ...profile.args,
+        "--claude-adapter",
+        "--expect-skill",
+        "--versioned-tools",
+        "--subscription-status",
+        "--echo-prompt-start",
+      ],
+      { env: {}, stdio: "pipe" },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const versions = new Map();
+    const sets = [];
+    let current;
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile: { ...profile, cwd: "/home/user/project-only-worktree" },
+      },
+      async () => ({
+        projectToolServerName: "cocalc_project_fixture_v2",
+        systemPromptAppend:
+          "CoCalc skill fixture: use project_exec for CLI commands.",
+        sessionInstructions: {
+          get: (id) => {
+            if (stored === "unreadable") throw Error("SQLITE_BUSY");
+            return stored === "current" ? current : versions.get(id);
+          },
+          set: (id, version) => {
+            sets.push([id, version]);
+            versions.set(id, version);
+          },
+        },
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+      30_000,
+      undefined,
+      "claude-subscription-controller",
+    );
+    t.after(() => client.dispose());
+    // The version is the hash of the instructions the session is given.
+    const { createHash } = require("node:crypto");
+    const { harnessSessionGuidance } = require("../../dist/acp/harness-context");
+    current = createHash("sha256")
+      .update(
+        [
+          "CoCalc skill fixture: use project_exec for CLI commands.",
+          harnessSessionGuidance(true),
+        ].join("\n\n"),
+      )
+      .digest("hex");
+    if (stored && stored !== "current" && stored !== "unreadable")
+      versions.set("fixture-session", stored);
+    await client.open(resume ? "fixture-session" : undefined);
+    const firstLines = async () => {
+      const events = [];
+      await client.prompt("hello", async (event) => events.push(event));
+      return events
+        .filter((event) => event.type === "message")
+        .map((event) => event.text)
+        .join("");
+    };
+    const first = await firstLines();
+    assert.equal(
+      first.startsWith("[CoCalc session instructions update]"),
+      expectUpdate,
+      `resume=${resume} stored=${stored}`,
+    );
+    // Recorded: the next turn is plain.
+    assert.equal(await firstLines(), "hello");
+    if (expectUpdate || !resume)
+      assert.deepEqual(sets, [["fixture-session", current]]);
+    else assert.deepEqual(sets, []);
+    await client.dispose();
+  }
+});
+
 test("subscription policy refuses an unqualified adapter", async () => {
   const child = spawn(process.execPath, profile.args, {
     env: {},

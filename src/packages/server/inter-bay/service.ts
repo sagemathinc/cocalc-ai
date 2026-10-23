@@ -30,7 +30,6 @@ import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-ro
 import { createInterBayComputersHandler } from "@cocalc/conat/inter-bay/computers";
 import { computersAtThisBay } from "@cocalc/server/computers/routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
-import { list as listOperations } from "@cocalc/server/conat/api/lro";
 import { repairScheduledCollectionExpiryLocal } from "@cocalc/server/lro/scheduled-collection-expiry-repair";
 import {
   createProjectOnOwningBay,
@@ -2687,13 +2686,6 @@ async function startHostConnectionService(): Promise<void> {
     getApiRelayHostUrl: resolveLocalApiRelayHostUrl,
     updateApiRelayUsage: updateLocalProjectApiRelayUsage,
     updateApiRelayAccountUsage: updateLocalApiRelayAccountUsage,
-    listHostOperations: async ({ account_id, host_id, include_completed }) =>
-      await listOperations({
-        account_id,
-        scope_type: "host",
-        scope_id: host_id,
-        include_completed,
-      }),
     get: async (opts) => {
       const connection = await resolveHostConnectionLocal(opts);
       if (!connection) {

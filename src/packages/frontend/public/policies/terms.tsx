@@ -15,7 +15,7 @@ export const termsPolicy: PublicPolicy = {
   navLabel: "Terms",
   slug: "terms",
   title: "Terms of Service",
-  updated: "June 30, 2026",
+  updated: "October 19, 2026",
   content: (
     <>
       <p>
@@ -241,6 +241,12 @@ export const termsPolicy: PublicPolicy = {
             termination, extended inactivity, nonpayment, or if your Content
             exceeds the resources allocated to your Account, subject to
             applicable law and our other policies.
+          </p>
+          <p>
+            Sagebrush: when a membership that includes sync ends, synced
+            Sagebrush data becomes read-only. You can still view and download
+            it. It is deleted 90 days later unless the membership is renewed. We
+            email you when the membership ends and again before deletion.
           </p>
         </PolicySubsection>
         <PolicySubsection title="Refunds and Changes">

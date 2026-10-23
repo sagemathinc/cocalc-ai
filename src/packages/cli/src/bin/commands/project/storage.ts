@@ -23,6 +23,7 @@ import {
   getStorageOverview,
 } from "@cocalc/conat/project/storage-info";
 import { humanSize } from "@cocalc/util/misc";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -914,7 +915,9 @@ export function registerProjectStorageCommands(
               client,
               project_id: ws.project_id,
             });
-            targetPath = visibleSummary(overview, "home")?.path ?? "/root";
+            targetPath =
+              visibleSummary(overview, "home")?.path ??
+              DEFAULT_PROJECT_RUNTIME_HOME;
           }
           const breakdown = await getStorageBreakdown({
             client,
@@ -981,7 +984,9 @@ export function registerProjectStorageCommands(
             force_sample: !!opts.forceSample,
           });
           const homePath =
-            visibleSummary(overview, "home")?.path ?? opts.home ?? "/root";
+            visibleSummary(overview, "home")?.path ??
+            opts.home ??
+            DEFAULT_PROJECT_RUNTIME_HOME;
           const history = await getStorageHistory({
             client,
             project_id: ws.project_id,

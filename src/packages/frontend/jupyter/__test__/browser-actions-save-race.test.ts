@@ -32,6 +32,8 @@ function createActions() {
   actions.setToIpynb = jest.fn(async () => {});
   actions.refreshKernelStatus = jest.fn(async () => {});
   actions.store = { emit: jest.fn() };
+  // These notebooks are loaded: their initial source has settled.
+  actions.resolveInitialSource();
   return actions;
 }
 
@@ -377,7 +379,8 @@ describe("Jupyter browser disk-save reconciliation", () => {
           expect(actions.syncdb.fs.jupyterImportIpynb).toHaveBeenCalledWith(
             diskRead.ipynb,
           );
-          expect(actions.setToIpynb).toHaveBeenCalledWith(diskRead.ipynb);
+          expect(actions.setToIpynb).toHaveBeenCalledTimes(1);
+          expect(actions.setToIpynb.mock.calls[0][0]).toEqual(diskRead.ipynb);
           expect(actions.saveIpynb).not.toHaveBeenCalled();
           expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
         } finally {

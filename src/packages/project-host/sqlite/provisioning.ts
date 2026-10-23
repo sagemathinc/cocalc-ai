@@ -92,6 +92,32 @@ export function listUnreportedProvisioning(limit = 256): ProvisioningRow[] {
   }));
 }
 
+export function getProjectProvisioning(
+  project_id: string,
+): ProvisioningRow | undefined {
+  ensureProvisioningTable();
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      "SELECT project_id, provisioned, provisioned_reported, updated_at FROM project_provisioning WHERE project_id=?",
+    )
+    .get(project_id) as
+    | {
+        project_id: string;
+        provisioned?: number;
+        provisioned_reported?: number;
+        updated_at?: number;
+      }
+    | undefined;
+  if (row == null) return undefined;
+  return {
+    project_id: row.project_id,
+    provisioned: !!row.provisioned,
+    provisioned_reported: row.provisioned_reported === 1,
+    updated_at: row.updated_at ?? undefined,
+  };
+}
+
 export function markProjectProvisionedReported(project_id: string) {
   ensureProvisioningTable();
   const db = getDatabase();

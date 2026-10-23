@@ -108,9 +108,8 @@ export default function EditHistoryStorage({
     logs: true,
     archived: false,
   });
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    origin: "edit-history-storage",
-  });
+  // (the default origin: the control plane, where the account signs in)
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const load = useCallback(async () => {
     setLoading(true);
