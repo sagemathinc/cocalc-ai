@@ -410,3 +410,33 @@ test("phone: a hidden chat opens and reads nothing until it is shown", () => {
   expect(screen.getByRole("article")).toHaveTextContent("third question");
   expect(actions.updateReaderState).toHaveBeenCalled();
 });
+
+test("phone: in a background browser tab nothing opens or is read until it is shown", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  const hidden = jest.spyOn(document, "hidden", "get").mockReturnValue(true);
+  try {
+    render(
+      <ChatReaderView
+        actions={actions}
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        narrow
+      />,
+    );
+    expect(screen.queryByRole("article")).toBeNull();
+    expect(actions.updateReaderState).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false);
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(screen.getByRole("article")).toHaveTextContent("third question");
+    expect(actions.updateReaderState).toHaveBeenCalled();
+  } finally {
+    hidden.mockRestore();
+  }
+});

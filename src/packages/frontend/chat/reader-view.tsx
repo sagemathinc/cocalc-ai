@@ -112,6 +112,19 @@ function snippet(message: ChatMessageTyped): string {
     .slice(0, 160);
 }
 
+/** Whether the browser shows this page (not a background tab). */
+function usePageVisible(): boolean {
+  const [visible, setVisible] = useState(
+    () => typeof document === "undefined" || !document.hidden,
+  );
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  return visible;
+}
+
 export function ChatReaderView({
   actions,
   threadId,
@@ -146,6 +159,9 @@ export function ChatReaderView({
   autoFocus?: boolean;
 }) {
   const userMap = useTypedRedux("users", "user_map");
+  // On screen: the chat (its tab) and the page (the browser's tab).
+  const pageVisible = usePageVisible();
+  const shown = isVisible && pageVisible;
   const items = useMemo(() => readerItems(messages), [messages]);
   const watermark = useMemo(
     () => (accountId ? actions.getThreadReadCount(threadId, accountId) : 0) - 1,
@@ -203,12 +219,7 @@ export function ChatReaderView({
   const startedRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     // Only once it is shown: a chat restored in a background tab reads nothing.
-    if (
-      !isVisible ||
-      !narrow ||
-      startedRef.current === threadId ||
-      !visible.length
-    )
+    if (!shown || !narrow || startedRef.current === threadId || !visible.length)
       return;
     startedRef.current = threadId;
     // Kept only if it is in this thread (not one left from the last thread).
@@ -217,18 +228,17 @@ export function ChatReaderView({
       visible.find((item) => !isItemRead(item, watermark, state)) ?? visible[0];
     setSelectedId(first.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVisible, narrow, threadId, visible.length]);
+  }, [shown, narrow, threadId, visible.length]);
 
   // Opening an item, or a new reply arriving while it is open, reads it.
   // Not while the chat is hidden: then once it is shown.
   useEffect(() => {
-    if (!isVisible || !selected || isItemRead(selected, watermark, state))
-      return;
+    if (!shown || !selected || isItemRead(selected, watermark, state)) return;
     save((current, watermark) =>
       markItemRead(items, selected, watermark, current),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVisible, selected?.id, selected?.lastId]);
+  }, [shown, selected?.id, selected?.lastId]);
 
   const open = (index: number | undefined) => {
     if (index == null) return;
