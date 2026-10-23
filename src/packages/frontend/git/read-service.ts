@@ -113,9 +113,10 @@ const PINNED_DIFF_FLAGS = [
   "--full-index",
 ];
 
-// More changed files than this, and their patch is not cached: checking
-// their attributes would need too long a command.
-const MAX_ATTRIBUTE_PATHS = 2000;
+// Changed paths longer than this in all (UTF-8 bytes), and their patch is
+// not cached: checking their attributes would need too long a command line.
+// Well under Linux's limits (128 KiB per argument, ARG_MAX for them all).
+const MAX_ATTRIBUTE_PATH_BYTES = 64 * 1024;
 
 // The object ids that fully name a comparison.
 function targetObjects(target: ImmutableReviewTarget): string[] {
@@ -668,7 +669,7 @@ export class GitReadService {
         "--find-renames",
         `-U${context}`,
       ]),
-      // Too many files to check: not cached.
+      // Attributes that can't be checked: not cached.
       settings == null ? [] : targetObjects(target),
       { settings },
     );
@@ -685,8 +686,8 @@ export class GitReadService {
    * attributes (from .gitattributes, .git/info/attributes and the global
    * and system files: `-diff` turns a text patch into "Binary files
    * differ", a diff driver names the function in hunk headers) and the
-   * settings of the drivers they name. Undefined when there are too many
-   * files to check.
+   * settings of the drivers they name. Undefined when they can't be
+   * checked (too many paths for one command, or the check failed).
    */
   private async attributeState(
     target: ImmutableReviewTarget,
@@ -697,15 +698,24 @@ export class GitReadService {
       if (file.newPath != null) paths.add(file.newPath);
     }
     if (paths.size === 0) return "";
-    if (paths.size > MAX_ATTRIBUTE_PATHS) return undefined;
+    let bytes = 0;
+    for (const path of paths)
+      bytes += new TextEncoder().encode(path).length + 1;
+    if (bytes > MAX_ATTRIBUTE_PATH_BYTES) return undefined;
     const { projectId, locator } = target.repository;
-    const attributes = await this.run(projectId, locator, [
-      "check-attr",
-      "-z",
-      "--all",
-      "--",
-      ...paths,
-    ]);
+    let attributes: string;
+    try {
+      attributes = await this.run(projectId, locator, [
+        "check-attr",
+        "-z",
+        "--all",
+        "--",
+        ...paths,
+      ]);
+    } catch {
+      // The patch is still read, just not cached.
+      return undefined;
+    }
     const fields = attributes.split("\0");
     let drivers = false;
     for (let i = 0; i + 2 < fields.length; i += 3)
@@ -714,15 +724,20 @@ export class GitReadService {
         !["set", "unset", "unspecified"].includes(fields[i + 2])
       )
         drivers = true;
-    const settings = drivers
-      ? await this.run(
+    let settings = "";
+    if (drivers) {
+      try {
+        settings = await this.run(
           projectId,
           locator,
           ["config", "-z", "--get-regexp", "^diff\\."],
           // 1: none set.
           [0, 1],
-        )
-      : "";
+        );
+      } catch {
+        return undefined;
+      }
+    }
     return sha1(`${attributes}\0\0${settings}`);
   }
 

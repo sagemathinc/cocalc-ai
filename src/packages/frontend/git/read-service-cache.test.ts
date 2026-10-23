@@ -312,3 +312,45 @@ test("a patch follows the attributes of its files, which can change", async () =
   }
   expect(await first.patch(target)).toContain("+two");
 });
+
+test("paths too long for one command, or a failed check, leave the patch uncached but read", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "git-cache-long-"));
+  try {
+    git(repo, ["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "keep"), "\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "first"]);
+    // 300 names of 240 bytes: over the limit on the command line.
+    for (let i = 0; i < 300; i++)
+      writeFileSync(
+        join(repo, `${String(i).padStart(3, "0")}${"x".repeat(237)}`),
+        "x\n",
+      );
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "many"]);
+    const head = git(repo, ["rev-parse", "HEAD"]).trim();
+    const reader = new GitReadService(execute);
+    const { repository } = await reader.discover("p11", repo);
+    const target = await reader.pinCommit(repository, head);
+    calls.length = 0;
+    expect(await reader.patch(target)).toContain("+x");
+    expect(calls.some((args) => args.includes("check-attr"))).toBe(false);
+    calls.length = 0;
+    await reader.patch(target);
+    // Not from a cache.
+    expect(calls.some((args) => args.includes("--patch"))).toBe(true);
+
+    const failing: GitReadExecutor = async (options) =>
+      options.args!.includes("check-attr")
+        ? { stdout: "", stderr: "no", exit_code: 1 }
+        : execute(options);
+    const other = new GitReadService(failing);
+    const first = await other.pinCommit(
+      repository,
+      git(repo, ["rev-parse", "HEAD^"]).trim(),
+    );
+    expect(await other.patch(first)).toContain("+");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
