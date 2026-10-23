@@ -792,54 +792,15 @@ export async function copyPersistVolumeIntoSnapshot(opts: {
   }
 }
 
-// A read-only snapshot at `dest` in the project's ~/.snapshots of `source`,
-// its home or a snapshot of it, with its edit history as in every snapshot
-// there (subvolume-snapshots.ts does the same for the usual ones).  The
-// project can write its home, and the history must never be writable there:
-// the snapshot is completed in host-only staging first.
-export async function snapshotWithHistory({
-  project_id,
-  source,
-  dest,
-  env = process.env,
-}: {
-  project_id: string;
-  source: string;
-  dest: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<void> {
-  const subvolume = `project-${project_id}`;
-  let captured = await capturePersistVolume({ subvolume, env });
-  try {
-    if (captured == null) {
-      await btrfs({ args: ["subvolume", "snapshot", "-r", source, dest] });
-      // There was nothing to add, but there may be now (the history just
-      // moved out of the home): then take the snapshot again with it.
-      captured = await capturePersistVolume({ subvolume, env });
-      if (captured == null) return;
-      await btrfs({ args: ["subvolume", "delete", dest] });
-    }
-    const staged = join(
-      dirname(persistVolumePath(project_id, env)!),
-      IMPORT_STAGING_DIR,
-      stagingName("snapshot", project_id),
-    );
-    await btrfs({ args: ["subvolume", "snapshot", source, staged] });
-    try {
-      await captured.addTo(staged);
-      await btrfs({ args: ["property", "set", "-ts", staged, "ro", "true"] });
-      await btrfs({ args: ["subvolume", "snapshot", "-r", staged, dest] });
-    } finally {
-      await btrfs({ args: ["subvolume", "delete", staged] }).catch((err) => {
-        logger.warn("unable to delete a staged snapshot", {
-          staged,
-          err: `${err}`,
-        });
-      });
-    }
-  } finally {
-    await captured?.release();
-  }
+// Removes CoCalc's copy of a history (it has READY_MARKER) at
+// HISTORY_IN_SNAPSHOTS in `root`, a home the project can't reach (restore
+// staging, or a snapshot's clone); anything else there is the project's.
+async function removeHistoryCopy(root: string): Promise<void> {
+  const target = join(root, HISTORY_IN_SNAPSHOTS);
+  if (!(await lstat(target).catch(() => undefined))?.isDirectory()) return;
+  const marker = await lstat(join(target, READY_MARKER)).catch(() => undefined);
+  if (!marker?.isFile()) return;
+  await sudo({ command: "rm", args: ["-rf", target] });
 }
 
 // Where restoring `path` of a backup to `dest` in the project's home puts
@@ -1341,6 +1302,7 @@ export async function replaceProjectHome<T>({
   reason,
   swap,
   historyInHome = true,
+  keepHistory = false,
   env = process.env,
   ops = btrfsOps,
 }: {
@@ -1350,15 +1312,26 @@ export async function replaceProjectHome<T>({
   swap: () => Promise<T>;
   // without volumes: whether the home holds the project's persist files
   historyInHome?: boolean;
+  // With volumes: the project keeps the history it has, whatever history
+  // `replacement` holds (a snapshot in ~/.snapshots: its files only).  The
+  // edit history is not revision control: restoring files is a new edit.
+  keepHistory?: boolean;
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<T> {
-  const staged = await stageRestoredVolume({
-    project_id,
-    replacement,
-    env,
-    ops,
-  });
+  if (keepHistory && persistVolumePath(project_id, env) != null) {
+    // CoCalc's copy of a history in `replacement` (a snapshot from before
+    // they were of the files only) would only take space in the home.
+    await removeHistoryCopy(replacement);
+  }
+  const staged = keepHistory
+    ? undefined
+    : await stageRestoredVolume({
+        project_id,
+        replacement,
+        env,
+        ops,
+      });
   let swappedIn = false;
   let previous: string | undefined;
   let result: T;

@@ -244,7 +244,6 @@ import {
   restoreBackupWithHistory,
   restoredHistoryCandidates,
   snapshotNeedsPersistVolume,
-  snapshotWithHistory,
   syncPersistVolumeQuota,
   persistVolumePath,
 } from "./persist-volume";
@@ -467,7 +466,10 @@ const legacyProjectArchiveHandlers = createLegacyProjectArchiveHandlers({
   projectMountpoint,
   createWritableSnapshot: async (source, dest) =>
     await btrfsSnapshotWritable({ source, dest }),
-  createProjectSnapshot: snapshotWithHistory,
+  // the files only, as every snapshot in ~/.snapshots (subvolume-snapshots.ts)
+  createProjectSnapshot: async ({ source, dest }) => {
+    await btrfs({ args: ["subvolume", "snapshot", "-r", source, dest] });
+  },
   deleteSubvolumeTree,
   invalidateProjectFsServer,
   touchProjectLastEdited,
@@ -2989,11 +2991,8 @@ async function createPathCopyArchive({
   let uncompressed_bytes = 0;
   let snapshotCreated = false;
   try {
-    // only read from, then deleted: no edit history needed
-    await volume.snapshots.create(snapshot, {
-      quotaMode: "skip",
-      includePreparedData: false,
-    });
+    // only read from, then deleted
+    await volume.snapshots.create(snapshot, { quotaMode: "skip" });
     snapshotCreated = true;
     for (const root of roots) {
       // The source path is the project user's, and so is the .snapshots
@@ -3399,13 +3398,14 @@ async function restoreSnapshot({
     ) {
       throw new Error(`safety snapshot is missing: ${safety_snapshot_name}`);
     }
-    // The snapshot's edit history replaces the project's together with its
-    // home, while nothing has either open (persist-volume.ts).
+    // Its files only: the project keeps its edit history, which is not
+    // revision control (persist-volume.ts replaceProjectHome keepHistory).
     ({ oldHomePath } = await replaceProjectHome({
       project_id,
       replacement: staged.path,
       reason: "restore-snapshot",
       historyInHome: homeHoldsPersistFiles(project_id),
+      keepHistory: true,
       swap: async () =>
         await swapProjectHome({
           project_id,

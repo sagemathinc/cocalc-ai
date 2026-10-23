@@ -34,7 +34,6 @@ import {
   replaceProjectHome,
   restoreBackupWithHistory,
   restoredHistoryCandidates,
-  snapshotWithHistory,
   syncPersistVolumeQuota,
   btrfsOps,
   type PersistVolumeOps,
@@ -666,67 +665,6 @@ describe("in the project-host", () => {
     expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
   });
 
-  describe("snapshotWithHistory", () => {
-    // (in ~/.snapshots on btrfs, which a copy can't do)
-    const dest = () => join(mount, "before-restore");
-    const snapshot = async () => {
-      await snapshotWithHistory({
-        project_id: PROJECT,
-        source: home,
-        dest: dest(),
-        env,
-      });
-    };
-
-    it("adds the history in host-only staging, never in the home", async () => {
-      await readyVolume();
-      await writeFile(join(home, "work.txt"), "work");
-      await snapshot();
-      expect(read(join(dest(), "work.txt"))).toBe("work");
-      const copy = join(dest(), HISTORY_IN_SNAPSHOTS);
-      expect(read(join(copy, "a.db"))).toBe("live");
-      expect(existsSync(join(copy, READY_MARKER))).toBe(true);
-      // made read-only in staging, then snapshotted read-only into the home
-      const ops = (btrfs as jest.Mock).mock.calls.map(([{ args }]) => args);
-      const staged = ops.find(
-        (args) =>
-          args[1] === "snapshot" && args[2] === home && args.length === 4,
-      )?.[3];
-      expect(staged).toContain(join(mount, ".persist-import"));
-      expect(ops).toContainEqual([
-        "property",
-        "set",
-        "-ts",
-        staged,
-        "ro",
-        "true",
-      ]);
-      expect(ops).toContainEqual([
-        "subvolume",
-        "snapshot",
-        "-r",
-        staged,
-        dest(),
-      ]);
-      expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
-    });
-
-    it("is a plain snapshot until the history was imported", async () => {
-      await snapshot();
-      expect(read(join(dest(), LEGACY, "a.db"))).toBe("a");
-      expect(existsSync(join(dest(), HISTORY_IN_SNAPSHOTS))).toBe(false);
-      expect(sudo).not.toHaveBeenCalled();
-    });
-
-    it("fails, leaving no snapshot, rather than replace a project's own .cocalc-persist", async () => {
-      await readyVolume();
-      await writeFile(join(home, HISTORY_IN_SNAPSHOTS), "mine");
-      await expect(snapshot()).rejects.toThrow(/reserved for CoCalc/);
-      expect(existsSync(dest())).toBe(false);
-      expect(readdirSync(join(mount, ".persist-import"))).toEqual([]);
-    });
-  });
-
   const leftovers = () =>
     readdirSync(join(mount, ".persist-import")).filter(
       (x) => x.startsWith("restore-") || x.startsWith("replaced-"),
@@ -785,6 +723,46 @@ describe("in the project-host", () => {
     expect(existsSync(join(root, "new.db"))).toBe(false);
     // the copy in the restored home is gone
     expect(existsSync(join(home, HISTORY_IN_SNAPSHOTS))).toBe(false);
+  });
+
+  it("keeps the project's history when its home is restored from one of its snapshots", async () => {
+    await readyVolume();
+    // a snapshot from before they were of the files only: an older copy of
+    // the history in it, and the old directory too
+    const { subvolume, snapshotPath } = await backupSnapshot();
+    await copyPersistVolumeIntoSnapshot({ subvolume, snapshotPath });
+    await mkdir(join(snapshotPath, LEGACY), { recursive: true });
+    await writeFile(join(snapshotPath, LEGACY, "a.db"), "old");
+    await writeFile(join(snapshotPath, "work.txt"), "restored");
+    await writeFile(join(root, "a.db"), "after the snapshot");
+    const ops = fakeOps();
+    const result = await replaceProjectHome({
+      project_id: PROJECT,
+      replacement: snapshotPath,
+      reason: "restore-snapshot",
+      keepHistory: true,
+      env,
+      ops,
+      swap: async () => {
+        await rm(home, { recursive: true });
+        await cp(snapshotPath, home, {
+          recursive: true,
+          verbatimSymlinks: true,
+        });
+        return "swapped";
+      },
+    });
+    expect(result).toBe("swapped");
+    // the history is the project's, as it was: not the snapshot's
+    expect(read(join(root, "a.db"))).toBe("after the snapshot");
+    expect(ops.joined).toEqual([]);
+    // the files are the snapshot's, without CoCalc's copy of a history
+    expect(read(join(home, "work.txt"))).toBe("restored");
+    expect(existsSync(join(home, HISTORY_IN_SNAPSHOTS))).toBe(false);
+    // (the old directory is just files of the project's now)
+    expect(read(join(home, LEGACY, "a.db"))).toBe("old");
+    // nothing reloads: the history wasn't replaced
+    expect(fenceOpts[fenceOpts.length - 1]).toMatchObject({ replaces: false });
   });
 
   it("leaves the clients' history alone when the restored home has none", async () => {

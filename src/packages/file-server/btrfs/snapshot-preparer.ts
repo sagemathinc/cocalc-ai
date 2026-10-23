@@ -4,11 +4,12 @@
  */
 
 /*
-Adds data to a snapshot of a subvolume while it is still writable, before it
-is made read-only: the project-host puts a copy of a project's edit history
-(its persist volume) in every snapshot and backup of the project's home, so
-restoring them restores the history with the files
-(project-host/persist-volume.ts).
+Adds data to a backup's snapshot of a subvolume while it is still writable,
+before it is made read-only: the project-host puts a copy of a project's edit
+history (its persist volume) in every backup of the project's home, so
+restoring one restores the history with the files
+(project-host/persist-volume.ts).  The snapshots in ~/.snapshots are of the
+files only (subvolume-snapshots.ts).
 
 The data is captured BEFORE the subvolume is snapshotted: when the history is
 older than the files, a restore reconciles the newer files into it, while
