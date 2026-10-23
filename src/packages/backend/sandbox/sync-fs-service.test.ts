@@ -128,6 +128,36 @@ describe("SyncFsService", () => {
     svc.close();
   }, 10_000);
 
+  it("stops watching every path under a replaced root, until the next heartbeat", async () => {
+    const home = join(dir, "home");
+    mkdirSync(join(home, "sub"), { recursive: true });
+    const a = join(home, "a.txt");
+    const b = join(home, "sub", "b.txt");
+    const other = join(dir, "other.txt");
+    for (const path of [a, b, other]) writeFileSync(path, "x");
+
+    const svc = new SyncFsService();
+    for (const path of [a, b, other]) await svc.heartbeat(path);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(svc.releasePathsUnder(home)).toBe(2);
+    const events: string[] = [];
+    svc.on("event", (evt) => events.push(evt.path));
+    writeFileSync(a, "after");
+    writeFileSync(other, "after");
+    await new Promise((r) => setTimeout(r, 500));
+    // only the path outside the replaced root is still watched
+    expect(events).toEqual([other]);
+
+    // an open document's next heartbeat watches it again
+    await svc.heartbeat(a);
+    await new Promise((r) => setTimeout(r, 50));
+    writeFileSync(a, "again");
+    const [evt] = (await once(svc, "event")) as any[];
+    expect(evt.path).toBe(a);
+    svc.close();
+  }, 10_000);
+
   it("absorbs watcher errors queued after close", async () => {
     const svc = new SyncFsService();
     const errors: Error[] = [];
@@ -932,6 +962,65 @@ describe("SyncFsService", () => {
     // Existing stream message only; no rollback patch published from stale disk.
     expect(fake.messages.length).toBe(1);
     expect((svc as any).store.get(path)?.content).toBe("stream-new");
+    svc.close();
+  }, 10_000);
+
+  it("reconciles an older on-disk file over newer history once its directory was replaced", async () => {
+    // e.g. a home restored from a snapshot: the file is older than the
+    // history, but it is what the project has now
+    const path = join(dir, "restored.txt");
+    writeFileSync(path, "disk-restored");
+    utimesSync(path, 10, 10);
+    const fake = new FakeAStream([
+      {
+        mesg: { time: legacyPatchId(50_000), parents: [], version: 1 },
+        seq: 1,
+      },
+    ]);
+    const svc = new SyncFsService();
+    (svc as any).getPatchWriter = async () => fake;
+    (svc as any).loadDocViaSyncDoc = async () => "stream-new";
+    const meta = { project_id: "p-restored", syncPath: "restored.txt" };
+
+    await svc.heartbeat(path, true, meta);
+    // older disk: not taken
+    expect(fake.messages.length).toBe(1);
+
+    expect(svc.releasePathsUnder(dir)).toBe(1);
+    await svc.heartbeat(path, true, meta);
+    expect(fake.messages.length).toBe(2);
+    expect((svc as any).store.get(path)?.content).toBe("disk-restored");
+
+    // once only: the next initialization is as usual again
+    svc.releasePathsUnder(dir, "other");
+    (svc as any).replacedPaths.clear();
+    await (svc as any).initPath(path, meta);
+    expect(fake.messages.length).toBe(2);
+    svc.close();
+  }, 10_000);
+
+  it("takes a file missing after its directory was replaced as deleted", async () => {
+    // e.g. created after the snapshot a home was restored from
+    const path = join(dir, "created-later.txt");
+    const fake = new FakeAStream([
+      {
+        mesg: { time: legacyPatchId(50_000), parents: [], version: 1 },
+        seq: 1,
+      },
+    ]);
+    const svc = new SyncFsService();
+    (svc as any).getPatchWriter = async () => fake;
+    (svc as any).loadDocViaSyncDoc = async () => "written later";
+    const meta = { project_id: "p-later", syncPath: "created-later.txt" };
+
+    await svc.heartbeat(path, true, meta);
+    // missing on an ordinary init: no delete inferred
+    expect(fake.messages.length).toBe(1);
+
+    svc.releasePathsUnder(dir);
+    await svc.heartbeat(path, true, meta);
+    expect(fake.messages.length).toBe(2);
+    expect((svc as any).store.get(path)).toMatchObject({ deleted: true });
     svc.close();
   }, 10_000);
 

@@ -19,6 +19,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -127,7 +128,10 @@ import {
   API_KEY_VIEWER_FILE_SERVICE,
   parseApiKeyViewerFsSubject,
 } from "@cocalc/conat/auth/project-host-api-key-subject";
-import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import {
+  SandboxedFilesystem,
+  releaseSyncFsWatchesUnder,
+} from "@cocalc/backend/sandbox";
 import execSandbox from "@cocalc/backend/sandbox/exec";
 import rustic, {
   getHost as getRusticSnapshotHost,
@@ -247,7 +251,11 @@ import {
   syncPersistVolumeQuota,
   persistVolumePath,
 } from "./persist-volume";
-import { applyPersistStorage, listPersistStorage } from "./persist-storage";
+import {
+  applyPersistStorage,
+  listPersistStorage,
+  touchDocumentsWithHistory,
+} from "./persist-storage";
 import {
   deleteEmptyQuotaGroups,
   joinProjectQuotaGroup,
@@ -3406,11 +3414,29 @@ async function restoreSnapshot({
       reason: "restore-snapshot",
       historyInHome: homeHoldsPersistFiles(project_id),
       keepHistory: true,
-      swap: async () =>
-        await swapProjectHome({
+      // Its files with history become the next version of their documents,
+      // not stale copies the history is written back over.
+      beforeSwap: async () => {
+        const touched = await touchDocumentsWithHistory({
+          project_id,
+          root: staged.path,
+        });
+        logger.debug("restore-snapshot: marked documents changed", {
+          project_id,
+          touched,
+        });
+      },
+      swap: async () => {
+        const swapped = await swapProjectHome({
           project_id,
           replacementPath: staged.path,
-        }),
+        });
+        // Still fenced: open documents watched the old home's files; they
+        // load the restored ones at their next heartbeat (sync-fs initPath),
+        // and nothing writes the old content back in between.
+        releaseSyncFsWatchesUnder(await realpath(home).catch(() => home));
+        return swapped;
+      },
     }));
     cleanupStagedClone = false;
   } finally {

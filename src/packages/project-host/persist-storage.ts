@@ -21,7 +21,7 @@ The volume is host-only, so its users can't do that themselves.
 */
 
 import { DatabaseSync } from "node:sqlite";
-import { lstat, open, opendir, rmdir, unlink } from "node:fs/promises";
+import { lstat, lutimes, open, opendir, rmdir, unlink } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 // (initialized with node:sqlite, as in the persist server)
@@ -56,6 +56,9 @@ const MAX_NAME_LENGTH = 4096;
 const MAX_ARCHIVE_PURGE_STEPS = 10_000;
 
 const SUFFIXES = ["", "-wal", "-shm", "-journal"];
+
+// touchDocumentsWithHistory
+const TOUCH_MARGIN_MS = 2_000;
 
 // Where the project's documents are, as its streams name them.
 const PROJECT_HOME_IN_NAMES = "home/user/";
@@ -224,6 +227,61 @@ async function walk(root: string): Promise<{
   };
   await visit(root, 0);
   return { streams, truncated };
+}
+
+// Marks as just changed the files in `root` that have edit history: `root`
+// is a home the project can't reach yet (a snapshot's clone), about to
+// replace the project's while it keeps its history (persist-volume.ts
+// replaceProjectHome keepHistory).  A restored file is older than its
+// history, so it would be taken as stale and the history written back over
+// it (sync-fs initPath); marked new, it becomes the next version of its
+// document.  Never follows a symlink.  The number of files marked.
+export async function touchDocumentsWithHistory({
+  project_id,
+  root,
+  // a little after now: strictly newer than the last edit of any document
+  // (sync-fs initPath compares mtime > the history's newest patch time),
+  // even with a patch in the same millisecond or a clock a little ahead
+  now = new Date(Date.now() + TOUCH_MARGIN_MS),
+  env = process.env,
+}: {
+  project_id: string;
+  root: string;
+  now?: Date;
+  env?: NodeJS.ProcessEnv;
+}): Promise<number> {
+  const ctx = context(project_id, env);
+  if (ctx == null || !(await isPersistVolumeReady(ctx.root))) return 0;
+  const { streams } = await walk(ctx.root);
+  const prefix = `/${PROJECT_HOME_IN_NAMES}`;
+  const documents = new Set<string>();
+  for (const { name } of streams) {
+    const { document } = classify(name);
+    if (document?.startsWith(prefix)) documents.add(document);
+  }
+  let touched = 0;
+  for (const document of documents) {
+    const parts = document.slice(prefix.length).split("/");
+    let path = root;
+    let ok = true;
+    for (let i = 0; i < parts.length && ok; i++) {
+      path = join(path, parts[i]);
+      const stat = await lstat(path).catch(() => undefined);
+      ok = i < parts.length - 1 ? !!stat?.isDirectory() : !!stat?.isFile();
+    }
+    if (!ok) continue;
+    try {
+      await lutimes(path, now, now);
+      touched += 1;
+    } catch (err) {
+      logger.warn("unable to mark a restored document changed", {
+        project_id,
+        document,
+        err: `${err}`,
+      });
+    }
+  }
+  return touched;
 }
 
 export async function listPersistStorage({

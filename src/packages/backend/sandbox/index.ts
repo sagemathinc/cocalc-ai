@@ -3420,6 +3420,13 @@ globalSyncFsService.on("error", (err) => {
   logger.error("sync-fs-service error", err);
 });
 
+// After the directory at `root` (a project's home) was replaced, e.g. by a
+// restore: stop watching its old files, so open documents load the new ones
+// (SyncFsService.releasePathsUnder).
+export function releaseSyncFsWatchesUnder(root: string): number {
+  return globalSyncFsService.releasePathsUnder(root);
+}
+
 export class SandboxError extends Error {
   code: string;
   errno: number;

@@ -1303,6 +1303,7 @@ export async function replaceProjectHome<T>({
   swap,
   historyInHome = true,
   keepHistory = false,
+  beforeSwap,
   env = process.env,
   ops = btrfsOps,
 }: {
@@ -1316,6 +1317,11 @@ export async function replaceProjectHome<T>({
   // `replacement` holds (a snapshot in ~/.snapshots: its files only).  The
   // edit history is not revision control: restoring files is a new edit.
   keepHistory?: boolean;
+  // runs while nothing has the project's history open (the fence), just
+  // before the home is swapped in, e.g. to mark the files of `replacement`
+  // that have history as changed (persist-storage.ts
+  // touchDocumentsWithHistory)
+  beforeSwap?: () => Promise<void>;
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<T> {
@@ -1356,6 +1362,7 @@ export async function replaceProjectHome<T>({
           : fn();
       // (with the history in the home, the fence covers just the home swap)
       const swapped = await fenced(async () => {
+        await beforeSwap?.();
         if (staged != null) {
           previous = await swapInVolume(project_id, staged.path, env, ops);
           swappedIn = true;
