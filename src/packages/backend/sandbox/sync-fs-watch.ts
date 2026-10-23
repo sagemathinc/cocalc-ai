@@ -141,6 +141,14 @@ export class SyncFsWatchStore {
           lastSeq INTEGER,
           formatVersion INTEGER
         );
+        CREATE TABLE IF NOT EXISTS replaced_roots (
+          root TEXT PRIMARY KEY,
+          time INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS reconciled_paths (
+          path TEXT PRIMARY KEY,
+          time INTEGER NOT NULL
+        );
       `);
       // Backward-compatible migrations; ignore if columns already exist.
       try {
@@ -352,5 +360,59 @@ export class SyncFsWatchStore {
         head.lastSeq ?? null,
         head.formatVersion ?? null,
       );
+  }
+
+  // A directory replaced as a whole (a home restored from a snapshot): what
+  // is on disk under it is newer than any edit history from before `time`.
+  // Returns the time it replaces, to undo it if the replacement failed.
+  markRootReplaced(root: string, time: number): number | undefined {
+    const previous = this.db
+      .prepare("SELECT time FROM replaced_roots WHERE root = ?")
+      .get(root) as { time: number } | undefined;
+    this.db
+      .prepare(
+        `INSERT INTO replaced_roots(root, time) VALUES(?, ?)
+         ON CONFLICT(root) DO UPDATE SET time=excluded.time`,
+      )
+      .run(root, time);
+    return previous?.time;
+  }
+
+  restoreRootReplaced(root: string, previous: number | undefined): void {
+    if (previous == null) {
+      this.db.prepare("DELETE FROM replaced_roots WHERE root = ?").run(root);
+    } else {
+      this.db
+        .prepare("UPDATE replaced_roots SET time = ? WHERE root = ?")
+        .run(previous, root);
+    }
+  }
+
+  // The latest replacement of a directory containing `path`.
+  getRootReplaced(path: string): { root: string; time: number } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT root, time FROM replaced_roots
+         WHERE root = ? OR substr(?, 1, length(root) + 1) = root || '/'
+         ORDER BY time DESC LIMIT 1`,
+      )
+      .get(path, path) as { root: string; time: number } | undefined;
+    return row == null ? undefined : { root: row.root, time: row.time };
+  }
+
+  getReconciledAt(path: string): number | undefined {
+    const row = this.db
+      .prepare("SELECT time FROM reconciled_paths WHERE path = ?")
+      .get(path) as { time: number } | undefined;
+    return row?.time;
+  }
+
+  setReconciledAt(path: string, time: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO reconciled_paths(path, time) VALUES(?, ?)
+         ON CONFLICT(path) DO UPDATE SET time=excluded.time`,
+      )
+      .run(path, time);
   }
 }

@@ -3420,9 +3420,15 @@ globalSyncFsService.on("error", (err) => {
   logger.error("sync-fs-service error", err);
 });
 
-// After the directory at `root` (a project's home) was replaced, e.g. by a
-// restore: stop watching its old files, so open documents load the new ones
-// (SyncFsService.releasePathsUnder).
+// Before the directory at `root` (a project's home) is replaced as a whole,
+// e.g. by a restore: every document under it, open or not, takes the new
+// files when next opened (SyncFsService.markRootReplaced).  Returns the undo.
+export function markSyncFsRootReplaced(root: string): () => void {
+  return globalSyncFsService.markRootReplaced(root);
+}
+
+// After the directory at `root` was replaced: stop watching its old files,
+// so open documents load the new ones (SyncFsService.releasePathsUnder).
 export function releaseSyncFsWatchesUnder(root: string): number {
   return globalSyncFsService.releasePathsUnder(root);
 }

@@ -293,6 +293,14 @@ export function cleanupSyncFsServicesForTests(): void {
   }
 }
 
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Centralized filesystem watcher that:
  * - Maintains a durable snapshot of last-on-disk content (via SyncFsWatchStore).
@@ -313,10 +321,6 @@ export class SyncFsService extends EventEmitter {
   private patchWriters: Map<string, AStream<any>> = new Map();
   private streamInfo: Map<string, StreamInfo> = new Map();
   private suppressOnce: Map<string, SuppressWriteMarker> = new Map();
-  // Paths whose file was replaced under them (releasePathsUnder): the next
-  // initialization takes the file on disk, whatever its mtime, and a missing
-  // file as deleted.
-  private replacedPaths: Set<string> = new Set();
   private conatClient?: any;
   private readonly clientId: string;
   private readonly heartbeatTtlMs: number;
@@ -611,7 +615,16 @@ export class SyncFsService extends EventEmitter {
         this.store.setContent(path, "");
       }
 
-      const replaced = this.replacedPaths.has(path);
+      // Under a directory replaced since this path was last initialized
+      // (markRootReplaced): the file on disk is what the project has now,
+      // whatever its mtime, and a missing file is deleted.
+      const replacedRoot = this.store.getRootReplaced(path);
+      const replaced =
+        replacedRoot != null &&
+        replacedRoot.time >= (this.store.getReconciledAt(path) ?? 0);
+      const reconciled = () => {
+        if (replacedRoot != null) this.store.setReconciledAt(path, Date.now());
+      };
       if (
         hasHistory &&
         !replaced &&
@@ -638,6 +651,10 @@ export class SyncFsService extends EventEmitter {
         if (hasHistory && replaced) {
           // The file is gone from what replaced it (e.g. restored from a
           // snapshot taken before it existed): the document is deleted.
+          // Unless the directory itself is missing (not mounted).
+          if (!(await isDirectory(replacedRoot!.root))) {
+            return true;
+          }
           const change = await this.store.handleExternalChange(
             path,
             async () => "",
@@ -657,7 +674,7 @@ export class SyncFsService extends EventEmitter {
           ) {
             return false;
           }
-          this.replacedPaths.delete(path);
+          reconciled();
           return true;
         }
         if (hasHistory) {
@@ -685,7 +702,7 @@ export class SyncFsService extends EventEmitter {
           return false;
         }
       }
-      this.replacedPaths.delete(path);
+      reconciled();
       return true;
     } catch (err) {
       this.emit("error", err);
@@ -733,7 +750,6 @@ export class SyncFsService extends EventEmitter {
       clearTimeout(marker.timer);
     }
     this.suppressOnce.clear();
-    this.replacedPaths.clear();
     this.streamInfo.clear();
     this.store.close();
     this.removeAllListeners();
@@ -766,7 +782,6 @@ export class SyncFsService extends EventEmitter {
       clearTimeout(marker.timer);
     }
     this.suppressOnce.clear();
-    this.replacedPaths.clear();
   }
 
   // Update the persisted snapshot when we know a local write/delete happened
@@ -894,11 +909,19 @@ export class SyncFsService extends EventEmitter {
     }
   }
 
+  // Records, durably, that the directory `root` is being replaced as a whole
+  // (a home restored from a snapshot): the next initialization of each path
+  // under it, open or not, takes what is on disk then (initPath).  Returns
+  // the undo, for a replacement that failed.
+  markRootReplaced(root: string): () => void {
+    const previous = this.store.markRootReplaced(root, Date.now());
+    return () => this.store.restoreRootReplaced(root, previous);
+  }
+
   // Stops watching every path under `root` (a home whose directory was
-  // replaced, e.g. restored from a snapshot): the watchers follow the old
-  // directories.  The next heartbeat of an open document initializes it
-  // again (initPath: disk newer than its history becomes a patch) and
-  // watches the new directory.  The number of paths released.
+  // replaced): the watchers follow the old directories.  The next heartbeat
+  // of an open document initializes it again and watches the new directory.
+  // The number of paths released.
   releasePathsUnder(root: string, reason = "root-replaced"): number {
     const prefix = root.endsWith("/") ? root : `${root}/`;
     const under = (path: string) => path === root || path.startsWith(prefix);
@@ -906,7 +929,6 @@ export class SyncFsService extends EventEmitter {
     for (const path of [...this.pathStates.keys()]) {
       if (!under(path)) continue;
       this.releasePath(path, reason);
-      this.replacedPaths.add(path);
       released += 1;
     }
     for (const dir of [...this.watchers.keys()]) {

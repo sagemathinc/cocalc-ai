@@ -130,6 +130,7 @@ import {
 } from "@cocalc/conat/auth/project-host-api-key-subject";
 import {
   SandboxedFilesystem,
+  markSyncFsRootReplaced,
   releaseSyncFsWatchesUnder,
 } from "@cocalc/backend/sandbox";
 import execSandbox from "@cocalc/backend/sandbox/exec";
@@ -251,11 +252,7 @@ import {
   syncPersistVolumeQuota,
   persistVolumePath,
 } from "./persist-volume";
-import {
-  applyPersistStorage,
-  listPersistStorage,
-  touchDocumentsWithHistory,
-} from "./persist-storage";
+import { applyPersistStorage, listPersistStorage } from "./persist-storage";
 import {
   deleteEmptyQuotaGroups,
   joinProjectQuotaGroup,
@@ -3414,27 +3411,34 @@ async function restoreSnapshot({
       reason: "restore-snapshot",
       historyInHome: homeHoldsPersistFiles(project_id),
       keepHistory: true,
-      // Its files with history become the next version of their documents,
-      // not stale copies the history is written back over.
-      beforeSwap: async () => {
-        const touched = await touchDocumentsWithHistory({
-          project_id,
-          root: staged.path,
-        });
-        logger.debug("restore-snapshot: marked documents changed", {
-          project_id,
-          touched,
-        });
-      },
       swap: async () => {
-        const swapped = await swapProjectHome({
-          project_id,
-          replacementPath: staged.path,
-        });
-        // Still fenced: open documents watched the old home's files; they
-        // load the restored ones at their next heartbeat (sync-fs initPath),
-        // and nothing writes the old content back in between.
-        releaseSyncFsWatchesUnder(await realpath(home).catch(() => home));
+        // Still fenced, so nothing writes the old content back in between:
+        // every document under the home, open or not, takes the restored
+        // file (or its absence) when next opened, not the newer history
+        // (sync-fs initPath).
+        const root = await realpath(home).catch(() => home);
+        const undo = markSyncFsRootReplaced(root);
+        let swapped;
+        try {
+          swapped = await swapProjectHome({
+            project_id,
+            replacementPath: staged.path,
+          });
+        } catch (err) {
+          undo();
+          throw err;
+        }
+        // again, after anything initialized while it was swapped
+        try {
+          markSyncFsRootReplaced(root);
+        } catch (err) {
+          logger.warn("restore-snapshot: marking the home replaced again", {
+            project_id,
+            err: `${err}`,
+          });
+        }
+        // open documents watched the old home's files
+        releaseSyncFsWatchesUnder(root);
         return swapped;
       },
     }));

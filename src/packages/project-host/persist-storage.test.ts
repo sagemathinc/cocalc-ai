@@ -1,4 +1,4 @@
-import { existsSync, statSync, utimesSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,6 @@ import {
   applyPersistStorage,
   listPersistStorage,
   sqliteFreeBytes,
-  touchDocumentsWithHistory,
 } from "./persist-storage";
 import { READY_MARKER } from "./persist-volume";
 
@@ -96,60 +95,6 @@ function count(path: string): number {
     db.close();
   }
 }
-
-describe("touchDocumentsWithHistory", () => {
-  it("marks as just changed the restored files that have history, once each, never through a symlink", async () => {
-    await makeStream("patchflow/home/user/a.md");
-    await makeStream("patchflow/home/user/sub/b.ipynb");
-    // two streams of one document
-    await makeStream("jupyter/home/user/sub/b.ipynb");
-    await makeStream("patchflow/home/user/gone.md");
-    await makeStream("patchflow/home/user/link/secret.md");
-    await makeStream("project-log");
-    // the restored home (a snapshot's clone)
-    const restored = join(mount, "restored");
-    await mkdir(join(restored, "sub"), { recursive: true });
-    await writeFile(join(restored, "a.md"), "a");
-    await writeFile(join(restored, "sub", "b.ipynb"), "b");
-    await writeFile(join(restored, "untracked.txt"), "u");
-    const outside = join(mount, "outside");
-    await mkdir(outside);
-    await writeFile(join(outside, "secret.md"), "s");
-    await symlink(outside, join(restored, "link"));
-    for (const path of [
-      join(restored, "a.md"),
-      join(restored, "sub", "b.ipynb"),
-      join(restored, "untracked.txt"),
-      join(outside, "secret.md"),
-    ]) {
-      utimesSync(path, 1000, 1000);
-    }
-    const before = Date.now();
-    const touched = await touchDocumentsWithHistory({
-      project_id: PROJECT,
-      root: restored,
-      env,
-    });
-    expect(touched).toBe(2);
-    const mtime = (path: string) => statSync(path).mtimeMs;
-    // strictly newer than any edit until now
-    expect(mtime(join(restored, "a.md"))).toBeGreaterThan(before);
-    expect(mtime(join(restored, "sub", "b.ipynb"))).toBeGreaterThan(before);
-    expect(mtime(join(restored, "untracked.txt"))).toBe(1000 * 1000);
-    expect(mtime(join(outside, "secret.md"))).toBe(1000 * 1000);
-  });
-
-  it("does nothing while the history is in the home", async () => {
-    const inHome = { COCALC_SYNC_PROJECTS: join(mount, "persist") };
-    expect(
-      await touchDocumentsWithHistory({
-        project_id: PROJECT,
-        root: home,
-        env: inHome,
-      }),
-    ).toBe(0);
-  });
-});
 
 describe("listPersistStorage", () => {
   it("lists the streams by size, with what they belong to", async () => {

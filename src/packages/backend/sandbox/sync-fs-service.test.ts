@@ -986,20 +986,72 @@ describe("SyncFsService", () => {
     // older disk: not taken
     expect(fake.messages.length).toBe(1);
 
+    svc.markRootReplaced(dir);
     expect(svc.releasePathsUnder(dir)).toBe(1);
     await svc.heartbeat(path, true, meta);
     expect(fake.messages.length).toBe(2);
     expect((svc as any).store.get(path)?.content).toBe("disk-restored");
 
     // once only: the next initialization is as usual again
+    writeFileSync(path, "disk-older-again");
+    utimesSync(path, 10, 10);
     svc.releasePathsUnder(dir, "other");
-    (svc as any).replacedPaths.clear();
     await (svc as any).initPath(path, meta);
     expect(fake.messages.length).toBe(2);
     svc.close();
   }, 10_000);
 
-  it("takes a file missing after its directory was replaced as deleted", async () => {
+  it("takes the restored file when a document closed during the replacement is first opened", async () => {
+    const dbPath = tmpNameSync({ prefix: "sync-fs-replaced-", postfix: ".db" });
+    const home = join(dir, "home-closed");
+    mkdirSync(home);
+    const kept = join(home, "kept.txt");
+    writeFileSync(kept, "disk-restored");
+    utimesSync(kept, 10, 10);
+    const gone = join(home, "gone.txt");
+    const streams = new Map<string, FakeAStream>();
+    const stream = (path: string) => {
+      if (!streams.has(path)) {
+        streams.set(
+          path,
+          new FakeAStream([
+            {
+              mesg: { time: legacyPatchId(50_000), parents: [], version: 1 },
+              seq: 1,
+            },
+          ]),
+        );
+      }
+      return streams.get(path)!;
+    };
+    const service = () => {
+      const svc = new SyncFsService(new SyncFsWatchStore(dbPath));
+      (svc as any).getPatchWriter = async ({ path }) =>
+        stream(path.endsWith("kept.txt") ? kept : gone);
+      (svc as any).loadDocViaSyncDoc = async () => "history";
+      return svc;
+    };
+    // marked by one process; the documents are opened by the next one
+    const before = service();
+    before.markRootReplaced(home);
+    before.close();
+    const svc = service();
+    await svc.heartbeat(kept, true, {
+      project_id: "p-closed",
+      syncPath: "home-closed/kept.txt",
+    });
+    await svc.heartbeat(gone, true, {
+      project_id: "p-closed",
+      syncPath: "home-closed/gone.txt",
+    });
+    expect(stream(kept).messages.length).toBe(2);
+    expect((svc as any).store.get(kept)?.content).toBe("disk-restored");
+    expect(stream(gone).messages.length).toBe(2);
+    expect((svc as any).store.get(gone)).toMatchObject({ deleted: true });
+    svc.close();
+  }, 10_000);
+
+  it("takes a file missing after its directory was replaced as deleted, unless the directory is missing too", async () => {
     // e.g. created after the snapshot a home was restored from
     const path = join(dir, "created-later.txt");
     const fake = new FakeAStream([
@@ -1017,12 +1069,39 @@ describe("SyncFsService", () => {
     // missing on an ordinary init: no delete inferred
     expect(fake.messages.length).toBe(1);
 
+    // a replaced directory that is not there (not mounted): nothing inferred
+    const unmounted = join(dir, "unmounted");
+    const inUnmounted = join(unmounted, "x.txt");
+    svc.markRootReplaced(unmounted);
+    await (svc as any).initPath(inUnmounted, {
+      project_id: "p-later",
+      syncPath: "unmounted/x.txt",
+    });
+    expect(fake.messages.length).toBe(1);
+
+    svc.markRootReplaced(dir);
     svc.releasePathsUnder(dir);
     await svc.heartbeat(path, true, meta);
     expect(fake.messages.length).toBe(2);
     expect((svc as any).store.get(path)).toMatchObject({ deleted: true });
     svc.close();
   }, 10_000);
+
+  it("undoes the mark of a replacement that failed", async () => {
+    const svc = new SyncFsService();
+    const store = (svc as any).store as SyncFsWatchStore;
+    const undo = svc.markRootReplaced(join(dir, "home"));
+    expect(store.getRootReplaced(join(dir, "home", "a"))).toBeDefined();
+    // a sibling with the same prefix is not under it
+    expect(store.getRootReplaced(join(dir, "home2", "a"))).toBeUndefined();
+    undo();
+    expect(store.getRootReplaced(join(dir, "home", "a"))).toBeUndefined();
+
+    store.markRootReplaced(join(dir, "home"), 1000);
+    svc.markRootReplaced(join(dir, "home"))();
+    expect(store.getRootReplaced(join(dir, "home", "a"))?.time).toBe(1000);
+    svc.close();
+  });
 
   it("still reconciles a newer on-disk file over older patchflow history on init", async () => {
     const path = join(dir, "newer-disk.txt");
