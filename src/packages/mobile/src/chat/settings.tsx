@@ -64,6 +64,41 @@ export function ChatSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const pending = useRef(false);
+  const edited = useRef(false);
+  const editDraft = (next: CodexThreadConfig) => {
+    edited.current = true;
+    setDraft(next);
+  };
+  // Which subscription pays is this account's payment selection, as in the
+  // web app; a credential in the shared thread config is only a fallback.
+  useEffect(() => {
+    if (isPreviewProfile(profile)) return;
+    let active = true;
+    void (async () => {
+      const session = await getActiveSiteSession(profile);
+      const result = await session.hubApi.agent?.getPaymentSelections?.({
+        targets: [{ project_id: project, thread_id: thread }],
+      });
+      const selection = result?.selections?.find(
+        (row) => row.thread_id === thread && row.provider === "codex",
+      )?.selection;
+      const credentialId =
+        selection?.provider === "codex" && selection.mode === "credential"
+          ? selection.credential_id
+          : undefined;
+      if (!active || edited.current || !credentialId) return;
+      setDraft((current) =>
+        current.paymentSource === "subscription"
+          ? { ...current, credentialId }
+          : current,
+      );
+    })().catch(() => {
+      // Older hubs lack the API; keep the thread's saved choice.
+    });
+    return () => {
+      active = false;
+    };
+  }, [profile, project, thread]);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -151,10 +186,27 @@ export function ChatSettings({
     setSaving(true);
     setError(undefined);
     try {
+      const { credentialId, ...shared } = { ...config, ...draft };
+      if (
+        !isPreviewProfile(profile) &&
+        draft.paymentSource === "subscription" &&
+        credentialId
+      ) {
+        const session = await getActiveSiteSession(profile);
+        await session.hubApi.agent.setPaymentSelections({
+          targets: [{ project_id: project, thread_id: thread }],
+          selection: {
+            version: 1,
+            provider: "codex",
+            mode: "credential",
+            credential_id: credentialId,
+          },
+        });
+      }
       // Preserve fields not edited here, including working directory and session.
       await client.updateCodexThreadConfig({
         thread_id: thread,
-        acp_config: { ...config, ...draft },
+        acp_config: shared,
       });
       onClose();
     } catch (err) {
@@ -225,7 +277,7 @@ export function ChatSettings({
             "Automatic",
             !draft.paymentSource || draft.paymentSource === "auto",
             () =>
-              setDraft({
+              editDraft({
                 ...draft,
                 paymentSource: "auto",
                 credentialId: undefined,
@@ -238,7 +290,7 @@ export function ChatSettings({
               "ChatGPT plan",
               draft.paymentSource === "subscription",
               () =>
-                setDraft({
+                editDraft({
                   ...draft,
                   paymentSource: "subscription",
                   credentialId: undefined,
@@ -251,7 +303,7 @@ export function ChatSettings({
             "CoCalc membership",
             draft.paymentSource === "site-api-key",
             () =>
-              setDraft({
+              editDraft({
                 ...draft,
                 paymentSource: "site-api-key",
                 credentialId: undefined,
@@ -271,7 +323,7 @@ export function ChatSettings({
               draft.paymentSource === "subscription" &&
                 draft.credentialId === c.id,
               () =>
-                setDraft({
+                editDraft({
                   ...draft,
                   paymentSource: "subscription",
                   credentialId: c.id,
@@ -285,7 +337,7 @@ export function ChatSettings({
               "Project API key",
               draft.paymentSource === "project-api-key",
               () =>
-                setDraft({
+                editDraft({
                   ...draft,
                   paymentSource: "project-api-key",
                   credentialId: undefined,
@@ -298,7 +350,7 @@ export function ChatSettings({
               "Account API key",
               draft.paymentSource === "account-api-key",
               () =>
-                setDraft({
+                editDraft({
                   ...draft,
                   paymentSource: "account-api-key",
                   credentialId: undefined,
@@ -349,7 +401,7 @@ export function ChatSettings({
           )}
           {models.map((m) =>
             choice(m.displayName || m.model, m.model === modelName, () =>
-              setDraft({
+              editDraft({
                 ...draft,
                 model: m.model,
                 reasoning: undefined,
@@ -361,7 +413,7 @@ export function ChatSettings({
           {choice(
             "Model default",
             !draft.reasoning,
-            () => setDraft({ ...draft, reasoning: undefined }),
+            () => editDraft({ ...draft, reasoning: undefined }),
             !model,
           )}
           {model?.reasoning
@@ -372,7 +424,7 @@ export function ChatSettings({
             )
             .map((r) =>
               choice(r.id.replace("_", " "), draft.reasoning === r.id, () =>
-                setDraft({
+                editDraft({
                   ...draft,
                   reasoning: r.id as CodexThreadConfig["reasoning"],
                 }),
@@ -388,14 +440,14 @@ export function ChatSettings({
           {choice(
             "Default speed",
             !draft.serviceTier,
-            () => setDraft({ ...draft, serviceTier: undefined }),
+            () => editDraft({ ...draft, serviceTier: undefined }),
             !model,
           )}
           {model?.serviceTiers
             .filter((t) => t.id === "standard" || t.id === "fast")
             .map((t) =>
               choice(t.label, draft.serviceTier === t.id, () =>
-                setDraft({
+                editDraft({
                   ...draft,
                   serviceTier: t.id as CodexThreadConfig["serviceTier"],
                 }),

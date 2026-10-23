@@ -188,9 +188,11 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
     credentialId: credential_id,
     subscriptions: [{ id: "personal", label: "My Pro", isDefault: false }],
   }));
+  const setPaymentSelections = jest.fn().mockResolvedValue({ updated: 1 });
   jest.mocked(getActiveSiteSession).mockResolvedValue({
     hubApi: {
       system: { getCodexPaymentSource: lookup },
+      agent: { setPaymentSelections },
       projects: {
         getCodexUsageStatus: async () => ({
           models: [
@@ -232,14 +234,93 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
     }),
   );
   await act(async () => find("Save agent settings").props.onPress());
+  // The subscription is this account's choice, not shared thread config.
+  expect(setPaymentSelections).toHaveBeenCalledWith({
+    targets: [{ project_id: "project", thread_id: "t" }],
+    selection: {
+      version: 1,
+      provider: "codex",
+      mode: "credential",
+      credential_id: "personal",
+    },
+  });
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({
       acp_config: expect.objectContaining({
         paymentSource: "subscription",
-        credentialId: "personal",
         serviceTier: undefined,
         reasoning: undefined,
       }),
     }),
+  );
+  expect(save.mock.calls[0][0].acp_config).not.toHaveProperty("credentialId");
+});
+
+it("shows the account's stored subscription for the agent, not one saved in the thread", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: "subscription",
+    hasSubscription: true,
+    credentialId: credential_id,
+    subscriptions: [
+      { id: "current", label: "Current plan" },
+      { id: "removed", label: "Old plan" },
+    ],
+  }));
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      agent: {
+        getPaymentSelections: async () => ({
+          selections: [
+            {
+              project_id: "project",
+              thread_id: "t",
+              provider: "codex",
+              selection: {
+                version: 1,
+                provider: "codex",
+                mode: "credential",
+                credential_id: "current",
+              },
+            },
+          ],
+          defaults: {},
+        }),
+      },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: "test",
+              displayName: "Test",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
+      },
+    },
+  } as any);
+  await act(async () => {
+    renderer = create(
+      <ChatSettings
+        profile="p"
+        project="project"
+        thread="t"
+        config={{
+          model: "test",
+          paymentSource: "subscription",
+          credentialId: "removed",
+        }}
+        client={{ updateCodexThreadConfig: jest.fn() } as any}
+        onClose={() => {}}
+      />,
+    );
+  });
+  expect(find("ChatGPT: Current plan").props.accessibilityState.selected).toBe(
+    true,
+  );
+  expect(lookup).toHaveBeenLastCalledWith(
+    expect.objectContaining({ credential_id: "current" }),
   );
 });

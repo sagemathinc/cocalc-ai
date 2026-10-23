@@ -330,15 +330,27 @@ test("updates settings without writing unrelated goal metadata", async () => {
 
   await client.updateCodexThreadConfig({
     thread_id: "thread-1",
-    acp_config: { model: "new-model", serviceTier: undefined },
+    acp_config: {
+      model: "new-model",
+      serviceTier: undefined,
+      paymentSource: "subscription",
+      credentialId: "subscription-1",
+    },
   });
 
+  // A subscription is never saved in shared config; null removes an old one
+  // from the merged record.
   expect(set).toHaveBeenCalledWith(
     expect.objectContaining({
       event: "chat-thread-config",
       thread_id: "thread-1",
       agent_model: "new-model",
-      acp_config: { model: "new-model", serviceTier: undefined },
+      acp_config: {
+        model: "new-model",
+        serviceTier: undefined,
+        paymentSource: "subscription",
+        credentialId: null,
+      },
     }),
   );
   expect(set.mock.calls[0][0]).not.toHaveProperty("acp_goal");
