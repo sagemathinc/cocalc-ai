@@ -27,10 +27,11 @@ fi
 keep() {
   grep -Ev '\.(png|jpe?g|gif|webp|svg|ico|mp4|webm|ttf|otf|woff2?|eot|pdf|wasm|zip|gz|tgz|lock|map)$' |
     grep -Ev '(^|/)pnpm-lock\.yaml$' |
-    grep -Ev '(\.test\.|\.spec\.|/__tests__/|/test/|/tests/|\.snap$|/fixtures?/)' |
+    grep -Ev '(\.test\.|\.spec\.|/__tests__/|/test/|/tests/|\.snap$|/(__)?fixtures?(__)?/)' |
     grep -Ev '^\.(agents|skills)/' |
     grep -Ev '^scripts/' |
     grep -Ev '^packages/frontend/i18n/trans/' |
+    grep -Ev '^packages/frontend/public/lang/locales/([^e]|e[^n]|en[^/])' |
     grep -Ev '^packages/assets/cocalc-icons-font/' |
     grep -Ev '^packages/frontend/components/iconfont\.cn/' |
     grep -Ev '(^|/)CHANGELOG(\.md)?$' || true
