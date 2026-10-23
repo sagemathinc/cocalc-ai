@@ -2445,6 +2445,25 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
     ).resolves.toEqual([]);
   });
 
+  it("mounts the canonical skill over an empty mount point left by an earlier start", async () => {
+    const tmp = await mkTempDir("codex-skill-test-");
+    const projectHome = path.join(tmp, "project-home");
+    const packagedSkills = path.join(tmp, "packaged-skills");
+    const packagedSkill = path.join(packagedSkills, "cocalc");
+    await fs.mkdir(packagedSkill, { recursive: true });
+    await fs.writeFile(path.join(packagedSkill, "SKILL.md"), "# cocalc\n");
+    await fs.mkdir(path.join(projectHome, ".codex", "skills", "cocalc"), {
+      recursive: true,
+    });
+
+    const { getBuiltinLaunchpadSkillMounts } =
+      await import("./codex/codex-project");
+
+    await expect(
+      getBuiltinLaunchpadSkillMounts(projectHome, packagedSkills),
+    ).resolves.toHaveLength(1);
+  });
+
   it("fails clearly when the project-host artifact omits the canonical skill", async () => {
     const tmp = await mkTempDir("codex-skill-test-");
     const projectHome = path.join(tmp, "project-home");
@@ -2508,7 +2527,14 @@ describe("getBuiltinClaudeSkillMount", () => {
         readOnly: true,
       },
     ]);
+    // The mount point left by an earlier start (an empty directory, maybe
+    // root-owned) is not an override: the skill still mounts.
     await fs.mkdir(projectSkill, { recursive: true });
+    await expect(
+      getBuiltinClaudeSkillMount(projectHome, packagedSkills),
+    ).resolves.toHaveLength(1);
+    // A real project skill is.
+    await fs.writeFile(path.join(projectSkill, "SKILL.md"), "# mine\n");
     await expect(
       getBuiltinClaudeSkillMount(projectHome, packagedSkills),
     ).resolves.toEqual([]);
