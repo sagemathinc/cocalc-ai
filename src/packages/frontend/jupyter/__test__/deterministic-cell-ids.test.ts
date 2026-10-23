@@ -86,6 +86,35 @@ describe("withDeterministicCellIds", () => {
     }
   });
 
+  it("numbers an nbformat 3 notebook's worksheet cells, adding no default cell", () => {
+    const legacy = () => ({
+      nbformat: 3,
+      nbformat_minor: 0,
+      metadata: {},
+      worksheets: [
+        {
+          cells: [
+            { cell_type: "heading", level: 1, source: ["Old"], metadata: {} },
+            {
+              cell_type: "code",
+              input: ["x = 1"],
+              outputs: [],
+              language: "python",
+              metadata: {},
+            },
+          ],
+        },
+      ],
+    });
+    const a = withDeterministicCellIds(legacy());
+    const b = withDeterministicCellIds(legacy());
+    // No spurious blank cell: exactly the two worksheet cells.
+    expect(importedIds(a)).toHaveLength(2);
+    expect(importedIds(a)).toEqual(importedIds(b));
+    // Without it, the legacy cells get random ids in each client.
+    expect(importedIds(legacy())).not.toEqual(importedIds(legacy()));
+  });
+
   it("makes two clients' imports of the same file write the same cells", () => {
     // Without it, each client's import gets random ids: two copies of every
     // cell once both are merged.
