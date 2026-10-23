@@ -554,7 +554,9 @@ export function createStorageAdmissionController(
     const at = inputs.sampled_at_ms;
     const full = effectiveIoFullAvg10(inputs);
     const lifecycleActive = inputs.starting_projects + inputs.stopping_projects;
-    if (full == null) {
+    // (a sample marked unavailable, e.g. no host PSI, is none, even if a
+    // cgroup's PSI still gives a number)
+    if (full == null || inputs.error) {
       resetEscalation();
       return;
     }

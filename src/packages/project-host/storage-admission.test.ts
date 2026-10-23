@@ -18,6 +18,7 @@ describe("storage admission controller", () => {
   let full = 0;
   let full60: number | undefined = undefined;
   let failRead = false;
+  let hostUnavailable = false;
   let starting = 0;
   let stopping = 0;
 
@@ -34,7 +35,10 @@ describe("storage admission controller", () => {
         if (failRead) throw new Error("PSI read failed");
         return {
           sampled_at_ms: now,
-          host_io_full_avg10: full,
+          // (as defaultReadInputs without /proc/pressure/io)
+          ...(hostUnavailable
+            ? { error: "host I/O pressure is unavailable" }
+            : { host_io_full_avg10: full }),
           project_pool_io_full_avg10: full / 2,
           ...(full60 == null ? {} : { host_io_full_avg60: full60 }),
           starting_projects: starting,
@@ -51,6 +55,7 @@ describe("storage admission controller", () => {
     full = 0;
     full60 = undefined;
     failRead = false;
+    hostUnavailable = false;
     starting = 0;
     stopping = 0;
   });
@@ -207,6 +212,22 @@ describe("storage admission controller", () => {
       tick(controller);
       failRead = false;
       // one high sample after the gap is not sustained pressure
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("emergency");
+    });
+
+    it("starts the 10 s over after samples without host pressure", () => {
+      const controller = gate();
+      full = 24; // the project pool's half of it stays above both thresholds
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      hostUnavailable = true;
+      tick(controller);
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, reason: "io_pressure_unavailable" });
+      hostUnavailable = false;
       expect(tick(controller)).toBe("normal");
       expect(tick(controller)).toBe("normal");
       expect(tick(controller)).toBe("emergency");
