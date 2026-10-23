@@ -830,6 +830,16 @@ function RuntimeCodexAttentionCard({
                                   },
                                 }));
                                 agentMentionContext.onSelect(reference);
+                                // The button goes once the name is bound:
+                                // keep the focus in this answer. An approval
+                                // dialog, if one opens, returns it here too.
+                                setTimeout(
+                                  () =>
+                                    answerControls.current
+                                      .get(question.id)
+                                      ?.current?.focus?.(),
+                                  0,
+                                );
                               }}
                             >
                               Resolve @{agent.name} to named agent (

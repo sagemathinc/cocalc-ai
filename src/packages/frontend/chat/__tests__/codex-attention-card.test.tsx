@@ -929,6 +929,7 @@ describe("Codex question attention", () => {
       fireEvent.change(box, {
         target: { value: "Yes, send it to @sagebrush." },
       });
+      mockFocus.mockClear();
       fireEvent.click(
         screen.getByRole("button", {
           name: "Resolve @sagebrush to named agent (Coordinator / Sagebrush)",
@@ -948,6 +949,8 @@ describe("Codex question attention", () => {
       expect(screen.queryByRole("button", { name: /Resolve @sagebrush/ })).toBe(
         null,
       );
+      // The button went: the focus is back in the answer, not lost.
+      await waitFor(() => expect(mockFocus).toHaveBeenCalled());
       view.unmount();
     } finally {
       mockMentionAgents = [];
