@@ -20,15 +20,20 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
+const freshAuthOptions: any[] = [];
+
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   FreshAuthModal: () => null,
-  useFreshAuthAction: () => ({
-    runFreshAuthAction: async (action: () => Promise<void>) => {
-      await action();
-      return true;
-    },
-    freshAuthModalProps: {},
-  }),
+  useFreshAuthAction: (opts?: any) => {
+    freshAuthOptions.push(opts);
+    return {
+      runFreshAuthAction: async (action: () => Promise<void>) => {
+        await action();
+        return true;
+      },
+      freshAuthModalProps: {},
+    };
+  },
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -116,6 +121,18 @@ describe("EditHistoryStorage", () => {
       }),
     );
     expect(await screen.findByText(/^Freed /)).toBeTruthy();
+  });
+
+  it("confirms destructive actions with the usual fresh sign-in", async () => {
+    listProjectPersistStorage.mockResolvedValue(listing(true));
+    render(<EditHistoryStorage project_id={PROJECT} />);
+    expect(await screen.findByText("/home/user/a.chat")).toBeTruthy();
+    // no origin of its own: the sign-in is at the control plane (an origin
+    // that isn't an absolute URL makes the confirmation fail)
+    expect(freshAuthOptions.length).toBeGreaterThan(0);
+    for (const opts of freshAuthOptions) {
+      expect(opts?.origin).toBeUndefined();
+    }
   });
 
   it("cleans up the history of deleted files and old logs", async () => {
