@@ -751,20 +751,21 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
       fn: async ({ syncdb, rows }) => {
         // The turn's own message, never the latest one.
         const message_id = resolveArtifactMessage(rows, threadId, messageDate);
-        const record = setTurnMeta(syncdb as any, {
-          thread_id: threadId,
-          message_id,
-          subject,
-          priority,
-        });
+        const row = rows.find(
+          (row) =>
+            row.event === "chat" &&
+            row.thread_id === threadId &&
+            row.message_id === message_id,
+        );
+        const meta = setTurnMeta(syncdb as any, row, { subject, priority });
         syncdb.commit();
         await syncdb.save();
         await syncdb.save_to_disk();
         return {
           thread_id: threadId,
           message_id,
-          subject: record.subject ?? null,
-          priority: record.priority ?? null,
+          subject: meta.subject ?? null,
+          priority: meta.priority ?? null,
         };
       },
     });

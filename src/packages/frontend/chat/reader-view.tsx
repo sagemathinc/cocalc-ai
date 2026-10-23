@@ -497,7 +497,7 @@ export function ChatReaderView({
                 fontWeight: read ? undefined : 600,
                 opacity: isItemArchived(item, state) ? 0.6 : undefined,
                 // High: a mark down its side; low: quieter.
-                borderLeft: `3px solid ${info?.priority === "high" ? "#d46b08" : "transparent"}`,
+                borderLeft: `3px solid ${info?.priority === "high" ? UI_COLORS.warning : "transparent"}`,
                 color: info?.priority === "low" ? UI_COLORS.muted : undefined,
               }}
             >
@@ -527,9 +527,25 @@ export function ChatReaderView({
                 {info?.priority === "high" ? (
                   <span
                     aria-label="For you"
-                    style={{ color: "#d46b08", fontSize: 11, flex: "none" }}
+                    style={{
+                      color: UI_COLORS.warning,
+                      fontSize: 11,
+                      flex: "none",
+                    }}
                   >
                     for you
+                  </span>
+                ) : info?.priority === "low" ? (
+                  // Not by color alone: low is named too.
+                  <span
+                    aria-label="Low priority"
+                    style={{
+                      color: UI_COLORS.muted,
+                      fontSize: 11,
+                      flex: "none",
+                    }}
+                  >
+                    fyi
                   </span>
                 ) : null}
                 {itemBadges?.(item)}

@@ -36,13 +36,7 @@ import {
   readerItemWorking,
 } from "./reader-item-log";
 import { readerItems, type ReaderItem } from "./reader-model";
-import {
-  itemPriority,
-  itemSubject,
-  itemTurnMeta,
-  threadTurnMeta,
-} from "./reader-turn-meta";
-import { useArtifactChanges } from "./artifacts";
+import { itemPriority, itemSubject, itemTurnMeta } from "./reader-turn-meta";
 import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -834,6 +828,14 @@ export function ChatRoomThreadPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [showReader, actions, selectedThreadId, messages, docVersion],
   );
+  // The thread's running turn, as the panel finds it (not a stale flag).
+  const readerRunningMessage = useMemo(
+    () =>
+      showReader
+        ? resolveSelectedThreadRunningCodexMessage(readerMessages, acpState)
+        : undefined,
+    [showReader, readerMessages, acpState],
+  );
   // Each item's questions and approvals, for its log and its list row.
   const readerAttention = useMemo(
     () =>
@@ -844,19 +846,6 @@ export function ChatRoomThreadPanel({
           )
         : new Map<string, readonly AcpAttentionRecord[]>(),
     [showReader, attentionRecords, readerMessages, acpState],
-  );
-  // What agents said about their turns (cocalc agent turn); re-read when
-  // the chat document changes.
-  const turnMetaVersion = useArtifactChanges(
-    showReader ? actions.syncdb : undefined,
-  );
-  const readerTurnMeta = useMemo(
-    () =>
-      showReader && selectedThreadId
-        ? threadTurnMeta(actions.syncdb, selectedThreadId)
-        : new Map(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showReader, actions, selectedThreadId, turnMetaVersion],
   );
   const selectedThreadMessages = useMemo(
     () =>
@@ -3142,7 +3131,7 @@ export function ChatRoomThreadPanel({
             isVisible={isVisible}
             acpState={acpState}
             itemInfo={(item: ReaderItem) => {
-              const meta = itemTurnMeta(item, readerTurnMeta);
+              const meta = itemTurnMeta(item);
               return {
                 subject: itemSubject(item, meta),
                 priority: itemPriority(
@@ -3154,7 +3143,7 @@ export function ChatRoomThreadPanel({
             }}
             itemBadges={(item: ReaderItem) => (
               <ReaderItemBadges
-                working={readerItemWorking(item, acpState)}
+                working={readerItemWorking(item, readerRunningMessage)}
                 question={(readerAttention.get(item.id) ?? []).some(
                   isOpenAttention,
                 )}
@@ -3331,8 +3320,9 @@ function ReaderItemBadges({
         <span
           aria-label="Waiting for your answer"
           style={{
-            color: "#fff",
-            background: "#d46b08",
+            color: UI_COLORS.warning,
+            background: UI_COLORS.warningBg,
+            border: `1px solid ${UI_COLORS.warning}`,
             borderRadius: 4,
             padding: "0 6px",
             fontSize: 11,
@@ -3346,7 +3336,7 @@ function ReaderItemBadges({
       {working ? (
         <span
           aria-label="Working"
-          style={{ color: "#1677ff", fontSize: 11, flex: "none" }}
+          style={{ color: UI_COLORS.info, fontSize: 11, flex: "none" }}
         >
           working…
         </span>

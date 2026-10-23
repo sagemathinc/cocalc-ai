@@ -8,9 +8,10 @@
 // Reply and Quote) the reader shows too. These pick what the log shows.
 
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
-import { dateValue, field } from "./access";
+import { dateValue } from "./access";
 import type { ThreadIndexEntry } from "./message-cache";
-import type { ReaderItem } from "./reader-model";
+import { readerMessageId, type ReaderItem } from "./reader-model";
+import type { ChatMessageTyped } from "./types";
 
 /** The log's keys of an item's messages (their dates in ms). */
 export function readerItemKeys(item: ReaderItem): Set<string> {
@@ -77,17 +78,17 @@ export function isOpenAttention(record: AcpAttentionRecord): boolean {
   return record.state === "pending" && record.response_submitted_at == null;
 }
 
-/** The item's agent turn is running (or queued). */
+/**
+ * The item holds the thread's running turn: the one the thread panel finds
+ * (resolveSelectedThreadRunningCodexMessage), which sees past a stale
+ * `generating` flag on a turn that has ended.
+ */
 export function readerItemWorking(
   item: ReaderItem,
-  acpState?: { get?: (key: string) => unknown },
+  running?: ChatMessageTyped,
 ): boolean {
-  return item.messages.some((message) => {
-    if (field<boolean>(message, "generating") === true) return true;
-    const id = `${field<string>(message, "message_id") ?? ""}`.trim();
-    const state =
-      (id ? acpState?.get?.(`message:${id}`) : undefined) ??
-      field<string>(message, "acp_state");
-    return state === "running" || state === "queue" || state === "queued";
-  });
+  const id = running ? readerMessageId(running) : "";
+  return (
+    !!id && item.messages.some((message) => readerMessageId(message) === id)
+  );
 }

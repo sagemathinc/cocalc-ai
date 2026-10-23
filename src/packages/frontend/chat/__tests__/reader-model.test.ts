@@ -102,6 +102,35 @@ describe("an item is one turn", () => {
     ).toEqual([["p1", "a1", "steer"]]);
   });
 
+  it("a delivered message goes with its turn, whatever a stale state says", () => {
+    expect(
+      ids(
+        readerItems(
+          [
+            said("p1", 1000),
+            turn("a1", "p1", 1100, 9000),
+            said("steer", 2000, { acp_guidance_delivered_at_ms: 2100 }),
+          ],
+          { acpState: new Map([["message:steer", "queue"]]) },
+        ),
+      ),
+    ).toEqual([["p1", "a1", "steer"]]);
+  });
+
+  it("the newest spanning turn by start time, in any order", () => {
+    // Out of date order (e.g. clock skew): a2 started later than a1.
+    const items = readerItems([
+      said("p2", 1500),
+      turn("a2", "p2", 1600, 9000),
+      said("p1", 1000),
+      turn("a1", "p1", 1100, 9000),
+      said("steer", 3000),
+    ]);
+    expect(
+      items.find((item) => item.id === "p2")!.messages.map((m) => m.message_id),
+    ).toEqual(["p2", "a2", "steer"]);
+  });
+
   it("not what waits to be sent, a note for people, or the next turn's prompt", () => {
     expect(
       ids(

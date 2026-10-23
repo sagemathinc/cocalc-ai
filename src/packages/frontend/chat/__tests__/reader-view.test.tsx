@@ -518,6 +518,8 @@ test("items show their subject; high ones are marked for you, and the open one i
   expect(within(top).getByLabelText("For you")).toBeTruthy();
   expect(next).toHaveTextContent("About p2");
   expect(within(next).queryByLabelText("For you")).toBeNull();
+  // Low is named, not shown by color alone.
+  expect(within(next).getByLabelText("Low priority")).toBeTruthy();
   fireEvent.click(top);
   expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
     "Needs your decision",
