@@ -269,6 +269,7 @@ test("a sender's inspection is answered by the account home's inbox", async () =
     account_id,
     installation_id: challenge_id,
     attempt_id: randomUUID(),
+    agent_network_id,
     source,
     source_account_id: randomUUID(),
   };
@@ -306,6 +307,7 @@ test("a sender's inspection is answered by the account home's inbox", async () =
     account_id,
     challenge_id,
     inspection.attempt_id,
+    agent_network_id,
     source,
     inspection.source_account_id,
   );

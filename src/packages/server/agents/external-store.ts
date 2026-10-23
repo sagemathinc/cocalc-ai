@@ -364,11 +364,15 @@ export class ExternalAgentStore {
     agent_network_id: string;
     network_generation: string;
     source: AgentRpcSource;
-    source_account_id: string;
+    source_account_id?: string;
     body: string;
   }): Promise<ExternalAgentInboxMessage> {
     requireUuid(opts.attempt_id, "attempt_id");
-    requireUuid(opts.source_account_id, "source_account_id");
+    // Optional while bays upgrade: an older sender's bay does not send it,
+    // and its message is still delivered (but never inspectable).
+    if (opts.source_account_id != null)
+      requireUuid(opts.source_account_id, "source_account_id");
+    const source_account_id = opts.source_account_id?.toLowerCase() ?? null;
     requireUuid(opts.agent_network_id, "agent_network_id");
     requireUuid(opts.network_generation, "network_generation");
     if (
@@ -399,7 +403,7 @@ export class ExternalAgentStore {
           existing.network_generation !== opts.network_generation ||
           existing.body !== opts.body ||
           (existing.source_account_id != null &&
-            existing.source_account_id !== opts.source_account_id) ||
+            existing.source_account_id !== source_account_id) ||
           agentRpcSourceKey(existing.source) !== agentRpcSourceKey(opts.source)
         )
           throw new Error("external_inbox_idempotency_conflict");
@@ -427,7 +431,7 @@ export class ExternalAgentStore {
             opts.agent_network_id,
             opts.network_generation,
             JSON.stringify(opts.source),
-            opts.source_account_id,
+            source_account_id,
             opts.body,
           ],
         )
@@ -494,25 +498,33 @@ export class ExternalAgentStore {
     account: string,
     installation: string,
     attempt_id: string,
+    agent_network_id: string,
     source: AgentRpcSource,
     source_account_id: string,
   ): Promise<ExternalAgentDelivery | null> {
+    requireUuid(installation, "installation_id");
     requireUuid(attempt_id, "attempt_id");
+    requireUuid(agent_network_id, "agent_network_id");
     requireUuid(source_account_id, "source_account_id");
     return this.locked(account, async (db) => {
+      // UUIDs compare in SQL, so their case does not matter. A row from a
+      // sender's bay that predates source_account_id (NULL) never matches.
       const row = (
         await db.query(
           `SELECT * FROM agent_external_inbox
-           WHERE account_id=$1 AND attempt_id=$2 AND expires_at>now()`,
-          [account, attempt_id],
+           WHERE account_id=$1 AND attempt_id=$2 AND installation_id=$3
+             AND agent_network_id=$4 AND source_account_id=$5
+             AND expires_at>now()`,
+          [
+            account,
+            attempt_id,
+            installation,
+            agent_network_id,
+            source_account_id,
+          ],
         )
       ).rows[0];
-      if (
-        !row ||
-        row.installation_id !== installation ||
-        row.source_account_id !== source_account_id ||
-        agentRpcSourceKey(row.source) !== agentRpcSourceKey(source)
-      )
+      if (!row || agentRpcSourceKey(row.source) !== agentRpcSourceKey(source))
         return null;
       return {
         state: row.state === "acknowledged" ? "acknowledged" : "pending",

@@ -247,6 +247,7 @@ describeDb("network-bound external agents", () => {
       over: Partial<{
         installation: string;
         attempt_id: string;
+        network: string;
         source: typeof source;
         source_account_id: string;
       }> = {},
@@ -255,6 +256,7 @@ describeDb("network-bound external agents", () => {
         account,
         over.installation ?? installation.installation_id,
         over.attempt_id ?? input.attempt_id,
+        over.network ?? network,
         over.source ?? source,
         over.source_account_id ?? sender,
       );
@@ -268,6 +270,14 @@ describeDb("network-bound external agents", () => {
     const read = await delivery();
     expect(read).toMatchObject({ state: "acknowledged" });
     expect(read?.acknowledged_at).toEqual(expect.any(String));
+    // UUIDs are compared as UUIDs, whatever their case.
+    expect(
+      await delivery({
+        installation: installation.installation_id.toUpperCase(),
+        network: network.toUpperCase(),
+        source_account_id: sender.toUpperCase(),
+      }),
+    ).toMatchObject({ state: "acknowledged" });
     // Another sender, another account presenting the same source, another
     // inbox or another attempt learns nothing.
     expect(
@@ -276,11 +286,53 @@ describeDb("network-bound external agents", () => {
     expect(await delivery({ source_account_id: randomUUID() })).toBeNull();
     expect(await delivery({ installation: randomUUID() })).toBeNull();
     expect(await delivery({ attempt_id: randomUUID() })).toBeNull();
+    expect(await delivery({ network: randomUUID() })).toBeNull();
     // Nor does anyone once the message has expired.
     await db.query(
       "UPDATE agent_external_inbox SET expires_at=now()-interval '1 second' WHERE message_id=$1",
       [message.message_id],
     );
     expect(await delivery()).toBeNull();
+  });
+
+  test("a message from a bay that predates the sender's account is delivered, but never inspectable", async () => {
+    const { options } = enrollment();
+    const installation = await store.enroll(account, "human-session", options);
+    const sender = randomUUID();
+    const source = {
+      kind: "registered" as const,
+      account_id: sender,
+      project_id: randomUUID(),
+      agent_id: randomUUID(),
+      run_id: randomUUID(),
+    };
+    // An older bay sends no source_account_id.
+    const legacy = {
+      account_id: account,
+      installation_id: installation.installation_id,
+      attempt_id: randomUUID(),
+      agent_network_id: network,
+      network_generation: generation,
+      source,
+      body: "From an older bay.",
+    };
+    const message = await store.enqueue(legacy);
+    expect(await store.inbox(account, installation.installation_id)).toEqual([
+      message,
+    ]);
+    // A retry from an upgraded bay is the same message, still NULL.
+    expect(
+      await store.enqueue({ ...legacy, source_account_id: sender }),
+    ).toEqual(message);
+    expect(
+      await store.delivery(
+        account,
+        installation.installation_id,
+        legacy.attempt_id,
+        network,
+        source,
+        sender,
+      ),
+    ).toBeNull();
   });
 });

@@ -999,30 +999,55 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
   };
 
 /**
- * For the sender: whether the external member has read its message. Only
- * the same source, run by the same authenticated account, learns anything.
+ * For the sender: whether the external member has read its message. Only a
+ * current member of the network, asking about its own message (the same
+ * source, run by the same authenticated account, in that network), learns
+ * anything. Every other answer is the same, so that nothing can be learned
+ * about other accounts by probing; the details are only logged.
  */
 async function inspectExternalInbox(
   account_id: string,
   source: AgentRpcSource,
+  run_id: string | undefined,
   request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt,
 ) {
   const target = request.target;
   if (!isExternalAgentSource(target))
     throw new Error("external inbox target required");
+  const nothing = (why: string) => {
+    logger.debug("external inbox inspection found nothing", {
+      attempt_id: request.attempt_id,
+      why,
+    });
+    return rpcOutcome(request, "unknown", {
+      reason:
+        "No delivery evidence for this attempt: the message may never have been admitted, or has expired",
+    });
+  };
   try {
+    const checked = await networkProof(
+      account_id,
+      source,
+      run_id,
+      target,
+      request.agent_network_id,
+    );
+    if ("denied" in checked) return nothing(`network: ${checked.denied}`);
+    if (
+      checked.account_id !== target.account_id ||
+      checked.target.kind !== "external" ||
+      checked.target.source.installation_id !== target.installation_id
+    )
+      return nothing("principal mismatch");
     const delivery = await inspectExternalAgentMessage({
-      account_id: target.account_id,
+      account_id: checked.account_id,
       installation_id: target.installation_id,
       attempt_id: request.attempt_id,
+      agent_network_id: checked.agent_network_id,
       source,
       source_account_id: account_id,
     });
-    if (!delivery)
-      return rpcOutcome(request, "unknown", {
-        reason:
-          "The external inbox holds no such message from you (never admitted, or expired)",
-      });
+    if (!delivery) return nothing("no matching inbox row");
     return {
       ...rpcOutcome(request, "accepted", {
         chat_effect: "saved",
@@ -1034,9 +1059,7 @@ async function inspectExternalInbox(
       inbox: delivery,
     };
   } catch (error) {
-    return rpcOutcome(request, "unknown", {
-      reason: `External inbox could not be checked: ${error}`,
-    });
+    return nothing(`${error}`);
   }
 }
 
@@ -1060,7 +1083,7 @@ function externalTargetRequest(
   if (request.action === "send")
     return submitExternalInbox(account_id, source, run_id, request);
   if (request.action === "inspect")
-    return inspectExternalInbox(account_id, source, request);
+    return inspectExternalInbox(account_id, source, run_id, request);
   return rpcOutcome(request, "rejected", {
     chat_effect: "none",
     reason:

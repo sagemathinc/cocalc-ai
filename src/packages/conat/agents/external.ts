@@ -78,6 +78,8 @@ export type ExternalAgentControlRequest =
       home_bay_id: string;
       installation_id: string;
       attempt_id: string;
+      /** The network the message was sent in (proved by the caller's bay). */
+      agent_network_id: string;
       source: import("./rpc").AgentRpcSource;
       /** The sender's authenticated account (with source, who sent it). */
       source_account_id: string;
@@ -98,8 +100,10 @@ export interface ExternalAgentEnqueueOptions {
   agent_network_id: string;
   network_generation: string;
   source: import("./rpc").AgentRpcSource;
-  /** The sender's authenticated account: only it may later inspect. */
-  source_account_id: string;
+  /** The sender's authenticated account: only it may later inspect. Absent
+   * from a bay that predates it: the message is delivered, but can never be
+   * inspected. */
+  source_account_id?: string;
   body: string;
 }
 

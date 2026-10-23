@@ -64,6 +64,7 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
         opts.account_id,
         opts.installation_id,
         opts.attempt_id,
+        opts.agent_network_id,
         opts.source,
         opts.source_account_id,
       ),
@@ -102,6 +103,7 @@ export async function inspectExternalAgentMessage(opts: {
   account_id: string;
   installation_id: string;
   attempt_id: string;
+  agent_network_id: string;
   source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
   source_account_id: string;
 }) {

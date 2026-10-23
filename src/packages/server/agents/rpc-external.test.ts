@@ -130,6 +130,7 @@ test("the sender can ask whether the external member read its message", async ()
     account_id: targetAccount,
     installation_id: installation,
     attempt_id: request.attempt_id,
+    agent_network_id: network,
     source,
     source_account_id: account,
   });
@@ -177,4 +178,39 @@ test("attachments to an external member stay unavailable", async () => {
       snapshot_manifest: [{ name: "a.txt", size: 1, sha256: "0".repeat(64) }],
     }),
   ).toMatchObject({ outcome: "rejected", chat_effect: "none" });
+});
+
+test("every inspection that finds nothing gets the same answer, so probing learns nothing", async () => {
+  const request = { ...attempt(), action: "inspect" as const };
+  inspect.mockResolvedValueOnce(null);
+  const none = await acceptAgentRpc(subject, request);
+  expect(none).toMatchObject({ outcome: "unknown" });
+  const same = (outcome: any) =>
+    expect({ outcome: outcome.outcome, reason: outcome.reason }).toEqual({
+      outcome: none.outcome,
+      reason: none.reason,
+    });
+  // Not a member of that network (or the network names another target).
+  checkNetwork.mockResolvedValueOnce({ denied: "not in this network" });
+  same(await acceptAgentRpc(subject, request));
+  // A network member, but not the installation named in the request.
+  const proof = await checkNetwork.getMockImplementation()!();
+  checkNetwork.mockResolvedValueOnce({
+    ...proof,
+    target: {
+      ...proof.target,
+      source: { ...target, installation_id: randomUUID() },
+    },
+  });
+  same(await acceptAgentRpc(subject, request));
+  // Another account than the one named.
+  checkNetwork.mockResolvedValueOnce({ ...proof, account_id: randomUUID() });
+  same(await acceptAgentRpc(subject, request));
+  // A nonexistent, disabled or moving account, or a failing service.
+  inspect.mockRejectedValueOnce(new Error("account 1234 is rehoming"));
+  const failed = await acceptAgentRpc(subject, request);
+  same(failed);
+  expect(JSON.stringify(failed)).not.toMatch(/rehoming/);
+  // The home was asked only when the network proved the target.
+  expect(inspect).toHaveBeenCalledTimes(2);
 });
