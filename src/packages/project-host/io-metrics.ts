@@ -67,6 +67,8 @@ export function parseIoStat(raw: string): IoCounters {
 export function parseIoPressure(raw: string): {
   somePercent?: number;
   fullPercent?: number;
+  // full avg60
+  fullAvg60Percent?: number;
   someTotal?: number;
   fullTotal?: number;
 } {
@@ -83,6 +85,7 @@ export function parseIoPressure(raw: string): {
     }
     if (kind === "full") {
       result.fullPercent = finite(values.get("avg10"));
+      result.fullAvg60Percent = finite(values.get("avg60"));
       result.fullTotal = finite(values.get("total"));
     }
   }
