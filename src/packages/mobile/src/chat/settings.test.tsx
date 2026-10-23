@@ -237,6 +237,7 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
   // The subscription is this account's choice, not shared thread config.
   expect(setPaymentSelections).toHaveBeenCalledWith({
     targets: [{ project_id: "project", thread_id: "t" }],
+    provider: "codex",
     selection: {
       version: 1,
       provider: "codex",
@@ -323,4 +324,91 @@ it("shows the account's stored subscription for the agent, not one saved in the 
   expect(lookup).toHaveBeenLastCalledWith(
     expect.objectContaining({ credential_id: "current" }),
   );
+});
+
+it("clears the stored subscription when another payment source is chosen, and keeps it otherwise", async () => {
+  const { DEFAULT_CODEX_MODEL_NAME } = require("@cocalc/util/ai/codex");
+  const setPaymentSelections = jest.fn().mockResolvedValue({ updated: 1 });
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: {
+        getCodexPaymentSource: async ({ preference, credential_id }: any) =>
+          preference === "subscription"
+            ? {
+                source: "subscription",
+                hasSubscription: true,
+                credentialId: credential_id,
+                subscriptions: [{ id: "current", label: "Current plan" }],
+              }
+            : { source: "account-api-key", hasAccountApiKey: true },
+      },
+      agent: {
+        getPaymentSelections: async () => ({
+          selections: [
+            {
+              project_id: "project",
+              thread_id: "t",
+              provider: "codex",
+              selection: {
+                version: 1,
+                provider: "codex",
+                mode: "credential",
+                credential_id: "current",
+              },
+            },
+          ],
+          defaults: {},
+        }),
+        setPaymentSelections,
+      },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: DEFAULT_CODEX_MODEL_NAME,
+              displayName: "Plan model",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
+      },
+    },
+  } as any);
+  const render = async (save: jest.Mock) =>
+    await act(async () => {
+      renderer = create(
+        <ChatSettings
+          profile="p"
+          project="project"
+          thread="t"
+          config={{
+            model: DEFAULT_CODEX_MODEL_NAME,
+            paymentSource: "subscription",
+          }}
+          client={{ updateCodexThreadConfig: save } as any}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+  // Saving without touching payment leaves the stored choice alone.
+  const save = jest.fn().mockResolvedValue(undefined);
+  await render(save);
+  await act(async () => find("Save agent settings").props.onPress());
+  expect(save).toHaveBeenCalled();
+  expect(setPaymentSelections).not.toHaveBeenCalled();
+  await act(async () => renderer.unmount());
+
+  // Choosing Automatic clears it.
+  const save2 = jest.fn().mockResolvedValue(undefined);
+  await render(save2);
+  await act(async () => find("Automatic").props.onPress());
+  await act(async () => find("Save agent settings").props.onPress());
+  expect(setPaymentSelections).toHaveBeenCalledWith({
+    targets: [{ project_id: "project", thread_id: "t" }],
+    provider: "codex",
+    selection: null,
+  });
+  expect(save2).toHaveBeenCalled();
 });

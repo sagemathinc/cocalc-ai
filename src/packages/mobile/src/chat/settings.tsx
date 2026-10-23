@@ -65,8 +65,14 @@ export function ChatSettings({
   const [error, setError] = useState<string>();
   const pending = useRef(false);
   const edited = useRef(false);
+  const paymentEdited = useRef(false);
   const editDraft = (next: CodexThreadConfig) => {
     edited.current = true;
+    if (
+      next.paymentSource !== draft.paymentSource ||
+      next.credentialId !== draft.credentialId
+    )
+      paymentEdited.current = true;
     setDraft(next);
   };
   // Which subscription pays is this account's payment selection, as in the
@@ -187,20 +193,22 @@ export function ChatSettings({
     setError(undefined);
     try {
       const { credentialId, ...shared } = { ...config, ...draft };
-      if (
-        !isPreviewProfile(profile) &&
-        draft.paymentSource === "subscription" &&
-        credentialId
-      ) {
+      // A changed choice replaces the stored one; anything other than a
+      // specific subscription clears it, so it cannot come back later.
+      if (!isPreviewProfile(profile) && paymentEdited.current) {
         const session = await getActiveSiteSession(profile);
         await session.hubApi.agent.setPaymentSelections({
           targets: [{ project_id: project, thread_id: thread }],
-          selection: {
-            version: 1,
-            provider: "codex",
-            mode: "credential",
-            credential_id: credentialId,
-          },
+          provider: "codex",
+          selection:
+            draft.paymentSource === "subscription" && credentialId
+              ? {
+                  version: 1,
+                  provider: "codex",
+                  mode: "credential",
+                  credential_id: credentialId,
+                }
+              : null,
         });
       }
       // Preserve fields not edited here, including working directory and session.
