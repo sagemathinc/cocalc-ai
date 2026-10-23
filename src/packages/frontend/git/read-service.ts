@@ -174,7 +174,13 @@ export class GitReadService {
       settings?: string;
     } = {},
   ): Promise<string> {
-    if (!objectIds.length || !objectIds.every(isFullObjectId))
+    // Only an id of the repository's own length names an object: a 64-hex
+    // name in a SHA-1 repository could be a branch.
+    const idLength = repository.objectFormat === "sha256" ? 64 : 40;
+    if (
+      !objectIds.length ||
+      !objectIds.every((id) => isFullObjectId(id) && id.length === idLength)
+    )
       return this.run(repository.projectId, repository.locator, args);
     if (walksHistory && (await this.isShallow(repository)))
       return this.run(repository.projectId, repository.locator, args);
@@ -254,7 +260,9 @@ export class GitReadService {
         err_on_exit: false,
         timeout: 60,
         max_output: GIT_READ_LIMIT,
-        env: { LC_ALL: "C" },
+        // No grafts (.git/info/grafts): like replacements (above), they
+        // change parents and can be edited, so cached history would go stale.
+        env: { LC_ALL: "C", GIT_GRAFT_FILE: "/dev/null" },
       });
       const stdout = response.stdout ?? "";
       const stderr = response.stderr ?? "";

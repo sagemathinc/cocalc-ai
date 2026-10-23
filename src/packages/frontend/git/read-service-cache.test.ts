@@ -354,3 +354,46 @@ test("paths too long for one command, or a failed check, leave the patch uncache
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("a branch named like a SHA-256 id, in a SHA-1 repository, is read every time", async () => {
+  const name = "a".repeat(64);
+  git(dir, ["branch", name, "HEAD^"]);
+  try {
+    const persistent = new MemoryGitCache(50_000_000);
+    const reader = new GitReadService(
+      execute,
+      Date.now,
+      16_000_000,
+      persistent,
+    );
+    const { repository } = await reader.discover("p12", dir);
+    expect(await reader.resolveCommit(repository, name)).toBe(
+      git(dir, ["rev-parse", "HEAD^"]).trim(),
+    );
+    git(dir, ["branch", "-f", name, "HEAD"]);
+    expect(await reader.resolveCommit(repository, name)).toBe(
+      git(dir, ["rev-parse", "HEAD"]).trim(),
+    );
+  } finally {
+    git(dir, ["branch", "-D", name]);
+  }
+});
+
+test("grafts, which can be edited, don't change parents or history", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "git-cache-grafts-"));
+  try {
+    git(repo, ["init", "-q", "-b", "main"]);
+    for (const message of ["one", "two", "three"])
+      git(repo, ["commit", "-q", "--allow-empty", "-m", message]);
+    const [head, parent, root] = git(repo, ["rev-list", "HEAD"])
+      .trim()
+      .split("\n");
+    writeFileSync(join(repo, ".git", "info", "grafts"), `${head} ${root}\n`);
+    const reader = new GitReadService(execute);
+    const { repository } = await reader.discover("p13", repo);
+    expect((await reader.pinCommit(repository, head)).parent).toBe(parent);
+    expect(await reader.history(repository, head)).toHaveLength(3);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
