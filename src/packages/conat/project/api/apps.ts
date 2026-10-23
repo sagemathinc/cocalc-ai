@@ -71,6 +71,9 @@ export interface ManagedAppStatus {
   mtime?: number;
   port?: number;
   url?: string;
+  // The base URL the app was started with: "/" when it runs at the root of
+  // its own app origin (no base URL).
+  base_url?: string;
   ready?: boolean;
   pid?: number;
   stdout?: Buffer;

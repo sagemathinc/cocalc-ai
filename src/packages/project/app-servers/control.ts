@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { appsAtRoot } from "./apps-at-root";
 import getPort from "get-port";
 import { spawn } from "node:child_process";
 import net from "node:net";
@@ -60,12 +61,15 @@ interface RunningApp {
   host: string;
   port: number;
   url: string;
+  // The base URL the app was started with (APP_BASE_URL).
+  base_url: string;
   stdout: Buffer;
   stderr: Buffer;
   ready?: boolean;
   spawnError?: unknown;
   exit?: { code: number | null; signal: NodeJS.Signals | null };
 }
+
 
 interface StaticRefreshState {
   running?: Promise<void>;
@@ -98,6 +102,9 @@ export interface AppStatus {
   mtime?: number;
   port?: number;
   url?: string;
+  // The base URL the app was started with: "/" when it runs at the root of
+  // its own app origin (no base URL).
+  base_url?: string;
   ready?: boolean;
   pid?: number;
   stdout?: Buffer;
@@ -872,7 +879,7 @@ export async function startApp(
     appId: spec.id,
   });
   const localUrl = getProxyUrl(port);
-  const appBaseUrl = localUrl;
+  const appBaseUrl = appsAtRoot() ? "/" : localUrl;
   const { exec: cmd, args } = resolveAppCommand({
     exec: spec.command.exec,
     args: spec.command.args ?? [],
@@ -910,6 +917,7 @@ export async function startApp(
     host,
     port,
     url: localUrl,
+    base_url: appBaseUrl,
     stdout: Buffer.alloc(0),
     stderr: Buffer.alloc(0),
   };
@@ -1031,6 +1039,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
     title: spec.title,
     port: running.port,
     url: running.url,
+    base_url: running.base_url,
     ready: running.ready,
     pid: running.child.pid,
     stdout: running.stdout,

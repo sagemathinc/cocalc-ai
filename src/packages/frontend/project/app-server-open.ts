@@ -20,13 +20,24 @@ export function appOpenURL(
   project_id: string,
   path: string,
   app_id?: string,
+  { root = false }: { root?: boolean } = {},
 ): string | undefined {
   if (!path.startsWith(`/${project_id}/`)) return;
   const base = appBasePath === "/" ? "" : appBasePath.replace(/\/+$/, "");
-  const query = app_id
-    ? `${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(app_id)}`
+  const params: string[] = [];
+  if (app_id) params.push(`cocalc_app=${encodeURIComponent(app_id)}`);
+  // The app runs without a base URL: open it at the root of its origin.
+  if (root) params.push("cocalc_root=1");
+  const query = params.length
+    ? `${path.includes("?") ? "&" : "?"}${params.join("&")}`
     : "";
   return `${base}/app-open${path}${query}`;
+}
+
+// Whether an app runs at the root of its own origin (no base URL; trust-free
+// step 6, phase 7c).
+export function appRunsAtRoot(status?: { base_url?: string } | null): boolean {
+  return status?.base_url === "/";
 }
 
 function ensureTrailingSlash(value: string): string {
@@ -242,10 +253,12 @@ export async function getProjectAppFrameUrl({
   project_id,
   path,
   app_id,
+  root = false,
 }: {
   project_id: string;
   path: string;
   app_id?: string;
+  root?: boolean;
 }): Promise<{ url: string } | { unavailable: string } | { error: string }> {
   try {
     const result =
@@ -253,6 +266,7 @@ export async function getProjectAppFrameUrl({
         project_id,
         path,
         app_id,
+        root,
       });
     return "url" in result
       ? { url: result.url }
@@ -293,6 +307,7 @@ async function getProjectAppOriginUrl(
         project_id: opts.project_id,
         path,
         app_id: opts.status.id,
+        root: appRunsAtRoot(opts.status),
       });
     return "url" in result ? result.url : undefined;
   } catch (err) {

@@ -2580,6 +2580,8 @@ export interface Hosts {
     // or an app's own base path (then app_id is required).
     path: string;
     app_id?: string;
+    // The app runs without a base URL: open it at the root of its origin.
+    root?: boolean;
   }) => Promise<
     | { url: string; expires_at: number }
     | {
@@ -2598,6 +2600,8 @@ export interface Hosts {
     project_id: string;
     path: string;
     app_id?: string;
+    // The app runs without a base URL: open it at the root of its origin.
+    root?: boolean;
   }) => Promise<
     | { url: string; expires_at: number }
     | {
