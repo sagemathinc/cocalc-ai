@@ -15,7 +15,8 @@ function store(row: Record<string, unknown>) {
       for (const k of ["event", "date", "sender_id", "message_id", "thread_id"])
         if (update[k] !== current[k]) throw Error(`wrong row: ${k}`);
       const merged: Record<string, unknown> = { ...current, ...update };
-      for (const k of Object.keys(merged)) if (merged[k] == null) delete merged[k];
+      for (const k of Object.keys(merged))
+        if (merged[k] == null) delete merged[k];
       current = merged;
     },
   };
@@ -50,6 +51,11 @@ test("a turn's subject and priority go on its message, set apart and kept", () =
 test("subjects are one bounded line; bad input is refused", () => {
   expect(normalizeTurnSubject(" a\n  b\tc ")).toBe("a b c");
   expect(normalizeTurnSubject("x".repeat(500))).toHaveLength(TURN_SUBJECT_MAX);
+  // Emoji are one character each, and never cut in half.
+  const emoji = normalizeTurnSubject("😀".repeat(200));
+  expect(Array.from(emoji)).toHaveLength(TURN_SUBJECT_MAX);
+  expect(emoji.endsWith("😀…")).toBe(true);
+  expect(emoji).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   const s = store(row);
   expect(() => setTurnMeta(s, row, {})).toThrow(/subject or a priority/);
   expect(() => setTurnMeta(s, row, { priority: "urgent" as any })).toThrow(
