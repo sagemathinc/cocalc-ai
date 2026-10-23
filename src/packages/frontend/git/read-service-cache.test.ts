@@ -412,3 +412,39 @@ test("core.bigFileThreshold doesn't make a cached patch binary", async () => {
     git(dir, ["config", "--unset", "core.bigFileThreshold"]);
   }
 });
+
+test("a patch read while the attributes changed is not stored", async () => {
+  const persistent = new MemoryGitCache(50_000_000);
+  let checks = 0;
+  // The attributes change between the check before the diff and the diff.
+  const racing: GitReadExecutor = async (options) => {
+    const result = await execute(options);
+    if (options.args!.includes("check-attr") && ++checks === 1)
+      writeFileSync(join(dir, ".gitattributes"), "a.txt -diff\n");
+    return result;
+  };
+  try {
+    const reader = new GitReadService(racing, Date.now, 16_000_000, persistent);
+    const { repository } = await reader.discover("p15", dir);
+    const target = await reader.pinCommit(
+      repository,
+      git(dir, ["rev-parse", "HEAD"]).trim(),
+    );
+    expect(await reader.patch(target)).toContain("Binary files");
+  } finally {
+    rmSync(join(dir, ".gitattributes"), { force: true });
+  }
+  // Back as they were checked: the text patch, not the binary one.
+  const reloaded = new GitReadService(
+    execute,
+    Date.now,
+    16_000_000,
+    persistent,
+  );
+  const { repository } = await reloaded.discover("p15", dir);
+  const target = await reloaded.pinCommit(
+    repository,
+    git(dir, ["rev-parse", "HEAD"]).trim(),
+  );
+  expect(await reloaded.patch(target)).toContain("+two");
+});

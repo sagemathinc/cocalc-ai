@@ -168,10 +168,13 @@ export class GitReadService {
     {
       walksHistory = false,
       settings,
+      currentSettings,
     }: {
       walksHistory?: boolean;
       /** Anything else the output depends on, e.g. attributeState(). */
       settings?: string;
+      /** Reads `settings` again: a read is stored only if they held. */
+      currentSettings?: () => Promise<string | undefined>;
     } = {},
   ): Promise<string> {
     // Only an id of the repository's own length names an object: a 64-hex
@@ -205,8 +208,11 @@ export class GitReadService {
         repository.locator,
         args,
       );
-      // It may have been read while the clone was shallow.
+      // It may have been read while the clone was shallow, or under
+      // settings that changed while it ran.
       if (walksHistory && (await this.isShallow(repository))) return output;
+      if (currentSettings && (await currentSettings()) !== settings)
+        return output;
       await this.recent.set(key, output);
       void this.persistent?.set(key, output);
       return output;
@@ -682,7 +688,7 @@ export class GitReadService {
       ]),
       // Attributes that can't be checked: not cached.
       settings == null ? [] : targetObjects(target),
-      { settings },
+      { settings, currentSettings: () => this.attributeState(target) },
     );
     if (patch.split("\n").length > maxLines)
       throw new GitReadError(
