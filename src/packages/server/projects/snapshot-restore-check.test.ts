@@ -34,15 +34,30 @@ describe("assertSnapshotRestoreAllowed", () => {
     ).rejects.toThrow(SNAPSHOT_HOME_RESTORE_UNAVAILABLE);
   });
 
-  it("allows it on a host from before the check", async () => {
-    const c = client(async () => {
-      throw new Error("unknown service method 'checkSnapshotRestore'");
-    });
-    await assertSnapshotRestoreAllowed({
-      client: c,
-      project_id: PROJECT,
-      mode: "both",
-    });
+  it("refuses a whole-home restore on a host from before the check", async () => {
+    // (it can't tell a files-only snapshot from one with the history)
+    for (const message of [
+      "unknown service method 'checkSnapshotRestore'",
+      "impl[mesg.name] is not a function",
+    ]) {
+      const c = client(async () => {
+        throw new Error(message);
+      });
+      for (const mode of ["home", "both"] as const) {
+        await expect(
+          assertSnapshotRestoreAllowed({
+            client: c,
+            project_id: PROJECT,
+            mode,
+          }),
+        ).rejects.toThrow(SNAPSHOT_HOME_RESTORE_UNAVAILABLE);
+      }
+      await assertSnapshotRestoreAllowed({
+        client: c,
+        project_id: PROJECT,
+        mode: "rootfs",
+      });
+    }
   });
 
   it("passes on other errors (the host is unreachable)", async () => {
