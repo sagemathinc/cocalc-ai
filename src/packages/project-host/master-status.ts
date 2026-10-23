@@ -30,6 +30,7 @@ import {
 } from "./sqlite/account-revocations";
 import { deleteProjectLocal, getProject } from "./sqlite/projects";
 import { deleteVolume } from "./file-server";
+import { projectHomeInstalledAt } from "./persist-volume";
 import { recordProjectHostRpcTraffic } from "./rpc-traffic-audit";
 import { setProjectStateReporter } from "./project-state-reporter";
 import { withBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-cache";
@@ -146,6 +147,9 @@ function staleDeletionSuperseded(
   }
   if ((project?.state_updated_at ?? 0) >= queued_at) {
     return "project lifecycle changed here since the deletion was requested";
+  }
+  if ((projectHomeInstalledAt(project_id) ?? 0) >= queued_at) {
+    return "a home was restored here since the deletion was requested";
   }
   const provisioning = getProjectProvisioning(project_id);
   if (

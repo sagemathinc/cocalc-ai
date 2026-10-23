@@ -891,6 +891,7 @@ export async function restoreBackupWithHistory({
               if (merged != null) await ops.removeTree(merged).catch(() => {});
               throw err;
             }
+            noteHomeInstalled(project_id);
             if (merged != null) {
               previous = await swapInVolume(project_id, merged, env, ops);
             }
@@ -1147,6 +1148,20 @@ export async function acquirePersistLock(
   };
 }
 
+// When a restore last installed a home here (replaceProjectHome, or a
+// backup restored over it), under the persist lock: anything that deletes
+// the project's data under that lock, decided before then (a stale-project
+// deletion, master-status.ts), no longer applies.
+const homeInstalledAt = new Map<string, number>();
+
+export function projectHomeInstalledAt(project_id: string): number | undefined {
+  return homeInstalledAt.get(project_id);
+}
+
+function noteHomeInstalled(project_id: string): void {
+  homeInstalledAt.set(project_id, Date.now());
+}
+
 async function withPersistLock<T>(
   project_id: string,
   fn: () => Promise<T>,
@@ -1350,6 +1365,7 @@ export async function replaceProjectHome<T>({
           throw err;
         }
       });
+      noteHomeInstalled(project_id);
       // Still holding the lock, so no capture or copy sees the history's
       // copy in the new home.
       if (staged != null) {

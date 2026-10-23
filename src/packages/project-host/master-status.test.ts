@@ -74,6 +74,12 @@ jest.mock("./file-server", () => ({
   deleteVolume: (...args: any[]) => deleteVolumeMock(...args),
 }));
 
+let homeInstalledAt: number | undefined;
+jest.mock("./persist-volume", () => ({
+  __esModule: true,
+  projectHomeInstalledAt: () => homeInstalledAt,
+}));
+
 jest.mock("./rpc-traffic-audit", () => ({
   __esModule: true,
   recordProjectHostRpcTraffic: jest.fn(),
@@ -268,6 +274,17 @@ describe("master-status stale project data deletion", () => {
     };
     await retry();
     expect(deleted).toEqual([]);
+  });
+
+  it("does not delete a home restored here after the deletion was requested", async () => {
+    const { queueProjectProvisioned } = await import("./master-status");
+    reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
+    queueProjectProvisioned("p", false);
+    await new Promise(setImmediate);
+    homeInstalledAt = Date.now() + 1;
+    await retry();
+    expect(deleted).toEqual([]);
+    homeInstalledAt = undefined;
   });
 
   it("dates a deletion from its request, not from a late answer", async () => {

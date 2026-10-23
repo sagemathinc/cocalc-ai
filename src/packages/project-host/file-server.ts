@@ -1376,8 +1376,9 @@ export async function deleteVolume(
     reportProvisioned?: boolean;
     expected_archive_backup_id?: string;
     expected_archive_generation?: number;
-    // Asked under the project's lifecycle lock, so no start or restore can
-    // come between: why the deletion no longer applies, if it doesn't
+    // Asked once every lock the deletion takes is held (the lifecycle lock,
+    // then the persist lock a restore installs a home under), so no restore
+    // can come between: why the deletion no longer applies, if it doesn't
     // (then nothing is deleted, and that reason is returned).
     superseded?: () => string | undefined;
   } = {},
@@ -1388,8 +1389,14 @@ export async function deleteVolume(
   // Nothing may have the project's history open while its storage goes
   // (persist-volume.ts): streams of it close, and clients start over if
   // it comes back (e.g., restored from an archive).
+  let superseded: string | undefined;
   const deleteFenced = () =>
     withProjectStorageFenced({ project_id, reason: "delete" }, async () => {
+      if (opts.superseded != null) {
+        superseded = opts.superseded();
+        if (superseded != null) return;
+        invalidateProjectVolumeLifecycle(project_id);
+      }
       const deleteIfExists = async ({
         name,
         volume_kind,
@@ -1499,14 +1506,10 @@ export async function deleteVolume(
   if (opts.superseded == null) {
     invalidateProjectVolumeLifecycle(project_id);
   }
-  let superseded: string | undefined;
   await withProjectVolumeLifecycleLock(project_id, async () => {
-    if (opts.superseded != null) {
-      superseded = opts.superseded();
-      if (superseded != null) return;
-      invalidateProjectVolumeLifecycle(project_id);
-    }
-    await deleteFenced();
+    // (first without the fence, which would disturb a project running here)
+    superseded = opts.superseded?.();
+    if (superseded == null) await deleteFenced();
   });
   if (superseded != null) {
     return { superseded };
