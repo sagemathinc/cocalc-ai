@@ -26,7 +26,7 @@ fi
 
 keep() {
   grep -Ev '\.(png|jpe?g|gif|webp|svg|ico|mp4|webm|ttf|otf|woff2?|eot|pdf|wasm|zip|gz|tgz|lock|map)$' |
-    grep -Ev '(^|/)pnpm-lock\.yaml$' |
+    grep -Ev '(^|/)(pnpm-lock\.yaml|package-lock\.json|npm-shrinkwrap\.json|go\.sum)$' |
     grep -Ev '(\.test\.|\.spec\.|\.browser-test\.|/__tests?__/|/test/|/tests/|/playwright/|playwright\.config|\.snap$|/(__)?fixtures?(__)?/)' |
     grep -Ev '^\.(agents|skills)/' |
     grep -Ev '^scripts/' |
