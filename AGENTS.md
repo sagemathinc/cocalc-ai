@@ -157,8 +157,36 @@ EOF
 - Outside a CoCalc runtime (no agent identity or site), name what you are and
   where you run instead, e.g. ``Owner: `claude-code` on <machine>, for
   <GitHub handle>``; site and project are optional then.
+- If you run in a project that belongs to a customer rather than to CoCalc's
+  own team, or on a site dedicated to one customer, leave out the site and
+  the project: ``Owner: `@<agent-name>`, customer environment (details
+  omitted)``.
 - If you take over another agent's PR, update its owner line.
 - A PR opened by a person may say `Owner: <GitHub handle>`.
+
+## Customer Data Stays Out of GitHub
+
+This repository is public. Work prompted by a support ticket or user report
+must not identify the customer anywhere on GitHub: PR and issue titles and
+bodies, review comments, commit messages, branch names, code comments, test
+fixtures and docs.
+
+- Leave out customer names, email addresses, institutions, courses,
+  customer-identifying locations, ticket numbers, customer project and account
+  IDs, hostnames tied to one customer, and file or assignment names from their
+  projects. An owner line that names CoCalc's own site and team project is
+  not customer data; in a customer's environment it omits both (see Pull
+  Requests).
+- Describe the problem generically: "a customer report", "a course notebook",
+  "a project on a busy host". Reproduce it with synthetic data.
+- Keep the identifying details where the support work happens, not in the
+  repository.
+- GitHub keeps every revision of a PR body, issue or comment. Editing it
+  later does not remove the earlier text: a maintainer has to delete those
+  revisions. A pushed commit message has to be reworded and force-pushed
+  before merge. So get it right before posting.
+- This rule does not relax the Security Issues rules above: security findings
+  still follow that section.
 
 ## Docs
 
