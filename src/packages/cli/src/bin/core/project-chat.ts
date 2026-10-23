@@ -16,6 +16,8 @@ import {
   validateArtifactPublication,
   artifactPublicationKey,
   withoutArtifactStorageDate,
+  setTurnMeta,
+  type TurnPriority,
   type PublishArtifactInput,
   type ChatThreadConfigRecord,
 } from "@cocalc/chat";
@@ -723,9 +725,55 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     });
   }
 
+  // The current turn's subject and priority, for the people reading it.
+  async function projectChatTurnMetaData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    messageDate,
+    subject,
+    priority,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId: string;
+    messageDate: string;
+    subject?: string;
+    priority?: TurnPriority;
+  }) {
+    return await withProjectChatFile({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      fn: async ({ syncdb, rows }) => {
+        // The turn's own message, never the latest one.
+        const message_id = resolveArtifactMessage(rows, threadId, messageDate);
+        const record = setTurnMeta(syncdb as any, {
+          thread_id: threadId,
+          message_id,
+          subject,
+          priority,
+        });
+        syncdb.commit();
+        await syncdb.save();
+        await syncdb.save_to_disk();
+        return {
+          thread_id: threadId,
+          message_id,
+          subject: record.subject ?? null,
+          priority: record.priority ?? null,
+        };
+      },
+    });
+  }
+
   return {
     projectChatSendData,
     projectChatArtifactData,
+    projectChatTurnMetaData,
     projectChatThreadCreateData,
     projectChatThreadForkData,
     projectChatThreadStatusData,

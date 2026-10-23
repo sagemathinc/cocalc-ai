@@ -19,7 +19,8 @@ import { akv } from "@cocalc/conat/sync/akv";
 import { externalAgentHandle } from "@cocalc/conat/agents/external";
 import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
 import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
-import { CHAT_DRAFT_STORE } from "@cocalc/chat";
+import { CHAT_DRAFT_STORE, isTurnPriority } from "@cocalc/chat";
+import { chatTarget } from "./chat-card";
 import {
   agentRpcInspectSummary,
   agentRpcWithdrawSummary,
@@ -375,6 +376,72 @@ export function registerAgentCommands(
         summary: agentRpcWithdrawSummary(outcome),
       });
     });
+  agent
+    .command("turn")
+    .description(
+      "say what the current turn is and whether it is for the person reading: a subject line and a priority (high, normal, low), shown in the chat's reader",
+    )
+    .option("--subject <text>", "one line saying what this turn did or asks")
+    .option(
+      "--priority <level>",
+      "high: it needs the person (a decision, an approval, results they asked for); normal; low: FYI, for the record",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option("--path <path>", "chat path (default: $COCALC_CODEX_CHAT_PATH)")
+    .option(
+      "--thread-id <id>",
+      "chat thread (default: $COCALC_CODEX_THREAD_ID)",
+    )
+    .option(
+      "--message-date <date>",
+      "the turn's message timestamp (default: $COCALC_CODEX_MESSAGE_DATE)",
+    )
+    .addHelpText(
+      "after",
+      `
+Run it during a turn, as often as you like: the last call wins, and the
+subject can be revised at the end when you know what happened. An empty
+--subject "" clears it. Without a subject the reader shows the first line
+of your reply; without a priority, a turn a person started is normal and one
+started by an agent message, a sensor or a schedule is low. An open question
+to the person always shows as high.
+
+  cocalc agent turn --subject "Fixed the shallow-clone cache bug" --priority high
+  cocalc agent turn --priority low`,
+    )
+    .action(async (opts, cmd) =>
+      deps.withContext(
+        cmd,
+        `${prefix} turn`,
+        async (ctx) => {
+          if (opts.subject === undefined && opts.priority === undefined)
+            throw new Error("give --subject, --priority or both");
+          if (
+            opts.priority !== undefined &&
+            !isTurnPriority(`${opts.priority}`.toLowerCase())
+          )
+            throw new Error("--priority must be high, normal or low");
+          const chat = chatTarget(opts);
+          if (!chat)
+            throw new Error(
+              "no current turn: run this during an agent turn, or pass --path, --thread-id and --message-date",
+            );
+          return await deps.projectChatTurnMetaData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: chat.path,
+            threadId: chat.threadId,
+            messageDate: chat.messageDate,
+            subject: opts.subject,
+            priority:
+              opts.priority === undefined
+                ? undefined
+                : `${opts.priority}`.toLowerCase(),
+          });
+        },
+        { projectOnly: { projectIdentifier: opts.project } },
+      ),
+    );
   agent
     .command("whoami")
     .description(

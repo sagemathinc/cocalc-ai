@@ -651,6 +651,29 @@ cocalc agent whoami                            # this runtime's identity
   networks themselves. `cocalc project chat agent ...` and
   `cocalc project chat send --to NAME` are older names for the same commands.
 
+## Turn Subject And Priority
+
+People can read a busy agent thread like an inbox: one item per turn, with
+its subject and how much it is for them. Say both during the turn (the last
+call wins, so revise the subject at the end):
+
+```bash
+cocalc agent turn --subject "Fixed the shallow-clone cache bug" --priority high
+cocalc agent turn --priority low
+```
+
+- Subject: one line (at most 120 characters) saying what the turn did or
+  asks. Without one, the first line of your reply is used, so a reply that
+  starts with its point also works.
+- `high`: it needs the person: a decision, an approval, results they asked
+  for, a problem they must know about. Use it sparingly, or it means nothing.
+- `normal`: the default for a turn a person started.
+- `low`: FYI or bookkeeping: the default for a turn an agent message, a
+  sensor or a schedule started. Raise it when such a turn has something for
+  the person (for example a reviewer found a security issue).
+- An open question to the person always shows as high.
+- These are shown to everyone who can read the chat; never put secrets in them.
+
 ## Sensors
 
 A sensor is you, on a schedule, without the model. Use one instead of polling

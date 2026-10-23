@@ -658,3 +658,64 @@ test("a watcher that cannot be set leaves the send a success", async () => {
     transport.mock.restore();
   }
 });
+
+test("agent turn sets the current turn's subject and priority", async () => {
+  const calls: any[] = [];
+  const output: unknown[] = [];
+  const command = new Command();
+  registerAgentCommands(
+    command.command("agent"),
+    {
+      globalsFrom: () => ({}),
+      emitSuccess: (_ctx: unknown, _label: string, value: unknown) =>
+        output.push(value),
+      withContext: async (
+        _cmd: unknown,
+        _name: string,
+        fn: any,
+        options: any,
+      ) => {
+        calls.push({ options });
+        output.push(await fn({ ctx: true }));
+      },
+      projectChatTurnMetaData: async (request: any) => {
+        calls.push(request);
+        return { message_id: "m1", subject: request.subject ?? null };
+      },
+    } as any,
+    "agent",
+  );
+  const saved = { ...process.env };
+  process.env.COCALC_CODEX_CHAT_PATH = "/home/user/a.chat";
+  process.env.COCALC_CODEX_THREAD_ID = "thread-1";
+  process.env.COCALC_CODEX_MESSAGE_DATE = "2026-10-23T01:00:00.000Z";
+  try {
+    await command.parseAsync(
+      ["agent", "turn", "--subject", "Fixed it", "--priority", "HIGH"],
+      { from: "user" },
+    );
+    const request = calls.find((call) => call.path);
+    assert.equal(request.path, "/home/user/a.chat");
+    assert.equal(request.threadId, "thread-1");
+    assert.equal(request.messageDate, "2026-10-23T01:00:00.000Z");
+    assert.equal(request.subject, "Fixed it");
+    assert.equal(request.priority, "high");
+    // The project's own credential, never an account fallback.
+    assert.ok(calls[0].options.projectOnly);
+    for (const args of [
+      ["agent", "turn"],
+      ["agent", "turn", "--priority", "urgent"],
+    ]) {
+      await assert.rejects(command.parseAsync(args, { from: "user" }));
+    }
+    delete process.env.COCALC_CODEX_MESSAGE_DATE;
+    await assert.rejects(
+      command.parseAsync(["agent", "turn", "--priority", "low"], {
+        from: "user",
+      }),
+      /no current turn/,
+    );
+  } finally {
+    process.env = saved;
+  }
+});
