@@ -86,7 +86,9 @@ align_backup_child_path COCALC_BAY_SQLITE_MIRROR_DIR sqlite-mirror/sync
 : "${COCALC_BAY_MIN_FREE_MB:=1024}"
 : "${COCALC_BAY_EVENT_LOG:=${COCALC_BAY_STATE_DIR}/rollout-events.jsonl}"
 : "${COCALC_BAY_SKIP_NEXT_MIGRATIONS_MARKER:=${COCALC_BAY_STATE_DIR}/skip-next-migrations}"
-: "${COCALC_BAY_NODE_VERSION:=26.12.1}"
+# Compatibility fallback for a bay.env without these keys: it names the runtime
+# such a bay already has installed. Generated envs pin the current version.
+: "${COCALC_BAY_NODE_VERSION:=26.2.0}"
 : "${COCALC_BAY_NODE_BIN:=/opt/cocalc/nvm/versions/node/v${COCALC_BAY_NODE_VERSION}/bin/node}"
 : "${COCALC_BAY_PUBLIC_URL:=}"
 : "${COCALC_CLUSTER_ID:=standalone}"
