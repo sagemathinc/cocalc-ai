@@ -287,6 +287,27 @@ describe("master-status stale project data deletion", () => {
     homeInstalledAt = undefined;
   });
 
+  it("does not delete a project restored here while the inventory was being taken", async () => {
+    const { startProvisionedInventoryReporter } =
+      await import("./master-status");
+    let finishScan: (project_ids: string[]) => void = () => {};
+    reportHostProvisionedInventoryMock.mockResolvedValueOnce({
+      delete_project_ids: ["p"],
+    });
+    const stop = startProvisionedInventoryReporter({
+      bootstrapProjectIds: () =>
+        new Promise<string[]>((resolve) => (finishScan = resolve)),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    // restored and stopped again here while the volumes were listed
+    localProject = { state: "opened", state_updated_at: Date.now() };
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    finishScan(["p"]);
+    await retry();
+    stop();
+    expect(deleted).toEqual([]);
+  });
+
   it("dates a deletion from its request, not from a late answer", async () => {
     // an old "not provisioned" report is answered (delete) only after a
     // restore here was reported and accepted
