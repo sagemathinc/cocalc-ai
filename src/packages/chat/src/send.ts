@@ -207,7 +207,7 @@ export async function admitPreparedChatSend({
   client: Client;
   timeoutMs?: number;
   transport?: { stream: typeof streamAcp; steer: typeof steerAcp };
-}): Promise<{ state: "steered" | "queued" | "running" }> {
+}): Promise<{ state: "steered" | "queued" | "running"; pending?: boolean }> {
   const { message, request } = prepared;
   try {
     if (request.chat.send_mode === "immediate") {
@@ -218,8 +218,12 @@ export async function admitPreparedChatSend({
       ) {
         throw new Error("guidance submission was not acknowledged");
       }
-      // steered: it joined the running turn; else it is a turn of its own.
-      return { state: response.state as "steered" | "queued" | "running" };
+      // steered: it joined the running turn (or, pending, was handed to the
+      // worker running it); else it is a turn of its own.
+      return {
+        state: response.state as "steered" | "queued" | "running",
+        ...(response.pending ? { pending: true } : {}),
+      };
     } else {
       for await (const response of transport.stream(
         request,

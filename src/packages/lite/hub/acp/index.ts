@@ -12217,6 +12217,9 @@ async function handleAcpSteerRequest(
     return {
       ok: true,
       state: "steered",
+      // Handed to the worker running the turn: it may still run as a turn
+      // of its own.
+      pending: true,
       threadId: result.threadId ?? threadId,
     };
   }
@@ -13127,6 +13130,81 @@ async function attemptAcpSteerRequest(
   extraCandidateIds: string[] = [],
   claimGuard?: () => boolean,
 ): Promise<AcpSteerAttemptResult> {
+  if (!request.chat?.sensor_wake)
+    return await steerAcpRequest(request, extraCandidateIds, claimGuard);
+  // A wake joins only a turn its approver runs (and so funds); a turn
+  // another collaborator started gets it as a turn of its own instead.
+  const otherPrincipal = (err: unknown) =>
+    (err as { code?: string })?.code === "principal_mismatch";
+  try {
+    assertRunningJobSteerPrincipal(request);
+  } catch (err) {
+    if (otherPrincipal(err)) return { state: "not_steerable" };
+    throw err;
+  }
+  // A sensor wake's permit is one-time. Claim it (every check, atomically:
+  // only one attempt can, and a revocation committed before leaves nothing
+  // to claim) before injecting; consume the claim once it was injected, and
+  // release it if it was not, so its own turn can consume it instead.
+  await authorizeAgentDeliveryExecution(request, hubApi.agent, {
+    phase: "claim",
+  });
+  let injected = false;
+  try {
+    const result = await steerAcpRequest(
+      request,
+      extraCandidateIds,
+      claimGuard,
+      { authorized: true },
+    ).catch((err) => {
+      if (otherPrincipal(err)) return { state: "not_steerable" as const };
+      throw err;
+    });
+    injected = result.state === "steered";
+    return result;
+  } finally {
+    if (injected) await consumeSensorWakeClaim(request);
+    else
+      await authorizeAgentDeliveryExecution(request, hubApi.agent, {
+        phase: "release",
+      }).catch((err) =>
+        logger.warn("sensor wake claim not released", {
+          run_id: request.chat?.sensor_wake?.run_id,
+          err: `${err}`,
+        }),
+      );
+  }
+}
+
+// Injected: the claim must become consumed. Retried; if it still fails, the
+// claim stays (never claimed or run again: no second delivery), and stops
+// holding the sensor's later wakes after a while.
+async function consumeSensorWakeClaim(request: AcpSteerRequest) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await authorizeAgentDeliveryExecution(request, hubApi.agent, {
+        phase: "consume-claim",
+      });
+      return;
+    } catch (err) {
+      if (attempt >= 3) {
+        logger.error(
+          "sensor wake joined a turn, but its claim was not consumed",
+          { run_id: request.chat?.sensor_wake?.run_id, err: `${err}` },
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+}
+
+async function steerAcpRequest(
+  request: AcpSteerRequest,
+  extraCandidateIds: string[] = [],
+  claimGuard?: () => boolean,
+  { authorized = false }: { authorized?: boolean } = {},
+): Promise<AcpSteerAttemptResult> {
   if (!request.chat) {
     throw new Error("chat metadata is required to steer an ACP turn");
   }
@@ -13140,12 +13218,8 @@ async function attemptAcpSteerRequest(
   assertRunningJobSteerPrincipal(request);
   // A forwarded steer may outlive its admission authority. Recheck before
   // injecting into any runtime; ordinary human guidance needs no network grant.
-  // A sensor wake's one-time permit is only checked here: if the wake cannot
-  // join the turn, it runs as a turn of its own, which consumes it then.
-  const sensorWake = !!request.chat.sensor_wake;
-  await authorizeAgentDeliveryExecution(request, hubApi.agent, {
-    checkOnly: sensorWake,
-  });
+  // (A sensor wake was claimed in attemptAcpSteerRequest.)
+  if (!authorized) await authorizeAgentDeliveryExecution(request, hubApi.agent);
   if (request.runtime) {
     const session = await withChatSyncDB({
       client: conatClient,
@@ -13217,22 +13291,6 @@ async function attemptAcpSteerRequest(
     hostProjectRoot,
   });
   if (result.state === "steered") {
-    if (sensorWake) {
-      // It joined the turn: now it has run, so its permit is spent, and a
-      // later turn of its own (say a retry) is refused.
-      try {
-        await authorizeAgentDeliveryExecution(request, hubApi.agent);
-      } catch (err) {
-        logger.warn(
-          "sensor wake joined a turn, but its permit was not consumed",
-          {
-            sensor_id: request.chat.sensor_wake?.sensor_id,
-            run_id: request.chat.sensor_wake?.run_id,
-            err: `${err}`,
-          },
-        );
-      }
-    }
     await recordAcpGuidanceDelivered(request);
     return result;
   }

@@ -183,8 +183,14 @@ Table({
     },
     wake_state: {
       type: "string",
-      desc: "issued, then consumed when the turn starts executing, or not-sent when the host certainly wrote nothing (the permit is then void); deferred while an earlier wake of the sensor was queued, combining while a later wake that carries it is sent, then combined; superseded when the sensor is approved or resumed again (the permit is then void).",
+      desc: "issued, then consumed when the turn starts executing, or not-sent when the host certainly wrote nothing (the permit is then void); claimed while it is being injected into a running turn as guidance (then consumed, or issued again if it could not join); deferred while an earlier wake of the sensor was queued, combining while a later wake that carries it is sent, then combined; superseded when the sensor is approved or resumed again (the permit is then void).",
     },
+    wake_claimed_at: timestamp(
+      "When the wake was claimed to join a running turn (never claimed again).",
+    ),
+    wake_guided_at: timestamp(
+      "When the wake joined a running turn as guidance: spaces such wakes.",
+    ),
     wake_data: json(
       "A deferred wake (summary and data), until a later wake includes it.",
     ),

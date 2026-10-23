@@ -92,6 +92,11 @@ describe("sensor wake delivery", () => {
         effective_delivery: "live-guidance",
       },
     });
+    // Handed to the worker running the turn: not known yet, so not claimed.
+    admit.mockResolvedValueOnce({ state: "steered", pending: true } as any);
+    await expect(
+      deliverSensorWake({} as any, { ...wake, delivery: "guidance" }, running),
+    ).resolves.toEqual({ message_id: "m1" });
     // No running turn to join (or it could not): a turn of its own.
     admit.mockResolvedValueOnce({ state: "queued" });
     await expect(

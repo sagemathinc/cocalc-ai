@@ -88,12 +88,14 @@ export async function deliverSensorWake(
     db.commit();
     await db.save();
     await db.save_to_disk();
-    const { state } = await admitPreparedChatSend({
+    const { state, pending } = await admitPreparedChatSend({
       prepared,
       client,
       timeoutMs: 15_000,
     });
-    const effective_delivery = state === "steered" ? "live-guidance" : "queued";
+    // Handed to another worker (pending): not known yet, so not claimed.
+    const effective_delivery =
+      state !== "steered" ? "queued" : pending ? undefined : "live-guidance";
     try {
       // Display only: how it arrived. Only the row's key and this field, so
       // nothing the hub wrote to the row since is overwritten.
@@ -108,7 +110,7 @@ export async function deliverSensorWake(
           sensor_id: wake.authorization.sensor_id,
           run_id: wake.authorization.run_id,
           title: wake.title,
-          effective_delivery,
+          ...(effective_delivery ? { effective_delivery } : {}),
         },
       });
       db.commit();
@@ -118,7 +120,7 @@ export async function deliverSensorWake(
     }
     return {
       message_id: `${prepared.message.message_id ?? ""}`,
-      effective_delivery,
+      ...(effective_delivery ? { effective_delivery } : {}),
     };
   } finally {
     await releaseChatSyncDB(project_id, wake.path);

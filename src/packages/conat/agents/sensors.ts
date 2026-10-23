@@ -410,11 +410,12 @@ export interface SensorDeliveryBinding {
   path: string;
   thread_id: string;
   /**
-   * Check everything without consuming the permit: a wake joining a running
-   * turn is checked before it is injected (and again if that is retried),
-   * and consumed once it was. If it cannot join, its turn consumes it.
+   * A wake joining a running turn: "claim" checks everything and reserves
+   * the permit atomically before it is injected (only one attempt can), then
+   * "consume-claim" once it was injected, or "release" if it could not join
+   * (its own turn then consumes it). Absent: consume, as a turn executes.
    */
-  check_only?: true;
+  phase?: "claim" | "consume-claim" | "release";
 }
 
 const LINE_CONTROL_RE =

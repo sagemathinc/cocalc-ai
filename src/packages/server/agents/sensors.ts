@@ -83,7 +83,9 @@ const WATCHER_RUNNING = `(spec->>'kind' = 'watch' AND lease_id IS NOT NULL
 const WATCHER_WAKE_QUEUED = `(spec->>'kind' = 'watch' AND EXISTS (
   SELECT 1 FROM agent_sensor_runs r
    WHERE r.sensor_id = agent_sensors.sensor_id
-     AND r.wake_state IN ('issued', 'deferred', 'combining')
+     AND (r.wake_state IN ('issued', 'deferred', 'combining')
+       OR (r.wake_state='claimed'
+           AND r.wake_claimed_at > now() - interval '10 minutes'))
      AND r.started_at > now() - interval '1 day'))`;
 
 /** The condition a sensor delete must meet (exported for the PostgreSQL test). */
@@ -634,7 +636,7 @@ export async function sensorControlLocal(
           `UPDATE agent_sensor_runs SET wake_state='superseded',
              wake_permit_hash=NULL, wake_data=NULL
            WHERE sensor_id=$1
-             AND wake_state IN ('issued', 'deferred', 'combining')`,
+             AND wake_state IN ('issued', 'claimed', 'deferred', 'combining')`,
           [row.sensor_id],
         );
       return updated;
@@ -797,6 +799,38 @@ export async function authorizeSensorExecutionLocal(
   requireUuid(authorization.sensor_id, "sensor_id");
   requireUuid(authorization.run_id, "run_id");
   await assertProjectHostAgentTokenAccess({ account_id, host_id, project_id });
+  const phase = delivery.phase;
+  if (phase != null && !["claim", "consume-claim", "release"].includes(phase))
+    throw denied();
+  if (phase === "consume-claim" || phase === "release") {
+    // Bookkeeping for a claim this host holds: the claim already checked
+    // everything, atomically. Injected (consumed, and when it joined is
+    // recorded) or not (issued again, for its own turn to consume).
+    const { rows } = await agentStore().query(
+      `UPDATE agent_sensor_runs SET ${
+        phase === "consume-claim"
+          ? "wake_state='consumed', wake_guided_at=now()"
+          : "wake_state='issued'"
+      }
+       WHERE run_id=$1 AND sensor_id=$2 AND project_id=$3
+         AND wake_state='claimed' AND wake_permit_hash=$4
+         AND wake_prompt_sha256=$5 AND wake_account_id=$6
+         AND wake_path=$7 AND wake_thread_id=$8
+       RETURNING run_id`,
+      [
+        authorization.run_id,
+        authorization.sensor_id,
+        project_id,
+        sensorPermitHash(authorization.permit),
+        delivery.prompt_sha256,
+        account_id,
+        delivery.path,
+        delivery.thread_id,
+      ],
+    );
+    if (rows.length !== 1) throw denied();
+    return;
+  }
   const row = await loadForProject(authorization.sensor_id, project_id);
   if (
     row.status !== "active" ||
@@ -816,17 +850,16 @@ export async function authorizeSensorExecutionLocal(
   // hash, approver and approval, identity thread, project membership and
   // host) and consumes the permit, so a pause, re-approval, disable, thread
   // change or loss of access committed before it leaves nothing to consume.
-  // check_only (a wake about to join a running turn) runs the same checks
-  // without consuming: the permit is consumed once the wake was injected,
-  // or by its own turn if it could not join one.
+  // A claim (a wake about to join a running turn) is the same statement:
+  // it reserves the permit instead of consuming it, so only one attempt can
+  // inject it, and a revocation committed before it leaves nothing to claim.
   const { rows: consumed } = await agentStore().query(
-    `${
-      delivery.check_only === true
-        ? `SELECT r.run_id FROM agent_sensor_runs r,
-             agent_sensors s, agent_identities i, projects p`
-        : `UPDATE agent_sensor_runs r SET wake_state='consumed'
-             FROM agent_sensors s, agent_identities i, projects p`
+    `UPDATE agent_sensor_runs r SET ${
+      phase === "claim"
+        ? "wake_state='claimed', wake_claimed_at=now()"
+        : "wake_state='consumed'"
     }
+     FROM agent_sensors s, agent_identities i, projects p
      WHERE r.run_id=$1 AND r.sensor_id=$2 AND r.wake_state='issued'
        AND r.wake_permit_hash=$3 AND r.wake_prompt_sha256=$4
        AND r.wake_account_id=$5 AND r.wake_path=$6 AND r.wake_thread_id=$7
@@ -839,7 +872,7 @@ export async function authorizeSensorExecutionLocal(
        AND p.project_id=s.project_id AND p.deleted IS NOT TRUE
        AND p.host_id=$11
        AND p.users #>> ARRAY[$5::text, 'group'] IN ('owner', 'collaborator')
-     ${delivery.check_only === true ? "" : "RETURNING r.run_id"}`,
+     RETURNING r.run_id`,
     [
       authorization.run_id,
       authorization.sensor_id,

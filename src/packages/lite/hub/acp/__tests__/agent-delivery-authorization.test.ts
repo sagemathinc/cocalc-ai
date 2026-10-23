@@ -178,7 +178,7 @@ test("logs never see a wake permit, and it is dropped once consumed", async () =
   expect(JSON.stringify(value)).not.toContain("secret-permit");
 });
 
-test("a wake joining a running turn is checked without consuming its permit", async () => {
+test("a wake joining a running turn is claimed, then consumed or released", async () => {
   const value = request();
   delete value.chat!.agent_delivery_id;
   value.prompt = "wake";
@@ -196,28 +196,25 @@ test("a wake joining a running turn is checked without consuming its permit", as
     authorizeRpcExecution: jest.fn(async () => {}),
     authorizeSensorExecution: jest.fn(async () => {}),
   };
-  await authorizeAgentDeliveryExecution(value, api, { checkOnly: true });
-  expect(api.authorizeSensorExecution).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      delivery: expect.objectContaining({ check_only: true }),
-    }),
-  );
-  // Kept: it may still run as a turn of its own, which consumes it.
+  const phaseSent = () =>
+    (api.authorizeSensorExecution.mock.calls.at(-1) as any)[0].delivery.phase;
+  await authorizeAgentDeliveryExecution(value, api, { phase: "claim" });
+  expect(phaseSent()).toBe("claim");
+  // Kept: if it cannot join, it is released for its own turn.
   expect(value.chat!.sensor_wake!.permit).toContain("secret-permit");
-  // A paused or deleted sensor is refused at the check: nothing is injected.
+  await authorizeAgentDeliveryExecution(value, api, { phase: "release" });
+  expect(phaseSent()).toBe("release");
+  expect(value.chat!.sensor_wake!.permit).toContain("secret-permit");
+  // A paused or deleted sensor is refused at the claim: nothing is injected.
   api.authorizeSensorExecution.mockRejectedValueOnce(
     new Error("sensor is no longer active as approved"),
   );
   await expect(
-    authorizeAgentDeliveryExecution(value, api, { checkOnly: true }),
+    authorizeAgentDeliveryExecution(value, api, { phase: "claim" }),
   ).rejects.toThrow("no longer active");
-  // Once it joined the turn, a normal call consumes it.
-  await authorizeAgentDeliveryExecution(value, api);
-  expect(api.authorizeSensorExecution).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      delivery: expect.not.objectContaining({ check_only: true }),
-    }),
-  );
+  // Once it joined the turn, the claim is consumed and the secret dropped.
+  await authorizeAgentDeliveryExecution(value, api, { phase: "consume-claim" });
+  expect(phaseSent()).toBe("consume-claim");
   expect(JSON.stringify(value)).not.toContain("secret-permit");
 });
 
