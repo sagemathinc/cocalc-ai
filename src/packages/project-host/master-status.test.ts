@@ -350,6 +350,37 @@ describe("master-status stale project data deletion", () => {
     expect(deleted).toEqual(["p"]);
   });
 
+  it("does not let an attempt superseded by a restore drop a newer verdict that came during it", async () => {
+    const { queueProjectProvisioned } = await import("./master-status");
+    deleteVolumeMock.mockReset();
+    deleteVolumeMock.mockImplementation(async (project_id, opts) => {
+      if (deleteVolumeMock.mock.calls.length === 1) {
+        // a restore here before the old deletion's attempt got the lock
+        homeInstalledAt = Date.now();
+      }
+      const superseded = opts?.superseded?.();
+      if (superseded != null) {
+        // and a newer verdict (after that restore) before the attempt is over
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        reportProjectProvisionedMock.mockResolvedValueOnce({
+          action: "delete",
+        });
+        queueProjectProvisioned("p", true);
+        await new Promise(setImmediate);
+        return { superseded };
+      }
+      deleted.push(project_id);
+      return {};
+    });
+    reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
+    queueProjectProvisioned("p", true);
+    await retry();
+    homeInstalledAt = undefined;
+    // the old attempt didn't drop the newer verdict, which then ran
+    expect(deleteVolumeMock).toHaveBeenCalledTimes(2);
+    expect(deleted).toEqual(["p"]);
+  });
+
   it("dates a deletion from its request, not from a late answer", async () => {
     // an old "not provisioned" report is answered (delete) only after a
     // restore here was reported and accepted

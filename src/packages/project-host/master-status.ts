@@ -91,12 +91,18 @@ function provisionedInventoryIntervalMs(): number {
 
 // Whether the data was deleted: not if the deletion no longer applies.
 async function deleteProjectDataLocal(project_id: string): Promise<boolean> {
+  // the request the decision under the lock was about
+  let judged = 0;
   const { superseded } = await deleteVolume(project_id, {
     reportProvisioned: false,
-    superseded: () => pendingDeletionSuperseded(project_id),
+    superseded: () => {
+      judged = pendingProjectDeletions.get(project_id)?.queued_at ?? 0;
+      return pendingDeletionSuperseded(project_id);
+    },
   });
   if (superseded != null) {
-    cancelProjectDataDeletion(project_id, superseded);
+    // (not a verdict that came after that decision)
+    cancelProjectDataDeletion(project_id, superseded, judged);
     return false;
   }
   try {
@@ -205,7 +211,7 @@ async function drainProjectDataDeletions(): Promise<void> {
         continue;
       }
       try {
-        await withBtrfsMutationContext(
+        const deleted = await withBtrfsMutationContext(
           {
             operation_id: `stale-project-delete:${project_id}`,
             project_id,
@@ -214,7 +220,10 @@ async function drainProjectDataDeletions(): Promise<void> {
           },
           async () => await deleteProjectDataLocal(project_id),
         );
-        pendingProjectDeletions.delete(project_id);
+        if (deleted) {
+          // the data is gone, whatever was requested meanwhile
+          pendingProjectDeletions.delete(project_id);
+        }
       } catch (err) {
         const nextAttempts = attempts + 1;
         // (as it is now: it may have been requested again meanwhile)
