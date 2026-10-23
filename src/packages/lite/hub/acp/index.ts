@@ -13149,7 +13149,12 @@ async function attemptAcpSteerRequest(
   await authorizeAgentDeliveryExecution(request, hubApi.agent, {
     phase: "claim",
   });
+  // Released only when it certainly was not injected. A throw may come
+  // after the guidance reached the runtime (a lost acknowledgement): then
+  // the claim stays, so the wake is never run twice (at most once, as for a
+  // claim whose consume failed).
   let injected = false;
+  let notInjected = false;
   try {
     const result = await steerAcpRequest(
       request,
@@ -13161,10 +13166,13 @@ async function attemptAcpSteerRequest(
       throw err;
     });
     injected = result.state === "steered";
+    // Not here: not steerable, no running turn, another principal, or
+    // handed to the worker running the turn (which claims it itself).
+    notInjected = !injected;
     return result;
   } finally {
     if (injected) await consumeSensorWakeClaim(request);
-    else
+    else if (notInjected)
       await authorizeAgentDeliveryExecution(request, hubApi.agent, {
         phase: "release",
       }).catch((err) =>
