@@ -59,8 +59,8 @@ test("open questions and running turns", () => {
     isOpenAttention({ state: "pending", response_submitted_at: 1 } as any),
   ).toBe(false);
   expect(isOpenAttention({ state: "answered" } as any)).toBe(false);
-  expect(readerItemWorking(items[0])).toBe(false);
-  expect(readerItemWorking(items[1])).toBe(true);
-  const running = new Map([["message:a1", "running"]]);
-  expect(readerItemWorking(items[0], running)).toBe(true);
+  // The running turn the panel found, not a flag on the row.
+  expect(readerItemWorking(items[1])).toBe(false);
+  expect(readerItemWorking(items[1], items[1].messages[1])).toBe(true);
+  expect(readerItemWorking(items[0], items[1].messages[1])).toBe(false);
 });
