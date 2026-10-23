@@ -26,6 +26,7 @@ import {
   isAcpAssistantMessage,
   parentMessageId,
 } from "./access";
+import { hasAcpGuidanceReceipt } from "./message-state";
 import { canMovePostedMessageToAgent } from "./post-to-agent";
 import { assistantFinishedAt } from "./turn-span";
 import type { ChatMessageTyped } from "./types";
@@ -86,10 +87,7 @@ export function isAgentReply(message: ChatMessageTyped): boolean {
 
 type AcpStateMap = { get?: (key: string) => unknown };
 
-function acpStateOf(
-  message: ChatMessageTyped,
-  acpState?: AcpStateMap,
-): string {
+function acpStateOf(message: ChatMessageTyped, acpState?: AcpStateMap): string {
   const id = readerMessageId(message);
   return `${(id ? acpState?.get?.(`message:${id}`) : undefined) ?? field<string>(message, "acp_state") ?? ""}`;
 }
@@ -109,16 +107,25 @@ function midTurnOwner(
   const date = dateValue(message)?.valueOf();
   if (date == null) return undefined;
   if (canMovePostedMessageToAgent(message)) return undefined;
-  if (["queue", "queued", "not-sent"].includes(acpStateOf(message, acpState)))
+  // A delivery receipt is stronger than a stale "queued" (as in the log).
+  if (
+    !hasAcpGuidanceReceipt(field(message, "acp_guidance_delivered_at_ms")) &&
+    ["queue", "queued", "not-sent"].includes(acpStateOf(message, acpState))
+  )
     return undefined;
+  // The newest by start time: the thread's order can differ from it.
   let owner: ChatMessageTyped | undefined;
+  let ownerStart = -Infinity;
   for (const turn of turns) {
     const start = dateValue(turn)?.valueOf();
-    if (start == null || start >= date) continue;
+    if (start == null || start >= date || start <= ownerStart) continue;
     const running =
       field<boolean>(turn, "generating") === true ||
       acpStateOf(turn, acpState) === "running";
-    if (running || date <= assistantFinishedAt(turn)) owner = turn;
+    if (running || date <= assistantFinishedAt(turn)) {
+      owner = turn;
+      ownerStart = start;
+    }
   }
   return owner;
 }
