@@ -21,15 +21,22 @@ export async function assertSnapshotRestoreAllowed({
   try {
     await client.checkSnapshotRestore({ project_id, mode });
   } catch (err) {
-    const message = `${(err as any)?.message ?? err}`;
-    if (
-      // (fast-rpc, and the request transport)
-      message.includes("unknown service method 'checkSnapshotRestore'") ||
-      message.includes("impl[mesg.name] is not a function")
-    ) {
+    if (isMissingCheck(err)) {
       if (mode === "rootfs") return;
       throw new Error(SNAPSHOT_HOME_RESTORE_UNAVAILABLE);
     }
     throw err;
   }
+}
+
+// How a host without checkSnapshotRestore answers, depending on the transport
+// (fast-rpc, the core client's call, the request service).
+function isMissingCheck(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err}`;
+  return (
+    (message.includes("checkSnapshotRestore") &&
+      (message.includes("unknown service method") ||
+        message.includes("not defined"))) ||
+    message.includes("impl[mesg.name] is not a function")
+  );
 }
