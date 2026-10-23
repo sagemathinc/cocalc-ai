@@ -129,6 +129,43 @@ describe("project storage info service", () => {
     });
   });
 
+  it("defaults to the project runtime's home, not the legacy /root", async () => {
+    const stream = makeStream();
+    const duMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: Buffer.from("120 /home/user\n"),
+        stderr: Buffer.alloc(0),
+        code: 0,
+      })
+      .mockRejectedValueOnce(new Error("not found"));
+    dstreamMock.mockResolvedValue(stream);
+    fileServerClientMock.mockReturnValue({
+      getQuota: jest.fn(async () => ({
+        used: 50,
+        size: 100,
+        qgroupid: "0/2",
+        scope: "subvolume",
+      })),
+    });
+    fsClientMock.mockReturnValue({
+      du: duMock,
+    });
+
+    const { handleProjectStorageOverviewRequest } =
+      await import("./storage-info-service");
+    const overview = await handleProjectStorageOverviewRequest.call(
+      {
+        subject: "project.11111111-1111-4111-8111-111111111111.storage-info.-",
+      },
+      {},
+      {} as any,
+    );
+
+    expect(overview.live.path).toBe("/home/user");
+    expect(duMock.mock.calls[0][0]).toBe("/home/user");
+  });
+
   it("keeps overview usable when the environment tree is unreadable", async () => {
     const stream = makeStream();
     const duMock = jest

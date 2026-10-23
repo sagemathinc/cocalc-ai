@@ -65,6 +65,29 @@ This is the key rule:
 - Use export/import for archive, bulk transformation, or document types that do not yet have a live backend API.
 - Use browser exec only when the task is inherently about the browser UI or when notebook work needs ephemeral UI context such as the active cell, selection, or viewport.
 
+## Disk Space: The Project Quota, Not `df`
+
+In a CoCalc project, `df` reports the host's filesystem, which many projects
+share. Its size and free space are not this project's. Never use `df` to judge
+how much room the project has left, or to tell the user. Ask CoCalc instead:
+
+```bash
+cocalc project storage show        # the project quota: used of size, live files
+cocalc project storage breakdown [path]  # one level of sizes under a path
+cocalc project storage analyze     # what takes space, with cleanup suggestions
+```
+
+These are the numbers the project's storage overview shows the user. They are
+sampled and cached; `--force-sample` measures again, at most once a minute.
+
+- The quota counts more than the files you see. Snapshots keep deleted or
+  changed data until they expire, so deleting files may free less than their
+  size. Edit history (TimeTravel, chat and agent logs) counts too, though it
+  is kept outside the home: `cocalc project edit-history list` shows it.
+- `du -sh <dir>` is fine for the size of particular files or directories.
+- Deleting edit history (`cocalc project edit-history cleanup`) can't be
+  undone: suggest it, and run it only when the user asks.
+
 ## Document Builds: Use The Complete Project Pipeline
 
 When creating, editing, or verifying a supported document, inspect the installed
