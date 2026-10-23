@@ -2488,9 +2488,11 @@ export class ChatActions extends Actions<ChatState> {
     if (!unread?.length) return 0;
     const watermark = this.getThreadReadCount(threadId, accountId) - 1;
     const ids = new Set(unread);
-    return readerItems(this.getMessagesInThread(threadId) ?? []).filter(
-      (item) => ids.has(item.id) && item.lastIndex <= watermark,
-    ).length;
+    // The same items the reader shows: a running turn (known from the live
+    // state) takes the messages that arrive while it runs.
+    return readerItems(this.getMessagesInThread(threadId) ?? [], {
+      acpState: this.store?.get?.("acpState"),
+    }).filter((item) => ids.has(item.id) && item.lastIndex <= watermark).length;
   };
 
   /**
