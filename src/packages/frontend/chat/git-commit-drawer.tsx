@@ -76,6 +76,7 @@ import {
 } from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
+import { prefetchCommitDiff } from "@cocalc/frontend/git/prefetch";
 import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
 import { useFeedbackDestination } from "./git-commit/feedback-destination";
 import type {
@@ -2607,6 +2608,7 @@ export function GitCommitDrawer({
     )
       return;
     let cancelled = false;
+    let cancelPrefetch: (() => void) | undefined;
     const requestedCommit = commit;
     loadedDiffRequestRef.current = undefined;
     setLoading(true);
@@ -2628,6 +2630,13 @@ export function GitCommitDrawer({
             contextLines,
           );
           if (!cancelled) {
+            // The previous commit is the usual next stop: read it when idle.
+            cancelPrefetch = prefetchCommitDiff(
+              projectGitReader,
+              discovery.repository,
+              target.parent,
+              contextLines,
+            );
             loadedDiffRequestRef.current = {
               scope: diffRequestScope,
               commit: target.commit,
@@ -2685,6 +2694,7 @@ export function GitCommitDrawer({
     })();
     return () => {
       cancelled = true;
+      cancelPrefetch?.();
     };
   }, [
     open,

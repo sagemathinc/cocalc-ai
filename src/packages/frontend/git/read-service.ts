@@ -18,6 +18,7 @@ import {
   parseWorktrees,
 } from "./read-parsers";
 import type { GitRef } from "./read-parsers";
+import { MemoryGitCache, type ImmutableGitCache } from "./immutable-cache";
 
 export const GIT_READ_LIMIT = 4_000_000;
 const DISCOVERY_TTL = 30_000;
@@ -88,6 +89,16 @@ function outputLine(output: string): string {
   return output.slice(0, -1);
 }
 
+// Bump when cached output would be read differently (new flags, parsing).
+const IMMUTABLE_CACHE_VERSION = 1;
+
+// The object ids that fully name a comparison.
+function targetObjects(target: ImmutableReviewTarget): string[] {
+  return target.kind === "commit"
+    ? [target.commit, ...(target.parent ? [target.parent] : [])]
+    : [target.base, target.head];
+}
+
 /** Read-only facade over the existing authorized project-host exec route. */
 export class GitReadService {
   private active = 0;
@@ -100,11 +111,58 @@ export class GitReadService {
   private blobBytes = 0;
   private blobRequests = new Map<string, Promise<string>>();
 
+  private readonly recent: MemoryGitCache;
+  private immutableRequests = new Map<string, Promise<string>>();
+
   constructor(
     private readonly exec: GitReadExecutor,
     private readonly now: () => number = Date.now,
     private readonly cacheBytes = 16_000_000,
-  ) {}
+    /** Output that never changes, kept across reloads (IndexedDB). */
+    private readonly persistent?: ImmutableGitCache,
+  ) {
+    this.recent = new MemoryGitCache(cacheBytes);
+  }
+
+  /**
+   * A read named only by full object ids: its output never changes, so it
+   * is answered from the caches when it can (this tab's, then this
+   * browser's) and stored after it runs. Anything else runs every time.
+   */
+  private async runImmutable(
+    repository: RepositoryContext,
+    args: string[],
+    objectIds: string[],
+  ): Promise<string> {
+    if (!objectIds.length || !objectIds.every(isFullObjectId))
+      return this.run(repository.projectId, repository.locator, args);
+    const key = JSON.stringify([
+      IMMUTABLE_CACHE_VERSION,
+      repositoryKey(repository),
+      args,
+    ]);
+    const recent = await this.recent.get(key);
+    if (recent !== undefined) return recent;
+    const pending = this.immutableRequests.get(key);
+    if (pending) return pending;
+    const promise = (async () => {
+      const stored = await this.persistent?.get(key);
+      if (stored !== undefined) {
+        await this.recent.set(key, stored);
+        return stored;
+      }
+      const output = await this.run(
+        repository.projectId,
+        repository.locator,
+        args,
+      );
+      await this.recent.set(key, output);
+      void this.persistent?.set(key, output);
+      return output;
+    })().finally(() => this.immutableRequests.delete(key));
+    this.immutableRequests.set(key, promise);
+    return promise;
+  }
 
   private async run(
     projectId: string,
@@ -262,12 +320,12 @@ export class GitReadService {
     requireValue(ref);
     let output: string;
     try {
-      output = await this.run(repository.projectId, repository.locator, [
-        "rev-parse",
-        "--verify",
-        "--end-of-options",
-        `${ref}^{commit}`,
-      ]);
+      output = await this.runImmutable(
+        repository,
+        ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
+        // A full id names one object for good; a branch or short id does not.
+        [ref],
+      );
     } catch (err) {
       // Git's words for an object this clone doesn't have, e.g. a commit
       // made on GitHub that was never fetched here.
@@ -296,13 +354,11 @@ export class GitReadService {
   ): Promise<Extract<ImmutableReviewTarget, { kind: "commit" }>> {
     const commit = await this.resolveCommit(repository, ref);
     const [, ...parents] = outputLine(
-      await this.run(repository.projectId, repository.locator, [
-        "rev-list",
-        "--parents",
-        "-n1",
-        commit,
-        "--",
-      ]),
+      await this.runImmutable(
+        repository,
+        ["rev-list", "--parents", "-n1", commit, "--"],
+        [commit],
+      ),
     ).split(" ");
     if (
       !Number.isInteger(parentIndex) ||
@@ -326,14 +382,11 @@ export class GitReadService {
     commit: string,
   ): Promise<string> {
     requireObject(commit);
-    return this.run(repository.projectId, repository.locator, [
-      "show",
-      "--no-patch",
-      "--no-color",
-      "--format=fuller",
-      commit,
-      "--",
-    ]);
+    return this.runImmutable(
+      repository,
+      ["show", "--no-patch", "--no-color", "--format=fuller", commit, "--"],
+      [commit],
+    );
   }
 
   async compare(
@@ -398,17 +451,21 @@ export class GitReadService {
     )
       throw new GitReadError("invalid", "Invalid history page");
     return parseHistory(
-      await this.run(repository.projectId, repository.locator, [
-        "log",
-        "-z",
-        "--format=%H%x00%P%x00%ct%x00%s",
-        `--skip=${skip}`,
-        `-n${count}`,
-        ...(firstParent ? ["--first-parent"] : []),
-        ...(showMerges ? [] : ["--no-merges"]),
-        commit,
-        "--",
-      ]),
+      await this.runImmutable(
+        repository,
+        [
+          "log",
+          "-z",
+          "--format=%H%x00%P%x00%ct%x00%s",
+          `--skip=${skip}`,
+          `-n${count}`,
+          ...(firstParent ? ["--first-parent"] : []),
+          ...(showMerges ? [] : ["--no-merges"]),
+          commit,
+          "--",
+        ],
+        [commit],
+      ),
     );
   }
 
@@ -421,13 +478,17 @@ export class GitReadService {
     requireObject(target.base);
     requireObject(target.head);
     const commits = (
-      await this.run(target.repository.projectId, target.repository.locator, [
-        "rev-list",
-        `--max-count=${limit + 1}`,
-        target.head,
-        `^${target.base}`,
-        "--",
-      ])
+      await this.runImmutable(
+        target.repository,
+        [
+          "rev-list",
+          `--max-count=${limit + 1}`,
+          target.head,
+          `^${target.base}`,
+          "--",
+        ],
+        [target.head, target.base],
+      )
     )
       .split("\n")
       .map((line) => line.trim())
@@ -462,9 +523,8 @@ export class GitReadService {
   async changedFiles(target: ImmutableReviewTarget) {
     const { repository } = target;
     const files = parseRawDiff(
-      await this.run(
-        repository.projectId,
-        repository.locator,
+      await this.runImmutable(
+        repository,
         this.comparisonArgs(target, [
           "--raw",
           "-z",
@@ -473,6 +533,7 @@ export class GitReadService {
           "--no-textconv",
           "--find-renames",
         ]),
+        targetObjects(target),
       ),
     );
     const oldCommit = target.kind === "commit" ? target.parent : target.base;
@@ -515,9 +576,8 @@ export class GitReadService {
     if (!Number.isInteger(context) || context < 0 || context > 1000)
       throw new GitReadError("invalid", "Invalid diff context");
     const { repository } = target;
-    const patch = await this.run(
-      repository.projectId,
-      repository.locator,
+    const patch = await this.runImmutable(
+      repository,
       this.comparisonArgs(target, [
         "--patch",
         "--no-color",
@@ -526,6 +586,7 @@ export class GitReadService {
         "--find-renames",
         `-U${context}`,
       ]),
+      targetObjects(target),
     );
     if (patch.split("\n").length > maxLines)
       throw new GitReadError(
@@ -613,22 +674,18 @@ export class GitReadService {
     blob: string,
   ): Promise<string> {
     const size = outputLine(
-      await this.run(repository.projectId, repository.locator, [
-        "cat-file",
-        "-s",
-        blob,
-      ]),
+      await this.runImmutable(repository, ["cat-file", "-s", blob], [blob]),
     );
     if (!/^\d+$/.test(size) || Number(size) >= GIT_READ_LIMIT)
       throw new GitReadError(
         "incomplete",
         "Historical file exceeds the review limit",
       );
-    const contents = await this.run(repository.projectId, repository.locator, [
-      "cat-file",
-      "blob",
-      blob,
-    ]);
+    const contents = await this.runImmutable(
+      repository,
+      ["cat-file", "blob", blob],
+      [blob],
+    );
     // Exec is a UTF-8 text transport. Reject binary/invalid UTF-8 rather than
     // silently treating transcoded bytes as the exact historical document.
     if (
