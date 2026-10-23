@@ -28,9 +28,16 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { lite } from "@cocalc/frontend/lite";
-import { useNamedAgents } from "@cocalc/frontend/agents/api";
+import {
+  namedAgentReference,
+  useNamedAgents,
+} from "@cocalc/frontend/agents/api";
 import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
+import {
+  bindAgentName,
+  hasUnboundAgentName,
+} from "@cocalc/frontend/agents/unbound-mentions";
 import { findWorkspaceAgentForThread } from "@cocalc/frontend/agents/workspace-model";
 
 import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
@@ -796,6 +803,50 @@ function RuntimeCodexAttentionCard({
                             }}
                           />
                         </AgentMentionContext.Provider>
+                        {/* A typed @name is checked before sending, as in the
+                            composer: offer the same way to resolve it. */}
+                        {agentMentions.agents
+                          .filter((agent) =>
+                            hasUnboundAgentName(
+                              draft.other[question.id] ?? "",
+                              agent.name,
+                            ),
+                          )
+                          .map((agent) => (
+                            <Button
+                              key={agent.endpoint.agent_id}
+                              size="small"
+                              onClick={() => {
+                                const reference = namedAgentReference(agent);
+                                lastAnswer.current = question.id;
+                                updateDraft((current) => ({
+                                  ...current,
+                                  other: {
+                                    ...current.other,
+                                    [question.id]: bindAgentName(
+                                      current.other[question.id] ?? "",
+                                      reference,
+                                    ),
+                                  },
+                                }));
+                                agentMentionContext.onSelect(reference);
+                                // The button goes once the name is bound:
+                                // keep the focus in this answer. An approval
+                                // dialog, if one opens, returns it here too.
+                                setTimeout(
+                                  () =>
+                                    answerControls.current
+                                      .get(question.id)
+                                      ?.current?.focus?.(),
+                                  0,
+                                );
+                              }}
+                            >
+                              Resolve @{agent.name} to named agent (
+                              {agent.thread_title ?? "Agent thread"} /{" "}
+                              {agent.project_title ?? "Project"})
+                            </Button>
+                          ))}
                         <div role="status" aria-live="polite">
                           <Text
                             type={

@@ -54,6 +54,19 @@ export function addEgressBytes(
   bySubject[key] = (bySubject[key] ?? 0) + bytes;
 }
 
+// A request's optional egress label (EGRESS_LABEL_HEADER, e.g. the hub API
+// method "projects.listAccountProjectWindow").  It comes from the client, so
+// only short dotted identifiers are accepted; anything else is ignored.  The
+// per-socket key cap bounds the cardinality a client can create.
+export const MAX_EGRESS_LABEL_LENGTH = 80;
+const EGRESS_LABEL_RE = /^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z][A-Za-z0-9_-]*)*$/;
+
+export function normalizeEgressLabel(label: unknown): string | undefined {
+  if (typeof label !== "string") return;
+  if (label.length === 0 || label.length > MAX_EGRESS_LABEL_LENGTH) return;
+  return EGRESS_LABEL_RE.test(label) ? label : undefined;
+}
+
 // Remembers which subject each pending reply inbox belongs to.  Bounded in
 // entries, bytes and age: reply subjects longer than MAX_REPLY_SUBJECT_LENGTH
 // are not remembered, only the request's (already bounded) normalized label
@@ -81,13 +94,21 @@ export class ReplySubjectAttribution {
     }
   }
 
-  remember(replySubject: string, requestSubject: string, now = Date.now()) {
+  remember(
+    replySubject: string,
+    requestSubject: string,
+    now = Date.now(),
+    label?: unknown,
+  ) {
     if (!replySubject || replySubject.length > MAX_REPLY_SUBJECT_LENGTH) {
       return;
     }
+    const egressLabel = normalizeEgressLabel(label);
     this.labels.delete(replySubject);
     this.labels.set(replySubject, {
-      label: normalizeSubjectForAttribution(requestSubject),
+      label:
+        normalizeSubjectForAttribution(requestSubject) +
+        (egressLabel ? `#${egressLabel}` : ""),
       at: now,
     });
     this.prune(now);

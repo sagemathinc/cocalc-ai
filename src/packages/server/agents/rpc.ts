@@ -69,6 +69,7 @@ import {
   externalControl,
   enqueueExternalAgentMessage,
   externalStore,
+  inspectExternalAgentMessage,
 } from "./external";
 import { personalControl, withPersonalHome } from "./personal";
 
@@ -997,6 +998,108 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
       throw new Error("this delivery report already started a turn");
   };
 
+/**
+ * For the sender: whether the external member has read its message. Only a
+ * current member of the network, asking about its own message (the same
+ * source, run by the same authenticated account, in that network), learns
+ * anything. Every other answer is the same, so that nothing can be learned
+ * about other accounts by probing; the details are only logged.
+ */
+async function inspectExternalInbox(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt,
+) {
+  if (!isExternalAgentSource(request.target))
+    throw new Error("external inbox target required");
+  // Members and inbox rows hold UUIDs in canonical (lowercase) form; the
+  // caller may spell them otherwise. The outcome still echoes the request.
+  const target = {
+    ...request.target,
+    account_id: request.target.account_id.toLowerCase(),
+    agent_id: request.target.agent_id.toLowerCase(),
+    installation_id: request.target.installation_id.toLowerCase(),
+  };
+  const nothing = (why: string) => {
+    logger.debug("external inbox inspection found nothing", {
+      attempt_id: request.attempt_id,
+      why,
+    });
+    return rpcOutcome(request, "unknown", {
+      reason:
+        "No delivery evidence for this attempt: the message may never have been admitted, or has expired",
+    });
+  };
+  try {
+    const checked = await networkProof(
+      account_id,
+      source,
+      run_id,
+      target,
+      request.agent_network_id.toLowerCase(),
+    );
+    if ("denied" in checked) return nothing(`network: ${checked.denied}`);
+    if (
+      checked.account_id !== target.account_id ||
+      checked.target.kind !== "external" ||
+      checked.target.source.installation_id !== target.installation_id
+    )
+      return nothing("principal mismatch");
+    const delivery = await inspectExternalAgentMessage({
+      account_id: checked.account_id,
+      installation_id: target.installation_id,
+      attempt_id: request.attempt_id,
+      agent_network_id: checked.agent_network_id,
+      source,
+      source_account_id: account_id,
+    });
+    if (!delivery) return nothing("no matching inbox row");
+    return {
+      ...rpcOutcome(request, "accepted", {
+        chat_effect: "saved",
+        reason:
+          delivery.state === "acknowledged"
+            ? `Read by the external agent at ${delivery.acknowledged_at}`
+            : `Not read yet by the external agent; it expires at ${delivery.expires_at}`,
+      }),
+      inbox: delivery,
+    };
+  } catch (error) {
+    return nothing(`${error}`);
+  }
+}
+
+/** A request about a message to an external network member's inbox. */
+function externalTargetRequest(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: Extract<
+    AgentRpcRequest,
+    {
+      action:
+        | "send"
+        | "prepare-attachments"
+        | "cancel-attachments"
+        | "inspect"
+        | "withdraw";
+    }
+  >,
+) {
+  if (request.action === "send")
+    return submitExternalInbox(account_id, source, run_id, request);
+  if (request.action === "inspect")
+    return inspectExternalInbox(account_id, source, run_id, request);
+  return rpcOutcome(request, "rejected", {
+    chat_effect: "none",
+    reason:
+      request.action === "withdraw"
+        ? "A message in an external inbox cannot be withdrawn: no turn starts there"
+        : "External inbox attachments are not available",
+  });
+}
+
 async function submitExternalInbox(
   account_id: string,
   source: AgentRpcSource,
@@ -1046,6 +1149,8 @@ async function submitExternalInbox(
       agent_network_id: checked.agent_network_id,
       network_generation: checked.network_generation,
       source,
+      // The sender's authenticated account: only it may inspect later.
+      source_account_id: account_id,
       body: request.body,
     });
     const outcome = rpcOutcome(request, "accepted", {
@@ -1126,14 +1231,8 @@ export async function acceptAgentRpc(
     );
   if (request.action === "inbox" || request.action === "ack-inbox")
     throw new Error("native agents do not have an external inbox");
-  if (isExternalAgentSource(request.target)) {
-    if (request.action !== "send")
-      return rpcOutcome(request, "rejected", {
-        chat_effect: "none",
-        reason: "External inbox supports direct send only",
-      });
-    return submitExternalInbox(run.account_id, source, run_id, request);
-  }
+  if (isExternalAgentSource(request.target))
+    return externalTargetRequest(run.account_id, source, run_id, request);
   const target = request.target;
   if (
     request.action === "prepare-attachments" ||
@@ -1242,14 +1341,8 @@ export async function acceptExternalAgentRpc(
       installation_id,
       request.message_id,
     );
-  if (isExternalAgentSource(request.target)) {
-    if (request.action !== "send")
-      return rpcOutcome(request, "rejected", {
-        chat_effect: "none",
-        reason: "External inbox supports direct send only",
-      });
-    return submitExternalInbox(account_id, source, undefined, request);
-  }
+  if (isExternalAgentSource(request.target))
+    return externalTargetRequest(account_id, source, undefined, request);
   const target = request.target;
   if (request.action === "inspect" || request.action === "withdraw") {
     const { action, ...attempt } = request;

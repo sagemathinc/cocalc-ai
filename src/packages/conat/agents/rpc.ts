@@ -85,6 +85,9 @@ export interface AgentRpcOutcome extends AgentRpcAttempt {
   operation?: { id: string; disposition: "queued" | "running" | "steered" };
   /** inspect: what became of the turn it started, if the recipient knows. */
   turn?: import("./rpc-turn").AgentRpcTurnState;
+  /** inspect, for an external member: whether it read the message (no turn
+   * starts there). */
+  inbox?: import("./external").ExternalAgentDelivery;
 }
 
 export interface AgentRpcBroadcast {
@@ -364,7 +367,10 @@ export function rpcOutcome(
   attempt: AgentRpcAttempt,
   outcome: AgentRpcOutcome["outcome"],
   extra: Partial<
-    Pick<AgentRpcOutcome, "reason" | "code" | "chat_effect" | "operation">
+    Pick<
+      AgentRpcOutcome,
+      "reason" | "code" | "chat_effect" | "operation" | "inbox"
+    >
   > = {},
 ): AgentRpcOutcome {
   return {
@@ -403,6 +409,15 @@ export function validateAgentRpcOutcome(
   )
     throw new Error("Recipient acknowledgment is invalid or mismatched");
   if (value.turn !== undefined) validateAgentRpcTurnState(value.turn);
+  if (
+    value.inbox !== undefined &&
+    (!["pending", "acknowledged"].includes(value.inbox?.state) ||
+      typeof value.inbox.created_at !== "string" ||
+      typeof value.inbox.expires_at !== "string" ||
+      (value.inbox.acknowledged_at !== undefined &&
+        typeof value.inbox.acknowledged_at !== "string"))
+  )
+    throw new Error("Recipient acknowledgment is invalid or mismatched");
 }
 
 export function validateAgentRpcBroadcastOutcome(

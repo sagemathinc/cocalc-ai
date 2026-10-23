@@ -61,6 +61,7 @@ import {
   CONTEXT_FENCE_VERSION,
   planThreadFork,
   buildForkedThread,
+  sharedCodexThreadConfig,
   type ThreadForkSource,
   type ChatThreadAnchor,
   type ChatThreadResolvedMeta,
@@ -3101,10 +3102,12 @@ export class ChatActions extends Actions<ChatState> {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
     const currentConfig = this.getCodexConfig(threadId) ?? {};
-    const mergedConfig: Partial<CodexThreadConfig> = {
+    // Thread config is shared with collaborators: never save a subscription
+    // in it, and drop one an older client saved.
+    const mergedConfig: Partial<CodexThreadConfig> = sharedCodexThreadConfig({
       ...currentConfig,
       ...config,
-    };
+    });
     const model = mergedConfig.model ?? DEFAULT_CODEX_MODEL_NAME;
     const sessionId = normalizeCodexSessionId(mergedConfig.sessionId);
     const nextConfig: CodexThreadConfig = {

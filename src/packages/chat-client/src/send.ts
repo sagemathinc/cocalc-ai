@@ -9,6 +9,7 @@ import {
   buildCodexAcpConfig,
   buildThreadStateRecord,
   normalizeCodexMention,
+  sharedCodexThreadConfig,
   type ChatMessage,
   type ChatThreadConfigRecord,
 } from "@cocalc/chat/core";
@@ -368,7 +369,7 @@ export class ChatSendPipeline {
       config: buildCodexAcpConfig({
         path: this.options.path,
         config: {
-          ...(configRow.acp_config ?? {}),
+          ...sharedCodexThreadConfig(configRow.acp_config),
           ...(inferSessionId(allRows, threadId)
             ? { sessionId: inferSessionId(allRows, threadId) }
             : {}),
@@ -524,7 +525,7 @@ export class ChatSendPipeline {
       config: buildCodexAcpConfig({
         path: this.options.path,
         config: {
-          ...(configRow.acp_config ?? {}),
+          ...sharedCodexThreadConfig(configRow.acp_config),
           sessionId,
         },
         model: normalizeCodexMention(configRow.agent_model),

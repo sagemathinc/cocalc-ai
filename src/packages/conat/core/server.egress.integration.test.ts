@@ -389,7 +389,9 @@ describe("core server authenticated browser egress integration", () => {
       const { value: mesg } = await apiSub.next();
       await mesg.respond(replyPayload);
     })();
-    const response = await browser.request(apiSubject, "load");
+    const response = await browser.request(apiSubject, "load", {
+      headers: { "CN-Egress-Label": "history.load" },
+    });
     await responding;
     expect(response.data).toBe(replyPayload);
 
@@ -399,7 +401,7 @@ describe("core server authenticated browser egress integration", () => {
         "browser-attr",
       );
       const bySubject = current?.stats.egress_by_subject ?? {};
-      return (bySubject["reply:egress.attr.*.history"] ?? 0) >
+      return (bySubject["reply:egress.attr.*.history#history.load"] ?? 0) >
         Buffer.byteLength(replyPayload) &&
         (bySubject["egress.attr.*.changes"] ?? 0) >
           Buffer.byteLength(pushPayload)

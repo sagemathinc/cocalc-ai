@@ -184,6 +184,7 @@ import {
   projectVolumeQuotaIsApplied,
 } from "../sqlite/volume-quotas";
 import { getRecordedProjectVolumeIdentity } from "../sqlite/project-volumes";
+import { assertHomeSnapshotRestoreAllowed } from "../persist-volume";
 import { effectiveProjectVolumeQuotaBytes } from "../sqlite/volume-quota-overrides";
 
 const logger = getLogger("project-host:hub:projects");
@@ -2806,6 +2807,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     if (!["both", "home", "rootfs"].includes(mode)) {
       throw Error(`invalid snapshot restore mode: ${mode}`);
     }
+    // before stopping the project or taking a safety snapshot
+    assertHomeSnapshotRestoreAllowed({ project_id, mode });
     const safetySnapshotName =
       safety_snapshot_name ?? defaultSafetySnapshotName(snapshot);
     if (snapshot === safetySnapshotName) {

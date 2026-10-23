@@ -3,6 +3,10 @@ import type { Headers } from "./client";
 
 export const REPLY_HEADER = "CN-Reply";
 export const SOCKET_RETURN_HEADER = "CN-SocketReturn";
+// Optional label for egress attribution of a request's reply, e.g. the hub
+// API method name.  Advisory only: the server never trusts it for anything
+// but accounting labels (see core/egress-attribution.ts).
+export const EGRESS_LABEL_HEADER = "CN-Egress-Label";
 export const MAX_MESSAGE_HEADER_BYTES = 100_000;
 
 function invalid(reason: string): never {

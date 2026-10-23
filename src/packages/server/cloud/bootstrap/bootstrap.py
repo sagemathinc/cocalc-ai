@@ -7771,7 +7771,9 @@ normalize_project_io_class_state() {
 
 reconcile_project_io_policy() {
   local pool project_id
-  acquire_project_cgroup_lock
+  # (background maintenance: it waits for a start or snapshot holding the
+  # lock, rather than failing the whole host reconcile after 5 s)
+  acquire_project_cgroup_lock "$PROJECT_IO_RECONCILE_LOCK_WAIT_SECONDS"
   normalize_project_io_class_state
   configure_project_pool_hierarchy
   configure_maintenance_cgroup
@@ -8711,10 +8713,16 @@ emit_project_network_rules() {
 }
 
 apply_pasta_resource_limits() {
-  local pid="$1"
+  local pid="$1" err
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 0
-  /usr/bin/prlimit --pid "$pid" \
-    --nofile="${PROJECT_PASTA_NOFILE_LIMIT}:${PROJECT_PASTA_NOFILE_LIMIT}"
+  if ! err="$(/usr/bin/prlimit --pid "$pid" \
+    --nofile="${PROJECT_PASTA_NOFILE_LIMIT}:${PROJECT_PASTA_NOFILE_LIMIT}" 2>&1)"; then
+    # A pasta process that exited meanwhile (its project stopped) needs no
+    # limit: only fail for one that is still there.
+    kill -0 "$pid" 2>/dev/null || return 0
+    printf '%s\\n' "$err" >&2
+    return 1
+  fi
 }
 
 project_cgroup_has_processes() {

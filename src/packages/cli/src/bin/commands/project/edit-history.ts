@@ -406,7 +406,12 @@ export function registerProjectEditHistoryCommands(
             }
             const before = olderThan(opts.olderThan);
             const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
-            const { streams } = await list(ctx, ws.project_id);
+            const { streams, truncated } = await list(ctx, ws.project_id);
+            if (truncated) {
+              process.stderr.write(
+                `this project has more than ${streams.length} streams: this only cleans up the largest ${streams.length}\n`,
+              );
+            }
             return await apply(
               ctx,
               ws.project_id,

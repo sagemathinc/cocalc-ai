@@ -1228,13 +1228,7 @@ export async function getBuiltinLaunchpadSkillMounts(
   const mounts: OptionalBindMount[] = [];
   for (const skillName of BUILTIN_LAUNCHPAD_SKILLS) {
     const source = join(skillsRoot, skillName);
-    const projectSkill = join(projectSkillsRoot, skillName);
-    try {
-      const projectStat = await fs.stat(projectSkill);
-      if (projectStat.isDirectory()) continue;
-    } catch {
-      // Missing project-local skill is the normal case.
-    }
+    if (await hasProjectSkill(join(projectSkillsRoot, skillName))) continue;
     mounts.push({
       source,
       target: join(PROJECT_RUNTIME_CODEX_HOME, "skills", skillName),
@@ -1242,6 +1236,21 @@ export async function getBuiltinLaunchpadSkillMounts(
     });
   }
   return mounts;
+}
+
+/**
+ * A project overrides a packaged skill only with a real one: a SKILL.md.
+ * Mounting the packaged skill leaves its (empty) mount point in the
+ * project's home, and that must not count as an override, or the skill would
+ * mount only on the first start.
+ */
+async function hasProjectSkill(dir: string): Promise<boolean> {
+  try {
+    return (await fs.stat(join(dir, "SKILL.md"))).isFile();
+  } catch {
+    // Missing (or unreadable) project-local skill is the normal case.
+    return false;
+  }
 }
 
 /** First-party skill text only: never load controller instructions from project HOME. */
@@ -1265,12 +1274,7 @@ export async function getBuiltinClaudeSkillMount(
   } catch {
     // Best effort: project home mount may already provide this path.
   }
-  const projectSkill = join(projectSkillsRoot, "cocalc");
-  try {
-    if ((await fs.stat(projectSkill)).isDirectory()) return [];
-  } catch {
-    // A missing project override uses the packaged first-party skill.
-  }
+  if (await hasProjectSkill(join(projectSkillsRoot, "cocalc"))) return [];
   const skillsRoot = await resolvePackagedSkillsRoot(packagedSkillsRoot);
   return [
     {
