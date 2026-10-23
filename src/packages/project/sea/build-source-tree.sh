@@ -27,7 +27,7 @@ fi
 keep() {
   grep -Ev '\.(png|jpe?g|gif|webp|svg|ico|mp4|webm|ttf|otf|woff2?|eot|pdf|wasm|zip|gz|tgz|lock|map)$' |
     grep -Ev '(^|/)pnpm-lock\.yaml$' |
-    grep -Ev '(\.test\.|\.spec\.|/__tests__/|/test/|/tests/|\.snap$|/(__)?fixtures?(__)?/)' |
+    grep -Ev '(\.test\.|\.spec\.|\.browser-test\.|/__tests?__/|/test/|/tests/|/playwright/|playwright\.config|\.snap$|/(__)?fixtures?(__)?/)' |
     grep -Ev '^\.(agents|skills)/' |
     grep -Ev '^scripts/' |
     grep -Ev '^packages/frontend/i18n/trans/' |
@@ -64,9 +64,11 @@ fi
   echo
   echo "| Package | Files | What it is |"
   echo "|---|---|---|"
-  for pj in "$OUT"/packages/*/package.json; do
+  # every workspace package, nested ones (e.g. packages/apps/notebook) too
+  find "$OUT/packages" -name package.json -not -path "*/node_modules/*" | sort |
+  while read -r pj; do
     dir="$(dirname "$pj")"
-    name="$(basename "$dir")"
+    name="${dir#"$OUT"/packages/}"
     desc="$(node -e 'const d=require(process.argv[1]); console.log(String(d.description ?? "").replace(/\|/g, "/").trim())' "$pj" 2>/dev/null || true)"
     files="$(find "$dir" -type f | wc -l | tr -d ' ')"
     echo "| \`packages/$name\` | $files | $desc |"
