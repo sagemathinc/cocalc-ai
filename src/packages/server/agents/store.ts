@@ -7,12 +7,26 @@ import {
   type AgentIdentity,
 } from "@cocalc/conat/agents/protocol";
 
-// Concurrent runs an agent may hold. Ended and expired runs do not count:
-// they are history, removed 30 days later by maintenance. A busy agent can
-// start thousands of turns a day and must not be locked out by its past.
+// Runs an agent may hold at once. Ended and expired runs do not count: a
+// busy agent starts thousands of turns a day and must not be locked out by
+// its past.
 export const MAX_LIVE_RUNS_PER_AGENT = 10_000;
-const LIVE_RUN_COUNT_SQL =
-  "SELECT count(*) AS count FROM agent_identity_runs WHERE agent_id=$1 AND ended_at IS NULL AND expires_at>now()";
+// Run history kept for an agent (maintenance removes runs 30 days after they
+// end). This bounds rows from issuing and ending runs in a loop, far above
+// the ~60k a month of the busiest real agent.
+export const MAX_RETAINED_RUNS_PER_AGENT = 250_000;
+const RUN_COUNTS_SQL = `SELECT count(*) FILTER (WHERE ended_at IS NULL AND expires_at>now()) AS live,
+  count(*) AS retained FROM agent_identity_runs WHERE agent_id=$1`;
+
+function atRunCapacity(row: {
+  live: string | number;
+  retained: string | number;
+}) {
+  return (
+    +row.live >= MAX_LIVE_RUNS_PER_AGENT ||
+    +row.retained >= MAX_RETAINED_RUNS_PER_AGENT
+  );
+}
 
 export function agentMessagingEnabled(): boolean {
   return true;
@@ -134,9 +148,9 @@ export class AgentStore {
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           `agent-runs:${agent.agent_id}`,
         ]);
-        const count = (await db.query(LIVE_RUN_COUNT_SQL, [agent.agent_id]))
-          .rows[0];
-        const atCapacity = +count.count >= MAX_LIVE_RUNS_PER_AGENT;
+        const atCapacity = atRunCapacity(
+          (await db.query(RUN_COUNTS_SQL, [agent.agent_id])).rows[0],
+        );
         // A recovery may have committed even if its response was lost. Retrying
         // the exact old/new run pair renews that replacement instead of
         // permanently wedging the worker on an unknown outcome. A replacement
@@ -194,9 +208,11 @@ export class AgentStore {
           )
         ).rows[0];
         if (!existing) {
-          const count = (await db.query(LIVE_RUN_COUNT_SQL, [agent.agent_id]))
-            .rows[0];
-          if (+count.count >= MAX_LIVE_RUNS_PER_AGENT)
+          if (
+            atRunCapacity(
+              (await db.query(RUN_COUNTS_SQL, [agent.agent_id])).rows[0],
+            )
+          )
             throw new Error("agent_identity_run_capacity");
         }
         return (

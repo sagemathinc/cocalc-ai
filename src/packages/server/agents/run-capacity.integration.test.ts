@@ -7,7 +7,11 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
-import { agentStore, MAX_LIVE_RUNS_PER_AGENT } from "./store";
+import {
+  agentStore,
+  MAX_LIVE_RUNS_PER_AGENT,
+  MAX_RETAINED_RUNS_PER_AGENT,
+} from "./store";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -126,5 +130,14 @@ describeDb("agent run capacity", () => {
       original,
     );
     expect(renewed.run_id).toBe(replacement);
+  });
+
+  test("retained history is still bounded, far above real use", async () => {
+    // Issuing and ending runs in a loop cannot grow history without limit.
+    await addRuns(MAX_RETAINED_RUNS_PER_AGENT - 1, "ended");
+    await agentStore().issue(await agent(), randomUUID(), account);
+    await expect(
+      agentStore().issue(await agent(), randomUUID(), account),
+    ).rejects.toThrow("agent_identity_run_capacity");
   });
 });
