@@ -37,6 +37,8 @@ import {
   persistVolumeQuota,
   prepareProjectPersistVolume,
   replaceProjectHome,
+  projectHomeInstalledAt,
+  withProjectStorageFenced,
   restoreBackupWithHistory,
   restoredHistoryCandidates,
   assertHomeSnapshotRestoreAllowed,
@@ -816,6 +818,46 @@ describe("in the project-host", () => {
     expect(fence).toHaveBeenCalledTimes(1);
     // replaced: clients load it again
     expect(fenceOpts[fenceOpts.length - 1].replaces).toBeUndefined();
+  });
+
+  it("a deletion checked under the persist lock sees a home a restore installed while it waited", async () => {
+    // a stale-project deletion (master-status.ts) decided before a restore
+    // installed the home here must see it, not delete it after
+    const outside = { COCALC_SYNC_PROJECTS: join(mount, "persist") };
+    const replacement = join(mount, "replacement");
+    await mkdir(replacement);
+    let finishSwap: () => void = () => {};
+    let swapStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => (swapStarted = resolve));
+    const restore = replaceProjectHome({
+      project_id: PROJECT,
+      replacement,
+      reason: "restore",
+      historyInHome: false,
+      env: outside,
+      ops: fakeOps(),
+      swap: async () => {
+        swapStarted();
+        await new Promise<void>((resolve) => (finishSwap = resolve));
+        return "swapped";
+      },
+    });
+    await started;
+    const decided = Date.now();
+    let seen: number | undefined | null = null;
+    const deletion = withProjectStorageFenced(
+      { project_id: PROJECT, reason: "delete", env: outside },
+      async () => {
+        seen = projectHomeInstalledAt(PROJECT);
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // still waiting for the restore's lock
+    expect(seen).toBeNull();
+    finishSwap();
+    await restore;
+    await deletion;
+    expect(seen).toBeGreaterThanOrEqual(decided);
   });
 
   it("restores the history of a snapshot taken before the import", async () => {
