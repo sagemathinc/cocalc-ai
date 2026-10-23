@@ -18,10 +18,11 @@ export async function assertSnapshotRestoreAllowed({
   try {
     await client.checkSnapshotRestore({ project_id, mode });
   } catch (err) {
+    const message = `${(err as any)?.message ?? err}`;
     if (
-      `${(err as any)?.message ?? err}`.includes(
-        "unknown service method 'checkSnapshotRestore'",
-      )
+      // (fast-rpc, and the request transport)
+      message.includes("unknown service method 'checkSnapshotRestore'") ||
+      message.includes("impl[mesg.name] is not a function")
     ) {
       return;
     }
