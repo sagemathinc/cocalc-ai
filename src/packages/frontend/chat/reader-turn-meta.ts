@@ -19,11 +19,14 @@ import { newest_content } from "./utils";
 
 export type { TurnMeta, TurnPriority };
 
-/** What the agent said about the item's turn, from any of its messages. */
+/**
+ * What the agent said about the item's turn, from its replies: never from
+ * a person's message, which an agent must not be able to label.
+ */
 export function itemTurnMeta(item: ReaderItem): TurnMeta {
   const meta: TurnMeta = {};
   for (const message of item.messages)
-    Object.assign(meta, readTurnMeta(message));
+    if (isAgentReply(message)) Object.assign(meta, readTurnMeta(message));
   return meta;
 }
 

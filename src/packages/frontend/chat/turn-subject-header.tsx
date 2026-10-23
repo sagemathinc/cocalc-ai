@@ -7,11 +7,15 @@
 // subject as a heading on its reply, and a high priority marked as in the
 // reader. Only what the agent set: the reader's defaults (a first line, a
 // priority by who started the turn) would just repeat the message here.
+// Only on an agent's reply: never as a banner on a person's message.
 
 import { readTurnMeta } from "@cocalc/chat";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { isAgentReply } from "./reader-model";
+import type { ChatMessageTyped } from "./types";
 
-export function TurnSubjectHeader({ message }: { message: unknown }) {
+export function TurnSubjectHeader({ message }: { message: ChatMessageTyped }) {
+  if (!isAgentReply(message)) return null;
   const { subject, priority } = readTurnMeta(message);
   const high = priority === "high";
   const low = priority === "low";
@@ -48,6 +52,8 @@ export function TurnSubjectHeader({ message }: { message: unknown }) {
       ) : null}
       {subject ? (
         <span
+          role="heading"
+          aria-level={2}
           style={{
             fontWeight: 600,
             color: low ? UI_COLORS.muted : undefined,
