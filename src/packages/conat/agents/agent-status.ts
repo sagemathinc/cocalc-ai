@@ -8,9 +8,10 @@
 // it travels with the agent's identity to everyone who may message it
 // (`agent destinations`, the Agents page). It never names the credential.
 
-import type {
-  TurnFailureKind,
-  TurnOutcome,
+import {
+  TURN_OUTCOME_DETAIL_MAX,
+  type TurnFailureKind,
+  type TurnOutcome,
 } from "@cocalc/conat/ai/acp/turn-outcome";
 
 export interface AgentTurnStatus {
@@ -26,8 +27,16 @@ export interface AgentTurnStatus {
    * latest turn. The hub turns it into `unavailable` for that account and
    * never passes it on (see agentTurnStatusFor). */
   by_account?: Record<string, AgentUnavailable>;
-  /** How its last turn ended. */
-  last?: { state: TurnOutcome["state"]; kind?: TurnFailureKind; at: number };
+  /** When its current turn started (the earliest running one), if busy. */
+  running_since?: number;
+  /** How its last turn ended; detail is the outcome's one line for people
+   * (e.g. why it failed), never tool output. */
+  last?: {
+    state: TurnOutcome["state"];
+    kind?: TurnFailureKind;
+    detail?: string;
+    at: number;
+  };
   /** When the host computed it (ms). */
   at: number;
 }
@@ -65,6 +74,13 @@ function parseUnavailable(value: unknown): AgentUnavailable | undefined {
   return { reason: u.reason, ...(u.until ? { until: u.until } : {}) };
 }
 
+/** One line, bounded: what a status may say about how a turn ended. */
+export function statusDetail(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const line = value.replace(/\s+/g, " ").trim();
+  return line ? line.slice(0, TURN_OUTCOME_DETAIL_MAX) : undefined;
+}
+
 const count = (value: unknown) =>
   Number.isSafeInteger(value) && (value as number) >= 0;
 const time = (value: unknown) =>
@@ -85,6 +101,7 @@ export function parseAgentTurnStatus(
   )
     return;
   if (s.unavailable !== undefined && !parseUnavailable(s.unavailable)) return;
+  if (s.running_since !== undefined && !time(s.running_since)) return;
   let by_account: Record<string, AgentUnavailable> | undefined;
   if (s.by_account !== undefined) {
     if (!s.by_account || typeof s.by_account !== "object") return;
@@ -102,6 +119,7 @@ export function parseAgentTurnStatus(
     (!s.last ||
       !OUTCOME_STATES.includes(s.last.state) ||
       (s.last.kind !== undefined && !FAILURE_KINDS.includes(s.last.kind)) ||
+      (s.last.detail !== undefined && typeof s.last.detail !== "string") ||
       !time(s.last.at))
   )
     return;
@@ -112,11 +130,15 @@ export function parseAgentTurnStatus(
     queued: s.queued,
     ...(s.unavailable ? { unavailable: parseUnavailable(s.unavailable) } : {}),
     ...(by_account ? { by_account } : {}),
+    ...(s.running_since ? { running_since: s.running_since } : {}),
     ...(s.last
       ? {
           last: {
             state: s.last.state,
             ...(s.last.kind ? { kind: s.last.kind } : {}),
+            ...(statusDetail(s.last.detail)
+              ? { detail: statusDetail(s.last.detail) }
+              : {}),
             at: s.last.at,
           },
         }
@@ -149,6 +171,8 @@ export function agentTurnStatusOf(opts: {
   queued: number;
   last?: { outcome?: TurnOutcome; at: number };
   byAccount?: Record<string, { outcome?: TurnOutcome; running?: number }>;
+  /** When the earliest running turn started. */
+  runningSince?: number;
   now: number;
 }): AgentTurnStatus {
   const outcome = opts.last?.outcome;
@@ -174,11 +198,17 @@ export function agentTurnStatusOf(opts: {
     // A turn running now means it is not stuck on the last failure.
     ...(unavailable && opts.running === 0 ? { unavailable } : {}),
     ...(by_account && Object.keys(by_account).length ? { by_account } : {}),
+    ...(opts.running > 0 && opts.runningSince
+      ? { running_since: opts.runningSince }
+      : {}),
     ...(opts.last && outcome
       ? {
           last: {
             state: outcome.state,
             ...(failure ? { kind: failure.kind } : {}),
+            ...(statusDetail(outcome.detail)
+              ? { detail: statusDetail(outcome.detail) }
+              : {}),
             at: opts.last.at,
           },
         }

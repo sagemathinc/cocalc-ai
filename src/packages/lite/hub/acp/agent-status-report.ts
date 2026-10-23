@@ -111,11 +111,18 @@ export function agentThreadStatus(
   thread: Thread,
   now = Date.now(),
 ): AgentTurnStatus {
-  const { running, queued, last, lastByAccount, runningByAccount } =
-    acpThreadJobSummary(thread);
+  const {
+    running,
+    queued,
+    last,
+    lastByAccount,
+    runningByAccount,
+    runningSince,
+  } = acpThreadJobSummary(thread);
   return agentTurnStatusOf({
     running,
     queued,
+    runningSince,
     byAccount: Object.fromEntries(
       Object.entries(lastByAccount).map(([account_id, job]) => [
         account_id,

@@ -9,7 +9,10 @@ import { constants } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
 import { sendIdentityMessage } from "../../core/agent-message";
 import { sendExternalAgentMessage } from "../../core/external-agent-message";
-import { resolveBroadcastTargets } from "../../core/agent-destination";
+import {
+  resolveAgentName,
+  resolveBroadcastTargets,
+} from "../../core/agent-destination";
 import {
   createAgentFromCopy,
   listNamedAgentsSummary,
@@ -17,7 +20,10 @@ import {
 } from "../../core/agent-create";
 import { akv } from "@cocalc/conat/sync/akv";
 import { externalAgentHandle } from "@cocalc/conat/agents/external";
-import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
+import {
+  AGENT_TURN_STATUS_TTL_MS,
+  agentTurnStatusText,
+} from "@cocalc/conat/agents/agent-status";
 import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
 import { CHAT_DRAFT_STORE } from "@cocalc/chat";
 import {
@@ -244,6 +250,28 @@ export function registerAgentCommands(
     .action((opts, cmd) =>
       destinations(opts, cmd, `${prefix} rpc destinations`, true),
     );
+  agent
+    .command("status")
+    .argument("[name]", "a peer's @name (default: every peer)")
+    .option(
+      "--network <title-or-id>",
+      "the Agent Network, if the name is in several",
+    )
+    .description(
+      "what your peers are doing: busy (since when) or idle, waiting turns, and how each one's last turn ended, with why if it failed; to be woken when that changes: sensor watch agent",
+    )
+    .action(async (name: string | undefined, opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      const directory = (await sendIdentityMessage(
+        { version: 3, action: "destinations" },
+        globals.api,
+      )) as AgentNetworkDiscovery;
+      emitSuccess(
+        { globals },
+        `${prefix} status`,
+        agentStatusReport(directory, Date.now(), name, opts.network),
+      );
+    });
   agent
     .command("inbox")
     .requiredOption(
@@ -912,5 +940,98 @@ export async function watchSentTurn(
     summary:
       "You will get one [Sensor wake] turn when its turn ends; you can end your turn now.",
     sensor_id: set?.sensor?.sensor_id,
+  };
+}
+
+const ago = (ms: number, now: number): string => {
+  const minutes = Math.max(0, Math.round((now - ms) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
+};
+
+const ENDED: Record<string, string> = {
+  completed: "completed",
+  failed: "failed",
+  canceled: "was canceled",
+  "never-started": "never started",
+};
+
+/**
+ * What each peer (or the one named) is doing, from the status its host
+ * reports to peers: `agent status`. External agents report no turns.
+ */
+export function agentStatusReport(
+  directory: AgentNetworkDiscovery,
+  now: number,
+  name?: string,
+  network?: string,
+) {
+  let peers = directory.peers;
+  if (name) {
+    const { target } = resolveAgentName(name, directory, [], network);
+    peers = peers.filter(({ member }) =>
+      member.kind === "registered"
+        ? member.endpoint.agent_id === (target as any).agent_id &&
+          member.endpoint.project_id === (target as any).project_id
+        : false,
+    );
+    if (!peers.length)
+      throw new Error(
+        `@${name.replace(/^@/, "")} is an external agent: its turns are not reported`,
+      );
+  }
+  return {
+    agents: peers
+      .filter(({ member }) => member.kind === "registered")
+      .map(({ member, same_project, networks }) => {
+        if (member.kind !== "registered") throw new Error("unreachable");
+        const status = member.status;
+        const fresh =
+          status != null && now - status.at <= AGENT_TURN_STATUS_TTL_MS;
+        const last = fresh ? status!.last : undefined;
+        return {
+          name: member.name,
+          ...(member.project_title ? { project: member.project_title } : {}),
+          ...(typeof same_project === "boolean" ? { same_project } : {}),
+          networks: networks.map(({ title }) => title),
+          // A phrase for people: busy, N waiting, idle, unavailable until ...
+          state: fresh
+            ? (agentTurnStatusText(status, now, (ms) =>
+                new Date(ms).toISOString(),
+              ) ?? "idle")
+            : "unknown (no report in the last day)",
+          ...(fresh
+            ? {
+                running: status!.running,
+                queued: status!.queued,
+                ...(status!.running_since
+                  ? {
+                      busy_since: new Date(status!.running_since).toISOString(),
+                      busy_for: ago(status!.running_since, now).replace(
+                        / ago$/,
+                        "",
+                      ),
+                    }
+                  : {}),
+                ...(status!.unavailable
+                  ? { unavailable: status!.unavailable }
+                  : {}),
+              }
+            : {}),
+          ...(last
+            ? {
+                last_turn: {
+                  ended: ENDED[last.state] ?? last.state,
+                  ...(last.kind ? { kind: last.kind } : {}),
+                  ...(last.detail ? { detail: last.detail } : {}),
+                  at: new Date(last.at).toISOString(),
+                  ago: ago(last.at, now),
+                },
+              }
+            : {}),
+        };
+      }),
   };
 }

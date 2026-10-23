@@ -628,6 +628,7 @@ cocalc agent send reviewer --file notes.md     # the same, from a file
 cocalc agent send reviewer --attach report.pdf "Results attached"
 cocalc agent broadcast --to reviewer,tester "Release at 10pm"
 cocalc agent whoami                            # this runtime's identity
+cocalc agent status [reviewer]                 # what peers are doing, how their last turn ended
 ```
 
 - A message is at most 32 KiB. Send longer material with `--attach`

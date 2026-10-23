@@ -549,17 +549,21 @@ export function acpThreadJobSummary({
   lastByAccount: Record<string, AcpJobRow>;
   /** Each account's running jobs. */
   runningByAccount: Record<string, number>;
+  /** When the earliest running job started. */
+  runningSince?: number;
 } {
   ensureInit();
   const db = getAcpDatabase();
   const counts = db
     .prepare(
-      `SELECT SUM(state = 'running') AS running, SUM(state = 'queued') AS queued
+      `SELECT SUM(state = 'running') AS running, SUM(state = 'queued') AS queued,
+              MIN(CASE WHEN state = 'running' THEN started_at END) AS running_since
        FROM ${TABLE} WHERE project_id = ? AND path = ? AND thread_id = ?`,
     )
     .get(project_id, path, thread_id) as {
     running?: number | null;
     queued?: number | null;
+    running_since?: number | null;
   };
   const last = db
     .prepare(
@@ -602,6 +606,7 @@ export function acpThreadJobSummary({
     ...(last ? { last } : {}),
     lastByAccount,
     runningByAccount,
+    ...(counts?.running_since ? { runningSince: counts.running_since } : {}),
   };
 }
 
