@@ -6,8 +6,13 @@
 import { _test, createStorageAdmissionController } from "./storage-admission";
 
 describe("storage admission controller", () => {
+  // Most tests here are about how pressure is classified and what each
+  // state admits, so they take every sample as a state sample and escalate
+  // on one (the hysteresis has its own tests below, with the defaults).
+  const immediate = { contendedSamples: 1, minStateSampleMs: 0 };
   let now = 1_000_000;
   let full = 0;
+  let full60: number | undefined = undefined;
   let starting = 0;
   let stopping = 0;
 
@@ -16,6 +21,7 @@ describe("storage admission controller", () => {
     extra: Parameters<typeof createStorageAdmissionController>[0] = {},
   ) =>
     createStorageAdmissionController({
+      ...immediate,
       ...extra,
       mode,
       now: () => now,
@@ -23,6 +29,7 @@ describe("storage admission controller", () => {
         sampled_at_ms: now,
         host_io_full_avg10: full,
         project_pool_io_full_avg10: full / 2,
+        ...(full60 == null ? {} : { host_io_full_avg60: full60 }),
         starting_projects: starting,
         stopping_projects: stopping,
         btrfs_mutation_locks: 0,
@@ -34,15 +41,14 @@ describe("storage admission controller", () => {
   beforeEach(() => {
     now = 1_000_000;
     full = 0;
+    full60 = undefined;
     starting = 0;
     stopping = 0;
   });
 
-  it("enters contention after two samples and emergency immediately", () => {
+  it("classifies pressure into contended and emergency", () => {
     const controller = create();
     full = 5;
-    expect(controller.sample().pressure_state).toBe("normal");
-    now += 5_000;
     expect(controller.sample().pressure_state).toBe("contended");
     full = 10;
     now += 5_000;
@@ -52,6 +58,93 @@ describe("storage admission controller", () => {
       host_io_full_avg10: 10,
       project_pool_io_full_avg10: 5,
       uncontained_io_full_avg10: 5,
+    });
+  });
+
+  describe("hysteresis (the defaults)", () => {
+    // what prod runs: samples >= 4 s apart, 2 of them per escalation
+    const gate = () =>
+      create("enforce", { contendedSamples: 2, minStateSampleMs: 4_000 });
+
+    it("does not flip on a single burst, however many operations ask meanwhile", () => {
+      // 2026-10-23: montreal-2 flipped 128 times in 30 min on SQLite
+      // checkpoint / btrfs commit bursts, deferring ~2100 snapshots.
+      const controller = gate();
+      full = 30;
+      for (let i = 0; i < 20; i++) {
+        now += 100;
+        expect(
+          controller.admit({ operation_kind: "scheduled_snapshot" }),
+        ).toMatchObject({ admitted: true });
+      }
+      expect(controller.getStatus().pressure_state).toBe("normal");
+      // the burst is over by the next timer sample
+      full = 1;
+      now = 1_005_000;
+      expect(controller.sample().pressure_state).toBe("normal");
+      expect(controller.getStatus().transition_count).toBe(0);
+    });
+
+    // (the controller samples once when created, at `now`)
+    const tick = (controller: ReturnType<typeof gate>) => {
+      now += 5_000;
+      return controller.sample().pressure_state;
+    };
+
+    it("still gates sustained pressure: contended, then emergency", () => {
+      const controller = gate();
+      full = 6;
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("contended");
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, reason: "io_pressure_contended" });
+      full = 12;
+      expect(tick(controller)).toBe("contended");
+      expect(tick(controller)).toBe("emergency");
+    });
+
+    it("escalates again from recovery only on sustained pressure", () => {
+      const controller = gate();
+      full = 6;
+      tick(controller);
+      expect(tick(controller)).toBe("contended");
+      full = 1;
+      expect(tick(controller)).toBe("recovery");
+      // one burst: still recovery
+      full = 8;
+      expect(tick(controller)).toBe("recovery");
+      full = 1;
+      expect(tick(controller)).toBe("recovery");
+      // sustained: contended
+      full = 8;
+      expect(tick(controller)).toBe("recovery");
+      expect(tick(controller)).toBe("contended");
+    });
+
+    it("escalates on bursts that keep the 60 s average up, without bouncing while it decays", () => {
+      const controller = gate();
+      // avg10 alone never stays up for two samples
+      full60 = 6;
+      full = 8;
+      expect(tick(controller)).toBe("normal");
+      full = 0;
+      expect(tick(controller)).toBe("contended");
+      // held while the 60 s average is still up
+      expect(tick(controller)).toBe("contended");
+      full60 = 3;
+      expect(tick(controller)).toBe("recovery");
+      expect(tick(controller)).toBe("recovery");
+    });
+
+    it("keeps lifecycle gating fresh between state samples", () => {
+      const controller = gate();
+      controller.sample();
+      starting = 1;
+      now += 100;
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, reason: "lifecycle_active" });
     });
   });
 
@@ -68,6 +161,7 @@ describe("storage admission controller", () => {
 
   it("does not classify BEES-only waits as actionable host pressure", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -96,6 +190,7 @@ describe("storage admission controller", () => {
     // A rustic backup in cocalc-maintenance stalls on that cgroup's io.max
     // even on an idle disk, so root PSI tracks the backup's own stall.
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -126,6 +221,7 @@ describe("storage admission controller", () => {
 
   it("preserves host pressure above maintenance waits", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -151,6 +247,7 @@ describe("storage admission controller", () => {
 
   it("still counts project-pool pressure while maintenance is throttled", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -178,6 +275,7 @@ describe("storage admission controller", () => {
     // I/O policy disabled or observe: bootstrap clears cocalc-maintenance's
     // io.max, so a backup stalling there is waiting on a saturated disk.
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -208,6 +306,7 @@ describe("storage admission controller", () => {
     // also writes its cache on the uncapped root disk, and cgroup PSI covers
     // every device. A cap alone does not prove the stall is the throttle.
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -313,6 +412,7 @@ describe("storage admission controller", () => {
 
   it("preserves host pressure above BEES and project-pool waits", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -351,6 +451,7 @@ describe("storage admission controller", () => {
   it("keeps protective I/O policy through recovery hysteresis", () => {
     const transitions: string[] = [];
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -842,6 +943,7 @@ describe("storage admission controller", () => {
 
   it("fails background admission closed when pressure cannot be sampled", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({

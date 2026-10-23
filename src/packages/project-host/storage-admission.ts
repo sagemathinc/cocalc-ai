@@ -50,7 +50,18 @@ const DEFAULT_RECOVERY_MS = 60_000;
 // In recovery, scheduled snapshots (short btrfs metadata operations) are
 // admitted at this pace instead of waiting for the next starvation override.
 const DEFAULT_RECOVERY_SNAPSHOT_INTERVAL_MS = 20_000;
+// Consecutive samples, at least MIN_STATE_SAMPLE_MS apart, that every
+// escalation (to contended, back to contended from recovery, to emergency)
+// needs: a single stall burst (a SQLite checkpoint, a btrfs commit) must not
+// defer background work for the whole recovery interval.
 const DEFAULT_CONTENDED_SAMPLES = 2;
+// Admission checks sample too (for fresh lifecycle counts); only samples at
+// least this far apart move the pressure state. Below the 5 s timer, for its
+// jitter.
+const DEFAULT_MIN_STATE_SAMPLE_MS = 4_000;
+// Disk activity is compared over at least this long (maintenance stalls on
+// idle disks), not over the milliseconds between two admission checks.
+const MIN_DISK_ACTIVITY_INTERVAL_MS = 1_000;
 const DEFAULT_BACKGROUND_QUIET_MS = 2_000;
 
 type StorageAdmissionInputs = {
@@ -59,6 +70,11 @@ type StorageAdmissionInputs = {
   project_pool_io_full_avg10?: number;
   bees_io_full_avg10?: number;
   maintenance_io_full_avg10?: number;
+  // the same, averaged over 60 s: sustained pressure made of bursts
+  host_io_full_avg60?: number;
+  project_pool_io_full_avg60?: number;
+  bees_io_full_avg60?: number;
+  maintenance_io_full_avg60?: number;
   // Whether cocalc-maintenance has a finite io.max. Only then is its stall
   // the throttle's own doing rather than real disk contention.
   maintenance_io_capped?: boolean;
@@ -108,6 +124,7 @@ type StorageAdmissionControllerOptions = {
   // 0 disables paced snapshots in recovery.
   recoverySnapshotIntervalMs?: number;
   contendedSamples?: number;
+  minStateSampleMs?: number;
   backgroundQuietMs?: number;
   onPressureStateChange?: (state: HostStoragePressureState) => void;
 };
@@ -137,11 +154,12 @@ function configuredMode(value: unknown): HostStorageAdmissionMode {
   return "observe";
 }
 
-function readIoFullAvg10(path: string): number | undefined {
+function readIoFull(path: string): { avg10?: number; avg60?: number } {
   try {
-    return parseIoPressure(readFileSync(path, "utf8")).fullPercent;
+    const parsed = parseIoPressure(readFileSync(path, "utf8"));
+    return { avg10: parsed.fullPercent, avg60: parsed.fullAvg60Percent };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -240,9 +258,17 @@ function maintenanceStallOnIdleDisks(
 }
 
 let lastDiskActivity: DiskActivity | undefined;
+let lastDisksIdle = false;
 
 function readMaintenanceDisksIdle(): boolean {
-  const next = readDiskActivity(Date.now());
+  const at = Date.now();
+  if (
+    lastDiskActivity != null &&
+    at - lastDiskActivity.at_ms < MIN_DISK_ACTIVITY_INTERVAL_MS
+  ) {
+    return lastDisksIdle;
+  }
+  const next = readDiskActivity(at);
   const idle = maintenanceStallOnIdleDisks(
     lastDiskActivity,
     next,
@@ -252,19 +278,28 @@ function readMaintenanceDisksIdle(): boolean {
     ),
   );
   lastDiskActivity = next;
+  lastDisksIdle = idle;
   return idle;
 }
 
 function defaultReadInputs(): StorageAdmissionInputs {
   const projectCounts = countProjectsByStates(["starting", "stopping"]);
   const locks = getBtrfsMutationLockStatus();
-  const hostIoFullAvg10 = readIoFullAvg10("/proc/pressure/io");
+  const host = readIoFull("/proc/pressure/io");
+  const pool = readIoFull(PROJECT_POOL_IO_PRESSURE);
+  const bees = readIoFull(BEES_IO_PRESSURE);
+  const maintenance = readIoFull(MAINTENANCE_IO_PRESSURE);
+  const hostIoFullAvg10 = host.avg10;
   return {
     sampled_at_ms: Date.now(),
     host_io_full_avg10: hostIoFullAvg10,
-    project_pool_io_full_avg10: readIoFullAvg10(PROJECT_POOL_IO_PRESSURE),
-    bees_io_full_avg10: readIoFullAvg10(BEES_IO_PRESSURE),
-    maintenance_io_full_avg10: readIoFullAvg10(MAINTENANCE_IO_PRESSURE),
+    project_pool_io_full_avg10: pool.avg10,
+    bees_io_full_avg10: bees.avg10,
+    maintenance_io_full_avg10: maintenance.avg10,
+    host_io_full_avg60: host.avg60,
+    project_pool_io_full_avg60: pool.avg60,
+    bees_io_full_avg60: bees.avg60,
+    maintenance_io_full_avg60: maintenance.avg60,
     maintenance_io_capped: readIoMaxCapped(MAINTENANCE_IO_MAX),
     maintenance_disks_idle: readMaintenanceDisksIdle(),
     starting_projects: projectCounts.starting ?? 0,
@@ -343,6 +378,19 @@ function effectiveIoFullAvg10(
   );
 }
 
+// effectiveIoFullAvg10 over the 60 s averages
+function effectiveIoFullAvg60(
+  inputs: StorageAdmissionInputs,
+): number | undefined {
+  return effectiveIoFullAvg10({
+    ...inputs,
+    host_io_full_avg10: inputs.host_io_full_avg60,
+    project_pool_io_full_avg10: inputs.project_pool_io_full_avg60,
+    bees_io_full_avg10: inputs.bees_io_full_avg60,
+    maintenance_io_full_avg10: inputs.maintenance_io_full_avg60,
+  });
+}
+
 function emptyActiveCounts(): Record<StorageOperationPriority, number> {
   return {
     lifecycle: 0,
@@ -404,6 +452,12 @@ export function createStorageAdmissionController(
       process.env.COCALC_PROJECT_HOST_STORAGE_IO_CONTENDED_SAMPLES,
       DEFAULT_CONTENDED_SAMPLES,
     );
+  const minStateSampleMs =
+    options.minStateSampleMs ??
+    finiteNonNegative(
+      process.env.COCALC_PROJECT_HOST_STORAGE_IO_MIN_STATE_SAMPLE_MS,
+      DEFAULT_MIN_STATE_SAMPLE_MS,
+    );
   const backgroundQuietMs =
     options.backgroundQuietMs ??
     positiveInteger(
@@ -414,6 +468,8 @@ export function createStorageAdmissionController(
   let pressureState: HostStoragePressureState = "normal";
   let stateSince = now();
   let consecutiveContended = 0;
+  let consecutiveEmergency = 0;
+  let lastStateSampleAt: number | undefined;
   let recoveryHealthySince: number | undefined;
   let transitionCount = 0;
   let lastTransitionReason: string | undefined;
@@ -461,6 +517,7 @@ export function createStorageAdmissionController(
       to: next,
       reason,
       effective_io_full_avg10: effectiveIoFullAvg10(lastInputs),
+      effective_io_full_avg60: effectiveIoFullAvg60(lastInputs),
       lifecycle_active:
         lastInputs.starting_projects + lastInputs.stopping_projects,
     });
@@ -479,26 +536,39 @@ export function createStorageAdmissionController(
     if (full == null) {
       return;
     }
-    if (full >= emergencyFullAvg10) {
-      consecutiveContended = 0;
+    // Admission checks sample as often as operations come (for fresh
+    // lifecycle counts), so consecutive samples could be milliseconds apart
+    // and read the same 10 s average: only samples at least
+    // minStateSampleMs apart count.
+    if (
+      lastStateSampleAt != null &&
+      at - lastStateSampleAt < minStateSampleMs
+    ) {
+      return;
+    }
+    lastStateSampleAt = at;
+    // The 60 s average too: pressure made of bursts that never stay above a
+    // threshold for consecutive 10 s averages is still sustained pressure.
+    // It also holds contended/emergency until it is down too, so the gate
+    // does not bounce between recovery and contended while it decays.
+    const pressure = Math.max(full, effectiveIoFullAvg60(inputs) ?? 0);
+    consecutiveEmergency =
+      pressure >= emergencyFullAvg10 ? consecutiveEmergency + 1 : 0;
+    consecutiveContended =
+      pressure >= contendedFullAvg10 ? consecutiveContended + 1 : 0;
+    if (consecutiveEmergency >= contendedSamples) {
       recoveryHealthySince = undefined;
       transition("emergency", "io_full_emergency", at);
       return;
     }
     if (pressureState === "normal") {
-      if (full >= contendedFullAvg10) {
-        consecutiveContended += 1;
-        if (consecutiveContended >= contendedSamples) {
-          consecutiveContended = 0;
-          transition("contended", "io_full_contended", at);
-        }
-      } else {
-        consecutiveContended = 0;
+      if (consecutiveContended >= contendedSamples) {
+        transition("contended", "io_full_contended", at);
       }
       return;
     }
     if (pressureState === "contended" || pressureState === "emergency") {
-      if (full < contendedFullAvg10) {
+      if (pressure < contendedFullAvg10) {
         recoveryHealthySince = recoveryHealthy(full, lifecycleActive)
           ? at
           : undefined;
@@ -506,12 +576,17 @@ export function createStorageAdmissionController(
       }
       return;
     }
-    if (full >= contendedFullAvg10) {
+    if (consecutiveContended >= contendedSamples) {
       recoveryHealthySince = undefined;
       transition("contended", "io_pressure_recurred", at);
       return;
     }
-    if (recoveryHealthy(full, lifecycleActive)) {
+    // (recovery health is the 10 s average, as before: the 60 s one would
+    // keep a host in recovery for minutes after a burst)
+    if (
+      pressure < contendedFullAvg10 &&
+      recoveryHealthy(full, lifecycleActive)
+    ) {
       recoveryHealthySince ??= at;
       if (at - recoveryHealthySince >= recoveryMs) {
         recoveryHealthySince = undefined;
