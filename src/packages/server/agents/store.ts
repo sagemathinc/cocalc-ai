@@ -134,28 +134,30 @@ export class AgentStore {
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           `agent-runs:${agent.agent_id}`,
         ]);
+        const count = (await db.query(LIVE_RUN_COUNT_SQL, [agent.agent_id]))
+          .rows[0];
+        const atCapacity = +count.count >= MAX_LIVE_RUNS_PER_AGENT;
         // A recovery may have committed even if its response was lost. Retrying
         // the exact old/new run pair renews that replacement instead of
-        // permanently wedging the worker on an unknown outcome.
+        // permanently wedging the worker on an unknown outcome. A replacement
+        // that has itself expired is no longer live: reviving it needs room.
         const retried = await db.query(
           `UPDATE agent_identity_runs replacement
            SET token_hash=$4,expires_at=$5,
              thread_id=COALESCE(replacement.thread_id,$7)
            WHERE replacement.agent_id=$1 AND replacement.run_id=$2
              AND replacement.account_id=$3 AND replacement.ended_at IS NULL
+             AND (replacement.expires_at>now() OR NOT $8::boolean)
              AND EXISTS (
                SELECT 1 FROM agent_identity_runs expired
                WHERE expired.agent_id=$1 AND expired.run_id=$6
                  AND expired.account_id=$3 AND expired.ended_at IS NOT NULL
              )
            RETURNING replacement.run_id`,
-          [...values, recoverExpiredRunId, agent.thread_id],
+          [...values, recoverExpiredRunId, agent.thread_id, atCapacity],
         );
         if (retried.rows[0]) return 1;
-        const count = (await db.query(LIVE_RUN_COUNT_SQL, [agent.agent_id]))
-          .rows[0];
-        if (+count.count >= MAX_LIVE_RUNS_PER_AGENT)
-          throw new Error("agent_identity_run_capacity");
+        if (atCapacity) throw new Error("agent_identity_run_capacity");
         const recovered = await db.query(
           `UPDATE agent_identity_runs SET ended_at=now()
            WHERE agent_id=$1 AND run_id=$2 AND account_id=$3
