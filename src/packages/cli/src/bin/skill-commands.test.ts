@@ -14,6 +14,19 @@ import { Command, type Option } from "commander";
 // Mentioned on purpose as what not to do.
 const NOT_COMMANDS = new Set(["docs project secrets"]);
 
+// Options of other tools the skill mentions (Sagebrush, npm, git, Chrome
+// DevTools).
+const OTHER_TOOLS_OPTIONS = new Set([
+  "--silent",
+  "--sage",
+  "--magma",
+  "--matlab",
+  "--search",
+  "--path-format",
+  "--git-common-dir",
+  "--browser-url",
+]);
+
 let program: Command;
 
 before(async () => {
@@ -139,6 +152,33 @@ test("every cocalc command in the agent skill exists in the CLI", () => {
     check(line).map((problem) => `${problem}   (from: cocalc ${line})`),
   );
   assert.deepEqual(problems, []);
+});
+
+// Every long option of every command (and the global ones).
+function allLongOptions(cmd: Command = program, out = new Set<string>()) {
+  for (const option of cmd.options as readonly Option[]) {
+    if (option.long) out.add(option.long);
+  }
+  for (const sub of cmd.commands) allLongOptions(sub, out);
+  return out;
+}
+
+test("options the skill mentions on their own exist in the CLI", () => {
+  // e.g. "`--force-sample` measures again": not part of a full command, so
+  // only checked to exist somewhere (renamed or removed ones fail)
+  const known = allLongOptions();
+  const mentioned = new Set<string>();
+  for (const m of skillText().matchAll(/`([^`]+)`/g)) {
+    if (/^\s*cocalc\s/.test(m[1])) continue;
+    for (const o of m[1].matchAll(/(?:^|\s)(--[a-z][\w-]*)/g)) {
+      mentioned.add(o[1]);
+    }
+  }
+  assert.ok(mentioned.size > 10, `only ${mentioned.size} options found`);
+  const unknown = [...mentioned].filter(
+    (o) => !known.has(o) && !OTHER_TOOLS_OPTIONS.has(o) && o !== "--help",
+  );
+  assert.deepEqual(unknown, []);
 });
 
 test("options on continuation lines are checked too", () => {

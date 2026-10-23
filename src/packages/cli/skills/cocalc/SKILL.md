@@ -10,9 +10,11 @@ runtime gives you (for example `"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-
 The CLI is the source of truth for its own interface: check `--help` (and
 `cocalc exec-api` for the scripting API) before relying on an option.
 
-Details for each area are in `references/` next to this file (in a project:
-`~/.claude/skills/cocalc/` or `~/.codex/skills/cocalc/`). Read the one you need
-before starting that kind of work; see the table at the end.
+Details for each area are in `references/` next to this file. In a project the
+same files, for the running release, are always at
+`/opt/cocalc/project-bundle/skills/cocalc/references/` (use that copy if
+`references/` is missing next to this file). Read the one you need before
+starting that kind of work; see the table at the end.
 
 ## Which Path To Take
 
