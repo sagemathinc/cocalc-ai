@@ -101,13 +101,13 @@ describe.each([
         .on("error", reject);
     });
 
-  const upgrade = (path: string) =>
+  const upgrade = (path: string, host = CONTENT_HOST) =>
     new Promise<string>((resolve) => {
       const req = http.request({
         host: "127.0.0.1",
         port: port(ingress),
         path,
-        headers: { host: CONTENT_HOST, connection: "Upgrade", upgrade: "websocket" },
+        headers: { host, connection: "Upgrade", upgrade: "websocket" },
       });
       req.on("upgrade", () => resolve("upgraded"));
       req.on("response", (res) => resolve(`response ${res.statusCode}`));
@@ -133,6 +133,24 @@ describe.each([
     expect(await upgrade("/_c/x/files/a")).toBe("closed");
     expect(conat.seen).toEqual([]);
     expect(main.seen).toEqual([]);
+  });
+
+  it("sends app-hostname upgrades only to the main server, which authorizes them", async () => {
+    const appHost = `ap8000-${CONTENT_HOST}`;
+    const viaApp = await upgrade("/p/port/8000/ws", appHost);
+    const viaConat = await upgrade("/conat/?EIO=4&transport=websocket", appHost);
+    expect(conat.seen).toEqual([]);
+    if (env.COCALC_PROJECT_CONTENT_DOMAIN) {
+      expect([viaApp, viaConat]).toEqual(["upgraded", "upgraded"]);
+      expect(main.seen).toEqual([
+        "UPGRADE /p/port/8000/ws",
+        "UPGRADE /conat/?EIO=4&transport=websocket",
+      ]);
+    } else {
+      // No content domain: nothing here serves app origins.
+      expect([viaApp, viaConat]).toEqual(["closed", "closed"]);
+      expect(main.seen).toEqual([]);
+    }
   });
 
   it("still answers /healthz itself on other hostnames", async () => {

@@ -42,9 +42,19 @@ import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
+  hostContentLabel,
   hostContentWildcardHostname,
   projectContentHostname,
 } from "@cocalc/util/project-content-origin";
+import {
+  issueProjectAppCapability,
+  normalizeProjectAppPath,
+  projectAppHostLabel,
+  projectAppKey,
+  projectAppRouteFromPath,
+} from "@cocalc/conat/auth/project-app-capability";
+
+export { normalizeProjectAppPath };
 import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
@@ -102,25 +112,21 @@ export function contentDirForFile(path: unknown): string {
   return `/${contentPathSegments(path).slice(0, -1).join("/")}`;
 }
 
-export async function issueProjectContentUrlLocal({
+// Whether this account may get content-origin links (files or apps) for this
+// project, and if so the host, domain and current epoch to sign for.
+export async function resolveProjectContentTarget({
   account_id,
   project_id,
-  path,
-  browser_session_exp_s,
-  now_ms = Date.now(),
 }: {
   account_id: string;
   project_id: string;
-  path: string;
-  // A restricted (testing) browser session must not outlive its link.
-  browser_session_exp_s?: number;
-  now_ms?: number;
-}): Promise<ProjectContentUrl> {
+}): Promise<
+  | { unavailable: ProjectContentUrlUnavailable }
+  | { host_id: string; domain: string; epoch: number }
+> {
   if (!isValidUUID(account_id) || !isValidUUID(project_id)) {
     throw new Error("invalid project or account");
   }
-  const filePath = encodeContentFilePath(path);
-  const dir = contentDirForFile(path);
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(account_id)) {
     throw new Error("account is banned");
@@ -179,6 +185,32 @@ export async function issueProjectContentUrlLocal({
   ) {
     return { unavailable: "host-not-ready" };
   }
+  // Bumped by "Revoke content links"; the host refuses any other value.
+  return { host_id, domain, epoch: Number(project.content_epoch ?? 0) };
+}
+
+export async function issueProjectContentUrlLocal({
+  account_id,
+  project_id,
+  path,
+  browser_session_exp_s,
+  now_ms = Date.now(),
+}: {
+  account_id: string;
+  project_id: string;
+  path: string;
+  // A restricted (testing) browser session must not outlive its link.
+  browser_session_exp_s?: number;
+  now_ms?: number;
+}): Promise<ProjectContentUrl> {
+  if (!isValidUUID(account_id) || !isValidUUID(project_id)) {
+    throw new Error("invalid project or account");
+  }
+  const filePath = encodeContentFilePath(path);
+  const dir = contentDirForFile(path);
+  const target = await resolveProjectContentTarget({ account_id, project_id });
+  if ("unavailable" in target) return target;
+  const { host_id, domain, epoch } = target;
 
   let ttl_seconds = PROJECT_CONTENT_CAPABILITY_TTL_SECONDS;
   if (browser_session_exp_s != null) {
@@ -194,8 +226,7 @@ export async function issueProjectContentUrlLocal({
     project_id,
     host_id,
     account_id,
-    // Bumped by "Revoke content links"; the host refuses any other value.
-    epoch: Number(project.content_epoch ?? 0),
+    epoch,
     dir,
     private_key: getProjectHostAuthTokenPrivateKey(),
     ttl_seconds,
@@ -204,6 +235,60 @@ export async function issueProjectContentUrlLocal({
   const hostname = projectContentHostname({ project_id, host_id, domain });
   return {
     url: `https://${hostname}/_c/${token}/files/${filePath}`,
+    expires_at,
+  };
+}
+
+// A link that opens a project's web server or app on its own app origin
+// (project-host/content-app-origin.ts): a short-lived, single-use app
+// capability for that origin, redeemed by the host at /_a/ for a session.
+export async function issueProjectAppUrlLocal({
+  account_id,
+  project_id,
+  path,
+  app_id,
+  browser_session_exp_s,
+  frame = false,
+  now_ms = Date.now(),
+}: {
+  account_id: string;
+  project_id: string;
+  path: string;
+  // A link for the app framed by the site (/_af/, a frame session) rather
+  // than opened on its own (/_a/).
+  frame?: boolean;
+  // For apps mounted at their own base_path (not /port, /proxy, /server or
+  // /apps), the app's id; the host checks the path belongs to it.
+  app_id?: string;
+  browser_session_exp_s?: number;
+  now_ms?: number;
+}): Promise<ProjectContentUrl> {
+  if (!isValidUUID(account_id) || !isValidUUID(project_id)) {
+    throw new Error("invalid project or account");
+  }
+  const next = normalizeProjectAppPath(project_id, path);
+  const route =
+    projectAppRouteFromPath(project_id, next.split("?")[0]) ??
+    (app_id ? ({ kind: "app", id: `${app_id}` } as const) : undefined);
+  if (route == null) throw new Error("not an app route");
+  const key = projectAppKey(route);
+  const target = await resolveProjectContentTarget({ account_id, project_id });
+  if ("unavailable" in target) return target;
+  const { host_id, domain, epoch } = target;
+  const { token, expires_at } = issueProjectAppCapability({
+    project_id,
+    host_id,
+    account_id,
+    key,
+    epoch,
+    private_key: getProjectHostAuthTokenPrivateKey(),
+    browser_session_exp_s,
+    scope: frame ? "app-frame" : "app",
+    now_ms,
+  });
+  const hostname = `${projectAppHostLabel({ project_id, key })}.${hostContentLabel(host_id)}.${domain}`;
+  return {
+    url: `https://${hostname}/${frame ? "_af" : "_a"}/${token}?next=${encodeURIComponent(next)}`,
     expires_at,
   };
 }

@@ -24,9 +24,17 @@ jest.mock("@cocalc/frontend/frame-editors/generic/client", () => ({
   exec: (...args: unknown[]) => execMock(...args),
 }));
 
+const getProjectAppFrameUrlMock = jest.fn();
 jest.mock("@cocalc/frontend/project/app-server-open", () => ({
+  ...jest.requireActual("@cocalc/frontend/project/app-server-open"),
   getProjectAppOpenUrl: (...args: unknown[]) =>
     getProjectAppOpenUrlMock(...args),
+  getProjectAppFrameUrl: (...args: unknown[]) =>
+    getProjectAppFrameUrlMock(...args),
+}));
+jest.mock("@cocalc/frontend/project/host-url", () => ({
+  withProjectHostBase: (_p: string, url?: string) =>
+    url ? `https://example.test${url}` : url,
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -48,6 +56,11 @@ describe("Blit graphical application setup", () => {
     execMock.mockReset();
     ensureRunningMock.mockReset();
     getProjectAppOpenUrlMock.mockReset();
+    getProjectAppFrameUrlMock.mockReset();
+    let n = 0;
+    getProjectAppFrameUrlMock.mockImplementation(async () => ({
+      url: `https://app.example.test/_af/CAP${++n}?next=x`,
+    }));
     stopAppMock.mockReset();
     upsertAppSpecMock.mockReset();
   });
@@ -61,7 +74,9 @@ describe("Blit graphical application setup", () => {
         id: BLIT_APP_ID,
         state: "running",
       });
-      getProjectAppOpenUrlMock.mockResolvedValue("https://example.test/blit/");
+      getProjectAppOpenUrlMock.mockResolvedValue(
+        "https://example.test/project-id/blit/",
+      );
       const user = userEvent.setup();
       const view = (active: boolean) => (
         <>
@@ -76,6 +91,11 @@ describe("Blit graphical application setup", () => {
       const { rerender } = render(view(true));
       const iframe = await screen.findByTitle("Blit graphical applications");
       const src = iframe.getAttribute("src");
+      // On the app's own origin, never the project host's.
+      expect(src).toBe(
+        "https://app.example.test/_af/CAP1?next=x#psk=project-id",
+      );
+      expect(iframe).toHaveAttribute("sandbox");
       iframe.focus();
       expect(iframe).toHaveFocus();
 
@@ -89,9 +109,15 @@ describe("Blit graphical application setup", () => {
       expect(input).toHaveValue("Still typing in chat");
 
       rerender(view(true));
-      const reconnected = screen.getByTitle("Blit graphical applications");
+      const reconnected = await screen.findByTitle(
+        "Blit graphical applications",
+      );
       expect(reconnected).not.toBe(iframe);
-      expect(reconnected).toHaveAttribute("src", src);
+      // A fresh single-use frame link each time it is shown.
+      expect(reconnected).toHaveAttribute(
+        "src",
+        "https://app.example.test/_af/CAP2?next=x#psk=project-id",
+      );
       expect(stopAppMock).not.toHaveBeenCalled();
       expect(ensureRunningMock).toHaveBeenCalledTimes(1);
       expect(upsertAppSpecMock).toHaveBeenCalledTimes(1);
@@ -146,7 +172,9 @@ describe("Blit graphical application setup", () => {
       state: "running",
       url: "http://127.0.0.1:1234",
     });
-    getProjectAppOpenUrlMock.mockResolvedValue("https://example.test/blit/");
+    getProjectAppOpenUrlMock.mockResolvedValue(
+      "https://example.test/project-id/blit/",
+    );
 
     render(<Blit is_current project_id="project-id" />);
 
@@ -179,7 +207,9 @@ describe("Blit graphical application setup", () => {
       state: "running",
       url: "http://127.0.0.1:1234",
     });
-    getProjectAppOpenUrlMock.mockResolvedValue("https://example.test/blit/");
+    getProjectAppOpenUrlMock.mockResolvedValue(
+      "https://example.test/project-id/blit/",
+    );
     stopAppMock.mockResolvedValue(undefined);
 
     render(<Blit is_current project_id="project-id" />);

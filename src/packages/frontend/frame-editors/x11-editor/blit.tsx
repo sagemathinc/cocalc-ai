@@ -18,6 +18,10 @@ import {
   parseBlitPrerequisites,
 } from "./blit-app";
 import { BlitLauncher } from "./blit-launcher";
+import {
+  APP_CARD_FRAME_SANDBOX,
+  useAppFrameSrc,
+} from "@cocalc/frontend/chat/app-frame-src";
 
 interface Props {
   is_current: boolean;
@@ -105,7 +109,9 @@ export function Blit({
         throw new Error("Blit started but CoCalc did not provide an app URL.");
       }
       if (!canceled) {
-        setSrc(addBlitPassphrase(url, project_id));
+        // The host URL: BlitFrame turns it into a fresh frame link on the
+        // app's own origin each time it is shown.
+        setSrc(url);
         setStage("ready");
       }
     })().catch((err) => {
@@ -217,20 +223,7 @@ export function Blit({
           project_id={project_id}
           shuttingDown={stage === "stopping"}
         />
-        <iframe
-          allow="autoplay; camera; clipboard-read; clipboard-write; fullscreen; microphone"
-          aria-label="Blit graphical applications"
-          key={src}
-          src={src}
-          style={{
-            border: 0,
-            flex: "1 1 auto",
-            minHeight: 0,
-            minWidth: 0,
-            width: "100%",
-          }}
-          title="Blit graphical applications"
-        />
+        <BlitFrame project_id={project_id} hostUrl={src} />
       </Flex>
     );
   }
@@ -294,5 +287,73 @@ export function Blit({
         </Flex>
       )}
     </Flex>
+  );
+}
+
+// The Blit client on its own app origin, through a single-use frame link
+// requested each time the frame is shown (it is removed while hidden), so
+// it never runs on the project host's origin.
+function BlitFrame({
+  project_id,
+  hostUrl,
+}: {
+  project_id: string;
+  hostUrl: string;
+}) {
+  const frame = useAppFrameSrc({
+    projectId: project_id,
+    appId: BLIT_APP_ID,
+    hostUrl,
+  });
+  if (frame.failed || frame.blocked) {
+    return (
+      <Flex align="center" justify="center" style={{ flex: "1 1 auto" }}>
+        <Alert
+          type="warning"
+          showIcon
+          title={
+            frame.failed ??
+            "This browser blocks the cookie graphical applications need here."
+          }
+          description={
+            <>
+              <Button size="small" onClick={frame.retry}>
+                Retry
+              </Button>{" "}
+              {frame.openUrl && (
+                <a href={frame.openUrl} target="_blank" rel="noopener">
+                  Open in a new tab
+                </a>
+              )}
+            </>
+          }
+        />
+      </Flex>
+    );
+  }
+  if (!frame.src) {
+    return (
+      <Flex align="center" justify="center" style={{ flex: "1 1 auto" }}>
+        <Spin />
+      </Flex>
+    );
+  }
+  return (
+    <iframe
+      allow="autoplay; camera; clipboard-read; clipboard-write; fullscreen; microphone"
+      aria-label="Blit graphical applications"
+      key={frame.src}
+      src={addBlitPassphrase(frame.src, project_id)}
+      referrerPolicy="strict-origin"
+      sandbox={APP_CARD_FRAME_SANDBOX}
+      style={{
+        border: 0,
+        flex: "1 1 auto",
+        minHeight: 0,
+        minWidth: 0,
+        width: "100%",
+      }}
+      title="Blit graphical applications"
+    />
   );
 }
