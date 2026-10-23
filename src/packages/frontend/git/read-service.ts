@@ -425,7 +425,21 @@ export class GitReadService {
     requireObject(commit);
     return this.runImmutable(
       repository,
-      ["show", "--no-patch", "--no-color", "--format=fuller", commit, "--"],
+      [
+        "show",
+        "--no-patch",
+        "--no-color",
+        "--format=fuller",
+        // Output that would otherwise follow files and settings that change
+        // (.mailmap, notes, log.date, log.showSignature, the log encoding).
+        "--no-use-mailmap",
+        "--no-notes",
+        "--no-show-signature",
+        "--date=default",
+        "--encoding=UTF-8",
+        commit,
+        "--",
+      ],
       [commit],
       // A merge's parents are in its header.
       { walksHistory: true },

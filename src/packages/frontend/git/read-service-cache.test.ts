@@ -138,3 +138,23 @@ test("a shallow clone's parents and history are not kept: deepening it shows the
     rmSync(clone, { recursive: true, force: true });
   }
 });
+
+test("a commit's summary doesn't follow .mailmap or notes, which can change", async () => {
+  const head = git(dir, ["rev-parse", "HEAD"]).trim();
+  writeFileSync(
+    join(dir, ".mailmap"),
+    "Someone Else <else@example.test> Fixture <f@example.test>\n",
+  );
+  git(dir, ["notes", "add", "-m", "a note", head]);
+  try {
+    const reader = new GitReadService(execute);
+    const { repository } = await reader.discover("p4", dir);
+    const summary = await reader.commitSummary(repository, head);
+    expect(summary).toContain("Author:     Fixture <f@example.test>");
+    expect(summary).not.toContain("Someone Else");
+    expect(summary).not.toContain("a note");
+  } finally {
+    rmSync(join(dir, ".mailmap"));
+    git(dir, ["notes", "remove", head]);
+  }
+});
