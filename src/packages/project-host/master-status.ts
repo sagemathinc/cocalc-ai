@@ -55,7 +55,8 @@ const projectStateReportQueues = new Map<string, ProjectStateReportQueue>();
 let pendingInventory: { project_ids: string[]; checked_at: number } | null =
   null;
 const DEFAULT_PROVISIONED_INVENTORY_INTERVAL_MS = 5 * 60 * 1000;
-// project_id -> attempts so far, and when the master asked for the deletion
+// project_id -> attempts so far, and when the request the master answered
+// with this deletion was sent
 const pendingProjectDeletions = new Map<
   string,
   { attempts: number; queued_at: number }
@@ -113,11 +114,17 @@ async function deleteProjectDataLocal(
   return true;
 }
 
-function queueProjectDataDeletion(project_id: string): void {
+// `requested_at`: when the request the master answered was sent (or the
+// inventory it answered was taken), not when the answer came: a later
+// "provisioned here" may have been answered first.
+function queueProjectDataDeletion(
+  project_id: string,
+  requested_at: number,
+): void {
   if (!pendingProjectDeletions.has(project_id)) {
     pendingProjectDeletions.set(project_id, {
       attempts: 0,
-      queued_at: Date.now(),
+      queued_at: requested_at,
     });
   }
   void drainProjectDataDeletions();
@@ -366,7 +373,7 @@ async function sendProjectStateToMaster(
     });
     if ((res as any)?.action === "delete") {
       logger.debug("master requested local project deletion", { project_id });
-      queueProjectDataDeletion(project_id);
+      queueProjectDataDeletion(project_id, started);
       return;
     }
     // A newer local state may have been written while this RPC was in flight.
@@ -511,7 +518,7 @@ async function reportProvisionedInventory() {
         count: deleteIds.length,
       });
       for (const project_id of deleteIds) {
-        queueProjectDataDeletion(project_id);
+        queueProjectDataDeletion(project_id, payload.checked_at);
       }
     }
     pendingInventory = null;
@@ -570,7 +577,7 @@ async function reportProjectProvisionedToMaster(
     });
     if ((res as any)?.action === "delete") {
       logger.debug("master requested local project deletion", { project_id });
-      queueProjectDataDeletion(project_id);
+      queueProjectDataDeletion(project_id, started);
       return;
     }
     markProjectProvisionedReported(project_id);
