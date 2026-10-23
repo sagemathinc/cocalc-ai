@@ -13,6 +13,7 @@ import {
   buildThreadConfigRecord,
   CHAT_PRIMARY_KEYS,
   CHAT_STRING_COLS,
+  preferredThreadConfigRecord,
   sharedCodexThreadConfig,
   type CodexThreadConfig,
 } from "@cocalc/chat/core";
@@ -233,11 +234,9 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     const threadId = opts.thread_id.trim();
     if (!db?.isReady()) throw new Error("Chat is not ready.");
     const allRows = db.get();
+    // Migrated chats can hold a legacy and a canonical config row.
     const existing = Array.isArray(allRows)
-      ? allRows.find(
-          (row) =>
-            row?.event === "chat-thread-config" && row?.thread_id === threadId,
-        )
+      ? preferredThreadConfigRecord(allRows, threadId)
       : undefined;
     if (
       !existing ||
@@ -277,11 +276,9 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     if (!db?.isReady()) throw new Error("Chat is not ready.");
     const settings = parseHarnessSessionSettings(opts.settings);
     const allRows = db.get();
+    // Migrated chats can hold a legacy and a canonical config row.
     const existing = Array.isArray(allRows)
-      ? allRows.find(
-          (row) =>
-            row?.event === "chat-thread-config" && row?.thread_id === threadId,
-        )
+      ? preferredThreadConfigRecord(allRows, threadId)
       : undefined;
     if (existing?.agent_runtime == null) {
       throw new Error("The selected thread is not a harness agent thread.");

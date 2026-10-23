@@ -10,6 +10,7 @@ import type {
   ChatThreadRuntimeState,
   ChatThreadStateRecord,
 } from "@cocalc/chat/core";
+import { threadConfigRowRank } from "@cocalc/chat/core";
 
 import {
   parseHarnessSessionControls,
@@ -146,7 +147,18 @@ export function projectChatRows(
     if (row.event === "chat-thread" && threadId) {
       threadRows.set(threadId, row as ChatThreadRecord);
     } else if (row.event === "chat-thread-config" && threadId) {
-      configs.set(threadId, row as ChatThreadConfigRecord);
+      // Migrated chats can hold a legacy and a canonical config row: keep
+      // the one sends and settings use (preferredThreadConfigRecord).
+      const current = configs.get(threadId);
+      if (
+        !current ||
+        threadConfigRowRank(row, threadId) >
+          threadConfigRowRank(
+            current as unknown as Record<string, unknown>,
+            threadId,
+          )
+      )
+        configs.set(threadId, row as ChatThreadConfigRecord);
     } else if (row.event === "chat-thread-state" && threadId) {
       states.set(threadId, row as ChatThreadStateRecord);
     } else if (row.event === "chat") {

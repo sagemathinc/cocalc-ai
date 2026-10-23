@@ -505,4 +505,53 @@ describe("ChatSendPipeline", () => {
       expect(transport.stream).not.toHaveBeenCalled();
     });
   });
+
+  it("uses the canonical thread-config row when a migrated chat also has a legacy one", async () => {
+    const db = fakeDb([]);
+    // A legacy Codex row first, then the canonical Claude row.
+    db.rows.unshift({
+      event: "chat-thread-config",
+      sender_id: "legacy-sender",
+      date: "2025-01-01T00:00:00.000Z",
+      thread_id: "thread-1",
+      agent_kind: "acp",
+      agent_model: "gpt-5.6-sol",
+      acp_config: { model: "gpt-5.6-sol" },
+    });
+    const canonical = db.rows.find(
+      (row) => row.sender_id === "__thread_config__:thread-1",
+    )!;
+    Object.assign(canonical, {
+      agent_model: "acp-harness",
+      acp_config: undefined,
+      agent_runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+    });
+    let request: any;
+    const transport: ChatSendTransport = {
+      stream: async function* (value) {
+        request = value;
+        yield { seq: 0, type: "status", state: "queued" };
+      },
+      interrupt: jest.fn(),
+      steer: jest.fn(),
+    };
+    await pipeline({ db, transport }).send({
+      thread_id: "thread-1",
+      text: "hi",
+    });
+    expect(request.runtime?.profile.id).toBe("claude-code");
+    expect(request.config).toBeUndefined();
+  });
 });

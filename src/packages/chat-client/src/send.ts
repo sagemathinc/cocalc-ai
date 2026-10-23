@@ -11,6 +11,7 @@ import {
   contextStamp,
   messagesSinceContextCleared,
   normalizeCodexMention,
+  preferredThreadConfigRecord,
   resolveHarnessSessionId,
   sharedCodexThreadConfig,
   storedSessionInContext,
@@ -97,9 +98,10 @@ function threadConfig(
   allRows: readonly Record<string, any>[],
   threadId: string,
 ): ChatThreadConfigRecord | undefined {
-  return allRows.find(
-    (row) => row.event === "chat-thread-config" && row.thread_id === threadId,
-  ) as ChatThreadConfigRecord | undefined;
+  // Migrated chats can hold a legacy and a canonical config row.
+  return preferredThreadConfigRecord(allRows, threadId) as
+    | ChatThreadConfigRecord
+    | undefined;
 }
 
 function agentThreadConfig(
