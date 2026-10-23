@@ -275,10 +275,11 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items, watermark, state, showArchived, filed],
   );
+  // As the Filed list shows them: archived ones too while they are shown.
   const filedUnread = useMemo(
-    () => unreadIn("filed", false),
+    () => unreadIn("filed", showArchived ? undefined : false),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, watermark, state, filed],
+    [items, watermark, state, filed, showArchived],
   );
   const [selectedId, setSelectedId] = useState<string>();
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);

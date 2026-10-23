@@ -609,6 +609,28 @@ describe("views: for you, all, filed", () => {
     expect(screen.getByText("Everything here is archived")).toBeTruthy();
   });
 
+  test("the Filed count includes archived unread items while they are shown", () => {
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            // p1's item is archived (and unread: nothing has been read).
+            getReaderState: jest.fn(() => ({ a: { p1: "a1" } })),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={info}
+      />,
+    );
+    expect(screen.getByText("Filed (1)")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
+    expect(screen.getByText("Filed (2)")).toBeTruthy();
+  });
+
   test("nothing for you says where the rest is", () => {
     show(((item) => ({ subject: item.id, priority: "low" })) as any);
     expect(
