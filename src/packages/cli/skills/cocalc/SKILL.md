@@ -655,7 +655,11 @@ cocalc agent whoami                            # this runtime's identity
 
 - A message is at most 32 KiB. Send longer material with `--attach`
   (repeatable, at most 16 files and 32 MiB in total), which copies it into the
-  recipient's project.
+  recipient's project; an external member (one on another site) gets the
+  copies with the message in its inbox (`agent inbox-attachments` saves them).
+- An external member starts no turn and gets no turn reports
+  (`--report-no-reply` is refused for it). To learn whether it has read your
+  message, run the `agent rpc inspect` command that send prints.
 - The result's `summary` says what happened. `accepted` means the recipient's
   turn was admitted (started or queued), not finished. `rejected` means it was
   not delivered. `unknown` means it may still run: check with the

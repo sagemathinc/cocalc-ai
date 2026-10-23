@@ -17,6 +17,7 @@ describeDb("Agent Network retention", () => {
     "agent_network_proposals",
     "agent_network_broadcasts",
     "agent_external_inbox",
+    "agent_external_inbox_attachments",
   ];
   beforeAll(async () => {
     await syncSchema(
@@ -73,7 +74,44 @@ describeDb("Agent Network retention", () => {
         randomUUID(),
       ],
     );
+    // Attachments: one expired, one whose message is gone, one kept.
+    const kept = randomUUID();
+    await db.query(
+      `INSERT INTO agent_external_inbox
+       (message_id,attempt_id,account_id,installation_id,agent_network_id,
+        network_generation,source,body,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'hi',now()+interval '1 day')`,
+      [
+        kept,
+        randomUUID(),
+        account,
+        randomUUID(),
+        randomUUID(),
+        randomUUID(),
+        JSON.stringify({ project_id: randomUUID(), agent_id: randomUUID() }),
+      ],
+    );
+    for (const [message_id, expires] of [
+      [kept, "now()-interval '1 minute'"],
+      [randomUUID(), "now()+interval '1 day'"],
+      [kept, "now()+interval '1 day'"],
+    ])
+      await db.query(
+        `INSERT INTO agent_external_inbox_attachments
+         (message_id,idx,account_id,installation_id,name,size,sha256,data,expires_at)
+         VALUES($1,(SELECT count(*) FROM agent_external_inbox_attachments WHERE message_id=$1),
+                $2,$3,'a.txt',1,$4,'\\x61'::bytea,${expires})`,
+        [message_id, account, randomUUID(), "a".repeat(64)],
+      );
     const result = await cleanupAgentMessagingHistory();
+    expect(result.external_inbox_attachments).toBe(2);
+    expect(
+      (
+        await db.query(
+          "SELECT message_id FROM agent_external_inbox_attachments",
+        )
+      ).rows,
+    ).toEqual([{ message_id: kept }]);
     expect(result.report_executions).toBe(1);
     expect(result.network_mutations).toBe(1);
     expect(result.network_proposals).toBe(1);

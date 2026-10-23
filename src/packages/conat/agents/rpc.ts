@@ -5,6 +5,7 @@ import {
   type ExternalAgentSource,
 } from "./external";
 import {
+  AGENT_ATTACHMENT_MAX_FILES,
   validateAttachmentMetadata,
   validateAttachmentPayload,
   type AgentFileReference,
@@ -85,6 +86,9 @@ export interface AgentRpcOutcome extends AgentRpcAttempt {
   operation?: { id: string; disposition: "queued" | "running" | "steered" };
   /** inspect: what became of the turn it started, if the recipient knows. */
   turn?: import("./rpc-turn").AgentRpcTurnState;
+  /** inspect, for an external member: whether it read the message (no turn
+   * starts there). */
+  inbox?: import("./external").ExternalAgentDelivery;
 }
 
 export interface AgentRpcBroadcast {
@@ -174,6 +178,13 @@ export type AgentRpcRequest =
   | { version: 3; action: "destinations" }
   | { version: 3; action: "inbox"; limit?: number }
   | { version: 3; action: "ack-inbox"; message_id: string }
+  /** One attachment of an external inbox message, by its position. */
+  | {
+      version: 3;
+      action: "inbox-attachment";
+      message_id: string;
+      index: number;
+    }
   | AgentRpcBroadcast
   | ({
       version: 3;
@@ -289,6 +300,15 @@ export function validateAgentRpcRequest(
   } else if (value.action === "ack-inbox") {
     keys.push("message_id");
     requireUuid(value.message_id, "message_id");
+  } else if (value.action === "inbox-attachment") {
+    keys.push("message_id", "index");
+    requireUuid(value.message_id, "message_id");
+    if (
+      !Number.isInteger(value.index) ||
+      value.index < 0 ||
+      value.index >= AGENT_ATTACHMENT_MAX_FILES
+    )
+      throw new Error("attachment index must be an integer from 0 to 15");
   } else if (value.action === "propose-network") {
     keys.push("proposal_id", "title", "delivery_mode", "members", "reason");
     requireUuid(value.proposal_id, "proposal_id");
@@ -364,7 +384,10 @@ export function rpcOutcome(
   attempt: AgentRpcAttempt,
   outcome: AgentRpcOutcome["outcome"],
   extra: Partial<
-    Pick<AgentRpcOutcome, "reason" | "code" | "chat_effect" | "operation">
+    Pick<
+      AgentRpcOutcome,
+      "reason" | "code" | "chat_effect" | "operation" | "inbox"
+    >
   > = {},
 ): AgentRpcOutcome {
   return {
@@ -403,6 +426,15 @@ export function validateAgentRpcOutcome(
   )
     throw new Error("Recipient acknowledgment is invalid or mismatched");
   if (value.turn !== undefined) validateAgentRpcTurnState(value.turn);
+  if (
+    value.inbox !== undefined &&
+    (!["pending", "acknowledged"].includes(value.inbox?.state) ||
+      typeof value.inbox.created_at !== "string" ||
+      typeof value.inbox.expires_at !== "string" ||
+      (value.inbox.acknowledged_at !== undefined &&
+        typeof value.inbox.acknowledged_at !== "string"))
+  )
+    throw new Error("Recipient acknowledgment is invalid or mismatched");
 }
 
 export function validateAgentRpcBroadcastOutcome(

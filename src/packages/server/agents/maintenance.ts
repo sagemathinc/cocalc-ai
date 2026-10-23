@@ -100,6 +100,17 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
         LIMIT $1)`,
       result,
     );
+    // Files go with their messages: expired, or the message is gone.
+    await remove(
+      db,
+      "external_inbox_attachments",
+      `DELETE FROM agent_external_inbox_attachments WHERE (message_id,idx) IN
+       (SELECT a.message_id,a.idx FROM agent_external_inbox_attachments a
+        WHERE a.expires_at<now()
+          OR NOT EXISTS (SELECT 1 FROM agent_external_inbox i WHERE i.message_id=a.message_id)
+        LIMIT $1)`,
+      result,
+    );
     await remove(
       db,
       "external_installations",
