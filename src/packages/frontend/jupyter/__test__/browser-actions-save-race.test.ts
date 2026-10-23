@@ -32,6 +32,8 @@ function createActions() {
   actions.setToIpynb = jest.fn(async () => {});
   actions.refreshKernelStatus = jest.fn(async () => {});
   actions.store = { emit: jest.fn() };
+  // These notebooks are loaded: their initial source has settled.
+  actions.resolveInitialSource();
   return actions;
 }
 

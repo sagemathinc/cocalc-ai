@@ -1124,6 +1124,12 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   };
 
   setCellId = (id: string, newId: string, save = true) => {
+    // Writes the syncdb directly, so check read_only here as _set does (in
+    // the browser a notebook is read-only until its initial source settled,
+    // a customer report).
+    if (this.store?.get("read_only")) {
+      return;
+    }
     let cell = this.store.getIn(["cells", id])?.toJS();
     if (cell == null) {
       return;
@@ -1803,7 +1809,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   undo = (): boolean => {
     const syncdb = this.syncdb;
-    if (!syncdb?.isReady()) {
+    // A read-only notebook's history is not changed either.  In the browser
+    // this includes a notebook whose initial source has not settled yet
+    // (a customer report): undoing then would change the live notebook
+    // before the file is loaded.
+    if (!syncdb?.isReady() || this.store?.get("read_only")) {
       return false;
     }
     syncdb.undo();
@@ -1812,7 +1822,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   redo = (): boolean => {
     const syncdb = this.syncdb;
-    if (!syncdb?.isReady()) {
+    // A read-only notebook's history is not changed either.  In the browser
+    // this includes a notebook whose initial source has not settled yet
+    // (a customer report): redoing then would change the live notebook
+    // before the file is loaded.
+    if (!syncdb?.isReady() || this.store?.get("read_only")) {
       return false;
     }
     syncdb.redo();
