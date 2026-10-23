@@ -16,6 +16,7 @@ import {
   markProjectStateReported,
 } from "./sqlite/projects";
 import {
+  getProjectProvisioning,
   listUnreportedProvisioning,
   markProjectProvisionedReported,
   setProjectProvisioned,
@@ -54,7 +55,18 @@ const projectStateReportQueues = new Map<string, ProjectStateReportQueue>();
 let pendingInventory: { project_ids: string[]; checked_at: number } | null =
   null;
 const DEFAULT_PROVISIONED_INVENTORY_INTERVAL_MS = 5 * 60 * 1000;
-const pendingProjectDeletions = new Map<string, number>();
+// project_id -> attempts so far, and when the master asked for the deletion
+const pendingProjectDeletions = new Map<
+  string,
+  { attempts: number; queued_at: number }
+>();
+// a project in one of these states runs here: its data is never stale
+const ACTIVE_PROJECT_STATES = new Set([
+  "pending",
+  "starting",
+  "running",
+  "stopping",
+]);
 let projectDeletionWorkerRunning = false;
 const projectProvisionedReportedListeners = new Set<
   (project_id: string) => void
@@ -75,8 +87,19 @@ function provisionedInventoryIntervalMs(): number {
   return Math.max(60_000, Math.floor(raw));
 }
 
-async function deleteProjectDataLocal(project_id: string) {
-  await deleteVolume(project_id, { reportProvisioned: false });
+// Whether the data was deleted: not if the deletion no longer applies.
+async function deleteProjectDataLocal(
+  project_id: string,
+  queued_at: number,
+): Promise<boolean> {
+  const { superseded } = await deleteVolume(project_id, {
+    reportProvisioned: false,
+    superseded: () => staleDeletionSuperseded(project_id, queued_at),
+  });
+  if (superseded != null) {
+    cancelProjectDataDeletion(project_id, superseded);
+    return false;
+  }
   try {
     deleteProjectLocal(project_id);
   } catch (err) {
@@ -87,13 +110,55 @@ async function deleteProjectDataLocal(project_id: string) {
   } catch (err) {
     logger.debug("deleteProjectProvisioning failed", { project_id, err });
   }
+  return true;
 }
 
 function queueProjectDataDeletion(project_id: string): void {
   if (!pendingProjectDeletions.has(project_id)) {
-    pendingProjectDeletions.set(project_id, 0);
+    pendingProjectDeletions.set(project_id, {
+      attempts: 0,
+      queued_at: Date.now(),
+    });
   }
   void drainProjectDataDeletions();
+}
+
+// The master's verdict that a project's data here is stale holds only for
+// the moment it was given: a deletion can be deferred (I/O pressure, a
+// lifecycle in progress) for minutes, and meanwhile the project may have
+// been moved or restored here, e.g. by the very move whose pre-restore
+// cleanup made this host report it (6f6a2389, 2026-10-23).  Why a queued
+// deletion no longer applies, if it doesn't.
+function staleDeletionSuperseded(
+  project_id: string,
+  queued_at: number,
+): string | undefined {
+  const project = getProject(project_id);
+  if (project?.state && ACTIVE_PROJECT_STATES.has(project.state)) {
+    return `project is ${project.state} here`;
+  }
+  if ((project?.state_updated_at ?? 0) >= queued_at) {
+    return "project lifecycle changed here since the deletion was requested";
+  }
+  const provisioning = getProjectProvisioning(project_id);
+  if (
+    provisioning?.provisioned &&
+    (provisioning.updated_at ?? 0) >= queued_at
+  ) {
+    return "project provisioned here since the deletion was requested";
+  }
+  return undefined;
+}
+
+// A project now provisioned here (and accepted by the master as ours) must
+// not lose its data to a deletion requested before.
+function cancelProjectDataDeletion(project_id: string, reason: string): void {
+  if (pendingProjectDeletions.delete(project_id)) {
+    logger.info("stale project data deletion canceled", {
+      project_id,
+      reason,
+    });
+  }
 }
 
 async function drainProjectDataDeletions(): Promise<void> {
@@ -102,10 +167,15 @@ async function drainProjectDataDeletions(): Promise<void> {
   try {
     while (pendingProjectDeletions.size > 0) {
       const entry = pendingProjectDeletions.entries().next().value as
-        | [string, number]
+        | [string, { attempts: number; queued_at: number }]
         | undefined;
       if (!entry) break;
-      const [project_id, attempts] = entry;
+      const [project_id, { attempts, queued_at }] = entry;
+      const superseded = staleDeletionSuperseded(project_id, queued_at);
+      if (superseded != null) {
+        cancelProjectDataDeletion(project_id, superseded);
+        continue;
+      }
       try {
         await withBtrfsMutationContext(
           {
@@ -114,12 +184,17 @@ async function drainProjectDataDeletions(): Promise<void> {
             priority: "scavenger",
             operation_class: "stale_project_cleanup",
           },
-          async () => await deleteProjectDataLocal(project_id),
+          async () => await deleteProjectDataLocal(project_id, queued_at),
         );
         pendingProjectDeletions.delete(project_id);
       } catch (err) {
         const nextAttempts = attempts + 1;
-        pendingProjectDeletions.set(project_id, nextAttempts);
+        if (pendingProjectDeletions.has(project_id)) {
+          pendingProjectDeletions.set(project_id, {
+            attempts: nextAttempts,
+            queued_at,
+          });
+        }
         logger.warn("stale project data deletion failed", {
           project_id,
           attempts: nextAttempts,
@@ -500,6 +575,10 @@ async function reportProjectProvisionedToMaster(
     }
     markProjectProvisionedReported(project_id);
     if (provisioned) {
+      cancelProjectDataDeletion(
+        project_id,
+        "master accepted it as provisioned",
+      );
       for (const listener of projectProvisionedReportedListeners) {
         try {
           listener(project_id);

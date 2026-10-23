@@ -4,6 +4,13 @@ const reportProjectStateMock = jest.fn();
 const markProjectStateReportedMock = jest.fn();
 const syncAccountRevocationsMock = jest.fn();
 const upsertAccountRevocationMock = jest.fn();
+const deleteVolumeMock = jest.fn(async (..._args: any[]): Promise<any> => ({}));
+const defaultLocalProject = {
+  project_bundle_version: "1791099701123",
+  tools_version: "1791099787193",
+};
+let localProject: any = defaultLocalProject;
+let localProvisioning: any = undefined;
 
 const loggerFactory = jest.fn(() => ({
   debug: jest.fn(),
@@ -37,10 +44,7 @@ jest.mock("./sqlite/projects", () => ({
   markProjectStateReported: (...args: any[]) =>
     markProjectStateReportedMock(...args),
   deleteProjectLocal: jest.fn(),
-  getProject: () => ({
-    project_bundle_version: "1791099701123",
-    tools_version: "1791099787193",
-  }),
+  getProject: () => localProject,
 }));
 
 jest.mock("./sqlite/provisioning", () => ({
@@ -48,6 +52,7 @@ jest.mock("./sqlite/provisioning", () => ({
   listUnreportedProvisioning: jest.fn(() => []),
   markProjectProvisionedReported: jest.fn(),
   setProjectProvisioned: jest.fn(() => true),
+  getProjectProvisioning: () => localProvisioning,
   deleteProjectProvisioning: jest.fn(),
 }));
 
@@ -66,7 +71,7 @@ jest.mock("./last-edited", () => ({
 
 jest.mock("./file-server", () => ({
   __esModule: true,
-  deleteVolume: jest.fn(async () => undefined),
+  deleteVolume: (...args: any[]) => deleteVolumeMock(...args),
 }));
 
 jest.mock("./rpc-traffic-audit", () => ({
@@ -183,6 +188,100 @@ describe("master-status provisioned inventory", () => {
     stop();
 
     expect(reportHostProvisionedInventoryMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("master-status stale project data deletion", () => {
+  const deferred = () =>
+    new Error("BtrfsMutationDeferredError: background btrfs mutation deferred");
+  // deleteVolume: deferred the first time, then as the real one (asks
+  // `superseded` under the project's lifecycle lock)
+  const deleted: string[] = [];
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    jest.useRealTimers();
+    deleted.length = 0;
+    reportProjectProvisionedMock.mockReset();
+    reportProjectProvisionedMock.mockResolvedValue({});
+    localProject = undefined;
+    localProvisioning = undefined;
+    deleteVolumeMock.mockImplementation(async (project_id, opts) => {
+      const superseded = opts?.superseded?.();
+      if (superseded != null) return { superseded };
+      deleted.push(project_id);
+      return {};
+    });
+    deleteVolumeMock.mockRejectedValueOnce(deferred());
+    const { resetMasterStatusForTests, setMasterStatusClient } =
+      await import("./master-status");
+    resetMasterStatusForTests();
+    setMasterStatusClient({ client: {} as any, host_id: "dest" });
+  });
+
+  afterEach(async () => {
+    const { resetMasterStatusForTests } = await import("./master-status");
+    resetMasterStatusForTests();
+    localProject = defaultLocalProject;
+    localProvisioning = undefined;
+  });
+
+  // the first attempt is deferred; the retry comes 250 ms later
+  const retry = () => new Promise((resolve) => setTimeout(resolve, 600));
+
+  it("deletes the data of a project that is still stale here", async () => {
+    const { queueProjectProvisioned } = await import("./master-status");
+    reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
+    queueProjectProvisioned("p", true);
+    await retry();
+    expect(deleteVolumeMock).toHaveBeenCalledTimes(2);
+    expect(deleted).toEqual(["p"]);
+  });
+
+  it("does not delete a project started here after the deletion was requested", async () => {
+    // a move's destination: the master asked for the deletion before the
+    // placement switched, then the move restored and started it here
+    const { queueProjectProvisioned } = await import("./master-status");
+    reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
+    queueProjectProvisioned("p", false);
+    await new Promise(setImmediate);
+    localProject = { state: "starting", state_updated_at: Date.now() };
+    await retry();
+    // (dropped before even trying again)
+    expect(deleteVolumeMock).toHaveBeenCalledTimes(1);
+    expect(deleted).toEqual([]);
+
+    // and not later either, once it is no longer starting
+    localProject = { state: "opened", state_updated_at: Date.now() };
+    await retry();
+    expect(deleted).toEqual([]);
+  });
+
+  it("does not delete a project provisioned here after the deletion was requested", async () => {
+    const { queueProjectProvisioned } = await import("./master-status");
+    reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
+    queueProjectProvisioned("p", false);
+    await new Promise(setImmediate);
+    localProvisioning = {
+      project_id: "p",
+      provisioned: true,
+      updated_at: Date.now() + 1,
+    };
+    await retry();
+    expect(deleted).toEqual([]);
+  });
+
+  it("drops a pending deletion once the master accepts the project as provisioned here", async () => {
+    const { queueProjectProvisioned } = await import("./master-status");
+    reportProjectProvisionedMock.mockResolvedValueOnce({ action: "delete" });
+    queueProjectProvisioned("p", false);
+    await new Promise(setImmediate);
+    expect(deleteVolumeMock).toHaveBeenCalledTimes(1);
+    // the master now says it is ours
+    reportProjectProvisionedMock.mockResolvedValueOnce({});
+    queueProjectProvisioned("p", true);
+    await retry();
+    expect(deleteVolumeMock).toHaveBeenCalledTimes(1);
+    expect(deleted).toEqual([]);
   });
 });
 
