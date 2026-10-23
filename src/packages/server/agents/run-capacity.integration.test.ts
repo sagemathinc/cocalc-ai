@@ -140,4 +140,25 @@ describeDb("agent run capacity", () => {
       agentStore().issue(await agent(), randomUUID(), account),
     ).rejects.toThrow("agent_identity_run_capacity");
   });
+
+  test("full history does not stop renewing an expired replacement, which adds no row", async () => {
+    const original = randomUUID();
+    const replacement = randomUUID();
+    await insertRun(original, { ended: true, expired: true });
+    await insertRun(replacement, { ended: false, expired: true });
+    await addRuns(MAX_RETAINED_RUNS_PER_AGENT - 2, "ended");
+    const renewed = await agentStore().issue(
+      await agent(),
+      replacement,
+      account,
+      original,
+    );
+    expect(renewed.run_id).toBe(replacement);
+    // A new recovery would add a row, so full history refuses it.
+    const stale = randomUUID();
+    await insertRun(stale, { ended: false, expired: true });
+    await expect(
+      agentStore().issue(await agent(), randomUUID(), account, stale),
+    ).rejects.toThrow("agent_identity_run_capacity");
+  });
 });

@@ -18,14 +18,16 @@ export const MAX_RETAINED_RUNS_PER_AGENT = 250_000;
 const RUN_COUNTS_SQL = `SELECT count(*) FILTER (WHERE ended_at IS NULL AND expires_at>now()) AS live,
   count(*) AS retained FROM agent_identity_runs WHERE agent_id=$1`;
 
-function atRunCapacity(row: {
+function runCapacity(row: {
   live: string | number;
   retained: string | number;
 }) {
-  return (
-    +row.live >= MAX_LIVE_RUNS_PER_AGENT ||
-    +row.retained >= MAX_RETAINED_RUNS_PER_AGENT
-  );
+  const liveFull = +row.live >= MAX_LIVE_RUNS_PER_AGENT;
+  return {
+    liveFull,
+    // A new run adds a live row and a retained row.
+    full: liveFull || +row.retained >= MAX_RETAINED_RUNS_PER_AGENT,
+  };
 }
 
 export function agentMessagingEnabled(): boolean {
@@ -148,13 +150,14 @@ export class AgentStore {
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           `agent-runs:${agent.agent_id}`,
         ]);
-        const atCapacity = atRunCapacity(
+        const capacity = runCapacity(
           (await db.query(RUN_COUNTS_SQL, [agent.agent_id])).rows[0],
         );
         // A recovery may have committed even if its response was lost. Retrying
         // the exact old/new run pair renews that replacement instead of
         // permanently wedging the worker on an unknown outcome. A replacement
-        // that has itself expired is no longer live: reviving it needs room.
+        // that has itself expired is no longer live: reviving it needs a live
+        // slot, but no retained one, since its row already exists.
         const retried = await db.query(
           `UPDATE agent_identity_runs replacement
            SET token_hash=$4,expires_at=$5,
@@ -168,10 +171,10 @@ export class AgentStore {
                  AND expired.account_id=$3 AND expired.ended_at IS NOT NULL
              )
            RETURNING replacement.run_id`,
-          [...values, recoverExpiredRunId, agent.thread_id, atCapacity],
+          [...values, recoverExpiredRunId, agent.thread_id, capacity.liveFull],
         );
         if (retried.rows[0]) return 1;
-        if (atCapacity) throw new Error("agent_identity_run_capacity");
+        if (capacity.full) throw new Error("agent_identity_run_capacity");
         const recovered = await db.query(
           `UPDATE agent_identity_runs SET ended_at=now()
            WHERE agent_id=$1 AND run_id=$2 AND account_id=$3
@@ -209,9 +212,9 @@ export class AgentStore {
         ).rows[0];
         if (!existing) {
           if (
-            atRunCapacity(
+            runCapacity(
               (await db.query(RUN_COUNTS_SQL, [agent.agent_id])).rows[0],
-            )
+            ).full
           )
             throw new Error("agent_identity_run_capacity");
         }
