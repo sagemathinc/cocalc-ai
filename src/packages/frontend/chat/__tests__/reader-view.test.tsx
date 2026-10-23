@@ -468,3 +468,28 @@ test("phone: opens nothing until the read state loads", () => {
   // Not the archived one it would have opened before.
   expect(screen.getByRole("article")).toHaveTextContent("second question");
 });
+
+test("the open item can be shown by the log, and the list can mark items", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  render(
+    <ChatReaderView
+      actions={actions}
+      threadId="thread-1"
+      messages={thread}
+      accountId="acct"
+      narrow
+      renderItem={(item) => <div data-testid="item-log">{item.id}</div>}
+      itemBadges={(item) => (item.id === "p3" ? <span>Question</span> : null)}
+    />,
+  );
+  // Opened on its own (narrow): the newest item, through the log.
+  expect(screen.getByTestId("item-log")).toHaveTextContent("p3");
+  expect(screen.queryByText("third question")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "All messages" }));
+  expect(within(options()[0]).getByText("Question")).toBeTruthy();
+  expect(within(options()[1]).queryByText("Question")).toBeNull();
+});

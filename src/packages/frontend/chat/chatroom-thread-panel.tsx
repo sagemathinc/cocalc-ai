@@ -29,6 +29,13 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ChatReaderView } from "./reader-view";
+import {
+  isOpenAttention,
+  readerItemAttention,
+  readerItemThreadIndex,
+  readerItemWorking,
+} from "./reader-item-log";
+import { readerItems, type ReaderItem } from "./reader-model";
 import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -819,6 +826,14 @@ export function ChatRoomThreadPanel({
         : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [showReader, actions, selectedThreadId, messages, docVersion],
+  );
+  // Each item's questions and approvals, for its log and its list row.
+  const readerAttention = useMemo(
+    () =>
+      showReader
+        ? readerItemAttention(attentionRecords, readerItems(readerMessages))
+        : new Map<string, readonly AcpAttentionRecord[]>(),
+    [showReader, attentionRecords, readerMessages],
   );
   const selectedThreadMessages = useMemo(
     () =>
@@ -3102,6 +3117,36 @@ export function ChatRoomThreadPanel({
             path={path}
             readOnly={readOnly}
             isVisible={isVisible}
+            itemBadges={(item: ReaderItem) => (
+              <ReaderItemBadges
+                working={readerItemWorking(item, acpState)}
+                question={(readerAttention.get(item.id) ?? []).some(
+                  isOpenAttention,
+                )}
+              />
+            )}
+            renderItem={(item: ReaderItem) => (
+              <ChatLog
+                actions={actions}
+                project_id={project_id ?? ""}
+                path={path ?? ""}
+                messages={messages}
+                threadIndex={readerItemThreadIndex(
+                  selectedThreadForLog ?? selectedThreadId,
+                  item,
+                )}
+                docVersion={docVersion}
+                acpState={acpState}
+                scrollCacheId={`${scrollCacheId ?? `${project_id}${path}`}:reader:${item.id}`}
+                isVisible={isVisible}
+                mode={variant === "compact" ? "sidechat" : "standalone"}
+                fontSize={fontSize}
+                selectedThread={selectedThreadForLog ?? selectedThreadId}
+                onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
+                attentionRecords={readerAttention.get(item.id) ?? []}
+                readOnly={readOnly}
+              />
+            )}
           />
         ) : (
           <ChatLog
@@ -3234,5 +3279,43 @@ function renderOptionWithDescription({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** The list row's marks for an item: its turn is running, or asks you. */
+function ReaderItemBadges({
+  working,
+  question,
+}: {
+  working: boolean;
+  question: boolean;
+}) {
+  return (
+    <>
+      {question ? (
+        <span
+          aria-label="Waiting for your answer"
+          style={{
+            color: "#fff",
+            background: "#d46b08",
+            borderRadius: 4,
+            padding: "0 6px",
+            fontSize: 11,
+            fontWeight: 600,
+            flex: "none",
+          }}
+        >
+          Question
+        </span>
+      ) : null}
+      {working ? (
+        <span
+          aria-label="Working"
+          style={{ color: "#1677ff", fontSize: 11, flex: "none" }}
+        >
+          working…
+        </span>
+      ) : null}
+    </>
   );
 }
