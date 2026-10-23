@@ -696,7 +696,7 @@ export async function initHostStatusService() {
             // Only data the host has is worth deleting.  A host reporting
             // that it has none is often the destination of a move whose
             // placement hasn't switched yet (its pre-restore cleanup), and a
-            // delete then may run after the restore (6f6a2389, 2026-10-23).
+            // delete then may run after the restore (a customer report, 2026-10-23).
             return provisioned ? { action: "delete" as const } : undefined;
           }
         }

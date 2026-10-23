@@ -416,6 +416,10 @@ export function createAgentRpcService(
             message_id: savedMessage?.message_id,
             admissionStarted,
             error: detail,
+            // Admission's own reason, e.g. which payment source is missing.
+            ...(setup
+              ? { reason: `${(error as Error)?.message ?? error}` }
+              : {}),
           });
           if (savedMessage) {
             const message = savedMessage;

@@ -4079,7 +4079,7 @@ reconcile_project_io_policy
             self.assertEqual(
                 log.read_text().splitlines(),
                 [
-                    "lock default",
+                    "lock 60",
                     "normalize",
                     "hierarchy",
                     "maintenance",
@@ -4091,6 +4091,63 @@ reconcile_project_io_policy
                     "unlock",
                 ],
             )
+
+    def test_pasta_limits_ignore_a_process_that_exits_meanwhile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                container_runtime_bundle=bootstrap.BundleSpec(
+                    "", None, "", "", "", ""
+                ),
+            )
+            captured: dict[str, str] = {}
+            with mock.patch.object(
+                bootstrap,
+                "text_write_atomic",
+                side_effect=lambda path, data, **_kwargs: captured.__setitem__(
+                    str(path), data
+                ),
+            ), mock.patch.object(bootstrap.os, "chmod"), mock.patch.object(
+                bootstrap.os, "chown"
+            ):
+                bootstrap.install_privileged_wrappers(cfg)
+            script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+            body = (
+                "apply_pasta_resource_limits() {"
+                + script.split("apply_pasta_resource_limits() {", 1)[1].split(
+                    "\n}\n", 1
+                )[0]
+                + "\n}\n"
+            )
+            # A pid that no longer exists: prlimit fails with ESRCH.  The
+            # process exits between the check and prlimit when kill -0
+            # succeeds only once; it is still there when it always does.
+            sleeper = subprocess.Popen(["sleep", "0"])
+            sleeper.wait()
+            gone = sleeper.pid
+
+            def run(alive: str) -> subprocess.CompletedProcess:
+                harness = f"""
+set -euo pipefail
+PROJECT_PASTA_NOFILE_LIMIT=1024
+CHECKS=0
+kill() {{
+  CHECKS=$((CHECKS + 1))
+  {alive}
+}}
+{body}
+apply_pasta_resource_limits {gone}
+"""
+                return subprocess.run(
+                    ["bash", "-c", harness], capture_output=True, text=True
+                )
+
+            exited = run('[ "$CHECKS" -eq 1 ]')
+            self.assertEqual(exited.returncode, 0, exited.stderr)
+            self.assertEqual(exited.stderr, "")
+            still_there = run("return 0")
+            self.assertNotEqual(still_there.returncode, 0)
+            self.assertIn("prlimit", still_there.stderr)
 
     def test_io_class_state_normalize_is_fork_free_and_forgets_stale_projects(
         self,

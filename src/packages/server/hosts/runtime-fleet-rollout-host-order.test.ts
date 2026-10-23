@@ -20,6 +20,7 @@ jest.mock("@cocalc/server/conat/api/hosts-routed", () => ({
     calls.push(`status ${status.label}`);
     return status;
   }),
+  waitForHostLro: jest.fn(async () => ({ status: "succeeded" })),
 }));
 jest.mock("@cocalc/server/lro/wait", () => ({
   waitForDurableLroCompletion: jest.fn(async () => ({ status: "succeeded" })),

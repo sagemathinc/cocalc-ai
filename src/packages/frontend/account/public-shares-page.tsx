@@ -437,9 +437,7 @@ function PublicSharesPage() {
   const [bulkSiteLicenseDurationDays, setBulkSiteLicenseDurationDays] =
     useState(30);
   const [bulkCopyRequiresGrant, setBulkCopyRequiresGrant] = useState(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    origin: "public directory shares",
-  });
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const selectedShares = useMemo(() => {
     const selected = new Set(selectedShareIds);
     return state.shares.filter((share) => selected.has(share.id));

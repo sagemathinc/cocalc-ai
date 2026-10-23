@@ -86,6 +86,14 @@ const hostDeploymentScope: HubApiRoute = {
   key: (args) => (args?.[0]?.scope_type === "host" ? args?.[0]?.id : undefined),
 };
 
+// A host's long-running operations live on the host's bay. Other scopes
+// (or none) run where received.
+const hostLroScope: HubApiRoute = {
+  owner: "host",
+  key: (args) =>
+    args?.[0]?.scope_type === "host" ? args?.[0]?.scope_id : undefined,
+};
+
 const collabInviteFromOpts: HubApiRoute = {
   owner: "collab-invite",
   key: (args) => ({
@@ -119,6 +127,8 @@ const leftOrDeletedProjects: HubApiRoute = {
 };
 
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
+  "lro.get": hostLroScope,
+  "lro.list": hostLroScope,
   // Host reads run on the host's owning bay.
   "hosts.getHostLog": hostFromOpts,
   "hosts.getHostAvailability": hostFromOpts,

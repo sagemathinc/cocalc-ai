@@ -58,7 +58,7 @@ overrides:
   "langsmith@<0.4.6": ">=0.4.6"
   "immutable@>=4.0.0-rc.1 <4.3.9": "^4.3.9"
   "immutable@>=5.0.0 <5.1.5": ">=5.1.5"
-  "zod": "4.3.6"
+  "zod": "4.6.7"
   "zod-to-json-schema": "3.25.0"
   "validator@<13.15.22": ">=13.15.22"
   "yaml@<2.8.3": ">=2.8.3"
@@ -140,6 +140,8 @@ minimumReleaseAgeExclude:
   - "@cocalc/gcloud-pricing-calculator"
   - "@cocalc/xterm"
   - patchflow
+  # CoCalc-owned release (the patchflow 0.16 dependency), validated via upstream CI and npm provenance.
+  - "@cocalc/diff-match-patch@1.1.1"
   - "@nebius/js-sdk"
   # First patched version for GHSA-xcj9-5m2h-648r, GHSA-87f9-hvmw-gh4p,
   # and GHSA-ghcm-xqfw-q4vr in the active Mermaid 11.x line.

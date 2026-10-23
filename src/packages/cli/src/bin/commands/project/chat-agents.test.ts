@@ -658,3 +658,81 @@ test("a watcher that cannot be set leaves the send a success", async () => {
     transport.mock.restore();
   }
 });
+
+test("rpc inspect reaches an external member by account and installation", async () => {
+  const requests: any[] = [];
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      requests.push(request);
+      return {
+        version: 3,
+        attempt_id: request.attempt_id,
+        agent_network_id: request.agent_network_id,
+        target: request.target,
+        outcome: "accepted",
+        observed_at: Date.now(),
+        inbox: {
+          state: "pending",
+          created_at: "2026-10-23T10:00:00.000Z",
+          expires_at: "2026-10-30T10:00:00.000Z",
+        },
+      };
+    },
+  );
+  try {
+    const [network, agent, account, installation, attempt] = [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ];
+    const output: any[] = [];
+    await topLevel(output).parseAsync(
+      [
+        "agent",
+        "rpc",
+        "inspect",
+        attempt,
+        "--agent-network",
+        network,
+        "--to-agent",
+        agent,
+        "--target-account",
+        account,
+        "--target-installation",
+        installation,
+      ],
+      { from: "user" },
+    );
+    assert.deepEqual(requests[0].target, {
+      kind: "external",
+      account_id: account,
+      agent_id: agent,
+      installation_id: installation,
+    });
+    assert.match(output[0].summary, /^Not read yet/);
+    await assert.rejects(
+      topLevel([]).parseAsync(
+        [
+          "agent",
+          "rpc",
+          "inspect",
+          attempt,
+          "--agent-network",
+          network,
+          "--to-agent",
+          agent,
+          "--target-account",
+          account,
+        ],
+        { from: "user" },
+      ),
+      /--target-account and --target-installation/,
+    );
+  } finally {
+    transport.mock.restore();
+  }
+});
