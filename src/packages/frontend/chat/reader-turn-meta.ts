@@ -52,7 +52,10 @@ export function firstLine(message: ChatMessageTyped | undefined): string {
     const text = line
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
       .replace(/^(#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, "")
-      .replace(/[*_`~]/g, "")
+      // Markdown's markup only: _ and ~ in cache_key or ~/.config stay.
+      .replace(/`([^`]*)`/g, "$1")
+      .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, "$2")
+      .replace(/(^|[^\w*])([*_])(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, "$1$3")
       .trim();
     if (text) return normalizeTurnSubject(text);
   }

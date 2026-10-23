@@ -29,6 +29,13 @@ test("the first line worth reading, without Markdown", () => {
   expect(firstLine(msg("m", ":robot: Thinking...\n- done it"))).toBe("done it");
   expect(firstLine(msg("m", "```\ncode\n```\nafter"))).toBe("after");
   expect(firstLine(msg("m", ""))).toBe("");
+  // Only markup goes: identifiers and paths keep their _ and ~.
+  expect(firstLine(msg("m", "Fixed cache_key in ~/.config/a_b"))).toBe(
+    "Fixed cache_key in ~/.config/a_b",
+  );
+  expect(
+    firstLine(msg("m", "**Bold**, _it_, *em*, `code_x` and ~~old~~ done")),
+  ).toBe("Bold, it, em, code_x and old done");
 });
 
 test("the subject: the agent's own, else its reply's first line, else the prompt's", () => {
