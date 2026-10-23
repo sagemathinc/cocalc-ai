@@ -7,6 +7,13 @@ import {
   type AgentIdentity,
 } from "@cocalc/conat/agents/protocol";
 
+// Concurrent runs an agent may hold. Ended and expired runs do not count:
+// they are history, removed 30 days later by maintenance. A busy agent can
+// start thousands of turns a day and must not be locked out by its past.
+export const MAX_LIVE_RUNS_PER_AGENT = 10_000;
+const LIVE_RUN_COUNT_SQL =
+  "SELECT count(*) AS count FROM agent_identity_runs WHERE agent_id=$1 AND ended_at IS NULL AND expires_at>now()";
+
 export function agentMessagingEnabled(): boolean {
   return true;
 }
@@ -145,13 +152,9 @@ export class AgentStore {
           [...values, recoverExpiredRunId, agent.thread_id],
         );
         if (retried.rows[0]) return 1;
-        const count = (
-          await db.query(
-            "SELECT count(*) AS count FROM agent_identity_runs WHERE agent_id=$1",
-            [agent.agent_id],
-          )
-        ).rows[0];
-        if (+count.count >= 10_000)
+        const count = (await db.query(LIVE_RUN_COUNT_SQL, [agent.agent_id]))
+          .rows[0];
+        if (+count.count >= MAX_LIVE_RUNS_PER_AGENT)
           throw new Error("agent_identity_run_capacity");
         const recovered = await db.query(
           `UPDATE agent_identity_runs SET ended_at=now()
@@ -189,13 +192,9 @@ export class AgentStore {
           )
         ).rows[0];
         if (!existing) {
-          const count = (
-            await db.query(
-              "SELECT count(*) AS count FROM agent_identity_runs WHERE agent_id=$1",
-              [agent.agent_id],
-            )
-          ).rows[0];
-          if (+count.count >= 10_000)
+          const count = (await db.query(LIVE_RUN_COUNT_SQL, [agent.agent_id]))
+            .rows[0];
+          if (+count.count >= MAX_LIVE_RUNS_PER_AGENT)
             throw new Error("agent_identity_run_capacity");
         }
         return (
