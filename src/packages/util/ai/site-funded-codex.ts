@@ -61,6 +61,8 @@ export type SiteFundedCodexRequestUsage = {
   inputTokens: number;
   cachedInputTokens?: number;
   cacheWriteInputTokens?: number;
+  /** Of cacheWriteInputTokens, those written for 1 hour (Anthropic). */
+  cacheWrite1hInputTokens?: number;
   outputTokens: number;
   reasoningOutputTokens?: number;
   providerToolFeesMicrousd?: number;
@@ -73,6 +75,7 @@ export type SiteFundedCodexCost = {
   ordinaryInputTokens: number;
   cachedInputTokens: number;
   cacheWriteInputTokens: number;
+  cacheWrite1hInputTokens: number;
   outputTokens: number;
   reasoningOutputTokens: number;
   ordinaryInputCostMicrousd: number;
@@ -241,6 +244,10 @@ export function computeSiteFundedCodexRequestCost({
     usage.cacheWriteInputTokens,
     "cacheWriteInputTokens",
   );
+  const cacheWrite1hInputTokens = tokenCount(
+    usage.cacheWrite1hInputTokens,
+    "cacheWrite1hInputTokens",
+  );
   const outputTokens = tokenCount(usage.outputTokens, "outputTokens");
   const reasoningOutputTokens = tokenCount(
     usage.reasoningOutputTokens,
@@ -254,6 +261,12 @@ export function computeSiteFundedCodexRequestCost({
     throw new Error(
       "cached and cache-write input tokens cannot exceed total input tokens",
     );
+  }
+  if (cacheWrite1hInputTokens > cacheWriteInputTokens) {
+    throw new Error("1-hour cache writes cannot exceed all cache writes");
+  }
+  if (cacheWrite1hInputTokens > 0 && price.cacheWrite1hUsdPerMillion == null) {
+    throw new Error(`model '${price.model}' has no 1-hour cache write price`);
   }
   if (reasoningOutputTokens > outputTokens) {
     throw new Error("reasoning output tokens cannot exceed output tokens");
@@ -278,9 +291,16 @@ export function computeSiteFundedCodexRequestCost({
     price.cachedInputUsdPerMillion,
   ).mul(inputMultiplier);
   const cacheWriteInputCost = microusdForTokens(
-    cacheWriteInputTokens,
+    cacheWriteInputTokens - cacheWrite1hInputTokens,
     price.cacheWriteUsdPerMillion,
-  ).mul(inputMultiplier);
+  )
+    .add(
+      microusdForTokens(
+        cacheWrite1hInputTokens,
+        price.cacheWrite1hUsdPerMillion ?? "0",
+      ),
+    )
+    .mul(inputMultiplier);
   const outputCost = microusdForTokens(
     outputTokens,
     price.outputUsdPerMillion,
@@ -298,6 +318,7 @@ export function computeSiteFundedCodexRequestCost({
     ordinaryInputTokens,
     cachedInputTokens,
     cacheWriteInputTokens,
+    cacheWrite1hInputTokens,
     outputTokens,
     reasoningOutputTokens,
     ordinaryInputCostMicrousd: ceilMicrousd(ordinaryInputCost),
