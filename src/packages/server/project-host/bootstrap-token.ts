@@ -209,27 +209,37 @@ export async function exchangeProjectHostBootstrapToken(
   return { ok: true, host_id: info.host_id, master };
 }
 
+async function isValidMasterTokenLocked(
+  db: Queryable,
+  hostId: string,
+  masterTokenId: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT 1 FROM project_host_bootstrap_tokens
+     WHERE token_id=$1
+       AND host_id=$2
+       AND purpose='master-conat'
+       AND revoked IS NOT TRUE
+       AND expires > NOW()`,
+    [masterTokenId, hostId],
+  );
+  return rows.length > 0;
+}
+
 // The host has shown that the master-conat token it holds is valid: its
-// bootstrap tokens can no longer mint one. Re-checked under the lock, so a
-// token revoked by a concurrent mint proves nothing. Tokens issued later
-// (start, restart, reconcile), and all of them after a new master token is
-// minted, are open until the host proves its token again.
+// bootstrap tokens can no longer mint one. Re-checked under the lock: a token
+// revoked by a concurrent mint is reported invalid and proves nothing.
+// Tokens issued later (start, restart, reconcile), and all of them after a
+// new master token is minted, are open until the host proves its token again.
 export async function proveProjectHostMasterToken(
   hostId: string,
   masterTokenId: string,
-): Promise<number> {
+): Promise<{ valid: boolean; closed: number }> {
   return await withHostTokenLock(hostId, async (db) => {
     await _test.hooks.beforeProofCheck?.();
-    const { rows } = await db.query(
-      `SELECT 1 FROM project_host_bootstrap_tokens
-       WHERE token_id=$1
-         AND host_id=$2
-         AND purpose='master-conat'
-         AND revoked IS NOT TRUE
-         AND expires > NOW()`,
-      [masterTokenId, hostId],
-    );
-    if (rows.length === 0) return 0;
+    if (!(await isValidMasterTokenLocked(db, hostId, masterTokenId))) {
+      return { valid: false, closed: 0 };
+    }
     const { rowCount } = await db.query(
       `UPDATE project_host_bootstrap_tokens
        SET exchange_closed=NOW()
@@ -240,14 +250,39 @@ export async function proveProjectHostMasterToken(
          AND expires > NOW()`,
       [hostId],
     );
-    return rowCount ?? 0;
+    return { valid: true, closed: rowCount ?? 0 };
   });
+}
+
+// Rotation with the host's current master token: the token is re-checked
+// under the lock, so a token revoked by a concurrent mint can't authorize a
+// new one.
+export async function rotateProjectHostMasterToken(
+  hostId: string,
+  currentTokenId: string,
+  opts: { ttlMs: number },
+): Promise<ProjectHostTokenInfo | undefined> {
+  const master = await withHostTokenLock(hostId, async (db) => {
+    await _test.hooks.beforeRotateCheck?.();
+    if (!(await isValidMasterTokenLocked(db, hostId, currentTokenId))) {
+      return undefined;
+    }
+    return await insertProjectHostToken(db, hostId, {
+      purpose: "master-conat",
+      ttlMs: opts.ttlMs,
+    });
+  });
+  if (master) {
+    await refreshLaunchpadOnPremAuthorizedKeys();
+  }
+  return master;
 }
 
 export const _test: {
   hooks: {
     afterExchangeCheck?: () => Promise<void>;
     beforeProofCheck?: () => Promise<void>;
+    beforeRotateCheck?: () => Promise<void>;
   };
 } = { hooks: {} };
 
@@ -256,21 +291,24 @@ export async function revokeProjectHostTokensForHost(
   opts: { purpose?: string } = {},
 ): Promise<void> {
   const purpose = opts.purpose;
-  await pool().query(
-    `UPDATE project_host_bootstrap_tokens
-     SET revoked=TRUE
-     WHERE host_id=$1
-       ${purpose ? "AND purpose=$2" : ""}`,
-    purpose ? [hostId, purpose] : [hostId],
-  );
+  await withHostTokenLock(hostId, async (db) => {
+    await db.query(
+      `UPDATE project_host_bootstrap_tokens
+       SET revoked=TRUE
+       WHERE host_id=$1
+         ${purpose ? "AND purpose=$2" : ""}`,
+      purpose ? [hostId, purpose] : [hostId],
+    );
+  });
   await refreshLaunchpadOnPremAuthorizedKeys();
 }
 
 async function restoreLatestRevokedTokenForPurpose(
+  db: Queryable,
   hostId: string,
   purpose: string,
 ): Promise<boolean> {
-  const { rows } = await pool().query<{ token_id: string }>(
+  const { rows } = await db.query<{ token_id: string }>(
     `
       WITH active AS (
         SELECT token_id
@@ -306,11 +344,13 @@ export async function restoreProjectHostTokensForRestart(
   hostId: string,
 ): Promise<{ restored: string[] }> {
   const restored: string[] = [];
-  for (const purpose of ["bootstrap", "master-conat"]) {
-    if (await restoreLatestRevokedTokenForPurpose(hostId, purpose)) {
-      restored.push(purpose);
+  await withHostTokenLock(hostId, async (db) => {
+    for (const purpose of ["bootstrap", "master-conat"]) {
+      if (await restoreLatestRevokedTokenForPurpose(db, hostId, purpose)) {
+        restored.push(purpose);
+      }
     }
-  }
+  });
   if (restored.length > 0) {
     await refreshLaunchpadOnPremAuthorizedKeys();
   }

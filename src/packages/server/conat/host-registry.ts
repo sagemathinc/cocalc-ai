@@ -14,9 +14,9 @@ import { conat } from "@cocalc/backend/conat";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import {
-  createProjectHostMasterConatToken,
   exchangeProjectHostBootstrapToken,
   proveProjectHostMasterToken,
+  rotateProjectHostMasterToken,
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -2052,17 +2052,21 @@ export async function initHostRegistryService() {
             "getMasterConatTokenStatus: token is invalid for this host",
           );
         }
+        let proof: { valid: boolean } | undefined;
         try {
-          await proveProjectHostMasterToken(host_id, info.token_id);
+          proof = await proveProjectHostMasterToken(host_id, info.token_id);
         } catch (err) {
           // The exchange stays open until the next check; never fail the
-          // status check, which would make the host re-mint its token.
+          // status check on this, which would make the host re-mint its token.
           logger.warn(
-            "getMasterConatTokenStatus: closing bootstrap exchange failed",
-            {
-              host_id,
-              err,
-            },
+            "getMasterConatTokenStatus: recording the host's proof failed",
+            { host_id, err },
+          );
+        }
+        if (proof && !proof.valid) {
+          // Revoked by a concurrent mint between the two checks.
+          throw Error(
+            "getMasterConatTokenStatus: token is invalid for this host",
           );
         }
         return {
@@ -2090,9 +2094,15 @@ export async function initHostRegistryService() {
           if (currentInfo.host_id !== host_id) {
             throw Error("rotateMasterConatToken: token is invalid for host");
           }
-          const issued = await createProjectHostMasterConatToken(host_id, {
-            ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
-          });
+          const issued = await rotateProjectHostMasterToken(
+            host_id,
+            currentInfo.token_id,
+            { ttlMs: 1000 * 60 * 60 * 24 * 365 }, // 1 year
+          );
+          if (!issued) {
+            // Revoked by a concurrent mint after the first check.
+            throw Error("rotateMasterConatToken: token is invalid for host");
+          }
           return { master_conat_token: issued.token };
         }
         // A bootstrap token is used only when the current token is not valid,
