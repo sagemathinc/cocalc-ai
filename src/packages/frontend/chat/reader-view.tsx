@@ -34,6 +34,7 @@ import {
   archiveAll,
   findItem,
   isItemArchived,
+  isItemRunning,
   isItemRead,
   markAllRead,
   markItemRead,
@@ -291,10 +292,15 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items, watermark, state, filed, showArchived],
   );
-  // In the inbox: not archived, in every view.
-  const inboxCount = useMemo(
-    () => items.filter((item) => !isItemArchived(item, state)).length,
-    [items, state],
+  // What Archive all archives: the inbox (not archived, in every view) but a
+  // turn still running.
+  const archivableCount = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          !isItemArchived(item, state) && !isItemRunning(item, acpState),
+      ).length,
+    [items, state, acpState],
   );
   const [selectedId, setSelectedId] = useState<string>();
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
@@ -872,15 +878,20 @@ export function ChatReaderView({
             Mark all read
           </Button>
           <Popconfirm
-            title={`Archive all ${inboxCount} message${inboxCount === 1 ? "" : "s"}?`}
-            description="Everything in this thread is archived and read: a clean slate. A new reply brings a message back."
+            title={`Archive all ${archivableCount} message${archivableCount === 1 ? "" : "s"}?`}
+            description="Everything in this thread is archived and read: a clean slate. A turn still running stays in the inbox. A new reply brings a message back."
             okText="Archive all"
             onConfirm={() => {
-              save((current) => archiveAll(items, current));
+              save((current, watermark) =>
+                archiveAll(items, current, {
+                  running: (item) => isItemRunning(item, acpState),
+                  watermark,
+                }),
+              );
               if (!showArchived) setSelectedId(undefined);
             }}
           >
-            <Button size="small" disabled={!inboxCount}>
+            <Button size="small" disabled={!archivableCount}>
               Archive all
             </Button>
           </Popconfirm>

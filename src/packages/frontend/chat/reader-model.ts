@@ -230,6 +230,19 @@ export function itemLastDate(item: ReaderItem): number {
   return last;
 }
 
+/** Whether an item's agent turn is running now (it shows "working..."). */
+export function isItemRunning(
+  item: ReaderItem,
+  acpState?: AcpStateMap,
+): boolean {
+  return item.messages.some(
+    (message) =>
+      isAgentReply(message) &&
+      (field<boolean>(message, "generating") === true ||
+        acpStateOf(message, acpState) === "running"),
+  );
+}
+
 export function isItemArchived(item: ReaderItem, state: ReaderState): boolean {
   if (state.a?.[item.id] === item.lastId) return true;
   // Archive all: up to its time, unless moved back since; a newer reply
@@ -365,12 +378,29 @@ export function setItemArchived(
 /**
  * A clean slate: every item is archived and read. Kept as a time, not a list
  * of items, so it holds for any number of them; a newer reply brings an item
- * back.
+ * back. Except a turn still running: it stays in the inbox (and unread if it
+ * was), so it can be watched and its answer is seen.
  */
 export function archiveAll(
   items: ReaderItem[],
   state: ReaderState,
+  {
+    running = () => false,
+    watermark,
+  }: {
+    running?: (item: ReaderItem) => boolean;
+    /** The read watermark, to keep a running turn unread if it was. */
+    watermark?: number;
+  } = {},
 ): ReturnType<ReaderChange> {
+  const kept = items.filter(running);
+  const keptIds = kept.map((item) => item.id);
+  const keptUnread =
+    watermark == null
+      ? []
+      : kept
+          .filter((item) => !isItemRead(item, watermark, state))
+          .map((item) => item.id);
   const newest = items.reduce(
     (last, item) => Math.max(last, itemLastDate(item)),
     state.aw ?? -Infinity,
@@ -379,13 +409,13 @@ export function archiveAll(
     compact({
       ...from,
       a: undefined,
-      ax: undefined,
+      ax: keptIds,
       ...(Number.isFinite(newest) ? { aw: newest } : {}),
     });
   const read = markAllRead(items, state);
   return {
     ...read,
-    state: archived(read.state),
+    state: archived({ ...read.state, u: keptUnread }),
     unmoved: archived(read.unmoved ?? state),
   };
 }
