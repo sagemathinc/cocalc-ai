@@ -163,7 +163,10 @@ import {
   newestProjectLogCursor,
   oldestProjectLogCursor,
 } from "@cocalc/frontend/project/log-state";
-import { getPrivateProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
+import {
+  appOpenURL,
+  getPrivateProjectAppOpenUrl,
+} from "@cocalc/frontend/project/app-server-open";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import { createSharedLroListClient } from "@cocalc/frontend/lro/shared-list";
 import {
@@ -3487,6 +3490,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "app":
         if (route.path) {
           try {
+            const open = appOpenURL(
+              this.project_id,
+              `/${this.project_id}/apps/${route.path}`,
+            );
+            if (open && typeof window !== "undefined") {
+              window.location.assign(open);
+              return;
+            }
             const rawUrl =
               withProjectHostBase(this.project_id, `/apps/${route.path}`) ??
               `/apps/${route.path}`;

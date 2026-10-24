@@ -181,9 +181,9 @@ describe("WidgetManager.close", () => {
     });
     const constructed = jest.fn();
     const loading = (manager.manager as any).loadClass(
-      "CustomView",
-      "custom",
-      "1",
+      "IntSliderView",
+      "@jupyter-widgets/controls",
+      "2.0.0",
     );
     manager.close();
     release(
@@ -237,5 +237,49 @@ describe("WidgetManager.close", () => {
     await provider.renderOutput({ output_type: "stream", text: "b" }, second);
     expect(unmount).toHaveBeenCalled();
     expect(manager.outputRoots.size).toBe(1);
+  });
+});
+
+describe("widget code restrictions", () => {
+  beforeEach(() => {
+    for (const id of Object.keys(models)) delete models[id];
+    resetLibrary();
+  });
+
+  it("never asks the library (and so the CDN) for modules that aren't allowed", async () => {
+    const original = library.loadClass;
+    const manager = new WidgetManager({
+      ipywidgets_state: makeState(),
+      actions: { sendCommMessageToKernel: jest.fn() } as any,
+    });
+    const lib = manager.manager as any;
+    for (const [name, version] of [
+      ["custom-widgets", "1.0.0"],
+      ["anywidget", "0.9.0"],
+      ["k3d/../evil", "1.0.0"],
+      ["k3d", "latest"],
+      ["k3d", "1.0.0/../../x"],
+    ]) {
+      await expect(lib.loadClass("V", name, version)).rejects.toThrow(
+        /not supported/,
+      );
+    }
+    // Third-party libraries too, until widgets run in an opaque frame.
+    await expect(lib.loadClass("Plot", "k3d", "2.16.0")).rejects.toThrow(
+      /not supported/,
+    );
+    expect(original).not.toHaveBeenCalled();
+    await lib.loadClass("IntSliderModel", "@jupyter-widgets/controls", "2.0.0");
+    expect(original).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows HTML descriptions as text", () => {
+    const manager = new WidgetManager({
+      ipywidgets_state: makeState(),
+      actions: { sendCommMessageToKernel: jest.fn() } as any,
+    });
+    expect((manager.manager as any).inline_sanitize("<b>x</b>")).toBe(
+      "&lt;b&gt;x&lt;/b&gt;",
+    );
   });
 });
