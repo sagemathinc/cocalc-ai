@@ -2081,6 +2081,23 @@ describe("a sensor wake joining a running turn", () => {
       expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
     });
 
+    it("releases it when the durable steer's claim is lost before the steer", async () => {
+      const request = wakeRequest();
+      enqueueAcpSteer({ request });
+      hubApi.agent.authorizeSensorExecution = jest.fn(async ({ delivery }) => {
+        phases.push({ phase: delivery.phase });
+        // Another worker takes the durable steer over right after the claim.
+        if (delivery.phase === "claim")
+          getAcpDatabase()
+            .prepare("UPDATE acp_steers SET claim_token = 'another-worker'")
+            .run();
+      }) as any;
+      await acpTestInternals.processPendingAcpSteersOnce();
+      expect(mockSteer).not.toHaveBeenCalled();
+      // Not injected, so not left claimed: its own turn can still run it.
+      expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
+    });
+
     it("never steers once the lease ends while an image is materialized", async () => {
       const request = wakeRequest();
       request.prompt = request.chat.user_message_content =

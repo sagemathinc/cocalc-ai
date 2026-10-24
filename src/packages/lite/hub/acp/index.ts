@@ -13213,6 +13213,9 @@ async function attemptAcpSteerRequest(
       // not, so it is released for its own turn.
       if (err instanceof SensorWakeClaimExpired && !deliveryTried)
         return { state: "not_steerable" as const };
+      // Any other failure before a steer started (a durable claim lost, say)
+      // certainly did not inject it either: released, never left claimed.
+      if (!deliveryTried) notInjected = true;
       throw err;
     });
     // Only an injection by this attempt: a handed-off wake (pending) is the
