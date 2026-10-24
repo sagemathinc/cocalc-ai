@@ -2548,9 +2548,8 @@ describe("project skill overrides never follow a project's symlinks", () => {
 
   it("a symlinked directory on the way is not followed either", async () => {
     const { projectHome, packagedSkills, host } = await setup();
-    const { getBuiltinClaudeSkillMount } = await import(
-      "./codex/codex-project"
-    );
+    const { getBuiltinClaudeSkillMount } =
+      await import("./codex/codex-project");
     // The skill directory itself, then a higher ancestor.
     await fs.mkdir(path.join(projectHome, ".claude", "skills"), {
       recursive: true,
@@ -2564,7 +2563,10 @@ describe("project skill overrides never follow a project's symlinks", () => {
     ).resolves.toHaveLength(1);
     await fs.rm(path.join(projectHome, ".claude"), { recursive: true });
     await fs.mkdir(path.join(host, "skills"));
-    await fs.rename(path.join(host, "cocalc"), path.join(host, "skills", "cocalc"));
+    await fs.rename(
+      path.join(host, "cocalc"),
+      path.join(host, "skills", "cocalc"),
+    );
     await fs.symlink(host, path.join(projectHome, ".claude"));
     await expect(
       getBuiltinClaudeSkillMount(projectHome, packagedSkills),
@@ -2573,12 +2575,13 @@ describe("project skill overrides never follow a project's symlinks", () => {
 
   it("creates the skills directory, but never through a symlink", async () => {
     const { projectHome, packagedSkills, tmp } = await setup();
-    const { getBuiltinClaudeSkillMount } = await import(
-      "./codex/codex-project"
-    );
+    const { getBuiltinClaudeSkillMount } =
+      await import("./codex/codex-project");
     await getBuiltinClaudeSkillMount(projectHome, packagedSkills);
     expect(
-      (await fs.lstat(path.join(projectHome, ".claude", "skills"))).isDirectory(),
+      (
+        await fs.lstat(path.join(projectHome, ".claude", "skills"))
+      ).isDirectory(),
     ).toBe(true);
     const elsewhere = path.join(tmp, "elsewhere");
     await fs.mkdir(elsewhere);
