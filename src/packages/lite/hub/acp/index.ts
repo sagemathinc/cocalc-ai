@@ -378,6 +378,7 @@ import {
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
+import { HarnessIdleDisposer, harnessIdleDisposeMs } from "./harness-idle";
 import { replaceAngleTags } from "@cocalc/util/linear-text";
 export {
   setHarnessAuthorityValidator,
@@ -536,6 +537,20 @@ const agents = new Map<string, AcpAgent>();
 const harnessConversationProfiles = new Map<string, string>();
 const agentProjectIds = new WeakMap<AcpAgent, string>();
 const harnessAgents = new WeakSet<AcpAgent>();
+// A retained harness agent holds its process (and, for a Claude controller on
+// a project host, a transcript staging slot) until it is disposed: dispose one
+// that has been idle a while. Its conversation's next turn starts a fresh one.
+const harnessIdle = new HarnessIdleDisposer<AcpAgent>({
+  idleMs: harnessIdleDisposeMs(),
+  dispose: async (key, agent) => {
+    if (agents.get(key) !== agent) return;
+    agents.delete(key);
+    agentProjectIds.delete(agent);
+    await agent.dispose?.();
+  },
+  onError: (key, err) =>
+    logger.warn("failed to dispose idle ACP harness agent", { key, err }),
+});
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
@@ -8357,22 +8372,36 @@ async function executeAcpRequest({
     harnessConversationProfiles.set(conversationKey, harnessKey);
   }
   let currentAgent = harnessKey ? agents.get(harnessKey) : undefined;
-  if (harnessKey && !currentAgent) {
-    currentAgent = await createHarnessAgent(
-      request,
-      createCodexAttentionHandler(conatClient!, {
-        runtimeLabel:
-          request.runtime?.profile.id === "claude-code" ? "Claude" : "Agent",
-        onSyncResponseResolved: persistAttentionResponseProjection,
-      }),
+  // This turn takes the agent, so it is not idle. Synchronous with the get
+  // above, so an idle disposal cannot remove it in between.
+  if (harnessKey) harnessIdle.acquire(harnessKey);
+  // Once, when the turn ends: dispose the agent if no turn takes it soon.
+  const releaseHarness = () => {
+    if (!harnessKey) return;
+    harnessIdle.release(
+      harnessKey,
+      currentAgent && agents.get(harnessKey) === currentAgent
+        ? currentAgent
+        : undefined,
     );
-    agents.set(harnessKey, currentAgent);
-    agentProjectIds.set(currentAgent, projectId);
-    harnessAgents.add(currentAgent);
-  }
-  currentAgent ??= await ensureAgent(projectId, useNativeTerminal, bindings);
-  const { prompt, local_images, image_attachments, cleanup } =
-    await materializeBlobs(
+  };
+  let materialized: Awaited<ReturnType<typeof materializeBlobs>>;
+  try {
+    if (harnessKey && !currentAgent) {
+      currentAgent = await createHarnessAgent(
+        request,
+        createCodexAttentionHandler(conatClient!, {
+          runtimeLabel:
+            request.runtime?.profile.id === "claude-code" ? "Claude" : "Agent",
+          onSyncResponseResolved: persistAttentionResponseProjection,
+        }),
+      );
+      agents.set(harnessKey, currentAgent);
+      agentProjectIds.set(currentAgent, projectId);
+      harnessAgents.add(currentAgent);
+    }
+    currentAgent ??= await ensureAgent(projectId, useNativeTerminal, bindings);
+    materialized = await materializeBlobs(
       request.prompt ?? "",
       projectId,
       useContainer && hostProjectRoot
@@ -8383,6 +8412,11 @@ async function executeAcpRequest({
         : undefined,
       !!harness,
     );
+  } catch (err) {
+    releaseHarness();
+    throw err;
+  }
+  const { prompt, local_images, image_attachments, cleanup } = materialized;
   try {
     if (!conatClient) {
       throw Error("conat client must be initialized");
@@ -8622,6 +8656,7 @@ async function executeAcpRequest({
       }),
     };
   } finally {
+    releaseHarness();
     await cleanup();
   }
 }
