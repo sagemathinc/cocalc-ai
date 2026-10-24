@@ -805,6 +805,18 @@ export async function recordSiteFundedCodexUsageEvent(
     model: event.model,
     usage: event,
   });
+  const recorded = await recordActiveSiteFundedCodexUsageEvent(event, cost);
+  // The late path takes its own connection only after the first is released,
+  // so a burst of late events cannot hold the whole pool waiting for more.
+  return recorded === "late"
+    ? await recordLateSiteFundedCodexUsageEvent(event, cost)
+    : recorded;
+}
+
+async function recordActiveSiteFundedCodexUsageEvent(
+  event: SiteFundedCodexUsageEvent,
+  cost: ReturnType<typeof computeSiteFundedCodexRequestCost>,
+): Promise<SiteFundedCodexUsageRecordResult | "late"> {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -855,7 +867,7 @@ export async function recordSiteFundedCodexUsageEvent(
       // lock first so the late path can lock the funding periods before the
       // reservation, in the same order as expiry and admission.
       await client.query("ROLLBACK");
-      return await recordLateSiteFundedCodexUsageEvent(event, cost);
+      return "late";
     }
     if (event.requestSequence < lastRequestSequence) {
       throw new Error("site-funded Codex usage event sequence is stale");
