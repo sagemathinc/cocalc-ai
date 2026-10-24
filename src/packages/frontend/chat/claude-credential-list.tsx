@@ -16,7 +16,10 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
-import { newAgentClaudeCredentialOptions } from "@cocalc/frontend/agents/claude-credential-options";
+import {
+  newAgentClaudeCredentialOptions,
+  SITE_FUNDED_CLAUDE_VALUE,
+} from "@cocalc/frontend/agents/claude-credential-options";
 
 /**
  * A warning when, at the rate used so far in this window, its limit would be
@@ -142,16 +145,23 @@ export function ClaudeCredentialList({
   value,
   loaded,
   disabled,
+  membership = false,
   onChange,
 }: {
   credentials: ExternalCredentialInfo[];
+  /** Offer included Claude (CoCalc Membership). */
+  membership?: boolean;
   // "account-subscription:<id>", "account-api-key:<id>" or "project-secret".
   value: string;
   loaded: boolean;
   disabled?: boolean;
   onChange: (value: string) => void;
 }) {
-  const options = newAgentClaudeCredentialOptions(credentials);
+  const options = newAgentClaudeCredentialOptions(
+    credentials,
+    false,
+    membership,
+  );
   const known = options.some((option) => option.value === value);
   const byId = new Map(credentials.map((row) => [row.id, row]));
   const hasSubscription = options.some((option) =>
@@ -207,7 +217,9 @@ export function ClaudeCredentialList({
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {option.value === "project-secret"
                       ? "Billed to the owner of the project's ANTHROPIC_API_KEY"
-                      : "Anthropic bills API usage to the key owner"}
+                      : option.value === SITE_FUNDED_CLAUDE_VALUE
+                        ? "Included in your CoCalc membership's AI allowance"
+                        : "Anthropic bills API usage to the key owner"}
                   </Typography.Text>
                 )}
               </div>

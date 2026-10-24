@@ -47,7 +47,10 @@ import { AgentSpeedControl } from "./agent-speed-control";
 import {
   newAgentClaudeCredentialValue,
   preferredClaudeCredential,
+  claudeCredentialFromValue,
+  SITE_FUNDED_CLAUDE_VALUE,
 } from "@cocalc/frontend/agents/claude-credential-options";
+import { useSiteFundedClaudeAvailable } from "@cocalc/frontend/agents/site-funded-claude";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue.";
@@ -134,6 +137,7 @@ function ClaudeCredentialControl({
   const fromSharedRef = useRef(false);
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [error, setError] = useState("");
+  const membership = useSiteFundedClaudeAvailable();
   const selection = readHarnessCredentialSelection({
     accountId,
     projectId,
@@ -244,26 +248,9 @@ function ClaudeCredentialControl({
         credentials={credentials}
         value={value}
         loaded={credentialsLoaded}
+        membership={membership || value === SITE_FUNDED_CLAUDE_VALUE}
         onChange={(next) => {
-          const credential = next.startsWith("account-subscription:")
-            ? {
-                version: 1 as const,
-                provider: "anthropic" as const,
-                mode: "account-subscription" as const,
-                credentialId: next.slice("account-subscription:".length),
-              }
-            : next.startsWith("account-api-key:")
-              ? {
-                  version: 1 as const,
-                  provider: "anthropic" as const,
-                  mode: "account-api-key" as const,
-                  credentialId: next.slice("account-api-key:".length),
-                }
-              : {
-                  version: 1 as const,
-                  provider: "anthropic" as const,
-                  mode: "project-secret" as const,
-                };
+          const credential = claudeCredentialFromValue(next);
           writeHarnessCredentialSelection({
             accountId,
             projectId,

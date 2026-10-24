@@ -31,13 +31,37 @@ export function claudeSubscriptionName(
   return `Claude ${plan} - ${compact ? identity.split("@")[0] : identity}`;
 }
 
+/** The picker value for included Claude, paid by the CoCalc membership. */
+export const SITE_FUNDED_CLAUDE_VALUE = "site-funded";
+
+export function siteFundedClaudeLabel(compact = false): string {
+  return compact ? "CoCalc Membership" : "CoCalc Membership (Claude Haiku 5.5)";
+}
+
 export function newAgentClaudeCredentialValue(
   credential: AcpHarnessCredential,
 ): string {
+  if (credential.mode === "site-funded") return SITE_FUNDED_CLAUDE_VALUE;
   return credential.mode === "account-api-key" ||
     credential.mode === "account-subscription"
     ? `${credential.mode}:${credential.credentialId}`
     : "project-secret";
+}
+
+/** The credential a picker value names (the inverse of the above). */
+export function claudeCredentialFromValue(value: string): AcpHarnessCredential {
+  if (value === SITE_FUNDED_CLAUDE_VALUE)
+    return { version: 1, provider: "anthropic", mode: "site-funded" };
+  for (const mode of ["account-subscription", "account-api-key"] as const) {
+    if (value.startsWith(`${mode}:`))
+      return {
+        version: 1,
+        provider: "anthropic",
+        mode,
+        credentialId: value.slice(mode.length + 1),
+      };
+  }
+  return { version: 1, provider: "anthropic", mode: "project-secret" };
 }
 
 // Most recently used (or connected) first.
@@ -59,10 +83,14 @@ function activeClaudeCredentials(credentials: ExternalCredentialInfo[]) {
   };
 }
 
-/** Subscriptions first, then account API keys; the project secret last. */
+/**
+ * Subscriptions first, then account API keys, then included Claude (when the
+ * account's membership includes it); the project secret last.
+ */
 export function newAgentClaudeCredentialOptions(
   credentials: ExternalCredentialInfo[],
   compact = false,
+  membership = false,
 ): { value: string; label: string }[] {
   const { subscriptions, apiKeys } = activeClaudeCredentials(credentials);
   return [
@@ -74,20 +102,32 @@ export function newAgentClaudeCredentialOptions(
       value: `account-api-key:${row.id}`,
       label: row.metadata?.label || "Anthropic API key",
     })),
+    ...(membership
+      ? [
+          {
+            value: SITE_FUNDED_CLAUDE_VALUE,
+            label: siteFundedClaudeLabel(compact),
+          },
+        ]
+      : []),
     { value: "project-secret", label: "Project secret (ANTHROPIC_API_KEY)" },
   ];
 }
 
 /**
  * The Claude credential to use: the remembered one while it exists, else the
- * most recent subscription, else an account API key. The project secret is
- * used only when chosen, and only kept if no account credential exists.
+ * most recent subscription, else an account API key, else included Claude
+ * (when the membership includes it). The project secret is used only when
+ * chosen, and only kept if no account credential exists; included Claude
+ * never replaces it.
  */
 export function preferredClaudeCredential(
   remembered: AcpHarnessCredential | undefined,
   credentials: ExternalCredentialInfo[],
+  membership = false,
 ): AcpHarnessCredential {
   const { subscriptions, apiKeys } = activeClaudeCredentials(credentials);
+  if (remembered?.mode === "site-funded" && membership) return remembered;
   if (
     remembered &&
     (remembered.mode === "account-subscription" ||
@@ -115,12 +155,15 @@ export function preferredClaudeCredential(
       mode: "account-api-key",
       credentialId: apiKeys[0].id,
     };
+  if (membership && remembered?.mode !== "project-secret")
+    return { version: 1, provider: "anthropic", mode: "site-funded" };
   return { version: 1, provider: "anthropic", mode: "project-secret" };
 }
 
 /** Default for a new agent with nothing remembered. */
 export function newAgentClaudeCredentialDefault(
   credentials: ExternalCredentialInfo[],
+  membership = false,
 ): AcpHarnessCredential {
-  return preferredClaudeCredential(undefined, credentials);
+  return preferredClaudeCredential(undefined, credentials, membership);
 }

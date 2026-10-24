@@ -20,7 +20,11 @@ import {
 } from "antd";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
-import { claudeSubscriptionName } from "@cocalc/frontend/agents/claude-credential-options";
+import {
+  claudeSubscriptionName,
+  siteFundedClaudeLabel,
+} from "@cocalc/frontend/agents/claude-credential-options";
+import { useSiteFundedClaudeAvailable } from "@cocalc/frontend/agents/site-funded-claude";
 import {
   PAYMENT_SELECTION_EVENT,
   refreshPaymentSelections,
@@ -280,6 +284,7 @@ export function SetPaymentModal({
   const [connectChatGPT, setConnectChatGPT] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const membership = useSiteFundedClaudeAvailable();
   useEffect(() => {
     if (!open) return;
     setCodex(KEEP);
@@ -311,6 +316,9 @@ export function SetPaymentModal({
       value: `${c.mode}:${c.id}`,
       label: c.label,
     })),
+    ...(membership
+      ? [{ value: "membership", label: siteFundedClaudeLabel() }]
+      : []),
     { value: "project-secret", label: "Project secret (ANTHROPIC_API_KEY)" },
   ];
 
@@ -327,6 +335,8 @@ export function SetPaymentModal({
     if (value === FOLLOW) return null;
     if (value === "project-secret")
       return { version: 1, provider: "claude-code", mode: "project-secret" };
+    if (value === "membership")
+      return { version: 1, provider: "claude-code", mode: "membership" };
     const [mode, id] = value.split(":") as [
       "account-subscription" | "account-api-key",
       string,

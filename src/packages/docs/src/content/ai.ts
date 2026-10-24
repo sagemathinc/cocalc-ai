@@ -153,7 +153,10 @@ that provider's default as well; other agents following the default use it too.
 Codex and Claude have separate choices.
 
 For Claude, **Project secret (ANTHROPIC_API_KEY)** uses a configured project
-key. Agents with project-managed credentials are not changed by this control.
+key. **CoCalc Membership (Claude Haiku 5.5)**, when your site offers it, pays
+from your membership's included AI allowance, the same allowance as Codex's
+**CoCalc Membership** option. Agents with project-managed credentials are not
+changed by this control.
 
 These choices belong to your account and are stored on the server, so a browser
 reload does not discard them. For shared agents, another participant's choice

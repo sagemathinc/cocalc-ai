@@ -158,6 +158,7 @@ export const system = {
   cancelChatSpeech: authFirstRequireAccount,
   getCodexPaymentSource: authFirstRequireAccountOrHostWithAccountTarget,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
+  getSiteFundedClaudeAvailability: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
   getFrontendSourceFingerprint: authFirstRequireAccount,
   getRootfsCatalog: authFirstRequireAccount,
@@ -2955,6 +2956,11 @@ export interface System {
     preference?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
     credential_id?: string;
   }) => Promise<CodexPaymentSourceInfo>;
+
+  /** Whether this account can choose included Claude (CoCalc Membership). */
+  getSiteFundedClaudeAvailability: (opts: {
+    account_id?: string;
+  }) => Promise<{ available: boolean; reason?: string }>;
 
   getSiteFundedCodexAdminStatus: (opts: {
     account_id?: string;
