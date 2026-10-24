@@ -1,4 +1,8 @@
-import { buildPublicSiteSettings } from "./site-settings-public";
+import { site_settings_conf, type SiteSettingsKeys } from "./site-defaults";
+import {
+  buildPublicSiteSettings,
+  isPublicSiteSettingKey,
+} from "./site-settings-public";
 
 describe("buildPublicSiteSettings", () => {
   describe("browser versions", () => {
@@ -165,5 +169,26 @@ describe("buildPublicSiteSettings", () => {
     expect(configuration.cli_connector_github_enabled).toBe(true);
     expect(configuration.cli_connector_cloudflare_enabled).toBe(false);
     expect(JSON.stringify(configuration)).not.toContain("very-secret");
+  });
+  describe("secret settings", () => {
+    const secretKeys = (
+      Object.keys(site_settings_conf) as SiteSettingsKeys[]
+    ).filter((key) => site_settings_conf[key].password === true);
+
+    it("knows at least the CRM outreach webhook secret", () => {
+      expect(secretKeys).toContain("crm_outreach_zendesk_webhook_secret");
+    });
+
+    it("never publishes a setting marked password", () => {
+      const all = Object.fromEntries(
+        secretKeys.map((key) => [key, `secret-value-of-${key}`]),
+      );
+      const { configuration } = buildPublicSiteSettings(all);
+      for (const key of secretKeys) {
+        expect(configuration).not.toHaveProperty(key);
+        expect(isPublicSiteSettingKey(key)).toBe(false);
+      }
+      expect(JSON.stringify(configuration)).not.toContain("secret-value-of-");
+    });
   });
 });
