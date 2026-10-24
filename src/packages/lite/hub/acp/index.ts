@@ -13142,6 +13142,22 @@ async function attemptAcpSteerRequest(
     if (otherPrincipal(err)) return { state: "not_steerable" };
     throw err;
   }
+  // Handed off already (a retry of a new request; the durable steer's own
+  // processing passes its claim guard): the worker running the turn, or the
+  // fallback turn its handling queued, owns the permit. Claiming it here,
+  // even briefly, could make that turn find it claimed and fail.
+  const handedOff = claimGuard
+    ? undefined
+    : getAcpSteer({
+        project_id: request.chat.project_id ?? request.project_id,
+        path: request.chat.path,
+        user_message_id: `${request.chat.parent_message_id ?? ""}`,
+      });
+  if (handedOff && handedOff.state !== "error")
+    return {
+      state: "pending",
+      threadId: `${request.chat.thread_id ?? ""}` || undefined,
+    };
   // A sensor wake's permit is one-time. Claim it (every check, atomically:
   // only one attempt can, and a revocation committed before leaves nothing
   // to claim) before injecting; consume the claim once it was injected, and

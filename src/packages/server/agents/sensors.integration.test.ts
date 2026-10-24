@@ -700,7 +700,8 @@ describeDb("agent sensors", () => {
     );
     // Its host went away after claiming (it may have injected it).
     await getPool().query(
-      "UPDATE agent_sensor_runs SET wake_claimed_at=now() - interval '11 minutes' WHERE run_id=$1",
+      // Long past any window: it still counts until consumed or released.
+      "UPDATE agent_sensor_runs SET wake_claimed_at=now() - interval '7 hours' WHERE run_id=$1",
       [first.authorization.run_id],
     );
     await expect(

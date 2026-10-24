@@ -25,7 +25,6 @@ import { listDueAgentRpcReports } from "../../sqlite/agent-rpc-reports";
 import {
   claimAcpSteer,
   decodeAcpSteerRequest,
-  claimAcpSteer,
   enqueueAcpSteer,
   getAcpSteer,
   markAcpSteerHandled,
@@ -2036,6 +2035,19 @@ describe("a sensor wake handed to the worker running the turn", () => {
     await expect(
       acpTestInternals.handleAcpSteerRequest(request),
     ).resolves.toMatchObject({ pending: true });
-    expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
+    // Not even claimed: the fallback turn that handling queued owns the
+    // permit, and could start while a claim was held.
+    expect(phases).toEqual([]);
+  });
+
+  it("does not claim a wake whose durable steer is still pending", async () => {
+    const request = wakeRequest();
+    enqueueAcpSteer({ request });
+    recordPhases(request);
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(request),
+    ).resolves.toMatchObject({ pending: true });
+    expect(phases).toEqual([]);
+    expect(durableState(request)).toBe("pending");
   });
 });

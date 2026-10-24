@@ -606,7 +606,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     }
     let delivered;
     deliveryStarted = true;
-    const delivery = await wakeDelivery(row.sensor_id, run_id, spec);
+    const delivery = await wakeDelivery(row, run_id, spec);
     try {
       delivered = await host.api.deliverAgentSensorWake({
         account_id: row.approved_by,
@@ -1050,29 +1050,35 @@ export function startSensorScheduler(pollMs: number = POLL_MS): () => void {
  * inject it until it is consumed or released. A sensor that did, or still
  * may, sends this one as a turn of its own, after the running one, and wakes
  * after that are held and combined into it as before. A chatty sensor never
- * floods a turn; queued wakes do not count. (A claim whose attempt died only
- * makes this sensor's wakes queued turns, within the coalescing window.)
+ * floods a turn; queued wakes do not count. (A claim whose attempt died makes
+ * this sensor's wakes queued turns until the sensor is approved again: never
+ * lost, and never a second injection.)
  */
 export const GUIDANCE_INTERVAL_MINUTES = 10;
 
 async function wakeDelivery(
-  sensor_id: string,
+  row: ClaimedSensor,
   run_id: string,
   spec: Parameters<typeof sensorDelivery>[0],
 ): Promise<"guidance" | "queued"> {
   if (sensorDelivery(spec) !== "guidance") return "queued";
+  // A claim counts however old it is, until consumed or released: its
+  // attempt can inject it until then. Only this approval's claims count.
   const { rows } = await agentStore().query(
     `SELECT 1 FROM agent_sensor_runs
-     WHERE sensor_id=$1 AND run_id<>$2
-       AND (wake_guided_at > now() - make_interval(mins => $3)
-         OR (wake_state='claimed'
-             AND started_at > now() - make_interval(hours => $4)))
+     WHERE sensor_id=$1 AND run_id<>$4
+       AND (wake_guided_at > now() - make_interval(mins => $5)
+         OR (wake_state='claimed' AND ${CURRENT_APPROVAL.replace(
+           "sensor_id=$1 AND ",
+           "",
+         )}))
      LIMIT 1`,
     [
-      sensor_id,
+      row.sensor_id,
+      row.script_hash,
+      row.approved_at_text,
       run_id,
       GUIDANCE_INTERVAL_MINUTES,
-      SENSOR_LIMITS.coalesceWindowHours,
     ],
   );
   return rows.length ? "queued" : "guidance";
