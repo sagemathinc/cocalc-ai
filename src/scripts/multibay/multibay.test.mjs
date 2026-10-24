@@ -2001,6 +2001,39 @@ describe("host reads across bays", () => {
       JSON.stringify(done),
     );
   });
+
+  it("cancels and dismisses a host's operation on the host's bay", async () => {
+    // The hosts page names the host when it cancels: lro.cancel and
+    // lro.dismiss are then routed to the host's bay, which keeps the
+    // operation. A kind no worker claims stays queued until canceled.
+    const op_id = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { createLro } = server("lro/lro-db.js");
+       const op = await createLro({
+         kind: "multibay-test-idle",
+         scope_type: "host",
+         scope_id: ${JSON.stringify(host_id)},
+         created_by: ${JSON.stringify(alice.account_id)},
+       });
+       return op.op_id;`,
+    );
+    const scope = { scope_type: "host", scope_id: host_id };
+    await alice.client.call("lro.cancel", { op_id, ...scope });
+    const canceled = await alice.client.call("lro.get", { op_id, ...scope });
+    assert.equal(canceled?.status, "canceled");
+    await alice.client.call("lro.dismiss", { op_id, ...scope });
+    const dismissed = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT dismissed_at IS NOT NULL AS dismissed FROM long_running_operations WHERE op_id=$1",
+         [${JSON.stringify(op_id)}]);
+       return rows[0]?.dismissed ?? null;`,
+    );
+    assert.equal(dismissed, true, "dismissed on the host's bay");
+  });
 });
 
 describe("course reconfiguration across bays", () => {

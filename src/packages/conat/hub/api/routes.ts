@@ -129,6 +129,8 @@ const leftOrDeletedProjects: HubApiRoute = {
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "lro.get": hostLroScope,
   "lro.list": hostLroScope,
+  "lro.cancel": hostLroScope,
+  "lro.dismiss": hostLroScope,
   // Host reads run on the host's owning bay.
   "hosts.getHostLog": hostFromOpts,
   "hosts.getHostAvailability": hostFromOpts,

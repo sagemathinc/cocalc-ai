@@ -130,7 +130,7 @@ describe("hub API routes", () => {
     ).toBeUndefined();
   });
 
-  it.each(["lro.get", "lro.list"])(
+  it.each(["lro.get", "lro.list", "lro.cancel", "lro.dismiss"])(
     "routes %s by host only for a host's operations",
     (name) => {
       const route = getHubApiRoute(name)!;
