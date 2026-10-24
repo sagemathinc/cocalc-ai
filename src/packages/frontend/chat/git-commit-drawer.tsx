@@ -76,6 +76,7 @@ import {
 } from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
+import { prefetchCommitDiff } from "@cocalc/frontend/git/prefetch";
 import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
 import { useFeedbackDestination } from "./git-commit/feedback-destination";
 import type {
@@ -178,6 +179,7 @@ import type { ReactNode } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { GitRevisionModal } from "@cocalc/frontend/frame-editors/time-travel-editor/git-revision-modal";
 import type { GitHistoricalFileRequest } from "@cocalc/frontend/git/historical-file";
+import type { RepositoryContext } from "@cocalc/frontend/components/diff-viewer/review-model";
 
 export { buildGitLogArgs, buildGitShowArgs, parseGitLogOutput };
 export {
@@ -539,6 +541,11 @@ export function GitCommitDrawer({
   const [loadedDiffScope, setLoadedDiffScope] = useState<string>();
   const loadedDiffRequestRef = useRef<
     { scope: string; commit: string } | undefined
+  >(undefined);
+  // What the loaded review reads ahead (its previous commit).
+  const readAheadRef = useRef<
+    | { repository: RepositoryContext; commit: string | null; context: number }
+    | undefined
   >(undefined);
   const [repoRoot, setRepoRoot] = useState<string>("");
   const [gitLog, setGitLog] = useState<GitLogEntry[]>([]);
@@ -2604,11 +2611,23 @@ export function GitCommitDrawer({
       !isHeadSelected &&
       loadedDiffRequestRef.current?.scope === diffRequestScope &&
       loadedDiffRequestRef.current.commit === commit
-    )
-      return;
+    ) {
+      // Its read-ahead was cancelled with the effect it was scheduled in.
+      const next = readAheadRef.current;
+      return next
+        ? prefetchCommitDiff(
+            projectGitReader,
+            next.repository,
+            next.commit,
+            next.context,
+          )
+        : undefined;
+    }
     let cancelled = false;
+    let cancelPrefetch: (() => void) | undefined;
     const requestedCommit = commit;
     loadedDiffRequestRef.current = undefined;
+    readAheadRef.current = undefined;
     setLoading(true);
     setError("");
     setMissingCommit(undefined);
@@ -2628,6 +2647,18 @@ export function GitCommitDrawer({
             contextLines,
           );
           if (!cancelled) {
+            // The previous commit is the usual next stop: read it when idle.
+            readAheadRef.current = {
+              repository: discovery.repository,
+              commit: target.parent,
+              context: contextLines,
+            };
+            cancelPrefetch = prefetchCommitDiff(
+              projectGitReader,
+              discovery.repository,
+              target.parent,
+              contextLines,
+            );
             loadedDiffRequestRef.current = {
               scope: diffRequestScope,
               commit: target.commit,
@@ -2685,6 +2716,7 @@ export function GitCommitDrawer({
     })();
     return () => {
       cancelled = true;
+      cancelPrefetch?.();
     };
   }, [
     open,

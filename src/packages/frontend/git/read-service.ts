@@ -9,6 +9,7 @@ import type {
   RepositoryContext,
   WorktreeContext,
 } from "../components/diff-viewer/review-model";
+import { sha1 } from "@cocalc/util/misc";
 import { repositoryKey } from "../components/diff-viewer/review-model";
 import {
   isFullObjectId,
@@ -18,6 +19,7 @@ import {
   parseWorktrees,
 } from "./read-parsers";
 import type { GitRef } from "./read-parsers";
+import { MemoryGitCache, type ImmutableGitCache } from "./immutable-cache";
 
 export const GIT_READ_LIMIT = 4_000_000;
 const DISCOVERY_TTL = 30_000;
@@ -88,6 +90,41 @@ function outputLine(output: string): string {
   return output.slice(0, -1);
 }
 
+// Bump when cached output would be read differently (new flags, parsing).
+const IMMUTABLE_CACHE_VERSION = 1;
+
+// Diff output is cached by its arguments, so the arguments decide it, not
+// settings that can change: diff.orderFile (the file list and the patch are
+// paired by position), diff.algorithm, prefixes, the rename limit, colors,
+// core.abbrev.
+const PINNED_DIFF_FLAGS = [
+  "-O/dev/null",
+  "--diff-algorithm=myers",
+  "--indent-heuristic",
+  "--inter-hunk-context=0",
+  "--no-relative",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+  "-l1000",
+  "--ignore-submodules=none",
+  "--submodule=short",
+  "--no-color",
+  // Index lines: abbreviated ids follow core.abbrev.
+  "--full-index",
+];
+
+// Changed paths longer than this in all (UTF-8 bytes), and their patch is
+// not cached: checking their attributes would need too long a command line.
+// Well under Linux's limits (128 KiB per argument, ARG_MAX for them all).
+const MAX_ATTRIBUTE_PATH_BYTES = 64 * 1024;
+
+// The object ids that fully name a comparison.
+function targetObjects(target: ImmutableReviewTarget): string[] {
+  return target.kind === "commit"
+    ? [target.commit, ...(target.parent ? [target.parent] : [])]
+    : [target.base, target.head];
+}
+
 /** Read-only facade over the existing authorized project-host exec route. */
 export class GitReadService {
   private active = 0;
@@ -100,11 +137,97 @@ export class GitReadService {
   private blobBytes = 0;
   private blobRequests = new Map<string, Promise<string>>();
 
+  private readonly recent: MemoryGitCache;
+  private immutableRequests = new Map<string, Promise<string>>();
+
   constructor(
     private readonly exec: GitReadExecutor,
     private readonly now: () => number = Date.now,
     private readonly cacheBytes = 16_000_000,
-  ) {}
+    /** Output that never changes, kept across reloads (IndexedDB). */
+    private readonly persistent?: ImmutableGitCache,
+  ) {
+    this.recent = new MemoryGitCache(cacheBytes);
+  }
+
+  /**
+   * A read named only by full object ids: its output never changes, so it
+   * is answered from the caches when it can (this tab's, then this
+   * browser's) and stored after it runs. Anything else runs every time.
+   *
+   * `walksHistory`: the output depends on the commits' parents (history,
+   * ranges, parents). In a shallow clone a boundary commit looks parentless
+   * until it is deepened, and a clone can be made shallow later, so such a
+   * read uses the caches only while the clone is not shallow: checked each
+   * time, and again after a read before it is stored.
+   */
+  private async runImmutable(
+    repository: RepositoryContext,
+    args: string[],
+    objectIds: string[],
+    {
+      walksHistory = false,
+      settings,
+      currentSettings,
+    }: {
+      walksHistory?: boolean;
+      /** Anything else the output depends on, e.g. attributeState(). */
+      settings?: string;
+      /** Reads `settings` again: a read is stored only if they held. */
+      currentSettings?: () => Promise<string | undefined>;
+    } = {},
+  ): Promise<string> {
+    // Only an id of the repository's own length names an object: a 64-hex
+    // name in a SHA-1 repository could be a branch.
+    const idLength = repository.objectFormat === "sha256" ? 64 : 40;
+    if (
+      !objectIds.length ||
+      !objectIds.every((id) => isFullObjectId(id) && id.length === idLength)
+    )
+      return this.run(repository.projectId, repository.locator, args);
+    if (walksHistory && (await this.isShallow(repository)))
+      return this.run(repository.projectId, repository.locator, args);
+    const key = JSON.stringify([
+      IMMUTABLE_CACHE_VERSION,
+      repositoryKey(repository),
+      args,
+      ...(settings == null ? [] : [settings]),
+    ]);
+    const recent = await this.recent.get(key);
+    if (recent !== undefined) return recent;
+    const pending = this.immutableRequests.get(key);
+    if (pending) return pending;
+    const promise = (async () => {
+      const stored = await this.persistent?.get(key);
+      if (stored !== undefined) {
+        await this.recent.set(key, stored);
+        return stored;
+      }
+      const output = await this.run(
+        repository.projectId,
+        repository.locator,
+        args,
+      );
+      // It may have been read while the clone was shallow, or under
+      // settings that changed while it ran.
+      if (walksHistory && (await this.isShallow(repository))) return output;
+      if (currentSettings && (await currentSettings()) !== settings)
+        return output;
+      await this.recent.set(key, output);
+      void this.persistent?.set(key, output);
+      return output;
+    })().finally(() => this.immutableRequests.delete(key));
+    this.immutableRequests.set(key, promise);
+    return promise;
+  }
+
+  private async isShallow(repository: RepositoryContext): Promise<boolean> {
+    const output = await this.run(repository.projectId, repository.locator, [
+      "rev-parse",
+      "--is-shallow-repository",
+    ]);
+    return outputLine(output) !== "false";
+  }
 
   private async run(
     projectId: string,
@@ -134,13 +257,21 @@ export class GitReadService {
           "core.quotePath=false",
           "-c",
           "core.warnAmbiguousRefs=true",
+          // Have no flags; see PINNED_DIFF_FLAGS. The threshold is Git's
+          // default: past it a file is shown as binary, not diffed.
+          "-c",
+          "diff.suppressBlankEmpty=false",
+          "-c",
+          "core.bigFileThreshold=512m",
           ...args,
         ],
         bash: false,
         err_on_exit: false,
         timeout: 60,
         max_output: GIT_READ_LIMIT,
-        env: { LC_ALL: "C" },
+        // No grafts (.git/info/grafts): like replacements (above), they
+        // change parents and can be edited, so cached history would go stale.
+        env: { LC_ALL: "C", GIT_GRAFT_FILE: "/dev/null" },
       });
       const stdout = response.stdout ?? "";
       const stderr = response.stderr ?? "";
@@ -262,12 +393,12 @@ export class GitReadService {
     requireValue(ref);
     let output: string;
     try {
-      output = await this.run(repository.projectId, repository.locator, [
-        "rev-parse",
-        "--verify",
-        "--end-of-options",
-        `${ref}^{commit}`,
-      ]);
+      output = await this.runImmutable(
+        repository,
+        ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
+        // A full id names one object for good; a branch or short id does not.
+        [ref],
+      );
     } catch (err) {
       // Git's words for an object this clone doesn't have, e.g. a commit
       // made on GitHub that was never fetched here.
@@ -296,13 +427,12 @@ export class GitReadService {
   ): Promise<Extract<ImmutableReviewTarget, { kind: "commit" }>> {
     const commit = await this.resolveCommit(repository, ref);
     const [, ...parents] = outputLine(
-      await this.run(repository.projectId, repository.locator, [
-        "rev-list",
-        "--parents",
-        "-n1",
-        commit,
-        "--",
-      ]),
+      await this.runImmutable(
+        repository,
+        ["rev-list", "--parents", "-n1", commit, "--"],
+        [commit],
+        { walksHistory: true },
+      ),
     ).split(" ");
     if (
       !Number.isInteger(parentIndex) ||
@@ -326,14 +456,31 @@ export class GitReadService {
     commit: string,
   ): Promise<string> {
     requireObject(commit);
-    return this.run(repository.projectId, repository.locator, [
-      "show",
-      "--no-patch",
-      "--no-color",
-      "--format=fuller",
-      commit,
-      "--",
-    ]);
+    return this.runImmutable(
+      repository,
+      [
+        "show",
+        "--no-patch",
+        "--no-color",
+        "--format=fuller",
+        // Output that would otherwise follow files and settings that change
+        // (.mailmap, notes, log.date, log.showSignature, the log encoding,
+        // log.abbrevCommit and core.abbrev, log.decorate: branch names).
+        "--no-use-mailmap",
+        "--no-abbrev-commit",
+        "--no-abbrev",
+        "--no-decorate",
+        "--no-notes",
+        "--no-show-signature",
+        "--date=default",
+        "--encoding=UTF-8",
+        commit,
+        "--",
+      ],
+      [commit],
+      // A merge's parents are in its header.
+      { walksHistory: true },
+    );
   }
 
   async compare(
@@ -398,17 +545,25 @@ export class GitReadService {
     )
       throw new GitReadError("invalid", "Invalid history page");
     return parseHistory(
-      await this.run(repository.projectId, repository.locator, [
-        "log",
-        "-z",
-        "--format=%H%x00%P%x00%ct%x00%s",
-        `--skip=${skip}`,
-        `-n${count}`,
-        ...(firstParent ? ["--first-parent"] : []),
-        ...(showMerges ? [] : ["--no-merges"]),
-        commit,
-        "--",
-      ]),
+      await this.runImmutable(
+        repository,
+        [
+          "log",
+          "-z",
+          "--format=%H%x00%P%x00%ct%x00%s",
+          // Not i18n.logOutputEncoding or log.showSignature, which can change.
+          "--encoding=UTF-8",
+          "--no-show-signature",
+          `--skip=${skip}`,
+          `-n${count}`,
+          ...(firstParent ? ["--first-parent"] : []),
+          ...(showMerges ? [] : ["--no-merges"]),
+          commit,
+          "--",
+        ],
+        [commit],
+        { walksHistory: true },
+      ),
     );
   }
 
@@ -421,13 +576,18 @@ export class GitReadService {
     requireObject(target.base);
     requireObject(target.head);
     const commits = (
-      await this.run(target.repository.projectId, target.repository.locator, [
-        "rev-list",
-        `--max-count=${limit + 1}`,
-        target.head,
-        `^${target.base}`,
-        "--",
-      ])
+      await this.runImmutable(
+        target.repository,
+        [
+          "rev-list",
+          `--max-count=${limit + 1}`,
+          target.head,
+          `^${target.base}`,
+          "--",
+        ],
+        [target.head, target.base],
+        { walksHistory: true },
+      )
     )
       .split("\n")
       .map((line) => line.trim())
@@ -437,8 +597,9 @@ export class GitReadService {
 
   private comparisonArgs(
     target: ImmutableReviewTarget,
-    flags: string[],
+    requested: string[],
   ): string[] {
+    const flags = [...PINNED_DIFF_FLAGS, ...requested];
     if (target.kind === "commit") {
       requireObject(target.commit);
       if (target.parent === null)
@@ -462,9 +623,8 @@ export class GitReadService {
   async changedFiles(target: ImmutableReviewTarget) {
     const { repository } = target;
     const files = parseRawDiff(
-      await this.run(
-        repository.projectId,
-        repository.locator,
+      await this.runImmutable(
+        repository,
         this.comparisonArgs(target, [
           "--raw",
           "-z",
@@ -473,6 +633,7 @@ export class GitReadService {
           "--no-textconv",
           "--find-renames",
         ]),
+        targetObjects(target),
       ),
     );
     const oldCommit = target.kind === "commit" ? target.parent : target.base;
@@ -515,17 +676,19 @@ export class GitReadService {
     if (!Number.isInteger(context) || context < 0 || context > 1000)
       throw new GitReadError("invalid", "Invalid diff context");
     const { repository } = target;
-    const patch = await this.run(
-      repository.projectId,
-      repository.locator,
+    const settings = await this.attributeState(target);
+    const patch = await this.runImmutable(
+      repository,
       this.comparisonArgs(target, [
         "--patch",
-        "--no-color",
         "--no-ext-diff",
         "--no-textconv",
         "--find-renames",
         `-U${context}`,
       ]),
+      // Attributes that can't be checked: not cached.
+      settings == null ? [] : targetObjects(target),
+      { settings, currentSettings: () => this.attributeState(target) },
     );
     if (patch.split("\n").length > maxLines)
       throw new GitReadError(
@@ -533,6 +696,66 @@ export class GitReadService {
         `Diff exceeds ${maxLines.toLocaleString("en-US")} lines; narrow the comparison`,
       );
     return patch;
+  }
+
+  /**
+   * What a patch depends on besides its objects: the changed files'
+   * attributes (from .gitattributes, .git/info/attributes and the global
+   * and system files: `-diff` turns a text patch into "Binary files
+   * differ", a diff driver names the function in hunk headers) and the
+   * settings of the drivers they name. Undefined when they can't be
+   * checked (too many paths for one command, or the check failed).
+   */
+  private async attributeState(
+    target: ImmutableReviewTarget,
+  ): Promise<string | undefined> {
+    const paths = new Set<string>();
+    for (const file of await this.changedFiles(target)) {
+      if (file.oldPath != null) paths.add(file.oldPath);
+      if (file.newPath != null) paths.add(file.newPath);
+    }
+    if (paths.size === 0) return "";
+    let bytes = 0;
+    for (const path of paths)
+      bytes += new TextEncoder().encode(path).length + 1;
+    if (bytes > MAX_ATTRIBUTE_PATH_BYTES) return undefined;
+    const { projectId, locator } = target.repository;
+    let attributes: string;
+    try {
+      attributes = await this.run(projectId, locator, [
+        "check-attr",
+        "-z",
+        "--all",
+        "--",
+        ...paths,
+      ]);
+    } catch {
+      // The patch is still read, just not cached.
+      return undefined;
+    }
+    const fields = attributes.split("\0");
+    let drivers = false;
+    for (let i = 0; i + 2 < fields.length; i += 3)
+      if (
+        fields[i + 1] === "diff" &&
+        !["set", "unset", "unspecified"].includes(fields[i + 2])
+      )
+        drivers = true;
+    let settings = "";
+    if (drivers) {
+      try {
+        settings = await this.run(
+          projectId,
+          locator,
+          ["config", "-z", "--get-regexp", "^diff\\."],
+          // 1: none set.
+          [0, 1],
+        );
+      } catch {
+        return undefined;
+      }
+    }
+    return sha1(`${attributes}\0\0${settings}`);
   }
 
   async readFile(
@@ -613,22 +836,18 @@ export class GitReadService {
     blob: string,
   ): Promise<string> {
     const size = outputLine(
-      await this.run(repository.projectId, repository.locator, [
-        "cat-file",
-        "-s",
-        blob,
-      ]),
+      await this.runImmutable(repository, ["cat-file", "-s", blob], [blob]),
     );
     if (!/^\d+$/.test(size) || Number(size) >= GIT_READ_LIMIT)
       throw new GitReadError(
         "incomplete",
         "Historical file exceeds the review limit",
       );
-    const contents = await this.run(repository.projectId, repository.locator, [
-      "cat-file",
-      "blob",
-      blob,
-    ]);
+    const contents = await this.runImmutable(
+      repository,
+      ["cat-file", "blob", blob],
+      [blob],
+    );
     // Exec is a UTF-8 text transport. Reject binary/invalid UTF-8 rather than
     // silently treating transcoded bytes as the exact historical document.
     if (
