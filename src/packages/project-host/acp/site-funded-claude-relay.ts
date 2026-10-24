@@ -12,12 +12,17 @@
 // funded turn. The site key is added here and never reaches the
 // container.
 //
+// One exception is accepted: a request that searches the web. Anthropic adds
+// the results to its prompt as it runs and documents no bound on their size,
+// so it can pass the cap and cost more than the room below; it is kept to a
+// short prompt and three searches, and metered exactly.
+//
 // A turn's requests run one at a time, and every limit is checked as each one
 // starts, so a turn passes its cost limit by at most one request; the ledger
-// holds room for the dearest possible request beyond the limit. Every
-// response is metered: exactly when it is complete, and at its upper bound
-// when it is not (a broken stream, missing usage), so nothing escapes the
-// ledger. A turn that ends waits for its running request to be metered.
+// holds room for the dearest request that does not search beyond the limit.
+// Every response is metered: exactly when it is complete, and at its upper
+// bound when it is not (a broken stream, missing usage), so nothing escapes
+// the ledger. A turn that ends waits for its running request to be metered.
 
 import {
   createServer,
@@ -127,8 +132,10 @@ type ActiveTurn = SiteFundedClaudeTurn & {
 
 /** What one request can cost at most, for metering an incomplete response. */
 type RequestBounds = {
-  /** An upper bound on its prompt tokens: as counted by Anthropic, else the
-   * forwarded request's size in bytes plus overhead; at most the cap. */
+  /** An upper bound on its prompt tokens, for charging a response that did
+   * not finish: as counted by Anthropic, else the forwarded request's size in
+   * bytes plus overhead, at most the cap; for a search, the cap itself (its
+   * results may pass it, but a finished response is charged exactly). */
   promptTokens: number;
   maxTokens: number;
   maxSearches: number;
