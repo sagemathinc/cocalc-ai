@@ -297,6 +297,29 @@ describe("project-host browser origin policy", () => {
     });
   });
 
+  describe("with app origins (a content domain)", () => {
+    afterEach(() => {
+      delete process.env.COCALC_PROJECT_CONTENT_DOMAIN;
+    });
+    it("no page of the canonical host may use the cookie (D7)", () => {
+      process.env.COCALC_PROJECT_CONTENT_DOMAIN = "usercontent.example";
+      const own = req({ origin: "https://host-1.cocalc.example" });
+      expect(ambientCookieRejection(own, "app")).toBe("origin not allowed");
+      expect(ambientCookieRejection(own, "file")).toBe("origin not allowed");
+      // Nor without Origin, as a same-origin request.
+      expect(
+        ambientCookieRejection(
+          req({ "sec-fetch-site": "same-origin", "sec-fetch-dest": "empty" }),
+          "file",
+        ),
+      ).toBeDefined();
+      // The site's pages are unaffected.
+      expect(
+        ambientCookieRejection(req({ origin: "https://cocalc.example" }), "app"),
+      ).toBeUndefined();
+    });
+  });
+
   describe("without an Origin header", () => {
     it("refuses unsafe methods", () => {
       expect(ambientCookieRejection(req({}, "POST"), "upload")).toBe(

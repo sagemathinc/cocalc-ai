@@ -12,8 +12,17 @@ import { TextEditorActions as CodeEditorActions } from "../base-editor/actions-t
 import { print_html } from "../frame-tree/print";
 import { FrameTree } from "../frame-tree/types";
 import { raw_url } from "../frame-tree/util";
+import { contentViewURL } from "@cocalc/frontend/lib/cocalc-urls";
 
 export class Actions extends CodeEditorActions {
+  // The preview shows this file on the project's content origin, so printing
+  // goes through /content-view (same origin as the app; see print()).
+  private contentOriginReady = false;
+
+  setContentOriginReady(ready: boolean): void {
+    this.contentOriginReady = ready;
+  }
+
   _init2(): void {
     this._init_syncstring_value();
     this._init_spellcheck();
@@ -64,7 +73,20 @@ export class Actions extends CodeEditorActions {
     try {
       switch (node.get("type")) {
         case "iframe":
-          print_html({ src: raw_url(this.project_id, this.path) });
+          if (this.contentOriginReady) {
+            // The raw URL ends on the host's domain, where the popup's
+            // print never runs; the content view prints itself.
+            print_html({
+              src: contentViewURL({
+                project_id: this.project_id,
+                path: this.path,
+                print: true,
+              }),
+              selfPrinting: true,
+            });
+          } else {
+            print_html({ src: raw_url(this.project_id, this.path) });
+          }
           break;
         case "preview":
           print_html({
