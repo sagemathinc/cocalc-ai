@@ -171,8 +171,9 @@ cocalc agent turn --priority low
 
 ## Waiting For Something: Sensors
 
-Don't poll or sleep. Set a watcher and end your turn; it starts your next turn
-when it fires (or gives up):
+Don't poll or sleep. Set a watcher and end your turn; it wakes you when it
+fires (or gives up): a new turn, or a message in your running turn if you are
+still working:
 
 ```bash
 cocalc sensor watch exit -- <command>           # e.g. a script that waits for CI
