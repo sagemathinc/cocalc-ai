@@ -33,7 +33,10 @@ export type TableAuthorityKey =
   | "mixed";
 
 export type TablePortabilityStatus =
-  "portable" | "rebuildable" | "stable" | "unsupported";
+  | "portable"
+  | "rebuildable"
+  | "stable"
+  | "unsupported";
 
 export type TableReferenceField =
   | "account_id"
@@ -1229,6 +1232,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
         "Cluster-wide site-funded AI budget, hold, and reservation state. All admission and settlement operations route to the seed bay so concurrency and spending limits are enforced globally.",
     },
   ),
+
+  ...adHocEntries(["site_ai_admission_attempts"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "server site-funded AI admission funnel bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "One row per site-funded admission attempt and its outcome (kept 90 days), recorded on the seed bay for the admin AI pool funnel.",
+  }),
 
   ...adHocEntries(
     [
