@@ -48,6 +48,8 @@ export const PROJECT_PROJECT_HOST_HUB_METHODS = new Set([
   "compute.getProjectVolume",
   "projects.getSshKeys",
   "system.getPublicSiteUrl",
+  // Retired (D9), a no-op kept for one release.
+  "system.releaseProjectAppPrivateHostname",
   "system.getManagedProjectEgressPolicy",
   "system.recordManagedProjectEgress",
   "system.recordServiceAdmissionDenial",

@@ -121,6 +121,18 @@ export function wireSystemApi(): void {
     return await forwardSystem("system.getPublicSiteUrl", [opts]);
   };
 
+  // Retired (D9); see the stub in @cocalc/server/conat/api/system.
+  hubApi.system.releaseProjectAppPrivateHostname = async (opts: {
+    account_id?: string;
+    host_id?: string;
+    project_id: string;
+    app_id: string;
+  }) => {
+    return await forwardSystem("system.releaseProjectAppPrivateHostname", [
+      opts,
+    ]);
+  };
+
   hubApi.hosts.getManagedRootfsReleaseArtifact = async (opts: {
     host_id?: string;
     image: string;
