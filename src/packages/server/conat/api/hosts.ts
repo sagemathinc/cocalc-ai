@@ -259,7 +259,11 @@ import {
   reserveSiteFundedCodexTurn as reserveSiteFundedCodexTurnLocal,
   type ReserveSiteFundedCodexTurnOptions,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
-import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
+import {
+  getSiteFundedClaudeConfiguration,
+  getSiteFundedCodexConfiguration,
+} from "@cocalc/server/ai/site-funded-codex-policy";
+import { getSiteFundedProviderKeyForReservation } from "@cocalc/server/ai/site-funded-provider-keys";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import type {
   SiteFundedCodexAdmission,
@@ -267,6 +271,7 @@ import type {
   SiteFundedCodexReservation,
   SiteFundedCodexUsageEvent,
   SiteFundedCodexUsageRecordResult,
+  SiteFundedProvider,
 } from "@cocalc/util/ai/site-funded-codex";
 import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 import type { DedicatedHostPricingSnapshot } from "@cocalc/util/db-schema/purchases";
@@ -1269,7 +1274,12 @@ async function markHostDeprovisioned(row: any, action: string) {
     deleteHostDns,
     releaseHostContentDns,
     alertAdmin: async ({ subject, body }) => {
-      await adminAlert({ subject, body, dedupMinutes: 60, dedupBySubject: true });
+      await adminAlert({
+        subject,
+        body,
+        dedupMinutes: 60,
+        dedupBySubject: true,
+      });
     },
     logWarn: (message, payload) => logger.warn(message, payload),
     updateHostDeprovisionedRecord: async ({ row, nextMetadata }) => {
@@ -3816,6 +3826,7 @@ export async function reserveSiteFundedCodexTurn({
   funded_turn_id,
   idempotency_key,
   path,
+  provider = "openai",
 }: {
   host_id?: string;
   project_id: string;
@@ -3823,8 +3834,18 @@ export async function reserveSiteFundedCodexTurn({
   funded_turn_id: string;
   idempotency_key: string;
   path?: string;
+  /** "anthropic": a site-funded Claude turn. Default Codex. */
+  provider?: SiteFundedProvider;
 }): Promise<SiteFundedCodexAdmission> {
   if (!host_id) throw new Error("host_id must be specified");
+  if (provider !== "openai" && provider !== "anthropic") {
+    throw new Error("provider must be openai or anthropic");
+  }
+  const product = provider === "anthropic" ? "Claude" : "Codex";
+  const alternative =
+    provider === "anthropic"
+      ? "Connect a Claude subscription or personal Anthropic API key"
+      : "Connect a ChatGPT plan or personal OpenAI API key";
   if (!project_id) throw new Error("project_id must be specified");
   if (!account_id) throw new Error("account_id must be specified");
   if (!isValidUUID(funded_turn_id)) {
@@ -3845,23 +3866,25 @@ export async function reserveSiteFundedCodexTurn({
   }
   let configuration;
   try {
-    configuration = await getSiteFundedCodexConfiguration();
+    configuration =
+      provider === "anthropic"
+        ? await getSiteFundedClaudeConfiguration()
+        : await getSiteFundedCodexConfiguration();
   } catch (err) {
-    logger.error("invalid site-funded Codex pricing or policy", {
+    logger.error(`invalid site-funded ${product} pricing or policy`, {
       err: `${err}`,
     });
     return {
       allowed: false,
       code: "missing_price",
-      reason: "Site-funded Codex pricing is not configured safely.",
+      reason: `Site-funded ${product} pricing is not configured safely.`,
     };
   }
   if (!configuration.enabled) {
     return {
       allowed: false,
       code: "disabled",
-      reason:
-        "Site-funded Codex is disabled. Connect a ChatGPT plan or personal OpenAI API key to continue.",
+      reason: `Site-funded ${product} is disabled. ${alternative} to continue.`,
     };
   }
   // The host's bay need not store the executing human's account or directory row.
@@ -3870,8 +3893,7 @@ export async function reserveSiteFundedCodexTurn({
     return {
       allowed: false,
       code: "ineligible",
-      reason:
-        "A verified, active CoCalc account is required for included Codex usage.",
+      reason: `A verified, active CoCalc account is required for included ${product} usage.`,
     };
   }
   const homeBayId =
@@ -3919,8 +3941,7 @@ export async function reserveSiteFundedCodexTurn({
     return {
       allowed: false,
       code: "ineligible",
-      reason:
-        "Your CoCalc membership does not include site-funded Codex usage. Connect a ChatGPT plan or personal OpenAI API key to continue.",
+      reason: `Your CoCalc membership does not include site-funded ${product} usage. ${alternative} to continue.`,
     };
   }
   const reservationOptions: ReserveSiteFundedCodexTurnOptions = {
@@ -3942,6 +3963,7 @@ export async function reserveSiteFundedCodexTurn({
       ...configuration.policy,
       maxConcurrentTurnsPerAccount: accountConcurrency,
     },
+    provider,
     accountRemaining5hMicrousd: account5h.remaining,
     accountRemaining7dMicrousd: account7d.remaining,
     accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
@@ -3958,6 +3980,33 @@ export async function reserveSiteFundedCodexTurn({
   return remoteSeed
     ? await remoteSeed.reserveSiteFundedCodexTurn(reservationOptions)
     : await reserveSiteFundedCodexTurnLocal(reservationOptions);
+}
+
+/** The site key funding an active Claude turn, for the host running it. */
+export async function getSiteFundedClaudeKey({
+  host_id,
+  reservation_id,
+}: {
+  host_id?: string;
+  reservation_id: string;
+}): Promise<{ api_key: string }> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (await isAiLaunchDisabled()) {
+    throw new Error("AI is temporarily disabled by the site administrator.");
+  }
+  const remoteSeed = remoteSiteFundedCodexSeed();
+  const api_key = remoteSeed
+    ? (
+        await remoteSeed.getSiteFundedProviderKey({
+          reservationId: reservation_id,
+          hostId: host_id,
+        })
+      ).apiKey
+    : await getSiteFundedProviderKeyForReservation({
+        reservationId: reservation_id,
+        hostId: host_id,
+      });
+  return { api_key };
 }
 
 export async function heartbeatSiteFundedCodexTurn({

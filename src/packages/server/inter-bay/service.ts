@@ -265,6 +265,7 @@ import {
   recordSiteFundedCodexUsageEvent,
   reserveSiteFundedCodexTurn,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
+import { getSiteFundedProviderKeyForReservation } from "@cocalc/server/ai/site-funded-provider-keys";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { getAccountIdFromRememberMe as getLocalAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
@@ -904,6 +905,15 @@ async function startBayOpsService(): Promise<void> {
         reconciliation: reconcile
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
+      };
+    },
+    getSiteFundedProviderKey: async ({ reservationId, hostId }) => {
+      assertSiteFundedCodexSeedAuthority();
+      return {
+        apiKey: await getSiteFundedProviderKeyForReservation({
+          reservationId,
+          hostId,
+        }),
       };
     },
     downloadCommercialQuoteInternal: async ({ token }) => {

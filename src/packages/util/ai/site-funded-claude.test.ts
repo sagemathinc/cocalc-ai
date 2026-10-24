@@ -8,7 +8,10 @@ import {
   getSiteFundedCodexPrice,
   hasSiteFundedCodexPrice,
 } from "./site-funded-codex";
-import { siteFundedUsageFromAnthropic } from "./site-funded-claude";
+import {
+  siteFundedKeyPeriodBounds,
+  siteFundedUsageFromAnthropic,
+} from "./site-funded-claude";
 import { EXTRAS } from "../db-schema/site-settings-extras";
 
 const cost = (usage: Parameters<typeof siteFundedUsageFromAnthropic>[0]) =>
@@ -175,5 +178,51 @@ describe("site-funded Claude accounting", () => {
         },
       }),
     ).toThrow(/1-hour/);
+  });
+});
+
+describe("a site key's monthly period", () => {
+  const bounds = (now: string, resetDay = 15, resetHour = 8) => {
+    const { start, end } = siteFundedKeyPeriodBounds({
+      resetDay,
+      resetHour,
+      now: new Date(now),
+    });
+    return [start.toISOString(), end.toISOString()];
+  };
+
+  it("starts at this month's reset point once it has passed", () => {
+    expect(bounds("2026-10-24T17:00:00Z")).toEqual([
+      "2026-10-15T08:00:00.000Z",
+      "2026-11-15T08:00:00.000Z",
+    ]);
+    expect(bounds("2026-10-15T08:00:00Z")).toEqual([
+      "2026-10-15T08:00:00.000Z",
+      "2026-11-15T08:00:00.000Z",
+    ]);
+  });
+
+  it("starts at last month's reset point before this month's", () => {
+    expect(bounds("2026-10-15T07:59:59Z")).toEqual([
+      "2026-09-15T08:00:00.000Z",
+      "2026-10-15T08:00:00.000Z",
+    ]);
+    expect(bounds("2027-01-03T00:00:00Z", 28, 23)).toEqual([
+      "2026-12-28T23:00:00.000Z",
+      "2027-01-28T23:00:00.000Z",
+    ]);
+  });
+
+  it("only resets on day 1-28 at hour 0-23", () => {
+    for (const [day, hour] of [
+      [0, 0],
+      [29, 0],
+      [1, 24],
+      [1.5, 0],
+    ]) {
+      expect(() =>
+        siteFundedKeyPeriodBounds({ resetDay: day, resetHour: hour }),
+      ).toThrow(/day 1-28/);
+    }
   });
 });

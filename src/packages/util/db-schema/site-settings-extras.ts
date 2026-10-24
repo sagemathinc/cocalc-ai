@@ -328,6 +328,13 @@ export type SiteSettingsExtrasKeys =
   | "site_funded_codex_global_concurrency"
   | "site_funded_codex_openai_admin_key"
   | "site_funded_codex_openai_project_id"
+  | "site_funded_claude_heading"
+  | "site_funded_claude_enabled"
+  | "site_funded_claude_model"
+  | "site_funded_claude_max_turn_usd"
+  | "site_funded_claude_max_turn_seconds"
+  | "site_funded_claude_max_output_tokens_per_request"
+  | "site_funded_claude_max_requests_per_turn"
   | "google_vertexai_key"
   | "ollama_configuration"
   | "custom_openai_configuration"
@@ -1302,6 +1309,86 @@ export const EXTRAS: SettingsExtras = {
     group: "AI & Agents",
     subgroup: "Site-Funded Codex",
     order: 100,
+  },
+  site_funded_claude_heading: {
+    name: "Site-Funded Claude",
+    desc: "Claude Code agents on Claude Haiku 5.5 paid for by the site, from the same membership allowance and weekly pools as site-funded Codex. The site's Anthropic API keys, each with its own monthly limit, are managed on the AI Pool page.",
+    default: "",
+    type: "header",
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    order: 10,
+  },
+  site_funded_claude_enabled: {
+    name: "Enable Site-Funded Claude",
+    desc: "Allow eligible accounts to run Claude Code agents with the site's Anthropic keys through the bounded funded relay. Disabling this leaves personal Claude subscriptions and API keys unchanged.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    order: 20,
+  },
+  site_funded_claude_model: {
+    name: "Funded Claude Model",
+    desc: "Exact model permitted for site-funded Claude turns. Models without a verified funded price fail closed.",
+    default: "claude-haiku-5-5",
+    // Claude runs Anthropic models only.
+    valid: (model: string) => hasSiteFundedCodexPrice(model, "anthropic"),
+    to_val: to_trimmed_str,
+    tags: ["AI", "Commercialization"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    order: 30,
+  },
+  site_funded_claude_max_turn_usd: {
+    name: "Emergency Maximum Funded Claude Turn Cost (USD)",
+    desc: "Generous emergency ceiling for one turn, not a normal UX limit. The ledger reserves this exposure before admission and releases unused funds when the turn finishes.",
+    default: "0.25",
+    valid: onlyPosFloat,
+    to_val: toFloat,
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    order: 200,
+  },
+  site_funded_claude_max_turn_seconds: {
+    name: "Emergency Maximum Claude Turn Duration (seconds)",
+    desc: "Generous emergency guard against abandoned or runaway turns. Normal turns should finish well below it.",
+    default: "3600",
+    valid: only_pos_int,
+    to_val: to_int,
+    tags: ["AI", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    advanced: true,
+    order: 210,
+  },
+  site_funded_claude_max_output_tokens_per_request: {
+    name: "Emergency Maximum Claude Output Tokens per Request",
+    desc: "Generous provider-output guard. It should not truncate ordinary Claude Code work.",
+    default: "32000",
+    valid: only_pos_int,
+    to_val: to_int,
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    advanced: true,
+    order: 230,
+  },
+  site_funded_claude_max_requests_per_turn: {
+    name: "Emergency Maximum Claude Provider Requests per Turn",
+    desc: "Generous runaway-loop guard. It should not stop normal multi-step Claude Code work.",
+    default: "256",
+    valid: only_pos_int,
+    to_val: to_int,
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    advanced: true,
+    order: 240,
   },
   google_vertexai_key: {
     name: "Google Generative AI API Key",

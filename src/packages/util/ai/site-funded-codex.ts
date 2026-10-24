@@ -5,14 +5,20 @@
 
 import Decimal from "decimal.js-light";
 
-import { getSiteFundedCodexPrice } from "./site-funded-codex-prices";
+import {
+  getSiteFundedCodexPrice,
+  type SiteFundedProvider,
+} from "./site-funded-codex-prices";
 
 export {
   getSiteFundedCodexPrice,
   hasSiteFundedCodexPrice,
   SITE_FUNDED_CODEX_PRICE_VERSION,
 } from "./site-funded-codex-prices";
-export type { SiteFundedCodexPrice } from "./site-funded-codex-prices";
+export type {
+  SiteFundedCodexPrice,
+  SiteFundedProvider,
+} from "./site-funded-codex-prices";
 
 export const MICROUSD_PER_USD = 1_000_000;
 export const SITE_FUNDED_CODEX_POLICY_VERSION = 7;
@@ -114,6 +120,10 @@ export type SiteFundedCodexReservation = {
   expiresAt: string;
   heartbeatIntervalMs: number;
   status: SiteFundedCodexReservationStatus;
+  /** Absent on reservations made before providers: OpenAI. */
+  provider?: SiteFundedProvider;
+  /** The site key this turn is funded by (site-funded Claude). */
+  providerKeyId?: string;
 };
 
 export type SiteFundedCodexUsageEvent = SiteFundedCodexRequestUsage & {
@@ -146,7 +156,9 @@ export type SiteFundedCodexDenialCode =
   | "global_pool"
   | "account_hold"
   | "ineligible"
-  | "unavailable";
+  | "unavailable"
+  /** Every site key for the provider has reached its monthly limit. */
+  | "provider_keys_exhausted";
 
 export type SiteFundedCodexAdmission =
   | {
