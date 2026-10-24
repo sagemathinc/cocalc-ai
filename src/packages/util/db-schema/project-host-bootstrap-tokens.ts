@@ -51,11 +51,11 @@ Table({
     },
     redeemed: {
       type: "timestamp",
-      desc: "When this bootstrap token first minted a master-conat token. It can mint again only for a short retry window after this.",
+      desc: "When this bootstrap token first minted a master-conat token (audit only).",
     },
     exchange_closed: {
       type: "timestamp",
-      desc: "When the host reported bootstrap done with this token: it can no longer mint a master-conat token (it still works for status and payload requests until it expires).",
+      desc: "When the host proved it holds a valid master-conat token: this bootstrap token can no longer mint one (it still works for status and payload requests until it expires).",
     },
   },
 });

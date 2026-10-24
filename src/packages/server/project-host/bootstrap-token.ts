@@ -114,11 +114,11 @@ export async function verifyProjectHostToken(
 }
 
 // A bootstrap token stays in the cloud provider's startup script, so it must
-// not keep minting host credentials. It mints a master-conat token once, plus
-// retries within this window (a lost response, or bootstrap.py falling back
-// from urllib to curl), and never after the host reports bootstrap done.
-export const BOOTSTRAP_EXCHANGE_RETRY_MS = 1000 * 60 * 10; // 10 minutes
-
+// not keep minting host credentials. It mints master-conat tokens only until
+// the host proves that the master-conat token it holds is valid
+// (getMasterConatTokenStatus). Until then the host may need it: the
+// project-host exchanges it at every daemon start, and to recover a lost or
+// revoked master token.
 export async function redeemProjectHostBootstrapToken(token: string): Promise<{
   token_id: string;
   host_id: string;
@@ -134,9 +134,8 @@ export async function redeemProjectHostBootstrapToken(token: string): Promise<{
        AND revoked IS NOT TRUE
        AND expires > NOW()
        AND exchange_closed IS NULL
-       AND (redeemed IS NULL OR redeemed > NOW() - $2 * INTERVAL '1 millisecond')
      RETURNING host_id, expires`,
-    [info.token_id, BOOTSTRAP_EXCHANGE_RETRY_MS],
+    [info.token_id],
   );
   const row = rows[0];
   if (!row) return null;
@@ -147,17 +146,23 @@ export async function redeemProjectHostBootstrapToken(token: string): Promise<{
   };
 }
 
-export async function closeProjectHostBootstrapTokenExchange(
-  tokenId: string,
-): Promise<void> {
-  await pool().query(
+// The host has shown a valid master-conat token: its bootstrap tokens can no
+// longer mint one.  Tokens issued later (start, restart, reconcile) are open
+// until the host proves its token again.
+export async function closeProjectHostBootstrapExchanges(
+  hostId: string,
+): Promise<number> {
+  const { rowCount } = await pool().query(
     `UPDATE project_host_bootstrap_tokens
      SET exchange_closed=NOW()
-     WHERE token_id=$1
+     WHERE host_id=$1
        AND purpose='bootstrap'
-       AND exchange_closed IS NULL`,
-    [tokenId],
+       AND exchange_closed IS NULL
+       AND revoked IS NOT TRUE
+       AND expires > NOW()`,
+    [hostId],
   );
+  return rowCount ?? 0;
 }
 
 export async function revokeProjectHostTokensForHost(

@@ -3,15 +3,12 @@ import express from "express";
 
 const redeemMock = jest.fn();
 const verifyMock = jest.fn();
-const closeMock = jest.fn();
 const createMasterMock = jest.fn();
 const mergeMetadataMock = jest.fn();
 
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
   redeemProjectHostBootstrapToken: (...args: any[]) => redeemMock(...args),
   verifyProjectHostToken: (...args: any[]) => verifyMock(...args),
-  closeProjectHostBootstrapTokenExchange: (...args: any[]) =>
-    closeMock(...args),
   createProjectHostMasterConatToken: (...args: any[]) =>
     createMasterMock(...args),
 }));
@@ -118,22 +115,13 @@ describe("project-host bootstrap token exchange routes", () => {
     expect(createMasterMock).not.toHaveBeenCalled();
   });
 
-  it("closes the exchange when the host reports bootstrap done", async () => {
+  it("accepts status reports without touching the exchange", async () => {
     const response = await request("/project-host/bootstrap/status", {
       method: "POST",
       body: { status: "done", message: "Bootstrap completed" },
     });
     expect(response.status).toBe(200);
     expect(mergeMetadataMock).toHaveBeenCalled();
-    expect(closeMock).toHaveBeenCalledWith("token-1");
-  });
-
-  it("keeps the exchange open for progress reports", async () => {
-    const response = await request("/project-host/bootstrap/status", {
-      method: "POST",
-      body: { status: "running", message: "Installing Ubuntu packages" },
-    });
-    expect(response.status).toBe(200);
-    expect(closeMock).not.toHaveBeenCalled();
+    expect(redeemMock).not.toHaveBeenCalled();
   });
 });

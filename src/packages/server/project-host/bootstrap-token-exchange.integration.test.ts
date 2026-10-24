@@ -8,9 +8,9 @@ import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import {
-  BOOTSTRAP_EXCHANGE_RETRY_MS,
-  closeProjectHostBootstrapTokenExchange,
+  closeProjectHostBootstrapExchanges,
   createProjectHostBootstrapToken,
+  createProjectHostMasterConatToken,
   redeemProjectHostBootstrapToken,
   restoreProjectHostTokensForRestart,
   revokeProjectHostTokensForHost,
@@ -31,49 +31,45 @@ describeDb("bootstrap token exchange", () => {
     });
   });
 
-  const backdateRedeemed = async (token_id: string, ms: number) =>
-    await getPool().query(
-      `UPDATE project_host_bootstrap_tokens
-       SET redeemed=NOW() - $2 * INTERVAL '1 millisecond'
-       WHERE token_id=$1`,
-      [token_id, ms],
-    );
+  const row = async (token_id: string) =>
+    (
+      await getPool().query(
+        "SELECT * FROM project_host_bootstrap_tokens WHERE token_id=$1",
+        [token_id],
+      )
+    ).rows[0];
 
-  it("mints once, retries within the window, and refuses afterwards", async () => {
+  it("exchanges repeatedly until the host proves its master token (bootstrap.py, then the daemon's startup preflight)", async () => {
     const host = randomUUID();
     const { token, token_id } = await createProjectHostBootstrapToken(host);
     expect(await redeemProjectHostBootstrapToken(token)).toMatchObject({
       token_id,
       host_id: host,
     });
-    // A lost response or the urllib -> curl fallback retries at once.
+    const first = (await row(token_id)).redeemed;
+    expect(first).toBeTruthy();
     expect(await redeemProjectHostBootstrapToken(token)).toMatchObject({
       host_id: host,
     });
-    await backdateRedeemed(token_id, BOOTSTRAP_EXCHANGE_RETRY_MS + 1000);
+    expect((await row(token_id)).redeemed).toEqual(first);
+    expect(await closeProjectHostBootstrapExchanges(host)).toBe(1);
+    // A second redemption after the host proved its token is refused.
     expect(await redeemProjectHostBootstrapToken(token)).toBeNull();
-    // The retry did not move the first redemption forward.
-    await backdateRedeemed(token_id, BOOTSTRAP_EXCHANGE_RETRY_MS - 60_000);
-    expect(await redeemProjectHostBootstrapToken(token)).not.toBeNull();
-  });
-
-  it("refuses the exchange once bootstrap is done, but the token still authenticates status and payload requests", async () => {
-    const host = randomUUID();
-    const { token, token_id } = await createProjectHostBootstrapToken(host);
-    await closeProjectHostBootstrapTokenExchange(token_id);
-    expect(await redeemProjectHostBootstrapToken(token)).toBeNull();
+    // ...but the token still authenticates status and payload requests.
     expect(
       await verifyProjectHostToken(token, { purpose: "bootstrap" }),
     ).toMatchObject({ token_id, host_id: host });
   });
 
-  it("a stale token (reboot after the exchange) is refused harmlessly, and a new start's token works", async () => {
+  it("a reboot with the stale startup-script token is refused harmlessly; a fresh start token is open until the next proof", async () => {
     const host = randomUUID();
     const first = await createProjectHostBootstrapToken(host);
     await redeemProjectHostBootstrapToken(first.token);
-    await closeProjectHostBootstrapTokenExchange(first.token_id);
+    await closeProjectHostBootstrapExchanges(host);
     expect(await redeemProjectHostBootstrapToken(first.token)).toBeNull();
-    // Start/restart issues a new token (revoking the old one).
+    // Start/restart issues a new token (revoking the old one). A host whose
+    // master token on disk is no longer valid can't prove it, so the fresh
+    // token still recovers it.
     const second = await createProjectHostBootstrapToken(host);
     expect(await redeemProjectHostBootstrapToken(first.token)).toBeNull();
     expect(
@@ -82,12 +78,28 @@ describeDb("bootstrap token exchange", () => {
     expect(await redeemProjectHostBootstrapToken(second.token)).toMatchObject({
       host_id: host,
     });
+    expect(await redeemProjectHostBootstrapToken(second.token)).not.toBeNull();
+    await closeProjectHostBootstrapExchanges(host);
+    expect(await redeemProjectHostBootstrapToken(second.token)).toBeNull();
+  });
+
+  it("closing touches only that host's open bootstrap tokens", async () => {
+    const host = randomUUID();
+    const other = randomUUID();
+    const mine = await createProjectHostBootstrapToken(host);
+    const theirs = await createProjectHostBootstrapToken(other);
+    const master = await createProjectHostMasterConatToken(host);
+    expect(await closeProjectHostBootstrapExchanges(host)).toBe(1);
+    expect(await closeProjectHostBootstrapExchanges(host)).toBe(0);
+    expect(await redeemProjectHostBootstrapToken(theirs.token)).not.toBeNull();
+    expect((await row(master.token_id)).exchange_closed).toBeNull();
+    expect((await row(mine.token_id)).exchange_closed).toBeTruthy();
   });
 
   it("restoring a revoked token for a restart does not reopen its exchange", async () => {
     const host = randomUUID();
-    const { token, token_id } = await createProjectHostBootstrapToken(host);
-    await closeProjectHostBootstrapTokenExchange(token_id);
+    const { token } = await createProjectHostBootstrapToken(host);
+    await closeProjectHostBootstrapExchanges(host);
     await revokeProjectHostTokensForHost(host, { purpose: "bootstrap" });
     expect(await restoreProjectHostTokensForRestart(host)).toEqual({
       restored: ["bootstrap"],
@@ -112,17 +124,14 @@ describeDb("bootstrap token exchange", () => {
     expect(await redeemProjectHostBootstrapToken(short.token)).toBeNull();
     await revokeProjectHostTokensForHost(host);
     expect(await redeemProjectHostBootstrapToken(token)).toBeNull();
-    const { createProjectHostMasterConatToken } =
-      await import("./bootstrap-token");
     const master = await createProjectHostMasterConatToken(randomUUID());
     expect(await redeemProjectHostBootstrapToken(master.token)).toBeNull();
   });
 
-  it("concurrent redemptions after the window all fail", async () => {
+  it("concurrent redemptions racing a close never succeed after it", async () => {
     const host = randomUUID();
-    const { token, token_id } = await createProjectHostBootstrapToken(host);
-    await redeemProjectHostBootstrapToken(token);
-    await backdateRedeemed(token_id, BOOTSTRAP_EXCHANGE_RETRY_MS + 1000);
+    const { token } = await createProjectHostBootstrapToken(host);
+    await closeProjectHostBootstrapExchanges(host);
     const results = await Promise.all(
       [1, 2, 3].map(() => redeemProjectHostBootstrapToken(token)),
     );

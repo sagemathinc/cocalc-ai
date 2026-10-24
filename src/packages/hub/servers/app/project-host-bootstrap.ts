@@ -8,7 +8,6 @@ import basePath from "@cocalc/backend/base-path";
 import { buildBootstrapScriptWithStatus } from "@cocalc/server/cloud/bootstrap-host";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
-  closeProjectHostBootstrapTokenExchange,
   createProjectHostMasterConatToken,
   redeemProjectHostBootstrapToken,
   verifyProjectHostToken,
@@ -318,11 +317,6 @@ export default function init(router: Router) {
           ? String(req.body.message)
           : undefined;
         await updateBootstrapStatus(tokenInfo.host_id, status, message);
-        if (status === "done") {
-          // The host has its master-conat token by now; the copy of this
-          // token left in the startup script must not mint another.
-          await closeProjectHostBootstrapTokenExchange(tokenInfo.token_id);
-        }
         res.json({ ok: true });
       } catch (err) {
         logger.warn("bootstrap status update failed", err);
@@ -340,14 +334,15 @@ export default function init(router: Router) {
       }
       const tokenInfo = await redeemProjectHostBootstrapToken(token);
       if (!tokenInfo) {
-        // Visible for alerting: a host (or whoever read its startup script)
-        // tried to mint a master-conat token with a used bootstrap token.
+        // Expected once per project-host daemon start after the host proved
+        // its master token (its startup preflight); otherwise worth a look.
         const known = await verifyProjectHostToken(token, {
           purpose: "bootstrap",
         });
         logger.warn("bootstrap conat token refused", {
           host_id: known?.host_id,
           token_id: token.split(".", 1)[0],
+          reason: known ? "exchange_closed" : "invalid",
         });
         res.status(401).send("invalid or already used bootstrap token");
         return;
