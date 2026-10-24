@@ -19,7 +19,7 @@ export const PUBLIC_HOME_EYEBROW = "CoCalc";
 export const PUBLIC_HOME_HEADLINE = "Build and use software with AI.";
 
 export const PUBLIC_HOME_INTRO =
-  "Agents work in a shared project with your files, software, and collaborators. Open what they save, or take over the work yourself.";
+  "Describe what you want, and an agent builds it in a project with your files and software. Review the result beside the conversation, then refine it or take over yourself.";
 
 export const PUBLIC_HOME_SECONDARY_CTA = {
   href: "features/ai",
@@ -37,6 +37,78 @@ export const PUBLIC_HOME_HIGHLIGHTS = [
   PUBLIC_HOME_COLLABORATION_HIGHLIGHT,
   "Restore earlier versions",
 ] as const;
+
+// The section after the hero: how working with an agent goes. Both renderings
+// (see above) use these strings.
+export const PUBLIC_HOME_AGENT_TITLE = "From an idea to something you can use.";
+
+export const PUBLIC_HOME_AGENT_BODY =
+  "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.";
+
+export const PUBLIC_HOME_AGENT_STEPS = [
+  {
+    body: "Say what you want and point the agent at your files. It works in the project, with the software installed there.",
+    title: "Describe the outcome",
+  },
+  {
+    body: "Open the app, report, or chart the agent saves, beside the conversation. Ask what it did and why.",
+    title: "Review the result",
+  },
+  {
+    body: "Ask for another version, or open the files, notebooks, and terminals and continue yourself.",
+    title: "Refine or take over",
+  },
+] as const;
+
+// Starter tasks in the Agents guide. The Agents workspace is part of the
+// hosted products, so CoCalc Plus does not link them.
+export const PUBLIC_HOME_AGENT_TASKS = [
+  {
+    href: "docs/ai/my-agents#turn-a-recurring-task-into-an-app",
+    label: "Try an app task",
+  },
+  {
+    href: "docs/ai/my-agents#investigate-a-change-in-your-data",
+    label: "Try an analysis task",
+  },
+] as const;
+
+export const PUBLIC_HOME_AGENT_LINKS = [
+  { href: "features/ai", label: "See agent workflows" },
+  { href: "features/compare", label: "Compare with agent sandboxes" },
+] as const;
+
+export function getPublicHomeAgentLinks(
+  config?: PublicRouteMetadataConfig,
+): ReadonlyArray<{ href: string; label: string }> {
+  if (config?.cocalc_product === "plus") return PUBLIC_HOME_AGENT_LINKS;
+  return [PUBLIC_HOME_AGENT_LINKS[0], ...PUBLIC_HOME_AGENT_TASKS];
+}
+
+// The hero image: the Agents workspace, with a published result open beside
+// the conversation. CoCalc Plus has no Agents workspace, so it shows a
+// project notebook instead.
+export function getPublicHomeHeroImage(config?: PublicRouteMetadataConfig): {
+  alt: string;
+  height: number;
+  src: string;
+  width: number;
+} {
+  if (config?.cocalc_product === "plus") {
+    return {
+      alt: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
+      height: 650,
+      src: "/public/landing/project-notebook-20260916.jpg",
+      width: 1050,
+    };
+  }
+  return {
+    alt: "An agent conversation in CoCalc beside the dispatch reliability review it published, a dashboard of charts the reader can open, download, or comment on",
+    height: 630,
+    src: "/public/docs/agents-workspace-dispatch-review-20260924.jpg",
+    width: 1180,
+  };
+}
 
 // The default CoCalc brand: no custom logo, and the marketing site name is
 // CoCalc (the default Launchpad brand maps to it).
