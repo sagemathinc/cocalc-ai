@@ -65,6 +65,10 @@ export function siteFundedUsageFromAnthropic(
       "cache write breakdown exceeds cache_creation_input_tokens",
     );
   }
+  // The breakdown should account for every cache write. Any it does not (a
+  // missing or short breakdown) is priced as the dearer 1-hour write: never
+  // undercharged, and still recorded rather than refused.
+  const cacheWrite1hPriced = cacheWrite - cacheWrite5m;
   const searches = count(
     usage.server_tool_use?.web_search_requests,
     "web_search_requests",
@@ -77,7 +81,7 @@ export function siteFundedUsageFromAnthropic(
     inputTokens,
     cachedInputTokens: cacheRead,
     cacheWriteInputTokens: cacheWrite,
-    cacheWrite1hInputTokens: cacheWrite1h,
+    cacheWrite1hInputTokens: cacheWrite1hPriced,
     outputTokens: count(usage.output_tokens, "output_tokens"),
     providerToolFeesMicrousd: searches * ANTHROPIC_WEB_SEARCH_MICROUSD,
   };

@@ -122,6 +122,34 @@ describe("site-funded Claude accounting", () => {
     });
   });
 
+  it("prices cache writes the breakdown does not explain as 1-hour writes", () => {
+    // No breakdown: all of it at the 1-hour rate.
+    expect(
+      siteFundedUsageFromAnthropic({
+        input_tokens: 0,
+        cache_creation_input_tokens: 1_000,
+      }),
+    ).toMatchObject({
+      cacheWriteInputTokens: 1_000,
+      cacheWrite1hInputTokens: 1_000,
+    });
+    expect(
+      cost({ input_tokens: 0, cache_creation_input_tokens: 1_000 }),
+    ).toMatchObject({ cacheWriteInputCostMicrousd: 200 });
+    // A short breakdown: the unexplained 400 at the 1-hour rate.
+    expect(
+      cost({
+        input_tokens: 0,
+        cache_creation_input_tokens: 1_000,
+        cache_creation: { ephemeral_5m_input_tokens: 600 },
+      }),
+    ).toMatchObject({
+      cacheWrite1hInputTokens: 400,
+      // 600 x 0.125 + 400 x 0.20
+      cacheWriteInputCostMicrousd: 155,
+    });
+  });
+
   it("rejects malformed usage", () => {
     expect(() => siteFundedUsageFromAnthropic({ input_tokens: -1 })).toThrow();
     expect(() =>

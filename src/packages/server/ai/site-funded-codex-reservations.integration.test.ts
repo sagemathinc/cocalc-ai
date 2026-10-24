@@ -47,6 +47,8 @@ function options({
   const fundedTurnId = uuid();
   const policy: SiteFundedCodexPolicy = {
     ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
+    // The model the usage events below are priced as.
+    model: "gpt-5.6-luna",
     maxTurnCostMicrousd,
     contextWindowTokens: 10_000,
     autoCompactTokenLimit: 7_500,
@@ -212,6 +214,29 @@ describe("site-funded Codex reservations", () => {
       committedMicrousd: 1_520,
       activeReservations: 0,
     });
+  });
+
+  it("prices usage as its reservation's model, never another catalog entry", async () => {
+    const admission = await reserveSiteFundedCodexTurn(options());
+    if (!admission.allowed) throw new Error("expected reservation");
+    await expect(
+      recordSiteFundedCodexUsageEvent({
+        eventId: uuid(),
+        reservationId: admission.reservation.reservationId,
+        requestSequence: 1,
+        model: "claude-haiku-5-5",
+        inputTokens: 10_000,
+        outputTokens: 500,
+      }),
+    ).rejects.toThrow("does not match its reservation");
+    expect(
+      (
+        await getPool().query(
+          "SELECT committed_microusd, last_request_sequence FROM site_ai_turn_reservations WHERE reservation_id=$1",
+          [admission.reservation.reservationId],
+        )
+      ).rows[0],
+    ).toMatchObject({ committed_microusd: "0", last_request_sequence: 0 });
   });
 
   it("records real provider liability when usage exceeds its reservation", async () => {
