@@ -985,17 +985,19 @@ function NewAgentPanel({
             );
           // Then, if the membership includes Claude, it is the default for
           // an account with no Claude credential of its own.
-          void siteFundedClaudeAvailable().then((membership) => {
-            if (disposed || !membership || claudeCredentialChosen.current)
-              return;
-            setClaudeCredential(
-              preferredClaudeCredential(
-                initialClaudeCredential.current,
-                rows,
-                true,
-              ),
-            );
-          });
+          void siteFundedClaudeAvailable(boundAccount.accountId).then(
+            (membership) => {
+              if (disposed || !membership || claudeCredentialChosen.current)
+                return;
+              setClaudeCredential(
+                preferredClaudeCredential(
+                  initialClaudeCredential.current,
+                  rows,
+                  true,
+                ),
+              );
+            },
+          );
           setClaudeCredentialsLoaded(true);
         }
       })

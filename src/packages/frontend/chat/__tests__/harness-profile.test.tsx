@@ -1177,3 +1177,34 @@ test("the payment list shows the latest subscription usage, not the usage when i
     getStore.mockRestore();
   }
 });
+
+test("a stored CoCalc Membership choice shows as selected", async () => {
+  const getStore = jest
+    .spyOn(redux, "getStore")
+    .mockReturnValue(accountStore as any);
+  const list = jest
+    .spyOn(webapp_client.conat_client.hub.system, "listExternalCredentials")
+    .mockResolvedValue([]);
+  writeHarnessCredentialSelection({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-membership",
+    credential: { version: 1, provider: "anthropic", mode: "site-funded" },
+  });
+  try {
+    render(
+      <HarnessRuntimeSummary
+        runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
+        projectId="project-a"
+        threadKey="thread-membership"
+      />,
+    );
+    const membership = await screen.findByRole("radio", {
+      name: /CoCalc Membership \(Claude Haiku 5\.5\)/,
+    });
+    expect((membership as HTMLInputElement).checked).toBe(true);
+  } finally {
+    list.mockRestore();
+    getStore.mockRestore();
+  }
+});

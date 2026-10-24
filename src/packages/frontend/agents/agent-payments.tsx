@@ -466,7 +466,7 @@ export function SetPaymentModal({
                 ? plural(claudeCount, "Claude Code agent")
                 : "Claude Code"}
             </Typography.Text>
-            {claudeCredentials.length === 0 ? (
+            {claudeCredentials.length === 0 && (
               <div style={{ marginTop: 4 }}>
                 <ClaudeSubscriptionConnect
                   projectId={groups.claude[0].project_id}
@@ -477,7 +477,9 @@ export function SetPaymentModal({
                   }}
                 />
               </div>
-            ) : (
+            )}
+            {/* Without a Claude credential, included Claude is still a choice. */}
+            {(claudeCredentials.length > 0 || membership) && (
               <>
                 <Select
                   aria-label="Claude credential for selected agents"

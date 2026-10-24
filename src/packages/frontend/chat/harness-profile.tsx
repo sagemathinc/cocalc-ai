@@ -23,6 +23,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import { ClaudeProjectSecretModal } from "./claude-project-secret-modal";
+import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
   readHarnessCredentialSelection,
@@ -61,6 +62,15 @@ function harnessErrorMessage(error: unknown): string {
     /^(?:Error:\s*)+/,
     "",
   );
+}
+
+/** The picker value of a stored selection (the project secret when none). */
+function claudeSelectionValue(
+  selection: AcpHarnessCredential | undefined,
+): string {
+  return selection
+    ? newAgentClaudeCredentialValue(selection)
+    : "project-secret";
 }
 
 export function claudeCredentialTrustWarning(
@@ -143,12 +153,7 @@ function ClaudeCredentialControl({
     projectId,
     threadKey,
   });
-  const [value, setValue] = useState(
-    selection?.mode === "account-api-key" ||
-      selection?.mode === "account-subscription"
-      ? `${selection.mode}:${selection.credentialId}`
-      : "project-secret",
-  );
+  const [value, setValue] = useState(claudeSelectionValue(selection));
   const [connectorsEnabled, setConnectorsEnabled] = useState(
     selection?.mode !== "account-subscription" ||
       selection.claudeAiConnectors !== false,
@@ -168,12 +173,7 @@ function ClaudeCredentialControl({
         current?.mode !== "account-subscription" ||
           current.claudeAiConnectors !== false,
       );
-      setValue(
-        current?.mode === "account-api-key" ||
-          current?.mode === "account-subscription"
-          ? `${current.mode}:${current.credentialId}`
-          : "project-secret",
-      );
+      setValue(claudeSelectionValue(current));
     };
     refresh();
     // The same list (and usage) as the footer's payment popover: reloaded
