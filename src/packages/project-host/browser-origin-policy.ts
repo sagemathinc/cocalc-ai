@@ -48,6 +48,7 @@ import type { IncomingMessage } from "node:http";
 import path from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { getPrivateAppHostnameProject } from "./private-app-hostname";
+import { getProjectContentDomain } from "./content-origin";
 
 const logger = getLogger("project-host:browser-origin-policy");
 
@@ -262,15 +263,23 @@ function isOwnOrigin(origin: string, req: Req): boolean {
 
 // The own-origin allowance for app routes: on a private app hostname only for
 // that app's own project; unbound only on the host's own public hostname
-// (PROJECT_HOST_PUBLIC_URL). Any other hostname, including a private hostname
-// whose lookup failed, gets no allowance.
+// (PROJECT_HOST_PUBLIC_URL), and only while the site has no app origins.
+// Any other hostname, including a private hostname whose lookup failed, gets
+// no allowance.
+//
+// With app origins (a content domain), no page of the canonical hostname may
+// use the cookie: the host serves no pages of its own there (its webapp and
+// exam pages are on the exam hostname), apps are never pages there (D7,
+// host-app-route-redirect.ts) and active files go to the content view, so
+// the only documents it could be are users' -- exactly what must never act
+// with the visitor's host cookie for other projects.
 function ownAppOriginAllowed(
   req: Req,
   project_id: string | undefined,
 ): boolean {
   const privateProject = getPrivateAppHostnameProject(req as IncomingMessage);
   if (privateProject != null) return privateProject === project_id;
-  return isCanonicalHost(req);
+  return isCanonicalHost(req) && !getProjectContentDomain();
 }
 
 function isCanonicalHost(req: Req): boolean {

@@ -29,6 +29,15 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ChatReaderView } from "./reader-view";
+import {
+  isOpenAttention,
+  readerItemAttention,
+  readerItemThreadIndex,
+  readerItemWaitsFor,
+  readerItemWorking,
+} from "./reader-item-log";
+import { readerItems, type ReaderItem } from "./reader-model";
+import { itemPriority, itemSubject, itemTurnMeta } from "./reader-turn-meta";
 import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -557,6 +566,8 @@ interface ChatRoomThreadPanelProps {
   /** Show the selected thread in the reader instead of the log. */
   readerMode?: boolean;
   onReaderModeChange?: (on: boolean) => void;
+  /** Move the keyboard focus into the reader as it appears. */
+  readerAutoFocus?: boolean;
   readStateVersion?: number;
   onMobileToolsAction?: () => void;
 }
@@ -610,6 +621,7 @@ export function ChatRoomThreadPanel({
   mobile = false,
   readerMode = false,
   onReaderModeChange,
+  readerAutoFocus = false,
   readStateVersion,
   onMobileToolsAction,
 }: ChatRoomThreadPanelProps) {
@@ -809,8 +821,6 @@ export function ChatRoomThreadPanel({
   } | null>(null);
   const selectedThreadLookup = selectedThreadId;
   const showReader = readerMode && !!selectedThreadId;
-  // Only when the person turns it on, never when a chat opens in the reader.
-  const [readerAutoFocus, setReaderAutoFocus] = useState(false);
   const readerMessages = useMemo(
     () =>
       showReader && selectedThreadId
@@ -818,6 +828,25 @@ export function ChatRoomThreadPanel({
         : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [showReader, actions, selectedThreadId, messages, docVersion],
+  );
+  // The thread's running turn, as the panel finds it (not a stale flag).
+  const readerRunningMessage = useMemo(
+    () =>
+      showReader
+        ? resolveSelectedThreadRunningCodexMessage(readerMessages, acpState)
+        : undefined,
+    [showReader, readerMessages, acpState],
+  );
+  // Each item's questions and approvals, for its log and its list row.
+  const readerAttention = useMemo(
+    () =>
+      showReader
+        ? readerItemAttention(
+            attentionRecords,
+            readerItems(readerMessages, { acpState }),
+          )
+        : new Map<string, readonly AcpAttentionRecord[]>(),
+    [showReader, attentionRecords, readerMessages, acpState],
   );
   const selectedThreadMessages = useMemo(
     () =>
@@ -2214,7 +2243,6 @@ export function ChatRoomThreadPanel({
             aria-pressed={readerMode}
             onClick={() => {
               onMobileToolsAction?.();
-              setReaderAutoFocus(!readerMode);
               onReaderModeChange(!readerMode);
             }}
             icon={<Icon name="mail" />}
@@ -3100,6 +3128,57 @@ export function ChatRoomThreadPanel({
             autoFocus={readerAutoFocus}
             projectId={project_id}
             path={path}
+            readOnly={readOnly}
+            isVisible={isVisible}
+            acpState={acpState}
+            itemInfo={(item: ReaderItem) => {
+              const meta = itemTurnMeta(item);
+              return {
+                subject: itemSubject(item, meta),
+                priority: itemPriority(
+                  item,
+                  meta,
+                  (readerAttention.get(item.id) ?? []).some(isOpenAttention),
+                ),
+              };
+            }}
+            itemBadges={(item: ReaderItem) => (
+              <ReaderItemBadges
+                working={readerItemWorking(item, readerRunningMessage)}
+                waitsFor={readerItemWaitsFor(
+                  readerAttention.get(item.id) ?? [],
+                )}
+              />
+            )}
+            renderItem={(item: ReaderItem) => (
+              <ChatLog
+                actions={actions}
+                project_id={project_id ?? ""}
+                path={path ?? ""}
+                messages={messages}
+                threadIndex={readerItemThreadIndex(
+                  selectedThreadForLog ?? selectedThreadId,
+                  item,
+                )}
+                docVersion={docVersion}
+                acpState={acpState}
+                scrollCacheId={`${scrollCacheId ?? `${project_id}${path}`}:reader:${item.id}`}
+                isVisible={isVisible}
+                mode={variant === "compact" ? "sidechat" : "standalone"}
+                fontSize={fontSize}
+                selectedThread={selectedThreadForLog ?? selectedThreadId}
+                onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
+                attentionRecords={readerAttention.get(item.id) ?? []}
+                readOnly={readOnly}
+                // The panel shows the running turn's status already, as for
+                // the log.
+                suppressInlineCodexStatusDate={
+                  selectedRunningCodexDate != null
+                    ? `${selectedRunningCodexDate}`
+                    : undefined
+                }
+              />
+            )}
           />
         ) : (
           <ChatLog
@@ -3232,5 +3311,48 @@ function renderOptionWithDescription({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** The list row's marks for an item: its turn is running, or asks you. */
+function ReaderItemBadges({
+  working,
+  waitsFor,
+}: {
+  working: boolean;
+  waitsFor?: "answer" | "action";
+}) {
+  return (
+    <>
+      {waitsFor ? (
+        <span
+          aria-label={
+            waitsFor === "answer"
+              ? "Waiting for your answer"
+              : "Waiting for your action"
+          }
+          style={{
+            color: UI_COLORS.warning,
+            background: UI_COLORS.warningBg,
+            border: `1px solid ${UI_COLORS.warning}`,
+            borderRadius: 4,
+            padding: "0 6px",
+            fontSize: 11,
+            fontWeight: 600,
+            flex: "none",
+          }}
+        >
+          {waitsFor === "answer" ? "Question" : "Needs you"}
+        </span>
+      ) : null}
+      {working ? (
+        <span
+          aria-label="Working"
+          style={{ color: UI_COLORS.info, fontSize: 11, flex: "none" }}
+        >
+          working…
+        </span>
+      ) : null}
+    </>
   );
 }

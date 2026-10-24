@@ -213,6 +213,7 @@ function saveWorkspaceOnly(project_id: string, enabled: boolean): void {
 
 interface AgentsFlyoutProps {
   project_id: string;
+  isVisible?: boolean;
   wrap: (
     content: React.JSX.Element,
     style?: React.CSSProperties,
@@ -222,6 +223,9 @@ interface AgentsFlyoutProps {
 interface AgentsPanelProps {
   project_id: string;
   layout?: "flyout" | "page";
+  // False while the panel stays mounted but hidden (a retained flyout or a
+  // background tab), so the embedded chat does not mark messages read.
+  isVisible?: boolean;
 }
 
 function PendingAgentLaunch({
@@ -255,7 +259,11 @@ function PendingAgentLaunch({
   );
 }
 
-export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
+export function AgentsPanel({
+  project_id,
+  layout = "page",
+  isVisible = true,
+}: AgentsPanelProps) {
   const { active_project_tab, workspaces } = useProjectContext();
   const actions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
@@ -1727,6 +1735,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               <SideChat
                 actions={inlineActions}
                 project_id={project_id}
+                isVisible={isVisible}
                 path={inlineSession.chat_path}
                 fontSize={fontSize}
                 onIncreaseFontSize={increaseFontSize}
@@ -1911,7 +1920,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   );
 }
 
-export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
+export function AgentsFlyout({
+  project_id,
+  wrap,
+  isVisible = true,
+}: AgentsFlyoutProps) {
   const { agentAIEnabled } = useProjectContext();
   if (!agentAIEnabled) {
     return wrap(
@@ -1924,5 +1937,11 @@ export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
       />,
     );
   }
-  return wrap(<AgentsPanel project_id={project_id} layout="flyout" />);
+  return wrap(
+    <AgentsPanel
+      project_id={project_id}
+      layout="flyout"
+      isVisible={isVisible}
+    />,
+  );
 }

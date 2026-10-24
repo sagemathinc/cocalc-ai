@@ -596,7 +596,7 @@ describeDb("agent memory", () => {
     expect(
       (results.find((r) => r.status === "rejected") as PromiseRejectedResult)
         .reason.message,
-    ).toMatch(/already has 500 notes in global; merge related notes/);
+    ).toMatch(/already has 500 notes in global; merge notes on the same topic/);
     // A full namespace still takes updates to its notes.
     expect((await write(memory, account, P1, "n-1")).saved).toBe("updated");
   });
@@ -650,7 +650,7 @@ describeDb("agent memory", () => {
     expect(index).toMatch(/\(\d+ more: `memory search <words>` finds them/);
     // A project without the namespace sees only the global note.
     expect((await memory.turnIndex(account, P3))?.index).toBe(
-      "Saved notes (name: description), most relevant first:\n- prefs: the prefs note",
+      "Saved notes (name: description), a selection (this project's and recent first):\n- prefs: the prefs note",
     );
   });
 

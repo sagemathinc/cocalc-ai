@@ -19,6 +19,7 @@ describe("I/O containment metrics", () => {
     ).toEqual({
       somePercent: 12.5,
       fullPercent: 3.25,
+      fullAvg60Percent: 1,
       someTotal: 1234,
       fullTotal: 456,
     });

@@ -57,6 +57,13 @@ export interface ChatReaderStateEntry {
   u?: string[];
   /** Archived: item id -> its last message id then. */
   a?: Record<string, string>;
+  /**
+   * Archive all: every item whose last message is at or before this time
+   * (ms) is archived, except those in `ax`.
+   */
+  aw?: number;
+  /** Moved back to the inbox although `aw` covers them. */
+  ax?: string[];
 }
 
 export function chatReaderStateKey(path: string, thread_id: string): string {

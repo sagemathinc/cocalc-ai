@@ -20,7 +20,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { React, useIsMountedRef } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  useIsMountedRef,
+  useRedux,
+} from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
 import {
   SortableItem,
@@ -268,11 +272,40 @@ export function canShowCellDragHandle(
   return actions?.store?.is_cell_editable?.(id) === true;
 }
 
+// An empty notebook shows the placeholder: its loading state until the
+// initial source settled (the notebook is read-only until then), then the
+// prompt to start the first cell unless the notebook is read-only.
+export function showEmptyNotebookPlaceholder({
+  cellCount,
+  hasActions,
+  readOnly,
+  initialSourceSettled,
+}: {
+  cellCount: number;
+  hasActions: boolean;
+  readOnly?: boolean;
+  initialSourceSettled?: boolean;
+}): boolean {
+  return cellCount === 0 && hasActions && (!readOnly || !initialSourceSettled);
+}
+
 export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
+  const initialSourceSettled = !!useRedux([
+    props.actions?.name ?? "",
+    "initial_source_settled",
+  ]);
   if (props.cell_list == null) {
     return renderLoading();
   }
-  if (props.cell_list.size === 0 && props.actions != null && !props.read_only) {
+  if (
+    props.actions != null &&
+    showEmptyNotebookPlaceholder({
+      cellCount: props.cell_list.size,
+      hasActions: true,
+      readOnly: props.read_only,
+      initialSourceSettled,
+    })
+  ) {
     // An empty notebook stores no cells until the user starts editing.
     return (
       <EmptyNotebookPlaceholder

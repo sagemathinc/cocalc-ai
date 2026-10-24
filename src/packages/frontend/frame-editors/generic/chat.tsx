@@ -26,7 +26,12 @@ export function chatFile(path: string): string {
   return chatMetaFile(path);
 }
 
-function Chat({ font_size, desc }: EditorComponentProps) {
+function Chat({
+  font_size,
+  desc,
+  is_visible,
+  tab_is_visible,
+}: EditorComponentProps) {
   const { project_id, path: path0, actions, id: frameId } = useFrameContext();
   const path = chatFile(path0);
   const [sideChatActions, setSideChatActions] = useState<ChatActions | null>(
@@ -93,6 +98,7 @@ function Chat({ font_size, desc }: EditorComponentProps) {
           path={path}
           fontSize={font_size}
           desc={desc}
+          isVisible={is_visible && tab_is_visible}
         />
       </Suspense>
     </CocalcErrorBoundary>
