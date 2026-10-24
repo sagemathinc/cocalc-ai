@@ -1098,10 +1098,25 @@ the disk again.
 ## Backups and snapshots
 
 Use project backups for portable project recovery, cross-host moves, and
-protection before lifecycle actions. Use provider snapshots or host-local
-snapshots only when the UI or provider explicitly exposes that workflow for the
-host; they are infrastructure recovery tools, not a substitute for project
-backups.
+protection before lifecycle actions.
+
+Snapshots in \`~/.snapshots\` are host-local copies of the project's files. They
+do not include the edit history (TimeTravel), which CoCalc stores separately.
+To recover from a snapshot, copy the files you need to another path and compare
+them with current work before replacing anything. Restoring the whole HOME from
+a snapshot, alone or together with the root filesystem, is temporarily
+unavailable on hosts that store edit history separately: the restore is refused
+before the project is stopped. Restoring the root filesystem only still works.
+
+To bring back many HOME files, restore them from a completed backup. A backup
+restore writes the backed-up files over the current ones and keeps files that
+are not in the backup, so HOME does not return exactly to its earlier state.
+[Recover research files and environments](/docs/research/recover-work) helps
+choose the smallest recovery operation.
+
+Provider disk snapshots are separate infrastructure recovery tools. Use them
+only when the UI or provider explicitly exposes that workflow for the host;
+they do not replace project backups.
 
 Project backups can skip files whose apparent size exceeds the backup file-size
 limit, which normally follows the project's disk quota. Sparse or compressed
