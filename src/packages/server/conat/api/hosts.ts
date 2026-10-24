@@ -3848,14 +3848,16 @@ function siteFundedSurface(path?: string): string {
         : "unknown";
 }
 
-// Best effort: the funnel never delays or fails an admission.
+// Best effort: the funnel never delays or fails an admission. Everything,
+// finding the seed included, runs inside the promise, so not even a
+// synchronous failure can escape.
 function recordSiteFundedAdmission(record: SiteFundedAdmissionRecord): void {
-  const remoteSeed = remoteSiteFundedCodexSeed();
-  void (
-    remoteSeed
+  void (async () => {
+    const remoteSeed = remoteSiteFundedCodexSeed();
+    await (remoteSeed
       ? remoteSeed.recordSiteFundedAdmission(record)
-      : recordSiteFundedAdmissionLocal(record)
-  ).catch((err) =>
+      : recordSiteFundedAdmissionLocal(record));
+  })().catch((err) =>
     logger.debug("site-funded admission not recorded", { err: `${err}` }),
   );
 }

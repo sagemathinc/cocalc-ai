@@ -869,6 +869,23 @@ describe("site-funded Codex account directory routing", () => {
     },
   );
 
+  it("returns the admission even if finding the seed to record it throws", async () => {
+    lookup.mockResolvedValue({ email_address_verified: false });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockImplementation(() => {
+        throw new Error("cluster config unavailable");
+      });
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({
+      allowed: false,
+      code: "ineligible",
+    });
+  });
+
   it("records nothing for a host that is not authorized", async () => {
     queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
     const record = jest

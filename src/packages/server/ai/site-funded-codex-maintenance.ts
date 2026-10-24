@@ -35,9 +35,14 @@ export function startSiteFundedCodexMaintenance(): void {
           reconciled,
         });
       }
-      await pruneSiteFundedAdmissions();
     } catch (err) {
       logger.warn("site-funded Codex maintenance failed", { err: `${err}` });
+    }
+    // Separately, so retention holds even while the above keeps failing.
+    try {
+      await pruneSiteFundedAdmissions();
+    } catch (err) {
+      logger.warn("site-funded admission pruning failed", { err: `${err}` });
     }
   };
   void run();
