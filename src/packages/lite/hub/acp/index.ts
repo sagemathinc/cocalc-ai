@@ -1,6 +1,9 @@
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
-import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
+import {
+  agentMemoryOffTurnContext,
+  agentMemoryTurnContext,
+} from "@cocalc/conat/agents/memory";
 import {
   chainToolRan,
   toolRanOf,
@@ -463,7 +466,7 @@ type AgentMemoryContextProvider = (opts: {
   /** The turn's chat, so the index can list its agent's own notes. */
   chatPath?: string;
   threadId?: string;
-}) => Promise<{ notes: number; index: string } | null>;
+}) => Promise<{ notes: number; index: string; off?: true } | null>;
 let agentMemoryContextProvider: AgentMemoryContextProvider | undefined;
 
 export function setAgentMemoryContextProvider(
@@ -499,6 +502,8 @@ async function loadAgentMemoryContext(
       return { event: { type: "memory", state: "unavailable" } };
     }
     if (!result) return {};
+    // Memory is off: no notes and no Memory line, only the hint that it exists.
+    if (result.off) return { context: agentMemoryOffTurnContext() };
     return {
       context: agentMemoryTurnContext(
         result.index,

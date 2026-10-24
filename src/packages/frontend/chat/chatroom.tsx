@@ -35,6 +35,7 @@ import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
 import { useArtifactFeedbackDraft } from "./use-artifact-feedback";
 import { artifactFeedbackPrompt } from "@cocalc/chat";
 import { ChatRoomComposer } from "./composer";
+import { AgentMemoryOffer } from "@cocalc/frontend/account/agent-memory-offer";
 import { ChatSpeechPlayer } from "./audio/chat-speech-player";
 import { ChatLiveVoice } from "./live-voice";
 import { projectLiveVoiceMessages } from "./live-voice-messages";
@@ -2795,6 +2796,10 @@ function ChatPanelContent({
       ) : !readOnly ? (
         <>
           {artifactFeedback.control}
+          {isSelectedThreadAI &&
+            isCodexThreadMetadata(selectedThreadMetadata) && (
+              <AgentMemoryOffer />
+            )}
           <ChatRoomComposer
             isActive={
               embeddingOptions.agentWorkspace
