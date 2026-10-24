@@ -177,18 +177,25 @@ function fakeOps(): PersistVolumeOps & {
   quotas: Map<string, number>;
   // volumes put in their project's quota group
   joined: string[];
+  // quota groups limited: project:home+history=quota
+  limited: string[];
 } {
   const calls: string[] = [];
   const quotas = new Map<string, number>();
   const joined: string[] = [];
+  const limited: string[] = [];
   return {
     calls,
     quotas,
     joined,
+    limited,
     joinQuotaGroup: async (project_id, path, opts) => {
       joined.push(
         `${project_id}:${path}${opts?.required ? " (required)" : ""}`,
       );
+    },
+    limitQuotaGroup: async (project_id, home, history, quota) => {
+      limited.push(`${project_id}:${home}+${history}=${quota}`);
     },
     getQuota: async (path) => quotas.get(path) ?? 0,
     setQuota: async (path, bytes) => {
@@ -325,6 +332,9 @@ describe("prepareProjectPersistVolume", () => {
     // disk quota and a tenth more) is its own too
     expect(ops.joined).toEqual([`${PROJECT}:${root}`]);
     expect(ops.quotas.get(root)).toBe(11 * GiB);
+    // and the group is limited for the disk quota before the volume is ready
+    // (not only at the project's next quota audit)
+    expect(ops.limited).toEqual([`${PROJECT}:${home}+${root}=${10 * GiB}`]);
     // the old directory is gone from the home
     expect(existsSync(join(home, LEGACY))).toBe(false);
     expect(existsSync(join(home, ".local/share/cocalc"))).toBe(true);
@@ -339,6 +349,49 @@ describe("prepareProjectPersistVolume", () => {
     // ready: nothing more to do
     await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
     expect(ops.calls).toHaveLength(3);
+  });
+
+  it("limits the group only once the volume is ready and the old copy is gone", async () => {
+    // (with both copies, the group may be over its limit: the ready marker
+    // could not be written)
+    const ops = fakeOps();
+    ops.quotas.set(home, 10 * GiB);
+    const seen: { ready: boolean; legacy: boolean }[] = [];
+    ops.limitQuotaGroup = async () => {
+      seen.push({
+        ready: existsSync(join(root, READY_MARKER)),
+        legacy: existsSync(join(home, LEGACY)),
+      });
+    };
+    await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
+    expect(seen).toEqual([{ ready: true, legacy: false }]);
+  });
+
+  it("doesn't limit the group while the old copy is still in the home", async () => {
+    const ops = fakeOps();
+    ops.quotas.set(home, 10 * GiB);
+    ops.removeFromHome = async () => {
+      throw new Error("root helper unavailable");
+    };
+    await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
+    expect(existsSync(join(root, READY_MARKER))).toBe(true);
+    expect(ops.limited).toEqual([]);
+  });
+
+  it("is ready even if the quota group can't be limited (the audit does it)", async () => {
+    const ops = fakeOps();
+    ops.quotas.set(home, 10 * GiB);
+    ops.limitQuotaGroup = async () => {
+      throw new Error("deferred");
+    };
+    await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
+    expect(existsSync(join(root, READY_MARKER))).toBe(true);
+  });
+
+  it("limits no group for a home without a quota", async () => {
+    const ops = fakeOps();
+    await prepareProjectPersistVolume({ project_id: PROJECT, root }, ops, env);
+    expect(ops.limited).toEqual([]);
   });
 
   it("imports once for concurrent opens", async () => {

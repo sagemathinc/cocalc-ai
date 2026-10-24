@@ -81,6 +81,7 @@ import {
 } from "./message-presentation";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
+import { TurnSubjectHeader } from "./turn-subject-header";
 import { agentMessageDirectory } from "./activity-path-context";
 import { AgentMessageFileContext } from "./message-file-context";
 import { codexEventsToMarkdown } from "./codex-activity";
@@ -2363,6 +2364,7 @@ export default function Message({
     return (
       <>
         {renderForkNotice()}
+        <TurnSubjectHeader message={message} />
         {/* How this turn began: above its activity, not under it as it grows. */}
         {showCodexActivity && acpRecoveryCount ? (
           <div

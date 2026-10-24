@@ -1,4 +1,5 @@
 import {
+  archiveAll,
   findItem,
   isItemArchived,
   isItemRead,
@@ -40,6 +41,128 @@ describe("reader items", () => {
       ["p2", "p2", 4, 4],
       ["p3", "a3", 5, 6],
     ]);
+  });
+});
+
+describe("an item is one turn", () => {
+  const at = (ms: number) => new Date(ms);
+  const said = (id: string, ms: number, extra: object = {}) =>
+    ({ message_id: id, sender_id: "acct", date: at(ms), ...extra }) as any;
+  // A turn: the reply to `parent`, started at `ms`, last written at `done`.
+  const turn = (
+    id: string,
+    parent: string,
+    ms: number,
+    done?: number,
+    extra: object = {},
+  ) =>
+    ({
+      message_id: id,
+      sender_id: "codex",
+      acp_thread_id: "t",
+      parent_message_id: parent,
+      date: at(ms),
+      history:
+        done == null
+          ? []
+          : [{ author_id: "codex", date: at(done).toISOString() }],
+      ...extra,
+    }) as any;
+  const ids = (items) =>
+    items.map((item) => item.messages.map((m) => m.message_id));
+
+  it("what arrives while a turn runs goes with it", () => {
+    expect(
+      ids(
+        readerItems([
+          said("p1", 1000),
+          turn("a1", "p1", 1100, 5000),
+          said("steer", 2000),
+          said("agent-message", 3000, { agent_rpc: { from: "x" } }),
+          said("later", 6000),
+        ]),
+      ),
+    ).toEqual([["p1", "a1", "steer", "agent-message"], ["later"]]);
+  });
+
+  it("a running turn takes what arrives, as the log shows it", () => {
+    const items = readerItems(
+      [said("p1", 1000), turn("a1", "p1", 1100), said("steer", 9000)],
+      { acpState: new Map([["message:a1", "running"]]) },
+    );
+    expect(ids(items)).toEqual([["p1", "a1", "steer"]]);
+    // Generating says the same.
+    expect(
+      ids(
+        readerItems([
+          said("p1", 1000),
+          turn("a1", "p1", 1100, undefined, { generating: true }),
+          said("steer", 9000),
+        ]),
+      ),
+    ).toEqual([["p1", "a1", "steer"]]);
+  });
+
+  it("a delivered message goes with its turn, whatever a stale state says", () => {
+    expect(
+      ids(
+        readerItems(
+          [
+            said("p1", 1000),
+            turn("a1", "p1", 1100, 9000),
+            said("steer", 2000, { acp_guidance_delivered_at_ms: 2100 }),
+          ],
+          { acpState: new Map([["message:steer", "queue"]]) },
+        ),
+      ),
+    ).toEqual([["p1", "a1", "steer"]]);
+  });
+
+  it("the newest spanning turn by start time, in any order", () => {
+    // Out of date order (e.g. clock skew): a2 started later than a1.
+    const items = readerItems([
+      said("p2", 1500),
+      turn("a2", "p2", 1600, 9000),
+      said("p1", 1000),
+      turn("a1", "p1", 1100, 9000),
+      said("steer", 3000),
+    ]);
+    expect(
+      items.find((item) => item.id === "p2")!.messages.map((m) => m.message_id),
+    ).toEqual(["p2", "a2", "steer"]);
+  });
+
+  it("an overlapping older turn its parents lead to keeps it, as in the log", () => {
+    // a1 (a recovery) still runs when a2 starts; the message replies into a1.
+    const items = readerItems([
+      said("p1", 1000),
+      turn("a1", "p1", 1100, 9000),
+      said("p2", 1500),
+      turn("a2", "p2", 1600, 9000),
+      said("steer", 3000, { parent_message_id: "a1" }),
+    ]);
+    expect(
+      items.find((item) => item.id === "p1")!.messages.map((m) => m.message_id),
+    ).toEqual(["p1", "a1", "steer"]);
+  });
+
+  it("not what waits to be sent, a note for people, or the next turn's prompt", () => {
+    expect(
+      ids(
+        readerItems(
+          [
+            said("p1", 1000),
+            turn("a1", "p1", 1100, 9000),
+            said("queued", 2000),
+            said("not-sent", 2500, { acp_state: "not-sent" }),
+            said("note", 3000, { post_only: true }),
+            said("p2", 4000),
+            turn("a2", "p2", 9500, 9600),
+          ],
+          { acpState: new Map([["message:queued", "queue"]]) },
+        ),
+      ),
+    ).toEqual([["p1", "a1"], ["queued"], ["not-sent"], ["note"], ["p2", "a2"]]);
   });
 });
 
@@ -209,5 +332,73 @@ describe("when the watermark cannot move", () => {
       watermarkCount: 2,
       unmoved: { r: { p1: "p1", p2: "p2" } },
     });
+  });
+});
+
+describe("archive all", () => {
+  const at = (id: string, ms: number, reply = false) =>
+    ({
+      message_id: id,
+      sender_id: reply ? "codex" : "acct",
+      ...(reply ? { acp_thread_id: "t", parent_message_id: `p${id.slice(1)}` } : {}),
+      date: new Date(ms),
+    }) as any;
+  const thread = [at("p1", 10), at("a1", 11, true), at("p2", 20), at("p3", 30)];
+
+  it("archives and reads every item, however many, by time", () => {
+    const many = readerItems(
+      Array.from({ length: READER_STATE_LIMITS.archived + 50 }, (_, i) =>
+        at(`p${i}`, i + 1),
+      ),
+    );
+    const { state, watermarkCount } = archiveAll(many, {
+      a: { p0: "p0" },
+      r: { p3: "p3" },
+      u: ["p1"],
+    });
+    expect(state).toEqual({ aw: many.length });
+    expect(watermarkCount).toBe(many.length);
+    expect(many.every((item) => isItemArchived(item, state))).toBe(true);
+  });
+
+  it("a newer message or reply brings an item back", () => {
+    const items = readerItems(thread);
+    const { state } = archiveAll(items, {});
+    expect(items.every((item) => isItemArchived(item, state))).toBe(true);
+    const later = readerItems([...thread, at("a2", 40, true), at("p4", 41)]);
+    expect(later.map((item) => isItemArchived(item, state))).toEqual([
+      true, // p1 + a1
+      true, // p3
+      false, // p2 + its new reply a2
+      false, // p4
+    ]);
+  });
+
+  it("an item can still be moved back to the inbox, and archived again", () => {
+    const items = readerItems(thread);
+    const { state } = archiveAll(items, {});
+    const back = setItemArchived(items[1], false, state);
+    expect(back).toEqual({ aw: 30, ax: ["p2"] });
+    expect(isItemArchived(items[1], back)).toBe(false);
+    expect(isItemArchived(items[0], back)).toBe(true);
+    const again = setItemArchived(items[1], true, back);
+    expect(isItemArchived(items[1], again)).toBe(true);
+    expect(again.ax).toBeUndefined();
+  });
+
+  it("is kept by other changes, and never moves back in time", () => {
+    const items = readerItems(thread);
+    const { state } = archiveAll(items, {});
+    expect(markItemUnread(items[0], state)).toEqual({ aw: 30, u: ["p1"] });
+    expect(markAllRead(items, state).state).toEqual({ aw: 30 });
+    expect(archiveAll(readerItems(thread.slice(0, 2)), state).state).toEqual({
+      aw: 30,
+    });
+  });
+
+  it("if the read watermark cannot move, archiving still holds", () => {
+    const items = readerItems(thread);
+    const { unmoved } = archiveAll(items, { u: ["p1"] });
+    expect(unmoved).toEqual({ u: ["p1"], aw: 30 });
   });
 });

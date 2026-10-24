@@ -52,7 +52,8 @@ export interface PersistStorageList {
   // over every stream (not only those listed)
   total: PersistStorageTotals;
   by_kind: Partial<Record<PersistStreamKind, PersistStorageTotals>>;
-  // there were more streams than could be looked at
+  // there are more streams than listed: more than the limit asked for, or
+  // than could be looked at (then the totals are over those looked at)
   truncated?: boolean;
   // whether the account asking may delete or trim (hub)
   can_manage?: boolean;

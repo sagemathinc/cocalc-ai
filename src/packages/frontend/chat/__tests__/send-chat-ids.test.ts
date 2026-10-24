@@ -1246,6 +1246,44 @@ describe("thread-config by thread_id", () => {
     expect(row?.codex_completion_notification).toBe("on");
   });
 
+  it("never saves a subscription in shared thread config, and drops a saved one", () => {
+    const threadId = "37333333-3333-4333-8333-333333333334";
+    const existing = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-02-21T18:40:00.000Z",
+      thread_id: threadId,
+      agent_kind: "acp",
+      agent_model: "gpt-5.4",
+      agent_mode: "interactive",
+      acp_config: {
+        model: "gpt-5.4",
+        paymentSource: "subscription",
+        credentialId: "removed-subscription",
+      },
+    };
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) =>
+      where?.event === "chat-thread-config" && where?.thread_id === threadId
+        ? existing
+        : undefined,
+    );
+
+    actions.setCodexConfig(threadId, {
+      model: "gpt-5.4",
+      credentialId: "newer-subscription",
+    } as any);
+
+    const row = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (x: any) =>
+          x?.event === "chat-thread-config" && x?.thread_id === threadId,
+      );
+    expect(row?.acp_config).toMatchObject({ paymentSource: "subscription" });
+    expect(row?.acp_config).not.toHaveProperty("credentialId");
+  });
+
   it("creates a canonical thread-config row when updating by thread_id", () => {
     const threadId = "44444444-4444-4444-8444-444444444444";
     const actions = makeActions();
@@ -2232,6 +2270,31 @@ describe("unread totals and the reader", () => {
     // p3 is past the watermark, so already counted: only p1 is added.
     expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(1);
     actions.getReaderState = jest.fn(() => ({}));
+    expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(0);
+  });
+
+  it("use the reader's items: a running turn takes what arrives while it runs", () => {
+    const actions = makeActions();
+    const messages = [
+      { message_id: "p1", sender_id: "u", date: new Date(1000) },
+      {
+        message_id: "a1",
+        sender_id: "codex",
+        acp_thread_id: "t",
+        parent_message_id: "p1",
+        date: new Date(1100),
+      },
+      { message_id: "steer", sender_id: "u", date: new Date(2000) },
+    ];
+    actions.getMessagesInThread = jest.fn(() => messages);
+    // Read in order through a1; the turn marked unread again.
+    actions.getThreadReadCount = jest.fn(() => 2);
+    actions.getReaderState = jest.fn(() => ({ u: ["p1"] }));
+    // Running only by the live state: the steer joins the turn's item, which
+    // is then past the watermark (counted there), not before it.
+    const get = actions.store.get.bind(actions.store);
+    actions.store.get = (key: string) =>
+      key === "acpState" ? new Map([["message:a1", "running"]]) : get(key);
     expect(actions.getReaderUnreadBeforeWatermark("thread-1", "acct")).toBe(0);
   });
 });

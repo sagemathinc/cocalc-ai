@@ -140,6 +140,8 @@ minimumReleaseAgeExclude:
   - "@cocalc/gcloud-pricing-calculator"
   - "@cocalc/xterm"
   - patchflow
+  # CoCalc-owned release (the patchflow 0.16 dependency), validated via upstream CI and npm provenance.
+  - "@cocalc/diff-match-patch@1.1.1"
   - "@nebius/js-sdk"
   # First patched version for GHSA-xcj9-5m2h-648r, GHSA-87f9-hvmw-gh4p,
   # and GHSA-ghcm-xqfw-q4vr in the active Mermaid 11.x line.
