@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "crypto";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -36,9 +36,37 @@ function deriveBootstrapKeySeed(secret: string): string {
     .digest("base64url");
 }
 
-export async function createProjectHostToken(
+type Queryable = Pick<PoolClient, "query">;
+
+// Minting a host token, exchanging a bootstrap token and recording a host's
+// proof of its master token take this per-host lock, so none of them can
+// interleave (e.g. a proof closing the exchange while an exchange that
+// already passed its check is still minting).
+async function withHostTokenLock<T>(
   hostId: string,
-  opts: { ttlMs?: number; purpose?: string } = {},
+  fn: (db: Queryable) => Promise<T>,
+): Promise<T> {
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+      `project-host-tokens:${hostId}`,
+    ]);
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function insertProjectHostToken(
+  db: Queryable,
+  hostId: string,
+  opts: { ttlMs?: number; purpose?: string },
 ): Promise<ProjectHostTokenInfo> {
   const token_id = randomUUID();
   const secret = randomBytes(32).toString("base64url");
@@ -49,22 +77,46 @@ export async function createProjectHostToken(
   const created = new Date();
   const expires = new Date(created.getTime() + (opts.ttlMs ?? DEFAULT_TTL_MS));
 
-  await pool().query(
+  await db.query(
     `UPDATE project_host_bootstrap_tokens
      SET revoked=TRUE
      WHERE host_id=$1 AND purpose=$2 AND revoked IS NOT TRUE`,
     [hostId, purpose],
   );
 
-  await pool().query(
+  await db.query(
     `INSERT INTO project_host_bootstrap_tokens
        (token_id, host_id, token_hash, ssh_key_seed, purpose, created, expires, revoked)
      VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE)`,
     [token_id, hostId, token_hash, ssh_key_seed, purpose, created, expires],
   );
-  await refreshLaunchpadOnPremAuthorizedKeys();
-
+  if (purpose === "master-conat") {
+    // The host has not shown that it stored this new master token (a
+    // rotation response can be lost), so its unexpired bootstrap tokens may
+    // mint again until it proves a valid token.
+    await db.query(
+      `UPDATE project_host_bootstrap_tokens
+       SET exchange_closed=NULL
+       WHERE host_id=$1
+         AND purpose='bootstrap'
+         AND exchange_closed IS NOT NULL
+         AND revoked IS NOT TRUE
+         AND expires > NOW()`,
+      [hostId],
+    );
+  }
   return { token, token_id, host_id: hostId, purpose, expires };
+}
+
+export async function createProjectHostToken(
+  hostId: string,
+  opts: { ttlMs?: number; purpose?: string } = {},
+): Promise<ProjectHostTokenInfo> {
+  const info = await withHostTokenLock(hostId, (db) =>
+    insertProjectHostToken(db, hostId, opts),
+  );
+  await refreshLaunchpadOnPremAuthorizedKeys();
+  return info;
 }
 
 export async function verifyProjectHostToken(
@@ -116,54 +168,88 @@ export async function verifyProjectHostToken(
 // A bootstrap token stays in the cloud provider's startup script, so it must
 // not keep minting host credentials. It mints master-conat tokens only until
 // the host proves that the master-conat token it holds is valid
-// (getMasterConatTokenStatus). Until then the host may need it: the
-// project-host exchanges it at every daemon start, and to recover a lost or
-// revoked master token.
-export async function redeemProjectHostBootstrapToken(token: string): Promise<{
-  token_id: string;
-  host_id: string;
-  expires: Date;
-} | null> {
+// (proveProjectHostMasterToken, from getMasterConatTokenStatus). Until then
+// the host may need it: the project-host exchanges it at every daemon start,
+// and to recover a lost or revoked master token.
+export async function exchangeProjectHostBootstrapToken(
+  token: string,
+  opts: { hostId?: string; ttlMs: number },
+): Promise<
+  | { ok: true; host_id: string; master: ProjectHostTokenInfo }
+  | { ok: false; reason: "invalid" | "exchange_closed"; host_id?: string }
+> {
   const info = await verifyProjectHostToken(token, { purpose: "bootstrap" });
-  if (!info) return null;
-  const { rows } = await pool().query<{ host_id: string; expires: Date }>(
-    `UPDATE project_host_bootstrap_tokens
-     SET redeemed=COALESCE(redeemed, NOW())
-     WHERE token_id=$1
-       AND purpose='bootstrap'
-       AND revoked IS NOT TRUE
-       AND expires > NOW()
-       AND exchange_closed IS NULL
-     RETURNING host_id, expires`,
-    [info.token_id],
-  );
-  const row = rows[0];
-  if (!row) return null;
-  return {
-    token_id: info.token_id,
-    host_id: row.host_id,
-    expires: row.expires,
-  };
+  if (!info || (opts.hostId != null && info.host_id !== opts.hostId)) {
+    return { ok: false, reason: "invalid" };
+  }
+  const master = await withHostTokenLock(info.host_id, async (db) => {
+    const { rows } = await db.query(
+      `UPDATE project_host_bootstrap_tokens
+       SET redeemed=COALESCE(redeemed, NOW())
+       WHERE token_id=$1
+         AND host_id=$2
+         AND purpose='bootstrap'
+         AND revoked IS NOT TRUE
+         AND expires > NOW()
+         AND exchange_closed IS NULL
+       RETURNING token_id`,
+      [info.token_id, info.host_id],
+    );
+    if (rows.length === 0) return undefined;
+    await _test.hooks.afterExchangeCheck?.();
+    return await insertProjectHostToken(db, info.host_id, {
+      purpose: "master-conat",
+      ttlMs: opts.ttlMs,
+    });
+  });
+  if (!master) {
+    return { ok: false, reason: "exchange_closed", host_id: info.host_id };
+  }
+  await refreshLaunchpadOnPremAuthorizedKeys();
+  return { ok: true, host_id: info.host_id, master };
 }
 
-// The host has shown a valid master-conat token: its bootstrap tokens can no
-// longer mint one.  Tokens issued later (start, restart, reconcile) are open
-// until the host proves its token again.
-export async function closeProjectHostBootstrapExchanges(
+// The host has shown that the master-conat token it holds is valid: its
+// bootstrap tokens can no longer mint one. Re-checked under the lock, so a
+// token revoked by a concurrent mint proves nothing. Tokens issued later
+// (start, restart, reconcile), and all of them after a new master token is
+// minted, are open until the host proves its token again.
+export async function proveProjectHostMasterToken(
   hostId: string,
+  masterTokenId: string,
 ): Promise<number> {
-  const { rowCount } = await pool().query(
-    `UPDATE project_host_bootstrap_tokens
-     SET exchange_closed=NOW()
-     WHERE host_id=$1
-       AND purpose='bootstrap'
-       AND exchange_closed IS NULL
-       AND revoked IS NOT TRUE
-       AND expires > NOW()`,
-    [hostId],
-  );
-  return rowCount ?? 0;
+  return await withHostTokenLock(hostId, async (db) => {
+    await _test.hooks.beforeProofCheck?.();
+    const { rows } = await db.query(
+      `SELECT 1 FROM project_host_bootstrap_tokens
+       WHERE token_id=$1
+         AND host_id=$2
+         AND purpose='master-conat'
+         AND revoked IS NOT TRUE
+         AND expires > NOW()`,
+      [masterTokenId, hostId],
+    );
+    if (rows.length === 0) return 0;
+    const { rowCount } = await db.query(
+      `UPDATE project_host_bootstrap_tokens
+       SET exchange_closed=NOW()
+       WHERE host_id=$1
+         AND purpose='bootstrap'
+         AND exchange_closed IS NULL
+         AND revoked IS NOT TRUE
+         AND expires > NOW()`,
+      [hostId],
+    );
+    return rowCount ?? 0;
+  });
 }
+
+export const _test: {
+  hooks: {
+    afterExchangeCheck?: () => Promise<void>;
+    beforeProofCheck?: () => Promise<void>;
+  };
+} = { hooks: {} };
 
 export async function revokeProjectHostTokensForHost(
   hostId: string,

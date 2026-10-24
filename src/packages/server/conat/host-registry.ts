@@ -14,9 +14,9 @@ import { conat } from "@cocalc/backend/conat";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import {
-  closeProjectHostBootstrapExchanges,
   createProjectHostMasterConatToken,
-  redeemProjectHostBootstrapToken,
+  exchangeProjectHostBootstrapToken,
+  proveProjectHostMasterToken,
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -2053,7 +2053,7 @@ export async function initHostRegistryService() {
           );
         }
         try {
-          await closeProjectHostBootstrapExchanges(host_id);
+          await proveProjectHostMasterToken(host_id, info.token_id);
         } catch (err) {
           // The exchange stays open until the next check; never fail the
           // status check, which would make the host re-mint its token.
@@ -2086,33 +2086,35 @@ export async function initHostRegistryService() {
               purpose: "master-conat",
             })
           : null;
+        if (currentInfo) {
+          if (currentInfo.host_id !== host_id) {
+            throw Error("rotateMasterConatToken: token is invalid for host");
+          }
+          const issued = await createProjectHostMasterConatToken(host_id, {
+            ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
+          });
+          return { master_conat_token: issued.token };
+        }
         // A bootstrap token is used only when the current token is not valid,
         // only for its own host, and only until the host has proved a valid
-        // master token (redeemProjectHostBootstrapToken).
-        let bootstrapInfo: { host_id: string } | null = null;
-        if (!currentInfo && bootstrapToken) {
-          const verified = await verifyProjectHostToken(bootstrapToken, {
-            purpose: "bootstrap",
-          });
-          if (verified?.host_id === host_id) {
-            bootstrapInfo =
-              await redeemProjectHostBootstrapToken(bootstrapToken);
-            if (!bootstrapInfo) {
-              logger.warn("rotateMasterConatToken: bootstrap token refused", {
-                host_id,
-                token_id: verified.token_id,
-                reason: "exchange_closed",
-              });
-            }
-          }
-        }
-        const info = currentInfo ?? bootstrapInfo;
-        if (!info || info.host_id !== host_id) {
+        // master token (exchangeProjectHostBootstrapToken).
+        if (!bootstrapToken) {
           throw Error("rotateMasterConatToken: token is invalid for host");
         }
-        const issued = await createProjectHostMasterConatToken(host_id, {
-          ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
-        });
+        const exchanged = await exchangeProjectHostBootstrapToken(
+          bootstrapToken,
+          { hostId: host_id, ttlMs: 1000 * 60 * 60 * 24 * 365 }, // 1 year
+        );
+        if (!exchanged.ok) {
+          if (exchanged.reason === "exchange_closed") {
+            logger.warn("rotateMasterConatToken: bootstrap token refused", {
+              host_id,
+              reason: exchanged.reason,
+            });
+          }
+          throw Error("rotateMasterConatToken: token is invalid for host");
+        }
+        const issued = exchanged.master;
         return { master_conat_token: issued.token };
       },
     },

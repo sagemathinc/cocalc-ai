@@ -89,9 +89,9 @@ jest.mock("@cocalc/server/projects/runtime-slots", () => ({
 }));
 
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
-  closeProjectHostBootstrapExchanges: jest.fn(),
   createProjectHostMasterConatToken: jest.fn(),
-  redeemProjectHostBootstrapToken: jest.fn(),
+  exchangeProjectHostBootstrapToken: jest.fn(),
+  proveProjectHostMasterToken: jest.fn(),
   verifyProjectHostToken: jest.fn(),
 }));
 
@@ -1558,12 +1558,6 @@ describe("host-registry runtime availability", () => {
 describe("host-registry master token exchange", () => {
   let tokens: any;
   let service: any;
-  const bootstrapInfo = (host_id: string) => ({
-    token_id: "boot-id",
-    host_id,
-    purpose: "bootstrap",
-    expires: new Date(),
-  });
   const masterInfo = {
     token_id: "m",
     host_id: "host-1",
@@ -1580,50 +1574,47 @@ describe("host-registry master token exchange", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     tokens.verifyProjectHostToken.mockReset();
-    tokens.redeemProjectHostBootstrapToken.mockReset();
-    tokens.closeProjectHostBootstrapExchanges.mockReset();
+    tokens.exchangeProjectHostBootstrapToken.mockReset();
+    tokens.proveProjectHostMasterToken.mockReset();
     tokens.createProjectHostMasterConatToken.mockResolvedValue({
       token: "new-master",
     });
   });
 
-  it("redeems a bootstrap token when there is no current token", async () => {
-    tokens.verifyProjectHostToken.mockResolvedValue(bootstrapInfo("host-1"));
-    tokens.redeemProjectHostBootstrapToken.mockResolvedValue({
-      token_id: "boot-id",
+  it("exchanges a bootstrap token, bound to the host, when there is no current token", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(null);
+    tokens.exchangeProjectHostBootstrapToken.mockResolvedValue({
+      ok: true,
       host_id: "host-1",
-      expires: new Date(),
+      master: { token: "exchanged-master" },
     });
     await expect(
       service.rotateMasterConatToken({
         host_id: "host-1",
+        current_token: "stale",
         bootstrap_token: "boot",
       }),
-    ).resolves.toEqual({ master_conat_token: "new-master" });
-    expect(tokens.redeemProjectHostBootstrapToken).toHaveBeenCalledWith("boot");
-  });
-
-  it("refuses a bootstrap token whose exchange is closed", async () => {
-    tokens.verifyProjectHostToken.mockResolvedValue(bootstrapInfo("host-1"));
-    tokens.redeemProjectHostBootstrapToken.mockResolvedValue(null);
-    await expect(
-      service.rotateMasterConatToken({
-        host_id: "host-1",
-        bootstrap_token: "boot",
-      }),
-    ).rejects.toThrow("token is invalid for host");
+    ).resolves.toEqual({ master_conat_token: "exchanged-master" });
+    expect(tokens.exchangeProjectHostBootstrapToken).toHaveBeenCalledWith(
+      "boot",
+      expect.objectContaining({ hostId: "host-1" }),
+    );
     expect(tokens.createProjectHostMasterConatToken).not.toHaveBeenCalled();
   });
 
-  it("checks the host binding before recording a redemption", async () => {
-    tokens.verifyProjectHostToken.mockResolvedValue(bootstrapInfo("host-2"));
-    await expect(
-      service.rotateMasterConatToken({
-        host_id: "host-1",
-        bootstrap_token: "boot",
-      }),
-    ).rejects.toThrow("token is invalid for host");
-    expect(tokens.redeemProjectHostBootstrapToken).not.toHaveBeenCalled();
+  it("refuses a bootstrap token whose exchange is closed or that is invalid", async () => {
+    for (const reason of ["exchange_closed", "invalid"]) {
+      tokens.exchangeProjectHostBootstrapToken.mockResolvedValue({
+        ok: false,
+        reason,
+      });
+      await expect(
+        service.rotateMasterConatToken({
+          host_id: "host-1",
+          bootstrap_token: "boot",
+        }),
+      ).rejects.toThrow("token is invalid for host");
+    }
     expect(tokens.createProjectHostMasterConatToken).not.toHaveBeenCalled();
   });
 
@@ -1636,26 +1627,40 @@ describe("host-registry master token exchange", () => {
         bootstrap_token: "boot",
       }),
     ).resolves.toEqual({ master_conat_token: "new-master" });
-    expect(tokens.redeemProjectHostBootstrapToken).not.toHaveBeenCalled();
-    // A rotation response can be lost, so it does not prove anything.
-    expect(tokens.closeProjectHostBootstrapExchanges).not.toHaveBeenCalled();
+    expect(tokens.exchangeProjectHostBootstrapToken).not.toHaveBeenCalled();
+    expect(tokens.proveProjectHostMasterToken).not.toHaveBeenCalled();
   });
 
-  it("closes the host's bootstrap exchanges when it proves a valid master token", async () => {
+  it("refuses a current token of another host", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue({
+      ...masterInfo,
+      host_id: "host-2",
+    });
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "other",
+      }),
+    ).rejects.toThrow("token is invalid for host");
+    expect(tokens.createProjectHostMasterConatToken).not.toHaveBeenCalled();
+  });
+
+  it("records the host's proof of its master token on a status check", async () => {
     tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
-    tokens.closeProjectHostBootstrapExchanges.mockResolvedValue(1);
+    tokens.proveProjectHostMasterToken.mockResolvedValue(1);
     await expect(
       service.getMasterConatTokenStatus({
         host_id: "host-1",
         current_token: "master",
       }),
     ).resolves.toEqual({ expires_at: "2027-10-24T00:00:00.000Z" });
-    expect(tokens.closeProjectHostBootstrapExchanges).toHaveBeenCalledWith(
+    expect(tokens.proveProjectHostMasterToken).toHaveBeenCalledWith(
       "host-1",
+      "m",
     );
   });
 
-  it("does not close anything for an invalid or foreign master token", async () => {
+  it("does not record a proof for an invalid or foreign master token", async () => {
     tokens.verifyProjectHostToken.mockResolvedValue(null);
     await expect(
       service.getMasterConatTokenStatus({
@@ -1673,14 +1678,12 @@ describe("host-registry master token exchange", () => {
         current_token: "other",
       }),
     ).rejects.toThrow("token is invalid for this host");
-    expect(tokens.closeProjectHostBootstrapExchanges).not.toHaveBeenCalled();
+    expect(tokens.proveProjectHostMasterToken).not.toHaveBeenCalled();
   });
 
-  it("a failure to close never fails the status check", async () => {
+  it("a failure to record the proof never fails the status check", async () => {
     tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
-    tokens.closeProjectHostBootstrapExchanges.mockRejectedValue(
-      new Error("db down"),
-    );
+    tokens.proveProjectHostMasterToken.mockRejectedValue(new Error("db down"));
     await expect(
       service.getMasterConatTokenStatus({
         host_id: "host-1",

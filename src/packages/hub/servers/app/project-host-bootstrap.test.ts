@@ -1,16 +1,13 @@
 import type { AddressInfo } from "node:net";
 import express from "express";
 
-const redeemMock = jest.fn();
+const exchangeMock = jest.fn();
 const verifyMock = jest.fn();
-const createMasterMock = jest.fn();
 const mergeMetadataMock = jest.fn();
 
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
-  redeemProjectHostBootstrapToken: (...args: any[]) => redeemMock(...args),
+  exchangeProjectHostBootstrapToken: (...args: any[]) => exchangeMock(...args),
   verifyProjectHostToken: (...args: any[]) => verifyMock(...args),
-  createProjectHostMasterConatToken: (...args: any[]) =>
-    createMasterMock(...args),
 }));
 
 jest.mock("@cocalc/database/postgres/project-hosts", () => ({
@@ -86,7 +83,6 @@ describe("project-host bootstrap token exchange routes", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    createMasterMock.mockResolvedValue({ token: "new-master" });
     verifyMock.mockResolvedValue({
       token_id: "token-1",
       host_id: "host-1",
@@ -95,24 +91,28 @@ describe("project-host bootstrap token exchange routes", () => {
     });
   });
 
-  it("mints a master-conat token by redeeming the bootstrap token", async () => {
-    redeemMock.mockResolvedValue({
-      token_id: "token-1",
+  it("mints a master-conat token through the bootstrap exchange", async () => {
+    exchangeMock.mockResolvedValue({
+      ok: true,
       host_id: "host-1",
-      expires: new Date(),
+      master: { token: "new-master" },
     });
     const response = await request("/project-host/bootstrap/conat");
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("new-master");
-    expect(redeemMock).toHaveBeenCalledWith("boot-token");
-    expect(createMasterMock).toHaveBeenCalledWith("host-1", expect.anything());
+    expect(exchangeMock).toHaveBeenCalledWith("boot-token", {
+      ttlMs: 1000 * 60 * 60 * 24 * 365,
+    });
   });
 
-  it("refuses to mint when the bootstrap token was already used", async () => {
-    redeemMock.mockResolvedValue(null);
+  it("refuses to mint when the exchange is closed", async () => {
+    exchangeMock.mockResolvedValue({
+      ok: false,
+      reason: "exchange_closed",
+      host_id: "host-1",
+    });
     const response = await request("/project-host/bootstrap/conat");
     expect(response.status).toBe(401);
-    expect(createMasterMock).not.toHaveBeenCalled();
   });
 
   it("accepts status reports without touching the exchange", async () => {
@@ -122,6 +122,6 @@ describe("project-host bootstrap token exchange routes", () => {
     });
     expect(response.status).toBe(200);
     expect(mergeMetadataMock).toHaveBeenCalled();
-    expect(redeemMock).not.toHaveBeenCalled();
+    expect(exchangeMock).not.toHaveBeenCalled();
   });
 });
