@@ -26,6 +26,7 @@ import {
   takeAgentRpcReportByOpId,
 } from "../sqlite/agent-rpc-reports";
 import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-reports";
+import { SENSOR_WAKE_CLAIM_LEASE_MS } from "@cocalc/conat/agents/sensors";
 import { toolUseTracker } from "./tool-use";
 import { sweepAgentStatus } from "./agent-status-report";
 import {
@@ -13162,9 +13163,20 @@ async function attemptAcpSteerRequest(
   // only one attempt can, and a revocation committed before leaves nothing
   // to claim) before injecting; consume the claim once it was injected, and
   // release it if it was not, so its own turn can consume it instead.
+  // Its lease, from before the hub records the claim: no attempt to inject
+  // it begins after this (approving the sensor again stops counting the
+  // claim against later wakes once it ends).
+  const leaseEnds = Date.now() + SENSOR_WAKE_CLAIM_LEASE_MS;
   await authorizeAgentDeliveryExecution(request, hubApi.agent, {
     phase: "claim",
   });
+  let deliveryTried = false;
+  const leaseGuard = () => {
+    if (Date.now() >= leaseEnds) throw new SensorWakeClaimExpired();
+    const owned = !claimGuard || claimGuard();
+    if (owned) deliveryTried = true;
+    return owned;
+  };
   // Released only when it certainly was not injected. A throw may come
   // after the guidance reached the runtime (a lost acknowledgement): then
   // the claim stays, so the wake is never run twice (at most once, as for a
@@ -13187,12 +13199,16 @@ async function attemptAcpSteerRequest(
     const result = await steerAcpRequest(
       request,
       extraCandidateIds,
-      claimGuard,
+      leaseGuard,
       // Handing the wake to the worker running the turn: release the claim
       // first, so that worker (which claims it itself) never finds it held.
       { authorized: true, beforeHandoff: release },
     ).catch((err) => {
       if (otherPrincipal(err)) return { state: "not_steerable" as const };
+      // The lease ended before any attempt to inject it: it certainly was
+      // not, so it is released for its own turn.
+      if (err instanceof SensorWakeClaimExpired && !deliveryTried)
+        return { state: "not_steerable" as const };
       throw err;
     });
     // Only an injection by this attempt: a handed-off wake (pending) is the
@@ -13208,9 +13224,16 @@ async function attemptAcpSteerRequest(
   }
 }
 
+class SensorWakeClaimExpired extends Error {
+  constructor() {
+    super("sensor wake claim lease ended before it was delivered");
+  }
+}
+
 // Injected: the claim must become consumed. Retried; if it still fails, the
-// claim stays (never claimed or run again: no second delivery), and stops
-// holding the sensor's later wakes after a while.
+// claim stays (never claimed or run again: no second delivery). It holds the
+// sensor's later wakes back for ten minutes, and makes them turns of their
+// own rather than guidance until the sensor is approved again.
 async function consumeSensorWakeClaim(request: AcpSteerRequest) {
   for (let attempt = 1; ; attempt++) {
     try {

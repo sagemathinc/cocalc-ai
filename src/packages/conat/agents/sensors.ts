@@ -418,6 +418,15 @@ export interface SensorDeliveryBinding {
   phase?: "claim" | "consume-claim" | "release";
 }
 
+/**
+ * A claimed wake is delivered only this soon after its claim (checked before
+ * each attempt to inject it), so no attempt can inject it later, whatever
+ * happened to the sensor since (it was approved again, say).
+ */
+export const SENSOR_WAKE_CLAIM_LEASE_MS = 5 * 60_000;
+/** The lease, with room for a delivery started just before it ended. */
+export const SENSOR_WAKE_CLAIM_WINDOW_MINUTES = 10;
+
 const LINE_CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 // Scripts may contain tabs and newlines; reject other controls and bidi

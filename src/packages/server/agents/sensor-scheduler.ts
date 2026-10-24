@@ -25,6 +25,7 @@ import {
   sensorDelivery,
   sensorWakePrompt,
   sensorWatchScript,
+  SENSOR_WAKE_CLAIM_WINDOW_MINUTES,
   validateSensorSpec,
   type SensorConnector,
   type SensorRunOutcome,
@@ -1052,7 +1053,10 @@ export function startSensorScheduler(pollMs: number = POLL_MS): () => void {
  * after that are held and combined into it as before. A chatty sensor never
  * floods a turn; queued wakes do not count. (A claim whose attempt died makes
  * this sensor's wakes queued turns until the sensor is approved again: never
- * lost, and never a second injection.)
+ * lost, and never a second injection.) Approving it again supersedes its
+ * claims, but one claimed under the old approval still counts for
+ * SENSOR_WAKE_CLAIM_WINDOW_MINUTES: its attempt starts no injection after
+ * the claim's lease (SENSOR_WAKE_CLAIM_LEASE_MS) ends.
  */
 export const GUIDANCE_INTERVAL_MINUTES = 10;
 
@@ -1063,7 +1067,8 @@ async function wakeDelivery(
 ): Promise<"guidance" | "queued"> {
   if (sensorDelivery(spec) !== "guidance") return "queued";
   // A claim counts however old it is, until consumed or released: its
-  // attempt can inject it until then. Only this approval's claims count.
+  // attempt can inject it until then. One an approval since superseded
+  // counts until its lease, and so any attempt to inject it, has ended.
   const { rows } = await agentStore().query(
     `SELECT 1 FROM agent_sensor_runs
      WHERE sensor_id=$1 AND run_id<>$4
@@ -1071,7 +1076,9 @@ async function wakeDelivery(
          OR (wake_state='claimed' AND ${CURRENT_APPROVAL.replace(
            "sensor_id=$1 AND ",
            "",
-         )}))
+         )})
+         OR (wake_state='superseded'
+           AND wake_claimed_at > now() - make_interval(mins => $6)))
      LIMIT 1`,
     [
       row.sensor_id,
@@ -1079,6 +1086,7 @@ async function wakeDelivery(
       row.approved_at_text,
       run_id,
       GUIDANCE_INTERVAL_MINUTES,
+      SENSOR_WAKE_CLAIM_WINDOW_MINUTES,
     ],
   );
   return rows.length ? "queued" : "guidance";

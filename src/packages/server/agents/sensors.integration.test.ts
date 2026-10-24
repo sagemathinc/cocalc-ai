@@ -111,7 +111,10 @@ import {
   startSensorScheduler,
 } from "./sensor-scheduler";
 import { pruneSensorEvents, WATCHERS_PER_WAKE } from "./sensor-budget";
-import { SENSOR_LIMITS } from "@cocalc/conat/agents/sensors";
+import {
+  SENSOR_LIMITS,
+  SENSOR_WAKE_CLAIM_WINDOW_MINUTES,
+} from "@cocalc/conat/agents/sensors";
 
 const HOST = "44444444-4444-4444-8444-444444444444";
 
@@ -736,6 +739,66 @@ describeDb("agent sensors", () => {
     );
     expect(host.deliverAgentSensorWake.mock.calls[1][0].delivery).toBe(
       "queued",
+    );
+  });
+
+  test("a claim from before the sensor was approved again spaces guidance until its lease ends", async () => {
+    const active = (
+      await approve(
+        (await propose({ ...(spec as any), max_wakes_per_day: 5 })).sensor,
+      )
+    ).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    const first = host.deliverAgentSensorWake.mock.calls[0][0];
+    await authorizeSensorExecutionLocal(
+      owner,
+      project_id,
+      HOST,
+      first.authorization,
+      {
+        prompt_sha256: sha(first.prompt),
+        path: first.path,
+        thread_id: first.thread_id,
+        phase: "claim",
+      },
+    );
+    // Approved again while the claim's attempt may still inject it.
+    await sensorControlLocal(owner, project_id, {
+      op: "pause",
+      sensor_id: active.sensor_id,
+    });
+    await sensorControlLocal(owner, project_id, {
+      op: "resume",
+      sensor_id: active.sensor_id,
+    });
+    const state = async (run_id: string) =>
+      (
+        await getPool().query(
+          "SELECT wake_state FROM agent_sensor_runs WHERE run_id=$1",
+          [run_id],
+        )
+      ).rows[0].wake_state;
+    expect(await state(first.authorization.run_id)).toBe("superseded");
+    await makeDue(active.sensor_id);
+    await runDue();
+    const second = host.deliverAgentSensorWake.mock.calls[1][0];
+    expect(second.delivery).toBe("queued");
+    // Its turn ran; the old claim's lease has long ended, so no attempt can
+    // inject it any more: the next wake joins the running turn again.
+    await getPool().query(
+      "UPDATE agent_sensor_runs SET wake_state='consumed' WHERE run_id=$1",
+      [second.authorization.run_id],
+    );
+    await getPool().query(
+      "UPDATE agent_sensor_runs SET wake_claimed_at=now() - make_interval(mins => $2) WHERE run_id=$1",
+      [first.authorization.run_id, SENSOR_WAKE_CLAIM_WINDOW_MINUTES + 1],
+    );
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(3);
+    expect(host.deliverAgentSensorWake.mock.calls[2][0].delivery).toBe(
+      "guidance",
     );
   });
 

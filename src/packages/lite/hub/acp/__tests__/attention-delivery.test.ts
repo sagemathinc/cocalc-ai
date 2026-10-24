@@ -1,5 +1,6 @@
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpRequest, AcpSteerRequest } from "@cocalc/conat/ai/acp/types";
+import { SENSOR_WAKE_CLAIM_LEASE_MS } from "@cocalc/conat/agents/sensors";
 import { acquireChatSyncDB } from "@cocalc/chat/server";
 import {
   acpTestInternals,
@@ -1942,7 +1943,7 @@ it("does not let another account or thread control a queued turn", async () => {
   });
 });
 
-describe("a sensor wake handed to the worker running the turn", () => {
+describe("a sensor wake joining a running turn", () => {
   const config: AcpRequest["config"] = { model: "gpt-6-astra", sessionId };
   const phases: { phase?: string; durable?: string }[] = [];
   let originalAuthorizeSensor: any;
@@ -2038,6 +2039,46 @@ describe("a sensor wake handed to the worker running the turn", () => {
     // Not even claimed: the fallback turn that handling queued owns the
     // permit, and could start while a claim was held.
     expect(phases).toEqual([]);
+  });
+
+  describe("in the turn this worker runs", () => {
+    beforeEach(() => {
+      mockLiveRuntime(config);
+      mockSteer.mockClear();
+      jest.mocked(listRunningAcpTurnLeases).mockReturnValue([]);
+    });
+
+    it("injects it within the claim's lease, then consumes the claim", async () => {
+      const request = wakeRequest();
+      recordPhases(request);
+      await acpTestInternals.handleAcpSteerRequest(request);
+      expect(mockSteer).toHaveBeenCalled();
+      expect(phases.map(({ phase }) => phase)).toEqual([
+        "claim",
+        "consume-claim",
+      ]);
+    });
+
+    it("releases it, never injected, once the claim's lease has ended", async () => {
+      const request = wakeRequest();
+      const now = jest.spyOn(Date, "now");
+      try {
+        hubApi.agent.authorizeSensorExecution = jest.fn(
+          async ({ delivery }) => {
+            phases.push({ phase: delivery.phase });
+            // The attempt stalls past its lease right after claiming (the
+            // sensor may be approved again meanwhile).
+            if (delivery.phase === "claim")
+              now.mockReturnValue(Date.now() + SENSOR_WAKE_CLAIM_LEASE_MS + 1);
+          },
+        ) as any;
+        await acpTestInternals.handleAcpSteerRequest(request);
+      } finally {
+        now.mockRestore();
+      }
+      expect(mockSteer).not.toHaveBeenCalled();
+      expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
+    });
   });
 
   it("does not claim a wake whose durable steer is still pending", async () => {
