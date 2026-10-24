@@ -137,7 +137,9 @@ function formatBytes(bytes: number) {
 
 /**
  * Ask for consent with the full disclosure, then turn memory on (the same
- * dialog wherever memory is offered). Resolves true once it is on.
+ * dialog wherever memory is offered). Resolves true once it is on. If turning
+ * it on fails, the dialog closes (resolving false) so the caller's error is
+ * not hidden behind it; `enable` reports the error itself.
  */
 export function confirmEnableAgentMemory(
   enable: () => Promise<unknown> = () =>
@@ -151,7 +153,12 @@ export function confirmEnableAgentMemory(
       okText: "I understand, turn it on",
       cancelText: "Cancel",
       onOk: async () => {
-        await enable();
+        try {
+          await enable();
+        } catch {
+          resolve(false);
+          return;
+        }
         refreshAll();
         resolve(true);
       },

@@ -786,7 +786,7 @@ ${index.trim() || "Saved notes: (none yet)"}
  */
 export function agentMemoryOffTurnContext(): string {
   return `[Agent memory]
-Agent memory is off for the account this turn runs as, so nothing from this conversation is kept for later sessions. If the person asks you to remember something for later, or corrects you about a preference or convention worth keeping, tell them once in this conversation that agent memory can remember it, and that they can turn it on in Settings > AI. Do not bring it up otherwise, and not again once they decline.
+Agent memory is off for the account this turn runs as, so you keep no notes for later sessions (the chat history itself is still saved). If the person asks you to remember something for later, or corrects you about a preference or convention worth keeping, tell them once in this conversation that agent memory can remember it, and that they can turn it on in Settings > AI. Do not bring it up otherwise, and not again once they decline.
 [/Agent memory]`;
 }
 

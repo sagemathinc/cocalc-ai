@@ -125,4 +125,27 @@ describe("AgentMemoryOffer", () => {
       enabled: true,
     });
   });
+
+  it("closes the dialog and announces a failed enable", async () => {
+    manageAgentMemory.mockImplementation(async ({ op }) => {
+      if (op === "set-enabled") throw new Error("hub unreachable");
+      return off;
+    });
+    await renderOffer();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on…" }));
+    await screen.findByText(/Global notes follow you into every project/);
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "I understand, turn it on" }),
+      );
+    });
+    const alerts = await screen.findAllByRole("alert");
+    expect(
+      alerts.some((alert) =>
+        /Agent memory was not turned on: Error: hub unreachable/.test(
+          alert.textContent ?? "",
+        ),
+      ),
+    ).toBe(true);
+  });
 });

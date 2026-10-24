@@ -80,7 +80,15 @@ function AgentMemoryOfferCard() {
           With agent memory on, Claude and Codex keep short notes across
           sessions: your preferences and corrections, project conventions, how
           to build and test. You can review or delete notes at any time.
-          {failure && <div style={{ marginTop: 6 }}>{failure}</div>}
+          {failure && (
+            // Its own alert (a live region), shown once the dialog closed.
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginTop: 8 }}
+              title={`Agent memory was not turned on: ${failure}`}
+            />
+          )}
         </>
       }
       action={
