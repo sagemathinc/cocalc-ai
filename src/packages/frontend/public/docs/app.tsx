@@ -31,6 +31,14 @@ import { PUBLIC_COLORS, PUBLIC_TYPE } from "../theme";
 import { navigatePublic } from "../navigation";
 import type { PublicDocsRoute } from "./routes";
 
+// A link to a section of a docs page (e.g. from the homepage) lands with its
+// heading below the sticky public header, not under it.
+const DOCS_ANCHOR_CSS = `
+  .cocalc-public-docs-detail .cocalc-docs-markdown [id] {
+    scroll-margin-top: calc(var(--cocalc-public-anchor-offset, 64px) + 12px);
+  }
+`;
+
 const { Paragraph, Text, Title } = Typography;
 
 interface PublicDocsAppProps {
@@ -161,7 +169,8 @@ function DocsDetail({
 
   return (
     <PublicSectionShell active="docs" config={config}>
-      <section>
+      <style>{DOCS_ANCHOR_CSS}</style>
+      <section className="cocalc-public-docs-detail">
         <DocsDetailContent
           entry={entry}
           linearNavigation={linearNavigation}
