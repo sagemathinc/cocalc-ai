@@ -626,6 +626,33 @@ export async function kindBeneath(root: string, rel: string): Promise<Kind> {
     .kind;
 }
 
+// As kindBeneath, with the modification time (0 unless a file or directory).
+export async function statBeneath(
+  root: string,
+  rel: string,
+): Promise<{ kind: Kind; mtimeNs: number }> {
+  const { kind, mtimeNs } = await entryAt(
+    new SandboxRoot(root),
+    root,
+    beneathRelative(rel),
+  );
+  return { kind, mtimeNs };
+}
+
+// The names in directory `rel` under `root`. A symlink anywhere on the way,
+// even one swapped in while listing, makes this throw instead of listing
+// another directory.
+export async function listBeneath(
+  root: string,
+  rel: string,
+): Promise<string[]> {
+  return await readdirBeneath(
+    new SandboxRoot(root),
+    root,
+    beneathRelative(rel),
+  );
+}
+
 // Creates directory `rel` (and missing parents) under `root`.
 export function mkdirBeneath(root: string, rel: string, mode = 0o755): void {
   new SandboxRoot(root).mkdir(beneathRelative(rel), true, mode);

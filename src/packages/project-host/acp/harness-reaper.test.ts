@@ -57,6 +57,37 @@ test("reaper removes only a generated Claude controller credential home", async 
   expect(mockRm).toHaveBeenCalledWith(home, { recursive: true, force: true });
 });
 
+test("reaper removes only a generated Claude transcript staging directory", async () => {
+  const staging = join(tmpdir(), "cocalc-claude-transcripts-Ab12Cd");
+  mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
+    cb(
+      null,
+      JSON.stringify([
+        {
+          Id: "a".repeat(64),
+          Labels: {
+            "cocalc.acp.owner": `10:${boot}:998`,
+            "cocalc.acp.transcript-staging": staging,
+          },
+        },
+        {
+          Id: "b".repeat(64),
+          Labels: {
+            "cocalc.acp.owner": `10:${boot}:998`,
+            "cocalc.acp.transcript-staging": join(tmpdir(), "project-home"),
+          },
+        },
+      ]),
+    ),
+  );
+  await reapAbandonedHarnesses();
+  expect(mockRm).toHaveBeenCalledTimes(1);
+  expect(mockRm).toHaveBeenCalledWith(staging, {
+    recursive: true,
+    force: true,
+  });
+});
+
 test("reaper refuses a symlinked Claude controller home", async () => {
   const home = join(tmpdir(), "cocalc-claude-controller-Ab12Cd");
   mockLstat.mockResolvedValue({

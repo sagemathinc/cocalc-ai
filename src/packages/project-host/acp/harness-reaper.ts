@@ -6,6 +6,8 @@ import { reapManagedSandboxCommands } from "@cocalc/project-runner/run/sandbox-c
 import {
   CLAUDE_CONTROLLER_HOME_LABEL,
   isManagedClaudeControllerHome,
+  CLAUDE_TRANSCRIPT_STAGING_LABEL,
+  isManagedClaudeTranscriptStaging,
 } from "./claude-subscription-paths";
 
 const logger = getLogger("project-host:acp:harness-reaper");
@@ -96,6 +98,24 @@ export async function reapAbandonedHarnesses(): Promise<void> {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
           failedRemovals++;
           logger.warn("Unable to clean abandoned Claude controller home", {
+            id,
+          });
+        }
+      }
+    }
+    // Its staged transcripts: what the last turn wrote was already copied
+    // back to the project when that turn ended.
+    const transcripts = row?.Labels?.[CLAUDE_TRANSCRIPT_STAGING_LABEL];
+    if (isManagedClaudeTranscriptStaging(transcripts)) {
+      try {
+        const stat = await lstat(transcripts);
+        if (!stat.isDirectory() || stat.isSymbolicLink())
+          throw Error("Refusing unsafe Claude transcript staging cleanup");
+        await rm(transcripts, { recursive: true, force: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          failedRemovals++;
+          logger.warn("Unable to clean abandoned Claude transcript staging", {
             id,
           });
         }

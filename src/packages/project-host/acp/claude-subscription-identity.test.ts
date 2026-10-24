@@ -43,6 +43,9 @@ jest.mock("./claude-subscription-home", () => ({
 jest.mock("./claude-subscription-paths", () => ({
   claudeControllerHomePrefix: () => join(tmpdir(), "claude-identity-test-"),
   CLAUDE_CONTROLLER_HOME_LABEL: "cocalc.claude.controller-home",
+  claudeTranscriptStagingPrefix: () =>
+    join(tmpdir(), "claude-identity-transcripts-"),
+  CLAUDE_TRANSCRIPT_STAGING_LABEL: "cocalc.acp.transcript-staging",
 }));
 jest.mock("./claude-project-tool-bridge", () => ({
   createClaudeProjectToolBridge: jest.fn(),
