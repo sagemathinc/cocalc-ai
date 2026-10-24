@@ -10,7 +10,7 @@
 // scrolls by itself: new items wait behind an "N new" button.
 
 import { Badge, Button, Checkbox, Empty, Modal, Space } from "antd";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
@@ -138,6 +138,8 @@ export function ChatReaderView({
   fontSize,
   narrow,
   autoFocus,
+  renderItem,
+  itemBadges,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -157,6 +159,13 @@ export function ChatReaderView({
   narrow?: boolean;
   /** Move the keyboard focus into the list when it appears. */
   autoFocus?: boolean;
+  /**
+   * Shows the open item as the chat log shows its messages (activity, live
+   * output, questions); without it, each message is shown as Markdown.
+   */
+  renderItem?: (item: ReaderItem) => ReactNode;
+  /** What the list says about an item besides its sender: e.g. a question. */
+  itemBadges?: (item: ReaderItem) => ReactNode;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
@@ -436,6 +445,7 @@ export function ChatReaderView({
                 >
                   {readerSender(first, userMap)}
                 </span>
+                {itemBadges?.(item)}
                 {date ? (
                   <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
                     <TimeAgo date={date} />
@@ -563,12 +573,24 @@ export function ChatReaderView({
       style={{
         flex: 1,
         minWidth: 0,
-        overflowY: "auto",
-        padding: narrow ? "8px 12px 24px" : "8px 16px 24px",
+        ...(renderItem
+          ? // The log scrolls itself.
+            { display: "flex", flexDirection: "column", minHeight: 0 }
+          : {
+              overflowY: "auto",
+              padding: narrow ? "8px 12px 24px" : "8px 16px 24px",
+            }),
       }}
     >
       {narrow ? null : (
-        <Space wrap style={{ marginBottom: 8 }}>
+        <Space
+          wrap
+          style={
+            renderItem
+              ? { padding: "8px 16px 0", flex: "none" }
+              : { marginBottom: 8 }
+          }
+        >
           <Button
             size="small"
             disabled={findItem(visible, selectedIndex, -1) == null}
@@ -591,56 +613,63 @@ export function ChatReaderView({
           </Button>
         </Space>
       )}
-      {selected.messages.map((message) => {
-        const date = dateValue(message);
-        const sender = readerSender(message, userMap);
-        const value = `${newest_content(message) ?? ""}`;
-        // As the log shows it: e.g. an agent message as its "From" card.
-        const shown = presentedMessageMarkdown(message, value);
-        return (
-          <div key={`${date?.valueOf()}`} style={{ marginBottom: 20 }}>
-            <div
-              style={{
-                color: UI_COLORS.muted,
-                marginBottom: 4,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <b style={{ color: UI_COLORS.text }}>{sender}</b>
-              {date ? <TimeAgo date={date} /> : null}
-              <CopyButton
-                markdown
-                value={value}
-                size="small"
-                noText
-                style={{ fontSize: "12px" }}
-              />
-            </div>
-            {/* The log's selection actions: Reply, Quote and Copy. */}
-            <ContextualReply
-              actions={actions}
-              projectId={projectId ?? ""}
-              path={path ?? ""}
-              disabled={readOnly || !projectId || !path || !value.trim()}
-              source={{
-                kind: "message",
-                id: readerMessageId(message),
-                thread_id: threadId,
-                title: isAcpAssistantMessage(message)
-                  ? "Assistant response"
-                  : `Message from ${sender}`,
-              }}
-            >
-              <StaticMarkdown
-                value={shown}
-                style={{ fontSize: `${fontSize ?? 14}px` }}
-              />
-            </ContextualReply>
-          </div>
-        );
-      })}
+      {renderItem ? (
+        <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          {renderItem(selected)}
+        </div>
+      ) : null}
+      {renderItem
+        ? null
+        : selected.messages.map((message) => {
+            const date = dateValue(message);
+            const sender = readerSender(message, userMap);
+            const value = `${newest_content(message) ?? ""}`;
+            // As the log shows it: e.g. an agent message as its "From" card.
+            const shown = presentedMessageMarkdown(message, value);
+            return (
+              <div key={`${date?.valueOf()}`} style={{ marginBottom: 20 }}>
+                <div
+                  style={{
+                    color: UI_COLORS.muted,
+                    marginBottom: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <b style={{ color: UI_COLORS.text }}>{sender}</b>
+                  {date ? <TimeAgo date={date} /> : null}
+                  <CopyButton
+                    markdown
+                    value={value}
+                    size="small"
+                    noText
+                    style={{ fontSize: "12px" }}
+                  />
+                </div>
+                {/* The log's selection actions: Reply, Quote and Copy. */}
+                <ContextualReply
+                  actions={actions}
+                  projectId={projectId ?? ""}
+                  path={path ?? ""}
+                  disabled={readOnly || !projectId || !path || !value.trim()}
+                  source={{
+                    kind: "message",
+                    id: readerMessageId(message),
+                    thread_id: threadId,
+                    title: isAcpAssistantMessage(message)
+                      ? "Assistant response"
+                      : `Message from ${sender}`,
+                  }}
+                >
+                  <StaticMarkdown
+                    value={shown}
+                    style={{ fontSize: `${fontSize ?? 14}px` }}
+                  />
+                </ContextualReply>
+              </div>
+            );
+          })}
     </div>
   ) : narrow ? null : (
     <div
