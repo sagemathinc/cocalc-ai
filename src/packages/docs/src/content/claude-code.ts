@@ -101,9 +101,11 @@ Every request goes through a CoCalc relay on the project host that adds the
 site's key, so no key reaches the project. The relay allows only the model
 included in your membership (Claude Haiku 5.5), caps each request's output and
 web searches, and refuses tools that cost extra, such as remote MCP servers and
-code execution. While a turn runs, project code can make requests through the
-relay too; they count against your allowance and that turn's limits. Between
-turns nothing is funded.
+code execution. Each request's context is limited to 100,000 tokens: Claude
+Code compacts the conversation before it gets there. For a larger context, use
+your own Claude subscription or Anthropic key. While a turn runs, project code
+can make requests through the relay too; they count against your allowance and
+that turn's limits. Between turns nothing is funded.
 
 ### Account API key
 
