@@ -15,6 +15,7 @@ import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import {
   createProjectHostMasterConatToken,
+  redeemProjectHostBootstrapToken,
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -2071,11 +2072,18 @@ export async function initHostRegistryService() {
               purpose: "master-conat",
             })
           : null;
-        const bootstrapInfo = bootstrapToken
-          ? await verifyProjectHostToken(bootstrapToken, {
-              purpose: "bootstrap",
-            })
-          : null;
+        // A bootstrap token is used only when the current token is not valid,
+        // and then only once (redeemProjectHostBootstrapToken).
+        const bootstrapInfo =
+          !currentInfo && bootstrapToken
+            ? await redeemProjectHostBootstrapToken(bootstrapToken)
+            : null;
+        if (!currentInfo && bootstrapToken && !bootstrapInfo) {
+          logger.warn("rotateMasterConatToken: bootstrap token refused", {
+            host_id,
+            token_id: bootstrapToken.split(".", 1)[0],
+          });
+        }
         const info = currentInfo ?? bootstrapInfo;
         if (!info || info.host_id !== host_id) {
           throw Error("rotateMasterConatToken: token is invalid for host");

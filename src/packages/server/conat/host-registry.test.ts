@@ -90,6 +90,7 @@ jest.mock("@cocalc/server/projects/runtime-slots", () => ({
 
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
   createProjectHostMasterConatToken: jest.fn(),
+  redeemProjectHostBootstrapToken: jest.fn(),
   verifyProjectHostToken: jest.fn(),
 }));
 
@@ -537,7 +538,9 @@ describe("host-registry automatic convergence retry", () => {
               project_id: "project-1",
               users: {},
               runtime_lifecycle_revision: "1",
-              ...(sql.includes("AS content_epoch") ? { content_epoch: "3" } : {}),
+              ...(sql.includes("AS content_epoch")
+                ? { content_epoch: "3" }
+                : {}),
               updated_ms: "10",
             },
           ],
@@ -548,7 +551,9 @@ describe("host-registry automatic convergence retry", () => {
     const { initHostRegistryService } = await import("./host-registry");
     const service: any = await initHostRegistryService();
     const deltas = await service.listProjectUserDeltas({ host_id: "host-1" });
-    const reconcile = await service.listProjectUserReconcile({ host_id: "host-1" });
+    const reconcile = await service.listProjectUserReconcile({
+      host_id: "host-1",
+    });
     expect(deltas.rows[0].content_epoch).toBe("3");
     expect(reconcile.rows[0].content_epoch).toBe("3");
     expect(seen).toHaveLength(2);
@@ -1546,6 +1551,85 @@ describe("host-registry runtime availability", () => {
       category: "unknown",
       summary: "Host is online.",
     });
+  });
+});
+
+describe("host-registry rotateMasterConatToken", () => {
+  let tokens: any;
+  let service: any;
+
+  beforeAll(async () => {
+    tokens = await import("@cocalc/server/project-host/bootstrap-token");
+    const { initHostRegistryService } = await import("./host-registry");
+    service = await initHostRegistryService();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    tokens.createProjectHostMasterConatToken.mockResolvedValue({
+      token: "new-master",
+    });
+  });
+
+  it("redeems a bootstrap token when there is no valid current token", async () => {
+    tokens.redeemProjectHostBootstrapToken.mockResolvedValue({
+      token_id: "t",
+      host_id: "host-1",
+      expires: new Date(),
+    });
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        bootstrap_token: "boot",
+      }),
+    ).resolves.toEqual({ master_conat_token: "new-master" });
+    expect(tokens.redeemProjectHostBootstrapToken).toHaveBeenCalledWith("boot");
+    expect(tokens.verifyProjectHostToken).not.toHaveBeenCalledWith("boot", {
+      purpose: "bootstrap",
+    });
+  });
+
+  it("refuses a bootstrap token that was already redeemed", async () => {
+    tokens.redeemProjectHostBootstrapToken.mockResolvedValue(null);
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        bootstrap_token: "boot",
+      }),
+    ).rejects.toThrow("token is invalid for host");
+    expect(tokens.createProjectHostMasterConatToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses a bootstrap token of another host", async () => {
+    tokens.redeemProjectHostBootstrapToken.mockResolvedValue({
+      token_id: "t",
+      host_id: "host-2",
+      expires: new Date(),
+    });
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        bootstrap_token: "boot",
+      }),
+    ).rejects.toThrow("token is invalid for host");
+    expect(tokens.createProjectHostMasterConatToken).not.toHaveBeenCalled();
+  });
+
+  it("rotates with a valid current token without using up the bootstrap token", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue({
+      token_id: "m",
+      host_id: "host-1",
+      purpose: "master-conat",
+      expires: new Date(),
+    });
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "master",
+        bootstrap_token: "boot",
+      }),
+    ).resolves.toEqual({ master_conat_token: "new-master" });
+    expect(tokens.redeemProjectHostBootstrapToken).not.toHaveBeenCalled();
   });
 });
 

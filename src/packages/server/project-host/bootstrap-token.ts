@@ -113,6 +113,53 @@ export async function verifyProjectHostToken(
   };
 }
 
+// A bootstrap token stays in the cloud provider's startup script, so it must
+// not keep minting host credentials. It mints a master-conat token once, plus
+// retries within this window (a lost response, or bootstrap.py falling back
+// from urllib to curl), and never after the host reports bootstrap done.
+export const BOOTSTRAP_EXCHANGE_RETRY_MS = 1000 * 60 * 10; // 10 minutes
+
+export async function redeemProjectHostBootstrapToken(token: string): Promise<{
+  token_id: string;
+  host_id: string;
+  expires: Date;
+} | null> {
+  const info = await verifyProjectHostToken(token, { purpose: "bootstrap" });
+  if (!info) return null;
+  const { rows } = await pool().query<{ host_id: string; expires: Date }>(
+    `UPDATE project_host_bootstrap_tokens
+     SET redeemed=COALESCE(redeemed, NOW())
+     WHERE token_id=$1
+       AND purpose='bootstrap'
+       AND revoked IS NOT TRUE
+       AND expires > NOW()
+       AND exchange_closed IS NULL
+       AND (redeemed IS NULL OR redeemed > NOW() - $2 * INTERVAL '1 millisecond')
+     RETURNING host_id, expires`,
+    [info.token_id, BOOTSTRAP_EXCHANGE_RETRY_MS],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    token_id: info.token_id,
+    host_id: row.host_id,
+    expires: row.expires,
+  };
+}
+
+export async function closeProjectHostBootstrapTokenExchange(
+  tokenId: string,
+): Promise<void> {
+  await pool().query(
+    `UPDATE project_host_bootstrap_tokens
+     SET exchange_closed=NOW()
+     WHERE token_id=$1
+       AND purpose='bootstrap'
+       AND exchange_closed IS NULL`,
+    [tokenId],
+  );
+}
+
 export async function revokeProjectHostTokensForHost(
   hostId: string,
   opts: { purpose?: string } = {},

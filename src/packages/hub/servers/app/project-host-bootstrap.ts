@@ -8,7 +8,9 @@ import basePath from "@cocalc/backend/base-path";
 import { buildBootstrapScriptWithStatus } from "@cocalc/server/cloud/bootstrap-host";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
+  closeProjectHostBootstrapTokenExchange,
   createProjectHostMasterConatToken,
+  redeemProjectHostBootstrapToken,
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
@@ -316,6 +318,11 @@ export default function init(router: Router) {
           ? String(req.body.message)
           : undefined;
         await updateBootstrapStatus(tokenInfo.host_id, status, message);
+        if (status === "done") {
+          // The host has its master-conat token by now; the copy of this
+          // token left in the startup script must not mint another.
+          await closeProjectHostBootstrapTokenExchange(tokenInfo.token_id);
+        }
         res.json({ ok: true });
       } catch (err) {
         logger.warn("bootstrap status update failed", err);
@@ -331,11 +338,12 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyProjectHostToken(token, {
-        purpose: "bootstrap",
-      });
+      const tokenInfo = await redeemProjectHostBootstrapToken(token);
       if (!tokenInfo) {
-        res.status(401).send("invalid bootstrap token");
+        logger.warn("bootstrap conat token refused", {
+          token_id: token.split(".", 1)[0],
+        });
+        res.status(401).send("invalid or already used bootstrap token");
         return;
       }
       const issued = await createProjectHostMasterConatToken(
