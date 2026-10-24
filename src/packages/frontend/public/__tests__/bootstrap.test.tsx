@@ -1,15 +1,21 @@
 /** @jest-environment jsdom */
 
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 
 import { UNPUBLISHED_TEAM_PROFILE_SLUGS } from "@cocalc/util/public-about-content";
 
 import { init } from "../bootstrap";
 
 const originalFetch = global.fetch;
+const originalScrollIntoView = Element.prototype.scrollIntoView;
+const scrollIntoView = jest.fn();
+let scrollTo: jest.SpyInstance;
 const profile = `/about/team/${UNPUBLISHED_TEAM_PROFILE_SLUGS[0]}`;
 
 beforeEach(() => {
+  Element.prototype.scrollIntoView = scrollIntoView;
+  scrollIntoView.mockClear();
+  scrollTo = jest.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   global.fetch = jest.fn(
     () => new Promise<Response>(() => undefined),
   ) as typeof fetch;
@@ -17,6 +23,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Element.prototype.scrollIntoView = originalScrollIntoView;
+  scrollTo.mockRestore();
   global.fetch = originalFetch;
   window.history.replaceState({}, "", "/");
 });
@@ -103,5 +111,69 @@ describe("public bootstrap", () => {
         name: "William Stein, Founder and CEO",
       }),
     ).not.toBeNull();
+  });
+});
+
+// Exercise real lazy routes, without depending on the marketing redesign.
+describe("public bootstrap section landing", () => {
+  async function waitForSection() {
+    const section = await waitFor(() => {
+      const element = document.getElementById("how-we-build");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    await waitFor(() => expect(section).toHaveFocus());
+    expect(scrollIntoView.mock.contexts).toContain(section);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(section).toHaveAttribute("tabindex", "-1");
+  }
+
+  it("scrolls and focuses the requested section after a cross-page link", async () => {
+    window.history.replaceState({}, "", "/about/team");
+    await act(async () => {
+      await init();
+    });
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Meet the People Behind CoCalc",
+    });
+    const link = document.createElement("a");
+    link.href = "/about?from=team#how-we-build";
+    link.textContent = "How we build";
+    document.body.appendChild(link);
+    fireEvent.click(link, { button: 0 });
+    await waitForSection();
+    expect(
+      window.location.pathname + window.location.search + window.location.hash,
+    ).toBe("/about?from=team#how-we-build");
+  });
+
+  it("lands after JavaScript replaces the initial HTML of a direct section URL", async () => {
+    window.history.replaceState({}, "", "/about#how-we-build");
+    await act(async () => {
+      await init();
+    });
+    await waitForSection();
+  });
+
+  it("starts an ordinary cross-page link at the top without moving section focus", async () => {
+    window.history.replaceState({}, "", "/about/team");
+    await act(async () => {
+      await init();
+    });
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Meet the People Behind CoCalc",
+    });
+    const link = document.createElement("a");
+    link.href = "/about";
+    document.body.appendChild(link);
+    fireEvent.click(link, { button: 0 });
+    await waitFor(() =>
+      expect(document.getElementById("how-we-build")).not.toBeNull(),
+    );
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(document.getElementById("how-we-build")).not.toHaveFocus();
   });
 });
