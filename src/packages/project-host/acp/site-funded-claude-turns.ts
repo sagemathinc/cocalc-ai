@@ -71,7 +71,8 @@ export function createSiteFundedClaudeTurns({
     if (!current) return;
     active = undefined;
     clearInterval(current.heartbeat);
-    relay.deactivate(current.reservationId);
+    // Its running request's usage is queued before the turn is settled.
+    await relay.deactivate(current.reservationId);
     await deps.finish({
       reservation_id: current.reservationId,
       status,
@@ -116,7 +117,7 @@ export function createSiteFundedClaudeTurns({
           .heartbeat(reservation.reservationId)
           .then((stillActive) => {
             // The hub ended it (expired, say): stop funding at once.
-            if (!stillActive) relay.deactivate(reservation.reservationId);
+            if (!stillActive) void relay.deactivate(reservation.reservationId);
           })
           .catch((err) =>
             logger.warn("site-funded Claude heartbeat failed", {

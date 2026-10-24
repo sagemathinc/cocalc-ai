@@ -30,7 +30,12 @@ let reply: (seen: Seen) => {
   status?: number;
   type: string;
   body: string;
+  /** Wait before answering; never answer when "hang". */
+  delayMs?: number | "hang";
 };
+// Requests the fake Anthropic is answering right now, and the most at once.
+let inFlight = 0;
+let maxInFlight = 0;
 let dir: string;
 let relay: SiteFundedClaudeRelay;
 let usage: SiteFundedCodexUsageEvent[];
@@ -43,6 +48,8 @@ const jsonReply = (usage: object) => () => ({
 beforeEach(async () => {
   seen = [];
   usage = [];
+  inFlight = 0;
+  maxInFlight = 0;
   reply = jsonReply({ input_tokens: 10, output_tokens: 5 });
   upstream = createServer((req, res) => {
     let data = "";
@@ -54,9 +61,19 @@ beforeEach(async () => {
         body: JSON.parse(data || "{}"),
       };
       seen.push(entry);
-      const { status = 200, type, body } = reply(entry);
-      res.writeHead(status, { "content-type": type, "request-id": "req_1" });
-      res.end(body);
+      const { status = 200, type, body, delayMs = 0 } = reply(entry);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      res.on("close", () => (inFlight -= 1));
+      if (delayMs === "hang") {
+        res.writeHead(status, { "content-type": type, "request-id": "req_1" });
+        res.write(body);
+        return;
+      }
+      setTimeout(() => {
+        res.writeHead(status, { "content-type": type, "request-id": "req_1" });
+        res.end(body);
+      }, delayMs);
     });
   });
   await new Promise<void>((resolve) =>
@@ -74,6 +91,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await relay.close();
+  upstream.closeAllConnections();
   await new Promise<void>((resolve) => upstream.close(() => resolve()));
   await rm(dir, { recursive: true, force: true });
 });
@@ -128,13 +146,16 @@ function send(
       (res) => {
         let data = "";
         res.on("data", (chunk) => (data += chunk));
-        res.on("end", () =>
+        const done = () =>
           resolve({
             status: res.statusCode ?? 0,
             body: data,
             headers: res.headers,
-          }),
-        );
+          });
+        res.on("end", done);
+        // Cut off by the relay (its turn ended): what arrived.
+        res.on("error", done);
+        res.on("close", done);
       },
     );
     req.on("error", reject);
@@ -244,6 +265,9 @@ describe("site-funded Claude relay", () => {
         "event: message_delta",
         `data: ${JSON.stringify({ type: "message_delta", usage: { output_tokens: 42 } })}`,
         "",
+        "event: message_stop",
+        `data: ${JSON.stringify({ type: "message_stop" })}`,
+        "",
         "",
       ].join("\n"),
     });
@@ -282,5 +306,115 @@ describe("site-funded Claude relay", () => {
     const costly = await send(message);
     expect(costly.status).toBe(403);
     expect(costly.body).toContain("cost limit");
+  });
+
+  it("runs a turn's requests one at a time, so limits cannot race", async () => {
+    activate({ maxRequestsPerTurn: 2 });
+    reply = () => ({
+      ...jsonReply({ input_tokens: 10, output_tokens: 5 })(),
+      delayMs: 50,
+    });
+    const results = await Promise.all([
+      send(message),
+      send(message),
+      send(message),
+    ]);
+    expect(maxInFlight).toBe(1);
+    expect(results.map(({ status }) => status).sort()).toEqual([200, 200, 403]);
+    expect(seen).toHaveLength(2);
+    expect(usage.map(({ requestSequence }) => requestSequence)).toEqual([1, 2]);
+  });
+
+  it("counts token counting toward the request limit", async () => {
+    activate({ maxRequestsPerTurn: 2 });
+    const count = { path: "/v1/messages/count_tokens" };
+    expect((await send(message, count)).status).toBe(200);
+    expect((await send(message, count)).status).toBe(200);
+    expect((await send(message, count)).status).toBe(403);
+    expect(usage).toEqual([]);
+  });
+
+  it("caps web searches per request", async () => {
+    activate();
+    await send({
+      ...message,
+      tools: [
+        { type: "web_search_20260209", name: "web_search", max_uses: 50 },
+      ],
+    });
+    expect(seen[0].body.tools[0].max_uses).toBe(5);
+    const twice = await send({
+      ...message,
+      tools: [
+        { type: "web_search_20260209", name: "a" },
+        { type: "web_search_20260209", name: "b" },
+      ],
+    });
+    expect(twice.status).toBe(403);
+  });
+
+  it("charges an unfinished stream at its upper bound", async () => {
+    activate();
+    reply = () => ({
+      type: "text/event-stream",
+      body: [
+        `data: ${JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 30, output_tokens: 1 } } })}`,
+        `data: ${JSON.stringify({ type: "message_delta", usage: { output_tokens: 7 } })}`,
+        "",
+      ].join("\n"),
+    });
+    await send({ ...message, stream: true });
+    // The prompt was reported; the output may have run to max_tokens.
+    expect(usage[0]).toMatchObject({ inputTokens: 30, outputTokens: 1_000 });
+  });
+
+  it("charges a response without usage at its upper bound", async () => {
+    activate();
+    reply = () => ({
+      type: "application/json",
+      body: JSON.stringify({ id: "msg_1" }),
+    });
+    const body = {
+      ...message,
+      messages: [{ role: "user", content: "x".repeat(500) }],
+    };
+    await send(body);
+    const bytes = Buffer.byteLength(JSON.stringify(body));
+    expect(usage[0]).toMatchObject({
+      inputTokens: bytes,
+      cacheWriteInputTokens: bytes,
+      cacheWrite1hInputTokens: bytes,
+      outputTokens: 1_000,
+    });
+  });
+
+  it("does not charge a refused request", async () => {
+    activate();
+    reply = () => ({
+      status: 400,
+      type: "application/json",
+      body: JSON.stringify({ type: "error" }),
+    });
+    expect((await send(message)).status).toBe(400);
+    expect(usage).toEqual([]);
+  });
+
+  it("ends a turn only after its running request is metered, aborting it if it hangs", async () => {
+    activate();
+    reply = () => ({
+      type: "text/event-stream",
+      body: `data: ${JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 30, output_tokens: 1 } } })}\n`,
+      delayMs: "hang",
+    });
+    const pending = send({ ...message, stream: true }).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(usage).toEqual([]);
+    await relay.deactivate("reservation-1", { timeoutMs: 50 });
+    // Aborted, and charged at its upper bound before the turn could settle.
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ inputTokens: 30, outputTokens: 1_000 });
+    await pending;
+    // And nothing more is funded.
+    expect((await send(message)).status).toBe(403);
   });
 });

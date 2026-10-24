@@ -42,6 +42,13 @@ export type SiteFundedCodexPolicy = {
   allowFastMode: false;
   allowUltraOrMultiAgent: false;
   allowedProviderTools: string[];
+  /**
+   * The largest prompt one request can carry, when it exceeds the context
+   * window the agent is told about (Claude: the model accepts far more).
+   */
+  maxPromptTokens?: number;
+  /** The most hosted-tool fees one request can incur (Claude: web search). */
+  maxProviderToolFeesMicrousdPerRequest?: number;
 };
 
 export const DEFAULT_SITE_FUNDED_CODEX_POLICY: SiteFundedCodexPolicy = {
@@ -351,15 +358,24 @@ export function siteFundedCodexMaxRequestBodyBytes(
 export function siteFundedCodexFinalRequestHeadroomMicrousd(
   policy: SiteFundedCodexPolicy,
 ): number {
-  const inputTokens =
+  // The worst single request: all of its largest prompt written to the
+  // dearest cache, its largest output, and its most hosted-tool fees.
+  const inputTokens = Math.max(
     policy.contextWindowTokens +
-    SITE_FUNDED_CODEX_PROVIDER_INPUT_OVERHEAD_TOKENS;
+      SITE_FUNDED_CODEX_PROVIDER_INPUT_OVERHEAD_TOKENS,
+    policy.maxPromptTokens ?? 0,
+  );
+  const hasHourCache =
+    getSiteFundedCodexPrice(policy.model).cacheWrite1hUsdPerMillion != null;
   return computeSiteFundedCodexRequestCost({
     model: policy.model,
     usage: {
       inputTokens,
       cacheWriteInputTokens: inputTokens,
+      cacheWrite1hInputTokens: hasHourCache ? inputTokens : 0,
       outputTokens: policy.maxOutputTokensPerRequest,
+      providerToolFeesMicrousd:
+        policy.maxProviderToolFeesMicrousdPerRequest ?? 0,
     },
   }).costMicrousd;
 }

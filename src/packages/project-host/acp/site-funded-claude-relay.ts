@@ -7,13 +7,20 @@
 // the same in-container bridge as an account API key, but the agent can run
 // any code in its container, so every limit is enforced here, not by Claude
 // Code's settings: only the Messages API, the funded model, a capped output,
-// no paid hosted tools beyond metered web search and web fetch, and nothing
+// no paid hosted tools beyond capped web search and web fetch, and nothing
 // outside a funded turn. The site key is added here and never reaches the
-// container. Every provider response's usage is metered exactly, from JSON or
-// from the stream.
+// container.
+//
+// A turn's requests run one at a time, and every limit is checked as each one
+// starts, so a turn passes its cost limit by at most one request; the ledger
+// holds room for the dearest possible request beyond the limit. Every
+// response is metered: exactly when it is complete, and at its upper bound
+// when it is not (a broken stream, missing usage), so nothing escapes the
+// ledger. A turn that ends waits for its running request to be metered.
 
 import {
   createServer,
+  type ClientRequest,
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
@@ -28,6 +35,7 @@ import {
   type SiteFundedCodexUsageEvent,
 } from "@cocalc/util/ai/site-funded-codex";
 import {
+  SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST,
   siteFundedUsageFromAnthropic,
   type AnthropicMessagesUsage,
 } from "@cocalc/util/ai/site-funded-claude";
@@ -39,13 +47,17 @@ const ANTHROPIC_ORIGIN = "https://api.anthropic.com";
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 64 * 1024 * 1024;
 const PROVIDER_TIMEOUT_MS = 10 * 60_000;
+// How long an ending turn waits for its running request before aborting it.
+const DRAIN_TIMEOUT_MS = 2 * 60_000;
 const MESSAGES_PATH = "/v1/messages";
 const COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
 // Request fields that cost more than the funded price or reach other services.
 const REFUSED_FIELDS = ["mcp_servers", "container"] as const;
-// Hosted tools Anthropic bills beyond tokens: web search is metered (1 cent
-// a search); web fetch costs only its tokens. Others are refused.
-const ALLOWED_HOSTED_TOOL = /^(web_search|web_fetch)_\d+$/;
+// Hosted tools Anthropic bills beyond tokens: web search is capped and
+// metered (1 cent a search); web fetch costs only its tokens. Others are
+// refused.
+const WEB_SEARCH_TOOL = /^web_search_\d+$/;
+const WEB_FETCH_TOOL = /^web_fetch_\d+$/;
 // Client tools (run by Claude Code itself) carry no type, "custom", or one of
 // Anthropic's schema-less client tool types.
 const CLIENT_TOOL = /^(custom|bash_\d+|text_editor_\d+|computer_\d+)$/;
@@ -61,20 +73,38 @@ export interface SiteFundedClaudeRelay {
   token: string;
   /** Funds requests with this turn until it is deactivated. */
   activate(turn: SiteFundedClaudeTurn): void;
-  /** Stops funding requests (this reservation's, when given). */
-  deactivate(reservationId?: string): void;
+  /**
+   * Stops funding requests (this reservation's, when given). Resolves once
+   * the turn's running request is metered, aborting it after `timeoutMs`.
+   */
+  deactivate(
+    reservationId?: string,
+    options?: { timeoutMs?: number },
+  ): Promise<void>;
   close(): Promise<void>;
 }
 
 type ActiveTurn = SiteFundedClaudeTurn & {
   startedAt: number;
-  /** Funded requests started, for the request limit. */
+  /** Requests started (counting tokens included), for the request limit. */
   requests: number;
-  /** Usage events, numbered as they are metered: the ledger needs them in
-   * order, and parallel requests (subagents) finish in any order. */
+  /** Usage events, numbered in order for the ledger. */
   usageSequence: number;
   committedMicrousd: number;
   blockedReason?: string;
+  ended: boolean;
+  /** The tail of this turn's requests: each runs after the previous ends. */
+  queue: Promise<void>;
+  /** Aborts the running provider request. */
+  abort?: () => void;
+};
+
+/** What one request can cost at most, for metering an incomplete response. */
+type RequestBounds = {
+  /** An upper bound on its prompt tokens: its size in bytes. */
+  promptBytes: number;
+  maxTokens: number;
+  maxSearches: number;
 };
 
 class RelayError extends Error {
@@ -132,7 +162,11 @@ export function fundedClaudeRequest(
   body: unknown,
   turn: Pick<ActiveTurn, "reservation">,
   countTokens = false,
-): Record<string, unknown> {
+): {
+  request: Record<string, unknown>;
+  maxTokens: number;
+  maxSearches: number;
+} {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new RelayError(400, "Request must be a JSON object");
   }
@@ -146,24 +180,38 @@ export function fundedClaudeRequest(
       );
     }
   }
-  const tools = request.tools;
-  if (tools != null) {
-    if (!Array.isArray(tools)) {
+  let maxSearches = 0;
+  if (request.tools != null) {
+    if (!Array.isArray(request.tools)) {
       throw new RelayError(400, "tools must be an array");
     }
-    for (const tool of tools) {
+    request.tools = request.tools.map((tool) => {
       const type = (tool as { type?: unknown })?.type;
-      if (
-        type == null ||
-        (typeof type === "string" &&
-          (CLIENT_TOOL.test(type) || ALLOWED_HOSTED_TOOL.test(type)))
-      ) {
-        continue;
+      if (type == null || (typeof type === "string" && CLIENT_TOOL.test(type)))
+        return tool;
+      if (typeof type === "string" && WEB_FETCH_TOOL.test(type)) return tool;
+      if (typeof type === "string" && WEB_SEARCH_TOOL.test(type)) {
+        // Searches cost money: never more than the cap per request.
+        const requested = Number((tool as { max_uses?: unknown }).max_uses);
+        const uses = Math.min(
+          SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST,
+          Number.isSafeInteger(requested) && requested > 0
+            ? requested
+            : SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST,
+        );
+        maxSearches += uses;
+        return { ...(tool as object), max_uses: uses };
       }
       throw new RelayError(
         403,
         `Included Claude turns cannot use the ${String(type)} tool. Use your own Claude subscription or Anthropic API key for it.`,
       );
+    });
+    if (
+      maxSearches * 10_000 >
+      (policy.maxProviderToolFeesMicrousdPerRequest ?? 0)
+    ) {
+      throw new RelayError(403, "Too many web search tools in one request");
     }
   }
   // The funded model, always: Claude Code also asks for others (aliases,
@@ -172,9 +220,10 @@ export function fundedClaudeRequest(
   // Price multipliers the funded price does not include.
   delete request.inference_geo;
   delete request.service_tier;
+  let maxTokens = 0;
   if (!countTokens) {
     const requested = Number(request.max_tokens);
-    const maxTokens = Math.min(
+    maxTokens = Math.min(
       policy.maxOutputTokensPerRequest,
       Number.isSafeInteger(requested) && requested > 0
         ? requested
@@ -195,16 +244,18 @@ export function fundedClaudeRequest(
       }
     }
   }
-  return request;
+  return { request, maxTokens, maxSearches };
 }
 
 /**
  * The usage of a streamed response: message_start carries the input usage,
- * each message_delta the cumulative usage so far.
+ * each message_delta the cumulative usage so far, and message_stop marks
+ * that the final usage has arrived.
  */
 export class StreamUsage {
   private buffer = "";
   usage: AnthropicMessagesUsage | undefined;
+  complete = false;
 
   push(chunk: Buffer | string): void {
     this.buffer += chunk.toString();
@@ -223,6 +274,8 @@ export class StreamUsage {
         this.usage = { ...event.message.usage };
       } else if (event?.type === "message_delta" && event.usage) {
         this.usage = { ...(this.usage ?? {}), ...stripNulls(event.usage) };
+      } else if (event?.type === "message_stop") {
+        this.complete = true;
       }
     }
     // A line longer than any event: not an SSE stream we can read.
@@ -234,6 +287,37 @@ function stripNulls(value: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry != null),
   );
+}
+
+/**
+ * The usage to charge for a response that did not finish (a broken or
+ * aborted stream, missing usage): what was reported, raised to what the
+ * request could have cost. Fails closed: never less than it may have used.
+ */
+export function upperBoundUsage(
+  seen: AnthropicMessagesUsage | undefined,
+  bounds: RequestBounds,
+): AnthropicMessagesUsage {
+  const searches = Math.max(
+    seen?.server_tool_use?.web_search_requests ?? 0,
+    bounds.maxSearches,
+  );
+  if (seen?.input_tokens != null) {
+    // message_start reported the prompt exactly; only the output is unknown.
+    return {
+      ...seen,
+      output_tokens: Math.max(seen.output_tokens ?? 0, bounds.maxTokens),
+      server_tool_use: { web_search_requests: searches },
+    };
+  }
+  // Nothing reported: the prompt at its byte size, as the dearest writes.
+  return {
+    input_tokens: 0,
+    cache_creation_input_tokens: bounds.promptBytes,
+    cache_creation: { ephemeral_1h_input_tokens: bounds.promptBytes },
+    output_tokens: bounds.maxTokens,
+    server_tool_use: { web_search_requests: searches },
+  };
 }
 
 export async function createSiteFundedClaudeRelay({
@@ -261,45 +345,35 @@ export async function createSiteFundedClaudeRelay({
   let turn: ActiveTurn | undefined;
   let closing = false;
 
-  const current = (): ActiveTurn => {
+  // Checked as each request starts, after the ones before it finished.
+  const assertMayStart = (active: ActiveTurn) => {
     if (closing) throw new RelayError(503, "Relay is closed");
-    if (!turn) {
-      throw new RelayError(
-        403,
-        "No included Claude turn is active. Requests are funded only while CoCalc runs a turn.",
-      );
+    if (active.ended || turn !== active) {
+      throw new RelayError(403, "This included Claude turn has ended.");
     }
-    if (turn.blockedReason) throw new RelayError(403, turn.blockedReason);
-    const policy = turn.reservation.policy;
-    if (Date.now() - turn.startedAt >= policy.maxTurnDurationMs) {
+    if (active.blockedReason) throw new RelayError(403, active.blockedReason);
+    const policy = active.reservation.policy;
+    if (Date.now() - active.startedAt >= policy.maxTurnDurationMs) {
       throw new RelayError(
         403,
         "This included Claude turn reached its duration limit. Start a new turn.",
       );
     }
-    if (turn.requests >= policy.maxRequestsPerTurn) {
+    if (active.requests >= policy.maxRequestsPerTurn) {
       throw new RelayError(
         403,
         "This included Claude turn reached its request limit. Start a new turn.",
       );
     }
-    return turn;
   };
 
-  // Synchronous up to recording the event, so a response's usage is queued
-  // before the response itself ends (and so before its turn can finish).
+  // Synchronous up to queueing the event, so its usage is recorded before
+  // the response ends and before the turn can be settled.
   const meter = (
     active: ActiveTurn,
-    usage: AnthropicMessagesUsage | undefined,
+    usage: AnthropicMessagesUsage,
     providerRequestId: string | undefined,
   ): void => {
-    if (!usage) {
-      logger.warn("site-funded Claude response without usage", {
-        reservationId: active.reservation.reservationId,
-        providerRequestId,
-      });
-      return;
-    }
     let event: SiteFundedCodexUsageEvent;
     try {
       event = {
@@ -337,6 +411,146 @@ export async function createSiteFundedClaudeRelay({
     );
   };
 
+  /** One request to Anthropic; resolves once its response is metered. */
+  const forward = (
+    active: ActiveTurn,
+    path: string,
+    payload: Buffer,
+    headers: Record<string, string>,
+    response: ServerResponse,
+    bounds: RequestBounds | undefined,
+  ) =>
+    new Promise<void>((resolve) => {
+      let settled = false;
+      // What the response has reported so far, if it began.
+      let reported: () => AnthropicMessagesUsage | undefined = () => undefined;
+      // Every way a request ends meters it exactly once: exactly when its
+      // usage is complete, else at its upper bound.
+      const settle = (
+        usage: AnthropicMessagesUsage | undefined,
+        complete: boolean,
+        providerRequestId?: string,
+      ) => {
+        if (settled) return;
+        settled = true;
+        active.abort = undefined;
+        if (bounds) {
+          meter(
+            active,
+            complete && usage ? usage : upperBoundUsage(usage, bounds),
+            providerRequestId,
+          );
+        }
+        resolve();
+      };
+      let providerRequest: ClientRequest;
+      try {
+        providerRequest = send(
+          new URL(path, upstreamUrl).toString(),
+          { method: "POST", headers },
+          (providerResponse) => {
+            const providerRequestId =
+              `${providerResponse.headers["request-id"] ?? ""}` || undefined;
+            const type = `${providerResponse.headers["content-type"] ?? ""}`;
+            const status = providerResponse.statusCode ?? 502;
+            if (!response.headersSent && !response.destroyed) {
+              response.writeHead(status, {
+                "content-type": type || "application/json",
+                "cache-control": "no-store",
+                ...(providerRequestId
+                  ? { "request-id": providerRequestId }
+                  : {}),
+              });
+            }
+            // The client may have gone: keep reading, so usage is exact.
+            const write = (chunk: Buffer) => {
+              if (!response.destroyed) response.write(chunk);
+            };
+            const finish = () => {
+              if (!response.destroyed) response.end();
+            };
+            if (status >= 400) {
+              // Anthropic does not bill a request it refused.
+              providerResponse.on("data", write);
+              const unbilled = () => {
+                settled = true;
+                active.abort = undefined;
+                resolve();
+              };
+              providerResponse.once("end", () => {
+                unbilled();
+                finish();
+              });
+              providerResponse.once("error", unbilled);
+              providerResponse.once("close", unbilled);
+              return;
+            }
+            if (type.includes("text/event-stream")) {
+              const stream = new StreamUsage();
+              reported = () => stream.usage;
+              providerResponse.on("data", (chunk: Buffer) => {
+                stream.push(chunk);
+                write(chunk);
+              });
+              providerResponse.once("end", () => {
+                settle(stream.usage, stream.complete, providerRequestId);
+                finish();
+              });
+              providerResponse.once("error", () => {
+                settle(stream.usage, false, providerRequestId);
+                response.destroy();
+              });
+              // Closed without end (aborted): whatever it reported, bounded.
+              providerResponse.once("close", () =>
+                settle(stream.usage, false, providerRequestId),
+              );
+              return;
+            }
+            const chunks: Buffer[] = [];
+            let size = 0;
+            providerResponse.on("data", (chunk: Buffer) => {
+              size += chunk.length;
+              if (size <= MAX_JSON_RESPONSE_BYTES) chunks.push(chunk);
+              write(chunk);
+            });
+            providerResponse.once("end", () => {
+              let usage: AnthropicMessagesUsage | undefined;
+              try {
+                usage = JSON.parse(
+                  Buffer.concat(chunks).toString("utf8"),
+                )?.usage;
+              } catch {
+                usage = undefined;
+              }
+              settle(usage, usage != null, providerRequestId);
+              finish();
+            });
+            providerResponse.once("error", () => {
+              settle(undefined, false, providerRequestId);
+              response.destroy();
+            });
+            providerResponse.once("close", () =>
+              settle(undefined, false, providerRequestId),
+            );
+          },
+        );
+      } catch {
+        fail(response, 502, "Anthropic is unavailable");
+        settle(undefined, false);
+        return;
+      }
+      active.abort = () => providerRequest.destroy(Error("turn ended"));
+      providerRequest.setTimeout(PROVIDER_TIMEOUT_MS, () =>
+        providerRequest.destroy(Error("provider timeout")),
+      );
+      providerRequest.on("error", () => {
+        // The request may have reached Anthropic: charge its upper bound.
+        fail(response, 502, "Anthropic is unavailable");
+        settle(reported(), false);
+      });
+      providerRequest.end(payload);
+    });
+
   async function handle(request: IncomingMessage, response: ServerResponse) {
     if (!sameToken(request.headers[CREDENTIAL_RELAY_AUTH_HEADER], token)) {
       request.resume();
@@ -352,17 +566,30 @@ export async function createSiteFundedClaudeRelay({
       request.resume();
       return fail(response, 403, "Only the Messages API is included");
     }
-    const active = current();
+    const active = turn;
+    if (!active || closing) {
+      request.resume();
+      return fail(
+        response,
+        403,
+        "No included Claude turn is active. Requests are funded only while CoCalc runs a turn.",
+      );
+    }
     let body: unknown;
+    let promptBytes: number;
     try {
-      body = JSON.parse((await readBody(request)).toString("utf8"));
+      const raw = await readBody(request);
+      promptBytes = raw.length;
+      body = JSON.parse(raw.toString("utf8"));
     } catch (err) {
       if (err instanceof RelayError) throw err;
       throw new RelayError(400, "Request must be JSON");
     }
-    const funded = fundedClaudeRequest(body, active, countTokens);
-    // Counting tokens is free; it is not a funded request.
-    if (!countTokens) active.requests += 1;
+    const {
+      request: funded,
+      maxTokens,
+      maxSearches,
+    } = fundedClaudeRequest(body, active, countTokens);
     const payload = Buffer.from(JSON.stringify(funded));
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -374,83 +601,31 @@ export async function createSiteFundedClaudeRelay({
     if (typeof beta === "string" && beta.trim()) {
       headers["anthropic-beta"] = beta;
     }
-    await new Promise<void>((resolve) => {
-      const target = new URL(
+    // One request at a time per turn; limits are checked as each starts.
+    const run = active.queue.then(async () => {
+      try {
+        assertMayStart(active);
+      } catch (err) {
+        fail(
+          response,
+          err instanceof RelayError ? err.statusCode : 500,
+          `${(err as Error).message}`,
+        );
+        return;
+      }
+      // Counting tokens is free, but it counts toward the request limit.
+      active.requests += 1;
+      await forward(
+        active,
         `${url.pathname}${url.search}`,
-        upstreamUrl,
-      ).toString();
-      const providerRequest = send(
-        target,
-        { method: "POST", headers },
-        (providerResponse) => {
-          const providerRequestId =
-            `${providerResponse.headers["request-id"] ?? ""}` || undefined;
-          const type = `${providerResponse.headers["content-type"] ?? ""}`;
-          const ok = (providerResponse.statusCode ?? 500) < 400;
-          response.writeHead(providerResponse.statusCode ?? 502, {
-            "content-type": type || "application/json",
-            "cache-control": "no-store",
-            ...(providerRequestId ? { "request-id": providerRequestId } : {}),
-          });
-          if (countTokens || !ok) {
-            // Errors are not billed; counting tokens is free.
-            providerResponse.pipe(response);
-            providerResponse.on("end", resolve);
-            providerResponse.on("error", () => resolve());
-            return;
-          }
-          if (type.includes("text/event-stream")) {
-            const stream = new StreamUsage();
-            providerResponse.on("data", (chunk) => {
-              stream.push(chunk);
-              response.write(chunk);
-            });
-            const done = () => {
-              // Metered even if the stream broke: what was used is owed.
-              meter(active, stream.usage, providerRequestId);
-              response.end();
-              resolve();
-            };
-            providerResponse.once("end", done);
-            providerResponse.once("error", done);
-            return;
-          }
-          const chunks: Buffer[] = [];
-          let size = 0;
-          providerResponse.on("data", (chunk: Buffer) => {
-            size += chunk.length;
-            if (size <= MAX_JSON_RESPONSE_BYTES) chunks.push(chunk);
-            response.write(chunk);
-          });
-          providerResponse.once("end", () => {
-            let usage: AnthropicMessagesUsage | undefined;
-            try {
-              usage = JSON.parse(Buffer.concat(chunks).toString("utf8"))?.usage;
-            } catch {
-              usage = undefined;
-            }
-            meter(active, usage, providerRequestId);
-            response.end();
-            resolve();
-          });
-          providerResponse.once("error", () => {
-            response.destroy();
-            resolve();
-          });
-        },
+        payload,
+        headers,
+        response,
+        countTokens ? undefined : { promptBytes, maxTokens, maxSearches },
       );
-      providerRequest.setTimeout(PROVIDER_TIMEOUT_MS, () =>
-        providerRequest.destroy(Error("provider timeout")),
-      );
-      providerRequest.on("error", () => {
-        fail(response, 502, "Anthropic is unavailable");
-        resolve();
-      });
-      response.on("close", () => {
-        if (!response.writableFinished) providerRequest.destroy();
-      });
-      providerRequest.end(payload);
     });
+    active.queue = run.catch(() => {});
+    await run;
   }
 
   await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
@@ -480,26 +655,59 @@ export async function createSiteFundedClaudeRelay({
   });
   await chmod(socketPath, 0o600);
 
+  // Turns that ended but whose running request may not be metered yet.
+  const ending = new Map<string, Promise<void>>();
+
+  // Stops a turn and waits for its running request to be metered.
+  const end = (active: ActiveTurn, timeoutMs: number): Promise<void> => {
+    const reservationId = active.reservation.reservationId;
+    const already = ending.get(reservationId);
+    if (already) return already;
+    active.ended = true;
+    if (turn === active) turn = undefined;
+    const timer = setTimeout(() => active.abort?.(), timeoutMs);
+    const drained = active.queue.finally(() => {
+      clearTimeout(timer);
+      ending.delete(reservationId);
+    });
+    ending.set(reservationId, drained);
+    return drained;
+  };
+
   return {
     socketPath,
     token,
     activate: (next) => {
+      if (turn) void end(turn, DRAIN_TIMEOUT_MS);
       turn = {
         ...next,
         startedAt: Date.now(),
         requests: 0,
         usageSequence: 0,
         committedMicrousd: 0,
+        ended: false,
+        queue: Promise.resolve(),
       };
     },
-    deactivate: (reservationId) => {
-      if (!reservationId || turn?.reservation.reservationId === reservationId) {
-        turn = undefined;
+    deactivate: async (
+      reservationId,
+      { timeoutMs = DRAIN_TIMEOUT_MS } = {},
+    ) => {
+      const active = turn;
+      if (
+        active &&
+        (!reservationId || active.reservation.reservationId === reservationId)
+      ) {
+        await end(active, timeoutMs);
+        return;
       }
+      // Already ended (the hub stopped it, say): still wait for its drain.
+      if (reservationId) await ending.get(reservationId);
     },
     close: async () => {
       closing = true;
-      turn = undefined;
+      const active = turn;
+      if (active) await end(active, 0);
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
         server.closeAllConnections();
