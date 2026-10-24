@@ -279,6 +279,11 @@ which:
   the funded model, caps `max_tokens` (and any thinking budget), drops
   `inference_geo` and `service_tier`, and refuses `mcp_servers`, `container`
   and hosted tools other than web search (metered) and web fetch;
+- refuses a prompt over 100,000 tokens (longer prompts cost 5x), with
+  Anthropic's `prompt is too long` error so Claude Code compacts: a text
+  prompt whose bytes (plus overhead) fit is sent as is, and any other prompt,
+  including one with images or documents, is counted first with the free
+  `count_tokens` API;
 - adds the site key itself, which never reaches the container;
 - meters every response exactly, from JSON or from the stream
   (`message_start` plus `message_delta`), numbering usage in completion order;
