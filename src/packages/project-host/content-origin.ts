@@ -34,6 +34,7 @@ import {
   projectContentHostname,
   projectContentLabel,
 } from "@cocalc/util/project-content-origin";
+import { looksLikeAppHostname } from "./content-app-origin";
 import {
   contentPathWithinDir,
   verifyProjectContentCapability,
@@ -68,13 +69,16 @@ export function isContentHostname(hostHeader: unknown, domain: string): boolean 
   return host === domain || host.endsWith(`.${domain}`);
 }
 
+// File hostnames (<project32>.h-<host32>...) and app hostnames
+// (a<key>-<project32>.h-<host32>..., content-app-origin.ts).
 const CONTENT_HOSTNAME_SHAPE =
-  /^[0-9a-f]{32}\.h-[0-9a-f]{32}(?:\.[a-z0-9-]+)+$/;
+  /^(?:a(?:p[1-9][0-9]{0,4}|s[0-9a-f]{10})-)?[0-9a-f]{32}\.h-[0-9a-f]{32}(?:\.[a-z0-9-]+)+$/;
 
-// Whether a hostname has the shape of a content hostname, under any domain.
-// This needs no configuration, so every process (including a respawned
-// router daemon, or a host whose content domain is unset) treats such
-// requests as content and never as its own: they fail closed instead.
+// Whether a hostname has the shape of a content (file or app) hostname,
+// under any domain.  This needs no configuration, so every process
+// (including a respawned router daemon, or a host whose content domain is
+// unset) treats such requests as content and never as its own: they fail
+// closed instead.
 export function looksLikeContentHostname(hostHeader: unknown): boolean {
   return CONTENT_HOSTNAME_SHAPE.test(normalizeHostname(hostHeader));
 }
@@ -423,17 +427,47 @@ export function createContentOriginHandler(opts: ContentOriginHandlerOptions) {
 }
 
 // Refuses websocket upgrades on content hostnames before any upgrade
-// listener sees them (the host attaches several, matched by path).
+// listener sees them (the host attaches several, matched by path).  On an
+// app hostname, authorizeAppUpgrade (once set) may let one through: it
+// resolves to true after marking the request as authorized for its app.
 export function installContentHostnameUpgradeGuard(
   server: Server,
   domain: string | undefined,
+  authorizeAppUpgrade?: () =>
+    | ((req: IncomingMessage) => Promise<boolean>)
+    | undefined,
 ): void {
   const emit = server.emit;
   server.emit = function (this: Server, event: string | symbol, ...args: any[]) {
     if (event === "upgrade") {
-      const [req, socket] = args as [IncomingMessage, { destroy: () => void }];
+      const [req, socket] = args as [
+        IncomingMessage,
+        {
+          destroy: () => void;
+          destroyed?: boolean;
+          on?: (event: string, f: () => void) => void;
+        },
+      ];
       if (isContentRequestHost(req?.headers?.host, domain)) {
-        socket?.destroy?.();
+        const authorize =
+          domain != null && looksLikeAppHostname(req?.headers?.host)
+            ? authorizeAppUpgrade?.()
+            : undefined;
+        if (!authorize) {
+          socket?.destroy?.();
+          return true;
+        }
+        // Nothing else listens yet: don't let a reset crash the process.
+        socket?.on?.("error", () => socket.destroy());
+        void authorize(req)
+          .then((ok) => {
+            if (!ok || socket.destroyed) {
+              socket.destroy();
+              return;
+            }
+            emit.apply(this, [event, ...args] as any);
+          })
+          .catch(() => socket.destroy());
         return true;
       }
     }

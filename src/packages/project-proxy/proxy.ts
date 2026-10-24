@@ -434,6 +434,7 @@ export function attachProjectProxy({
   onUpgradeAuthorized,
   rewriteRequest,
   rewriteResponse,
+  rewriteUpgradeResponse,
   assertForwardAllowed,
   noteUpstreamHttpBytes,
   noteUpstreamWsBytes,
@@ -448,6 +449,12 @@ export function attachProjectProxy({
   ) => void;
   rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
   rewriteResponse?: (
+    proxyRes: http.IncomingMessage,
+    req: http.IncomingMessage,
+  ) => void;
+  // The upstream's 101 response, before its headers are written to the
+  // client socket.
+  rewriteUpgradeResponse?: (
     proxyRes: http.IncomingMessage,
     req: http.IncomingMessage,
   ) => void;
@@ -507,6 +514,12 @@ export function attachProjectProxy({
       _proxyReq.setHeader("cookie", cookie);
     } else {
       _proxyReq.removeHeader("cookie");
+    }
+    if (rewriteUpgradeResponse) {
+      // Before http-proxy-3's own listener, which writes the 101 headers.
+      _proxyReq.prependListener("upgrade", (proxyRes) =>
+        rewriteUpgradeResponse(proxyRes, req),
+      );
     }
     logger.debug("forwarding-ws", {
       url: req.url,
