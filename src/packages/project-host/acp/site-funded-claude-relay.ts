@@ -7,7 +7,7 @@
 // the same in-container bridge as an account API key, but the agent can run
 // any code in its container, so every limit is enforced here, not by Claude
 // Code's settings: only the Messages API, the funded model, a capped output,
-// no paid hosted tools beyond capped web search and web fetch, no prompt
+// no paid hosted tools beyond capped web search on a short prompt, no prompt
 // longer than the policy's cap (longer prompts cost 5x), and nothing outside a
 // funded turn. The site key is added here and never reaches the
 // container.
@@ -52,7 +52,8 @@ const COUNT_TIMEOUT_MS = 30_000;
 // Tokens a prompt can have beyond its bytes: role and tool formatting, and
 // the definitions of hosted tools, which Anthropic adds.
 const PROMPT_OVERHEAD_TOKENS = 4_096;
-// The fields /v1/messages/count_tokens accepts.
+// The fields of a request that add to its prompt, all of which
+// /v1/messages/count_tokens accepts.
 const COUNTED_FIELDS = [
   "model",
   "messages",
@@ -60,7 +61,17 @@ const COUNTED_FIELDS = [
   "tools",
   "tool_choice",
   "thinking",
+  "output_config",
+  "output_format",
 ] as const;
+// Anthropic's count is an estimate that "might differ by a small amount":
+// a counted prompt must fit with this much to spare.
+const COUNT_MARGIN_TOKENS = 2_000;
+// Searches add their results to the prompt while the request runs, which no
+// count can include (count_tokens refuses server tools): only a short prompt
+// may search, leaving the rest of the cap to its (at most three) searches.
+// Claude Code searches in a request of its own, with just the query.
+const SEARCH_PROMPT_TOKENS = 16_000;
 // How long an ending turn waits for its running request before aborting it.
 const DRAIN_TIMEOUT_MS = 2 * 60_000;
 const MESSAGES_PATH = "/v1/messages";
@@ -68,10 +79,9 @@ const COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
 // Request fields that cost more than the funded price or reach other services.
 const REFUSED_FIELDS = ["mcp_servers", "container"] as const;
 // Hosted tools Anthropic bills beyond tokens: web search is capped and
-// metered (1 cent a search); web fetch costs only its tokens. Others are
-// refused.
+// metered (1 cent a search). Others are refused, web fetch included: its
+// pages join the prompt unbounded (Claude Code's WebFetch runs locally).
 const WEB_SEARCH_TOOL = /^web_search_\d+$/;
-const WEB_FETCH_TOOL = /^web_fetch_\d+$/;
 // Client tools (run by Claude Code itself) carry no type, "custom", or one of
 // Anthropic's schema-less client tool types.
 const CLIENT_TOOL = /^(custom|bash_\d+|text_editor_\d+|computer_\d+)$/;
@@ -197,6 +207,13 @@ export function fundedClaudeRequest(
       );
     }
   }
+  if (remoteMedia(request.messages) || remoteMedia(request.system)) {
+    // Not countable (count_tokens refuses them), and their size is unknown.
+    throw new RelayError(
+      403,
+      "Included Claude turns take images and documents only inline (base64), not by URL or file.",
+    );
+  }
   let maxSearches = 0;
   if (request.tools != null) {
     if (!Array.isArray(request.tools)) {
@@ -206,7 +223,6 @@ export function fundedClaudeRequest(
       const type = (tool as { type?: unknown })?.type;
       if (type == null || (typeof type === "string" && CLIENT_TOOL.test(type)))
         return tool;
-      if (typeof type === "string" && WEB_FETCH_TOOL.test(type)) return tool;
       if (typeof type === "string" && WEB_SEARCH_TOOL.test(type)) {
         // Searches cost money: never more than the cap per request.
         const requested = Number((tool as { max_uses?: unknown }).max_uses);
@@ -278,6 +294,25 @@ export function hasMedia(value: unknown, depth = 0): boolean {
   if (block.type === "image" || block.type === "document") return true;
   if (block.source != null) return true;
   return Object.values(block).some((v) => hasMedia(v, depth + 1));
+}
+
+/** Whether a prompt refers to media by URL or file rather than inline. */
+export function remoteMedia(value: unknown, depth = 0): boolean {
+  // Deeper than any real prompt: refuse rather than search further.
+  if (depth > 64) return true;
+  if (Array.isArray(value)) return value.some((v) => remoteMedia(v, depth + 1));
+  if (value == null || typeof value !== "object") return false;
+  const block = value as Record<string, unknown>;
+  if (block.type === "container_upload" || block.file_id != null) return true;
+  const source = block.source as { type?: unknown } | undefined;
+  if (
+    source != null &&
+    typeof source === "object" &&
+    (source.type === "url" || source.type === "file")
+  ) {
+    return true;
+  }
+  return Object.values(block).some((v) => remoteMedia(v, depth + 1));
 }
 
 /**
@@ -745,7 +780,27 @@ export async function createSiteFundedClaudeRelay({
         // in) bound the tokens of a text prompt.
         let promptTokens = payload.length + PROMPT_OVERHEAD_TOKENS;
         const cap = active.reservation.policy.maxPromptTokens;
-        if (cap != null && (promptTokens > cap || hasMedia(funded))) {
+        if (
+          cap != null &&
+          maxSearches > 0 &&
+          (promptTokens > SEARCH_PROMPT_TOKENS ||
+            hasMedia(funded.messages) ||
+            hasMedia(funded.system))
+        ) {
+          fail(
+            response,
+            403,
+            "Included Claude turns can search the web only from a short prompt. Ask in a new conversation, or use your own Claude subscription or Anthropic key.",
+          );
+          return;
+        }
+        if (
+          cap != null &&
+          maxSearches === 0 &&
+          (promptTokens > cap - COUNT_MARGIN_TOKENS ||
+            hasMedia(funded.messages) ||
+            hasMedia(funded.system))
+        ) {
           // It may be over the cap: count it exactly first.
           const counted = await countPromptTokens(
             active,
@@ -763,12 +818,13 @@ export async function createSiteFundedClaudeRelay({
             response.end(counted.body);
             return;
           }
-          if (counted > cap) {
+          const limit = cap - COUNT_MARGIN_TOKENS;
+          if (counted > limit) {
             // Anthropic's wording, so Claude Code compacts and retries.
             fail(
               response,
               400,
-              `prompt is too long: ${counted} tokens > ${cap} maximum`,
+              `prompt is too long: ${counted} tokens > ${limit} maximum`,
             );
             return;
           }
@@ -786,8 +842,13 @@ export async function createSiteFundedClaudeRelay({
           }
         }
         bounds = {
+          // A search adds its results to the prompt as it runs: up to the cap.
           promptTokens:
-            cap != null ? Math.min(promptTokens, cap) : promptTokens,
+            cap == null
+              ? promptTokens
+              : maxSearches > 0
+                ? cap
+                : Math.min(promptTokens, cap),
           maxTokens,
           maxSearches,
         };

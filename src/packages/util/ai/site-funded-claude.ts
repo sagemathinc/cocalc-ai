@@ -93,7 +93,7 @@ export function siteFundedUsageFromAnthropic(
 
 /** Site-funded Claude: like Codex's policy, with Claude Haiku 5.5. */
 /** Web searches one funded request may make (the relay caps max_uses). */
-export const SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST = 5;
+export const SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST = 3;
 
 export const DEFAULT_SITE_FUNDED_CLAUDE_POLICY: SiteFundedCodexPolicy = {
   ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
