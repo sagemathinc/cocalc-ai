@@ -644,6 +644,32 @@ describe("site-funded Claude relay", () => {
     expect(usage[0].inputTokens).toBe(100_000);
   });
 
+  it("charges a broken search stream at the cap, not at its first count", async () => {
+    activate();
+    reply = () => ({
+      type: "text/event-stream",
+      body: [
+        "event: message_start",
+        `data: ${JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 300, output_tokens: 1 } } })}`,
+        "",
+        "",
+      ].join("\n"),
+    });
+    await send({
+      ...message,
+      stream: true,
+      tools: [{ type: "web_search_20260209", name: "web_search" }],
+      messages: [{ role: "user", content: "news today?" }],
+    });
+    // The search results it may have added count toward the prompt.
+    expect(usage[0]).toMatchObject({
+      inputTokens: 100_000,
+      cacheWrite1hInputTokens: 100_000,
+      outputTokens: 1_000,
+      providerToolFeesMicrousd: 30_000,
+    });
+  });
+
   it("passes on a refused count and sends nothing", async () => {
     activate({ maxPromptTokens: 5_000 });
     reply = () => ({

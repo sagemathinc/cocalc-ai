@@ -370,7 +370,7 @@ export function upperBoundUsage(
     seen?.server_tool_use?.web_search_requests ?? 0,
     bounds.maxSearches,
   );
-  if (seen?.input_tokens != null) {
+  if (seen?.input_tokens != null && bounds.maxSearches === 0) {
     // message_start reported the prompt exactly; only the output is unknown.
     return {
       ...seen,
@@ -378,12 +378,19 @@ export function upperBoundUsage(
       server_tool_use: { web_search_requests: searches },
     };
   }
-  // Nothing reported: the prompt at its bound, as the dearest writes.
+  // Nothing reported, or a search, whose results join the prompt after
+  // message_start counted it: the prompt at its bound, as the dearest writes.
+  const input = Math.max(
+    bounds.promptTokens,
+    (seen?.input_tokens ?? 0) +
+      (seen?.cache_read_input_tokens ?? 0) +
+      (seen?.cache_creation_input_tokens ?? 0),
+  );
   return {
     input_tokens: 0,
-    cache_creation_input_tokens: bounds.promptTokens,
-    cache_creation: { ephemeral_1h_input_tokens: bounds.promptTokens },
-    output_tokens: bounds.maxTokens,
+    cache_creation_input_tokens: input,
+    cache_creation: { ephemeral_1h_input_tokens: input },
+    output_tokens: Math.max(seen?.output_tokens ?? 0, bounds.maxTokens),
     server_tool_use: { web_search_requests: searches },
   };
 }
