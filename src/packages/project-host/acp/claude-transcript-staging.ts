@@ -14,15 +14,22 @@ podman cannot use them.
 
 So the container mounts a host-owned staging directory, and transcripts move
 between it and the project's home only through the openat2 no-follow helpers
-(beneath-copy): in when the controller starts, and back out after every turn
-and when it stops. Only regular files and directories cross, in either
-direction: a symlink is never copied, so neither side can plant one for the
-other to follow.
+(beneath-copy): in when the controller starts, and back out when each turn
+completes (before the turn reports success) and when it stops. Only regular
+files and directories cross, in either direction, each file copied from the
+descriptor openat2 opened, so a symlink or FIFO is never copied or followed,
+even one swapped in mid-copy. The staged tree is bounded in size: the host's
+disk is not the project's quota.
 */
 
 import { mkdtemp, rm } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
-import { copyBeneath, listBeneath, statBeneath } from "../beneath-copy";
+import {
+  copyRegularFileBeneath,
+  kindBeneath,
+  listBeneath,
+  type FileIdentity,
+} from "../beneath-copy";
 import { claudeTranscriptStagingPrefix } from "./claude-subscription-paths";
 
 const logger = getLogger("project-host:claude-transcript-staging");
@@ -31,12 +38,25 @@ const logger = getLogger("project-host:claude-transcript-staging");
 // host walk (or copy) without end.
 export const MAX_TRANSCRIPT_ENTRIES = 100_000;
 
+// The staged tree may hold at most this many bytes (copied in, or written by
+// the controller and checked when a turn completes).
+export function maxTranscriptBytes(): number {
+  const configured = Number(process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : 1024 ** 3;
+}
+
 export interface ClaudeTranscriptStaging {
   /** Host-owned directory for the controller to mount. */
   directory: string;
   /** Copy what changed since the last copy back into the project's home. */
   sync(): Promise<void>;
-  /** Copy back one last time (best effort), then remove the directory. */
+  /**
+   * Copy back one last time, then remove the directory. If that copy fails
+   * for a reason that may pass (no space, an I/O error), the staged copy is
+   * kept and the error thrown, so a retry of close can still save it.
+   */
   close(): Promise<void>;
 }
 
@@ -44,53 +64,79 @@ function joinRel(base: string, rel: string): string {
   return base && rel ? `${base}/${rel}` : base || rel;
 }
 
+function errorCode(error: unknown): string | undefined {
+  return (
+    `${(error as Error)?.message ?? ""}`.match(/^(E[A-Z]+)\b/)?.[1] ??
+    (error as NodeJS.ErrnoException)?.code
+  );
+}
+
+// Errors after which keeping the staged copy cannot help: the tree is over
+// its bound, or the project's own path is unusable (a symlink or a
+// non-directory where its transcript directory should be).
+const UNRECOVERABLE = new Set(["EFBIG", "ELOOP", "ENOTDIR", "EXDEV"]);
+
+const identityKey = ({ size, ctimeNs }: FileIdentity) => `${ctimeNs}:${size}`;
+
 // Copies the regular files of the tree at `fromBase` under `fromRoot` to the
-// same relative paths at `toBase` under `toRoot`. `copied` records, for each
-// file, the modification time of its staged copy when it last crossed
-// (`staged` says which side is the staging directory); a staged file whose
-// time is unchanged is not copied out again. Symlinks and other special files
-// are skipped, never followed.
+// same relative paths at `toBase` under `toRoot`, never following or copying a
+// symlink. `staged` records, for each file, the identity (change time and
+// size, which a writer cannot set back) of its staged copy when it last
+// crossed; `stagedSide` says which side is the staging directory. A staged
+// file whose identity is unchanged is not copied out again. Throws EFBIG once
+// the tree holds more than `maxBytes`.
 async function copyTree({
   fromRoot,
   fromBase,
   toRoot,
   toBase,
-  copied,
   staged,
+  stagedSide,
+  maxBytes,
 }: {
   fromRoot: string;
   fromBase: string;
   toRoot: string;
   toBase: string;
-  copied: Map<string, number>;
-  staged: "from" | "to";
+  staged: Map<string, string>;
+  stagedSide: "from" | "to";
+  maxBytes: number;
 }): Promise<void> {
   let entries = 0;
+  let bytes = 0;
   const visit = async (rel: string): Promise<void> => {
     for (const name of await listBeneath(fromRoot, joinRel(fromBase, rel))) {
       if (++entries > MAX_TRANSCRIPT_ENTRIES)
         throw Error("Claude transcript tree has too many entries");
       const child = joinRel(rel, name);
       const from = joinRel(fromBase, child);
-      const { kind, mtimeNs } = await statBeneath(fromRoot, from);
+      const kind = await kindBeneath(fromRoot, from);
       if (kind === "dir") {
         await visit(child);
         continue;
       }
       if (kind !== "file") continue;
-      if (staged === "from" && copied.get(child) === mtimeNs) continue;
-      const to = joinRel(toBase, child);
-      await copyBeneath({
+      const result = await copyRegularFileBeneath({
         src: { root: fromRoot, path: from },
-        dest: { root: toRoot, path: to },
-        options: { force: true, preserveTimestamps: true },
+        dest: { root: toRoot, path: joinRel(toBase, child) },
+        maxBytes: maxBytes - bytes,
+        skip: (source) =>
+          stagedSide === "from" && staged.get(child) === identityKey(source),
       });
-      // Preserved times are not exact to the nanosecond: record the time the
-      // staged copy really has.
-      copied.set(
-        child,
-        staged === "from" ? mtimeNs : (await statBeneath(toRoot, to)).mtimeNs,
-      );
+      if (result.kind === "not-regular") continue;
+      bytes += result.source.size;
+      if (bytes > maxBytes) {
+        const error: NodeJS.ErrnoException = Error(
+          `EFBIG: Claude transcripts exceed ${maxBytes} bytes`,
+        );
+        error.code = "EFBIG";
+        throw error;
+      }
+      if (result.kind === "copied")
+        staged.set(
+          child,
+          identityKey(stagedSide === "from" ? result.source : result.dest),
+        );
     }
   };
   await visit("");
@@ -103,22 +149,25 @@ async function copyTree({
 export async function stageClaudeTranscripts({
   projectHome,
   parts,
+  maxBytes = maxTranscriptBytes(),
 }: {
   projectHome: string;
   parts: string[];
+  maxBytes?: number;
 }): Promise<ClaudeTranscriptStaging> {
   const directory = await mkdtemp(claudeTranscriptStagingPrefix());
   const base = parts.join("/");
   // So that a file the controller did not change is not copied back.
-  const copied = new Map<string, number>();
+  const staged = new Map<string, string>();
   try {
     await copyTree({
       fromRoot: projectHome,
       fromBase: base,
       toRoot: directory,
       toBase: "",
-      copied,
-      staged: "to",
+      staged,
+      stagedSide: "to",
+      maxBytes,
     });
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
@@ -133,8 +182,9 @@ export async function stageClaudeTranscripts({
         fromBase: "",
         toRoot: projectHome,
         toBase: base,
-        copied,
-        staged: "from",
+        staged,
+        stagedSide: "from",
+        maxBytes,
       }),
     );
     queue = run.catch(() => {});
@@ -147,18 +197,22 @@ export async function stageClaudeTranscripts({
     },
     close: async () => {
       if (closed) return;
-      closed = true;
       try {
         await copyBack();
       } catch (error) {
-        // The project's copy is unreachable (it removed the directory, or a
-        // symlink is in the way); keeping the staged copy would only leak it.
-        logger.warn("Claude transcripts were not copied back to the project", {
+        if (!UNRECOVERABLE.has(errorCode(error) ?? "")) {
+          logger.warn("Claude transcripts were not copied back; kept", {
+            directory,
+            error: `${error}`,
+          });
+          throw error;
+        }
+        logger.warn("Claude transcripts were not copied back", {
           error: `${error}`,
         });
-      } finally {
-        await rm(directory, { recursive: true, force: true });
       }
+      closed = true;
+      await rm(directory, { recursive: true, force: true });
     },
   };
 }

@@ -3,7 +3,9 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { execFileSync } from "node:child_process";
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -19,6 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stageClaudeTranscripts } from "./claude-transcript-staging";
+import { copyRegularFileBeneath } from "../beneath-copy";
 import { isManagedClaudeTranscriptStaging } from "./claude-subscription-paths";
 
 const parts = [
@@ -160,4 +163,79 @@ test("sync and close after close are no-ops", async () => {
   await staging.close();
   await staging.sync();
   await staging.close();
+});
+
+test("a file swapped for a symlink or FIFO before the copy is never copied or followed", async () => {
+  const dest = await mkdtemp(join(tmpdir(), "claude-staging-dest-"));
+  try {
+    const workspace = join(transcripts, "-workspace");
+    // What a stat-then-copy would race on: by the time of the copy, the name
+    // is a symlink (to a host file) or a FIFO (which would block a reader).
+    await symlink("/etc/passwd", join(workspace, "link.jsonl"));
+    execFileSync("mkfifo", [join(workspace, "fifo.jsonl")]);
+    for (const name of ["link.jsonl", "fifo.jsonl"]) {
+      await expect(
+        copyRegularFileBeneath({
+          src: {
+            root: projectHome,
+            path: [...parts, "-workspace", name].join("/"),
+          },
+          dest: { root: dest, path: name },
+          maxBytes: 1024,
+        }),
+      ).resolves.toEqual({ kind: "not-regular" });
+    }
+    expect(await readdir(dest)).toEqual([]);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test("staging refuses a transcript tree larger than its byte bound", async () => {
+  await writeFile(
+    join(transcripts, "-workspace", "big.jsonl"),
+    "x".repeat(4096),
+  );
+  await expect(
+    stageClaudeTranscripts({ projectHome, parts, maxBytes: 1024 }),
+  ).rejects.toThrow(/EFBIG|larger than/);
+});
+
+test("growth past the byte bound fails the sync, and close drops the staged copy", async () => {
+  const staging = await stageClaudeTranscripts({
+    projectHome,
+    parts,
+    maxBytes: 1024,
+  });
+  await writeFile(
+    join(staging.directory, "-workspace", "big.jsonl"),
+    "x".repeat(4096),
+  );
+  await expect(staging.sync()).rejects.toThrow(/EFBIG|larger than|exceed/);
+  await staging.close();
+  await expect(lstat(staging.directory)).rejects.toThrow();
+});
+
+test("close keeps the staged copy when the copy back may succeed later", async () => {
+  const staging = await stageClaudeTranscripts({ projectHome, parts });
+  await writeFile(join(staging.directory, "-workspace", "late.jsonl"), "late");
+  // A failure that may pass (here: permission), not an unsafe path.
+  await chmod(join(transcripts, "-workspace"), 0o500);
+  try {
+    await expect(staging.close()).rejects.toThrow();
+    expect(
+      await readFile(
+        join(staging.directory, "-workspace", "late.jsonl"),
+        "utf8",
+      ),
+    ).toBe("late");
+  } finally {
+    await chmod(join(transcripts, "-workspace"), 0o700);
+  }
+  // A retry saves it and only then removes the staged copy.
+  await staging.close();
+  expect(
+    await readFile(join(transcripts, "-workspace", "late.jsonl"), "utf8"),
+  ).toBe("late");
+  await expect(lstat(staging.directory)).rejects.toThrow();
 });

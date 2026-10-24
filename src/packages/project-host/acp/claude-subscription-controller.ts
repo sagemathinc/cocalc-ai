@@ -501,12 +501,16 @@ ${skill}
       },
       refreshCredential: async () => await credentialSync?.finish(),
       removeHome: async () => {
-        // The container has stopped: copy back its last writes, then drop the
-        // staged copy.
-        await transcripts?.close();
-        transcripts = undefined;
-        await credentialSync?.idle();
-        await rm(home, { recursive: true, force: true });
+        try {
+          // The container has stopped: copy back its last writes, then drop
+          // the staged copy. A failure that may pass keeps it and throws, so
+          // the cleanup retry tries again.
+          await transcripts?.close();
+          transcripts = undefined;
+        } finally {
+          await credentialSync?.idle();
+          await rm(home, { recursive: true, force: true });
+        }
       },
       launched,
     })
@@ -701,15 +705,11 @@ ${skill}
         : undefined,
       setTurnPublicationContext: (context) => {
         turnPublication = context;
-        // Cleared when a turn ends: its transcript is complete, so copy it
-        // back to the project now rather than only when the controller stops.
-        if (context === undefined)
-          void transcripts?.sync().catch((error) =>
-            logger.warn("Claude transcripts were not copied back", {
-              error: `${error}`,
-            }),
-          );
       },
+      // The turn's transcript is complete: put it back in the project before
+      // the turn reports success, so a completed turn never exists only in
+      // the staged copy (which a crash and the reaper would lose).
+      turnCompleted: async () => await transcripts?.sync(),
       // A lease issued after a fence has no connector turn until the next turn.
       beginConnectorTurn: async (chat) =>
         await leases.current?.beginConnectorTurn(chat),

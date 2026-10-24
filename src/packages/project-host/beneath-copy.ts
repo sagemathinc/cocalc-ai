@@ -626,19 +626,6 @@ export async function kindBeneath(root: string, rel: string): Promise<Kind> {
     .kind;
 }
 
-// As kindBeneath, with the modification time (0 unless a file or directory).
-export async function statBeneath(
-  root: string,
-  rel: string,
-): Promise<{ kind: Kind; mtimeNs: number }> {
-  const { kind, mtimeNs } = await entryAt(
-    new SandboxRoot(root),
-    root,
-    beneathRelative(rel),
-  );
-  return { kind, mtimeNs };
-}
-
 // The names in directory `rel` under `root`. A symlink anywhere on the way,
 // even one swapped in while listing, makes this throw instead of listing
 // another directory.
@@ -651,6 +638,110 @@ export async function listBeneath(
     root,
     beneathRelative(rel),
   );
+}
+
+export interface FileIdentity {
+  size: number;
+  ctimeNs: number;
+}
+
+// Opening a source that is not a regular file (a symlink anywhere on its
+// path, a FIFO, a directory) or that has gone fails with one of these.
+const NOT_REGULAR = new Set([
+  "ELOOP",
+  "ENOENT",
+  "ENOTDIR",
+  "EISDIR",
+  "EINVAL",
+  "ENXIO",
+  "EOPNOTSUPP",
+  "ENOTSUP",
+  "EXDEV",
+]);
+
+// Copies the regular file at `src` to exactly `dest` (replacing a file there,
+// creating missing parent directories), from the descriptor openat2 opened.
+// Whatever is checked first, the open itself refuses a symlink, FIFO or
+// directory swapped in at any moment: such a source is reported, never copied
+// or followed. `skip` sees the opened source's identity and may decline the
+// copy; a source larger than `maxBytes` (also while it is copied) is refused
+// with EFBIG. The copy is written to a temporary name and renamed into place.
+export async function copyRegularFileBeneath({
+  src,
+  dest,
+  maxBytes,
+  skip,
+}: {
+  src: BeneathPath;
+  dest: BeneathPath;
+  maxBytes: number;
+  skip?: (source: FileIdentity) => boolean;
+}): Promise<
+  | { kind: "not-regular" }
+  | { kind: "unchanged"; source: FileIdentity }
+  | { kind: "copied"; source: FileIdentity; dest: FileIdentity }
+> {
+  const srcRel = beneathRelative(src.path);
+  const destRel = beneathRelative(dest.path);
+  if (srcRel === "" || destRel === "") {
+    throw codedError("EINVAL", "a file copy needs a file path on both sides");
+  }
+  let srcFd: number;
+  try {
+    srcFd = new SandboxRoot(src.root).openRead(srcRel);
+  } catch (err) {
+    if (NOT_REGULAR.has(errorCode(err) ?? "")) return { kind: "not-regular" };
+    throw err;
+  }
+  try {
+    const st = fstatSync(srcFd, { bigint: true });
+    if ((Number(st.mode) & constants.S_IFMT) !== constants.S_IFREG) {
+      return { kind: "not-regular" };
+    }
+    const source = { size: Number(st.size), ctimeNs: Number(st.ctimeNs) };
+    if (skip?.(source)) return { kind: "unchanged", source };
+    const tooLarge = () =>
+      codedError("EFBIG", `'${srcRel}' is larger than ${maxBytes} bytes`);
+    if (source.size > maxBytes) throw tooLarge();
+    const sandbox = new SandboxRoot(dest.root);
+    const parent = path.posix.dirname(destRel);
+    if (parent !== ".") sandbox.mkdir(parent, true, 0o700);
+    const tmp = tempSibling(destRel);
+    const destFd = sandbox.openWrite(tmp, true, true, false, 0o600);
+    let placed = false;
+    try {
+      try {
+        // Both ends are the descriptors opened beneath their roots.
+        await runNativeFsTask(() =>
+          copyFile(
+            `/proc/self/fd/${srcFd}`,
+            `/proc/self/fd/${destFd}`,
+            constants.COPYFILE_FICLONE,
+          ),
+        );
+        // The source may have grown while it was copied.
+        if (fstatSync(destFd).size > maxBytes) throw tooLarge();
+      } finally {
+        closeSync(destFd);
+      }
+      sandbox.rename(tmp, destRel);
+      placed = true;
+    } finally {
+      if (!placed) {
+        try {
+          sandbox.unlink(tmp);
+        } catch {}
+      }
+    }
+    const placedStat = sandbox.stat(destRel);
+    return {
+      kind: "copied",
+      source,
+      dest: { size: placedStat.size, ctimeNs: placedStat.ctimeNs },
+    };
+  } finally {
+    closeSync(srcFd);
+  }
 }
 
 // Creates directory `rel` (and missing parents) under `root`.
