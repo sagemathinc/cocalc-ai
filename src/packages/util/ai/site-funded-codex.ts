@@ -181,8 +181,68 @@ export type SiteFundedCodexAccountStatus = {
   reset7dAt?: string;
 };
 
+/**
+ * How one site-funded admission attempt ended: "allowed", a denial code, or a
+ * finer reason for an early refusal ("unverified_email", "no_allowance",
+ * "banned", "ai_disabled"), or "error" if admission itself failed.
+ */
+export type SiteFundedAdmissionOutcome =
+  | "allowed"
+  | SiteFundedCodexDenialCode
+  | "unverified_email"
+  | "no_allowance"
+  | "banned"
+  | "ai_disabled"
+  | "error";
+
+export const SITE_FUNDED_ADMISSION_OUTCOMES: readonly SiteFundedAdmissionOutcome[] =
+  [
+    "allowed",
+    "disabled",
+    "missing_price",
+    "account_limit_5h",
+    "account_limit_7d",
+    "account_concurrency",
+    "global_concurrency",
+    "global_pool",
+    "account_hold",
+    "ineligible",
+    "unavailable",
+    "unverified_email",
+    "no_allowance",
+    "banned",
+    "ai_disabled",
+    "error",
+  ];
+
+export type SiteFundedAdmissionRecord = {
+  fundedTurnId: string;
+  accountId: string;
+  provider: "openai" | "anthropic";
+  outcome: SiteFundedAdmissionOutcome;
+  membershipTier?: string;
+  surface?: string;
+};
+
+/** Who tried included AI, what admission said, and how admitted turns ended. */
+export type SiteFundedFunnel = {
+  periodStart: string;
+  periodEnd: string;
+  attempts: number;
+  accounts: number;
+  admittedAccounts: number;
+  outcomes: { outcome: string; attempts: number; accounts: number }[];
+  turns: {
+    status: string;
+    turns: number;
+    accounts: number;
+    committedMicrousd: number;
+  }[];
+};
+
 export type SiteFundedCodexStatus = {
   pools: SiteFundedCodexPoolStatus[];
+  funnel?: SiteFundedFunnel;
   account?: SiteFundedCodexAccountStatus;
   accountReservations?: {
     accountId: string;

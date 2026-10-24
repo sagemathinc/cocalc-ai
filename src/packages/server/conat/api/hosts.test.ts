@@ -831,17 +831,57 @@ describe("site-funded Codex account directory routing", () => {
   });
 
   it.each([
-    null,
-    { banned: true, email_address_verified: true },
-    { email_address_verified: false },
-  ])("denies an ineligible directory account: %j", async (account) => {
-    lookup.mockResolvedValue(account);
+    [null, "ineligible"],
+    [{ banned: true, email_address_verified: true }, "banned"],
+    [{ email_address_verified: false }, "unverified_email"],
+  ])(
+    "denies an ineligible directory account, and records why: %j",
+    async (account, outcome) => {
+      lookup.mockResolvedValue(account);
+      jest
+        .spyOn(
+          await import("@cocalc/server/cluster-config"),
+          "getConfiguredClusterSeedBayId",
+        )
+        .mockReturnValue(
+          (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+        );
+      const record = jest
+        .spyOn(
+          await import("@cocalc/server/ai/site-funded-admissions"),
+          "recordSiteFundedAdmissionLocal",
+        )
+        .mockResolvedValue();
+      const { reserveSiteFundedCodexTurn } = await import("./hosts");
+      await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({
+        allowed: false,
+        code: "ineligible",
+      });
+      expect(membership).not.toHaveBeenCalled();
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fundedTurnId: request.funded_turn_id,
+          accountId: ACCOUNT_ID,
+          provider: "openai",
+          outcome,
+        }),
+      );
+    },
+  );
+
+  it("records nothing for a host that is not authorized", async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+    const record = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-admissions"),
+        "recordSiteFundedAdmissionLocal",
+      )
+      .mockResolvedValue();
     const { reserveSiteFundedCodexTurn } = await import("./hosts");
-    await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({
-      allowed: false,
-      code: "ineligible",
-    });
-    expect(membership).not.toHaveBeenCalled();
+    await expect(reserveSiteFundedCodexTurn(request)).rejects.toThrow(
+      "host is not authorized",
+    );
+    expect(record).not.toHaveBeenCalled();
   });
 
   it("does not fall back to local metadata when the directory is unavailable", async () => {

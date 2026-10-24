@@ -264,6 +264,7 @@ import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 import type {
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolId,
+  SiteFundedAdmissionRecord,
   SiteFundedCodexStatus,
   SiteFundedCodexPolicy,
   SiteFundedCodexReservation,
@@ -2394,7 +2395,11 @@ export interface BayOpsFinishSiteFundedCodexTurnRequest extends BayOpsSiteFunded
 export interface BayOpsSiteFundedCodexStatusRequest {
   reconcile?: boolean;
   accountId?: string;
+  /** Include the admission funnel (admins). */
+  funnel?: boolean;
 }
+
+export type BayOpsRecordSiteFundedAdmissionRequest = SiteFundedAdmissionRecord;
 
 export interface BayOpsReserveSiteFundedSpeechRequest {
   requestId: string;
@@ -2920,6 +2925,7 @@ export type BayOpsMethod =
   | "record-site-funded-codex-usage"
   | "finish-site-funded-codex-turn"
   | "get-site-funded-codex-status"
+  | "record-site-funded-admission"
   | "reserve-site-funded-speech"
   | "finish-site-funded-speech"
   | "commercial-orders"
@@ -4660,6 +4666,9 @@ export interface InterBayBayOpsApi {
   getSiteFundedCodexStatus: (
     opts: BayOpsSiteFundedCodexStatusRequest,
   ) => Promise<SiteFundedCodexStatus>;
+  recordSiteFundedAdmission: (
+    opts: BayOpsRecordSiteFundedAdmissionRequest,
+  ) => Promise<void>;
   reserveSiteFundedSpeech: (
     opts: BayOpsReserveSiteFundedSpeechRequest,
   ) => Promise<{
@@ -11004,6 +11013,15 @@ export function createInterBayBayOpsClient({
       method: "get-site-funded-codex-status",
     }),
   });
+  const recordSiteFundedAdmissionClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "recordSiteFundedAdmission">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "record-site-funded-admission",
+    }),
+  });
   const reserveSiteFundedSpeechClient = createServiceClient<
     Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">
   >({
@@ -11300,6 +11318,8 @@ export function createInterBayBayOpsClient({
       await finishSiteFundedCodexTurnClient.finishSiteFundedCodexTurn(opts),
     getSiteFundedCodexStatus: async (opts) =>
       await siteFundedCodexStatusClient.getSiteFundedCodexStatus(opts),
+    recordSiteFundedAdmission: async (opts) =>
+      await recordSiteFundedAdmissionClient.recordSiteFundedAdmission(opts),
     reserveSiteFundedSpeech: async (opts) =>
       await reserveSiteFundedSpeechClient.reserveSiteFundedSpeech(opts),
     finishSiteFundedSpeech: async (opts) =>
@@ -11542,6 +11562,18 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getSiteFundedCodexStatus: async (opts) =>
           await impl.getSiteFundedCodexStatus(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "recordSiteFundedAdmission">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "record-site-funded-admission",
+      }),
+      impl: {
+        recordSiteFundedAdmission: async (opts) =>
+          await impl.recordSiteFundedAdmission(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">>({

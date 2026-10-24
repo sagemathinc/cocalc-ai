@@ -265,6 +265,10 @@ import {
   recordSiteFundedCodexUsageEvent,
   reserveSiteFundedCodexTurn,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
+import {
+  getSiteFundedFunnel,
+  recordSiteFundedAdmissionLocal,
+} from "@cocalc/server/ai/site-funded-admissions";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { getAccountIdFromRememberMe as getLocalAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
@@ -893,11 +897,12 @@ async function startBayOpsService(): Promise<void> {
         outcome,
       });
     },
-    getSiteFundedCodexStatus: async ({ reconcile, accountId }) => {
+    getSiteFundedCodexStatus: async ({ reconcile, accountId, funnel }) => {
       assertSiteFundedCodexSeedAuthority();
       const pools = await getSiteFundedCodexPoolStatus();
       return {
         pools,
+        funnel: funnel ? await getSiteFundedFunnel() : undefined,
         accountReservations: accountId
           ? await getSiteFundedCodexAccountReservationStatus({ accountId })
           : undefined,
@@ -905,6 +910,10 @@ async function startBayOpsService(): Promise<void> {
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
       };
+    },
+    recordSiteFundedAdmission: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      await recordSiteFundedAdmissionLocal(opts);
     },
     downloadCommercialQuoteInternal: async ({ token }) => {
       if (bay_id !== getConfiguredClusterSeedBayId()) {

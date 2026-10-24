@@ -121,6 +121,7 @@ import {
   getSiteFundedCodexPoolStatus,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
+import { getSiteFundedFunnel } from "@cocalc/server/ai/site-funded-admissions";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import {
   enqueueRootfsPrepullForHost,
@@ -7605,11 +7606,12 @@ export async function getSiteFundedCodexAdminStatus({
   if (seedBayId !== getConfiguredBayId()) {
     return await getInterBayBridge()
       .bayOps(seedBayId, { timeout_ms: 30_000 })
-      .getSiteFundedCodexStatus({ reconcile: true });
+      .getSiteFundedCodexStatus({ reconcile: true, funnel: true });
   }
   const pools = await getSiteFundedCodexPoolStatus();
   return {
     pools,
+    funnel: await getSiteFundedFunnel(),
     reconciliation: await reconcileSiteFundedCodexCosts(pools),
   };
 }
