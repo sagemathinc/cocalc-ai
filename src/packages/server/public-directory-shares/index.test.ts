@@ -292,30 +292,18 @@ describe("public directory share normalization", () => {
     }
   });
 
-  it("excludes credential files at any depth", () => {
-    for (const share of [".", "work"]) {
-      const policy = publicDirectoryShareReadPolicyForPath(share);
-      for (const path of [
-        "work/.env",
-        "work/app/.env.local",
-        "work/.netrc",
-        "work/.git-credentials",
-        "work/.npmrc",
-        "work/.pypirc",
-        "work/.pgpass",
-        "work/repo/.git/config",
-        "work/.ssh/id_ed25519",
-        "work/.aws/credentials",
-        "work/.gnupg/private-keys-v1.d/key",
-        "work/.docker/config.json",
-        "work/.kube/config",
-      ]) {
-        expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(false);
-      }
-      expect(
-        viewerReadPolicyAllowsPath({ policy, path: "work/analysis.ipynb" }),
-      ).toBe(true);
+  it("keeps folder shares unchanged, so their copies need no tree walk", () => {
+    const policy = publicDirectoryShareReadPolicyForPath("work");
+    for (const path of [
+      "work/analysis.ipynb",
+      "work/repo/.gitignore",
+      "work/repo/.github/workflows/ci.yml",
+    ]) {
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(true);
     }
+    expect(viewerReadPolicyAllowsPath({ policy, path: ".config/x" })).toBe(
+      false,
+    );
   });
 
   it("refuses to publish a hidden top-level path directly", () => {
@@ -857,6 +845,41 @@ describe("public directory temporary viewer grants", () => {
       project_id: PROJECT_ID,
     });
     expect(policy.read_policy).toEqual(grant.read_policy);
+  });
+
+  it("authorizes a temporary grant with the share's current policy, not the stored one", async () => {
+    await insertShare();
+    await grantTemporaryViewerAccess({
+      account_id: ACCOUNT_ID,
+      slug: "test2",
+    });
+    // A grant made before a policy change: its stored policy is broader.
+    await getPool().query(
+      `UPDATE public_project_path_viewer_grants SET read_policy=$1 WHERE account_id=$2`,
+      [
+        JSON.stringify({ rules: [{ action: "include", path: "**" }] }),
+        ACCOUNT_ID,
+      ],
+    );
+
+    const policy = await getTemporaryViewerReadPolicy({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(policy.read_policy).toEqual(
+      publicDirectoryShareReadPolicyForPath("share"),
+    );
+    expect(
+      viewerReadPolicyAllowsPath({
+        policy: policy.read_policy,
+        path: "share/a.ipynb",
+      }),
+    ).toBe(true);
+    for (const path of ["private/a.ipynb", ".config/cocalc/agents/x.json"]) {
+      expect(
+        viewerReadPolicyAllowsPath({ policy: policy.read_policy, path }),
+      ).toBe(false);
+    }
   });
 
   it("lists directories through the exact share-scoped filesystem", async () => {

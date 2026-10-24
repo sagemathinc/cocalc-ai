@@ -600,10 +600,7 @@ backups.
 Public shares never include hidden files and folders at the top of the home
 directory (names starting with a dot, such as \`.ssh\`, \`.config\`, \`.cache\`,
 \`.local\`, \`.snapshots\`, and \`.backups\`), where programs keep settings and
-credentials. At any depth they also leave out common credential files such as
-\`.env\`, \`.netrc\`, \`.git-credentials\`, \`.npmrc\`, \`.git/config\`, and the
-\`.ssh\`, \`.aws\`, \`.gnupg\`, \`.docker\`, and \`.kube\` folders. You cannot
-publish a hidden top-level path directly.
+credentials. You cannot publish a hidden top-level path directly.
 
 Publishing is only allowed for paths inside \`/home/user\`. Project secrets are
 mounted outside HOME under \`/run/secrets/cocalc\`, so they are not project
