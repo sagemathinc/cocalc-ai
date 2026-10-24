@@ -9,7 +9,16 @@
 // unread again; j and k move, u goes to the next unread one. The list never
 // scrolls by itself: new items wait behind an "N new" button.
 
-import { Badge, Button, Checkbox, Empty, Modal, Segmented, Space } from "antd";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  Empty,
+  Modal,
+  Popconfirm,
+  Segmented,
+  Space,
+} from "antd";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -22,6 +31,7 @@ import StaticMarkdown from "./bounded-static-markdown";
 import ContextualReply from "./contextual-reply";
 import { presentedMessageMarkdown } from "./message-presentation";
 import {
+  archiveAll,
   findItem,
   isItemArchived,
   isItemRead,
@@ -280,6 +290,11 @@ export function ChatReaderView({
     () => unreadIn("filed", showArchived ? undefined : false),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items, watermark, state, filed, showArchived],
+  );
+  // In the inbox: not archived, in every view.
+  const inboxCount = useMemo(
+    () => items.filter((item) => !isItemArchived(item, state)).length,
+    [items, state],
   );
   const [selectedId, setSelectedId] = useState<string>();
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
@@ -856,6 +871,19 @@ export function ChatReaderView({
           >
             Mark all read
           </Button>
+          <Popconfirm
+            title={`Archive all ${inboxCount} message${inboxCount === 1 ? "" : "s"}?`}
+            description="Everything in this thread is archived and read: a clean slate. A new reply brings a message back."
+            okText="Archive all"
+            onConfirm={() => {
+              save((current) => archiveAll(items, current));
+              if (!showArchived) setSelectedId(undefined);
+            }}
+          >
+            <Button size="small" disabled={!inboxCount}>
+              Archive all
+            </Button>
+          </Popconfirm>
           {itemInfo ? (
             <Segmented
               size="small"

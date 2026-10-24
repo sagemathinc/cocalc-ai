@@ -1,4 +1,5 @@
 import {
+  archiveAll,
   findItem,
   isItemArchived,
   isItemRead,
@@ -331,5 +332,73 @@ describe("when the watermark cannot move", () => {
       watermarkCount: 2,
       unmoved: { r: { p1: "p1", p2: "p2" } },
     });
+  });
+});
+
+describe("archive all", () => {
+  const at = (id: string, ms: number, reply = false) =>
+    ({
+      message_id: id,
+      sender_id: reply ? "codex" : "acct",
+      ...(reply ? { acp_thread_id: "t", parent_message_id: `p${id.slice(1)}` } : {}),
+      date: new Date(ms),
+    }) as any;
+  const thread = [at("p1", 10), at("a1", 11, true), at("p2", 20), at("p3", 30)];
+
+  it("archives and reads every item, however many, by time", () => {
+    const many = readerItems(
+      Array.from({ length: READER_STATE_LIMITS.archived + 50 }, (_, i) =>
+        at(`p${i}`, i + 1),
+      ),
+    );
+    const { state, watermarkCount } = archiveAll(many, {
+      a: { p0: "p0" },
+      r: { p3: "p3" },
+      u: ["p1"],
+    });
+    expect(state).toEqual({ aw: many.length });
+    expect(watermarkCount).toBe(many.length);
+    expect(many.every((item) => isItemArchived(item, state))).toBe(true);
+  });
+
+  it("a newer message or reply brings an item back", () => {
+    const items = readerItems(thread);
+    const { state } = archiveAll(items, {});
+    expect(items.every((item) => isItemArchived(item, state))).toBe(true);
+    const later = readerItems([...thread, at("a2", 40, true), at("p4", 41)]);
+    expect(later.map((item) => isItemArchived(item, state))).toEqual([
+      true, // p1 + a1
+      true, // p3
+      false, // p2 + its new reply a2
+      false, // p4
+    ]);
+  });
+
+  it("an item can still be moved back to the inbox, and archived again", () => {
+    const items = readerItems(thread);
+    const { state } = archiveAll(items, {});
+    const back = setItemArchived(items[1], false, state);
+    expect(back).toEqual({ aw: 30, ax: ["p2"] });
+    expect(isItemArchived(items[1], back)).toBe(false);
+    expect(isItemArchived(items[0], back)).toBe(true);
+    const again = setItemArchived(items[1], true, back);
+    expect(isItemArchived(items[1], again)).toBe(true);
+    expect(again.ax).toBeUndefined();
+  });
+
+  it("is kept by other changes, and never moves back in time", () => {
+    const items = readerItems(thread);
+    const { state } = archiveAll(items, {});
+    expect(markItemUnread(items[0], state)).toEqual({ aw: 30, u: ["p1"] });
+    expect(markAllRead(items, state).state).toEqual({ aw: 30 });
+    expect(archiveAll(readerItems(thread.slice(0, 2)), state).state).toEqual({
+      aw: 30,
+    });
+  });
+
+  it("if the read watermark cannot move, archiving still holds", () => {
+    const items = readerItems(thread);
+    const { unmoved } = archiveAll(items, { u: ["p1"] });
+    expect(unmoved).toEqual({ u: ["p1"], aw: 30 });
   });
 });
