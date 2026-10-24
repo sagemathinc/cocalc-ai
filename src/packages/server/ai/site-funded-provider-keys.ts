@@ -380,7 +380,9 @@ async function reorderSiteFundedProviderKeys(
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
-      `SELECT key_id FROM site_ai_provider_keys WHERE provider = $1 FOR UPDATE`,
+      // Locked in the order admission locks them, so the two cannot deadlock.
+      `SELECT key_id FROM site_ai_provider_keys WHERE provider = $1
+       ORDER BY position, created_at FOR UPDATE`,
       [provider],
     );
     const current = new Set(rows.map(({ key_id }) => `${key_id}`));

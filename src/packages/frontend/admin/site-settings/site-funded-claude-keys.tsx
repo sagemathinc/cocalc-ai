@@ -27,6 +27,7 @@ import type {
 } from "@cocalc/util/ai/site-funded-claude";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { Icon } from "@cocalc/frontend/components";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -247,7 +248,7 @@ export default function SiteFundedClaudeKeysCard() {
       }
       style={{ marginBottom: 20, width: "100%" }}
     >
-      <div style={{ marginBottom: 12, color: "#666" }}>
+      <div style={{ marginBottom: 12, color: UI_COLORS.secondary }}>
         A Claude turn is paid for by the first enabled key, in this order, that
         has room left in its month. Each key has its own monthly limit and reset
         point. When every key is used up, included Claude is unavailable until
