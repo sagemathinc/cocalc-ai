@@ -5,7 +5,6 @@ import {
   authFirstRequireAccountWithBoundSession,
   authFirstRequireAccountOrHost,
   authFirstRequireAccountOrHostWithAccountTarget,
-  authFirstRequireAccountOrProjectOrHost,
   authFirstRequireAuthenticated,
   authFirstRequireHost,
   authFirstRequireProject,
@@ -202,13 +201,6 @@ export const system = {
   listBrowserSessions: authFirstRequireAccount,
   removeBrowserSession: authFirstRequireAccount,
   issueBrowserSignInCookie: authFirstRequireAccount,
-  getProjectAppPrivateHostnamePolicy: authFirstRequireAccountOrProjectOrHost,
-  inspectProjectAppPrivateHostname: authFirstRequireAccountOrProjectOrHost,
-  listProjectAppPrivateHostnames: authFirstRequireAccountOrProjectOrHost,
-  tracePrivateAppHostname: authFirstRequireAccountOrHost,
-  reserveProjectAppPrivateHostname: authFirstRequireAccountOrProjectOrHost,
-  releaseProjectAppPrivateHostname: authFirstRequireAccountOrProjectOrHost,
-  reconcileProjectAppPrivateHostnames: authFirstRequireAccount,
   recordManagedProjectEgress: authFirstRequireProjectOrHost,
   getManagedProjectEgressPolicy: authFirstRequireProjectOrHost,
   recordManagedProjectCpuUsage: authFirstRequireProjectOrHost,
@@ -482,9 +474,7 @@ export interface ProjectCryptominingEvidence {
 }
 
 export type ProjectBandwidthRelaySignalKind =
-  | "tunnel_process"
-  | "bulk_transfer_process"
-  | "automated_uploader_process";
+  "tunnel_process" | "bulk_transfer_process" | "automated_uploader_process";
 
 export interface ProjectBandwidthRelaySignal {
   kind: ProjectBandwidthRelaySignalKind;
@@ -633,10 +623,7 @@ export interface CloudflareTunnelApplyResult {
 }
 
 export type CloudflareTeardownClassification =
-  | "safe_owned"
-  | "probably_owned"
-  | "unknown"
-  | "protected";
+  "safe_owned" | "probably_owned" | "unknown" | "protected";
 
 export interface CloudflareTeardownResource {
   kind: "tunnel" | "dns_record" | "r2_bucket" | "api_token";
@@ -1219,43 +1206,6 @@ export interface ParallelOpsLimitResolution {
   config_source: "constant" | "env-legacy" | "db-override" | "env-debug-cap";
 }
 
-export interface ProjectAppPrivateHostnamePolicy {
-  enabled: boolean;
-  can_reserve: boolean;
-  current_private_hostnames: number;
-  max_private_hostnames: number;
-  current_bay_private_hostnames: number;
-  max_bay_private_hostnames: number;
-  membership_class?: string;
-  browser_origin?: string;
-  site_hostname?: string;
-  host_hostname?: string;
-  dns_target?: string;
-  warnings: string[];
-}
-
-export interface ProjectAppPrivateHostnameRecord {
-  project_id: string;
-  app_id: string;
-  label: string;
-  hostname: string;
-  base_path: string;
-  url: string;
-  dns_record_id?: string;
-  dns_target?: string;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-  last_dns_error?: string;
-}
-
-export interface ReconcileProjectAppPrivateHostnamesResult {
-  project_id: string;
-  checked: number;
-  updated: number;
-  errors: Array<{ app_id: string; error: string }>;
-}
-
 export interface BayInfo {
   bay_id: string;
   label: string;
@@ -1378,10 +1328,7 @@ export interface SiteSettingsReadResult {
 }
 
 export type GlobalConfigPropagationBayState =
-  | "current"
-  | "stale"
-  | "missing"
-  | "error";
+  "current" | "stale" | "missing" | "error";
 
 export interface GlobalConfigPropagationBayStatus {
   bay_id: string;
@@ -1408,11 +1355,7 @@ export interface GlobalConfigPropagationStatus {
 }
 
 export type SiteSetupStepState =
-  | "done"
-  | "blocked"
-  | "warning"
-  | "optional"
-  | "manual";
+  "done" | "blocked" | "warning" | "optional" | "manual";
 
 export interface SiteSetupStep {
   id: string;
@@ -1806,11 +1749,7 @@ export interface BayRestoreReadinessStatus {
   latest_backup_set_id: string | null;
   latest_backup_format: "pg_basebackup" | "pg_dumpall" | null;
   latest_backup_restore_test_status:
-    | "no-backup"
-    | "not-run"
-    | "stale"
-    | "passed"
-    | "failed";
+    "no-backup" | "not-run" | "stale" | "passed" | "failed";
   latest_backup_restore_tested: boolean;
   latest_backup_restore_tested_at: string | null;
   latest_backup_pitr_test_status:
@@ -2229,14 +2168,6 @@ export interface BillingAuthorityStatus {
   };
   completed: number;
   failed: number;
-}
-
-export interface PrivateAppHostnameTrace {
-  matched: boolean;
-  hostname: string;
-  project_id?: string;
-  app_id?: string;
-  base_path?: string;
 }
 
 export interface System {
@@ -3376,50 +3307,6 @@ export interface System {
     max_age_ms?: number;
     testing_account_id?: string;
   }) => Promise<BrowserSignInCookieInfo>;
-
-  getProjectAppPrivateHostnamePolicy: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-  }) => Promise<ProjectAppPrivateHostnamePolicy>;
-
-  inspectProjectAppPrivateHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-    app_id: string;
-  }) => Promise<ProjectAppPrivateHostnameRecord | undefined>;
-
-  listProjectAppPrivateHostnames: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-  }) => Promise<ProjectAppPrivateHostnameRecord[]>;
-
-  tracePrivateAppHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    hostname: string;
-  }) => Promise<PrivateAppHostnameTrace>;
-
-  reserveProjectAppPrivateHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-    app_id: string;
-  }) => Promise<ProjectAppPrivateHostnameRecord>;
-
-  releaseProjectAppPrivateHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-    app_id: string;
-  }) => Promise<{ released: boolean }>;
-
-  reconcileProjectAppPrivateHostnames: (opts: {
-    account_id?: string;
-    project_id: string;
-  }) => Promise<ReconcileProjectAppPrivateHostnamesResult>;
 
   recordManagedProjectEgress: (opts: {
     account_id?: string;

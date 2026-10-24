@@ -495,10 +495,11 @@ describe("hard delete project cleanup", () => {
       record_id: "dns-1",
       hostname: "server.example.com",
     });
-    expect(deleteAppSubdomainDnsMock).toHaveBeenCalledWith({
-      record_id: "dns-private-1",
-      hostname: "dev-private.example.com",
-    });
+    // Private app hostnames are retired: a stale row is purged with the
+    // project, and no DNS work is done for it.
+    expect(deleteAppSubdomainDnsMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ hostname: "dev-private.example.com" }),
+    );
     await expect(countRows("syncstrings", "project_id=$1")).resolves.toBe(0);
     await expect(
       getPool().query("SELECT COUNT(*)::int AS count FROM patches", []),

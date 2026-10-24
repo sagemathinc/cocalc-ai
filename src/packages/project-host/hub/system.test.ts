@@ -80,32 +80,4 @@ describe("wireSystemApi", () => {
       host_id: "00000000-1000-4000-8000-000000000123",
     });
   });
-
-  it("forwards private hostname reservation through the master host scope", async () => {
-    callHubMock.mockResolvedValue({
-      project_id: "00000000-1000-4000-8000-000000000456",
-      app_id: "cocalc-dev-main",
-      hostname: "dev-example.cocalc.ai",
-    });
-    const { hubApi } = await import("@cocalc/lite/hub/api");
-    const { wireSystemApi } = await import("./system");
-
-    wireSystemApi();
-
-    const request = {
-      project_id: "00000000-1000-4000-8000-000000000456",
-      app_id: "cocalc-dev-main",
-    };
-    await expect(
-      hubApi.system.reserveProjectAppPrivateHostname(request),
-    ).resolves.toMatchObject({
-      hostname: "dev-example.cocalc.ai",
-    });
-    expect(callHubMock).toHaveBeenCalledWith({
-      client: { id: "master-client" },
-      name: "system.reserveProjectAppPrivateHostname",
-      args: [request],
-      host_id: "00000000-1000-4000-8000-000000000123",
-    });
-  });
 });

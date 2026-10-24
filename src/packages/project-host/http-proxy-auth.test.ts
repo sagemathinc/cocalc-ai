@@ -67,10 +67,6 @@ import {
   PROJECT_HOST_API_KEY_HTTP_HEADER,
   PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
 } from "@cocalc/conat/auth/project-host-http";
-import {
-  createPrivateAppHostnameRequestRewriter,
-  PRIVATE_APP_HOST_HEADER,
-} from "./private-app-hostname";
 
 function createResponse() {
   const headers = new Map<string, string | string[]>();
@@ -366,7 +362,10 @@ describe("project-host HTTP session cookie", () => {
     await auth.authorizeHttpRequest(
       request(
         `cocalc_project_host_session=${encodeURIComponent(
-          createProjectHostBrowserSessionToken({ account_id, auth_iat_s: origin_s }),
+          createProjectHostBrowserSessionToken({
+            account_id,
+            auth_iat_s: origin_s,
+          }),
         )}`,
       ),
       res,
@@ -385,7 +384,11 @@ describe("project-host HTTP session cookie", () => {
     getAccountRevokedBeforeMsMock.mockReturnValue((now_s - 1800) * 1000);
     for (const cookie of fresh) {
       await expect(
-        auth.authorizeHttpRequest(request(cookie), createResponse(), project_id),
+        auth.authorizeHttpRequest(
+          request(cookie),
+          createResponse(),
+          project_id,
+        ),
       ).rejects.toThrow("session revoked");
     }
   });
@@ -477,7 +480,10 @@ describe("project-host HTTP session cookie", () => {
     const res = createResponse();
     await auth.authorizeHttpRequest(
       {
-        headers: { authorization: "Bearer token", "x-forwarded-proto": "https" },
+        headers: {
+          authorization: "Bearer token",
+          "x-forwarded-proto": "https",
+        },
         socket: {},
         url: `/${project_id}/apps/python-hello/`,
       } as any,
@@ -664,45 +670,6 @@ describe("project-host HTTP session cookie", () => {
       "Location",
       `/${project_id}/apps/python-hello/?x=1`,
     );
-    expect(res.end).toHaveBeenCalled();
-  });
-
-  it("keeps private-hostname token cleanup at the hostname root", async () => {
-    const auth = createProjectHostHttpProxyAuth({
-      host_id: "00000000-1000-4000-8000-000000000099",
-    });
-    const browserSession = createProjectHostBrowserSessionToken({
-      account_id,
-      now_ms: Date.now(),
-    });
-    const req = {
-      headers: {
-        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
-        "sec-fetch-site": "none",
-        host: "dev-1234.example.com",
-        "x-forwarded-proto": "https",
-      },
-      method: "GET",
-      socket: {},
-      url: `/?${PROJECT_HOST_HTTP_AUTH_QUERY_PARAM}=secret`,
-    } as any;
-    const rewrite = createPrivateAppHostnameRequestRewriter({
-      trace: async () => ({
-        matched: true,
-        project_id,
-        app_id: "python-hello",
-        base_path: "/apps/python-hello",
-      }),
-    });
-    await rewrite(req);
-    const res = createResponse();
-    res.end = jest.fn();
-    res.statusCode = 200;
-
-    await auth.authorizeHttpRequest(req, res, project_id);
-
-    expect(res.statusCode).toBe(302);
-    expect(res.setHeader).toHaveBeenCalledWith("Location", "/");
     expect(res.end).toHaveBeenCalled();
   });
 
@@ -983,25 +950,6 @@ describe("project-host HTTP session cookie", () => {
     });
   });
 
-  it("never falls through to public HTTP authorization for a private hostname", async () => {
-    const auth = createProjectHostHttpProxyAuth({
-      host_id: "00000000-1000-4000-8000-000000000099",
-    });
-    const req = {
-      headers: {
-        [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
-      },
-      socket: {},
-      url: `/${project_id}/apps/python-hello/`,
-    } as any;
-
-    await expect(
-      auth.authorizeHttpRequest(req, createResponse(), project_id),
-    ).rejects.toThrow(
-      "This private development site must be opened from its CoCalc project.",
-    );
-  });
-
   it("rejects retired public-app headers and query tokens without account auth", async () => {
     const auth = createProjectHostHttpProxyAuth({
       host_id: "00000000-1000-4000-8000-000000000099",
@@ -1021,7 +969,7 @@ describe("project-host HTTP session cookie", () => {
     expect(req.headers).not.toHaveProperty("x-cocalc-public-app-host");
   });
 
-  it("authorizes a collaborator on a private hostname", async () => {
+  it("authorizes a collaborator with a browser session", async () => {
     const auth = createProjectHostHttpProxyAuth({
       host_id: "00000000-1000-4000-8000-000000000099",
     });
@@ -1033,7 +981,6 @@ describe("project-host HTTP session cookie", () => {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
         "sec-fetch-site": "none",
-        [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/`,
@@ -1044,24 +991,7 @@ describe("project-host HTTP session cookie", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("never falls through to public websocket authorization for a private hostname", async () => {
-    const auth = createProjectHostHttpProxyAuth({
-      host_id: "00000000-1000-4000-8000-000000000099",
-    });
-    const req = {
-      headers: {
-        [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
-      },
-      socket: {},
-      url: `/${project_id}/apps/python-hello/`,
-    } as any;
-
-    await expect(auth.authorizeUpgradeRequest(req, project_id)).rejects.toThrow(
-      "This private development site must be opened from its CoCalc project.",
-    );
-  });
-
-  it("denies a signed-in non-collaborator on a private hostname", async () => {
+  it("denies a signed-in non-collaborator", async () => {
     const auth = createProjectHostHttpProxyAuth({
       host_id: "00000000-1000-4000-8000-000000000099",
     });
@@ -1074,7 +1004,6 @@ describe("project-host HTTP session cookie", () => {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
         "sec-fetch-site": "none",
-        [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/`,
@@ -1099,7 +1028,6 @@ describe("project-host HTTP session cookie", () => {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
         "sec-fetch-site": "none",
-        [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/socket`,
@@ -1340,7 +1268,10 @@ describe("app origin requests", () => {
   let row: any;
   beforeEach(() => {
     clearProjectHostHttpProxyAuthCaches();
-    row = { users: { [account_id]: { group: "collaborator" } }, content_epoch: 0 };
+    row = {
+      users: { [account_id]: { group: "collaborator" } },
+      content_epoch: 0,
+    };
     getRowMock.mockReset();
     getRowMock.mockImplementation(() => row);
     getAccountRevokedBeforeMsMock.mockReset();
@@ -1385,7 +1316,11 @@ describe("app origin requests", () => {
     const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
     const other = "00000000-1000-4000-8000-000000000009";
     await expect(
-      auth.authorizeHttpRequest(appRequest(`/${other}/port/8000/`), createResponse(), other),
+      auth.authorizeHttpRequest(
+        appRequest(`/${other}/port/8000/`),
+        createResponse(),
+        other,
+      ),
     ).rejects.toThrow("permission denied");
     await expect(
       auth.authorizeUpgradeRequest(appRequest(`/${other}/port/8000/`), other),
@@ -1401,7 +1336,10 @@ describe("app origin requests", () => {
       for (let i = 0; i < 2; i++) {
         const req = appRequest();
         await auth.authorizeUpgradeRequest(req, project_id);
-        const socket = Object.assign(new EventEmitter(), { destroy: jest.fn(), destroyed: false });
+        const socket = Object.assign(new EventEmitter(), {
+          destroy: jest.fn(),
+          destroyed: false,
+        });
         auth.trackUpgradedSocket(req, socket as any);
         sockets.push(socket);
       }

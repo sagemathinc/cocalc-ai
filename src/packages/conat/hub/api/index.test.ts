@@ -718,7 +718,7 @@ describe("hub API argument transforms", () => {
     expect(projectArgs[0]).not.toHaveProperty("account_id");
 
     const hostArgs = await transformArgs({
-      name: "system.getProjectAppPrivateHostnamePolicy",
+      name: "db.saveBlob",
       args: [
         {
           account_id: "victim-account",
@@ -979,50 +979,5 @@ describe("hub API argument transforms", () => {
         }),
       ).rejects.toThrow("user must be signed in with an account");
     }
-  });
-
-  it("registers private app hostname RPCs and injects caller identities", async () => {
-    const rpcNames = [
-      "system.getProjectAppPrivateHostnamePolicy",
-      "system.inspectProjectAppPrivateHostname",
-      "system.listProjectAppPrivateHostnames",
-      "system.tracePrivateAppHostname",
-      "system.reserveProjectAppPrivateHostname",
-      "system.releaseProjectAppPrivateHostname",
-      "system.reconcileProjectAppPrivateHostnames",
-    ];
-
-    for (const name of rpcNames) {
-      const args = await transformArgs({
-        name,
-        args: [{ project_id: "project-1", app_id: "app-1" }],
-        account_id: "account-1",
-      });
-      expect(args[0].account_id).toBe("account-1");
-    }
-
-    for (const name of [
-      "system.getProjectAppPrivateHostnamePolicy",
-      "system.inspectProjectAppPrivateHostname",
-      "system.listProjectAppPrivateHostnames",
-      "system.reserveProjectAppPrivateHostname",
-      "system.releaseProjectAppPrivateHostname",
-    ]) {
-      await expect(
-        transformArgs({
-          name,
-          args: [{ project_id: "spoofed-project", app_id: "app-1" }],
-          project_id: "project-1",
-        }),
-      ).resolves.toEqual([{ project_id: "project-1", app_id: "app-1" }]);
-    }
-
-    await expect(
-      transformArgs({
-        name: "system.tracePrivateAppHostname",
-        args: [{ host_id: "spoofed-host", hostname: "dev-1.example.com" }],
-        host_id: "host-1",
-      }),
-    ).resolves.toEqual([{ host_id: "host-1", hostname: "dev-1.example.com" }]);
   });
 });

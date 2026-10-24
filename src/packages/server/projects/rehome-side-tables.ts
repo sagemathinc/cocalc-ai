@@ -264,7 +264,7 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     table: "project_app_private_hostnames",
     status: "not-portable",
     reason:
-      "Private app hostnames contain owning-bay DNS lifecycle state. Release them before cross-bay rehome and reserve them again on the destination until an explicit DNS handoff protocol exists.",
+      "Retired (Oct 2026): private app hostnames were removed. The table may remain, empty, in older databases; nothing reads or writes it, and hard delete still purges any stale rows.",
   },
   account_project_index: {
     table: "account_project_index",
