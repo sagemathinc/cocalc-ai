@@ -43,6 +43,128 @@ describe("reader items", () => {
   });
 });
 
+describe("an item is one turn", () => {
+  const at = (ms: number) => new Date(ms);
+  const said = (id: string, ms: number, extra: object = {}) =>
+    ({ message_id: id, sender_id: "acct", date: at(ms), ...extra }) as any;
+  // A turn: the reply to `parent`, started at `ms`, last written at `done`.
+  const turn = (
+    id: string,
+    parent: string,
+    ms: number,
+    done?: number,
+    extra: object = {},
+  ) =>
+    ({
+      message_id: id,
+      sender_id: "codex",
+      acp_thread_id: "t",
+      parent_message_id: parent,
+      date: at(ms),
+      history:
+        done == null
+          ? []
+          : [{ author_id: "codex", date: at(done).toISOString() }],
+      ...extra,
+    }) as any;
+  const ids = (items) =>
+    items.map((item) => item.messages.map((m) => m.message_id));
+
+  it("what arrives while a turn runs goes with it", () => {
+    expect(
+      ids(
+        readerItems([
+          said("p1", 1000),
+          turn("a1", "p1", 1100, 5000),
+          said("steer", 2000),
+          said("agent-message", 3000, { agent_rpc: { from: "x" } }),
+          said("later", 6000),
+        ]),
+      ),
+    ).toEqual([["p1", "a1", "steer", "agent-message"], ["later"]]);
+  });
+
+  it("a running turn takes what arrives, as the log shows it", () => {
+    const items = readerItems(
+      [said("p1", 1000), turn("a1", "p1", 1100), said("steer", 9000)],
+      { acpState: new Map([["message:a1", "running"]]) },
+    );
+    expect(ids(items)).toEqual([["p1", "a1", "steer"]]);
+    // Generating says the same.
+    expect(
+      ids(
+        readerItems([
+          said("p1", 1000),
+          turn("a1", "p1", 1100, undefined, { generating: true }),
+          said("steer", 9000),
+        ]),
+      ),
+    ).toEqual([["p1", "a1", "steer"]]);
+  });
+
+  it("a delivered message goes with its turn, whatever a stale state says", () => {
+    expect(
+      ids(
+        readerItems(
+          [
+            said("p1", 1000),
+            turn("a1", "p1", 1100, 9000),
+            said("steer", 2000, { acp_guidance_delivered_at_ms: 2100 }),
+          ],
+          { acpState: new Map([["message:steer", "queue"]]) },
+        ),
+      ),
+    ).toEqual([["p1", "a1", "steer"]]);
+  });
+
+  it("the newest spanning turn by start time, in any order", () => {
+    // Out of date order (e.g. clock skew): a2 started later than a1.
+    const items = readerItems([
+      said("p2", 1500),
+      turn("a2", "p2", 1600, 9000),
+      said("p1", 1000),
+      turn("a1", "p1", 1100, 9000),
+      said("steer", 3000),
+    ]);
+    expect(
+      items.find((item) => item.id === "p2")!.messages.map((m) => m.message_id),
+    ).toEqual(["p2", "a2", "steer"]);
+  });
+
+  it("an overlapping older turn its parents lead to keeps it, as in the log", () => {
+    // a1 (a recovery) still runs when a2 starts; the message replies into a1.
+    const items = readerItems([
+      said("p1", 1000),
+      turn("a1", "p1", 1100, 9000),
+      said("p2", 1500),
+      turn("a2", "p2", 1600, 9000),
+      said("steer", 3000, { parent_message_id: "a1" }),
+    ]);
+    expect(
+      items.find((item) => item.id === "p1")!.messages.map((m) => m.message_id),
+    ).toEqual(["p1", "a1", "steer"]);
+  });
+
+  it("not what waits to be sent, a note for people, or the next turn's prompt", () => {
+    expect(
+      ids(
+        readerItems(
+          [
+            said("p1", 1000),
+            turn("a1", "p1", 1100, 9000),
+            said("queued", 2000),
+            said("not-sent", 2500, { acp_state: "not-sent" }),
+            said("note", 3000, { post_only: true }),
+            said("p2", 4000),
+            turn("a2", "p2", 9500, 9600),
+          ],
+          { acpState: new Map([["message:queued", "queue"]]) },
+        ),
+      ),
+    ).toEqual([["p1", "a1"], ["queued"], ["not-sent"], ["note"], ["p2", "a2"]]);
+  });
+});
+
 describe("read state", () => {
   const messages = [person("p1"), agent("a1"), person("p2"), person("p3")];
   const items = readerItems(messages);

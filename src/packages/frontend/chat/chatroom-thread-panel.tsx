@@ -839,9 +839,12 @@ export function ChatRoomThreadPanel({
   const readerAttention = useMemo(
     () =>
       showReader
-        ? readerItemAttention(attentionRecords, readerItems(readerMessages))
+        ? readerItemAttention(
+            attentionRecords,
+            readerItems(readerMessages, { acpState }),
+          )
         : new Map<string, readonly AcpAttentionRecord[]>(),
-    [showReader, attentionRecords, readerMessages],
+    [showReader, attentionRecords, readerMessages, acpState],
   );
   const selectedThreadMessages = useMemo(
     () =>
@@ -3125,6 +3128,7 @@ export function ChatRoomThreadPanel({
             path={path}
             readOnly={readOnly}
             isVisible={isVisible}
+            acpState={acpState}
             itemBadges={(item: ReaderItem) => (
               <ReaderItemBadges
                 working={readerItemWorking(item, readerRunningMessage)}

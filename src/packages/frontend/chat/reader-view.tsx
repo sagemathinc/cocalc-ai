@@ -140,6 +140,7 @@ export function ChatReaderView({
   autoFocus,
   renderItem,
   itemBadges,
+  acpState,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -166,12 +167,17 @@ export function ChatReaderView({
   renderItem?: (item: ReaderItem) => ReactNode;
   /** What the list says about an item besides its sender: e.g. a question. */
   itemBadges?: (item: ReaderItem) => ReactNode;
+  /** The live state of agent turns: which are running. */
+  acpState?: { get?: (key: string) => unknown };
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
   const pageVisible = usePageVisible();
   const shown = isVisible && pageVisible;
-  const items = useMemo(() => readerItems(messages), [messages]);
+  const items = useMemo(
+    () => readerItems(messages, { acpState }),
+    [messages, acpState],
+  );
   const watermark = useMemo(
     () => (accountId ? actions.getThreadReadCount(threadId, accountId) : 0) - 1,
     // eslint-disable-next-line react-hooks/exhaustive-deps
