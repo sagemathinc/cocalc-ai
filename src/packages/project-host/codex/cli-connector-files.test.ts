@@ -329,3 +329,16 @@ describe("lease files are never written through a symlink", () => {
     }
   });
 });
+
+describe("BeneathDir.writeFile", () => {
+  it("writes the whole content, however large", async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), "beneath-write-"));
+    try {
+      const big = "x".repeat(4 * 1024 * 1024) + "end";
+      new BeneathDir(root).writeFile("big", big);
+      expect(await fs.readFile(join(root, "big"), "utf8")).toBe(big);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});

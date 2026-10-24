@@ -824,7 +824,12 @@ export class BeneathDir {
     let placed = false;
     try {
       try {
-        writeSync(fd, data);
+        // writeSync may write less than asked: never publish a short file.
+        const bytes = Buffer.from(data);
+        let offset = 0;
+        while (offset < bytes.length) {
+          offset += writeSync(fd, bytes, offset, bytes.length - offset);
+        }
         fchmodSync(fd, mode);
       } finally {
         closeSync(fd);
