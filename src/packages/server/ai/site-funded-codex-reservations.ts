@@ -844,9 +844,18 @@ export async function recordSiteFundedCodexUsageEvent(
       return result(false);
     }
     if (row.status !== "active") {
-      throw new Error(
-        `site-funded Codex reservation is not active (${row.status})`,
-      );
+      if (event.requestSequence !== lastRequestSequence + 1) {
+        throw new Error(
+          `site-funded Codex reservation is not active (${row.status})`,
+        );
+      }
+      // A provider request that was already running when the reservation
+      // expired or was reconciled still completes and is billed by the
+      // provider. Record it rather than dropping the liability. Release this
+      // lock first so the late path can lock the funding periods before the
+      // reservation, in the same order as expiry and admission.
+      await client.query("ROLLBACK");
+      return await recordLateSiteFundedCodexUsageEvent(event, cost);
     }
     if (event.requestSequence < lastRequestSequence) {
       throw new Error("site-funded Codex usage event sequence is stale");
@@ -889,6 +898,109 @@ export async function recordSiteFundedCodexUsageEvent(
     );
     await client.query("COMMIT");
     return result(true);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Usage for a reservation that is no longer active (expired, reconciled from a
+// terminal session, or finished) is added to its committed cost and to the
+// committed totals of its funding periods. The pool hold was already released
+// when the reservation stopped being active, so only committed changes.
+async function recordLateSiteFundedCodexUsageEvent(
+  event: SiteFundedCodexUsageEvent,
+  cost: ReturnType<typeof computeSiteFundedCodexRequestCost>,
+): Promise<SiteFundedCodexUsageRecordResult> {
+  const { rows } = await getPool().query(
+    `SELECT pool_id, period_start FROM site_ai_turn_reservations
+     WHERE reservation_id = $1`,
+    [event.reservationId],
+  );
+  if (!rows[0]) throw new Error("site-funded Codex reservation not found");
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    for (const poolId of [GLOBAL_POOL_ID, rows[0].pool_id]) {
+      await client.query(
+        `SELECT pool_id FROM site_ai_funding_periods
+         WHERE pool_id = $1 AND period_start = $2 FOR UPDATE`,
+        [poolId, rows[0].period_start],
+      );
+    }
+    const found = await client.query(
+      `SELECT * FROM site_ai_turn_reservations
+       WHERE reservation_id = $1 FOR UPDATE`,
+      [event.reservationId],
+    );
+    const row = found.rows[0];
+    if (!row) throw new Error("site-funded Codex reservation not found");
+    const lastRequestSequence = int(row.last_request_sequence);
+    const base = {
+      fundedTurnId: row.funded_turn_id,
+      accountId: row.account_id,
+      projectId: row.project_id,
+      homeBayId: row.home_bay_id ?? undefined,
+    };
+    if (event.requestSequence === lastRequestSequence) {
+      await client.query("COMMIT");
+      return {
+        ...base,
+        costMicrousd: int(row.last_event_cost_microusd),
+        inserted: false,
+        priceVersion: row.last_event_price_version ?? cost.priceVersion,
+        longContext: row.last_event_long_context ?? cost.longContext,
+      };
+    }
+    if (
+      row.status === "active" ||
+      event.requestSequence !== lastRequestSequence + 1
+    ) {
+      // Reservations never return to active; anything else is a concurrent
+      // delivery that the caller retries through the normal path.
+      throw new Error(
+        `site-funded Codex usage event sequence ${event.requestSequence} follows ${lastRequestSequence}`,
+      );
+    }
+    const committedMicrousd = int(row.committed_microusd) + cost.costMicrousd;
+    await client.query(
+      `UPDATE site_ai_turn_reservations
+       SET committed_microusd = $2, last_request_sequence = $3,
+           last_event_id = $4, last_event_cost_microusd = $5,
+           last_event_price_version = $6, last_event_long_context = $7
+       WHERE reservation_id = $1`,
+      [
+        event.reservationId,
+        committedMicrousd,
+        event.requestSequence,
+        event.eventId,
+        cost.costMicrousd,
+        cost.priceVersion,
+        cost.longContext,
+      ],
+    );
+    await client.query(
+      `UPDATE site_ai_funding_periods
+       SET committed_microusd = committed_microusd + $3, updated_at = NOW()
+       WHERE pool_id = ANY($1::TEXT[]) AND period_start = $2`,
+      [[row.pool_id, GLOBAL_POOL_ID], row.period_start, cost.costMicrousd],
+    );
+    await client.query("COMMIT");
+    logger.warn("recorded site-funded Codex usage after reservation ended", {
+      reservationId: event.reservationId,
+      status: row.status,
+      requestSequence: event.requestSequence,
+      costMicrousd: cost.costMicrousd,
+    });
+    return {
+      ...base,
+      costMicrousd: cost.costMicrousd,
+      inserted: true,
+      priceVersion: cost.priceVersion,
+      longContext: cost.longContext,
+    };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
