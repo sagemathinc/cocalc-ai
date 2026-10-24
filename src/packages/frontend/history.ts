@@ -50,7 +50,6 @@ The URI schema handled by the single page app is as follows:
 import { join } from "path";
 
 import { redux } from "@cocalc/frontend/app-framework";
-import { alert_message } from "@cocalc/frontend/alerts";
 import {
   applyAccountSettingsRoute,
   getAccountSettingsRouteFromState,
@@ -66,8 +65,6 @@ import {
   type ParsedPageTarget,
 } from "@cocalc/frontend/page-routing";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
-import { handoffToPrivateProjectApp } from "@cocalc/frontend/project/private-app-handoff";
-import { parsePrivateProjectAppHandoffTarget } from "@cocalc/frontend/project-routing";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
 import {
@@ -282,28 +279,6 @@ export function load_target(
       break;
 
     case "project": {
-      const privateApp = parsePrivateProjectAppHandoffTarget(parsed.target);
-      if (privateApp != null) {
-        void handoffToPrivateProjectApp({
-          projectId: privateApp.projectId,
-          appId: privateApp.appId,
-        }).catch((err) => {
-          alert_message({
-            type: "error",
-            message: `Unable to open private project app: ${err}`,
-          });
-          redux
-            .getActions("projects")
-            .load_target(
-              `${privateApp.projectId}/servers`,
-              true,
-              ignore_kiosk,
-              change_history,
-              Fragment.get(),
-            );
-        });
-        return;
-      }
       redux
         .getActions("projects")
         .load_target(

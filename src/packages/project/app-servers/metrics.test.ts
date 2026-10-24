@@ -8,11 +8,7 @@ import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-au
 
 jest.mock("@cocalc/project/conat/hub", () => ({
   hubApi: jest.fn(() => ({
-    system: {
-      releaseProjectAppPrivateHostname: jest.fn(async () => ({
-        released: false,
-      })),
-    },
+    system: {},
   })),
 }));
 

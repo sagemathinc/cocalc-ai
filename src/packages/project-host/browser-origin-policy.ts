@@ -47,7 +47,6 @@ import fs from "node:fs";
 import type { IncomingMessage } from "node:http";
 import path from "node:path";
 import getLogger from "@cocalc/backend/logger";
-import { getPrivateAppHostnameProject } from "./private-app-hostname";
 import { getProjectContentDomain } from "./content-origin";
 
 const logger = getLogger("project-host:browser-origin-policy");
@@ -261,11 +260,9 @@ function isOwnOrigin(origin: string, req: Req): boolean {
   return url.protocol === "https:" || isLocalHostname(url.hostname);
 }
 
-// The own-origin allowance for app routes: on a private app hostname only for
-// that app's own project; unbound only on the host's own public hostname
-// (PROJECT_HOST_PUBLIC_URL), and only while the site has no app origins.
-// Any other hostname, including a private hostname whose lookup failed, gets
-// no allowance.
+// The own-origin allowance for app routes: only on the host's own public
+// hostname (PROJECT_HOST_PUBLIC_URL), and only while the site has no app
+// origins.  Any other hostname gets no allowance.
 //
 // With app origins (a content domain), no page of the canonical hostname may
 // use the cookie: the host serves no pages of its own there (its webapp and
@@ -273,12 +270,7 @@ function isOwnOrigin(origin: string, req: Req): boolean {
 // host-app-route-redirect.ts) and active files go to the content view, so
 // the only documents it could be are users' -- exactly what must never act
 // with the visitor's host cookie for other projects.
-function ownAppOriginAllowed(
-  req: Req,
-  project_id: string | undefined,
-): boolean {
-  const privateProject = getPrivateAppHostnameProject(req as IncomingMessage);
-  if (privateProject != null) return privateProject === project_id;
+function ownAppOriginAllowed(req: Req): boolean {
   return isCanonicalHost(req) && !getProjectContentDomain();
 }
 
@@ -324,7 +316,9 @@ function ownOriginRoute(req: Req, route: AmbientRoute): boolean {
 export function ambientCookieRejection(
   req: Req & { url?: string },
   route: AmbientRoute,
-  project_id?: string,
+  // Unused since private app hostnames are gone (every own-origin rule is
+  // now the same for every project); kept for callers' sake.
+  _project_id?: string,
 ): string | undefined {
   const approved = approvedBrowserOrigins();
   const originHeader = header(req, "origin");
@@ -335,7 +329,7 @@ export function ambientCookieRejection(
     if (
       ownOriginRoute(req, route) &&
       isOwnOrigin(origin, req) &&
-      ownAppOriginAllowed(req, project_id)
+      ownAppOriginAllowed(req)
     ) {
       return;
     }
@@ -355,7 +349,7 @@ export function ambientCookieRejection(
   if (
     ownOriginRoute(req, route) &&
     site === "same-origin" &&
-    ownAppOriginAllowed(req, project_id)
+    ownAppOriginAllowed(req)
   ) {
     return;
   }
@@ -367,10 +361,9 @@ export function ambientCookieRejection(
     (route === "app" || route === "file") &&
     header(req, "sec-fetch-mode").toLowerCase() === "navigate" &&
     header(req, "sec-fetch-dest").toLowerCase() === "document" &&
-    // Same serving-host rule as the own-origin cases: the shared host
-    // (PROJECT_HOST_PUBLIC_URL) unbound, a private app hostname only for its
-    // own project, anything else (including a failed lookup) refused.
-    ownAppOriginAllowed(req, project_id)
+    // Same serving-host rule as the own-origin cases: only the shared host
+    // (PROJECT_HOST_PUBLIC_URL), and only without app origins.
+    ownAppOriginAllowed(req)
   ) {
     return;
   }

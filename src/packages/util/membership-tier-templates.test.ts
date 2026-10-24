@@ -111,7 +111,6 @@ describe("membership tier templates", () => {
     expect(tier.features).toEqual({
       create_hosts: true,
       project_host_tier: 2,
-      private_app_hostnames_per_project: 30,
     });
     expect(tier.ai_limits).toEqual({ units_5h: 0, units_7d: 0 });
     expect(tier.store_visible).toBe(false);

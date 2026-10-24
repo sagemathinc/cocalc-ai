@@ -12,7 +12,6 @@ import {
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createPrivateAppHostnameRequestRewriter } from "./private-app-hostname";
 
 const project_id = "00000000-1000-4000-8000-000000000000";
 
@@ -315,7 +314,10 @@ describe("project-host browser origin policy", () => {
       ).toBeDefined();
       // The site's pages are unaffected.
       expect(
-        ambientCookieRejection(req({ origin: "https://cocalc.example" }), "app"),
+        ambientCookieRejection(
+          req({ origin: "https://cocalc.example" }),
+          "app",
+        ),
       ).toBeUndefined();
     });
   });
@@ -377,115 +379,25 @@ describe("project-host browser origin policy", () => {
       ).toBe("app");
     });
 
-    it("binds a private app's own origin to its project", async () => {
-      const rewrite = createPrivateAppHostnameRequestRewriter({
-        trace: async () => ({
-          matched: true,
-          project_id,
-          app_id: "x",
-          base_path: "/apps/x",
-        }),
-      });
+    it("gives no own-origin allowance on any other hostname, e.g. a former private app hostname", () => {
       const other = "00000000-1000-4000-8000-0000000000aa";
-      const privateReq = async (
-        headers: Record<string, string>,
-        target: string,
-      ) => {
-        const r: any = {
-          method: "GET",
-          url: `/${target}/apps/x/`,
-          headers: { host: "dev-1.app.example", ...headers },
-        };
-        await rewrite(r);
-        return r;
-      };
-      const origin = { origin: "https://dev-1.app.example" };
-      const sameOrigin = { "sec-fetch-site": "same-origin" };
-      expect(
-        ambientCookieRejection(await privateReq(origin, other), "app", other),
-      ).toBe("origin not allowed");
-      expect(
-        ambientCookieRejection(
-          await privateReq(sameOrigin, other),
-          "app",
-          other,
-        ),
-      ).toBe("not from an approved page");
-      expect(
-        ambientCookieRejection(
-          await privateReq(origin, project_id),
-          "app",
-          project_id,
-        ),
-      ).toBeUndefined();
-    });
-
-    it.each([
-      [
-        "a failed lookup",
-        async () => {
-          throw new Error("hub unavailable");
-        },
-      ],
-      ["no match", async () => ({ matched: false })],
-    ])(
-      "gives no own-origin allowance to a non-canonical host after %s",
-      async (_, trace) => {
-        const rewrite = createPrivateAppHostnameRequestRewriter({
-          trace: trace as any,
-        });
-        const other = "00000000-1000-4000-8000-0000000000aa";
-        for (const headers of [
-          { origin: "https://dev-1.app.example" },
-          { "sec-fetch-site": "same-origin" },
-        ]) {
-          const r: any = {
-            method: "GET",
-            url: `/${other}/apps/x/`,
-            headers: { host: "dev-1.app.example", ...headers },
-          };
-          await rewrite(r);
-          expect(ambientCookieRejection(r, "app", other)).toBeDefined();
+      for (const target of [project_id, other]) {
+        for (const [kind, route] of [
+          ["apps/x/", "app"],
+          ["files/a.txt", "file"],
+        ] as const) {
+          for (const headers of [
+            { origin: "https://dev-1.app.example" },
+            { "sec-fetch-site": "same-origin" },
+          ]) {
+            const r: any = {
+              method: "GET",
+              url: `/${target}/${kind}`,
+              headers: { host: "dev-1.app.example", ...headers },
+            };
+            expect(ambientCookieRejection(r, route, target)).toBeDefined();
+          }
         }
-      },
-    );
-
-    it("binds file reads on a private app hostname to that app's project", async () => {
-      const rewrite = createPrivateAppHostnameRequestRewriter({
-        trace: async () => ({
-          matched: true,
-          project_id,
-          app_id: "x",
-          base_path: "/apps/x",
-        }),
-      });
-      const other = "00000000-1000-4000-8000-0000000000aa";
-      const fileReq = async (
-        headers: Record<string, string>,
-        target: string,
-      ) => {
-        const r: any = {
-          method: "GET",
-          url: `/${target}/files/a.txt`,
-          headers: { host: "dev-1.app.example", ...headers },
-        };
-        await rewrite(r);
-        return r;
-      };
-      for (const headers of [
-        { origin: "https://dev-1.app.example" },
-        { "sec-fetch-site": "same-origin" },
-      ]) {
-        expect(
-          ambientCookieRejection(await fileReq(headers, other), "file", other),
-        ).toBeDefined();
-        expect(
-          ambientCookieRejection(
-            await fileReq(headers, project_id),
-            "file",
-            project_id,
-          ),
-        ).toBeUndefined();
       }
     });
 
@@ -585,50 +497,19 @@ describe("project-host browser origin policy", () => {
         "sec-fetch-mode": "navigate",
         "sec-fetch-dest": "document",
       };
-      const onPrivateHost = async (
-        trace: any,
-        target: string,
-        kind: string,
-      ) => {
-        const rewrite = createPrivateAppHostnameRequestRewriter({ trace });
-        const r: any = {
-          method: "GET",
-          url: `/${target}/${kind}/x`,
-          headers: { host: "dev-1.app.example", ...navHeaders },
-        };
-        await rewrite(r);
-        return ambientCookieRejection(
-          r,
-          classifyProjectRoute(r, target),
-          target,
-        );
-      };
-      const matched = async () => ({
-        matched: true,
-        project_id,
-        app_id: "x",
-        base_path: "/apps/x",
-      });
-      for (const kind of ["files", "port/6002"]) {
-        // Another project's content under this project's private origin.
-        expect(await onPrivateHost(matched, other, kind)).toBe(
-          "not from an approved page",
-        );
-        // Failed or unmatched lookups fail closed.
-        expect(
-          await onPrivateHost(
-            async () => {
-              throw new Error("hub down");
-            },
-            other,
-            kind,
-          ),
-        ).toBe("not from an approved page");
-        expect(
-          await onPrivateHost(async () => ({ matched: false }), other, kind),
-        ).toBe("not from an approved page");
+      for (const target of [project_id, other]) {
+        for (const kind of ["files", "port/6002"]) {
+          const r: any = {
+            method: "GET",
+            url: `/${target}/${kind}/x`,
+            headers: { host: "dev-1.app.example", ...navHeaders },
+          };
+          expect(
+            ambientCookieRejection(r, classifyProjectRoute(r, target), target),
+          ).toBe("not from an approved page");
+        }
       }
-      // A host that is neither the shared host nor a resolved private host.
+      // Any host that is not the shared host.
       expect(
         ambientCookieRejection(
           {

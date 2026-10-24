@@ -20,8 +20,6 @@ let runBayRestoreMock: jest.Mock;
 let requireDangerousSessionAuthMock: jest.Mock;
 let assertAccountTrustedForProductAccessMock: jest.Mock;
 let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
-let getPrivateAppRouteByHostnameMock: jest.Mock;
-let reserveProjectAppPrivateHostnameMock: jest.Mock;
 let getAssignedProjectHostInfoMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -166,18 +164,6 @@ jest.mock("@cocalc/server/conat/project-remote-access", () => ({
 jest.mock("@cocalc/server/conat/project-host-assignment", () => ({
   getAssignedProjectHostInfo: (...args: any[]) =>
     getAssignedProjectHostInfoMock(...args),
-}));
-
-jest.mock("@cocalc/server/app-private-hostnames", () => ({
-  getPrivateAppRouteByHostname: (...args: any[]) =>
-    getPrivateAppRouteByHostnameMock(...args),
-  getProjectAppPrivateHostnamePolicy: jest.fn(),
-  inspectProjectAppPrivateHostname: jest.fn(),
-  listProjectAppPrivateHostnames: jest.fn(),
-  reconcileProjectAppPrivateHostnamesForProject: jest.fn(),
-  releaseProjectAppPrivateHostname: jest.fn(),
-  reserveProjectAppPrivateHostname: (...args: any[]) =>
-    reserveProjectAppPrivateHostnameMock(...args),
 }));
 
 describe("getBayLoad", () => {
@@ -744,120 +730,5 @@ describe("getBayLoad", () => {
       session_hash: "session-hash",
       require_second_factor: true,
     });
-  });
-});
-
-describe("private project app hostname authorization", () => {
-  const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
-  const OWNER_ID = "11111111-1111-4111-8111-111111111111";
-  const OTHER_ID = "33333333-3333-4333-8333-333333333333";
-
-  beforeEach(() => {
-    jest.resetModules();
-    isAdminMock = jest.fn(async () => false);
-    queryMock = jest.fn(async (sql: string) => {
-      if (sql.includes("jsonb_each(projects.users)")) {
-        return { rows: [{ account_id: OWNER_ID }] };
-      }
-      return { rows: [] };
-    });
-    getPoolMock = jest.fn(() => ({ query: queryMock }));
-    assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
-    assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(
-      async () => undefined,
-    );
-    getPrivateAppRouteByHostnameMock = jest.fn();
-    reserveProjectAppPrivateHostnameMock = jest.fn(async () => ({
-      project_id: PROJECT_ID,
-      app_id: "workspace-dev",
-      hostname: "dev-1234.cocalc.ai",
-    }));
-    getAssignedProjectHostInfoMock = jest.fn(async () => ({
-      host_id: "00000000-1000-4000-8000-000000000099",
-    }));
-  });
-
-  it("allows a project owner to reserve a private hostname", async () => {
-    const { reserveProjectAppPrivateHostname } = await import("./system");
-
-    await expect(
-      reserveProjectAppPrivateHostname({
-        account_id: OWNER_ID,
-        project_id: PROJECT_ID,
-        app_id: "workspace-dev",
-      }),
-    ).resolves.toMatchObject({
-      hostname: "dev-1234.cocalc.ai",
-    });
-
-    expect(assertProjectCollaboratorAccessAllowRemoteMock).toHaveBeenCalledWith(
-      {
-        account_id: OWNER_ID,
-        project_id: PROJECT_ID,
-      },
-    );
-    expect(reserveProjectAppPrivateHostnameMock).toHaveBeenCalledWith({
-      project_id: PROJECT_ID,
-      app_id: "workspace-dev",
-      created_by: OWNER_ID,
-    });
-    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
-      OWNER_ID,
-      "create private project app hostnames",
-    );
-  });
-
-  it("allows the assigned host to reserve for its project after checking owners", async () => {
-    const { reserveProjectAppPrivateHostname } = await import("./system");
-
-    await expect(
-      reserveProjectAppPrivateHostname({
-        host_id: "00000000-1000-4000-8000-000000000099",
-        project_id: PROJECT_ID,
-        app_id: "workspace-dev",
-      }),
-    ).resolves.toMatchObject({
-      hostname: "dev-1234.cocalc.ai",
-    });
-
-    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
-      OWNER_ID,
-      "create private project app hostnames",
-    );
-    expect(reserveProjectAppPrivateHostnameMock).toHaveBeenCalledWith({
-      project_id: PROJECT_ID,
-      app_id: "workspace-dev",
-      created_by: OWNER_ID,
-    });
-  });
-
-  it("denies a collaborator who is not an owner or administrator", async () => {
-    const { reserveProjectAppPrivateHostname } = await import("./system");
-
-    await expect(
-      reserveProjectAppPrivateHostname({
-        account_id: OTHER_ID,
-        project_id: PROJECT_ID,
-        app_id: "workspace-dev",
-      }),
-    ).rejects.toThrow(
-      "only a project owner or site administrator can manage private app hostnames",
-    );
-    expect(reserveProjectAppPrivateHostnameMock).not.toHaveBeenCalled();
-  });
-
-  it("does not disclose a matched route to an unauthenticated caller", async () => {
-    getPrivateAppRouteByHostnameMock.mockResolvedValue({
-      project_id: PROJECT_ID,
-      app_id: "workspace-dev",
-      base_path: "/apps/workspace-dev",
-    });
-    const { tracePrivateAppHostname } = await import("./system");
-
-    await expect(
-      tracePrivateAppHostname({
-        hostname: "dev-1234.cocalc.ai",
-      }),
-    ).rejects.toThrow("must be signed in");
   });
 });

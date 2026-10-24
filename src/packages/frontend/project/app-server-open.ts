@@ -4,7 +4,6 @@
  */
 
 import type { AppSpec, ManagedAppStatus } from "@cocalc/conat/project/api/apps";
-import type { ProjectAppPrivateHostnameRecord } from "@cocalc/conat/hub/api/system";
 import { message } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -55,35 +54,8 @@ function translateServiceOpenUrl(
   return localUrl;
 }
 
-export function buildPrivateHostnameOpenUrl({
-  privateHostnameUrl,
-  spec,
-  status,
-}: {
-  privateHostnameUrl: string;
-  spec?: AppSpec;
-  status: ManagedAppStatus;
-}): string {
-  if (
-    spec?.kind !== "service" ||
-    spec.proxy?.open_mode !== "port" ||
-    !status.url
-  ) {
-    return privateHostnameUrl;
-  }
-  const localUrl = translateServiceOpenUrl(status.url, "port");
-  if (!localUrl) return privateHostnameUrl;
-  const privateUrl = new URL(privateHostnameUrl);
-  const local = new URL(localUrl, "https://project-host.invalid");
-  privateUrl.pathname = local.pathname;
-  privateUrl.search = local.search;
-  privateUrl.hash = local.hash;
-  return privateUrl.toString();
-}
-
 interface ProjectAppOpenOptions {
   getSpec?: (id: string) => Promise<AppSpec>;
-  privateHostname?: ProjectAppPrivateHostnameRecord;
   project_id: string;
   spec?: AppSpec;
   status: ManagedAppStatus;
@@ -93,7 +65,6 @@ interface ProjectAppOpenOptions {
 
 export async function getProjectAppOpenUrl({
   getSpec,
-  privateHostname,
   project_id,
   spec,
   status,
@@ -108,21 +79,6 @@ export async function getProjectAppOpenUrl({
       // Fall back to the app status URL below.
     }
   };
-
-  if (privateHostname?.url) {
-    await resolveSpec();
-  }
-
-  if (privateHostname?.url) {
-    return await webapp_client.conat_client.addProjectHostAuthToUrl({
-      project_id,
-      url: buildPrivateHostnameOpenUrl({
-        privateHostnameUrl: privateHostname.url,
-        spec: resolvedSpec,
-        status,
-      }),
-    });
-  }
 
   await resolveSpec();
   const declaredBasePath = `${resolvedSpec?.proxy?.base_path ?? ""}`.trim();
@@ -158,32 +114,8 @@ export async function getProjectAppOpenUrl({
   });
 }
 
-export async function getPrivateProjectAppOpenUrl({
-  app_id,
-  project_id,
-}: {
-  app_id: string;
-  project_id: string;
-}): Promise<string> {
-  const hostname =
-    await webapp_client.conat_client.hub.system.inspectProjectAppPrivateHostname(
-      {
-        project_id,
-        app_id,
-      },
-    );
-  if (!hostname?.url) {
-    throw new Error(`Private hostname for app '${app_id}' is not reserved.`);
-  }
-  return await webapp_client.conat_client.addProjectHostAuthToUrl({
-    project_id,
-    url: hostname.url,
-  });
-}
-
 export async function openProjectAppStatus(opts: {
   getSpec?: (id: string) => Promise<AppSpec>;
-  privateHostname?: ProjectAppPrivateHostnameRecord;
   project_id: string;
   spec?: AppSpec;
   status: ManagedAppStatus;
@@ -203,27 +135,26 @@ export async function openProjectAppStatus(opts: {
       );
     return;
   }
-  if (!opts.privateHostname?.url) {
-    // Reserve the tab while the click still has user activation (browsers
-    // block popups opened after an await), then send it where it goes.
-    const tab = window.open("", "_blank");
-    if (tab != null) {
-      tab.opener = null;
-      try {
-        // Not noreferrer: the app origin accepts the link only from this
-        // site (the Referer is just the site's origin).
-        const url =
-          (await getProjectAppOriginUrl(opts)) ??
-          (await getProjectAppOpenUrl(opts));
-        if (url) tab.location.href = url;
-        else tab.close();
-      } catch (err) {
-        tab.close();
-        throw err;
-      }
-      return;
+  // Reserve the tab while the click still has user activation (browsers
+  // block popups opened after an await), then send it where it goes.
+  const tab = window.open("", "_blank");
+  if (tab != null) {
+    tab.opener = null;
+    try {
+      // Not noreferrer: the app origin accepts the link only from this
+      // site (the Referer is just the site's origin).
+      const url =
+        (await getProjectAppOriginUrl(opts)) ??
+        (await getProjectAppOpenUrl(opts));
+      if (url) tab.location.href = url;
+      else tab.close();
+    } catch (err) {
+      tab.close();
+      throw err;
     }
+    return;
   }
+  // The popup was blocked: open it directly (no opener).
   const url = await getProjectAppOpenUrl(opts);
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");

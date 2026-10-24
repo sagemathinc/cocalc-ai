@@ -255,10 +255,7 @@ describe("project-host hub API request authorization", () => {
         authorizeProjectHostHubApiRequest(projectRequest(name)),
       ).not.toThrow();
     }
-    for (const name of [
-      "compute.authorizeProjectSshKey",
-      "system.reserveProjectAppPrivateHostname",
-    ]) {
+    for (const name of ["compute.authorizeProjectSshKey"]) {
       expectForbidden(() =>
         authorizeProjectHostHubApiRequest(projectRequest(name)),
       );
@@ -269,7 +266,7 @@ describe("project-host hub API request authorization", () => {
     expectForbidden(() =>
       authorizeProjectHostHubApiRequest(
         projectRequest(
-          "system.getProjectAppPrivateHostnamePolicy",
+          "system.getManagedProjectEgressPolicy",
           other_project_id,
         ),
       ),

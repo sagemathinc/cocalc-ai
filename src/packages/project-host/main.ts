@@ -79,12 +79,6 @@ import {
 import { wireHostsApi } from "./hub/hosts";
 import { wireNotificationsApi } from "./hub/notifications";
 import { wireSystemApi } from "./hub/system";
-import {
-  createAppHostnameRequestRewriteBarrier,
-  createPrivateAppHostnameRequestRewriter,
-  PRIVATE_APP_HOST_HEADER,
-  rewritePrivateAppHostnameResponseLocation,
-} from "./private-app-hostname";
 import { startMasterRegistration } from "./master";
 import { startProvisionedInventoryReporter } from "./master-status";
 import { startReconciler } from "./reconcile";
@@ -205,7 +199,6 @@ import { getProjectHostActivitySnapshot } from "./health-progress";
 import {
   attachProjectHostConatRouterProxy,
   resolveProjectHostConatRouterUrl,
-  shouldRouteProjectHostIngressToApp,
 } from "./conat-router";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import {
@@ -285,10 +278,6 @@ const PROJECT_HTTP_PORT_POLL_MS = Math.max(
   100,
   Number(process.env.COCALC_PROJECT_HTTP_PORT_POLL_MS ?? 500),
 );
-const PRIVATE_APP_ROUTE_CACHE_MS = Math.max(
-  1000,
-  Number(process.env.COCALC_PROJECT_HOST_PRIVATE_APP_ROUTE_CACHE_MS ?? 30_000),
-);
 
 export interface ProjectHostConfig {
   hostId?: string;
@@ -353,8 +342,7 @@ async function startHttpListener(
   tls: TlsConfig,
 ) {
   let httpServer:
-    | ReturnType<typeof createHttpServer>
-    | ReturnType<typeof createHttpsServer>;
+    ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
   if (tls.enabled) {
     const { key, cert, keyPath, certPath } = getOrCreateSelfSigned(
       tls.hostname,
@@ -435,12 +423,6 @@ export async function main(
 
   // 1) HTTP + conat server
   const app = express();
-  // Only the private-hostname rewriter sets this header: never trust a
-  // client's value (upgrades: see the emit wrapper below).
-  app.use((req, _res, next) => {
-    delete req.headers[PRIVATE_APP_HOST_HEADER];
-    next();
-  });
   // The per-project content origin (trust-free step 6) owns every request on
   // a content hostname, before any other route; see content-origin.ts.
   const contentDomain = getProjectContentDomain();
@@ -476,21 +458,6 @@ export async function main(
     }
     void handleContentRequest(req, res, next).catch(() => res.destroy());
   });
-  let handlePrivateAppHttpRequest:
-    | ((
-        req: IncomingMessage,
-        res: ServerResponse,
-        next: NextFunction,
-      ) => Promise<void>)
-    | undefined;
-  // Private hostnames own their complete URL namespace, including paths such
-  // as /healthz and /conat that the project-host itself also serves.
-  app.use((req, res, next) => {
-    if (!handlePrivateAppHttpRequest) {
-      return next();
-    }
-    void handlePrivateAppHttpRequest(req, res, next).catch(next);
-  });
   app.use(express.json());
   const { httpServer } = await startHttpListener(app, port, host, tls);
   installContentHostnameUpgradeGuard(httpServer, contentDomain, () => {
@@ -499,24 +466,10 @@ export async function main(
     return async (req) => {
       const auth = await origin.authorizeUpgrade(req);
       if (!auth) return false;
-      delete req.headers[PRIVATE_APP_HOST_HEADER];
       setAppOriginRequestAuth(req, auth);
       return true;
     };
   });
-  {
-    // Outermost: runs before the guard and every upgrade listener.
-    const emit = httpServer.emit;
-    httpServer.emit = function (
-      this: any,
-      event: string | symbol,
-      ...args: any[]
-    ) {
-      if (event === "upgrade")
-        delete args[0]?.headers?.[PRIVATE_APP_HOST_HEADER];
-      return emit.apply(this, [event, ...args] as any);
-    } as typeof httpServer.emit;
-  }
   app.get("/healthz", (_req, res) =>
     res.json({
       ok: true,
@@ -1150,56 +1103,20 @@ export async function main(
       res.status(status).json({ error: message });
     }
   });
-  const maybeRewritePrivateHostnameRequest =
-    createPrivateAppHostnameRequestRewriter({
-      cacheMs: PRIVATE_APP_ROUTE_CACHE_MS,
-      trace: async (hostname) =>
-        await hubApi.system.tracePrivateAppHostname({ hostname }),
-      onTraceError: (hostname, err) => {
-        logger.debug("private hostname trace failed", {
-          hostname,
-          err: `${err}`,
-        });
-      },
-    });
-  const maybeRewriteAppHostnameRequest = createAppHostnameRequestRewriteBarrier(
-    {
-      shouldClaim: (req) => {
-        if (req.headers[PRIVATE_APP_HOST_HEADER]) {
-          return false;
-        }
-        const parsed = new URL(
-          `${req.url ?? "/"}`,
-          "http://project-host.local",
-        );
-        const maybeProjectPrefix = (parsed.pathname || "/").split("/")[1];
-        if (maybeProjectPrefix && isValidUUID(maybeProjectPrefix)) {
-          return false;
-        }
-        return shouldRouteProjectHostIngressToApp(req);
-      },
-      rewrite: async (req, originalUrl) => {
-        await maybeRewritePrivateHostnameRequest(req, originalUrl);
-      },
-    },
-  );
   attachProjectHostConatRouterProxy({
     app,
     httpServer,
     target: conatRouterUrl,
-    rewriteIngressRequest: maybeRewriteAppHostnameRequest,
   });
   const projectProxyHandlers = attachProjectProxy({
     httpServers: [httpServer],
     app,
-    rewriteRequest: maybeRewriteAppHostnameRequest,
     rewriteResponse: (proxyRes, req) => {
       // App origins: the user's server's cookies stay host-only, and can't
       // set the app session (also guarded on the response itself).
       if (isAppOriginRequest(req)) {
         rewriteUpstreamResponseCookies(proxyRes.headers);
       }
-      rewritePrivateAppHostnameResponseLocation(proxyRes, req);
     },
     rewriteUpgradeResponse: (proxyRes, req) => {
       if (isAppOriginRequest(req)) {
@@ -1254,11 +1171,7 @@ export async function main(
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
       const isProjectUploadRoute = isProjectUploadRequest(req, project_id);
-      if (
-        res &&
-        !isAppOriginRequest(req) &&
-        !req.headers[PRIVATE_APP_HOST_HEADER]
-      ) {
+      if (res && !isAppOriginRequest(req)) {
         // D7: apps are never pages on this origin (host-app-route-redirect.ts).
         const decision = hostAppRouteRedirect({
           req,
@@ -1465,8 +1378,6 @@ export async function main(
       } else {
         delete req.headers[PROJECT_PROXY_ACCOUNT_ID_HEADER];
       }
-      const privateAppHost =
-        `${req.headers[PRIVATE_APP_HOST_HEADER] ?? ""}`.trim();
       const isManagedHttpRoute =
         !!res && isManagedProjectHttpEgressRequest(req, project_id);
       const isManagedWsRoute =
@@ -1515,10 +1426,6 @@ export async function main(
           app_id: await resolveManagedWsAppId({ project_id, req }),
         });
       }
-      if (privateAppHost) {
-        req.headers.host = privateAppHost;
-      }
-      delete req.headers[PRIVATE_APP_HOST_HEADER];
       if (res) {
         const match = await matchAppRequest({
           project_id,
@@ -1599,7 +1506,6 @@ export async function main(
       matchApp: async ({ project_id, url }) =>
         await matchAppRequest({ project_id, url }),
       proxy: async (req, res, auth) => {
-        delete req.headers[PRIVATE_APP_HOST_HEADER];
         setAppOriginRequestAuth(req, auth);
         await projectProxyHandlers.handleRequest(req, res, () => {
           if (!res.headersSent) {
@@ -1615,13 +1521,6 @@ export async function main(
         }),
     });
   }
-  handlePrivateAppHttpRequest = async (req, res, next) => {
-    await maybeRewritePrivateHostnameRequest(req);
-    if (!req.headers[PRIVATE_APP_HOST_HEADER]) {
-      return next();
-    }
-    await projectProxyHandlers.handleRequest(req, res, next);
-  };
 
   logger.info(
     "Serve per-project files via the fs.* conat service, mounting from the local file-server.",

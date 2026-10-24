@@ -30,10 +30,6 @@ import type {
   InstalledAppTemplate,
   ManagedAppStatus,
 } from "@cocalc/conat/project/api/apps";
-import type {
-  ProjectAppPrivateHostnamePolicy,
-  ProjectAppPrivateHostnameRecord,
-} from "@cocalc/conat/hub/api/system";
 import { useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
@@ -63,10 +59,7 @@ import {
   type AppServerPreset,
   type AppServiceOpenMode,
 } from "./app-template-catalog";
-import {
-  buildPrivateHostnameOpenUrl,
-  openProjectAppStatus,
-} from "./app-server-open";
+import { openProjectAppStatus } from "./app-server-open";
 import {
   inferStaticSharingFromDirectory,
   suggestAppIdFromDirectory,
@@ -76,11 +69,8 @@ import {
 } from "./static-sharing-inference";
 
 type AppKind = "service" | "static";
-type AppStatusFilter = "all" | "running" | "stopped" | "error" | "private";
-type AppRowAction =
-  | "refresh"
-  | "reserve-private-hostname"
-  | "release-private-hostname";
+type AppStatusFilter = "all" | "running" | "stopped" | "error";
+type AppRowAction = "refresh";
 const APP_SERVER_PANEL_REFRESH_EVENT = "cocalc-project-apps-refresh";
 
 function notifyAppServerPanelRefresh(project_id: string, source: string): void {
@@ -545,103 +535,6 @@ function renderLogTailBlock({
       >
         <StaticMarkdown value={toFencedCodeBlock(content, "sh")} />
       </div>
-    </div>
-  );
-}
-
-function PrivateHostnameRow({
-  busy,
-  hostname,
-  openUrl,
-  onConfigure,
-  onOpen,
-  onRelease,
-}: {
-  busy?: boolean;
-  hostname?: ProjectAppPrivateHostnameRecord;
-  openUrl?: string;
-  onConfigure?: () => void;
-  onOpen: () => void;
-  onRelease?: () => void;
-}) {
-  if (!hostname) {
-    if (!onConfigure) return null;
-    return (
-      <div
-        style={{
-          alignItems: "center",
-          display: "flex",
-          flexWrap: "wrap",
-          fontSize: 12,
-          gap: 6,
-          marginTop: 4,
-        }}
-      >
-        <Typography.Text type="secondary">
-          Private URL (platform-managed): not configured
-        </Typography.Text>
-        <Button
-          type="link"
-          size="small"
-          loading={busy}
-          onClick={onConfigure}
-          style={{ height: "auto", padding: 0 }}
-        >
-          Create
-        </Button>
-      </div>
-    );
-  }
-  return (
-    <div
-      style={{
-        alignItems: "center",
-        display: "flex",
-        flexWrap: "wrap",
-        fontSize: 12,
-        gap: 6,
-        marginTop: 4,
-        minWidth: 0,
-      }}
-    >
-      <Typography.Text type="secondary">
-        Private URL (platform-managed):
-      </Typography.Text>
-      <Icon name="lock" />
-      <Typography.Link
-        href={openUrl ?? hostname.url}
-        onClick={(event) => {
-          event.preventDefault();
-          onOpen();
-        }}
-        style={{ overflowWrap: "anywhere" }}
-      >
-        {openUrl ?? hostname.url}
-      </Typography.Link>
-      <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-        collaborators only
-      </Tag>
-      {hostname.last_dns_error ? (
-        <Tag
-          color="red"
-          title={hostname.last_dns_error}
-          style={{ marginInlineEnd: 0 }}
-        >
-          DNS issue
-        </Tag>
-      ) : null}
-      {onRelease ? (
-        <Button
-          danger
-          type="link"
-          size="small"
-          loading={busy}
-          onClick={onRelease}
-          style={{ height: "auto", padding: 0 }}
-        >
-          Release
-        </Button>
-      ) : null}
     </div>
   );
 }
@@ -1268,12 +1161,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
   const [rowFilter, setRowFilter] = useState<AppStatusFilter>("all");
   const [rowSearch, setRowSearch] = useState<string>("");
-  const [privateHostnamePolicy, setPrivateHostnamePolicy] = useState<
-    ProjectAppPrivateHostnamePolicy | undefined
-  >(undefined);
-  const [privateHostnamesById, setPrivateHostnamesById] = useState<
-    Record<string, ProjectAppPrivateHostnameRecord | undefined>
-  >({});
   const [transferBusy, setTransferBusy] = useState<boolean>(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const instanceIdRef = useRef<string>(appServerPanelInstanceId());
@@ -1403,8 +1290,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       if (rowFilter === "running" && row.state !== "running") return false;
       if (rowFilter === "stopped" && row.state !== "stopped") return false;
       if (rowFilter === "error" && !rowHasError) return false;
-      if (rowFilter === "private" && !privateHostnamesById[row.id])
-        return false;
       if (!needle) return true;
       const haystacks = [
         row.id,
@@ -1412,8 +1297,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         row.kind,
         row.lifecycle_mode,
         row.state,
-        privateHostnamesById[row.id]?.hostname,
-        privateHostnamesById[row.id]?.url,
         spec?.proxy?.base_path,
         spec?.static?.root,
       ];
@@ -1421,14 +1304,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         `${value ?? ""}`.toLowerCase().includes(needle),
       );
     });
-  }, [
-    privateHostnamesById,
-    rowFilter,
-    rowSearch,
-    specById,
-    startupFailures,
-    userVisibleRows,
-  ]);
+  }, [rowFilter, rowSearch, specById, startupFailures, userVisibleRows]);
 
   const summaryCounts = useMemo(() => {
     const running = userVisibleRows.filter(
@@ -1444,21 +1320,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       total: userVisibleRows.length,
       running,
       stopped: Math.max(0, userVisibleRows.length - running),
-      privateHostnames: userVisibleRows.filter(
-        (row) => !!privateHostnamesById[row.id],
-      ).length,
       attention,
     };
-  }, [privateHostnamesById, startupFailures, userVisibleRows]);
-  const privateHostnameUiVisible =
-    privateHostnamePolicy?.can_reserve === true ||
-    summaryCounts.privateHostnames > 0;
-
-  useEffect(() => {
-    if (!privateHostnameUiVisible && rowFilter === "private") {
-      setRowFilter("all");
-    }
-  }, [privateHostnameUiVisible, rowFilter]);
+  }, [startupFailures, userVisibleRows]);
   const siteOrigin = useMemo(() => {
     if (typeof window === "undefined" || !window.location?.origin) return "";
     return window.location.origin.replace(/\/+$/, "");
@@ -1573,11 +1437,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     detectingInstalledTemplates;
 
   useEffect(() => {
-    setPrivateHostnamePolicy(undefined);
-    setPrivateHostnamesById({});
-  }, [project_id]);
-
-  useEffect(() => {
     let cancelled = false;
     void resolveProjectHomeDirectory(project_id).then((nextHome) => {
       if (cancelled) return;
@@ -1616,15 +1475,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setLoading(true);
       setError(undefined);
       setStartupFailures({});
-      const [next, specRecords, metrics, templates, privatePolicy, hostnames] =
-        await Promise.all([
-          api.apps.listAppStatuses(),
-          api.apps.listAppSpecs(),
-          api.apps.listAppMetrics({ minutes: 60 }),
-          api.apps.listAppTemplates(),
-          api.apps.getPrivateHostnamePolicy().catch(() => undefined),
-          api.apps.listPrivateHostnames().catch(() => undefined),
-        ]);
+      const [next, specRecords, metrics, templates] = await Promise.all([
+        api.apps.listAppStatuses(),
+        api.apps.listAppSpecs(),
+        api.apps.listAppMetrics({ minutes: 60 }),
+        api.apps.listAppTemplates(),
+      ]);
       setRows(next.sort((a, b) => a.id.localeCompare(b.id)));
       const map: Record<string, AppSpec | undefined> = {};
       for (const row of specRecords) {
@@ -1637,16 +1493,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         Object.fromEntries(metrics.map((item) => [item.app_id, item] as const)),
       );
       setTemplateEntries(templates);
-      if (privatePolicy) {
-        setPrivateHostnamePolicy(privatePolicy);
-      }
-      if (hostnames) {
-        setPrivateHostnamesById(
-          Object.fromEntries(
-            hostnames.map((item) => [item.app_id, item] as const),
-          ),
-        );
-      }
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2059,55 +1905,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         return spec;
       },
       project_id,
-      privateHostname: privateHostnamesById[status.id],
       spec: specById[status.id],
       status,
-    });
-  }
-
-  async function onReservePrivateHostname(id: string) {
-    try {
-      setSubmitting(true);
-      setRowAction({ appId: id, action: "reserve-private-hostname" });
-      setError(undefined);
-      const hostname = await api.apps.reservePrivateHostname(id);
-      setPrivateHostnamesById((prev) => ({ ...prev, [id]: hostname }));
-      notifyAppServerPanelRefresh(project_id, instanceIdRef.current);
-    } catch (err) {
-      setError(normalizeError(err));
-    } finally {
-      setSubmitting(false);
-      setRowAction(null);
-    }
-  }
-
-  async function onReleasePrivateHostname(id: string) {
-    try {
-      setSubmitting(true);
-      setRowAction({ appId: id, action: "release-private-hostname" });
-      setError(undefined);
-      await api.apps.releasePrivateHostname(id);
-      setPrivateHostnamesById((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      notifyAppServerPanelRefresh(project_id, instanceIdRef.current);
-    } catch (err) {
-      setError(normalizeError(err));
-    } finally {
-      setSubmitting(false);
-      setRowAction(null);
-    }
-  }
-
-  function confirmReleasePrivateHostname(id: string) {
-    Modal.confirm({
-      title: "Release private URL?",
-      content: `Release the private hostname for '${id}' and remove its DNS record.`,
-      okText: "Release",
-      okButtonProps: { danger: true },
-      onOk: async () => onReleasePrivateHostname(id),
     });
   }
 
@@ -2757,15 +2556,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   function onRowMenuAction(
     row: ManagedAppStatus,
-    action:
-      | "tunnel"
-      | "refresh"
-      | "reserve-private-hostname"
-      | "release-private-hostname"
-      | "logs"
-      | "export"
-      | "edit"
-      | "delete",
+    action: "tunnel" | "refresh" | "logs" | "export" | "edit" | "delete",
   ) {
     switch (action) {
       case "tunnel":
@@ -2773,12 +2564,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         return;
       case "refresh":
         void onRefreshNow(row.id);
-        return;
-      case "reserve-private-hostname":
-        void onReservePrivateHostname(row.id);
-        return;
-      case "release-private-hostname":
-        confirmReleasePrivateHostname(row.id);
         return;
       case "logs":
         void onLogs(row.id);
@@ -2990,14 +2775,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             <Tag color={summaryCounts.running > 0 ? "green" : "default"}>
               running {summaryCounts.running}
             </Tag>
-            {privateHostnameUiVisible ? (
-              <Tag
-                color={summaryCounts.privateHostnames > 0 ? "blue" : "default"}
-              >
-                private URLs {summaryCounts.privateHostnames}/
-                {privateHostnamePolicy?.max_private_hostnames ?? "?"}
-              </Tag>
-            ) : null}
             <Tag color={summaryCounts.attention > 0 ? "red" : "default"}>
               attention {summaryCounts.attention}
             </Tag>
@@ -3072,8 +2849,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 const isRunning = row.state === "running";
                 const isStatic = row.kind === "static";
                 const isUnmanaged = row.lifecycle_mode === "unmanaged";
-                const privateHostname = privateHostnamesById[row.id];
-                const canOpen = !!row.url || !!privateHostname;
+                const canOpen = !!row.url;
                 return (
                   <div
                     key={`launch-${row.id}`}
@@ -3115,34 +2891,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         {isStatic ? <Tag>static</Tag> : null}
                       </Space>
                     </div>
-                    <PrivateHostnameRow
-                      busy={
-                        rowAction?.appId === row.id &&
-                        (rowAction.action === "reserve-private-hostname" ||
-                          rowAction.action === "release-private-hostname")
-                      }
-                      hostname={privateHostname}
-                      openUrl={
-                        privateHostname
-                          ? buildPrivateHostnameOpenUrl({
-                              privateHostnameUrl: privateHostname.url,
-                              spec: specById[row.id],
-                              status: row,
-                            })
-                          : undefined
-                      }
-                      onConfigure={
-                        privateHostnamePolicy?.can_reserve
-                          ? () => void onReservePrivateHostname(row.id)
-                          : undefined
-                      }
-                      onOpen={() => void openStatus(row)}
-                      onRelease={
-                        privateHostname
-                          ? () => confirmReleasePrivateHostname(row.id)
-                          : undefined
-                      }
-                    />
                     <Space wrap>
                       <Button
                         type="primary"
@@ -3996,9 +3744,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   { value: "running", label: "Running" },
                   { value: "stopped", label: "Stopped" },
                   { value: "error", label: "Needs attention" },
-                  ...(privateHostnameUiVisible
-                    ? [{ value: "private" as const, label: "Private URL" }]
-                    : []),
                 ]}
               />
             </Space>
@@ -4029,7 +3774,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             const spec = specById[row.id];
             const metrics = metricsById[row.id];
             const specSummary = summarizeSpec(spec);
-            const privateHostname = privateHostnamesById[row.id];
             const startupFailure = startupFailures[row.id];
             const isExpanded = !!expandedRows[row.id] || !!startupFailure;
             const rowMenuItems = [
@@ -4049,22 +3793,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     },
                   ]
                 : []),
-              ...(privateHostname
-                ? [
-                    {
-                      key: "release-private-hostname",
-                      label: "Release private URL",
-                      danger: true,
-                    },
-                  ]
-                : privateHostnamePolicy?.can_reserve
-                  ? [
-                      {
-                        key: "reserve-private-hostname",
-                        label: "Create private URL",
-                      },
-                    ]
-                  : []),
               {
                 key: "logs",
                 label: "Logs",
@@ -4128,34 +3856,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     >
                       {row.id}
                     </div>
-                    <PrivateHostnameRow
-                      busy={
-                        rowAction?.appId === row.id &&
-                        (rowAction.action === "reserve-private-hostname" ||
-                          rowAction.action === "release-private-hostname")
-                      }
-                      hostname={privateHostname}
-                      openUrl={
-                        privateHostname
-                          ? buildPrivateHostnameOpenUrl({
-                              privateHostnameUrl: privateHostname.url,
-                              spec,
-                              status: row,
-                            })
-                          : undefined
-                      }
-                      onConfigure={
-                        privateHostnamePolicy?.can_reserve
-                          ? () => void onReservePrivateHostname(row.id)
-                          : undefined
-                      }
-                      onOpen={() => void openStatus(row)}
-                      onRelease={
-                        privateHostname
-                          ? () => confirmReleasePrivateHostname(row.id)
-                          : undefined
-                      }
-                    />
                   </div>
                   <Space wrap>
                     <Button
@@ -4167,7 +3867,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     <Button
                       size="small"
                       onClick={() => void openStatus(row)}
-                      disabled={!privateHostname && !row.url}
+                      disabled={!row.url}
                     >
                       Open
                     </Button>
@@ -4195,8 +3895,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                             key as
                               | "tunnel"
                               | "refresh"
-                              | "reserve-private-hostname"
-                              | "release-private-hostname"
                               | "logs"
                               | "export"
                               | "edit"
