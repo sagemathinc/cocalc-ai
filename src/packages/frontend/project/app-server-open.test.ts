@@ -1,8 +1,13 @@
+const mockIssueProjectAppUrl = jest.fn();
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       addProjectHostAuthToUrl: jest.fn(async ({ url }) => url),
       hub: {
+        hosts: {
+          issueProjectAppUrl: (...args: any[]) =>
+            mockIssueProjectAppUrl(...args),
+        },
         system: {
           inspectProjectAppPrivateHostname: jest.fn(
             async ({ app_id }: { app_id: string }) =>
@@ -25,7 +30,9 @@ import type { AppSpec, ManagedAppStatus } from "@cocalc/conat/project/api/apps";
 import {
   buildPrivateHostnameOpenUrl,
   getPrivateProjectAppOpenUrl,
+  appOpenURL,
   getProjectAppOpenUrl,
+  openProjectAppStatus,
 } from "./app-server-open";
 
 describe("getProjectAppOpenUrl", () => {
@@ -253,5 +260,91 @@ describe("getPrivateProjectAppOpenUrl", () => {
         app_id: "missing",
       }),
     ).rejects.toThrow("is not reserved");
+  });
+});
+
+describe("openProjectAppStatus", () => {
+  const PROJECT = "11111111-1111-4111-8111-111111111111";
+  const status: ManagedAppStatus = {
+    id: "my-server",
+    kind: "service",
+    state: "running",
+    url: `/${PROJECT}/proxy/8000/`,
+  };
+  let open: jest.SpyInstance;
+  let tab: any;
+  beforeEach(() => {
+    mockIssueProjectAppUrl.mockReset();
+    tab = { opener: window, location: { href: "" }, close: jest.fn() };
+    open = jest.spyOn(window, "open").mockImplementation(() => tab);
+  });
+  afterEach(() => open.mockRestore());
+
+  it("reserves a tab at once and sends it to the app's own origin", async () => {
+    let resolve!: (v: any) => void;
+    mockIssueProjectAppUrl.mockReturnValue(new Promise((r) => (resolve = r)));
+    const pending = openProjectAppStatus({ project_id: PROJECT, status });
+    // Opened before any await (keeps the click's user activation).
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(tab.opener).toBeNull();
+    resolve({
+      url: "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
+      expires_at: 0,
+    });
+    await pending;
+    expect(mockIssueProjectAppUrl).toHaveBeenCalledWith({
+      project_id: PROJECT,
+      path: `/${PROJECT}/proxy/8000/`,
+      app_id: "my-server",
+    });
+    expect(tab.location.href).toBe(
+      "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
+    );
+  });
+
+  it("sends the tab to the old URL when the site has no app origins", async () => {
+    mockIssueProjectAppUrl.mockResolvedValue({ unavailable: "off" });
+    await openProjectAppStatus({ project_id: PROJECT, status });
+    expect(tab.location.href).toBe(
+      `https://host.example/${PROJECT}/proxy/8000/`,
+    );
+    mockIssueProjectAppUrl.mockRejectedValue(new Error("not an app route"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    tab.location.href = "";
+    await openProjectAppStatus({ project_id: PROJECT, status });
+    expect(tab.location.href).toBe(
+      `https://host.example/${PROJECT}/proxy/8000/`,
+    );
+    warn.mockRestore();
+  });
+
+  it("opens as before if the tab couldn't be reserved", async () => {
+    open.mockReturnValueOnce(null).mockReturnValueOnce(null);
+    await openProjectAppStatus({ project_id: PROJECT, status });
+    expect(mockIssueProjectAppUrl).not.toHaveBeenCalled();
+    expect(open).toHaveBeenLastCalledWith(
+      `https://host.example/${PROJECT}/proxy/8000/`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+});
+
+describe("appOpenURL", () => {
+  const P = "11111111-1111-4111-8111-111111111111";
+  it("is a same-origin /app-open link for a project path", () => {
+    expect(appOpenURL(P, `/${P}/port/8000/a?b=1`)).toBe(
+      `/app-open/${P}/port/8000/a?b=1`,
+    );
+    expect(appOpenURL(P, `/${P}/myapp/`, "my app")).toBe(
+      `/app-open/${P}/myapp/?app=my%20app`,
+    );
+    expect(appOpenURL(P, `/${P}/x/?q=1`, "a")).toBe(
+      `/app-open/${P}/x/?q=1&app=a`,
+    );
+  });
+  it("is undefined for anything else", () => {
+    expect(appOpenURL(P, "/other/port/8000/")).toBeUndefined();
+    expect(appOpenURL(P, "https://h.example/x")).toBeUndefined();
   });
 });

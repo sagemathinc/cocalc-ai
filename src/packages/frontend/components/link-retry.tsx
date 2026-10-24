@@ -67,11 +67,22 @@ const LinkRetry: React.FC<Props> = ({
     }
   }
 
+  function isAppOpenLink(): boolean {
+    try {
+      return new URL(href, window.location.href).pathname.includes(
+        "/app-open/",
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async function start(): Promise<void> {
     onClick?.();
     setLoading(true);
     setError(false);
-    if (skipCheck || !isSameOrigin()) {
+    // /app-open answers navigations only (it redirects to the app).
+    if (skipCheck || !isSameOrigin() || isAppOpenLink()) {
       open();
       if (isMountedRef.current) {
         setError(false);

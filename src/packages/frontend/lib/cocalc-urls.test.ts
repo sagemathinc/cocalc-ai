@@ -52,4 +52,17 @@ describe("frontend/lib/cocalc-urls", () => {
       `/${project_id}/files/%2Fhome/user/out.pdf`,
     );
   });
+
+  it("builds the content view URL for a file, printing when asked", async () => {
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "/base",
+    }));
+    const { contentViewURL } = await import("./cocalc-urls");
+    expect(contentViewURL({ project_id, path: "/home/user/a b.html" })).toBe(
+      `/base/content-view/${project_id}/home/user/a%20b.html`,
+    );
+    expect(
+      contentViewURL({ project_id, path: "/home/user/a.html", print: true }),
+    ).toBe(`/base/content-view/${project_id}/home/user/a.html?print=1`);
+  });
 });

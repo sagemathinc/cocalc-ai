@@ -193,6 +193,8 @@ cocalc
 !src/packages/rootfs-recipes/cocalc/**
 !src/packages/mobile/src/cocalc/
 !src/packages/mobile/src/cocalc/**
+!src/packages/cli/skills/cocalc/
+!src/packages/cli/skills/cocalc/**
 cocalc-lite.tar.*
 *.egg-info
 .python-version

@@ -6,8 +6,19 @@
 import { _test, createStorageAdmissionController } from "./storage-admission";
 
 describe("storage admission controller", () => {
+  // Most tests here are about how pressure is classified and what each
+  // state admits, so they take every sample as a state sample and escalate
+  // on one (the hysteresis has its own tests below, with the defaults).
+  const immediate = {
+    contendedSamples: 1,
+    minStateSampleMs: 0,
+    escalationMs: 0,
+  };
   let now = 1_000_000;
   let full = 0;
+  let full60: number | undefined = undefined;
+  let failRead = false;
+  let hostUnavailable = false;
   let starting = 0;
   let stopping = 0;
 
@@ -16,33 +27,42 @@ describe("storage admission controller", () => {
     extra: Parameters<typeof createStorageAdmissionController>[0] = {},
   ) =>
     createStorageAdmissionController({
+      ...immediate,
       ...extra,
       mode,
       now: () => now,
-      readInputs: () => ({
-        sampled_at_ms: now,
-        host_io_full_avg10: full,
-        project_pool_io_full_avg10: full / 2,
-        starting_projects: starting,
-        stopping_projects: stopping,
-        btrfs_mutation_locks: 0,
-        btrfs_mutation_waiters: 0,
-      }),
+      readInputs: () => {
+        if (failRead) throw new Error("PSI read failed");
+        return {
+          sampled_at_ms: now,
+          // (as defaultReadInputs without /proc/pressure/io)
+          ...(hostUnavailable
+            ? { error: "host I/O pressure is unavailable" }
+            : { host_io_full_avg10: full }),
+          project_pool_io_full_avg10: full / 2,
+          ...(full60 == null ? {} : { host_io_full_avg60: full60 }),
+          starting_projects: starting,
+          stopping_projects: stopping,
+          btrfs_mutation_locks: 0,
+          btrfs_mutation_waiters: 0,
+        };
+      },
       recoveryMs: 60_000,
     });
 
   beforeEach(() => {
     now = 1_000_000;
     full = 0;
+    full60 = undefined;
+    failRead = false;
+    hostUnavailable = false;
     starting = 0;
     stopping = 0;
   });
 
-  it("enters contention after two samples and emergency immediately", () => {
+  it("classifies pressure into contended and emergency", () => {
     const controller = create();
     full = 5;
-    expect(controller.sample().pressure_state).toBe("normal");
-    now += 5_000;
     expect(controller.sample().pressure_state).toBe("contended");
     full = 10;
     now += 5_000;
@@ -52,6 +72,238 @@ describe("storage admission controller", () => {
       host_io_full_avg10: 10,
       project_pool_io_full_avg10: 5,
       uncontained_io_full_avg10: 5,
+    });
+  });
+
+  describe("hysteresis (the defaults)", () => {
+    // what prod runs: samples >= 4 s apart, 2 of them per escalation
+    const gate = () =>
+      create("enforce", {
+        contendedSamples: 2,
+        minStateSampleMs: 4_000,
+        escalationMs: 10_000,
+      });
+
+    it("does not flip on a single burst, however many operations ask meanwhile", () => {
+      // 2026-10-23: montreal-2 flipped 128 times in 30 min on SQLite
+      // checkpoint / btrfs commit bursts, deferring ~2100 snapshots.
+      const controller = gate();
+      full = 30;
+      for (let i = 0; i < 20; i++) {
+        now += 100;
+        expect(
+          controller.admit({ operation_kind: "scheduled_snapshot" }),
+        ).toMatchObject({ admitted: true });
+      }
+      expect(controller.getStatus().pressure_state).toBe("normal");
+      // the burst is over by the next timer sample
+      full = 1;
+      now = 1_005_000;
+      expect(controller.sample().pressure_state).toBe("normal");
+      expect(controller.getStatus().transition_count).toBe(0);
+    });
+
+    // (the controller samples once when created, at `now`)
+    const tick = (controller: ReturnType<typeof gate>) => {
+      now += 5_000;
+      return controller.sample().pressure_state;
+    };
+
+    it("still gates sustained pressure: contended, then emergency", () => {
+      const controller = gate();
+      // seen at 0, 5 and 10 s: escalates at 10 s
+      full = 6;
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("contended");
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, reason: "io_pressure_contended" });
+      full = 12;
+      expect(tick(controller)).toBe("contended");
+      expect(tick(controller)).toBe("contended");
+      expect(tick(controller)).toBe("emergency");
+    });
+
+    it("escalates again from recovery only on sustained pressure", () => {
+      const controller = gate();
+      full = 6;
+      tick(controller);
+      tick(controller);
+      expect(tick(controller)).toBe("contended");
+      full = 1;
+      expect(tick(controller)).toBe("recovery");
+      // one burst: still recovery
+      full = 8;
+      expect(tick(controller)).toBe("recovery");
+      full = 1;
+      expect(tick(controller)).toBe("recovery");
+      // sustained: contended
+      full = 8;
+      expect(tick(controller)).toBe("recovery");
+      expect(tick(controller)).toBe("recovery");
+      expect(tick(controller)).toBe("contended");
+    });
+
+    it("escalates on bursts that keep the 60 s average up, without bouncing while it decays", () => {
+      const controller = gate();
+      // avg10 alone never stays up for two samples
+      full60 = 6;
+      full = 8;
+      expect(tick(controller)).toBe("normal");
+      full = 0;
+      expect(tick(controller)).toBe("normal");
+      full = 8;
+      expect(tick(controller)).toBe("contended");
+      full = 0;
+      // held while the 60 s average is still up
+      expect(tick(controller)).toBe("contended");
+      full60 = 3;
+      expect(tick(controller)).toBe("recovery");
+      expect(tick(controller)).toBe("recovery");
+    });
+
+    it("needs 10 s of pressure whatever the phase of the samples", () => {
+      // @review: pressure starting just before an eligible sample, with
+      // admission checks every 4 s, escalated after ~4 s on sample count
+      // alone.
+      const controller = gate();
+      full = 12;
+      now += 4_000;
+      expect(controller.sample().pressure_state).toBe("normal");
+      for (const at of [4_000, 8_000]) {
+        now = 1_004_000 + at;
+        controller.admit({ operation_kind: "interactive_backup" });
+        expect(controller.getStatus().pressure_state).toBe("normal");
+      }
+      now = 1_004_000 + 10_000;
+      // (not a state sample yet: 2 s after the last one)
+      expect(controller.sample().pressure_state).toBe("normal");
+      now = 1_004_000 + 12_000;
+      expect(controller.sample().pressure_state).toBe("emergency");
+    });
+
+    it("does not count a failed read as a sample", () => {
+      const controller = gate();
+      full = 12;
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      // (were it counted, with the previous values, this would be the
+      // third sample, 10 s on: emergency)
+      failRead = true;
+      expect(tick(controller)).toBe("normal");
+      // background work stays deferred meanwhile
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, reason: "io_pressure_unavailable" });
+      failRead = false;
+      full = 1;
+      expect(tick(controller)).toBe("normal");
+      expect(controller.getStatus().transition_count).toBe(0);
+    });
+
+    it("starts the 10 s over after failed reads", () => {
+      const controller = gate();
+      full = 12;
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      failRead = true;
+      tick(controller);
+      tick(controller);
+      failRead = false;
+      // one high sample after the gap is not sustained pressure
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("emergency");
+    });
+
+    it("starts the 10 s over after samples without host pressure", () => {
+      const controller = gate();
+      full = 24; // the project pool's half of it stays above both thresholds
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      hostUnavailable = true;
+      tick(controller);
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, reason: "io_pressure_unavailable" });
+      hostUnavailable = false;
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("normal");
+      expect(tick(controller)).toBe("emergency");
+    });
+
+    it("ends a run on a low reading between state samples", () => {
+      // Codex on #1341: a dip seen by an admission check 2 s after a state
+      // sample was discarded with the duplicates, so the run kept its start.
+      const controller = gate();
+      full = 12;
+      now += 4_000;
+      expect(controller.sample().pressure_state).toBe("normal");
+      full = 0;
+      now += 2_000;
+      controller.admit({ operation_kind: "interactive_backup" });
+      full = 12;
+      for (const step of [2_000, 4_000, 4_000]) {
+        now += step;
+        expect(controller.sample().pressure_state).toBe("normal");
+      }
+      // 10 s since the run restarted at the first sample after the dip
+      now += 4_000;
+      expect(controller.sample().pressure_state).toBe("emergency");
+    });
+
+    it("restarts recovery's healthy interval on an unhealthy reading between state samples", () => {
+      // Codex on #1341: the reading was discarded with the duplicates, so
+      // recovery ended 60 s after it began despite the interruption.
+      const controller = gate();
+      full = 6;
+      tick(controller);
+      tick(controller);
+      expect(tick(controller)).toBe("contended");
+      full = 1;
+      expect(tick(controller)).toBe("recovery");
+      for (let i = 0; i < 11; i++) {
+        expect(tick(controller)).toBe("recovery");
+      }
+      // 55 s healthy; at 57 s an admission check reads 3%
+      full = 3;
+      now += 2_000;
+      controller.admit({ operation_kind: "interactive_backup" });
+      full = 1;
+      now += 3_000;
+      expect(controller.sample().pressure_state).toBe("recovery");
+      // a full healthy interval from the first sample after it
+      for (let i = 0; i < 11; i++) {
+        expect(tick(controller)).toBe("recovery");
+      }
+      expect(tick(controller)).toBe("normal");
+    });
+
+    it("starts over when the clock is set back", () => {
+      // Codex on #1341: with the last sample in the future, the spacing
+      // check skipped every sample until the clock caught up.
+      const controller = gate();
+      full = 12;
+      now = 1_100_000;
+      expect(controller.sample().pressure_state).toBe("normal");
+      now = 1_050_000;
+      for (let i = 0; i < 3; i++) {
+        expect(controller.sample().pressure_state).toBe("normal");
+        now += 4_000;
+      }
+      // 10 s of pressure since the clock was set back
+      expect(controller.sample().pressure_state).toBe("emergency");
+    });
+
+    it("keeps lifecycle gating fresh between state samples", () => {
+      const controller = gate();
+      controller.sample();
+      starting = 1;
+      now += 100;
+      expect(
+        controller.admit({ operation_kind: "scheduled_snapshot" }),
+      ).toMatchObject({ admitted: false, reason: "lifecycle_active" });
     });
   });
 
@@ -68,6 +320,7 @@ describe("storage admission controller", () => {
 
   it("does not classify BEES-only waits as actionable host pressure", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -96,6 +349,7 @@ describe("storage admission controller", () => {
     // A rustic backup in cocalc-maintenance stalls on that cgroup's io.max
     // even on an idle disk, so root PSI tracks the backup's own stall.
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -126,6 +380,7 @@ describe("storage admission controller", () => {
 
   it("preserves host pressure above maintenance waits", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -151,6 +406,7 @@ describe("storage admission controller", () => {
 
   it("still counts project-pool pressure while maintenance is throttled", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -178,6 +434,7 @@ describe("storage admission controller", () => {
     // I/O policy disabled or observe: bootstrap clears cocalc-maintenance's
     // io.max, so a backup stalling there is waiting on a saturated disk.
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -208,6 +465,7 @@ describe("storage admission controller", () => {
     // also writes its cache on the uncapped root disk, and cgroup PSI covers
     // every device. A cap alone does not prove the stall is the throttle.
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -313,6 +571,7 @@ describe("storage admission controller", () => {
 
   it("preserves host pressure above BEES and project-pool waits", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -351,6 +610,7 @@ describe("storage admission controller", () => {
   it("keeps protective I/O policy through recovery hysteresis", () => {
     const transitions: string[] = [];
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
@@ -646,6 +906,37 @@ describe("storage admission controller", () => {
     ).toMatchObject({ admitted: true });
   });
 
+  it("ends the quiet window when the clock is set back", () => {
+    // (cocalc-star hosts run on laptops, whose clocks jump)
+    const controller = create("enforce");
+    starting = 1;
+    controller.sample();
+    starting = 0;
+    now -= 60_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }),
+    ).toMatchObject({ admitted: true });
+  });
+
+  it("keeps the recovery pace when the clock is set back", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    expect(controller.sample().pressure_state).toBe("recovery");
+    controller.admit({ operation_kind: "scheduled_snapshot" }).release();
+    now -= 60_000;
+    // (not blocked until the clock is back at the last start)
+    const next = controller.admit({ operation_kind: "scheduled_snapshot" });
+    expect(next).toMatchObject({ admitted: true, recovery_paced: true });
+    next.release();
+    now += 1_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).admitted,
+    ).toBe(false);
+  });
+
   it("reports would-defer decisions without blocking in observe mode", () => {
     const controller = create("observe");
     stopping = 1;
@@ -842,6 +1133,7 @@ describe("storage admission controller", () => {
 
   it("fails background admission closed when pressure cannot be sampled", () => {
     const controller = createStorageAdmissionController({
+      ...immediate,
       mode: "enforce",
       now: () => now,
       readInputs: () => ({
