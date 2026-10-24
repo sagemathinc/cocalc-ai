@@ -23,7 +23,7 @@ import {
   hostAccessRoleCan,
 } from "@cocalc/server/project-host/access";
 import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
-import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
+import { assertHostOwnedHere } from "@cocalc/server/inter-bay/host-owned-here";
 
 const DISMISSABLE_STATUSES: LroStatus[] = [
   "succeeded",
@@ -105,6 +105,8 @@ async function getInNamedScope(
   { scope_type, scope_id }: NamedScope,
 ): Promise<LroSummary | undefined> {
   if (scope_type === "host" && scope_id != null) {
+    // The host's bay keeps the authoritative log: never act on a stale
+    // local copy.
     await assertHostOwnedHere(scope_id);
   }
   const row = await getLro(op_id);
@@ -118,21 +120,6 @@ async function getInNamedScope(
     return undefined;
   }
   return row;
-}
-
-// A host's operations are routed to the host's owning bay, which keeps the
-// authoritative log: refuse anywhere else rather than act on a stale local
-// copy.
-async function assertHostOwnedHere(host_id: string): Promise<void> {
-  const owner = (await resolveHostBay(host_id))?.bay_id;
-  if (owner && owner !== getConfiguredBayId()) {
-    throw Object.assign(
-      new Error(
-        `stale route: host ${host_id} is owned by ${owner}, not ${getConfiguredBayId()}; retry`,
-      ),
-      { code: 409 },
-    );
-  }
 }
 
 export async function get({
