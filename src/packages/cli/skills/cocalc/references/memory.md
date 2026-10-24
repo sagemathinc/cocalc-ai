@@ -27,9 +27,10 @@ move a note another agent wrote, read it first and pass its revision with
 someone else's work. Prefer your own scope, or a new name, for your status.
 
 When memory is on, each turn's prompt includes an `[Agent memory]` block with
-this project's namespaces and the most relevant notes (name: description); the
-turn's activity log shows a Memory line. The list is bounded, so `search` finds
-notes it does not show. If the block is missing, memory is off or could not be
+this project's namespaces and a selection of notes (name: description), this
+project's and recent ones first; the turn's activity log shows a Memory line.
+The list is bounded, so a note it does not show may still exist: `search`
+before acting on a topic and before writing. If the block is missing, memory is off or could not be
 loaded for this turn; check with `list` rather than searching the filesystem.
 
 ```bash
@@ -68,7 +69,8 @@ cocalc project chat memory export [--out notes.md]
 Memory works best as a small, curated set of notes, not a log.
 
 **What to save.** Only what stays useful in later sessions: the user's
-decisions, preferences and corrections; project conventions; how to build,
+decisions (record them with the date and the user's exact words, since a
+paraphrase drifts), preferences and corrections; project conventions; how to build,
 test or deploy; lessons from mistakes. In shared notes, not progress reports,
 transcripts, one-off results or anything already in the repository or an
 issue (your own working state goes in your own scope, below).
@@ -106,6 +108,9 @@ stay visible; hundreds of single-event notes push each other out of view.
 to keep each namespace curated; the account limits (2,000 notes, 8 MB, and
 rates) also bound the service's work, since a search reads every visible
 note. When a namespace is nearly full: merge notes on the same topic into one, move
-working state to your own scope, and delete notes that are stale or wrong.
+working state to your own scope, and delete notes that are stale or wrong. If
+it fills with one kind of note (reviews, status), suggest a separate namespace
+to the owner: agents see the counts, the owner may not.
 `memory export --out notes.md` keeps a full copy first (search it with grep
-later). Never delete notes you have not read just to make room.
+later). Never delete notes you have not read just to make room, nor another
+agent's note without passing the revision you read.

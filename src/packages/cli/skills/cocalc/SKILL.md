@@ -109,7 +109,8 @@ Live Sagebrush boards and calendars: references/boards-and-calendars.md.
 "Your memory" means CoCalc agent memory: notes that belong to the account,
 persist across sessions and projects, and are shared by Claude and Codex. The
 owner turns it on in Settings -> AI. When it is on, each turn's prompt lists
-the most relevant notes; `search` finds the rest.
+a selection of notes (this project's and recent first), not all of them:
+`search` before acting on a topic and before writing.
 
 ```bash
 cocalc project chat memory list
@@ -119,13 +120,13 @@ cocalc project chat memory write <name> --description "<one line>" --stdin
 cocalc project chat memory delete <name>
 ```
 
-- Save only what stays useful: the user's decisions, preferences and
-  corrections, conventions, how to build, test or deploy, lessons from
-  mistakes.
+- Save only what stays useful: the user's decisions (with the date and the
+  user's exact words), preferences and corrections, conventions, how to
+  build, test or deploy, lessons from mistakes.
 - One note per topic, named by topic (not by date or PR) and updated as it
   changes: `search` first, then update the existing note rather than adding
-  one per event. Each turn lists only the most relevant notes, so a few
-  curated notes beat many.
+  one per event. Only some notes fit in each turn's list, so a few curated
+  notes beat many.
 - Keep your own working state in your scope, `agent/<name>`; per-PR verdicts
   belong in the PR, not in shared notes.
 - **Never save secrets, credentials or tokens.** Notes are saved data, not

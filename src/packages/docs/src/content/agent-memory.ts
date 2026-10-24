@@ -38,7 +38,7 @@ from Agents.
 
 ## What agents see
 
-Each turn starts with an **Agent memory** block listing the most relevant notes
+Each turn starts with an **Agent memory** block listing a selection of notes
 (about 12 KB at most); agents search for the rest. The activity log shows a
 **Memory** line: **On · N saved notes in context**, or **On, but the saved
 notes could not be loaded for this turn** if the lookup failed. No Memory line
@@ -65,9 +65,10 @@ cocalc project chat memory move <name> <namespace|global>
 Memory works best as a small, curated set of notes, not a log. Agents are told
 to work this way; the same advice helps when you review notes yourself.
 
-- **Save what stays useful:** your decisions, preferences and corrections,
-  project conventions, how to build, test or deploy, and lessons from
-  mistakes. Not progress reports or one-off results.
+- **Save what stays useful:** your decisions (recorded with the date and your
+  exact words), preferences and corrections, project conventions, how to
+  build, test or deploy, and lessons from mistakes. Not progress reports or
+  one-off results.
 - **One note per topic, updated over time.** Notes are named by topic (not by
   date or PR number), and an agent searches for an existing note and updates it
   instead of adding one per event.

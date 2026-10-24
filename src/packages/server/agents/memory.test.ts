@@ -650,7 +650,7 @@ describeDb("agent memory", () => {
     expect(index).toMatch(/\(\d+ more: `memory search <words>` finds them/);
     // A project without the namespace sees only the global note.
     expect((await memory.turnIndex(account, P3))?.index).toBe(
-      "Saved notes (name: description), most relevant first:\n- prefs: the prefs note",
+      "Saved notes (name: description), a selection (this project's and recent first):\n- prefs: the prefs note",
     );
   });
 

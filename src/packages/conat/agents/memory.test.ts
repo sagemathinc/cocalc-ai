@@ -298,7 +298,7 @@ test("without namespaces, the index is just the most relevant notes", () => {
     counts: { global: 2 },
   });
   expect(index).toBe(
-    "Saved notes (name: description), most relevant first:\n- a: about a\n- b: about b",
+    "Saved notes (name: description), a selection (this project's and recent first):\n- a: about a\n- b: about b",
   );
   expect(
     buildMemoryIndex({
@@ -355,7 +355,10 @@ test("the turn context names every command and keeps the notes as data", () => {
   );
   // The strategy every agent sees: curate by topic, keep status private.
   expect(context).toContain("one note per topic");
-  expect(context).toContain("search before writing");
+  expect(context).toContain(
+    "search before acting on a topic and before writing",
+  );
+  expect(context).toContain("the date and the user's exact words");
   expect(context).toContain("your own scope (agent/<name>)");
   expect(context.startsWith("[Agent memory]")).toBe(true);
 });
