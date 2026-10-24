@@ -604,6 +604,30 @@ function isHostPlacementFailure(err: unknown): boolean {
   );
 }
 
+// Hidden entries are never public. Every top-level dot entry of the home is
+// excluded ("." then "**": any path that starts with a dot), because that is
+// where tools keep credentials (.config/cocalc, .config/gh, .netrc, .codex,
+// ...). Deeper in the tree, only names that hold credentials are excluded, so
+// a shared repository keeps its .gitignore and .github. "**/.ssh**" also
+// covers everything beneath .ssh: a rule ending in "/**" is matched as a
+// literal directory, not a glob.
+const PUBLIC_SHARE_HIDDEN_EXCLUDES: ProjectViewerReadPolicy["rules"] = [
+  ".**",
+  "**/.env",
+  "**/.env.*",
+  "**/.netrc",
+  "**/.git-credentials",
+  "**/.npmrc",
+  "**/.pypirc",
+  "**/.pgpass",
+  "**/.git/config",
+  "**/.ssh**",
+  "**/.aws**",
+  "**/.gnupg**",
+  "**/.docker**",
+  "**/.kube**",
+].map((path) => ({ action: "exclude" as const, path }));
+
 export function publicDirectoryShareReadPolicyForPath(
   path: string,
   pathType: PublicDirectorySharePathType = "directory",
@@ -620,6 +644,7 @@ export function publicDirectoryShareReadPolicyForPath(
   return {
     rules: [
       ...include,
+      ...PUBLIC_SHARE_HIDDEN_EXCLUDES,
       { action: "exclude", path: ".snapshots" },
       { action: "exclude", path: ".snapshots/**" },
       { action: "exclude", path: ".backups" },

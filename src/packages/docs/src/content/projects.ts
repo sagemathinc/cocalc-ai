@@ -597,9 +597,13 @@ publish the whole project. Whole-project publishing means publishing
 \`/home/user\`, not the operating system, project host, secrets, snapshots, or
 backups.
 
-Whole-project shares automatically exclude private and internal paths such as
-\`.ssh\`, \`.cache\`, \`.local\`, \`.snapshots\`, and \`.backups\`. You also
-cannot publish \`.snapshots\` or \`.backups\` directly.
+Public shares never include hidden files and folders at the top of the home
+directory (names starting with a dot, such as \`.ssh\`, \`.config\`, \`.cache\`,
+\`.local\`, \`.snapshots\`, and \`.backups\`), where programs keep settings and
+credentials. At any depth they also leave out common credential files such as
+\`.env\`, \`.netrc\`, \`.git-credentials\`, \`.npmrc\`, \`.git/config\`, and the
+\`.ssh\`, \`.aws\`, \`.gnupg\`, \`.docker\`, and \`.kube\` folders. You cannot
+publish a hidden top-level path directly.
 
 Publishing is only allowed for paths inside \`/home/user\`. Project secrets are
 mounted outside HOME under \`/run/secrets/cocalc\`, so they are not project

@@ -28,7 +28,10 @@ import {
   publicDirectoryShareLabelsFromProjectLabels,
   publicDirectoryShareProjectLabelKey,
 } from "@cocalc/util/public-directory-share-labels";
-import { viewerReadPolicyAllowsPath } from "@cocalc/util/project-access";
+import {
+  viewerReadPolicyAllowsPath,
+  viewerReadPolicyMayAllowDescendant,
+} from "@cocalc/util/project-access";
 
 let mockGetProjectFsClient: jest.Mock;
 let mockGetProjectShareFsClient: jest.Mock;
@@ -251,6 +254,75 @@ describe("public directory share normalization", () => {
         path: ".cache/cocalc/project/secrets",
       }),
     ).toBe(false);
+  });
+
+  it("excludes every top-level hidden entry from root shares", () => {
+    const policy = publicDirectoryShareReadPolicyForPath(".");
+    for (const path of [
+      ".config",
+      ".config/cocalc/agents/profile.json",
+      ".config/gh/hosts.yml",
+      ".config/gcloud/credentials.db",
+      ".codex/sessions/2026/10/24/rollout.jsonl",
+      ".claude/projects/session.jsonl",
+      ".cocalc/state.json",
+      ".netrc",
+      ".git-credentials",
+      ".bash_history",
+      ".env",
+    ]) {
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(false);
+    }
+    for (const path of [
+      "README.md",
+      "notebooks/intro.ipynb",
+      "repo/.gitignore",
+      "repo/.github/workflows/ci.yml",
+      "not.hidden/file.txt",
+    ]) {
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(true);
+    }
+  });
+
+  it("hides top-level hidden directories from root share listings", () => {
+    const policy = publicDirectoryShareReadPolicyForPath(".");
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "" })).toBe(true);
+    for (const path of [".config", ".codex", ".config/cocalc"]) {
+      expect(viewerReadPolicyMayAllowDescendant({ policy, path })).toBe(false);
+    }
+  });
+
+  it("excludes credential files at any depth", () => {
+    for (const share of [".", "work"]) {
+      const policy = publicDirectoryShareReadPolicyForPath(share);
+      for (const path of [
+        "work/.env",
+        "work/app/.env.local",
+        "work/.netrc",
+        "work/.git-credentials",
+        "work/.npmrc",
+        "work/.pypirc",
+        "work/.pgpass",
+        "work/repo/.git/config",
+        "work/.ssh/id_ed25519",
+        "work/.aws/credentials",
+        "work/.gnupg/private-keys-v1.d/key",
+        "work/.docker/config.json",
+        "work/.kube/config",
+      ]) {
+        expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(false);
+      }
+      expect(
+        viewerReadPolicyAllowsPath({ policy, path: "work/analysis.ipynb" }),
+      ).toBe(true);
+    }
+  });
+
+  it("refuses to publish a hidden top-level path directly", () => {
+    for (const path of [".config", ".codex", ".config/cocalc"]) {
+      const policy = publicDirectoryShareReadPolicyForPath(path);
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(false);
+    }
   });
 
   it("excludes snapshot and backup paths even when directly shared", () => {
