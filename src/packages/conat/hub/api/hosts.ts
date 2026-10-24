@@ -2371,13 +2371,16 @@ export interface Hosts {
   // owner_account_id because host auth reserves account_id for the caller.
   // With the turn's chat path and thread, the index also lists that agent's
   // own scope.
+  // With report_off, an account whose memory is off gets { off: true } (an
+  // older hub ignores it and answers null).
   getAgentMemoryContext: (opts: {
     host_id?: string;
     project_id: string;
     owner_account_id: string;
     chat_path?: string;
     thread_id?: string;
-  }) => Promise<{ notes: number; index: string } | null>;
+    report_off?: boolean;
+  }) => Promise<{ notes: number; index: string; off?: true } | null>;
   // Claude subscription limits reported during a turn, saved on the
   // credential. The owner is owner_account_id: host auth strips account_id.
   recordClaudeSubscriptionUsage: (opts: {

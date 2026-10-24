@@ -1269,7 +1269,12 @@ async function markHostDeprovisioned(row: any, action: string) {
     deleteHostDns,
     releaseHostContentDns,
     alertAdmin: async ({ subject, body }) => {
-      await adminAlert({ subject, body, dedupMinutes: 60, dedupBySubject: true });
+      await adminAlert({
+        subject,
+        body,
+        dedupMinutes: 60,
+        dedupBySubject: true,
+      });
     },
     logWarn: (message, payload) => logger.warn(message, payload),
     updateHostDeprovisionedRecord: async ({ row, nextMetadata }) => {
@@ -3110,13 +3115,15 @@ export async function getAgentMemoryContext({
   owner_account_id,
   chat_path,
   thread_id,
+  report_off,
 }: {
   host_id?: string;
   project_id: string;
   owner_account_id: string;
   chat_path?: string;
   thread_id?: string;
-}): Promise<{ notes: number; index: string } | null> {
+  report_off?: boolean;
+}): Promise<{ notes: number; index: string; off?: true } | null> {
   if (!host_id) throw new Error("host_id must be specified");
   if (!project_id) throw new Error("project_id must be specified");
   if (!isValidUUID(owner_account_id))
@@ -3152,6 +3159,7 @@ export async function getAgentMemoryContext({
       kind: "turn-index",
       project_id,
       ...(agent ? { agent } : {}),
+      ...(report_off === true ? { report_off: true } : {}),
     })) ?? null
   );
 }
