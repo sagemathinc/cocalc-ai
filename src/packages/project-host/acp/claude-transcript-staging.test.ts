@@ -317,3 +317,25 @@ test("a file that grows while staged counts at its staged size", async () => {
     await staging.close();
   }
 });
+
+test("each copy back renews the staging directory's time, which the reaper ages by", async () => {
+  const staging = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+  });
+  const old = new Date(Date.now() - 24 * 3600_000);
+  await utimes(staging.directory, old, old);
+  await writeFile(join(staging.directory, "-workspace", "late.jsonl"), "late");
+  // A failure that may pass: the copy is kept, and kept from now.
+  await chmod(join(transcripts, "-workspace"), 0o500);
+  try {
+    await expect(staging.close()).rejects.toThrow();
+    expect(Date.now() - (await stat(staging.directory)).mtimeMs).toBeLessThan(
+      60_000,
+    );
+  } finally {
+    await chmod(join(transcripts, "-workspace"), 0o700);
+  }
+  await staging.close();
+});

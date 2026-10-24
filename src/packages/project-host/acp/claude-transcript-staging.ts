@@ -22,7 +22,7 @@ even one swapped in mid-copy. The staged tree is bounded in size: the host's
 disk is not the project's quota.
 */
 
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import getLogger from "@cocalc/backend/logger";
 import {
@@ -232,8 +232,15 @@ export async function stageClaudeTranscripts({
   let closed = false;
   let queue: Promise<void> = Promise.resolve();
   const copyBack = (): Promise<void> => {
-    const run = queue.then(() =>
-      copyTree({
+    const run = queue.then(async () => {
+      // The reaper ages staging no container refers to by this directory's
+      // own time, which the controller's nested writes do not change. Every
+      // copy back (each completed turn, cleanup before the container stops,
+      // and close) renews it, so a copy kept after a failed copy back is
+      // kept for the full retention, counted from that failure.
+      const now = new Date();
+      await utimes(directory, now, now);
+      await copyTree({
         fromRoot: directory,
         fromBase: "",
         toRoot: projectHome,
@@ -241,8 +248,8 @@ export async function stageClaudeTranscripts({
         staged,
         stagedSide: "from",
         maxBytes,
-      }),
-    );
+      });
+    });
     queue = run.catch(() => {});
     return run;
   };
