@@ -43,8 +43,8 @@ export type SiteFundedCodexPolicy = {
   allowUltraOrMultiAgent: false;
   allowedProviderTools: string[];
   /**
-   * The largest prompt one request can carry, when it exceeds the context
-   * window the agent is told about (Claude: the model accepts far more).
+   * A hard cap on one request's prompt, enforced before it is sent (Claude:
+   * the relay refuses longer prompts, which cost 5x).
    */
   maxPromptTokens?: number;
   /** The most hosted-tool fees one request can incur (Claude: web search). */
@@ -360,11 +360,10 @@ export function siteFundedCodexFinalRequestHeadroomMicrousd(
 ): number {
   // The worst single request: all of its largest prompt written to the
   // dearest cache, its largest output, and its most hosted-tool fees.
-  const inputTokens = Math.max(
+  const inputTokens =
+    policy.maxPromptTokens ??
     policy.contextWindowTokens +
-      SITE_FUNDED_CODEX_PROVIDER_INPUT_OVERHEAD_TOKENS,
-    policy.maxPromptTokens ?? 0,
-  );
+      SITE_FUNDED_CODEX_PROVIDER_INPUT_OVERHEAD_TOKENS;
   const hasHourCache =
     getSiteFundedCodexPrice(policy.model).cacheWrite1hUsdPerMillion != null;
   return computeSiteFundedCodexRequestCost({

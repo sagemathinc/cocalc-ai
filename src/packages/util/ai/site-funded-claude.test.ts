@@ -233,13 +233,13 @@ describe("a site key's monthly period", () => {
 });
 
 describe("room for the dearest single Claude request", () => {
-  it("covers a 1M-token prompt as 1-hour writes, full output and capped searches", () => {
-    // 1,000,000 x $0.20 x 5 + 32,000 x $0.50 x 5 + 5 searches x $0.01
+  it("covers a prompt at the 100,000-token cap as 1-hour writes, full output and capped searches", () => {
+    // 100,000 x $0.20 + 32,000 x $0.50 + 5 searches x $0.01, never 5x
     expect(
       siteFundedCodexFinalRequestHeadroomMicrousd(
         DEFAULT_SITE_FUNDED_CLAUDE_POLICY,
       ),
-    ).toBe(1_000_000 + 80_000 + 50_000);
+    ).toBe(20_000 + 16_000 + 50_000);
   });
 
   it("leaves Codex's room unchanged", () => {

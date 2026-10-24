@@ -7,8 +7,9 @@
 // the same in-container bridge as an account API key, but the agent can run
 // any code in its container, so every limit is enforced here, not by Claude
 // Code's settings: only the Messages API, the funded model, a capped output,
-// no paid hosted tools beyond capped web search and web fetch, and nothing
-// outside a funded turn. The site key is added here and never reaches the
+// no paid hosted tools beyond capped web search and web fetch, no prompt
+// longer than the policy's cap (longer prompts cost 5x), and nothing outside a
+// funded turn. The site key is added here and never reaches the
 // container.
 //
 // A turn's requests run one at a time, and every limit is checked as each one
@@ -47,6 +48,19 @@ const ANTHROPIC_ORIGIN = "https://api.anthropic.com";
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 64 * 1024 * 1024;
 const PROVIDER_TIMEOUT_MS = 10 * 60_000;
+const COUNT_TIMEOUT_MS = 30_000;
+// Tokens a prompt can have beyond its bytes: role and tool formatting, and
+// the definitions of hosted tools, which Anthropic adds.
+const PROMPT_OVERHEAD_TOKENS = 4_096;
+// The fields /v1/messages/count_tokens accepts.
+const COUNTED_FIELDS = [
+  "model",
+  "messages",
+  "system",
+  "tools",
+  "tool_choice",
+  "thinking",
+] as const;
 // How long an ending turn waits for its running request before aborting it.
 const DRAIN_TIMEOUT_MS = 2 * 60_000;
 const MESSAGES_PATH = "/v1/messages";
@@ -103,9 +117,9 @@ type ActiveTurn = SiteFundedClaudeTurn & {
 
 /** What one request can cost at most, for metering an incomplete response. */
 type RequestBounds = {
-  /** An upper bound on its prompt tokens: the forwarded request's size in
-   * bytes, at most the largest prompt the model accepts. */
-  promptBytes: number;
+  /** An upper bound on its prompt tokens: as counted by Anthropic, else the
+   * forwarded request's size in bytes plus overhead; at most the cap. */
+  promptTokens: number;
   maxTokens: number;
   maxSearches: number;
 };
@@ -251,6 +265,22 @@ export function fundedClaudeRequest(
 }
 
 /**
+ * Whether a request's prompt holds media (images, documents, anything with a
+ * source): their tokens are not bounded by their bytes, and one given by URL
+ * has almost no bytes at all, so such a prompt is always counted.
+ */
+export function hasMedia(value: unknown, depth = 0): boolean {
+  // Deeper than any real prompt: count it rather than search further.
+  if (depth > 64) return true;
+  if (Array.isArray(value)) return value.some((v) => hasMedia(v, depth + 1));
+  if (value == null || typeof value !== "object") return false;
+  const block = value as Record<string, unknown>;
+  if (block.type === "image" || block.type === "document") return true;
+  if (block.source != null) return true;
+  return Object.values(block).some((v) => hasMedia(v, depth + 1));
+}
+
+/**
  * The usage of a streamed response: message_start carries the input usage,
  * each message_delta the cumulative usage so far, and message_stop marks
  * that the final usage has arrived.
@@ -313,11 +343,11 @@ export function upperBoundUsage(
       server_tool_use: { web_search_requests: searches },
     };
   }
-  // Nothing reported: the prompt at its byte size, as the dearest writes.
+  // Nothing reported: the prompt at its bound, as the dearest writes.
   return {
     input_tokens: 0,
-    cache_creation_input_tokens: bounds.promptBytes,
-    cache_creation: { ephemeral_1h_input_tokens: bounds.promptBytes },
+    cache_creation_input_tokens: bounds.promptTokens,
+    cache_creation: { ephemeral_1h_input_tokens: bounds.promptTokens },
     output_tokens: bounds.maxTokens,
     server_tool_use: { web_search_requests: searches },
   };
@@ -563,6 +593,90 @@ export async function createSiteFundedClaudeRelay({
       providerRequest.end(payload);
     });
 
+  /**
+   * The prompt's tokens as Anthropic counts them (free of charge), or the
+   * provider's refusal to pass on. Abortable like a request, when the turn
+   * ends.
+   */
+  const countPromptTokens = (
+    active: ActiveTurn,
+    search: string,
+    funded: Record<string, unknown>,
+    headers: Record<string, string>,
+  ) =>
+    new Promise<number | { status: number; body: string }>((resolve) => {
+      const body = Buffer.from(
+        JSON.stringify(
+          Object.fromEntries(
+            COUNTED_FIELDS.filter((field) => funded[field] != null).map(
+              (field) => [field, funded[field]],
+            ),
+          ),
+        ),
+      );
+      const unavailable = () => {
+        active.abort = undefined;
+        resolve({
+          status: 503,
+          body: JSON.stringify({
+            type: "error",
+            error: {
+              type: "api_error",
+              message: "Could not check the prompt's size. Try again.",
+            },
+          }),
+        });
+      };
+      let countRequest: ClientRequest;
+      try {
+        countRequest = send(
+          new URL(`${COUNT_TOKENS_PATH}${search}`, upstreamUrl).toString(),
+          {
+            method: "POST",
+            headers: { ...headers, "content-length": `${body.length}` },
+          },
+          (countResponse) => {
+            const chunks: Buffer[] = [];
+            let size = 0;
+            countResponse.on("data", (chunk: Buffer) => {
+              size += chunk.length;
+              if (size <= 1024 * 1024) chunks.push(chunk);
+            });
+            countResponse.once("error", unavailable);
+            countResponse.once("end", () => {
+              active.abort = undefined;
+              const text = Buffer.concat(chunks).toString("utf8");
+              const status = countResponse.statusCode ?? 502;
+              if (status !== 200) {
+                resolve({ status, body: text });
+                return;
+              }
+              let tokens: unknown;
+              try {
+                tokens = JSON.parse(text)?.input_tokens;
+              } catch {
+                tokens = undefined;
+              }
+              if (Number.isSafeInteger(tokens) && (tokens as number) >= 0) {
+                resolve(tokens as number);
+              } else {
+                unavailable();
+              }
+            });
+          },
+        );
+      } catch {
+        unavailable();
+        return;
+      }
+      active.abort = () => countRequest.destroy(Error("turn ended"));
+      countRequest.setTimeout(COUNT_TIMEOUT_MS, () =>
+        countRequest.destroy(Error("count timeout")),
+      );
+      countRequest.on("error", unavailable);
+      countRequest.end(body);
+    });
+
   async function handle(request: IncomingMessage, response: ServerResponse) {
     if (!sameToken(request.headers[CREDENTIAL_RELAY_AUTH_HEADER], token)) {
       request.resume();
@@ -601,12 +715,6 @@ export async function createSiteFundedClaudeRelay({
       maxSearches,
     } = fundedClaudeRequest(body, active, countTokens);
     const payload = Buffer.from(JSON.stringify(funded));
-    // Bytes bound the tokens of what is sent (compact JSON, not whatever
-    // padding came in), and no prompt exceeds what the model accepts.
-    const promptBytes = Math.min(
-      payload.length,
-      active.reservation.policy.maxPromptTokens ?? payload.length,
-    );
     const headers: Record<string, string> = {
       "content-type": "application/json",
       "content-length": `${payload.length}`,
@@ -631,13 +739,66 @@ export async function createSiteFundedClaudeRelay({
       }
       // Counting tokens is free, but it counts toward the request limit.
       active.requests += 1;
+      let bounds: RequestBounds | undefined;
+      if (!countTokens) {
+        // The bytes of what is sent (compact JSON, not whatever padding came
+        // in) bound the tokens of a text prompt.
+        let promptTokens = payload.length + PROMPT_OVERHEAD_TOKENS;
+        const cap = active.reservation.policy.maxPromptTokens;
+        if (cap != null && (promptTokens > cap || hasMedia(funded))) {
+          // It may be over the cap: count it exactly first.
+          const counted = await countPromptTokens(
+            active,
+            url.search,
+            funded,
+            headers,
+          );
+          if (typeof counted !== "number") {
+            if (!response.headersSent) {
+              response.writeHead(counted.status, {
+                "content-type": "application/json",
+                "cache-control": "no-store",
+              });
+            }
+            response.end(counted.body);
+            return;
+          }
+          if (counted > cap) {
+            // Anthropic's wording, so Claude Code compacts and retries.
+            fail(
+              response,
+              400,
+              `prompt is too long: ${counted} tokens > ${cap} maximum`,
+            );
+            return;
+          }
+          promptTokens = counted;
+          // The turn may have ended while counting.
+          try {
+            assertMayStart(active);
+          } catch (err) {
+            fail(
+              response,
+              err instanceof RelayError ? err.statusCode : 500,
+              `${(err as Error).message}`,
+            );
+            return;
+          }
+        }
+        bounds = {
+          promptTokens:
+            cap != null ? Math.min(promptTokens, cap) : promptTokens,
+          maxTokens,
+          maxSearches,
+        };
+      }
       await forward(
         active,
         `${url.pathname}${url.search}`,
         payload,
         headers,
         response,
-        countTokens ? undefined : { promptBytes, maxTokens, maxSearches },
+        bounds,
       );
     });
     active.queue = run.catch(() => {});

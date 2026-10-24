@@ -98,9 +98,9 @@ export const SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST = 5;
 export const DEFAULT_SITE_FUNDED_CLAUDE_POLICY: SiteFundedCodexPolicy = {
   ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
   model: "claude-haiku-5-5",
-  // The model accepts a 1M-token prompt, whatever Claude Code is told: the
-  // ledger holds room for one such request beyond a turn's cost limit.
-  maxPromptTokens: 1_000_000,
+  // Prompts over 100,000 tokens cost 5x, so the relay refuses them: the
+  // ledger holds room for one request of this size beyond a turn's limit.
+  maxPromptTokens: 100_000,
   maxProviderToolFeesMicrousdPerRequest:
     SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST *
     ANTHROPIC_WEB_SEARCH_MICROUSD,

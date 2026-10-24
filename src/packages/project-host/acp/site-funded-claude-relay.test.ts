@@ -44,6 +44,11 @@ let dir: string;
 let relay: SiteFundedClaudeRelay;
 let usage: SiteFundedCodexUsageEvent[];
 
+const counted = (tokens: number) => ({
+  type: "application/json",
+  body: JSON.stringify({ input_tokens: tokens }),
+});
+
 const jsonReply = (usage: object) => () => ({
   type: "application/json",
   body: JSON.stringify({ id: "msg_1", content: [], usage }),
@@ -395,8 +400,9 @@ describe("site-funded Claude relay", () => {
       messages: [{ role: "user", content: "x".repeat(500) }],
     };
     await send(body);
-    // The compact request that was forwarded, not what came in.
-    const bytes = Buffer.byteLength(JSON.stringify(seen[0].body));
+    // The compact request that was forwarded, not what came in, plus what
+    // Anthropic adds beyond its bytes.
+    const bytes = Buffer.byteLength(JSON.stringify(seen[0].body)) + 4_096;
     expect(usage[0]).toMatchObject({
       inputTokens: bytes,
       cacheWriteInputTokens: bytes,
@@ -463,8 +469,9 @@ describe("site-funded Claude relay", () => {
       req.end(padded);
     });
     const [event] = usage;
+    // Its compact bytes, plus what Anthropic adds beyond them.
     expect(event.inputTokens).toBe(
-      Buffer.byteLength(JSON.stringify(seen[0].body)),
+      Buffer.byteLength(JSON.stringify(seen[0].body)) + 4_096,
     );
     expect(
       computeSiteFundedCodexRequestCost({ model: event.model, usage: event })
@@ -472,17 +479,125 @@ describe("site-funded Claude relay", () => {
     ).toBeLessThanOrEqual(siteFundedCodexFinalRequestHeadroomMicrousd(policy));
   });
 
-  it("bounds a fallback by the largest prompt the model accepts", async () => {
-    activate({ maxPromptTokens: 100 });
-    reply = () => ({
-      type: "application/json",
-      body: JSON.stringify({ id: "msg_1" }),
-    });
+  it("bounds a fallback by the prompt as counted", async () => {
+    activate({ maxPromptTokens: 1_000 });
+    reply = (seen) =>
+      seen.url.startsWith("/v1/messages/count_tokens")
+        ? counted(800)
+        : { type: "application/json", body: JSON.stringify({ id: "msg_1" }) };
     await send({
       ...message,
       messages: [{ role: "user", content: "x".repeat(5_000) }],
     });
-    expect(usage[0].inputTokens).toBe(100);
+    expect(usage[0].inputTokens).toBe(800);
+  });
+
+  it("refuses a prompt over the cap with Anthropic's wording, sending nothing", async () => {
+    activate({ maxPromptTokens: 5_000 });
+    reply = (seen) =>
+      seen.url.startsWith("/v1/messages/count_tokens")
+        ? counted(6_000)
+        : jsonReply({ input_tokens: 6_000, output_tokens: 5 })();
+    const long = await send({
+      ...message,
+      system: "be brief",
+      metadata: { user_id: "u" },
+      messages: [{ role: "user", content: "x".repeat(10_000) }],
+    });
+    expect(long.status).toBe(400);
+    expect(JSON.parse(long.body).error).toEqual({
+      type: "invalid_request_error",
+      message: "prompt is too long: 6000 tokens > 5000 maximum",
+    });
+    // Only counted, with the site key and the fields count_tokens takes.
+    expect(seen.map(({ url }) => url)).toEqual([
+      "/v1/messages/count_tokens?beta=true",
+    ]);
+    expect(seen[0].headers["x-api-key"]).toBe("sk-ant-site-key");
+    expect(Object.keys(seen[0].body).sort()).toEqual([
+      "messages",
+      "model",
+      "system",
+    ]);
+    expect(seen[0].body.model).toBe("claude-haiku-5-5");
+    expect(usage).toEqual([]);
+  });
+
+  it("sends a prompt at the cap after counting it", async () => {
+    activate({ maxPromptTokens: 5_000 });
+    reply = (seen) =>
+      seen.url.startsWith("/v1/messages/count_tokens")
+        ? counted(5_000)
+        : jsonReply({ input_tokens: 5_000, output_tokens: 5 })();
+    const atCap = await send({
+      ...message,
+      messages: [{ role: "user", content: "x".repeat(10_000) }],
+    });
+    expect(atCap.status).toBe(200);
+    expect(seen.map(({ url }) => url)).toEqual([
+      "/v1/messages/count_tokens?beta=true",
+      "/v1/messages?beta=true",
+    ]);
+    expect(usage[0].inputTokens).toBe(5_000);
+  });
+
+  it("counts any prompt with media, however few its bytes", async () => {
+    activate();
+    reply = (seen) =>
+      seen.url.startsWith("/v1/messages/count_tokens")
+        ? counted(1_500)
+        : jsonReply({ input_tokens: 1_500, output_tokens: 5 })();
+    for (const block of [
+      { type: "image", source: { type: "url", url: "https://x/y.png" } },
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        content: [{ type: "document", source: { type: "url", url: "u" } }],
+      },
+    ]) {
+      seen = [];
+      const sent = await send({
+        ...message,
+        messages: [{ role: "user", content: [block] }],
+      });
+      expect(sent.status).toBe(200);
+      expect(seen.map(({ url }) => url)).toEqual([
+        "/v1/messages/count_tokens?beta=true",
+        "/v1/messages?beta=true",
+      ]);
+    }
+    // A short text prompt is sent without counting.
+    seen = [];
+    await send({ ...message, messages: [{ role: "user", content: "hi" }] });
+    expect(seen.map(({ url }) => url)).toEqual(["/v1/messages?beta=true"]);
+  });
+
+  it("passes on a refused count and sends nothing", async () => {
+    activate({ maxPromptTokens: 1_000 });
+    reply = () => ({
+      status: 429,
+      type: "application/json",
+      body: JSON.stringify({
+        type: "error",
+        error: { type: "rate_limit_error" },
+      }),
+    });
+    const refused = await send({
+      ...message,
+      messages: [{ role: "user", content: "x".repeat(5_000) }],
+    });
+    expect(refused.status).toBe(429);
+    expect(seen).toHaveLength(1);
+    // An unreadable count is refused too, rather than sent uncounted.
+    reply = () => ({ type: "application/json", body: "{}" });
+    seen = [];
+    const unreadable = await send({
+      ...message,
+      messages: [{ role: "user", content: "x".repeat(5_000) }],
+    });
+    expect(unreadable.status).toBe(503);
+    expect(seen).toHaveLength(1);
+    expect(usage).toEqual([]);
   });
 
   it("stops funding a turn whose usage could not be recorded, and settles after it", async () => {
