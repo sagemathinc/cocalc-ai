@@ -80,7 +80,7 @@ to work this way; the same advice helps when you review notes yourself.
   expire; per-PR review verdicts belong in the PR.
 - **Split busy memory by purpose.** When a project's namespace fills up with
   different kinds of notes, add a second namespace for one kind (for example
-  review notes apart from decisions and lessons) and attach both. Agents
+  durable review lessons apart from product decisions) and attach both. Agents
   suggest this; only you can create namespaces.
 - **Archive, then prune.** **Export** keeps a Markdown copy of all notes;
   then delete what is stale.

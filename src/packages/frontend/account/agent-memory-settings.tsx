@@ -88,8 +88,9 @@ export function AgentMemoryDisclosure() {
           agent's own) and 8 MB. Each turn lists only a selection of notes;
           agents search for the rest, so agents keep one note per topic and
           update it rather than adding many. If a project's memory gets busy,
-          add a namespace by purpose (for example review notes apart from
-          decisions). Agent use of memory is rate-limited per account.
+          add a namespace by purpose (for example durable review lessons apart
+          from product decisions). Agent use of memory is rate-limited per
+          account.
         </li>
       </ul>
       <p style={{ marginBottom: 0 }}>

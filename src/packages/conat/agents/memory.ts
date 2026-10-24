@@ -703,7 +703,7 @@ export function buildMemoryIndex(input: AgentMemoryIndexInput): string {
       AGENT_MEMORY_NEARLY_FULL * AGENT_MEMORY_LIMITS.maxNotesPerNamespace
     )
       head.push(
-        `Memory is nearly full in ${ns} (${count} of ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} notes): before adding, merge notes on the same topic into one, move working state to your own scope, and delete notes that are stale or wrong (export first if unsure). If it fills with one kind of note (reviews, status), suggest a separate namespace to the owner. Never delete notes you have not read to make room, nor another agent's note without passing the revision you read.`,
+        `Memory is nearly full in ${ns} (${count} of ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} notes): before adding, merge notes on the same topic into one, move working state to your own scope, and delete notes that are stale or wrong (export first if unsure). If it fills with notes of one area (for example durable review lessons, or deployment and support notes), suggest a separate namespace for that area to the owner. Never delete notes you have not read to make room, nor another agent's note without passing the revision you read.`,
       );
   head.push(
     input.total

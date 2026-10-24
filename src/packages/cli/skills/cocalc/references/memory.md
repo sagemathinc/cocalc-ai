@@ -101,7 +101,8 @@ stay visible; hundreds of single-event notes push each other out of view.
   report file, not shared notes. A lasting lesson from a review is worth a
   note; the verdict is not.
 - When a project's memory gets busy, suggest that the owner add namespaces by
-  purpose (for example decisions and lessons apart from review notes). Only
+  purpose (for example durable review lessons apart from product decisions).
+  Only
   the owner creates namespaces and attaches them to projects.
 
 **Tidy before you hit the limits.** The 500-note limit per namespace is there
@@ -109,8 +110,9 @@ to keep each namespace curated; the account limits (2,000 notes, 8 MB, and
 rates) also bound the service's work, since a search reads every visible
 note. When a namespace is nearly full: merge notes on the same topic into one, move
 working state to your own scope, and delete notes that are stale or wrong. If
-it fills with one kind of note (reviews, status), suggest a separate namespace
-to the owner: agents see the counts, the owner may not.
+it fills with notes of one area (for example durable review lessons, or
+deployment and support notes), suggest a separate namespace for that area to
+the owner: agents see the counts, the owner may not.
 `memory export --out notes.md` keeps a full copy first (search it with grep
 later). Never delete notes you have not read just to make room, nor another
 agent's note without passing the revision you read.
