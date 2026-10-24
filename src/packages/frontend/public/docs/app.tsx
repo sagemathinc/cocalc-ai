@@ -153,8 +153,24 @@ function DocsDetail({
 }) {
   const siteName = getPublicMarketingSiteName(config);
   const docsAccess = getPublicDocsAccess(config);
-  const onSelectEntry = (nextEntry: DocsEntry) => {
-    navigatePublic(appPath(docsPath(nextEntry.slug)));
+  const onSelectEntry = (nextEntry: DocsEntry, href?: string) => {
+    let nextPath = appPath(docsPath(nextEntry.slug));
+    if (href != null) {
+      const url = new URL(href, window.location.href);
+      nextPath += `${url.search}${url.hash}`;
+    }
+    const target = new URL(nextPath, window.location.href);
+    if (
+      target.hash &&
+      target.pathname === window.location.pathname &&
+      target.search === window.location.search
+    ) {
+      // A root-relative docs link may need the base path added before it
+      // names this same page. Use native fragment scrolling in that case.
+      window.location.hash = target.hash;
+      return;
+    }
+    navigatePublic(nextPath);
   };
   const linearNavigation = getDocsLinearNavigation({
     entries: listDocsEntries(docsAccess),
@@ -172,6 +188,7 @@ function DocsDetail({
       <style>{DOCS_ANCHOR_CSS}</style>
       <section className="cocalc-public-docs-detail">
         <DocsDetailContent
+          docsAccess={docsAccess}
           entry={entry}
           linearNavigation={linearNavigation}
           onBackHref={appPath(docsPath())}
