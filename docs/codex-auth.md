@@ -283,9 +283,14 @@ which:
   results join the prompt as it runs);
 - refuses a prompt over 100,000 tokens (longer prompts cost 5x), less a
   2,000-token margin for the count's error, with Anthropic's `prompt is too
-long` error so Claude Code compacts: a text prompt whose bytes (plus
+  long` error so Claude Code compacts: a text prompt whose bytes (plus
   overhead) fit is sent as is, and any other prompt, including one with inline
-  images or documents, is counted first with the free `count_tokens` API;
+  images or documents, is counted first with the free `count_tokens` API. The
+  exception is a request that searches the web: Anthropic adds the results to
+  its prompt as it runs and documents no bound on their size, so such a
+  request can pass the cap (and the room a turn reserves). It is still
+  metered exactly, and one that does not finish is charged as if its prompt
+  filled the cap;
 - adds the site key itself, which never reaches the container;
 - meters every response exactly, from JSON or from the stream
   (`message_start` plus `message_delta`), numbering usage in completion order;
