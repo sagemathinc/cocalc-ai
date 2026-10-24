@@ -23,7 +23,7 @@ import {
   hostAccessRoleCan,
 } from "@cocalc/server/project-host/access";
 import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
-import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
+import { assertHostOwnedHere } from "@cocalc/server/inter-bay/host-owned-here";
 
 const DISMISSABLE_STATUSES: LroStatus[] = [
   "succeeded",
@@ -94,21 +94,23 @@ async function assertScopeAccess({
   throw new Error("unsupported scope");
 }
 
-export async function get({
-  account_id,
-  op_id,
-  scope_type,
-  scope_id,
-}: {
-  account_id?: string;
-  op_id: string;
-  scope_type?: LroScopeType;
-  scope_id?: string;
-}): Promise<LroSummary | undefined> {
+// The scope a call names, which routed it here (see
+// @cocalc/conat/hub/api/routes).
+type NamedScope = { scope_type?: LroScopeType; scope_id?: string };
+
+// Look up an operation for a call naming its scope: only an operation of
+// that scope answers it.
+async function getInNamedScope(
+  op_id: string,
+  { scope_type, scope_id }: NamedScope,
+): Promise<LroSummary | undefined> {
+  if (scope_type === "host" && scope_id != null) {
+    // The host's bay keeps the authoritative log: never act on a stale
+    // local copy.
+    await assertHostOwnedHere(scope_id);
+  }
   const row = await getLro(op_id);
   if (!row) return undefined;
-  // A named scope routed this call here (see @cocalc/conat/hub/api/routes):
-  // only an operation of that scope answers it.
   if (
     (scope_type != null && row.scope_type !== scope_type) ||
     // UUIDs: routing accepts any spelling, the database returns lowercase.
@@ -117,6 +119,20 @@ export async function get({
   ) {
     return undefined;
   }
+  return row;
+}
+
+export async function get({
+  account_id,
+  op_id,
+  scope_type,
+  scope_id,
+}: {
+  account_id?: string;
+  op_id: string;
+} & NamedScope): Promise<LroSummary | undefined> {
+  const row = await getInNamedScope(op_id, { scope_type, scope_id });
+  if (!row) return undefined;
   if (!account_id || account_id !== row.created_by) {
     await assertScopeAccess({
       account_id,
@@ -140,18 +156,7 @@ export async function list({
   include_completed?: boolean;
 }): Promise<LroSummary[]> {
   if (scope_type === "host") {
-    // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes),
-    // which keeps the authoritative operation log: refuse anywhere else
-    // rather than answer from a stale local copy.
-    const owner = (await resolveHostBay(scope_id))?.bay_id;
-    if (owner && owner !== getConfiguredBayId()) {
-      throw Object.assign(
-        new Error(
-          `stale route: host ${scope_id} is owned by ${owner}, not ${getConfiguredBayId()}; retry`,
-        ),
-        { code: 409 },
-      );
-    }
+    await assertHostOwnedHere(scope_id);
   }
   await assertScopeAccess({ account_id, scope_type, scope_id, mode: "read" });
   if (scope_type === "project") {
@@ -163,11 +168,13 @@ export async function list({
 export async function cancel({
   account_id,
   op_id,
+  scope_type,
+  scope_id,
 }: {
   account_id?: string;
   op_id: string;
-}): Promise<void> {
-  const row = await getLro(op_id);
+} & NamedScope): Promise<void> {
+  const row = await getInNamedScope(op_id, { scope_type, scope_id });
   if (!row) return;
   if (!account_id || account_id !== row.created_by) {
     await assertScopeAccess({
@@ -199,11 +206,13 @@ export async function cancel({
 export async function dismiss({
   account_id,
   op_id,
+  scope_type,
+  scope_id,
 }: {
   account_id?: string;
   op_id: string;
-}): Promise<void> {
-  const row = await getLro(op_id);
+} & NamedScope): Promise<void> {
+  const row = await getInNamedScope(op_id, { scope_type, scope_id });
   if (!row) return;
   if (!account_id || account_id !== row.created_by) {
     await assertScopeAccess({

@@ -285,6 +285,7 @@ import {
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { assertHostOwnedHere } from "@cocalc/server/inter-bay/host-owned-here";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { validateHostActionAuth } from "@cocalc/server/auth/host-action-auth";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -1116,20 +1117,6 @@ async function resolveRemoteHostBayIfAuthoritative(
     return;
   }
   return bay_id;
-}
-
-// A method routed to the host's owning bay refuses to run anywhere else: a
-// stale route, which the caller retries after re-resolving the owner.
-async function assertHostOwnedHere(host_id: string): Promise<void> {
-  const owner = await resolveRemoteHostBayIfAuthoritative(host_id);
-  if (owner) {
-    throw Object.assign(
-      new Error(
-        `stale route: host ${host_id} is owned by ${owner}, not ${getConfiguredBayId()}; retry`,
-      ),
-      { code: 409 },
-    );
-  }
 }
 
 async function resolveHostProjectListingTarget({
