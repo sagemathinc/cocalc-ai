@@ -557,6 +557,8 @@ interface ChatRoomThreadPanelProps {
   /** Show the selected thread in the reader instead of the log. */
   readerMode?: boolean;
   onReaderModeChange?: (on: boolean) => void;
+  /** Move the keyboard focus into the reader as it appears. */
+  readerAutoFocus?: boolean;
   readStateVersion?: number;
   onMobileToolsAction?: () => void;
 }
@@ -610,6 +612,7 @@ export function ChatRoomThreadPanel({
   mobile = false,
   readerMode = false,
   onReaderModeChange,
+  readerAutoFocus = false,
   readStateVersion,
   onMobileToolsAction,
 }: ChatRoomThreadPanelProps) {
@@ -809,8 +812,6 @@ export function ChatRoomThreadPanel({
   } | null>(null);
   const selectedThreadLookup = selectedThreadId;
   const showReader = readerMode && !!selectedThreadId;
-  // Only when the person turns it on, never when a chat opens in the reader.
-  const [readerAutoFocus, setReaderAutoFocus] = useState(false);
   const readerMessages = useMemo(
     () =>
       showReader && selectedThreadId
@@ -2214,7 +2215,6 @@ export function ChatRoomThreadPanel({
             aria-pressed={readerMode}
             onClick={() => {
               onMobileToolsAction?.();
-              setReaderAutoFocus(!readerMode);
               onReaderModeChange(!readerMode);
             }}
             icon={<Icon name="mail" />}
@@ -3100,6 +3100,8 @@ export function ChatRoomThreadPanel({
             autoFocus={readerAutoFocus}
             projectId={project_id}
             path={path}
+            readOnly={readOnly}
+            isVisible={isVisible}
           />
         ) : (
           <ChatLog

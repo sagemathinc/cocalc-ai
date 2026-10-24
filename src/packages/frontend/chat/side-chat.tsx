@@ -40,6 +40,8 @@ interface Props {
   threadPanelTopRightControlsPrefix?: ReactNode;
   threadPanelCompactTopRightControls?: boolean;
   threadPanelTopRightControlsPortal?: HTMLElement | null;
+  /** False while the file's editor tab is in the background. */
+  isVisible?: boolean;
 }
 
 export default function SideChat({
@@ -58,6 +60,7 @@ export default function SideChat({
   threadPanelTopRightControlsPrefix,
   threadPanelCompactTopRightControls,
   threadPanelTopRightControlsPortal,
+  isVisible,
 }: Props) {
   const actionsViaContext = redux.getEditorActions(project_id, path);
   const propActions = isLiveChatActions(actions0) ? actions0 : undefined;
@@ -104,6 +107,7 @@ export default function SideChat({
             threadPanelCompactTopRightControls
           }
           threadPanelTopRightControlsPortal={threadPanelTopRightControlsPortal}
+          isVisible={isVisible}
         />
       </KeyboardBoundary>
     </ChatDocProvider>
@@ -123,6 +127,7 @@ function SideChatInner(props: Props & { actions: ChatActions }) {
       fontSize={props.fontSize}
       desc={props.desc}
       variant="compact"
+      isVisible={props.isVisible}
       hideSidebar={props.hideSidebar}
       scrollCacheId={props.scrollCacheId}
       forceScrollToBottomToken={props.forceScrollToBottomToken}
