@@ -2613,7 +2613,6 @@ export type HostConnectionMethod =
   | "get-project-backup-indexes"
   | "sync-project-backup-indexes"
   | "delete-project-backup-index"
-  | "list-host-projects"
   | "ensure-host-owner-ssh-trust"
   | "rehome-host"
   | "prepare-host-rehome"
@@ -3377,19 +3376,6 @@ export interface InterBayHostConnectionApi {
   deleteProjectBackupIndex: (
     opts: Parameters<Hosts["deleteProjectBackupIndex"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["deleteProjectBackupIndex"]>>>;
-  listHostProjects: (
-    opts: Pick<
-      Parameters<Hosts["listHostProjects"]>[0],
-      | "account_id"
-      | "id"
-      | "limit"
-      | "cursor"
-      | "risk_only"
-      | "free_only"
-      | "state_filter"
-      | "project_state"
-    >,
-  ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
   ensureHostOwnerSshTrust: (
     opts: HostOwnerSshTrustRequest,
   ) => Promise<HostOwnerSshTrustResponse>;
@@ -3473,10 +3459,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "deleteProjectBackupIndex",
     method: "delete-project-backup-index",
-  },
-  {
-    name: "listHostProjects",
-    method: "list-host-projects",
   },
   {
     name: "ensureHostOwnerSshTrust",
