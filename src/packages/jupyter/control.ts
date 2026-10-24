@@ -234,16 +234,19 @@ export async function hydrateNotebookFromIpynbIfNeeded({
   fs: Pick<Filesystem, "readFile">;
   path: string;
 }): Promise<boolean> {
-  const existing = actions.syncdb.get({ type: "cell" });
-  const existingCount =
-    typeof existing?.size === "number"
-      ? existing.size
-      : Array.isArray(existing)
-        ? existing.length
-        : existing == null
-          ? 0
-          : 1;
-  if (existingCount > 0) {
+  const hasCells = (): boolean => {
+    const existing = actions.syncdb.get({ type: "cell" });
+    const existingCount =
+      typeof existing?.size === "number"
+        ? existing.size
+        : Array.isArray(existing)
+          ? existing.length
+          : existing == null
+            ? 0
+            : 1;
+    return existingCount > 0;
+  };
+  if (hasCells()) {
     return false;
   }
   const notebookPath = ipynbPath(path);
@@ -265,8 +268,13 @@ export async function hydrateNotebookFromIpynbIfNeeded({
   if (cells.length === 0) {
     return false;
   }
-  await actions.setToIpynb(ipynb);
-  return true;
+  // A client may add cells while the file is read (a customer report: a
+  // cell pasted into a new notebook was replaced by the file's blank cell
+  // when the kernel started), so check again at the last moment, inside
+  // setToIpynb, before replacing the cells.
+  return (
+    (await actions.setToIpynb(ipynb, false, { skipIf: hasCells })) !== false
+  );
 }
 
 export async function loadKernelSpecsIntoStore({
