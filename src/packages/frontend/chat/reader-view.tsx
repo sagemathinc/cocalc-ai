@@ -9,8 +9,17 @@
 // unread again; j and k move, u goes to the next unread one. The list never
 // scrolls by itself: new items wait behind an "N new" button.
 
-import { Button, Checkbox, Empty, Modal, Space } from "antd";
-import type { KeyboardEvent } from "react";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  Empty,
+  Modal,
+  Popconfirm,
+  Segmented,
+  Space,
+} from "antd";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
@@ -22,6 +31,7 @@ import StaticMarkdown from "./bounded-static-markdown";
 import ContextualReply from "./contextual-reply";
 import { presentedMessageMarkdown } from "./message-presentation";
 import {
+  archiveAll,
   findItem,
   isItemArchived,
   isItemRead,
@@ -40,6 +50,33 @@ import { getUserName } from "./user-name";
 import { newest_content } from "./utils";
 
 const READER_MODE_KEY = "cocalc-chat-reader-mode";
+const READER_VIEW_KEY = "cocalc-chat-reader-view";
+
+/**
+ * for-you: what is for the person (high and normal); all; filed: low, FYI.
+ * One choice for every chat, kept in this browser.
+ */
+export type ReaderListView = "for-you" | "all" | "filed";
+
+function useReaderListView(): [ReaderListView, (view: ReaderListView) => void] {
+  const [view, setView] = useState<ReaderListView>(() => {
+    try {
+      const stored = localStorage.getItem(READER_VIEW_KEY);
+      return stored === "all" || stored === "filed" ? stored : "for-you";
+    } catch {
+      return "for-you";
+    }
+  });
+  const choose = useCallback((next: ReaderListView) => {
+    setView(next);
+    try {
+      localStorage.setItem(READER_VIEW_KEY, next);
+    } catch {
+      // Kept for this session only.
+    }
+  }, []);
+  return [view, choose];
+}
 
 function readReaderMode(key: string): boolean {
   try {
@@ -82,6 +119,12 @@ export function useChatReaderMode(
 const toJS = (value: any) =>
   typeof value?.toJS === "function" ? value.toJS() : value;
 
+export interface ReaderItemInfo {
+  subject: string;
+  /** high: for the person; low: FYI, for the record. */
+  priority: "high" | "normal" | "low";
+}
+
 export function readerSender(message: ChatMessageTyped, userMap: any): string {
   const rpc = toJS(field<any>(message, "agent_rpc"));
   if (rpc?.source?.agent_id) {
@@ -112,6 +155,19 @@ function snippet(message: ChatMessageTyped): string {
     .slice(0, 160);
 }
 
+/** Whether the browser shows this page (not a background tab). */
+function usePageVisible(): boolean {
+  const [visible, setVisible] = useState(
+    () => typeof document === "undefined" || !document.hidden,
+  );
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  return visible;
+}
+
 export function ChatReaderView({
   actions,
   threadId,
@@ -120,9 +176,15 @@ export function ChatReaderView({
   readStateVersion,
   projectId,
   path,
+  readOnly,
+  isVisible = true,
   fontSize,
   narrow,
   autoFocus,
+  renderItem,
+  itemBadges,
+  acpState,
+  itemInfo,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -133,14 +195,35 @@ export function ChatReaderView({
   readStateVersion?: number;
   projectId?: string;
   path?: string;
+  /** A read-only chat: no Reply or Quote, as in the log. */
+  readOnly?: boolean;
+  /** Whether the chat is on screen (its tab and the browser's). */
+  isVisible?: boolean;
   fontSize?: number;
   /** Show the list or the open item, not both side by side. */
   narrow?: boolean;
   /** Move the keyboard focus into the list when it appears. */
   autoFocus?: boolean;
+  /**
+   * Shows the open item as the chat log shows its messages (activity, live
+   * output, questions); without it, each message is shown as Markdown.
+   */
+  renderItem?: (item: ReaderItem) => ReactNode;
+  /** What the list says about an item besides its sender: e.g. a question. */
+  itemBadges?: (item: ReaderItem) => ReactNode;
+  /** The live state of agent turns: which are running. */
+  acpState?: { get?: (key: string) => unknown };
+  /** Each item's subject and priority (what its agent said, or defaults). */
+  itemInfo?: (item: ReaderItem) => ReaderItemInfo;
 }) {
   const userMap = useTypedRedux("users", "user_map");
-  const items = useMemo(() => readerItems(messages), [messages]);
+  // On screen: the chat (its tab) and the page (the browser's tab).
+  const pageVisible = usePageVisible();
+  const shown = isVisible && pageVisible;
+  const items = useMemo(
+    () => readerItems(messages, { acpState }),
+    [messages, acpState],
+  );
   const watermark = useMemo(
     () => (accountId ? actions.getThreadReadCount(threadId, accountId) : 0) - 1,
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -153,33 +236,65 @@ export function ChatReaderView({
   );
   const [showArchived, setShowArchived] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
+  // Without priorities (no itemInfo) there is one view: all.
+  const [chosenView, setView] = useReaderListView();
+  const view: ReaderListView = itemInfo ? chosenView : "all";
+  // Keyed by its contents: itemInfo is a new function every render.
+  const filedKey = itemInfo
+    ? items
+        .filter((item) => itemInfo(item).priority === "low")
+        .map((item) => item.id)
+        .join("\0")
+    : "";
+  const filed = useMemo(
+    () => new Set(filedKey ? filedKey.split("\0") : []),
+    [filedKey],
+  );
+  const inView = (item: ReaderItem, which: ReaderListView = view) =>
+    which === "all" ||
+    (which === "filed" ? filed.has(item.id) : !filed.has(item.id));
   // Newest first, as in an inbox: j goes down the list, to older items.
   const visible = useMemo(
     () =>
-      (showArchived
-        ? items
-        : items.filter((item) => !isItemArchived(item, state))
-      )
-        .slice()
+      items
+        .filter(
+          (item) =>
+            (showArchived || !isItemArchived(item, state)) && inView(item),
+        )
         .reverse(),
-    [items, state, showArchived],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, state, showArchived, view, filed],
   );
-  // Counted over every item, as Mark all read reads every item; archived
-  // ones are named apart while hidden.
+  // Counted over every item that is for the person (filed ones are FYI and
+  // never counted), as Mark all read reads every item; archived ones are
+  // named apart while hidden.
+  const unreadIn = (which: ReaderListView, archived?: boolean) =>
+    items.filter(
+      (item) =>
+        inView(item, which) &&
+        (archived == null || isItemArchived(item, state) === archived) &&
+        !isItemRead(item, watermark, state),
+    ).length;
   const unread = useMemo(
-    () => items.filter((item) => !isItemRead(item, watermark, state)).length,
-    [items, watermark, state],
+    () => unreadIn("for-you"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, filed],
   );
   const hiddenUnread = useMemo(
-    () =>
-      showArchived
-        ? 0
-        : items.filter(
-            (item) =>
-              isItemArchived(item, state) &&
-              !isItemRead(item, watermark, state),
-          ).length,
-    [items, watermark, state, showArchived],
+    () => (showArchived ? 0 : unreadIn("for-you", true)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, showArchived, filed],
+  );
+  // As the Filed list shows them: archived ones too while they are shown.
+  const filedUnread = useMemo(
+    () => unreadIn("filed", showArchived ? undefined : false),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, filed, showArchived],
+  );
+  // In the inbox: not archived, in every view.
+  const inboxCount = useMemo(
+    () => items.filter((item) => !isItemArchived(item, state)).length,
+    [items, state],
   );
   const [selectedId, setSelectedId] = useState<string>();
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
@@ -192,14 +307,34 @@ export function ChatReaderView({
     [actions, threadId],
   );
 
-  // Opening an item, or a new reply arriving while it is open, reads it.
+  // Narrow: start on a message, not the list (the first unread one from the
+  // top, else the newest); once per thread.
+  const startedRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!selected || isItemRead(selected, watermark, state)) return;
+    // Only once it is shown: a chat restored in a background tab reads nothing.
+    if (!shown || !narrow || startedRef.current === threadId || !visible.length)
+      return;
+    // Not before the read state loads: until then every message looks unread
+    // and archived ones look like they are in the inbox.
+    if (!(actions.isProjectReadStateReady?.() ?? true)) return;
+    startedRef.current = threadId;
+    // Kept only if it is in this thread (not one left from the last thread).
+    if (selectedId && visible.some((item) => item.id === selectedId)) return;
+    const first =
+      visible.find((item) => !isItemRead(item, watermark, state)) ?? visible[0];
+    setSelectedId(first.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown, narrow, threadId, visible.length, readStateVersion]);
+
+  // Opening an item, or a new reply arriving while it is open, reads it.
+  // Not while the chat is hidden: then once it is shown.
+  useEffect(() => {
+    if (!shown || !selected || isItemRead(selected, watermark, state)) return;
     save((current, watermark) =>
       markItemRead(items, selected, watermark, current),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id, selected?.lastId]);
+  }, [shown, selected?.id, selected?.lastId]);
 
   const open = (index: number | undefined) => {
     if (index == null) return;
@@ -294,8 +429,9 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [seenCount, setSeenCount] = useState(visible.length);
-  // Another thread, or archived shown or hidden: nothing there is new.
-  const context = `${threadId}\0${showArchived}`;
+  // Another thread, archived shown or hidden, or another view: nothing there
+  // is new.
+  const context = `${threadId}\0${showArchived}\0${view}`;
   const contextRef = useRef(context);
   useEffect(() => {
     if (contextRef.current !== context) {
@@ -340,7 +476,14 @@ export function ChatReaderView({
           <Empty
             style={{ marginTop: 40 }}
             description={
-              items.length ? "Everything here is archived" : "No messages yet"
+              !items.length
+                ? "No messages yet"
+                : items.some((item) => inView(item))
+                  ? // This view has items: all archived.
+                    "Everything here is archived"
+                  : view === "for-you"
+                    ? "Nothing for you here: the rest is filed"
+                    : "Nothing filed"
             }
           />
         ) : null}
@@ -349,6 +492,7 @@ export function ChatReaderView({
           const first = item.messages[0];
           const date = dateValue(item.messages[item.messages.length - 1]);
           const replies = item.messages.length - 1;
+          const info = itemInfo?.(item);
           return (
             <div
               key={item.id}
@@ -362,13 +506,16 @@ export function ChatReaderView({
                 focusKeys();
               }}
               style={{
-                padding: "8px 12px",
+                padding: narrow ? "12px 12px" : "8px 12px",
                 cursor: "pointer",
                 borderBottom: `1px solid ${UI_COLORS.border}`,
                 background:
                   item.id === selectedId ? UI_COLORS.selected : undefined,
                 fontWeight: read ? undefined : 600,
                 opacity: isItemArchived(item, state) ? 0.6 : undefined,
+                // High: a mark down its side; low: quieter.
+                borderLeft: `3px solid ${info?.priority === "high" ? UI_COLORS.warning : "transparent"}`,
+                color: info?.priority === "low" ? UI_COLORS.muted : undefined,
               }}
             >
               <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
@@ -394,6 +541,31 @@ export function ChatReaderView({
                 >
                   {readerSender(first, userMap)}
                 </span>
+                {info?.priority === "high" ? (
+                  <span
+                    aria-label="For you"
+                    style={{
+                      color: UI_COLORS.warning,
+                      fontSize: 11,
+                      flex: "none",
+                    }}
+                  >
+                    for you
+                  </span>
+                ) : info?.priority === "low" ? (
+                  // Not by color alone: low is named too.
+                  <span
+                    aria-label="Low priority"
+                    style={{
+                      color: UI_COLORS.muted,
+                      fontSize: 11,
+                      flex: "none",
+                    }}
+                  >
+                    fyi
+                  </span>
+                ) : null}
+                {itemBadges?.(item)}
                 {date ? (
                   <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
                     <TimeAgo date={date} />
@@ -410,10 +582,16 @@ export function ChatReaderView({
                   whiteSpace: "nowrap",
                 }}
               >
-                {replies > 0
-                  ? `(${replies} ${replies === 1 ? "reply" : "replies"}) `
-                  : ""}
-                {snippet(first)}
+                {info ? (
+                  info.subject || snippet(first)
+                ) : (
+                  <>
+                    {replies > 0
+                      ? `(${replies} ${replies === 1 ? "reply" : "replies"}) `
+                      : ""}
+                    {snippet(first)}
+                  </>
+                )}
               </div>
             </div>
           );
@@ -449,6 +627,70 @@ export function ChatReaderView({
     </div>
   );
 
+  // Narrow (a phone): the message takes the screen; this one row moves
+  // between items and acts on the open one.
+  const navBar = selected ? (
+    <div
+      role="toolbar"
+      aria-label="Message navigation"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        padding: "2px 4px",
+        borderBottom: `1px solid ${UI_COLORS.border}`,
+        background: UI_COLORS.surface,
+      }}
+    >
+      <Badge count={unread} size="small" offset={[-4, 4]}>
+        <Button
+          type="text"
+          aria-label="All messages"
+          icon={<Icon name="bars" />}
+          onClick={() => {
+            focusListRef.current = true;
+            setSelectedId(undefined);
+          }}
+        />
+      </Badge>
+      <Button
+        type="text"
+        aria-label="Newer"
+        icon={<Icon name="chevron-up" />}
+        disabled={findItem(visible, selectedIndex, -1) == null}
+        onClick={() => open(findItem(visible, selectedIndex, -1))}
+      />
+      <Button
+        type="text"
+        aria-label="Older"
+        icon={<Icon name="chevron-down" />}
+        disabled={findItem(visible, selectedIndex, 1) == null}
+        onClick={() => open(findItem(visible, selectedIndex, 1))}
+      />
+      <span
+        style={{ color: UI_COLORS.muted, fontSize: 12, flex: 1, marginLeft: 4 }}
+      >
+        {selectedIndex + 1} of {visible.length}
+      </span>
+      <Button
+        type="text"
+        aria-label={
+          isItemArchived(selected, state) ? "Move to inbox" : "Archive"
+        }
+        icon={
+          <Icon name={isItemArchived(selected, state) ? "undo" : "container"} />
+        }
+        onClick={() => archive(selected)}
+      />
+      <Button
+        type="text"
+        aria-label="Mark unread"
+        icon={<Icon name="mail" />}
+        onClick={() => markUnread(selected)}
+      />
+    </div>
+  ) : null;
+
   const pane = selected ? (
     <div
       key={selected.id}
@@ -457,93 +699,117 @@ export function ChatReaderView({
       style={{
         flex: 1,
         minWidth: 0,
-        overflowY: "auto",
-        padding: "8px 16px 24px",
+        ...(renderItem
+          ? // The log scrolls itself.
+            { display: "flex", flexDirection: "column", minHeight: 0 }
+          : {
+              overflowY: "auto",
+              padding: narrow ? "8px 12px 24px" : "8px 16px 24px",
+            }),
       }}
     >
-      <Space wrap style={{ marginBottom: 8 }}>
-        {narrow ? (
+      {narrow ? null : (
+        <Space
+          wrap
+          style={
+            renderItem
+              ? { padding: "8px 16px 0", flex: "none" }
+              : { marginBottom: 8 }
+          }
+        >
           <Button
             size="small"
-            onClick={() => {
-              focusListRef.current = true;
-              setSelectedId(undefined);
-            }}
+            disabled={findItem(visible, selectedIndex, -1) == null}
+            onClick={() => open(findItem(visible, selectedIndex, -1))}
           >
-            <Icon name="arrow-left" /> All messages
+            Newer
           </Button>
-        ) : null}
-        <Button
-          size="small"
-          disabled={findItem(visible, selectedIndex, -1) == null}
-          onClick={() => open(findItem(visible, selectedIndex, -1))}
+          <Button
+            size="small"
+            disabled={findItem(visible, selectedIndex, 1) == null}
+            onClick={() => open(findItem(visible, selectedIndex, 1))}
+          >
+            Older
+          </Button>
+          <Button size="small" onClick={() => archive(selected)}>
+            {isItemArchived(selected, state) ? "Move to inbox" : "Archive"}
+          </Button>
+          <Button size="small" onClick={() => markUnread(selected)}>
+            Mark unread
+          </Button>
+        </Space>
+      )}
+      {itemInfo?.(selected).subject ? (
+        <div
+          role="heading"
+          aria-level={2}
+          style={{
+            flex: "none",
+            fontWeight: 600,
+            fontSize: (fontSize ?? 14) + 2,
+            padding: renderItem ? "6px 16px 0" : "0 0 8px",
+          }}
         >
-          Newer
-        </Button>
-        <Button
-          size="small"
-          disabled={findItem(visible, selectedIndex, 1) == null}
-          onClick={() => open(findItem(visible, selectedIndex, 1))}
-        >
-          Older
-        </Button>
-        <Button size="small" onClick={() => archive(selected)}>
-          {isItemArchived(selected, state) ? "Move to inbox" : "Archive"}
-        </Button>
-        <Button size="small" onClick={() => markUnread(selected)}>
-          Mark unread
-        </Button>
-      </Space>
-      {selected.messages.map((message) => {
-        const date = dateValue(message);
-        const sender = readerSender(message, userMap);
-        const value = `${newest_content(message) ?? ""}`;
-        // As the log shows it: e.g. an agent message as its "From" card.
-        const shown = presentedMessageMarkdown(message, value);
-        return (
-          <div key={`${date?.valueOf()}`} style={{ marginBottom: 20 }}>
-            <div
-              style={{
-                color: UI_COLORS.muted,
-                marginBottom: 4,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <b style={{ color: UI_COLORS.text }}>{sender}</b>
-              {date ? <TimeAgo date={date} /> : null}
-              <CopyButton
-                markdown
-                value={value}
-                size="small"
-                noText
-                style={{ fontSize: "12px" }}
-              />
-            </div>
-            {/* The log's selection actions: Reply, Quote and Copy. */}
-            <ContextualReply
-              actions={actions}
-              projectId={projectId ?? ""}
-              path={path ?? ""}
-              disabled={!projectId || !path || !value.trim()}
-              source={{
-                kind: "message",
-                id: readerMessageId(message),
-                thread_id: threadId,
-                title: isAcpAssistantMessage(message)
-                  ? "Assistant response"
-                  : `Message from ${sender}`,
-              }}
-            >
-              <StaticMarkdown
-                value={shown}
-                style={{ fontSize: `${fontSize ?? 14}px` }}
-              />
-            </ContextualReply>
-          </div>
-        );
-      })}
+          {itemInfo(selected).subject}
+        </div>
+      ) : null}
+      {renderItem ? (
+        <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          {renderItem(selected)}
+        </div>
+      ) : null}
+      {renderItem
+        ? null
+        : selected.messages.map((message) => {
+            const date = dateValue(message);
+            const sender = readerSender(message, userMap);
+            const value = `${newest_content(message) ?? ""}`;
+            // As the log shows it: e.g. an agent message as its "From" card.
+            const shown = presentedMessageMarkdown(message, value);
+            return (
+              <div key={`${date?.valueOf()}`} style={{ marginBottom: 20 }}>
+                <div
+                  style={{
+                    color: UI_COLORS.muted,
+                    marginBottom: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <b style={{ color: UI_COLORS.text }}>{sender}</b>
+                  {date ? <TimeAgo date={date} /> : null}
+                  <CopyButton
+                    markdown
+                    value={value}
+                    size="small"
+                    noText
+                    style={{ fontSize: "12px" }}
+                  />
+                </div>
+                {/* The log's selection actions: Reply, Quote and Copy. */}
+                <ContextualReply
+                  actions={actions}
+                  projectId={projectId ?? ""}
+                  path={path ?? ""}
+                  disabled={readOnly || !projectId || !path || !value.trim()}
+                  source={{
+                    kind: "message",
+                    id: readerMessageId(message),
+                    thread_id: threadId,
+                    title: isAcpAssistantMessage(message)
+                      ? "Assistant response"
+                      : `Message from ${sender}`,
+                  }}
+                >
+                  <StaticMarkdown
+                    value={shown}
+                    style={{ fontSize: `${fontSize ?? 14}px` }}
+                  />
+                </ContextualReply>
+              </div>
+            );
+          })}
     </div>
   ) : narrow ? null : (
     <div
@@ -573,50 +839,88 @@ export function ChatReaderView({
         outline: "none",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-          padding: "6px 12px",
-          borderBottom: `1px solid ${UI_COLORS.border}`,
-          flexWrap: "wrap",
-        }}
-      >
-        {/* Status, not a control: how much is left to read. */}
-        <span
-          style={
-            unread
-              ? { fontWeight: 600 }
-              : { color: UI_COLORS.muted, fontSize: 13 }
-          }
+      {narrow && selected ? (
+        navBar
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            padding: "6px 12px",
+            borderBottom: `1px solid ${UI_COLORS.border}`,
+            flexWrap: "wrap",
+          }}
         >
-          {unread
-            ? `${unread} unread${hiddenUnread ? ` (${hiddenUnread} archived)` : ""}`
-            : "No unread messages"}
-        </span>
-        <Button
-          size="small"
-          disabled={!unread}
-          onClick={() => save((current) => markAllRead(items, current))}
-        >
-          Mark all read
-        </Button>
-        <Checkbox
-          checked={showArchived}
-          onChange={(e) => setShowArchived(e.target.checked)}
-        >
-          Show archived
-        </Checkbox>
-        <Button
-          size="small"
-          type="text"
-          icon={<Icon name="keyboard" />}
-          onClick={() => setShowKeys(true)}
-        >
-          Keys
-        </Button>
-      </div>
+          {/* Status, not a control: how much is left to read. */}
+          <span
+            style={
+              unread
+                ? { fontWeight: 600 }
+                : { color: UI_COLORS.muted, fontSize: 13 }
+            }
+          >
+            {unread
+              ? `${unread} unread${hiddenUnread ? ` (${hiddenUnread} archived)` : ""}`
+              : "No unread messages"}
+          </span>
+          <Button
+            size="small"
+            disabled={!unread}
+            onClick={() => save((current) => markAllRead(items, current))}
+          >
+            Mark all read
+          </Button>
+          <Popconfirm
+            title={`Archive all ${inboxCount} message${inboxCount === 1 ? "" : "s"}?`}
+            description="Everything in this thread is archived and read: a clean slate. A new reply brings a message back."
+            okText="Archive all"
+            onConfirm={() => {
+              save((current) => archiveAll(items, current));
+              if (!showArchived) setSelectedId(undefined);
+            }}
+          >
+            <Button size="small" disabled={!inboxCount}>
+              Archive all
+            </Button>
+          </Popconfirm>
+          {itemInfo ? (
+            <Segmented
+              size="small"
+              aria-label="Which messages"
+              value={view}
+              onChange={(value) => setView(value as ReaderListView)}
+              options={[
+                {
+                  value: "for-you",
+                  label: unread ? `For you (${unread})` : "For you",
+                },
+                { value: "all", label: "All" },
+                {
+                  value: "filed",
+                  label: filedUnread ? `Filed (${filedUnread})` : "Filed",
+                },
+              ]}
+            />
+          ) : null}
+          <Checkbox
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+          >
+            Show archived
+          </Checkbox>
+          {narrow ? null : (
+            <Button
+              size="small"
+              type="text"
+              icon={<Icon name="keyboard" />}
+              onClick={() => setShowKeys(true)}
+            >
+              Keys
+            </Button>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {narrow && selected ? null : list}
         {pane}

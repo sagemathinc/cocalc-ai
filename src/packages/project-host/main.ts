@@ -126,7 +126,18 @@ import { isProjectHostDevGcpReverseTunnelEnabled } from "./master-conat-server";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
 import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-node";
-import { getAccountContentRevokedBeforeMs } from "./sqlite/account-revocations";
+import {
+  getAccountContentRevokedBeforeMs,
+  getAccountRevokedBeforeMs,
+} from "./sqlite/account-revocations";
+import { consumeAppCapability } from "./sqlite/app-capability-replay";
+import { hostAppRouteRedirect } from "./host-app-route-redirect";
+import {
+  createAppOriginHandler,
+  looksLikeAppHostname,
+  rewriteUpstreamResponseCookies,
+} from "./content-app-origin";
+import { conatPassword } from "@cocalc/backend/data";
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import {
   contentViewSiteOrigin,
@@ -159,6 +170,8 @@ import {
 import {
   createProjectHostHttpProxyAuth,
   getProjectHostHttpAuthContext,
+  isAppOriginRequest,
+  setAppOriginRequestAuth,
 } from "./http-proxy-auth";
 import { isValidUUID } from "@cocalc/util/misc";
 import { main as runAcpWorkerMain } from "./acp-worker";
@@ -422,6 +435,12 @@ export async function main(
 
   // 1) HTTP + conat server
   const app = express();
+  // Only the private-hostname rewriter sets this header: never trust a
+  // client's value (upgrades: see the emit wrapper below).
+  app.use((req, _res, next) => {
+    delete req.headers[PRIVATE_APP_HOST_HEADER];
+    next();
+  });
   // The per-project content origin (trust-free step 6) owns every request on
   // a content hostname, before any other route; see content-origin.ts.
   const contentDomain = getProjectContentDomain();
@@ -432,11 +451,23 @@ export async function main(
         next: NextFunction,
       ) => Promise<void>)
     | undefined;
+  // Project app origins (content-app-origin.ts): app hostnames under the
+  // content domain.
+  let appOrigin: ReturnType<typeof createAppOriginHandler> | undefined;
   // Content-shaped hostnames are claimed even when no content domain is
   // configured, so they fail closed rather than reach the host's routes.
   app.use((req, res, next) => {
     if (!isContentRequestHost(req.headers.host, contentDomain)) {
       return next();
+    }
+    if (contentDomain && looksLikeAppHostname(req.headers.host)) {
+      if (!appOrigin) {
+        res.statusCode = 503;
+        res.end();
+        return;
+      }
+      void appOrigin.handleRequest(req, res).catch(() => res.destroy());
+      return;
     }
     if (!handleContentRequest) {
       res.statusCode = contentDomain ? 503 : 404;
@@ -462,7 +493,25 @@ export async function main(
   });
   app.use(express.json());
   const { httpServer } = await startHttpListener(app, port, host, tls);
-  installContentHostnameUpgradeGuard(httpServer, contentDomain);
+  installContentHostnameUpgradeGuard(httpServer, contentDomain, () => {
+    const origin = appOrigin;
+    if (!origin) return;
+    return async (req) => {
+      const auth = await origin.authorizeUpgrade(req);
+      if (!auth) return false;
+      delete req.headers[PRIVATE_APP_HOST_HEADER];
+      setAppOriginRequestAuth(req, auth);
+      return true;
+    };
+  });
+  {
+    // Outermost: runs before the guard and every upgrade listener.
+    const emit = httpServer.emit;
+    httpServer.emit = function (this: any, event: string | symbol, ...args: any[]) {
+      if (event === "upgrade") delete args[0]?.headers?.[PRIVATE_APP_HOST_HEADER];
+      return emit.apply(this, [event, ...args] as any);
+    } as typeof httpServer.emit;
+  }
   app.get("/healthz", (_req, res) =>
     res.json({
       ok: true,
@@ -1139,7 +1188,19 @@ export async function main(
     httpServers: [httpServer],
     app,
     rewriteRequest: maybeRewriteAppHostnameRequest,
-    rewriteResponse: rewritePrivateAppHostnameResponseLocation,
+    rewriteResponse: (proxyRes, req) => {
+      // App origins: the user's server's cookies stay host-only, and can't
+      // set the app session (also guarded on the response itself).
+      if (isAppOriginRequest(req)) {
+        rewriteUpstreamResponseCookies(proxyRes.headers);
+      }
+      rewritePrivateAppHostnameResponseLocation(proxyRes, req);
+    },
+    rewriteUpgradeResponse: (proxyRes, req) => {
+      if (isAppOriginRequest(req)) {
+        rewriteUpstreamResponseCookies(proxyRes.headers);
+      }
+    },
     assertForwardAllowed: (req) => {
       const expires = getProjectHostHttpAuthContext(req)?.scoped_api_key_exp_s;
       if (expires != null && Date.now() >= expires * 1000) {
@@ -1188,6 +1249,54 @@ export async function main(
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
       const isProjectUploadRoute = isProjectUploadRequest(req, project_id);
+      if (
+        res &&
+        !isAppOriginRequest(req) &&
+        !req.headers[PRIVATE_APP_HOST_HEADER]
+      ) {
+        // D7: apps are never pages on this origin (host-app-route-redirect.ts).
+        const decision = hostAppRouteRedirect({
+          req,
+          project_id,
+          contentDomain,
+          siteOrigin: contentViewSiteOrigin({
+            req,
+            approvedOrigins: approvedBrowserOrigins(),
+            siteUrl: process.env.COCALC_SITE_URL,
+          }),
+        });
+        if (decision && "redirect" in decision) {
+          res.statusCode = 302;
+          res.setHeader("Location", decision.redirect);
+          res.setHeader("Cache-Control", "no-store");
+          res.end();
+          return { handled: true };
+        }
+        if (decision) {
+          res.statusCode = decision.refuse;
+          res.setHeader("Cache-Control", "no-store");
+          const site = contentViewSiteOrigin({
+            req,
+            approvedOrigins: approvedBrowserOrigins(),
+            siteUrl: process.env.COCALC_SITE_URL,
+          });
+          if (site) {
+            // A page with a way back to the project (no request content).
+            res.setHeader("Content-Type", "text/html; charset=utf-8");
+            res.setHeader(
+              "Content-Security-Policy",
+              "default-src 'none'; frame-ancestors 'none'",
+            );
+            res.end(
+              `<!doctype html><meta charset="utf-8"><title>App</title><p>${decision.message}</p><p><a href="${site}/projects/${project_id}">Back to the project</a></p>`,
+            );
+          } else {
+            res.setHeader("Content-Type", "text/plain; charset=utf-8");
+            res.end(`${decision.message}\n`);
+          }
+          return { handled: true };
+        }
+      }
       if (res) {
         if (isProjectFileRequest(req, project_id)) {
           setProjectFileCorsHeaders(req, res);
@@ -1454,6 +1563,51 @@ export async function main(
       return { handled: true, target: { host: "127.0.0.1", port: http_port } };
     },
   });
+  if (contentDomain) {
+    appOrigin = createAppOriginHandler({
+      domain: contentDomain,
+      host_id: hostId,
+      getPublicKey: getProjectHostAuthPublicKey,
+      getSecret: () => conatPassword,
+      approvedOrigins: approvedBrowserOrigins,
+      // The site's own URL (an app page's Referer is the app).
+      siteOrigin: () =>
+        contentViewSiteOrigin({
+          req: { headers: {} },
+          approvedOrigins: approvedBrowserOrigins(),
+          siteUrl: process.env.COCALC_SITE_URL,
+        }),
+      isCollaborator: hasProjectContentReadAccess,
+      currentEpoch: projectContentEpoch,
+      observeEpoch: observeProjectContentEpoch,
+      // Sign-in sessions end with any of the account's cutoffs.
+      accountRevokedBeforeMs: (account_id) => {
+        const cutoffs = [
+          getAccountRevokedBeforeMs(account_id),
+          getAccountContentRevokedBeforeMs(account_id),
+        ].filter((ms): ms is number => ms != null);
+        return cutoffs.length ? Math.max(...cutoffs) : undefined;
+      },
+      consumeCapability: consumeAppCapability,
+      matchApp: async ({ project_id, url }) =>
+        await matchAppRequest({ project_id, url }),
+      proxy: async (req, res, auth) => {
+        delete req.headers[PRIVATE_APP_HOST_HEADER];
+        setAppOriginRequestAuth(req, auth);
+        await projectProxyHandlers.handleRequest(req, res, () => {
+          if (!res.headersSent) {
+            res.statusCode = 404;
+            res.end("not found\n");
+          }
+        });
+      },
+      onError: ({ project_id, err }) =>
+        logger.debug("app origin request failed", {
+          project_id,
+          err: `${err}`,
+        }),
+    });
+  }
   handlePrivateAppHttpRequest = async (req, res, next) => {
     await maybeRewritePrivateHostnameRequest(req);
     if (!req.headers[PRIVATE_APP_HOST_HEADER]) {

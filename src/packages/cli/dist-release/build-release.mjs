@@ -8,7 +8,7 @@
  *
  * Usage:
  *   node dist-release/build-release.mjs [--out DIR] [--bundle index.js]
- *     [--node-version 26.11.1] [--node-keyring pubring.kbx]
+ *     [--node-version 26.12.1] [--node-keyring pubring.kbx]
  *     [--skip-node-signature] [--platforms linux-x64,darwin-arm64]
  */
 

@@ -218,13 +218,19 @@ export function peerHandle({ member }: Peer): string | undefined {
 export function parseBroadcastTarget(
   entry: unknown,
   index: number,
-): { name: string } | { member_id: string } | { target: AgentRpcTarget } {
+):
+  | { name: string }
+  | { member_id: string; name?: string }
+  | { target: AgentRpcTarget } {
   const where = `--targets[${index}]`;
   if (typeof entry === "string") {
     // Kept as typed: a full external label may start with "@".
     const name = entry.trim();
     const bare = name.replace(/^@/, "");
-    return isUuid(bare) ? { member_id: bare } : { name };
+    // A UUID typed as a string may be a member id, or a peer's free-text
+    // label that happens to look like one: both are candidates, and two
+    // different peers are ambiguous below, as agent send refuses them.
+    return isUuid(bare) ? { member_id: bare, name } : { name };
   }
   if (!entry || typeof entry !== "object" || Array.isArray(entry))
     throw new Error(
@@ -292,7 +298,12 @@ export function resolveBroadcastTargets(
         : "member_id" in p
           ? peer.member.member_id === p.member_id ||
             (peer.member.kind === "registered" &&
-              peer.member.endpoint.agent_id === p.member_id)
+              peer.member.endpoint.agent_id === p.member_id) ||
+            (p.name != null &&
+              [p.name, p.name.replace(/^@/, "")].some(
+                (name) =>
+                  peerName(peer).trim().toLowerCase() === name.toLowerCase(),
+              ))
           : [p.name, p.name.replace(/^@/, "")].some(
               (name) =>
                 peerName(peer).trim().toLowerCase() === name.toLowerCase(),

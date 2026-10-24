@@ -204,6 +204,24 @@ test("new items wait behind a button; mark all read", () => {
   expect(screen.getByText("No unread messages")).toBeInTheDocument();
 });
 
+test("archive all: a clean slate, after confirming", async () => {
+  const { count, setMessages } = setup(thread, 0);
+  expect(options()).toHaveLength(3);
+  fireEvent.click(screen.getByRole("button", { name: "Archive all" }));
+  // Nothing happens until it is confirmed.
+  expect(options()).toHaveLength(3);
+  expect(await screen.findByText("Archive all 3 messages?")).toBeInTheDocument();
+  const [, confirm] = screen.getAllByRole("button", { name: "Archive all" });
+  fireEvent.click(confirm);
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
+  expect(screen.getByText("No unread messages")).toBeInTheDocument();
+  expect(count()).toBe(4);
+  expect(screen.getAllByRole("button", { name: "Archive all" })[0]).toBeDisabled();
+  // A new message is in the inbox.
+  setMessages([...thread, person("p4", "fourth question", 5)]);
+  expect(options()).toHaveLength(1);
+});
+
 test("unread archived items still count while hidden", async () => {
   setup(thread, 4, { autoFocus: true });
   const keys = user();
@@ -218,7 +236,7 @@ test("unread archived items still count while hidden", async () => {
 test("narrow: back to the list keeps the keys working", async () => {
   setup(thread, 0, { narrow: true });
   const keys = user();
-  await keys.click(screen.getByText(/second question/));
+  // A phone starts on a message.
   expect(screen.queryByRole("listbox")).toBeNull();
   await keys.click(screen.getByRole("button", { name: "All messages" }));
   expect(document.activeElement).toBe(screen.getByRole("listbox"));
@@ -251,7 +269,6 @@ test("narrow: keys keep working as items open, though the list goes", async () =
   setup(thread, 4, { narrow: true });
   const keys = user();
   // Back on the list, which has the focus.
-  await keys.click(screen.getByText(/first question/));
   await keys.click(screen.getByRole("button", { name: "All messages" }));
   expect(document.activeElement).toBe(screen.getByRole("listbox"));
   // Opening an item replaces the list.
@@ -261,6 +278,29 @@ test("narrow: keys keep working as items open, though the list goes", async () =
   expect(document.activeElement).toBe(screen.getByLabelText("Reader"));
   await keys.keyboard("j");
   expect(screen.getByRole("article")).toHaveTextContent("second question");
+});
+
+test("phone: starts on the first unread message, with one bar to move and act", async () => {
+  // p1 (with its answer) is read; p2 and p3 are not.
+  const { state } = setup(thread, 2, { narrow: true });
+  const keys = user();
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+  const bar = screen.getByRole("toolbar", { name: "Message navigation" });
+  expect(bar).toHaveTextContent("1 of 3");
+  // The list's header (Mark all read, Show archived) waits for the list.
+  expect(screen.queryByRole("button", { name: "Mark all read" })).toBeNull();
+  expect(within(bar).getByRole("button", { name: "Newer" })).toBeDisabled();
+  await keys.click(within(bar).getByRole("button", { name: "Older" }));
+  expect(screen.getByRole("article")).toHaveTextContent("second question");
+  expect(bar).toHaveTextContent("2 of 3");
+  await keys.click(within(bar).getByRole("button", { name: "Mark unread" }));
+  expect(state().u).toEqual(["p2"]);
+  await keys.click(within(bar).getByRole("button", { name: "Archive" }));
+  expect(state().a).toEqual({ p2: "p2" });
+  await keys.click(screen.getByRole("button", { name: "All messages" }));
+  expect(
+    screen.getByRole("button", { name: "Mark all read" }),
+  ).toBeInTheDocument();
 });
 
 test("Newer and Older keep the keys working, though the pane is replaced", async () => {
@@ -333,4 +373,287 @@ test("an agent message is shown as the log shows it: its From card", async () =>
   expect(screen.getByRole("article")).toHaveTextContent(
     /```agent-message .*direction=incoming/,
   );
+});
+
+test("a read-only chat offers no replies from a selection, as in the log", async () => {
+  setup(thread, 4, { projectId: "project-1", path: "a.chat", readOnly: true });
+  await user().click(screen.getByText(/first question/));
+  for (const el of within(screen.getByRole("article")).getAllByTestId(
+    "contextual-reply",
+  ))
+    expect(el).toHaveAttribute("data-disabled", "true");
+});
+
+test("phone: another thread opens on its own first message", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  const view = (threadId: string, messages: any[]) => (
+    <ChatReaderView
+      actions={actions}
+      threadId={threadId}
+      messages={messages}
+      accountId="acct"
+      narrow
+    />
+  );
+  const { rerender } = render(view("thread-1", thread));
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+  rerender(view("thread-2", [person("q1", "other thread", 7)]));
+  expect(screen.getByRole("article")).toHaveTextContent("other thread");
+});
+
+test("phone: a hidden chat opens and reads nothing until it is shown", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  const view = (isVisible: boolean) => (
+    <ChatReaderView
+      actions={actions}
+      threadId="thread-1"
+      messages={thread}
+      accountId="acct"
+      narrow
+      isVisible={isVisible}
+    />
+  );
+  const { rerender } = render(view(false));
+  expect(screen.queryByRole("article")).toBeNull();
+  expect(actions.updateReaderState).not.toHaveBeenCalled();
+  rerender(view(true));
+  expect(screen.getByRole("article")).toHaveTextContent("third question");
+  expect(actions.updateReaderState).toHaveBeenCalled();
+});
+
+test("phone: in a background browser tab nothing opens or is read until it is shown", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  const hidden = jest.spyOn(document, "hidden", "get").mockReturnValue(true);
+  try {
+    render(
+      <ChatReaderView
+        actions={actions}
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        narrow
+      />,
+    );
+    expect(screen.queryByRole("article")).toBeNull();
+    expect(actions.updateReaderState).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false);
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(screen.getByRole("article")).toHaveTextContent("third question");
+    expect(actions.updateReaderState).toHaveBeenCalled();
+  } finally {
+    hidden.mockRestore();
+  }
+});
+
+test("phone: opens nothing until the read state loads", () => {
+  let ready = false;
+  const actions: any = {
+    isProjectReadStateReady: jest.fn(() => ready),
+    getThreadReadCount: jest.fn(() => 0),
+    // Once loaded: the newest is archived.
+    getReaderState: jest.fn(() => (ready ? { a: { p3: "p3" } } : {})),
+    updateReaderState: jest.fn(() => true),
+  };
+  const view = (readStateVersion: number) => (
+    <ChatReaderView
+      actions={actions}
+      threadId="thread-1"
+      messages={thread}
+      accountId="acct"
+      readStateVersion={readStateVersion}
+      narrow
+    />
+  );
+  const { rerender } = render(view(0));
+  expect(screen.queryByRole("article")).toBeNull();
+  expect(actions.updateReaderState).not.toHaveBeenCalled();
+  ready = true;
+  rerender(view(1));
+  // Not the archived one it would have opened before.
+  expect(screen.getByRole("article")).toHaveTextContent("second question");
+});
+
+test("the open item can be shown by the log, and the list can mark items", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  render(
+    <ChatReaderView
+      actions={actions}
+      threadId="thread-1"
+      messages={thread}
+      accountId="acct"
+      narrow
+      renderItem={(item) => <div data-testid="item-log">{item.id}</div>}
+      itemBadges={(item) => (item.id === "p3" ? <span>Question</span> : null)}
+    />,
+  );
+  // Opened on its own (narrow): the newest item, through the log.
+  expect(screen.getByTestId("item-log")).toHaveTextContent("p3");
+  expect(screen.queryByText("third question")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "All messages" }));
+  expect(within(options()[0]).getByText("Question")).toBeTruthy();
+  expect(within(options()[1]).queryByText("Question")).toBeNull();
+});
+
+test("items show their subject; high ones are marked for you, and the open one is titled", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  render(
+    <ChatReaderView
+      actions={actions}
+      threadId="thread-1"
+      messages={thread}
+      accountId="acct"
+      itemInfo={(item) =>
+        item.id === "p3"
+          ? { subject: "Needs your decision", priority: "high" }
+          : { subject: `About ${item.id}`, priority: "normal" }
+      }
+    />,
+  );
+  const [top, next] = options();
+  expect(top).toHaveTextContent("Needs your decision");
+  expect(within(top).getByLabelText("For you")).toBeTruthy();
+  expect(next).toHaveTextContent("About p2");
+  expect(within(next).queryByLabelText("For you")).toBeNull();
+  expect(within(next).queryByLabelText("Low priority")).toBeNull();
+  fireEvent.click(top);
+  expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
+    "Needs your decision",
+  );
+});
+
+describe("views: for you, all, filed", () => {
+  beforeEach(() => localStorage.removeItem("cocalc-chat-reader-view"));
+  const info = (item: { id: string }) =>
+    ({
+      subject: `About ${item.id}`,
+      priority: item.id === "p2" || item.id === "p1" ? "low" : "normal",
+    }) as const;
+  const show = (itemInfo = info) =>
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({})),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={itemInfo}
+      />,
+    );
+  const subjects = () => options().map((o) => o.textContent);
+
+  test("for you hides what is filed, and counts only what is for you", () => {
+    show();
+    expect(subjects()).toEqual([expect.stringContaining("About p3")]);
+    expect(screen.getByText("For you (1)")).toBeTruthy();
+    expect(screen.getByText("1 unread")).toBeTruthy();
+    // Filed: the low ones, with their own count.
+    fireEvent.click(screen.getByText("Filed (2)"));
+    expect(subjects()).toEqual([
+      expect.stringContaining("About p2"),
+      expect.stringContaining("About p1"),
+    ]);
+    fireEvent.click(screen.getByText("All"));
+    expect(options()).toHaveLength(3);
+  });
+
+  test("the choice is kept", () => {
+    const { unmount } = show();
+    fireEvent.click(screen.getByText("All"));
+    unmount();
+    show();
+    expect(options()).toHaveLength(3);
+  });
+
+  test("the switcher is a labelled group of choices the keyboard reaches", async () => {
+    const keys = user();
+    show();
+    const group = screen.getByRole("radiogroup", { name: "Which messages" });
+    const forYou = within(group).getByRole("radio", { name: /For you/ });
+    expect(forYou).toBeChecked();
+    // Tab reaches the checked choice; the arrow keys move between them.
+    forYou.focus();
+    await keys.keyboard("{ArrowRight}");
+    const all = within(group).getByRole("radio", { name: "All" });
+    expect(all).toBeChecked();
+    expect(options()).toHaveLength(3);
+  });
+
+  test("filed items that are archived are said to be archived", () => {
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({
+              a: { p1: "a1", p2: "p2" },
+            })),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={info}
+      />,
+    );
+    fireEvent.click(screen.getByText(/^Filed/));
+    expect(screen.getByText("Everything here is archived")).toBeTruthy();
+  });
+
+  test("the Filed count includes archived unread items while they are shown", () => {
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            // p1's item is archived (and unread: nothing has been read).
+            getReaderState: jest.fn(() => ({ a: { p1: "a1" } })),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={info}
+      />,
+    );
+    expect(screen.getByText("Filed (1)")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
+    expect(screen.getByText("Filed (2)")).toBeTruthy();
+  });
+
+  test("nothing for you says where the rest is", () => {
+    show(((item) => ({ subject: item.id, priority: "low" })) as any);
+    expect(
+      screen.getByText("Nothing for you here: the rest is filed"),
+    ).toBeTruthy();
+    expect(screen.getByText("No unread messages")).toBeTruthy();
+  });
 });

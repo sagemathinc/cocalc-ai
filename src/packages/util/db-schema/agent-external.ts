@@ -147,6 +147,10 @@ Table({
       ...required("map", "Discriminated authenticated source member."),
       pg_type: "JSONB",
     },
+    source_account_id: {
+      type: "uuid",
+      desc: "The sender's authenticated account: with source, the only principal that may inspect the message (null for rows from before it was recorded).",
+    },
     body: required("string", "Explicit agent-provided message body."),
     state: {
       ...required("string", "Pending or acknowledged."),

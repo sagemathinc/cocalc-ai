@@ -35,7 +35,7 @@ For a fresh Ubuntu VM, the intended first pass is:
 sudo ./src/scripts/bay-systemd/bay-bootstrap-host.sh --install-nodejs
 ```
 
-This installs Node.js 26.2.0 via nvm 0.40.4 under `/opt/cocalc/nvm` by default.
+This installs Node.js 26.12.1 via nvm 0.40.4 under `/opt/cocalc/nvm` by default.
 The generated bay environment points services at that exact runtime with
 `COCALC_BAY_NODE_BIN`, instead of relying on whichever `node` binary systemd
 would otherwise find.

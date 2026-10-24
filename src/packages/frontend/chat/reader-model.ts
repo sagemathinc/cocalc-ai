@@ -7,8 +7,11 @@
 // which are read and archived. Pure, so the rules are tested apart from the
 // view.
 //
-// An item is an incoming message (from a person, another agent, a sensor or a
-// scheduled prompt) with the agent replies that follow it. It is read when its
+// An item is one agent turn: the incoming message that started it (from a
+// person, another agent, a sensor or a scheduled prompt), what arrived while
+// it ran (steering, other agents' messages, answers to its questions: as the
+// log places them, with the turn they arrived during) and its replies. A
+// message no turn answers or ran through is an item of its own. It is read when its
 // last message is at or before the thread's watermark (what the person has
 // read in order), or when it was opened since its last message arrived; and
 // not when it was marked unread again. Archived works the same way: a new
@@ -23,6 +26,12 @@ import {
   isAcpAssistantMessage,
   parentMessageId,
 } from "./access";
+import { hasAcpGuidanceReceipt } from "./message-state";
+import { canMovePostedMessageToAgent } from "./post-to-agent";
+import {
+  assistantFinishedAt,
+  resolveSteerAssistantMessageId,
+} from "./turn-span";
 import type { ChatMessageTyped } from "./types";
 
 export interface ReaderItem {
@@ -56,7 +65,12 @@ export type ReaderChange = (
 };
 
 /** How many ids each list keeps; the oldest go first. */
-export const READER_STATE_LIMITS = { read: 1000, unread: 1000, archived: 2000 };
+export const READER_STATE_LIMITS = {
+  read: 1000,
+  unread: 1000,
+  archived: 2000,
+  unarchived: 1000,
+};
 
 export function readerMessageId(message: ChatMessageTyped): string {
   const id = `${field<string>(message, "message_id") ?? ""}`.trim();
@@ -79,18 +93,99 @@ export function isAgentReply(message: ChatMessageTyped): boolean {
   return typeof author === "string" && isLanguageModelService(author);
 }
 
-export function readerItems(messages: ChatMessageTyped[]): ReaderItem[] {
+type AcpStateMap = { get?: (key: string) => unknown };
+
+function acpStateOf(message: ChatMessageTyped, acpState?: AcpStateMap): string {
+  const id = readerMessageId(message);
+  return `${(id ? acpState?.get?.(`message:${id}`) : undefined) ?? field<string>(message, "acp_state") ?? ""}`;
+}
+
+/**
+ * The turn a message arrived during, as the log places it: the latest turn
+ * that started before it and was still going (running now, or its reply was
+ * last written after the message came). Not a message waiting to be sent
+ * (queued, not sent, a note posted for people only): that isn't part of any
+ * turn yet.
+ */
+function midTurnOwner(
+  message: ChatMessageTyped,
+  turns: readonly ChatMessageTyped[],
+  byMessageId: Map<string, ChatMessageTyped>,
+  acpState?: AcpStateMap,
+): ChatMessageTyped | undefined {
+  const date = dateValue(message)?.valueOf();
+  if (date == null) return undefined;
+  if (canMovePostedMessageToAgent(message)) return undefined;
+  // A delivery receipt is stronger than a stale "queued" (as in the log).
+  if (
+    !hasAcpGuidanceReceipt(field(message, "acp_guidance_delivered_at_ms")) &&
+    ["queue", "queued", "not-sent"].includes(acpStateOf(message, acpState))
+  )
+    return undefined;
+  // It arrived during the turn: started before it, and running or written
+  // since.
+  const spans = (turn: ChatMessageTyped | undefined) => {
+    const start = turn ? dateValue(turn)?.valueOf() : undefined;
+    if (!turn || start == null || start >= date) return false;
+    return (
+      field<boolean>(turn, "generating") === true ||
+      acpStateOf(turn, acpState) === "running" ||
+      date <= assistantFinishedAt(turn)
+    );
+  };
+  // First the turn its parents lead to, as the log does; else the newest
+  // by start time (the thread's order can differ from it).
+  const chainId = resolveSteerAssistantMessageId({
+    message,
+    byMessageId,
+    includeMidturnMessages: true,
+  });
+  const chain = chainId ? byMessageId.get(chainId) : undefined;
+  if (chain && spans(chain)) return chain;
+  let owner: ChatMessageTyped | undefined;
+  let ownerStart = -Infinity;
+  for (const turn of turns) {
+    const start = dateValue(turn)?.valueOf();
+    if (start == null || start <= ownerStart || !spans(turn)) continue;
+    owner = turn;
+    ownerStart = start;
+  }
+  return owner;
+}
+
+export function readerItems(
+  messages: ChatMessageTyped[],
+  { acpState }: { acpState?: AcpStateMap } = {},
+): ReaderItem[] {
   const items: ReaderItem[] = [];
   // Every message's item, by message id: a reply joins its parent's item.
   const byMessage = new Map<string, ReaderItem>();
+  // The agent turns (their replies) and the messages they answer.
+  const turns = messages.filter(isAgentReply);
+  const prompts = new Set(
+    turns.map((turn) => parentMessageId(turn)).filter(Boolean),
+  );
+  const byMessageId = new Map<string, ChatMessageTyped>();
+  for (const message of messages) {
+    const id = `${field<string>(message, "message_id") ?? ""}`.trim();
+    if (id) byMessageId.set(id, message);
+  }
   messages.forEach((message, index) => {
     const id = readerMessageId(message);
     if (!id) return;
-    if (isAgentReply(message)) {
+    const reply = isAgentReply(message);
+    // A reply goes with its prompt; what arrived during a turn, with it.
+    const owner = reply
+      ? undefined
+      : prompts.has(id)
+        ? undefined
+        : midTurnOwner(message, turns, byMessageId, acpState);
+    if (reply || owner) {
       // Its prompt's item (histories can interleave), else the one before.
-      const parent = parentMessageId(message);
+      const parent = reply ? parentMessageId(message) : readerMessageId(owner!);
       const item =
-        (parent ? byMessage.get(parent) : undefined) ?? items[items.length - 1];
+        (parent ? byMessage.get(parent) : undefined) ??
+        (reply ? items[items.length - 1] : undefined);
       if (item) {
         item.messages.push(message);
         item.lastId = id;
@@ -125,8 +220,25 @@ export function isItemRead(
   return item.lastIndex <= watermark || state.r?.[item.id] === item.lastId;
 }
 
+/** When its newest message was written (ms), or -Infinity if unknown. */
+export function itemLastDate(item: ReaderItem): number {
+  let last = -Infinity;
+  for (const message of item.messages) {
+    const date = dateValue(message)?.valueOf();
+    if (date != null && date > last) last = date;
+  }
+  return last;
+}
+
 export function isItemArchived(item: ReaderItem, state: ReaderState): boolean {
-  return state.a?.[item.id] === item.lastId;
+  if (state.a?.[item.id] === item.lastId) return true;
+  // Archive all: up to its time, unless moved back since; a newer reply
+  // brings an item back, as for one archived alone.
+  return (
+    state.aw != null &&
+    !state.ax?.includes(item.id) &&
+    itemLastDate(item) <= state.aw
+  );
 }
 
 function capRecord(
@@ -167,6 +279,8 @@ function compact(state: ReaderState): ReaderState {
     ...(state.r && Object.keys(state.r).length ? { r: state.r } : {}),
     ...(state.u?.length ? { u: state.u } : {}),
     ...(state.a && Object.keys(state.a).length ? { a: state.a } : {}),
+    ...(state.aw != null ? { aw: state.aw } : {}),
+    ...(state.ax?.length ? { ax: state.ax } : {}),
   };
 }
 
@@ -235,12 +349,45 @@ export function setItemArchived(
   archived: boolean,
   state: ReaderState,
 ): ReaderState {
+  const ax = (state.ax ?? []).filter((id) => id !== item.id);
+  // Back to the inbox from under Archive all: remembered as an exception.
+  if (!archived && state.aw != null && itemLastDate(item) <= state.aw)
+    ax.push(item.id);
   return compact({
     ...state,
     a: archived
       ? withEntry(state.a, item.id, item.lastId, READER_STATE_LIMITS.archived)
       : without(state.a, new Set([item.id])),
+    ax: ax.slice(Math.max(0, ax.length - READER_STATE_LIMITS.unarchived)),
   });
+}
+
+/**
+ * A clean slate: every item is archived and read. Kept as a time, not a list
+ * of items, so it holds for any number of them; a newer reply brings an item
+ * back.
+ */
+export function archiveAll(
+  items: ReaderItem[],
+  state: ReaderState,
+): ReturnType<ReaderChange> {
+  const newest = items.reduce(
+    (last, item) => Math.max(last, itemLastDate(item)),
+    state.aw ?? -Infinity,
+  );
+  const archived = (from: ReaderState): ReaderState =>
+    compact({
+      ...from,
+      a: undefined,
+      ax: undefined,
+      ...(Number.isFinite(newest) ? { aw: newest } : {}),
+    });
+  const read = markAllRead(items, state);
+  return {
+    ...read,
+    state: archived(read.state),
+    unmoved: archived(read.unmoved ?? state),
+  };
 }
 
 /** Everything read: the watermark covers every message; archives stay. */
@@ -250,7 +397,7 @@ export function markAllRead(
 ): { state: ReaderState; watermarkCount: number; unmoved: ReaderState } {
   const last = items[items.length - 1];
   return {
-    state: compact({ a: state.a }),
+    state: compact({ a: state.a, aw: state.aw, ax: state.ax }),
     watermarkCount: last ? last.lastIndex + 1 : 0,
     unmoved: state,
   };

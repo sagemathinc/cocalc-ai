@@ -32,6 +32,7 @@ backend/conat/persist-volume-template.ts).
 - Deleting, copying and archiving a project do the same to its volume.
 */
 
+import { SNAPSHOT_HOME_RESTORE_UNAVAILABLE } from "@cocalc/conat/files/file-server";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -61,7 +62,10 @@ import {
 import { SubvolumeQuota } from "@cocalc/file-server/btrfs/subvolume-quota";
 import { btrfsQuotasDisabled } from "@cocalc/file-server/btrfs/config";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
-import { forgetSubvolumePaths } from "@cocalc/file-server/btrfs/operation-cache";
+import {
+  assertBtrfsBackgroundMutationAllowed,
+  forgetSubvolumePaths,
+} from "@cocalc/file-server/btrfs/operation-cache";
 import { noteQgroupLimit } from "@cocalc/file-server/btrfs/qgroup-scan";
 import { setPrepareProjectStore } from "@cocalc/conat/persist/context";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -74,6 +78,7 @@ import {
 import {
   joinProjectQuotaGroup,
   projectQuotaGroupLimit,
+  syncProjectQuotaGroup,
 } from "./project-quota-group";
 
 const logger = getLogger("project-host:persist-volume");
@@ -251,6 +256,14 @@ export interface PersistVolumeOps {
     path: string,
     opts?: { required?: boolean },
   ) => Promise<void>;
+  // the project's quota group holds its home and history, limited for the
+  // home's quota `quota` (project-quota-group.ts syncProjectQuotaGroup)
+  limitQuotaGroup: (
+    project_id: string,
+    home: string,
+    history: string,
+    quota: number,
+  ) => Promise<void>;
 }
 
 export const btrfsOps: PersistVolumeOps = {
@@ -328,6 +341,15 @@ export const btrfsOps: PersistVolumeOps = {
       mount: dirname(path),
       path,
       required: opts?.required,
+    });
+  },
+  limitQuotaGroup: async (project_id, home, history, quota) => {
+    await syncProjectQuotaGroup({
+      project_id,
+      mount: dirname(home),
+      home,
+      history,
+      quota,
     });
   },
 };
@@ -485,6 +507,25 @@ async function prepare({
       project_id,
       err: `${err}`,
     });
+    // (the group is limited at the project's next quota change or audit)
+    return;
+  }
+  if (homeQuota > 0) {
+    // A group just made by the join above has no limit until the project's
+    // next quota change or audit: until then the home and history would each
+    // have their own allowance, together more than the project's quota.
+    // Only now, with the volume ready and the old copy gone: while both
+    // copies are there, the group may be over its limit (the marker could
+    // not be written, and every open would import again and fail; or, with
+    // the copy left behind, the project could write nothing).
+    await ops
+      .limitQuotaGroup(project_id, home, root, homeQuota)
+      .catch((err) => {
+        logger.warn("unable to limit a project's quota group", {
+          project_id,
+          err: `${err}`,
+        });
+      });
   }
 }
 
@@ -677,6 +718,16 @@ export async function capturePersistVolume({
   const { legacy } = projectPersistTemplates(env);
   const volume = project_id ? persistVolumePath(project_id, env) : undefined;
   if (project_id == null || volume == null || legacy == null) return;
+  // Background work (a scheduled backup or snapshot) that the host would
+  // defer under I/O pressure must not snapshot the history first: it would
+  // be deleted again at once, and each try is a btrfs transaction commit,
+  // which only adds to the pressure (operation-cache.ts).
+  const assertAllowed = () =>
+    assertBtrfsBackgroundMutationAllowed({
+      mount: dirname(volume),
+      operation: "persist-capture",
+    });
+  assertAllowed();
   const unlock = await acquirePersistLock(project_id);
   let captured: string;
   try {
@@ -685,6 +736,8 @@ export async function capturePersistVolume({
       unlock();
       return;
     }
+    // (again: the lock may have taken a while)
+    assertAllowed();
     // removed by the persist server when it starts, if left over
     captured =
       stagingPath ??
@@ -755,54 +808,22 @@ export async function copyPersistVolumeIntoSnapshot(opts: {
   }
 }
 
-// A read-only snapshot at `dest` in the project's ~/.snapshots of `source`,
-// its home or a snapshot of it, with its edit history as in every snapshot
-// there (subvolume-snapshots.ts does the same for the usual ones).  The
-// project can write its home, and the history must never be writable there:
-// the snapshot is completed in host-only staging first.
-export async function snapshotWithHistory({
+// Snapshots in ~/.snapshots are of the files only (subvolume-snapshots.ts),
+// so restoring a whole home from one would keep the project's current edit
+// history, which open documents then write back over the restored files.
+// Until a restore reconciles the two, it is refused with persist volumes;
+// files can still be restored from ~/.snapshots, and a home from a backup.
+export function assertHomeSnapshotRestoreAllowed({
   project_id,
-  source,
-  dest,
+  mode,
   env = process.env,
 }: {
   project_id: string;
-  source: string;
-  dest: string;
+  mode: string;
   env?: NodeJS.ProcessEnv;
-}): Promise<void> {
-  const subvolume = `project-${project_id}`;
-  let captured = await capturePersistVolume({ subvolume, env });
-  try {
-    if (captured == null) {
-      await btrfs({ args: ["subvolume", "snapshot", "-r", source, dest] });
-      // There was nothing to add, but there may be now (the history just
-      // moved out of the home): then take the snapshot again with it.
-      captured = await capturePersistVolume({ subvolume, env });
-      if (captured == null) return;
-      await btrfs({ args: ["subvolume", "delete", dest] });
-    }
-    const staged = join(
-      dirname(persistVolumePath(project_id, env)!),
-      IMPORT_STAGING_DIR,
-      stagingName("snapshot", project_id),
-    );
-    await btrfs({ args: ["subvolume", "snapshot", source, staged] });
-    try {
-      await captured.addTo(staged);
-      await btrfs({ args: ["property", "set", "-ts", staged, "ro", "true"] });
-      await btrfs({ args: ["subvolume", "snapshot", "-r", staged, dest] });
-    } finally {
-      await btrfs({ args: ["subvolume", "delete", staged] }).catch((err) => {
-        logger.warn("unable to delete a staged snapshot", {
-          staged,
-          err: `${err}`,
-        });
-      });
-    }
-  } finally {
-    await captured?.release();
-  }
+}): void {
+  if (mode === "rootfs" || persistVolumePath(project_id, env) == null) return;
+  throw new Error(SNAPSHOT_HOME_RESTORE_UNAVAILABLE);
 }
 
 // Where restoring `path` of a backup to `dest` in the project's home puts
@@ -907,6 +928,7 @@ export async function restoreBackupWithHistory({
               if (merged != null) await ops.removeTree(merged).catch(() => {});
               throw err;
             }
+            noteHomeInstalled(project_id);
             if (merged != null) {
               previous = await swapInVolume(project_id, merged, env, ops);
             }
@@ -1163,6 +1185,20 @@ export async function acquirePersistLock(
   };
 }
 
+// When a restore last installed a home here (replaceProjectHome, or a
+// backup restored over it), under the persist lock: anything that deletes
+// the project's data under that lock, decided before then (a stale-project
+// deletion, master-status.ts), no longer applies.
+const homeInstalledAt = new Map<string, number>();
+
+export function projectHomeInstalledAt(project_id: string): number | undefined {
+  return homeInstalledAt.get(project_id);
+}
+
+function noteHomeInstalled(project_id: string): void {
+  homeInstalledAt.set(project_id, Date.now());
+}
+
 async function withPersistLock<T>(
   project_id: string,
   fn: () => Promise<T>,
@@ -1366,6 +1402,7 @@ export async function replaceProjectHome<T>({
           throw err;
         }
       });
+      noteHomeInstalled(project_id);
       // Still holding the lock, so no capture or copy sees the history's
       // copy in the new home.
       if (staged != null) {

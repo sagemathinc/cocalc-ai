@@ -25,7 +25,8 @@ import {
   agentTurnStatusText,
 } from "@cocalc/conat/agents/agent-status";
 import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
-import { CHAT_DRAFT_STORE } from "@cocalc/chat";
+import { CHAT_DRAFT_STORE, isTurnPriority } from "@cocalc/chat";
+import { chatTarget } from "./chat-card";
 import {
   agentRpcInspectSummary,
   agentRpcWithdrawSummary,
@@ -354,16 +355,46 @@ export function registerAgentCommands(
     .option("--external-agent <profile>", "use an enrolled external agent")
     .requiredOption("--agent-network <uuid>", "exact Agent Network")
     .requiredOption("--to-agent <uuid>", "target from the original outcome")
-    .requiredOption("--target-project <uuid>", "target project")
-    .description("inspect an exact attempt without retrying or starting work")
+    .option("--target-project <uuid>", "target project (a project agent)")
+    .option(
+      "--target-account <uuid>",
+      "an external member's account (with --target-installation)",
+    )
+    .option(
+      "--target-installation <uuid>",
+      "an external member's installation (with --target-account)",
+    )
+    .description(
+      "inspect an exact attempt without retrying or starting work; for an external member, whether it has read the message",
+    )
     .action(async (attempt_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
+      const external =
+        opts.targetAccount !== undefined ||
+        opts.targetInstallation !== undefined;
+      if (
+        external
+          ? opts.targetProject !== undefined ||
+            !opts.targetAccount ||
+            !opts.targetInstallation
+          : !opts.targetProject
+      )
+        throw new Error(
+          "give --target-project, or --target-account and --target-installation for an external member",
+        );
       const request = {
         version: 3 as const,
         action: "inspect" as const,
         attempt_id,
         agent_network_id: opts.agentNetwork,
-        target: { project_id: opts.targetProject, agent_id: opts.toAgent },
+        target: external
+          ? {
+              kind: "external" as const,
+              account_id: opts.targetAccount,
+              agent_id: opts.toAgent,
+              installation_id: opts.targetInstallation,
+            }
+          : { project_id: opts.targetProject, agent_id: opts.toAgent },
       };
       const outcome = (
         opts.externalAgent
@@ -403,6 +434,72 @@ export function registerAgentCommands(
         summary: agentRpcWithdrawSummary(outcome),
       });
     });
+  agent
+    .command("turn")
+    .description(
+      "say what the current turn is and whether it is for the person reading: a subject line and a priority (high, normal, low), shown in the chat's reader",
+    )
+    .option("--subject <text>", "one line saying what this turn did or asks")
+    .option(
+      "--priority <level>",
+      "high: it needs the person (a decision, an approval, results they asked for); normal; low: FYI, for the record",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option("--path <path>", "chat path (default: $COCALC_CODEX_CHAT_PATH)")
+    .option(
+      "--thread-id <id>",
+      "chat thread (default: $COCALC_CODEX_THREAD_ID)",
+    )
+    .option(
+      "--message-date <date>",
+      "the turn's message timestamp (default: $COCALC_CODEX_MESSAGE_DATE)",
+    )
+    .addHelpText(
+      "after",
+      `
+Run it during a turn, as often as you like: the last call wins, and the
+subject can be revised at the end when you know what happened. An empty
+--subject "" clears it. Without a subject the reader shows the first line
+of your reply; without a priority, a turn a person started is normal and one
+started by an agent message, a sensor or a schedule is low. An open question
+to the person always shows as high.
+
+  cocalc agent turn --subject "Fixed the shallow-clone cache bug" --priority high
+  cocalc agent turn --priority low`,
+    )
+    .action(async (opts, cmd) =>
+      deps.withContext(
+        cmd,
+        `${prefix} turn`,
+        async (ctx) => {
+          if (opts.subject === undefined && opts.priority === undefined)
+            throw new Error("give --subject, --priority or both");
+          if (
+            opts.priority !== undefined &&
+            !isTurnPriority(`${opts.priority}`.toLowerCase())
+          )
+            throw new Error("--priority must be high, normal or low");
+          const chat = chatTarget(opts);
+          if (!chat)
+            throw new Error(
+              "no current turn: run this during an agent turn, or pass --path, --thread-id and --message-date",
+            );
+          return await deps.projectChatTurnMetaData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: chat.path,
+            threadId: chat.threadId,
+            messageDate: chat.messageDate,
+            subject: opts.subject,
+            priority:
+              opts.priority === undefined
+                ? undefined
+                : `${opts.priority}`.toLowerCase(),
+          });
+        },
+        { projectOnly: { projectIdentifier: opts.project } },
+      ),
+    );
   agent
     .command("whoami")
     .description(

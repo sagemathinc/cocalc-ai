@@ -35,6 +35,7 @@ import { useAppStatus } from "@cocalc/frontend/project/apps/use-app-status";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { Button } from "antd";
 import { withProjectHostBase } from "./host-url";
+import { appOpenURL } from "./app-server-open";
 
 const LAUNCHING_SERVER = defineMessage({
   id: "project.named-server-panel.launching_server",
@@ -253,13 +254,12 @@ export function NamedServerPanel({ project_id, name, style }: Props) {
 }
 
 export function serverURL(project_id: string, name: NamedServerName): string {
-  const path =
-    join(
-      appBasePath,
-      project_id,
-      SPEC[name]?.usesBasePath ? "port" : "server",
-      name,
-    ) + "/";
+  const local =
+    join("/", project_id, SPEC[name]?.usesBasePath ? "port" : "server", name) +
+    "/";
+  const open = appOpenURL(project_id, local);
+  if (open) return open;
+  const path = join(appBasePath, local);
   return withProjectHostBase(project_id, path) ?? path;
 }
 
@@ -283,6 +283,14 @@ export function ServerLink({
   useEffect(() => {
     let canceled = false;
     void (async () => {
+      const open =
+        ready && appStatus.status?.url
+          ? appOpenURL(project_id, appStatus.status.url, name)
+          : undefined;
+      if (open) {
+        if (!canceled) setAppUrl(open);
+        return;
+      }
       const rawUrl =
         ready && appStatus.status?.url
           ? withProjectHostBase(project_id, appStatus.status.url)
