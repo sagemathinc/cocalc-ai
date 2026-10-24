@@ -14,6 +14,7 @@ import {
   exchangeProjectHostBootstrapToken,
   proveProjectHostMasterToken,
   restoreProjectHostTokensForRestart,
+  rotateProjectHostMasterToken,
   revokeProjectHostTokensForHost,
   verifyProjectHostToken,
 } from "./bootstrap-token";
@@ -84,7 +85,7 @@ describeDb("bootstrap token exchange", () => {
 
     expect(
       await proveProjectHostMasterToken(host, second.master.token_id),
-    ).toBe(1);
+    ).toEqual({ valid: true, closed: 1 });
     // A second redemption after the host proved its token is refused...
     expect(await exchange(token)).toEqual({
       ok: false,
@@ -103,9 +104,15 @@ describeDb("bootstrap token exchange", () => {
     const { token } = await createProjectHostBootstrapToken(host);
     const old = await createProjectHostMasterConatToken(host);
     await createProjectHostMasterConatToken(host); // revokes old
-    expect(await proveProjectHostMasterToken(host, old.token_id)).toBe(0);
+    expect(await proveProjectHostMasterToken(host, old.token_id)).toEqual({
+      valid: false,
+      closed: 0,
+    });
     const foreign = await createProjectHostMasterConatToken(randomUUID());
-    expect(await proveProjectHostMasterToken(host, foreign.token_id)).toBe(0);
+    expect(await proveProjectHostMasterToken(host, foreign.token_id)).toEqual({
+      valid: false,
+      closed: 0,
+    });
     expect((await exchange(token)).ok).toBe(true);
   });
 
@@ -114,19 +121,28 @@ describeDb("bootstrap token exchange", () => {
     const { token } = await createProjectHostBootstrapToken(host);
     const m = await createProjectHostMasterConatToken(host);
     // ensureMasterConatToken: status check (proof), then rotation...
-    expect(await proveProjectHostMasterToken(host, m.token_id)).toBe(1);
+    expect(await proveProjectHostMasterToken(host, m.token_id)).toEqual({
+      valid: true,
+      closed: 1,
+    });
     expect((await exchange(token)).ok).toBe(false);
-    const n = await createProjectHostMasterConatToken(host);
+    const n = await rotateProjectHostMasterToken(host, m.token_id, {
+      ttlMs: YEAR,
+    });
+    if (!n) throw Error("unreachable");
     // ...whose response is lost: the host still holds M, now revoked.
     expect(await isMasterValid(m.token)).toBe(false);
-    expect(await proveProjectHostMasterToken(host, m.token_id)).toBe(0);
+    expect(await proveProjectHostMasterToken(host, m.token_id)).toEqual({
+      valid: false,
+      closed: 0,
+    });
     const recovered = await exchange(token);
     expect(recovered.ok).toBe(true);
     if (!recovered.ok) throw Error("unreachable");
     expect(await isMasterValid(n.token)).toBe(false);
     expect(
       await proveProjectHostMasterToken(host, recovered.master.token_id),
-    ).toBe(1);
+    ).toEqual({ valid: true, closed: 1 });
     expect((await exchange(token)).ok).toBe(false);
   });
 
@@ -148,9 +164,9 @@ describeDb("bootstrap token exchange", () => {
     g.open();
     const minted = await attacker;
     expect(minted.ok).toBe(true);
-    // The exchange won: M is revoked, so the host's proof closes nothing and
-    // the host can still recover with the bootstrap token.
-    expect(await proof).toBe(0);
+    // The exchange won: M is revoked, so the proof reports M invalid (the
+    // status check fails and the host recovers) and closes nothing.
+    expect(await proof).toEqual({ valid: false, closed: 0 });
     expect(await isMasterValid(m.token)).toBe(false);
     expect((await exchange(token)).ok).toBe(true);
   });
@@ -171,12 +187,100 @@ describeDb("bootstrap token exchange", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(exchangeSettled).toBe(false);
     g.open();
-    expect(await proof).toBe(1);
+    expect(await proof).toEqual({ valid: true, closed: 1 });
     expect(await attacker).toMatchObject({
       ok: false,
       reason: "exchange_closed",
     });
     expect(await isMasterValid(m.token)).toBe(true);
+  });
+
+  it("race: a current token revoked by a concurrent exchange can't rotate afterwards", async () => {
+    const host = randomUUID();
+    const { token } = await createProjectHostBootstrapToken(host);
+    const m = await createProjectHostMasterConatToken(host);
+    const g = gate();
+    _test.hooks.afterExchangeCheck = g.hook;
+    const winner = exchange(token);
+    await g.wasReached;
+    _test.hooks.afterExchangeCheck = undefined;
+    // A stale request with M passed its unlocked check before this point.
+    const stale = rotateProjectHostMasterToken(host, m.token_id, {
+      ttlMs: YEAR,
+    });
+    g.open();
+    const won = await winner;
+    expect(won.ok).toBe(true);
+    expect(await stale).toBeUndefined();
+    if (!won.ok) throw Error("unreachable");
+    expect(await isMasterValid(won.master.token)).toBe(true);
+  });
+
+  it("race: a rotation that holds the lock first wins, and the revoked token can't rotate again", async () => {
+    const host = randomUUID();
+    const m = await createProjectHostMasterConatToken(host);
+    const g = gate();
+    _test.hooks.beforeRotateCheck = g.hook;
+    const first = rotateProjectHostMasterToken(host, m.token_id, {
+      ttlMs: YEAR,
+    });
+    await g.wasReached;
+    _test.hooks.beforeRotateCheck = undefined;
+    const second = rotateProjectHostMasterToken(host, m.token_id, {
+      ttlMs: YEAR,
+    });
+    g.open();
+    const n = await first;
+    expect(n).toBeDefined();
+    expect(await second).toBeUndefined();
+    expect(await isMasterValid(n!.token)).toBe(true);
+  });
+
+  it("race: a teardown revoke waits for an in-flight exchange and revokes what it minted", async () => {
+    const host = randomUUID();
+    const { token } = await createProjectHostBootstrapToken(host);
+    const g = gate();
+    _test.hooks.afterExchangeCheck = g.hook;
+    const inflight = exchange(token);
+    await g.wasReached;
+    _test.hooks.afterExchangeCheck = undefined;
+    const revokeBootstrap = revokeProjectHostTokensForHost(host, {
+      purpose: "bootstrap",
+    });
+    const revokeMaster = revokeProjectHostTokensForHost(host, {
+      purpose: "master-conat",
+    });
+    g.open();
+    const minted = await inflight;
+    await Promise.all([revokeBootstrap, revokeMaster]);
+    expect(minted.ok).toBe(true);
+    if (!minted.ok) throw Error("unreachable");
+    expect(await isMasterValid(minted.master.token)).toBe(false);
+    expect((await exchange(token)).ok).toBe(false);
+  });
+
+  it("race: a restore waits for an in-flight mint and keeps one valid master token", async () => {
+    const host = randomUUID();
+    const { token } = await createProjectHostBootstrapToken(host);
+    await createProjectHostMasterConatToken(host);
+    await revokeProjectHostTokensForHost(host, { purpose: "master-conat" });
+    const g = gate();
+    _test.hooks.afterExchangeCheck = g.hook;
+    const inflight = exchange(token);
+    await g.wasReached;
+    _test.hooks.afterExchangeCheck = undefined;
+    const restore = restoreProjectHostTokensForRestart(host);
+    g.open();
+    expect((await inflight).ok).toBe(true);
+    // The mint committed first, so there is an active master token and the
+    // older revoked one is not resurrected.
+    expect((await restore).restored).not.toContain("master-conat");
+    const { rows } = await getPool().query(
+      `SELECT count(*)::int AS n FROM project_host_bootstrap_tokens
+       WHERE host_id=$1 AND purpose='master-conat' AND revoked IS NOT TRUE`,
+      [host],
+    );
+    expect(rows[0].n).toBe(1);
   });
 
   it("concurrent mints leave exactly one valid master token", async () => {
