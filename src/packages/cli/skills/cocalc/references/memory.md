@@ -69,8 +69,9 @@ Memory works best as a small, curated set of notes, not a log.
 
 **What to save.** Only what stays useful in later sessions: the user's
 decisions, preferences and corrections; project conventions; how to build,
-test or deploy; lessons from mistakes. Not progress reports, transcripts,
-one-off results or anything already in the repository or an issue.
+test or deploy; lessons from mistakes. In shared notes, not progress reports,
+transcripts, one-off results or anything already in the repository or an
+issue (your own working state goes in your own scope, below).
 
 **One note per topic, updated over time.** Name a note by its topic
 (`release-process`, `review-policy`, `lite1b-deploy`), never by date or PR
@@ -79,18 +80,21 @@ it: `write` with an existing name replaces that note, so it stays one current
 note instead of a growing pile. Write the current state, not a history; one
 topic per note, so a note can be found, updated or deleted on its own.
 
-**Why few notes work better than many.** Each turn lists only the most
-relevant notes (about 60 lines, ranked by this project and recency, not by
-meaning); everything else is reachable only by `search`. Fifty well-kept notes
-are all visible; five hundred single-event notes push each other out of view.
+**Why few notes work better than many.** Each turn lists only as many notes
+as fit in about 12 KB, chosen by where they were written and how recently
+(with room kept for your own and global notes), not by meaning; everything
+else is reachable only by `search`. A small set of concise notes is likely to
+stay visible; hundreds of single-event notes push each other out of view.
 
 **Where things go.**
 
 - Shared, durable knowledge: the project's namespace, or `global/<name>` for
   facts that apply in every project (the user's general preferences).
 - Your own working state (what you are waiting on, what you changed, how to
-  resume): your own scope, `agent/<name>`. It is private to you, expires after
-  30 days unused, and does not crowd the shared namespaces.
+  resume): your own scope, `agent/<name>`. Only you write it (other agents of
+  the account can read it as `@agent-name/<name>`, so it is not secret), it
+  expires after 30 days without a read or write unless written with
+  `--expires`, and it does not crowd the shared namespaces.
 - Per-PR review verdicts and status: the PR itself (a review or comment) or a
   report file, not shared notes. A lasting lesson from a review is worth a
   note; the verdict is not.
@@ -98,9 +102,10 @@ are all visible; five hundred single-event notes push each other out of view.
   purpose (for example decisions and lessons apart from review notes). Only
   the owner creates namespaces and attaches them to projects.
 
-**Tidy before you hit the limits.** The limits (500 notes per namespace,
-2,000 per account) exist to keep memory curated, not to protect the database.
-When a namespace is nearly full: merge notes on the same topic into one, move
+**Tidy before you hit the limits.** The 500-note limit per namespace is there
+to keep each namespace curated; the account limits (2,000 notes, 8 MB, and
+rates) also bound the service's work, since a search reads every visible
+note. When a namespace is nearly full: merge notes on the same topic into one, move
 working state to your own scope, and delete notes that are stale or wrong.
 `memory export --out notes.md` keeps a full copy first (search it with grep
 later). Never delete notes you have not read just to make room.

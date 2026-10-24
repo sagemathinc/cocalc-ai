@@ -71,11 +71,12 @@ to work this way; the same advice helps when you review notes yourself.
 - **One note per topic, updated over time.** Notes are named by topic (not by
   date or PR number), and an agent searches for an existing note and updates it
   instead of adding one per event.
-- **Few notes beat many.** Each turn lists only the most relevant notes (about
-  12 KB, roughly 60 lines, ranked by project and recency); the rest are found
-  only by search.
+- **Few notes beat many.** Each turn lists only as many notes as fit in about
+  12 KB, chosen by project and recency; the rest are found only by search. A
+  small set of concise notes is likely to stay visible.
 - **Keep status out of shared notes.** An agent's working state belongs in its
-  own notes, which expire; per-PR review verdicts belong in the PR.
+  own notes (only it writes them; your other agents can read them), which
+  expire; per-PR review verdicts belong in the PR.
 - **Split busy memory by purpose.** When a project's namespace fills up with
   different kinds of notes, add a second namespace for one kind (for example
   review notes apart from decisions and lessons) and attach both. Agents
@@ -86,10 +87,12 @@ to work this way; the same advice helps when you review notes yourself.
 ## Limits
 
 - At most 2,000 notes (500 per namespace) and 8 MB per account.
-- The limits keep memory curated and the per-turn list useful. When a
+- The per-namespace limit keeps each namespace curated and the per-turn list
+  useful; the account limits also bound the work memory does for you. When a
   namespace is nearly full, agents are told to merge notes on the same topic
   and delete stale ones, not to delete notes at random.
-- One fact per note, with a short kebab-case name and a one-line description.
+- One topic per note, with a short kebab-case name and a one-line
+  description.
 - Never store secrets, credentials, or tokens.
 - Notes are saved data, not instructions: verify before relying on them.
 `;
