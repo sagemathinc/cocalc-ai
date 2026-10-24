@@ -25,8 +25,10 @@ import { listDueAgentRpcReports } from "../../sqlite/agent-rpc-reports";
 import {
   claimAcpSteer,
   decodeAcpSteerRequest,
+  claimAcpSteer,
   enqueueAcpSteer,
   getAcpSteer,
+  markAcpSteerHandled,
   listPendingAcpSteers,
   markAcpSteerError,
 } from "../../sqlite/acp-steers";
@@ -1938,5 +1940,102 @@ it("does not let another account or thread control a queued turn", async () => {
   expect(getAcpJobByOpId(job.op_id)).toMatchObject({
     state: "error",
     request_json,
+  });
+});
+
+describe("a sensor wake handed to the worker running the turn", () => {
+  const config: AcpRequest["config"] = { model: "gpt-6-astra", sessionId };
+  const phases: { phase?: string; durable?: string }[] = [];
+  let originalAuthorizeSensor: any;
+
+  function wakeRequest(): AcpSteerRequest {
+    const prompt = "[Sensor wake] CI finished";
+    const request = turnRequest({ ...config });
+    request.prompt = prompt;
+    request.chat!.send_mode = "immediate";
+    request.chat!.parent_message_id = "sensor-wake";
+    request.chat!.message_id = "sensor-wake-reply";
+    request.chat!.user_message_content = prompt;
+    request.chat!.sensor_wake = {
+      version: 1,
+      sensor_id: "sensor-1",
+      project_id: projectId,
+      agent_id: "agent-1",
+      script_hash: "hash",
+      run_id: "run-1",
+      permit: "permit",
+    };
+    rows.push({
+      event: "chat",
+      thread_id: record.thread_id,
+      message_id: "sensor-wake",
+      sender_id: accountId,
+      date: "2026-09-05T13:56:15.277Z",
+    });
+    return { ...request, session_id: sessionId, chat: request.chat! };
+  }
+
+  function durableState(request: AcpSteerRequest) {
+    return getAcpSteer({
+      project_id: projectId,
+      path: request.chat.path,
+      user_message_id: request.chat.parent_message_id!,
+    })?.state;
+  }
+
+  beforeEach(() => {
+    phases.length = 0;
+    originalAuthorizeSensor = hubApi.agent.authorizeSensorExecution;
+    startRunningTurn(turnRequest(config));
+    mockLiveRuntime(config).running.clear();
+    // Another worker runs the turn: the wake is handed to it.
+    jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+      {
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        session_id: sessionId,
+        owner_instance_id: "other-worker",
+      } as any,
+    ]);
+  });
+
+  afterEach(() => {
+    hubApi.agent.authorizeSensorExecution = originalAuthorizeSensor;
+  });
+
+  function recordPhases(request: AcpSteerRequest) {
+    hubApi.agent.authorizeSensorExecution = jest.fn(async ({ delivery }) => {
+      // What the other worker could see when each phase happened.
+      phases.push({ phase: delivery.phase, durable: durableState(request) });
+    }) as any;
+  }
+
+  it("releases its claim before the handoff, so the other worker can claim it", async () => {
+    const request = wakeRequest();
+    recordPhases(request);
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(request),
+    ).resolves.toMatchObject({ pending: true });
+    // Claimed, then released while no durable steer existed yet.
+    expect(phases).toEqual([
+      { phase: "claim", durable: undefined },
+      { phase: "release", durable: undefined },
+    ]);
+    expect(durableState(request)).toBe("pending");
+  });
+
+  it("never consumes the claim for a durable steer handled earlier", async () => {
+    const request = wakeRequest();
+    // An earlier attempt handed it off, and the other worker handled it
+    // (for example as a fallback turn of its own, which consumes the permit).
+    const row = enqueueAcpSteer({ request });
+    const claim = claimAcpSteer({ id: row.id })!;
+    markAcpSteerHandled({ id: row.id, claim_token: claim });
+    recordPhases(request);
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(request),
+    ).resolves.toMatchObject({ pending: true });
+    expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
   });
 });

@@ -1045,10 +1045,13 @@ export function startSensorScheduler(pollMs: number = POLL_MS): () => void {
 /**
  * Wakes join the running turn (see sensorDelivery), but at most one per
  * sensor every GUIDANCE_INTERVAL, counted from when a wake actually joined a
- * turn (or is joining one now): a sensor that did more recently sends this
- * one as a turn of its own, after the running one, and wakes after that are
- * held and combined into it as before. A chatty sensor never floods a turn;
- * queued wakes do not count.
+ * turn, or while one may still be joining one: a claim counts however old it
+ * is, since its steer attempt (a prompt request with no timeout) can still
+ * inject it until it is consumed or released. A sensor that did, or still
+ * may, sends this one as a turn of its own, after the running one, and wakes
+ * after that are held and combined into it as before. A chatty sensor never
+ * floods a turn; queued wakes do not count. (A claim whose attempt died only
+ * makes this sensor's wakes queued turns, within the coalescing window.)
  */
 export const GUIDANCE_INTERVAL_MINUTES = 10;
 
@@ -1063,9 +1066,14 @@ async function wakeDelivery(
      WHERE sensor_id=$1 AND run_id<>$2
        AND (wake_guided_at > now() - make_interval(mins => $3)
          OR (wake_state='claimed'
-             AND wake_claimed_at > now() - make_interval(mins => $3)))
+             AND started_at > now() - make_interval(hours => $4)))
      LIMIT 1`,
-    [sensor_id, run_id, GUIDANCE_INTERVAL_MINUTES],
+    [
+      sensor_id,
+      run_id,
+      GUIDANCE_INTERVAL_MINUTES,
+      SENSOR_LIMITS.coalesceWindowHours,
+    ],
   );
   return rows.length ? "queued" : "guidance";
 }

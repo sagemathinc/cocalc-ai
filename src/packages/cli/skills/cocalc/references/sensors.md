@@ -8,7 +8,7 @@ A sensor is you, on a schedule, without the model. Use one instead of polling
 or sleeping, and whenever the user wants you to watch for something over time.
 
 **Waiting for something? Set a watcher and end your turn.** Watchers are
-CoCalc's own one-shot checks: no approval needed, and you are woken exactly
+CoCalc's own one-shot checks: no approval needed, and you are woken at most
 once when it happens, or when it gives up (after 24 hours by default, or when
 its check keeps failing, with the reason):
 
@@ -67,6 +67,9 @@ cocalc sensor delete <id>
   `sensor watch` (or `"delivery": "queued"` in a spec) makes it a turn of its
   own after the running one instead. A scheduled prompt is queued unless its
   spec says `"delivery": "guidance"`.
+- Delivery is at most once: a wake is never delivered twice, and in rare
+  failures (its delivery to a running turn could not be confirmed) it can be
+  lost instead. For something you must not miss, check again later.
 - A sensor joins a running turn at most once every 10 minutes; a wake sooner
   than that is queued, and while one of a sensor's wakes waits for you, it
   holds later ones: the next `[Sensor wake]` then has them all ("3 events:

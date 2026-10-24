@@ -678,7 +678,7 @@ describeDb("agent sensors", () => {
     );
   });
 
-  test("a stale claim holds nothing back, and is never claimed again", async () => {
+  test("an old claim holds nothing back, is never claimed again, and still spaces guidance", async () => {
     const active = (await approve((await propose()).sensor)).sensor;
     await makeDue(active.sensor_id);
     await runDue();
@@ -724,10 +724,18 @@ describeDb("agent sensors", () => {
         binding,
       ),
     ).rejects.toThrow();
-    // The next wake is not held behind it.
+    // The next wake is not held behind it, but it does not join a running
+    // turn either: the old claim's attempt (a prompt with no timeout) may
+    // still inject it, so this one is a turn of its own.
     await makeDue(active.sensor_id);
     await runDue();
     expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+    expect(host.deliverAgentSensorWake.mock.calls[0][0].delivery).toBe(
+      "guidance",
+    );
+    expect(host.deliverAgentSensorWake.mock.calls[1][0].delivery).toBe(
+      "queued",
+    );
   });
 
   test("a paused sensor's wake is refused at the claim, so nothing is injected", async () => {

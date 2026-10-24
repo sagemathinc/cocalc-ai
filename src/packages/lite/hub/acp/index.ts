@@ -13155,32 +13155,40 @@ async function attemptAcpSteerRequest(
   // claim whose consume failed).
   let injected = false;
   let notInjected = false;
+  let released = false;
+  const release = async () => {
+    released = true;
+    await authorizeAgentDeliveryExecution(request, hubApi.agent, {
+      phase: "release",
+    }).catch((err) =>
+      logger.warn("sensor wake claim not released", {
+        run_id: request.chat?.sensor_wake?.run_id,
+        err: `${err}`,
+      }),
+    );
+  };
   try {
     const result = await steerAcpRequest(
       request,
       extraCandidateIds,
       claimGuard,
-      { authorized: true },
+      // Handing the wake to the worker running the turn: release the claim
+      // first, so that worker (which claims it itself) never finds it held.
+      { authorized: true, beforeHandoff: release },
     ).catch((err) => {
       if (otherPrincipal(err)) return { state: "not_steerable" as const };
       throw err;
     });
-    injected = result.state === "steered";
+    // Only an injection by this attempt: a handed-off wake (pending) is the
+    // other worker's to claim and consume, even if it was handled already.
+    injected = result.state === "steered" && !released;
     // Not here: not steerable, no running turn, another principal, or
-    // handed to the worker running the turn (which claims it itself).
+    // handed to the worker running the turn.
     notInjected = !injected;
     return result;
   } finally {
     if (injected) await consumeSensorWakeClaim(request);
-    else if (notInjected)
-      await authorizeAgentDeliveryExecution(request, hubApi.agent, {
-        phase: "release",
-      }).catch((err) =>
-        logger.warn("sensor wake claim not released", {
-          run_id: request.chat?.sensor_wake?.run_id,
-          err: `${err}`,
-        }),
-      );
+    else if (notInjected && !released) await release();
   }
 }
 
@@ -13211,7 +13219,14 @@ async function steerAcpRequest(
   request: AcpSteerRequest,
   extraCandidateIds: string[] = [],
   claimGuard?: () => boolean,
-  { authorized = false }: { authorized?: boolean } = {},
+  {
+    authorized = false,
+    beforeHandoff,
+  }: {
+    authorized?: boolean;
+    /** Runs before the steer is handed to the worker running the turn. */
+    beforeHandoff?: () => Promise<void>;
+  } = {},
 ): Promise<AcpSteerAttemptResult> {
   if (!request.chat) {
     throw new Error("chat metadata is required to steer an ACP turn");
@@ -13314,6 +13329,7 @@ async function steerAcpRequest(
       candidateIds,
     })
   ) {
+    await beforeHandoff?.();
     const queued = enqueueSteerRequestForExecution({
       request,
       candidateIds,
@@ -13329,7 +13345,12 @@ async function steerAcpRequest(
       });
     }
     return {
-      state: queued.state === "handled" ? "steered" : "pending",
+      // A sensor wake's earlier handling may have been a fallback to a turn
+      // of its own, not an injection: never report it as joined here.
+      state:
+        queued.state === "handled" && !request.chat?.sensor_wake
+          ? "steered"
+          : "pending",
       threadId: result.threadId ?? candidateIds[0] ?? threadId,
     };
   }
