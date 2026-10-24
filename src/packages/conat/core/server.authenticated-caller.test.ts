@@ -91,6 +91,80 @@ describe("authenticated Conat caller metadata", () => {
     },
   );
 
+  it.each([
+    ["the Hub API subject", true],
+    ["any other subject", false],
+  ])(
+    "stamps the caller's own auth session only on %s",
+    async (_label, hubApi) => {
+      const account_id = "00000000-0000-4000-8000-000000000001";
+      const subject = hubApi
+        ? `hub.account.${account_id}.api`
+        : `test.account.${account_id}.api`;
+      const server = init({
+        port: 0,
+        getUser: async (socket) =>
+          socket.handshake.auth.key
+            ? { account_id, auth_session_hash: "own-session" }
+            : { hub_id: "service" },
+        isAllowed: async () => true,
+      });
+      const receiver = connect({ address: server.address(), noCache: true });
+      const sender = connect({
+        address: server.address(),
+        noCache: true,
+        auth: { key: true },
+      });
+      await receiver.waitUntilSignedIn({ timeout: 5_000 });
+      await sender.waitUntilSignedIn({ timeout: 5_000 });
+      const subscription = await receiver.subscribe(subject);
+      const response = await sender.conn
+        .timeout(5_000)
+        .emitWithAck("publish", [
+          subject,
+          "session-test",
+          0,
+          1,
+          DataEncoding.JsonCodec,
+          Buffer.from("null"),
+          undefined,
+          undefined,
+          { account_id, auth_session_hash: "forged-session" },
+        ]);
+      expect(response?.error).toBeUndefined();
+      expect((await subscription.next()).value?.caller ?? undefined).toEqual(
+        hubApi ? { account_id, auth_session_hash: "own-session" } : undefined,
+      );
+    },
+  );
+
+  it("stamps a null session for an account connection without one", async () => {
+    const account_id = "00000000-0000-4000-8000-000000000001";
+    const subject = `hub.account.${account_id}.api`;
+    const server = init({
+      port: 0,
+      getUser: async (socket) =>
+        socket.handshake.auth.key
+          ? { account_id, auth_method: "api_key" }
+          : { hub_id: "service" },
+      isAllowed: async () => true,
+    });
+    const receiver = connect({ address: server.address(), noCache: true });
+    const sender = connect({
+      address: server.address(),
+      noCache: true,
+      auth: { key: true },
+    });
+    await receiver.waitUntilSignedIn({ timeout: 5_000 });
+    await sender.waitUntilSignedIn({ timeout: 5_000 });
+    const subscription = await receiver.subscribe(subject);
+    await sender.publish(subject, { auth_session_hash: "forged-session" });
+    expect((await subscription.next()).value?.caller).toEqual({
+      account_id,
+      auth_session_hash: null,
+    });
+  });
+
   it("closes a credential-backed socket when its authorization lease expires", async () => {
     const server = init({
       port: 0,

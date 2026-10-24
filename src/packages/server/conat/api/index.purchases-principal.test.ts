@@ -114,10 +114,57 @@ describe("hub purchases principal enforcement", () => {
       },
     });
 
-    expect(getMembershipMock).toHaveBeenCalledWith({ account_id });
+    // No session stamped on the connection: bound to none.
+    expect(getMembershipMock).toHaveBeenCalledWith({
+      account_id,
+      session_hash: null,
+    });
     expect(respond).toHaveBeenCalledWith(
       { source: "test" },
       { headers: undefined },
     );
+  });
+
+  it("binds the session the server stamped, never one the request names", async () => {
+    const { handleApiRequest } = await import("./index");
+    const caller = { account_id, auth_session_hash: "own-session" };
+    const respond = jest.fn(async () => undefined);
+    await handleApiRequest({
+      request: {
+        name: "purchases.getMembership",
+        args: [{}],
+        auth_session_hash: "own-session",
+      },
+      mesg: { subject: `hub.account.${account_id}.api`, caller, respond },
+    });
+    expect(getMembershipMock).toHaveBeenLastCalledWith({
+      account_id,
+      session_hash: "own-session",
+    });
+
+    for (const request of [
+      { name: "purchases.getMembership", args: [{}], auth_session_hash: "x" },
+      {
+        name: "purchases.getMembership",
+        args: [{ session_hash: "another-fresh-session" }],
+      },
+    ]) {
+      getMembershipMock.mockClear();
+      const refused = jest.fn(async () => undefined);
+      await handleApiRequest({
+        request,
+        mesg: {
+          subject: `hub.account.${account_id}.api`,
+          caller,
+          respond: refused,
+        },
+      });
+      expect(getMembershipMock).not.toHaveBeenCalled();
+      expect(refused).toHaveBeenCalledWith(null, {
+        headers: expect.objectContaining({
+          error: expect.stringMatching(/caller's own/),
+        }),
+      });
+    }
   });
 });

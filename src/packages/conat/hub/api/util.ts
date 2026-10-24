@@ -51,6 +51,18 @@ function firstArg(args: any[]): any {
   return args[0];
 }
 
+function sessionMismatch(): Error {
+  return Object.assign(
+    new Error("session_hash must be the caller's own authenticated session"),
+    { code: 403 },
+  );
+}
+
+// The Hub API request handler sets auth_session_hash from the caller's own
+// connection: a string, or null when it has no session (an API key). Only
+// internal calls, which reuse arguments that were already bound, leave it
+// undefined. A caller may never nominate another session (finding 001):
+// fresh auth would then be per account rather than per session.
 function bindAccount({
   args,
   account_id,
@@ -58,9 +70,20 @@ function bindAccount({
 }: HubApiArgTransformContext): any[] {
   const opts = firstArg(args);
   opts.account_id = account_id;
-  if (auth_session_hash && opts.session_hash == null) {
-    opts.session_hash = auth_session_hash;
+  if (auth_session_hash === undefined) {
+    return args;
   }
+  const bound = auth_session_hash || null;
+  if (
+    opts.session_hash != null &&
+    opts.session_hash !== "" &&
+    opts.session_hash !== bound
+  ) {
+    throw sessionMismatch();
+  }
+  // null, not undefined: fresh-auth checks must not fall back to a browser
+  // session that the request names by browser_id.
+  opts.session_hash = bound;
   return args;
 }
 

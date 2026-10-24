@@ -38,7 +38,6 @@ describe("hub API argument transforms", () => {
   ])("binds %s to the actual human session", async (name) => {
     const opts = {
       account_id: "forged",
-      session_hash: "forged",
       decision: "execute",
     };
     expect(
@@ -309,7 +308,7 @@ describe("hub API argument transforms", () => {
   ])("requires a human and binds %s to the actual session", async (name) => {
     const args = await transformArgs({
       name,
-      args: [{ account_id: "forged", session_hash: "forged" }],
+      args: [{ account_id: "forged" }],
       account_id: "human",
       auth_session_hash: "verified",
     });
@@ -449,21 +448,40 @@ describe("hub API argument transforms", () => {
     }
   });
 
-  it("does not overwrite an explicit session_hash", async () => {
-    const args = await transformArgs({
+  it("refuses a session_hash other than the caller's own", async () => {
+    // A session may not borrow another session's fresh auth by naming it.
+    for (const auth_session_hash of ["cli-session-hash", null]) {
+      await expect(
+        transformArgs({
+          name: "projects.moveProject",
+          args: [
+            {
+              project_id: "project-1",
+              dest_host_id: "host-1",
+              session_hash: "explicit-session-hash",
+            },
+          ],
+          account_id: "acct-1",
+          auth_session_hash,
+        }),
+      ).rejects.toThrow("caller's own authenticated session");
+    }
+    // Naming its own session is fine; having none binds null, so fresh auth
+    // cannot fall back to a browser named by browser_id.
+    const own = await transformArgs({
       name: "projects.moveProject",
-      args: [
-        {
-          project_id: "project-1",
-          dest_host_id: "host-1",
-          session_hash: "explicit-session-hash",
-        },
-      ],
+      args: [{ project_id: "project-1", session_hash: "cli-session-hash" }],
       account_id: "acct-1",
       auth_session_hash: "cli-session-hash",
     });
-
-    expect(args[0].session_hash).toBe("explicit-session-hash");
+    expect(own[0].session_hash).toBe("cli-session-hash");
+    const none = await transformArgs({
+      name: "projects.moveProject",
+      args: [{ project_id: "project-1", browser_id: "b" }],
+      account_id: "acct-1",
+      auth_session_hash: null,
+    });
+    expect(none[0].session_hash).toBeNull();
   });
 
   it("binds content-link issuance to the authenticated account and session", async () => {
@@ -474,7 +492,6 @@ describe("hub API argument transforms", () => {
           account_id: "attacker-selected-account",
           project_id: "project-1",
           path: "a.html",
-          session_hash: "attacker-selected-session",
         },
       ],
       account_id: "acct-1",
@@ -494,7 +511,6 @@ describe("hub API argument transforms", () => {
         {
           host_id: "host-1",
           project_id: "project-1",
-          session_hash: "attacker-selected-session",
         },
       ],
       account_id: "acct-1",
@@ -510,7 +526,6 @@ describe("hub API argument transforms", () => {
   it("binds ownership transfer actor/session and rejects non-account principals", async () => {
     const request = {
       account_id: "other",
-      session_hash: "other-session",
       project_id: "project",
       from_account_id: "owner",
       to_account_id: "collaborator",
@@ -556,7 +571,6 @@ describe("hub API argument transforms", () => {
         {
           account_id: "another-account",
           user_account_id: "target-account",
-          session_hash: "stale-session",
         },
       ],
       account_id: "admin-account",
@@ -579,7 +593,6 @@ describe("hub API argument transforms", () => {
       args: [
         {
           account_id: "another-account",
-          session_hash: "stale-session",
           purchase_id: 7,
         },
       ],

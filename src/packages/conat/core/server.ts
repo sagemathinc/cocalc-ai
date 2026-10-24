@@ -257,6 +257,17 @@ function measureServerEgressPacketBytes(socket: any, packet: any): number {
   return bytes;
 }
 
+// hub.account.<account_id>.api: the subject the Hub API serves accounts on.
+function isAccountHubApiSubject(subject: string): boolean {
+  const segments = subject.split(".");
+  return (
+    segments.length === 4 &&
+    segments[0] === "hub" &&
+    segments[1] === "account" &&
+    segments[3] === "api"
+  );
+}
+
 function isHubUser(user: any): boolean {
   return (
     user != null &&
@@ -1554,7 +1565,10 @@ export class ConatServer extends EventEmitter {
     }
   };
 
-  private authenticatedCaller = (user: any) => {
+  private authenticatedCaller = (
+    user: any,
+    subject: string,
+  ): AuthenticatedCaller | undefined => {
     if (
       typeof user?.cluster_id === "string" &&
       typeof user?.bay_id === "string" &&
@@ -1566,9 +1580,24 @@ export class ConatServer extends EventEmitter {
         bay_credential_id: user.bay_credential_id,
       };
     }
+    let caller: AuthenticatedCaller | undefined;
     const file_mutation_authority = fileMutationAuthority(user);
-    if (file_mutation_authority) return { file_mutation_authority };
-    return undefined;
+    if (file_mutation_authority) caller = { file_mutation_authority };
+    // Hub API handlers derive fresh-auth policy from the caller's own session,
+    // never from the request. Only the Hub API subject carries it, so other
+    // subscribers never learn a session reference.
+    if (isAccountHubApiSubject(subject) && !isHubUser(user)) {
+      const account_id = user?.account_id;
+      if (typeof account_id === "string" && account_id) {
+        const hash = user?.auth_session_hash;
+        caller = {
+          ...caller,
+          account_id,
+          auth_session_hash: typeof hash === "string" && hash ? hash : null,
+        };
+      }
+    }
+    return caller;
   };
 
   private isLocalClusterControlSubject = (subject: string): boolean => {
@@ -1685,7 +1714,7 @@ export class ConatServer extends EventEmitter {
     // can never choose it; trusted cluster links preserve the value stamped by
     // the first server while forwarding the message.
     if (!clusterForward || data[7] == null) {
-      data[7] = this.authenticatedCaller(from);
+      data[7] = this.authenticatedCaller(from, subject);
       if (socketReturn && !clusterForward) {
         data[7] = { ...data[7], socket_return: socketReturn };
       }
@@ -2449,7 +2478,7 @@ export class ConatServer extends EventEmitter {
             encoding,
             raw,
             headers,
-            caller: this.authenticatedCaller(user),
+            caller: this.authenticatedCaller(user, subject),
           },
           Math.min(timeout, MAX_INTEREST_TIMEOUT),
         );
@@ -2531,7 +2560,7 @@ export class ConatServer extends EventEmitter {
             subject,
             pattern: target.pattern,
             payload,
-            caller: this.authenticatedCaller(user),
+            caller: this.authenticatedCaller(user, subject),
           },
           Math.min(timeout, MAX_INTEREST_TIMEOUT),
         );
@@ -2649,7 +2678,7 @@ export class ConatServer extends EventEmitter {
         encoding,
         raw,
         headers,
-        caller: this.authenticatedCaller(user),
+        caller: this.authenticatedCaller(user, subject),
       });
     });
 
