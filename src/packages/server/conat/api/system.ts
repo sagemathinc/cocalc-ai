@@ -124,6 +124,11 @@ import {
   getSiteFundedCodexPoolStatus,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
+import { manageSiteFundedProviderKeys } from "@cocalc/server/ai/site-funded-provider-keys";
+import type {
+  SiteFundedProviderKeyAction,
+  SiteFundedProviderKeyInfo,
+} from "@cocalc/util/ai/site-funded-claude";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import {
   enqueueRootfsPrepullForHost,
@@ -7648,6 +7653,58 @@ export async function getSiteFundedClaudeAvailability({
     };
   }
   return { available: true };
+}
+
+async function siteFundedClaudeKeysOnSeed(
+  action?: SiteFundedProviderKeyAction,
+): Promise<SiteFundedProviderKeyInfo[]> {
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (seedBayId !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 30_000 })
+      .manageSiteFundedProviderKeys({ provider: "anthropic", action });
+  }
+  return await manageSiteFundedProviderKeys("anthropic", action);
+}
+
+/** The site's Anthropic keys for site-funded Claude, without secrets. */
+export async function getSiteFundedClaudeKeys({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<SiteFundedProviderKeyInfo[]> {
+  await assertAdmin(account_id);
+  return await siteFundedClaudeKeysOnSeed();
+}
+
+/** Adds, edits, removes or reorders them: they spend the site's money. */
+export async function manageSiteFundedClaudeKeys({
+  account_id,
+  browser_id,
+  session_hash,
+  action,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  action: SiteFundedProviderKeyAction;
+}): Promise<SiteFundedProviderKeyInfo[]> {
+  await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
+  if (!action || typeof action !== "object") {
+    throw new Error("a site key action is required");
+  }
+  logger.info("site-funded Claude key change", {
+    account_id,
+    op: action.op,
+    keyId: "keyId" in action ? action.keyId : undefined,
+  });
+  return await siteFundedClaudeKeysOnSeed(action);
 }
 
 export async function getCodexUsageStatus({

@@ -229,12 +229,14 @@ describe("site-funded Claude relay", () => {
     expect(JSON.stringify(ok)).not.toContain("sk-ant-site-key");
   });
 
-  it("refuses hosted tools beyond metered web search and fetch", async () => {
+  it("refuses hosted tools beyond metered web search", async () => {
     activate();
     for (const body of [
       { ...message, mcp_servers: [{ url: "https://x" }] },
       { ...message, container: "c" },
       { ...message, tools: [{ type: "code_execution_20250825" }] },
+      // Its pages would join the prompt unbounded.
+      { ...message, tools: [{ type: "web_fetch_20260209", name: "f" }] },
     ]) {
       expect((await send(body)).status).toBe(403);
     }
@@ -244,7 +246,6 @@ describe("site-funded Claude relay", () => {
       tools: [
         { name: "Bash", input_schema: {} },
         { type: "web_search_20260209", name: "web_search" },
-        { type: "web_fetch_20260209", name: "web_fetch" },
       ],
     });
     expect(allowed.status).toBe(200);
@@ -363,7 +364,7 @@ describe("site-funded Claude relay", () => {
         { type: "web_search_20260209", name: "web_search", max_uses: 50 },
       ],
     });
-    expect(seen[0].body.tools[0].max_uses).toBe(5);
+    expect(seen[0].body.tools[0].max_uses).toBe(3);
     const twice = await send({
       ...message,
       tools: [
@@ -480,7 +481,7 @@ describe("site-funded Claude relay", () => {
   });
 
   it("bounds a fallback by the prompt as counted", async () => {
-    activate({ maxPromptTokens: 1_000 });
+    activate({ maxPromptTokens: 5_000 });
     reply = (seen) =>
       seen.url.startsWith("/v1/messages/count_tokens")
         ? counted(800)
@@ -502,14 +503,17 @@ describe("site-funded Claude relay", () => {
       ...message,
       system: "be brief",
       metadata: { user_id: "u" },
+      output_config: { format: { type: "json_schema", schema: {} } },
       messages: [{ role: "user", content: "x".repeat(10_000) }],
     });
     expect(long.status).toBe(400);
     expect(JSON.parse(long.body).error).toEqual({
       type: "invalid_request_error",
-      message: "prompt is too long: 6000 tokens > 5000 maximum",
+      // With room for the count's error.
+      message: "prompt is too long: 6000 tokens > 3000 maximum",
     });
-    // Only counted, with the site key and the fields count_tokens takes.
+    // Only counted, with the site key and every field that adds to the
+    // prompt.
     expect(seen.map(({ url }) => url)).toEqual([
       "/v1/messages/count_tokens?beta=true",
     ]);
@@ -517,18 +521,19 @@ describe("site-funded Claude relay", () => {
     expect(Object.keys(seen[0].body).sort()).toEqual([
       "messages",
       "model",
+      "output_config",
       "system",
     ]);
     expect(seen[0].body.model).toBe("claude-haiku-5-5");
     expect(usage).toEqual([]);
   });
 
-  it("sends a prompt at the cap after counting it", async () => {
+  it("sends a prompt at the limit after counting it", async () => {
     activate({ maxPromptTokens: 5_000 });
     reply = (seen) =>
       seen.url.startsWith("/v1/messages/count_tokens")
-        ? counted(5_000)
-        : jsonReply({ input_tokens: 5_000, output_tokens: 5 })();
+        ? counted(3_000)
+        : jsonReply({ input_tokens: 3_000, output_tokens: 5 })();
     const atCap = await send({
       ...message,
       messages: [{ role: "user", content: "x".repeat(10_000) }],
@@ -538,7 +543,7 @@ describe("site-funded Claude relay", () => {
       "/v1/messages/count_tokens?beta=true",
       "/v1/messages?beta=true",
     ]);
-    expect(usage[0].inputTokens).toBe(5_000);
+    expect(usage[0].inputTokens).toBe(3_000);
   });
 
   it("counts any prompt with media, however few its bytes", async () => {
@@ -547,12 +552,13 @@ describe("site-funded Claude relay", () => {
       seen.url.startsWith("/v1/messages/count_tokens")
         ? counted(1_500)
         : jsonReply({ input_tokens: 1_500, output_tokens: 5 })();
+    const inline = { type: "base64", media_type: "image/png", data: "AAAA" };
     for (const block of [
-      { type: "image", source: { type: "url", url: "https://x/y.png" } },
+      { type: "image", source: inline },
       {
         type: "tool_result",
         tool_use_id: "t",
-        content: [{ type: "document", source: { type: "url", url: "u" } }],
+        content: [{ type: "document", source: inline }],
       },
     ]) {
       seen = [];
@@ -572,8 +578,74 @@ describe("site-funded Claude relay", () => {
     expect(seen.map(({ url }) => url)).toEqual(["/v1/messages?beta=true"]);
   });
 
+  it("refuses media by URL or file, which cannot be counted", async () => {
+    activate();
+    for (const block of [
+      { type: "image", source: { type: "url", url: "https://x/y.png" } },
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        content: [
+          { type: "document", source: { type: "file", file_id: "file_1" } },
+        ],
+      },
+      { type: "container_upload", file_id: "file_2" },
+    ]) {
+      const sent = await send({
+        ...message,
+        messages: [{ role: "user", content: [block] }],
+      });
+      expect(sent.status).toBe(403);
+      expect(sent.body).toContain("only inline");
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it("lets only a short prompt search the web, and bounds it by the cap", async () => {
+    activate();
+    const search = [{ type: "web_search_20260209", name: "web_search" }];
+    const long = await send({
+      ...message,
+      tools: search,
+      messages: [{ role: "user", content: "x".repeat(20_000) }],
+    });
+    expect(long.status).toBe(403);
+    expect(long.body).toContain("only from a short prompt");
+    const image = await send({
+      ...message,
+      tools: search,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: "AA" },
+            },
+          ],
+        },
+      ],
+    });
+    expect(image.status).toBe(403);
+    expect(seen).toEqual([]);
+    // A short one is sent without counting (count_tokens refuses server
+    // tools); without usage it is charged as if its results filled the cap.
+    reply = () => ({
+      type: "application/json",
+      body: JSON.stringify({ id: "msg_1" }),
+    });
+    const short = await send({
+      ...message,
+      tools: search,
+      messages: [{ role: "user", content: "news today?" }],
+    });
+    expect(short.status).toBe(200);
+    expect(seen.map(({ url }) => url)).toEqual(["/v1/messages?beta=true"]);
+    expect(usage[0].inputTokens).toBe(100_000);
+  });
+
   it("passes on a refused count and sends nothing", async () => {
-    activate({ maxPromptTokens: 1_000 });
+    activate({ maxPromptTokens: 5_000 });
     reply = () => ({
       status: 429,
       type: "application/json",

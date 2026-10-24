@@ -159,6 +159,8 @@ export const system = {
   getCodexPaymentSource: authFirstRequireAccountOrHostWithAccountTarget,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
   getSiteFundedClaudeAvailability: authFirstRequireAccount,
+  getSiteFundedClaudeKeys: authFirstRequireAccount,
+  manageSiteFundedClaudeKeys: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
   getFrontendSourceFingerprint: authFirstRequireAccount,
   getRootfsCatalog: authFirstRequireAccount,
@@ -2966,6 +2968,23 @@ export interface System {
     account_id?: string;
   }) => Promise<
     import("@cocalc/util/ai/site-funded-codex").SiteFundedCodexStatus
+  >;
+
+  /** Admins: the site's Anthropic keys for site-funded Claude, no secrets. */
+  getSiteFundedClaudeKeys: (opts: {
+    account_id?: string;
+  }) => Promise<
+    import("@cocalc/util/ai/site-funded-claude").SiteFundedProviderKeyInfo[]
+  >;
+
+  /** Admins, with fresh auth: add, edit, remove or reorder those keys. */
+  manageSiteFundedClaudeKeys: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    action: import("@cocalc/util/ai/site-funded-claude").SiteFundedProviderKeyAction;
+  }) => Promise<
+    import("@cocalc/util/ai/site-funded-claude").SiteFundedProviderKeyInfo[]
   >;
 
   getCodexUsageStatus: (opts: {

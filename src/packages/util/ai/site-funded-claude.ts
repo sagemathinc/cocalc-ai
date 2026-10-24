@@ -93,7 +93,7 @@ export function siteFundedUsageFromAnthropic(
 
 /** Site-funded Claude: like Codex's policy, with Claude Haiku 5.5. */
 /** Web searches one funded request may make (the relay caps max_uses). */
-export const SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST = 5;
+export const SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST = 3;
 
 export const DEFAULT_SITE_FUNDED_CLAUDE_POLICY: SiteFundedCodexPolicy = {
   ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
@@ -140,3 +140,44 @@ export function siteFundedKeyPeriodBounds({
   if (start > now) start = at(now.getUTCFullYear(), now.getUTCMonth() - 1);
   return { start, end: at(start.getUTCFullYear(), start.getUTCMonth() + 1) };
 }
+
+/** A site key as admins see it: never its secret. */
+export type SiteFundedProviderKeyInfo = {
+  keyId: string;
+  provider: "openai" | "anthropic";
+  label: string;
+  /** The key's last four characters, to tell keys apart. */
+  last4: string;
+  monthlyLimitMicrousd: number;
+  resetDay: number;
+  resetHour: number;
+  position: number;
+  enabled: boolean;
+  periodStart: string;
+  periodEnd: string;
+  /** Committed spend plus what running turns may still spend. */
+  exposureMicrousd: number;
+};
+
+/** What an admin can do to the site's Claude keys. */
+export type SiteFundedProviderKeyAction =
+  | {
+      op: "add";
+      label: string;
+      apiKey: string;
+      monthlyLimitUsd: number;
+      resetDay: number;
+      resetHour: number;
+    }
+  | {
+      op: "update";
+      keyId: string;
+      label?: string;
+      monthlyLimitUsd?: number;
+      resetDay?: number;
+      resetHour?: number;
+      enabled?: boolean;
+    }
+  | { op: "remove"; keyId: string }
+  /** Every key, in the new order. */
+  | { op: "reorder"; keyIds: string[] };

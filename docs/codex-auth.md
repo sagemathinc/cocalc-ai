@@ -277,13 +277,15 @@ which:
   outbox as Codex when it ends (`site-funded-claude-turns.ts`);
 - forwards only `POST /v1/messages` and `/v1/messages/count_tokens`, forces
   the funded model, caps `max_tokens` (and any thinking budget), drops
-  `inference_geo` and `service_tier`, and refuses `mcp_servers`, `container`
-  and hosted tools other than web search (metered) and web fetch;
-- refuses a prompt over 100,000 tokens (longer prompts cost 5x), with
-  Anthropic's `prompt is too long` error so Claude Code compacts: a text
-  prompt whose bytes (plus overhead) fit is sent as is, and any other prompt,
-  including one with images or documents, is counted first with the free
-  `count_tokens` API;
+  `inference_geo` and `service_tier`, and refuses `mcp_servers`, `container`,
+  media by URL or file, and hosted tools other than web search (metered, at
+  most three a request, only from a prompt under 16,000 tokens since its
+  results join the prompt as it runs);
+- refuses a prompt over 100,000 tokens (longer prompts cost 5x), less a
+  2,000-token margin for the count's error, with Anthropic's `prompt is too
+long` error so Claude Code compacts: a text prompt whose bytes (plus
+  overhead) fit is sent as is, and any other prompt, including one with inline
+  images or documents, is counted first with the free `count_tokens` API;
 - adds the site key itself, which never reaches the container;
 - meters every response exactly, from JSON or from the stream
   (`message_start` plus `message_delta`), numbering usage in completion order;
