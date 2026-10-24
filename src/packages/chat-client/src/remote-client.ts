@@ -14,6 +14,7 @@ import type {
   ProjectedChatThread,
 } from "./types";
 import type { CodexThreadConfig } from "@cocalc/chat";
+import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 
 export const PROJECT_CHAT_SESSION_SERVICE = "project-chat-session";
 export const PROJECT_CHAT_SESSION_NOT_FOUND =
@@ -289,6 +290,29 @@ export class RemoteHeadlessChatClient implements HeadlessChatClient {
       if (message.includes("unknown service method 'updateThread'")) {
         throw new Error(
           "Changing Codex settings requires restarting this project to update its backend.",
+        );
+      }
+      throw err;
+    }
+  }
+
+  async updateHarnessSettings(opts: {
+    thread_id: string;
+    settings: HarnessSessionSettings;
+  }): Promise<void> {
+    try {
+      await this.withSessionRecovery(() =>
+        this.call(
+          "updateHarnessSettings",
+          [{ session_id: this.requireSession(), ...opts }],
+          OPERATION_TIMEOUT_MS,
+        ),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `${err}`;
+      if (message.includes("unknown service method 'updateHarnessSettings'")) {
+        throw new Error(
+          "Changing agent settings requires restarting this project to update its backend.",
         );
       }
       throw err;
