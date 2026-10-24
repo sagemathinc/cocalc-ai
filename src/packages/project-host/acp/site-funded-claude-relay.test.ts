@@ -8,7 +8,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_SITE_FUNDED_CLAUDE_POLICY } from "@cocalc/util/ai/site-funded-claude";
-import type { SiteFundedCodexUsageEvent } from "@cocalc/util/ai/site-funded-codex";
+import {
+  computeSiteFundedCodexRequestCost,
+  siteFundedCodexFinalRequestHeadroomMicrousd,
+  type SiteFundedCodexUsageEvent,
+} from "@cocalc/util/ai/site-funded-codex";
 import {
   createSiteFundedClaudeRelay,
   type SiteFundedClaudeRelay,
@@ -103,16 +107,28 @@ const policy = {
   maxTurnCostMicrousd: 100_000,
 };
 
-function activate(overrides: Partial<typeof policy> = {}) {
+function activate(
+  overrides: Partial<typeof policy> = {},
+  {
+    expiresAt,
+    onUsage,
+  }: {
+    expiresAt?: string;
+    onUsage?: (event: SiteFundedCodexUsageEvent) => Promise<void>;
+  } = {},
+) {
   relay.activate({
     reservation: {
       reservationId: "reservation-1",
       policy: { ...policy, ...overrides },
+      expiresAt,
     } as any,
     apiKey: "sk-ant-site-key",
-    onUsage: async (event) => {
-      usage.push(event);
-    },
+    onUsage:
+      onUsage ??
+      (async (event) => {
+        usage.push(event);
+      }),
   });
 }
 
@@ -379,7 +395,8 @@ describe("site-funded Claude relay", () => {
       messages: [{ role: "user", content: "x".repeat(500) }],
     };
     await send(body);
-    const bytes = Buffer.byteLength(JSON.stringify(body));
+    // The compact request that was forwarded, not what came in.
+    const bytes = Buffer.byteLength(JSON.stringify(seen[0].body));
     expect(usage[0]).toMatchObject({
       inputTokens: bytes,
       cacheWriteInputTokens: bytes,
@@ -416,5 +433,101 @@ describe("site-funded Claude relay", () => {
     await pending;
     // And nothing more is funded.
     expect((await send(message)).status).toBe(403);
+  });
+
+  it("never charges a padded request's fallback beyond the room for one request", async () => {
+    activate();
+    reply = () => ({
+      type: "application/json",
+      body: JSON.stringify({ id: "msg_1" }),
+    });
+    // Whitespace padding: valid JSON, forwarded compact.
+    const padded = `{${" ".repeat(4 * 1024 * 1024)}"model":"x","max_tokens":10,"messages":[]}`;
+    await new Promise<void>((resolve, reject) => {
+      const req = request(
+        {
+          socketPath: relay.socketPath,
+          path: "/v1/messages",
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            [CREDENTIAL_RELAY_AUTH_HEADER]: relay.token,
+          },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve());
+        },
+      );
+      req.on("error", reject);
+      req.end(padded);
+    });
+    const [event] = usage;
+    expect(event.inputTokens).toBe(
+      Buffer.byteLength(JSON.stringify(seen[0].body)),
+    );
+    expect(
+      computeSiteFundedCodexRequestCost({ model: event.model, usage: event })
+        .costMicrousd,
+    ).toBeLessThanOrEqual(siteFundedCodexFinalRequestHeadroomMicrousd(policy));
+  });
+
+  it("bounds a fallback by the largest prompt the model accepts", async () => {
+    activate({ maxPromptTokens: 100 });
+    reply = () => ({
+      type: "application/json",
+      body: JSON.stringify({ id: "msg_1" }),
+    });
+    await send({
+      ...message,
+      messages: [{ role: "user", content: "x".repeat(5_000) }],
+    });
+    expect(usage[0].inputTokens).toBe(100);
+  });
+
+  it("stops funding a turn whose usage could not be recorded, and settles after it", async () => {
+    let recorded: () => void = () => {};
+    let attempts = 0;
+    activate(
+      {},
+      {
+        onUsage: () => {
+          attempts += 1;
+          return new Promise((_, reject) => {
+            recorded = () => reject(Error("outbox unavailable"));
+          });
+        },
+      },
+    );
+    expect((await send(message)).status).toBe(200);
+    let settled = false;
+    const ending = relay.deactivate("reservation-1").then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The turn waits for its usage to be recorded (here: to fail).
+    expect(settled).toBe(false);
+    recorded();
+    await ending;
+    expect(attempts).toBe(1);
+  });
+
+  it("blocks the next request once a usage record fails", async () => {
+    activate(
+      {},
+      { onUsage: async () => Promise.reject(Error("outbox unavailable")) },
+    );
+    expect((await send(message)).status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const blocked = await send(message);
+    expect(blocked.status).toBe(403);
+    expect(blocked.body).toContain("could not be recorded");
+  });
+
+  it("starts no request after the reservation's deadline", async () => {
+    activate({}, { expiresAt: new Date(Date.now() - 1_000).toISOString() });
+    const late = await send(message);
+    expect(late.status).toBe(403);
+    expect(seen).toEqual([]);
   });
 });

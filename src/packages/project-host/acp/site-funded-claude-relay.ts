@@ -95,13 +95,16 @@ type ActiveTurn = SiteFundedClaudeTurn & {
   ended: boolean;
   /** The tail of this turn's requests: each runs after the previous ends. */
   queue: Promise<void>;
+  /** Usage events still being recorded; a turn settles after them. */
+  persisting: Set<Promise<void>>;
   /** Aborts the running provider request. */
   abort?: () => void;
 };
 
 /** What one request can cost at most, for metering an incomplete response. */
 type RequestBounds = {
-  /** An upper bound on its prompt tokens: its size in bytes. */
+  /** An upper bound on its prompt tokens: the forwarded request's size in
+   * bytes, at most the largest prompt the model accepts. */
   promptBytes: number;
   maxTokens: number;
   maxSearches: number;
@@ -353,7 +356,12 @@ export async function createSiteFundedClaudeRelay({
     }
     if (active.blockedReason) throw new RelayError(403, active.blockedReason);
     const policy = active.reservation.policy;
-    if (Date.now() - active.startedAt >= policy.maxTurnDurationMs) {
+    // The reservation's own deadline too: its usage is accepted only before.
+    const expiresAt = Date.parse(active.reservation.expiresAt ?? "");
+    if (
+      Date.now() - active.startedAt >= policy.maxTurnDurationMs ||
+      (Number.isFinite(expiresAt) && Date.now() >= expiresAt)
+    ) {
       throw new RelayError(
         403,
         "This included Claude turn reached its duration limit. Start a new turn.",
@@ -403,12 +411,16 @@ export async function createSiteFundedClaudeRelay({
       logger.error("site-funded Claude usage not metered", { err: `${err}` });
       return;
     }
-    void active.onUsage(event).catch((err) =>
+    // Not recorded: fund nothing more, and settle only after it is known.
+    const persisted = active.onUsage(event).catch((err) => {
+      active.blockedReason = "Included Claude usage could not be recorded.";
       logger.error("site-funded Claude usage not recorded", {
         reservationId: event.reservationId,
         err: `${err}`,
-      }),
-    );
+      });
+    });
+    active.persisting.add(persisted);
+    void persisted.finally(() => active.persisting.delete(persisted));
   };
 
   /** One request to Anthropic; resolves once its response is metered. */
@@ -576,10 +588,8 @@ export async function createSiteFundedClaudeRelay({
       );
     }
     let body: unknown;
-    let promptBytes: number;
     try {
       const raw = await readBody(request);
-      promptBytes = raw.length;
       body = JSON.parse(raw.toString("utf8"));
     } catch (err) {
       if (err instanceof RelayError) throw err;
@@ -591,6 +601,12 @@ export async function createSiteFundedClaudeRelay({
       maxSearches,
     } = fundedClaudeRequest(body, active, countTokens);
     const payload = Buffer.from(JSON.stringify(funded));
+    // Bytes bound the tokens of what is sent (compact JSON, not whatever
+    // padding came in), and no prompt exceeds what the model accepts.
+    const promptBytes = Math.min(
+      payload.length,
+      active.reservation.policy.maxPromptTokens ?? payload.length,
+    );
     const headers: Record<string, string> = {
       "content-type": "application/json",
       "content-length": `${payload.length}`,
@@ -666,10 +682,13 @@ export async function createSiteFundedClaudeRelay({
     active.ended = true;
     if (turn === active) turn = undefined;
     const timer = setTimeout(() => active.abort?.(), timeoutMs);
-    const drained = active.queue.finally(() => {
-      clearTimeout(timer);
-      ending.delete(reservationId);
-    });
+    const drained = active.queue
+      .then(() => Promise.allSettled([...active.persisting]))
+      .then(() => undefined)
+      .finally(() => {
+        clearTimeout(timer);
+        ending.delete(reservationId);
+      });
     ending.set(reservationId, drained);
     return drained;
   };
@@ -687,6 +706,7 @@ export async function createSiteFundedClaudeRelay({
         committedMicrousd: 0,
         ended: false,
         queue: Promise.resolve(),
+        persisting: new Set(),
       };
     },
     deactivate: async (
