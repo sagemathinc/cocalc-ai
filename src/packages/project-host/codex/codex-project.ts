@@ -616,6 +616,23 @@ export type ProjectCliTokenLease = {
   close: () => Promise<void>;
 };
 
+// The host writes a runtime's private files (CLI tokens, an isolated Codex
+// home) into the project's scratch volume. Without one they would go under
+// the project's home, by paths whose directories the project controls: a
+// symlinked ~/.local or ~/.cocalc would make the host create, chmod and write
+// files wherever it points. Only the workspace runtime (COCALC_PROJECT_PATH)
+// has no scratch, and there projects already run as the host's user, so the
+// home is no worse. Anywhere else, refuse.
+export function assertHostWritableRuntimeRoot(
+  scratch: string | undefined,
+  what: string,
+): void {
+  if (scratch || `${process.env.COCALC_PROJECT_PATH ?? ""}`.trim()) return;
+  throw new Error(
+    `${what}: the project has no scratch volume; refusing to write host runtime files under the project home`,
+  );
+}
+
 export async function createProjectCliTokenLease({
   projectId,
   accountId,
@@ -649,6 +666,7 @@ export async function createProjectCliTokenLease({
     `${currentEnv?.COCALC_AGENT_TOKEN ?? ""}`.trim();
   const initialToken = issued?.token || fallbackToken;
   if (!initialToken) return;
+  assertHostWritableRuntimeRoot(scratch, "CLI token lease");
 
   const leaseName = `.cocalc-agent-${randomUUID()}`;
   const relativeHomeDir = join(
@@ -2506,6 +2524,7 @@ async function spawnCodexAppServerInProjectRuntime({
         "codex-account-status",
         randomUUID(),
       );
+      assertHostWritableRuntimeRoot(scratch, "isolated Codex home");
       const hostRoot = scratch ?? home;
       isolatedCodexHomeHostPath = join(hostRoot, relativePath);
       await fs.mkdir(isolatedCodexHomeHostPath, {

@@ -193,11 +193,18 @@ function jwt(payload: Record<string, unknown>): string {
 
 describe("initCodexProjectRunner", () => {
   const originalSiteUrl = process.env.COCALC_SITE_URL;
+  const originalProjectPath = process.env.COCALC_PROJECT_PATH;
   afterEach(() => {
     if (originalSiteUrl === undefined) delete process.env.COCALC_SITE_URL;
     else process.env.COCALC_SITE_URL = originalSiteUrl;
+    if (originalProjectPath === undefined)
+      delete process.env.COCALC_PROJECT_PATH;
+    else process.env.COCALC_PROJECT_PATH = originalProjectPath;
   });
   beforeEach(() => {
+    // Most tests mock localPath() without a scratch volume, as the workspace
+    // runtime returns it, so they run as that runtime does.
+    process.env.COCALC_PROJECT_PATH = "/test-workspace-projects";
     hubApi.agent.issueIdentity.mockReset().mockResolvedValue(undefined);
     hubApi.agent.endIdentityRun.mockReset().mockResolvedValue(undefined);
     hubApi.agent.beginCocalcConnectorTurn.mockReset();
@@ -1409,6 +1416,42 @@ describe("initCodexProjectRunner", () => {
     await expect(fs.stat(lease!.hostPath)).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("refuses a CLI token lease under the project home outside the workspace runtime", async () => {
+    delete process.env.COCALC_PROJECT_PATH;
+    const home = await mkTempDir("codex-project-no-scratch-");
+    // A project-controlled symlink the host must never write through.
+    const elsewhere = await mkTempDir("codex-project-elsewhere-");
+    await fs.mkdir(path.join(home, ".local", "share"), { recursive: true });
+    await fs.symlink(elsewhere, path.join(home, ".local", "share", "cocalc"));
+    hubApi.hosts.issueProjectHostAgentAuthToken.mockResolvedValueOnce({
+      token: "project-token",
+      expires_at: Date.now() + 60_000,
+    });
+    const { createProjectCliTokenLease } =
+      await import("./codex/codex-project");
+    await expect(
+      createProjectCliTokenLease({
+        projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        currentEnv: {},
+        home,
+      }),
+    ).rejects.toThrow(/no scratch volume/);
+    expect(await fs.readdir(elsewhere)).toEqual([]);
+  });
+
+  it("allows the home fallback only in the workspace runtime", async () => {
+    const { assertHostWritableRuntimeRoot } =
+      await import("./codex/codex-project");
+    delete process.env.COCALC_PROJECT_PATH;
+    expect(() => assertHostWritableRuntimeRoot(undefined, "x")).toThrow(
+      /no scratch volume/,
+    );
+    expect(() => assertHostWritableRuntimeRoot("/scratch", "x")).not.toThrow();
+    process.env.COCALC_PROJECT_PATH = "/test-workspace-projects";
+    expect(() => assertHostWritableRuntimeRoot(undefined, "x")).not.toThrow();
   });
 
   it("atomically provisions and removes a native connector credential file", async () => {
