@@ -319,7 +319,7 @@ test("several namespaces: new notes need a namespace; nearly full asks to tidy",
   });
   expect(index).toContain("Name the namespace of new notes");
   expect(index).toContain(
-    "Memory is nearly full in a (460 of 500 notes): merge related notes",
+    "Memory is nearly full in a (460 of 500 notes): before adding, merge notes on the same topic",
   );
   expect(index).not.toContain("nearly full in b");
 });
@@ -353,6 +353,10 @@ test("the turn context names every command and keeps the notes as data", () => {
   expect(context).toContain(
     "Memory keeps up to 2000 notes, 500 per namespace (the global notes count as one)",
   );
+  // The strategy every agent sees: curate by topic, keep status private.
+  expect(context).toContain("one note per topic");
+  expect(context).toContain("search before writing");
+  expect(context).toContain("your own scope (agent/<name>)");
   expect(context.startsWith("[Agent memory]")).toBe(true);
 });
 

@@ -86,8 +86,10 @@ export function AgentMemoryDisclosure() {
         <li>
           <b>Limits.</b> At most 2,000 notes (500 per namespace, 100 of an
           agent's own) and 8 MB. Each turn lists only the most relevant notes;
-          agents search for the rest. Agent use of memory is rate-limited per
-          account.
+          agents search for the rest, so agents keep one note per topic and
+          update it rather than adding many. If a project's memory gets busy,
+          add a namespace by purpose (for example review notes apart from
+          decisions). Agent use of memory is rate-limited per account.
         </li>
       </ul>
       <p style={{ marginBottom: 0 }}>

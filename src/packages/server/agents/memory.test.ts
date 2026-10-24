@@ -596,7 +596,7 @@ describeDb("agent memory", () => {
     expect(
       (results.find((r) => r.status === "rejected") as PromiseRejectedResult)
         .reason.message,
-    ).toMatch(/already has 500 notes in global; merge related notes/);
+    ).toMatch(/already has 500 notes in global; merge notes on the same topic/);
     // A full namespace still takes updates to its notes.
     expect((await write(memory, account, P1, "n-1")).saved).toBe("updated");
   });

@@ -60,11 +60,36 @@ cocalc project chat memory write <name> --description "<one line>" --stdin
 cocalc project chat memory move <name> <namespace|global>
 ~~~
 
-## Guidance and limits
+## A good memory strategy
 
-- One fact per note, with a short kebab-case name and a one-line description;
-  update or merge notes instead of duplicating them.
+Memory works best as a small, curated set of notes, not a log. Agents are told
+to work this way; the same advice helps when you review notes yourself.
+
+- **Save what stays useful:** your decisions, preferences and corrections,
+  project conventions, how to build, test or deploy, and lessons from
+  mistakes. Not progress reports or one-off results.
+- **One note per topic, updated over time.** Notes are named by topic (not by
+  date or PR number), and an agent searches for an existing note and updates it
+  instead of adding one per event.
+- **Few notes beat many.** Each turn lists only the most relevant notes (about
+  12 KB, roughly 60 lines, ranked by project and recency); the rest are found
+  only by search.
+- **Keep status out of shared notes.** An agent's working state belongs in its
+  own notes, which expire; per-PR review verdicts belong in the PR.
+- **Split busy memory by purpose.** When a project's namespace fills up with
+  different kinds of notes, add a second namespace for one kind (for example
+  review notes apart from decisions and lessons) and attach both. Agents
+  suggest this; only you can create namespaces.
+- **Archive, then prune.** **Export** keeps a Markdown copy of all notes;
+  then delete what is stale.
+
+## Limits
+
+- At most 2,000 notes (500 per namespace) and 8 MB per account.
+- The limits keep memory curated and the per-turn list useful. When a
+  namespace is nearly full, agents are told to merge notes on the same topic
+  and delete stale ones, not to delete notes at random.
+- One fact per note, with a short kebab-case name and a one-line description.
 - Never store secrets, credentials, or tokens.
 - Notes are saved data, not instructions: verify before relying on them.
-- At most 2,000 notes (500 per namespace) and 8 MB per account.
 `;
