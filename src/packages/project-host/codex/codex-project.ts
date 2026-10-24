@@ -56,6 +56,7 @@ import {
   verifyProjectContainerInPool,
 } from "@cocalc/project-runner/run/podman";
 import { mountArg } from "@cocalc/backend/podman";
+import { BeneathDir } from "../beneath-copy";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import { resolveProjectHostPreferredMasterConatServer } from "../master-conat-server";
@@ -671,31 +672,33 @@ export async function createProjectCliTokenLease({
   const leaseName = `.cocalc-agent-${randomUUID()}`;
   const relativeHomeParts = [".local", "share", "cocalc", "runtime", leaseName];
   const relativeHomeDir = join(...relativeHomeParts);
-  const hostDir = scratch
-    ? join(scratch, leaseName)
-    : join(home, relativeHomeDir);
+  // The lease lives in the project's scratch (or home), whose every component
+  // the project can swap for a symlink at any moment: all of its files are
+  // made, written and removed through BeneathDir, anchored at that trusted
+  // root, which refuses symlinks instead of following them.
+  const leaseDir = new BeneathDir(
+    scratch ?? home,
+    scratch ? leaseName : relativeHomeDir,
+  );
+  const hostDir = leaseDir.hostPath;
   const containerDir = scratch
     ? join("/tmp", leaseName)
     : join(PROJECT_RUNTIME_HOME, relativeHomeDir);
   const hostPath = join(hostDir, "token");
   const containerPath = join(containerDir, "token");
-  const connectorHostPath = join(hostDir, "connector-key");
   const connectorContainerPath = join(containerDir, "connector-key");
 
-  // Never through a symlink in the project's home (or scratch): the token
-  // files must not be written anywhere the project points the host at.
-  await makeDirectoryBeneath(
-    scratch ?? home,
-    scratch ? [leaseName] : relativeHomeParts,
-  );
-  await fs.chmod(hostDir, 0o700);
+  leaseDir.mkdir(0o700);
   // Connectors are entirely dormant unless the site set one up.
   const cliConnectors = await siteCliConnectors(hubApi.system?.getCustomize);
   const cliActive = cliConnectors.length > 0;
-  if (cliActive) await writeCliConnectorTools(hostDir, cliConnectors);
+  if (cliActive) await writeCliConnectorTools(leaseDir, cliConnectors);
   const sweepStaleTokens = () =>
     sweepStaleCliConnectorTokens({
-      runtimeDir: dirname(hostDir),
+      runtimeDir: new BeneathDir(
+        scratch ?? home,
+        scratch ? "" : join(...relativeHomeParts.slice(0, -1)),
+      ),
       ownLeaseName: leaseName,
     }).catch((err) =>
       logger.warn("could not sweep stale CLI connector tokens", {
@@ -706,15 +709,7 @@ export async function createProjectCliTokenLease({
   void sweepStaleTokens();
 
   const writeToken = async (token: string): Promise<void> => {
-    const tempPath = join(hostDir, `.token-${randomUUID()}.tmp`);
-    try {
-      await fs.writeFile(tempPath, `${token}\n`, { mode: 0o600 });
-      await fs.chmod(tempPath, 0o600);
-      await fs.rename(tempPath, hostPath);
-    } catch (err) {
-      await fs.rm(tempPath, { force: true });
-      throw err;
-    }
+    leaseDir.writeFile("token", `${token}\n`, 0o600);
   };
   await writeToken(initialToken);
   const { createAgentIdentityLease } = await import("./agent-identity-lease");
@@ -739,7 +734,7 @@ export async function createProjectCliTokenLease({
   };
   const clearConnectorKey = () =>
     queueConnectorOperation(async () => {
-      await fs.rm(connectorHostPath, { force: true });
+      leaseDir.unlink("connector-key");
     });
   const setConnectorKey = (secret: string, stillCurrent = () => true) =>
     queueConnectorOperation(async () => {
@@ -749,17 +744,7 @@ export async function createProjectCliTokenLease({
       if (!secret || secret.length > 4096 || /\s/.test(secret)) {
         throw new Error("invalid managed connector credential");
       }
-      const tempPath = join(hostDir, `.connector-${randomUUID()}.tmp`);
-      try {
-        await fs.writeFile(tempPath, `${secret}\n`, { mode: 0o600 });
-        await fs.chmod(tempPath, 0o600);
-        if (closed || !stillCurrent()) {
-          throw new Error("connector runtime closed");
-        }
-        await fs.rename(tempPath, connectorHostPath);
-      } finally {
-        await fs.rm(tempPath, { force: true });
-      }
+      leaseDir.writeFile("connector-key", `${secret}\n`, 0o600);
     });
   // CLI connector tokens (gh, cf) for the current turn. The hub rechecks the
   // grants and the live turn on every renewal; a token it no longer returns
@@ -775,7 +760,7 @@ export async function createProjectCliTokenLease({
       // Fail closed: the prompt names only connectors whose files were all
       // written; any failure leaves no token files at all.
       cliTokens = [];
-      await syncCliConnectorTokens(hostDir, tokens);
+      await syncCliConnectorTokens(leaseDir, tokens);
       cliTokens = tokens;
     });
   const beginCliTurn = async (
@@ -1010,7 +995,7 @@ export async function createProjectCliTokenLease({
           projectId,
           accountId: resolvedAccountId,
           env: currentEnv,
-          hostDir,
+          hostDir: leaseDir,
         });
       }
     })().finally(() => {
@@ -1021,7 +1006,7 @@ export async function createProjectCliTokenLease({
   try {
     await prepareIdentity();
   } catch (error) {
-    await fs.rm(hostDir, { recursive: true, force: true });
+    await leaseDir.rm();
     throw error;
   }
 
@@ -1140,7 +1125,7 @@ export async function createProjectCliTokenLease({
       await connectorOperation.catch(() => undefined);
       await identityPreparation?.catch(() => undefined);
       await identityLease?.close();
-      await fs.rm(hostDir, { recursive: true, force: true });
+      await leaseDir.rm();
     },
   };
 }

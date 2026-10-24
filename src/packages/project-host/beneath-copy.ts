@@ -40,6 +40,7 @@ import {
   fchmodSync,
   futimesSync,
   openSync,
+  writeSync,
 } from "node:fs";
 import {
   copyFile,
@@ -771,5 +772,102 @@ export async function rmBeneath(root: string, rel: string): Promise<void> {
     await runNativeFsTask(() => sandbox.rm(beneathRelative(rel), true, true));
   } catch (err) {
     if (errorCode(err) !== "ENOENT") throw err;
+  }
+}
+
+// A directory `rel` beneath a trusted `root` (chosen by the host, never by a
+// project), in a tree the project can change at any moment. Every operation
+// resolves beneath the root and refuses all symlinks, so a component of `rel`
+// (or anything beneath it) swapped for a symlink makes the operation fail
+// instead of acting wherever the link points.
+export class BeneathDir {
+  readonly root: string;
+  readonly rel: string;
+
+  constructor(root: string, rel = "") {
+    this.root = root;
+    this.rel = beneathRelative(rel);
+  }
+
+  /** The host path, for display or to hand to something that trusts it. */
+  get hostPath(): string {
+    return this.rel ? path.join(this.root, this.rel) : this.root;
+  }
+
+  child(name: string): BeneathDir {
+    return new BeneathDir(this.root, this.at(name));
+  }
+
+  private at(name = ""): string {
+    const relName = beneathRelative(name);
+    return this.rel && relName ? `${this.rel}/${relName}` : this.rel || relName;
+  }
+
+  private sandbox(): SandboxRoot {
+    return new SandboxRoot(this.root);
+  }
+
+  /** Creates this directory (and missing parents), then sets its mode. */
+  mkdir(mode = 0o700): void {
+    if (this.rel === "") return;
+    const sandbox = this.sandbox();
+    sandbox.mkdir(this.rel, true, mode);
+    sandbox.chmod(this.rel, mode);
+  }
+
+  /** Writes `name` in this directory by a temporary file renamed into place. */
+  writeFile(name: string, data: string, mode = 0o600): void {
+    const sandbox = this.sandbox();
+    const target = this.at(name);
+    const tmp = this.at(`.${path.posix.basename(target)}-${randomUUID()}.tmp`);
+    const fd = sandbox.openWrite(tmp, true, true, false, mode);
+    let placed = false;
+    try {
+      try {
+        writeSync(fd, data);
+        fchmodSync(fd, mode);
+      } finally {
+        closeSync(fd);
+      }
+      sandbox.rename(tmp, target);
+      placed = true;
+    } finally {
+      if (!placed) {
+        try {
+          sandbox.unlink(tmp);
+        } catch {}
+      }
+    }
+  }
+
+  /** Removes file `name` from this directory, if present. */
+  unlink(name: string): void {
+    try {
+      this.sandbox().unlink(this.at(name));
+    } catch (err) {
+      if (errorCode(err) !== "ENOENT") throw err;
+    }
+  }
+
+  /** The names in this directory. */
+  async list(): Promise<string[]> {
+    return await readdirBeneath(this.sandbox(), this.root, this.rel);
+  }
+
+  /** What `name` is and when it last changed; a symlink is never followed. */
+  async stat(name: string): Promise<{ kind: Kind; mtimeMs: number }> {
+    const { kind, mtimeNs } = await entryAt(
+      this.sandbox(),
+      this.root,
+      this.at(name),
+    );
+    return { kind, mtimeMs: mtimeNs / 1e6 };
+  }
+
+  /** Removes this directory and everything in it, if present. */
+  async rm(): Promise<void> {
+    if (this.rel === "")
+      throw codedError("EINVAL", "refusing to remove a root");
+    await rmBeneath(this.root, this.rel);
   }
 }

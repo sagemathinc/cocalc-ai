@@ -9,9 +9,8 @@
 // files exist only while a turn of an agent with that connector turned on is
 // running; without one, every wrapper just runs the real command unchanged.
 
-import { promises as fs } from "node:fs";
-import { join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { BeneathDir } from "../beneath-copy";
 import {
   CLI_CONNECTORS,
   CLI_CONNECTOR_INFO,
@@ -135,31 +134,30 @@ fi
 exec "$real" "$@"
 `;
 
-/** Writes the wrappers of the given (site-enabled) connectors only. */
+/**
+ * Writes the wrappers of the given (site-enabled) connectors only, in the
+ * lease directory `leaseDir` (in the project's scratch or home, so never
+ * through a symlink: see BeneathDir).
+ */
 export async function writeCliConnectorTools(
-  hostDir: string,
+  leaseDir: BeneathDir,
   connectors: readonly CliConnector[] = CLI_CONNECTORS,
 ): Promise<void> {
-  const dir = join(hostDir, CLI_CONNECTOR_DIR);
-  const bin = join(dir, "bin");
-  await fs.mkdir(bin, { recursive: true, mode: 0o700 });
-  await fs.chmod(dir, 0o700);
-  await fs.chmod(bin, 0o700);
+  const dir = leaseDir.child(CLI_CONNECTOR_DIR);
+  const bin = dir.child("bin");
+  dir.mkdir(0o700);
+  bin.mkdir(0o700);
   for (const { name, connector, envVar, missing } of WRAPPERS) {
     if (!connectors.includes(connector)) continue;
-    await fs.writeFile(
-      join(bin, name),
+    bin.writeFile(
+      name,
       wrapperScript({ command: name, envVar, connector, missing }),
-      { mode: 0o700 },
+      0o700,
     );
   }
   if (!connectors.includes("github")) return;
-  await fs.writeFile(
-    join(bin, GIT_CREDENTIAL_HELPER_NAME),
-    GIT_CREDENTIAL_HELPER,
-    { mode: 0o700 },
-  );
-  await fs.writeFile(join(bin, "git"), GIT_WRAPPER, { mode: 0o700 });
+  bin.writeFile(GIT_CREDENTIAL_HELPER_NAME, GIT_CREDENTIAL_HELPER, 0o700);
+  bin.writeFile("git", GIT_WRAPPER, 0o700);
 }
 
 let siteConnectorsCache: { at: number; connectors: CliConnector[] } | undefined;
@@ -215,29 +213,31 @@ function validToken(token: string): boolean {
 // Makes the token files match exactly the given tokens. Fails closed: if
 // any write fails, every token file is removed and the error is rethrown.
 export async function syncCliConnectorTokens(
-  hostDir: string,
+  leaseDir: BeneathDir,
   tokens: CliConnectorTurnToken[],
 ): Promise<void> {
   try {
-    await writeCliConnectorTokens(hostDir, tokens);
+    await writeCliConnectorTokens(leaseDir, tokens);
   } catch (err) {
-    await clearCliConnectorTokens(hostDir);
+    await clearCliConnectorTokens(leaseDir);
     throw err;
   }
 }
 
-export async function clearCliConnectorTokens(hostDir: string): Promise<void> {
-  const dir = join(hostDir, CLI_CONNECTOR_DIR);
+export async function clearCliConnectorTokens(
+  leaseDir: BeneathDir,
+): Promise<void> {
+  const dir = leaseDir.child(CLI_CONNECTOR_DIR);
   for (const connector of CLI_CONNECTORS) {
-    await fs.rm(join(dir, tokenFile(connector)), { force: true });
+    dir.unlink(tokenFile(connector));
   }
 }
 
 async function writeCliConnectorTokens(
-  hostDir: string,
+  leaseDir: BeneathDir,
   tokens: CliConnectorTurnToken[],
 ): Promise<void> {
-  const dir = join(hostDir, CLI_CONNECTOR_DIR);
+  const dir = leaseDir.child(CLI_CONNECTOR_DIR);
   const byConnector = new Map<CliConnector, string>();
   for (const { connector, token } of tokens) {
     if (CLI_CONNECTORS.includes(connector) && validToken(token)) {
@@ -245,20 +245,12 @@ async function writeCliConnectorTokens(
     }
   }
   for (const connector of CLI_CONNECTORS) {
-    const path = join(dir, tokenFile(connector));
     const token = byConnector.get(connector);
     if (token == null) {
-      await fs.rm(path, { force: true });
+      dir.unlink(tokenFile(connector));
       continue;
     }
-    const tempPath = join(dir, `.${connector}-${randomUUID()}.tmp`);
-    try {
-      await fs.writeFile(tempPath, `${token}\n`, { mode: 0o600 });
-      await fs.chmod(tempPath, 0o600);
-      await fs.rename(tempPath, path);
-    } finally {
-      await fs.rm(tempPath, { force: true });
-    }
+    dir.writeFile(tokenFile(connector), `${token}\n`, 0o600);
   }
 }
 
@@ -275,33 +267,32 @@ export async function sweepStaleCliConnectorTokens({
   ownLeaseName,
   now = Date.now(),
 }: {
-  runtimeDir: string;
+  // The directory of the leases (in the project's scratch or home).
+  runtimeDir: BeneathDir;
   ownLeaseName: string;
   now?: number;
 }): Promise<number> {
   let removed = 0;
   let leases: string[];
   try {
-    // runtimeDir is in the project's home: never sweep through a symlink
-    // the project put on the way (it could point at another project's).
-    if ((await fs.realpath(runtimeDir)) !== resolve(runtimeDir)) return 0;
-    leases = await fs.readdir(runtimeDir);
+    // Never through a symlink the project put on the way (it could point at
+    // another project's): listing and every removal below refuse them.
+    leases = await runtimeDir.list();
   } catch {
     return 0;
   }
   for (const lease of leases) {
     if (!lease.startsWith(".cocalc-agent-") || lease === ownLeaseName) continue;
-    const dir = join(runtimeDir, lease, CLI_CONNECTOR_DIR);
+    const dir = runtimeDir.child(lease).child(CLI_CONNECTOR_DIR);
     for (const connector of CLI_CONNECTORS) {
-      const path = join(dir, tokenFile(connector));
       try {
-        const stat = await fs.lstat(path);
-        if (now - stat.mtimeMs > STALE_CLI_TOKEN_MS) {
-          await fs.rm(path, { force: true });
+        const { kind, mtimeMs } = await dir.stat(tokenFile(connector));
+        if (kind === "file" && now - mtimeMs > STALE_CLI_TOKEN_MS) {
+          dir.unlink(tokenFile(connector));
           removed++;
         }
       } catch {
-        // No such file: nothing to sweep.
+        // No such file, or not reachable without a symlink: nothing to sweep.
       }
     }
   }

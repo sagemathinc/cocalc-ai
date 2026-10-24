@@ -26,6 +26,7 @@ import {
   syncCliConnectorTokens,
   writeCliConnectorTools,
 } from "./codex/cli-connector-files";
+import { BeneathDir } from "./beneath-copy";
 
 /** Output beyond this kills the run; scripts should print little. */
 const MAX_OUTPUT_BYTES = 1_000_000;
@@ -126,11 +127,14 @@ export async function runSensor(
     }
     const pathPrefix: string[] = [];
     if (credentials.cli_tokens?.length) {
+      // A host-owned directory (not the project's), so BeneathDir is only
+      // the files' interface here.
+      const runDir = new BeneathDir(runsRoot, request.run_id);
       await writeCliConnectorTools(
-        hostDir,
+        runDir,
         credentials.cli_tokens.map((token) => token.connector),
       );
-      await syncCliConnectorTokens(hostDir, credentials.cli_tokens);
+      await syncCliConnectorTokens(runDir, credentials.cli_tokens);
       pathPrefix.push(`${dir}/${CLI_CONNECTOR_DIR}/bin`);
     }
     const result = await exec({
