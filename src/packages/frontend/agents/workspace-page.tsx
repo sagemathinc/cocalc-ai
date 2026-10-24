@@ -90,6 +90,7 @@ import {
 } from "./new-agent-runtime-select";
 import { preferredClaudeCredential } from "./claude-credential-options";
 import { siteFundedClaudeAvailable } from "./site-funded-claude";
+import { useClaudeRuntimeDefault } from "./use-claude-runtime-default";
 import {
   NewAgentClaudeControls,
   NewAgentAcpControls,
@@ -324,7 +325,6 @@ import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit
 import {
   NewAgentCodexPaymentControl,
   newAgentPaymentSourceEnabled,
-  shouldDefaultToClaude,
   shouldPrepareProjectForClaude,
 } from "./new-agent-codex-payment";
 import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
@@ -1341,6 +1341,7 @@ function NewAgentPanel({
 
   async function create(requestValue?: string, withoutTask = false) {
     if (runtimeKind === "claude-code" && !claudeCredentialsLoaded) return;
+    if (runtimeDefaultPending) return;
     // Without a way to pay for the chosen agent, sending starts sign-in; the
     // request stays in the box.
     if (signInRequired && !withoutTask) {
@@ -1793,43 +1794,38 @@ function NewAgentPanel({
       : lite || paymentSourceError
         ? false
         : undefined;
-  useEffect(() => {
-    if (
-      runtimeKind !== "codex-native" ||
-      runtimeChosen.current ||
-      codexOwnPlan == null
-    )
-      return;
-    let disposed = false;
-    void Promise.all([
-      webapp_client.conat_client.hub.system
-        .listExternalCredentials({ provider: "anthropic", scope: "account" })
-        .catch(() => undefined),
-      siteFundedClaudeAvailable(boundAccount.accountId),
-    ]).then(([rows, claudeIncluded]) => {
-      if (disposed) return;
-      if (
-        shouldDefaultToClaude({
-          runtimeChosen: runtimeChosen.current,
-          claudeConnected: (rows ?? []).some(
-            (row) =>
-              !row.revoked &&
-              (row.kind === "anthropic-api-key" ||
-                row.kind === CLAUDE_SUBSCRIPTION_KIND),
-          ),
-          claudeIncluded,
-          codexOwnPlan,
-        })
-      )
-        setRuntimeKind("claude-code");
-    });
-    return () => {
-      disposed = true;
-    };
-  }, [codexOwnPlan, runtimeKind, boundAccount.accountId]);
+  const claudeDefault = useClaudeRuntimeDefault({
+    codexRuntime: runtimeKind === "codex-native",
+    runtimeChosen: () => runtimeChosen.current,
+    codexOwnPlan,
+    accountId: boundAccount.accountId,
+    checkClaude: async () => {
+      const [rows, claudeIncluded] = await Promise.all([
+        webapp_client.conat_client.hub.system
+          .listExternalCredentials({ provider: "anthropic", scope: "account" })
+          .catch(() => undefined),
+        siteFundedClaudeAvailable(boundAccount.accountId),
+      ]);
+      return {
+        claudeConnected: (rows ?? []).some(
+          (row) =>
+            !row.revoked &&
+            (row.kind === "anthropic-api-key" ||
+              row.kind === CLAUDE_SUBSCRIPTION_KIND),
+        ),
+        claudeIncluded,
+      };
+    },
+    onClaude: () => setRuntimeKind("claude-code"),
+  });
+  // Until it is decided whether this agent starts as Claude, it is not
+  // created: a quick submit would otherwise make the Codex agent the default
+  // was about to replace.
+  const runtimeDefaultPending = !claudeDefault.settled;
 
   function chooseRuntime(kind: NewAgentRuntimeKind) {
     runtimeChosen.current = true;
+    claudeDefault.settle();
     setClaudeConnectRequested(false);
     setRuntimeKind(kind);
     if (kind === "claude-code") void prepareProjectForClaude();
@@ -2124,7 +2120,9 @@ function NewAgentPanel({
                     atLimit ||
                     (!projectId &&
                       (!projectMap || emailVerificationRequired)) ||
-                    (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
+                    (runtimeKind === "claude-code" &&
+                      !claudeCredentialsLoaded) ||
+                    runtimeDefaultPending
                   }
                   onClick={() => {
                     const request =
