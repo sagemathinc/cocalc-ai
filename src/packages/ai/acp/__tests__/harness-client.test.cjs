@@ -146,7 +146,7 @@ async function probeClaudeAuthMethods(args, remote) {
       });
       child.stdout.on("data", (chunk) => {
         buffer += chunk.toString();
-        for (let end; (end = buffer.indexOf("\n")) >= 0;) {
+        for (let end; (end = buffer.indexOf("\n")) >= 0; ) {
           const line = buffer.slice(0, end);
           buffer = buffer.slice(end + 1);
           let message;

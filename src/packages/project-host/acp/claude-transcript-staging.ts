@@ -22,7 +22,8 @@ even one swapped in mid-copy. The staged tree is bounded in size: the host's
 disk is not the project's quota.
 */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import getLogger from "@cocalc/backend/logger";
 import {
   copyRegularFileBeneath,
@@ -30,7 +31,10 @@ import {
   listBeneath,
   type FileIdentity,
 } from "../beneath-copy";
-import { claudeTranscriptStagingPrefix } from "./claude-subscription-paths";
+import {
+  claudeTranscriptStagingPrefix,
+  claudeTranscriptStagingProject,
+} from "./claude-subscription-paths";
 
 const logger = getLogger("project-host:claude-transcript-staging");
 
@@ -45,6 +49,49 @@ export function maxTranscriptBytes(): number {
   return Number.isSafeInteger(configured) && configured > 0
     ? configured
     : 1024 ** 3;
+}
+
+function positiveSetting(name: string, fallback: number): number {
+  const configured = Number(process.env[name]);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : fallback;
+}
+
+// At most this many staging directories may exist on the host, and this many
+// for one project, counting copies kept after a failed copy back (which the
+// reaper removes once they are old): with the byte bound, this bounds the
+// host disk they use.
+export function maxTranscriptStagings(): { host: number; project: number } {
+  return {
+    host: positiveSetting("COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS", 32),
+    project: positiveSetting(
+      "COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS",
+      4,
+    ),
+  };
+}
+
+// Refuses (after removing it) the staging directory just created if the host
+// or its project now has more than allowed. Counting after creating it means
+// controllers starting at once can refuse each other, but never all succeed
+// past the bound.
+async function enforceStagingLimits(
+  projectId: string,
+  limits: { host: number; project: number },
+): Promise<void> {
+  let host = 0;
+  let project = 0;
+  for (const name of await readdir(tmpdir())) {
+    const owner = claudeTranscriptStagingProject(name);
+    if (owner === undefined) continue;
+    host++;
+    if (owner === projectId) project++;
+  }
+  if (host > limits.host || project > limits.project)
+    throw Error(
+      "Too many Claude controllers are running on this project host; try again later",
+    );
 }
 
 export interface ClaudeTranscriptStaging {
@@ -124,7 +171,11 @@ async function copyTree({
           stagedSide === "from" && staged.get(child) === identityKey(source),
       });
       if (result.kind === "not-regular") continue;
-      bytes += result.source.size;
+      // What the staging side really holds: a file can grow while copied.
+      bytes +=
+        result.kind === "copied"
+          ? Math.max(result.source.size, result.dest.size)
+          : result.source.size;
       if (bytes > maxBytes) {
         const error: NodeJS.ErrnoException = Error(
           `EFBIG: Claude transcripts exceed ${maxBytes} bytes`,
@@ -147,19 +198,24 @@ async function copyTree({
  * ensureClaudeTranscriptDirectory) in a new host-owned directory.
  */
 export async function stageClaudeTranscripts({
+  projectId,
   projectHome,
   parts,
   maxBytes = maxTranscriptBytes(),
+  limits = maxTranscriptStagings(),
 }: {
+  projectId: string;
   projectHome: string;
   parts: string[];
   maxBytes?: number;
+  limits?: { host: number; project: number };
 }): Promise<ClaudeTranscriptStaging> {
-  const directory = await mkdtemp(claudeTranscriptStagingPrefix());
+  const directory = await mkdtemp(claudeTranscriptStagingPrefix(projectId));
   const base = parts.join("/");
   // So that a file the controller did not change is not copied back.
   const staged = new Map<string, string>();
   try {
+    await enforceStagingLimits(projectId, limits);
     await copyTree({
       fromRoot: projectHome,
       fromBase: base,
@@ -211,8 +267,9 @@ export async function stageClaudeTranscripts({
           error: `${error}`,
         });
       }
-      closed = true;
       await rm(directory, { recursive: true, force: true });
+      // Only now: if removing failed, a retry of close tries again.
+      closed = true;
     },
   };
 }

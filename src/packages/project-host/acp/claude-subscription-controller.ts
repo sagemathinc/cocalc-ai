@@ -550,6 +550,7 @@ ${skill}
     // again at start, through any symlink the project put there since): mount
     // a host-owned copy instead.
     transcripts = await stageClaudeTranscripts({
+      projectId,
       projectHome: projectPaths.home,
       parts: transcript.parts,
     });

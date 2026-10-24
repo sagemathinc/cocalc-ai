@@ -24,6 +24,7 @@ import { stageClaudeTranscripts } from "./claude-transcript-staging";
 import { copyRegularFileBeneath } from "../beneath-copy";
 import { isManagedClaudeTranscriptStaging } from "./claude-subscription-paths";
 
+const projectId = "00000000-0000-4000-8000-0000000000aa";
 const parts = [
   ".local",
   "share",
@@ -50,7 +51,11 @@ afterEach(async () => {
 });
 
 test("stages the project's transcripts in a host-owned directory, not the project's", async () => {
-  const staging = await stageClaudeTranscripts({ projectHome, parts });
+  const staging = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+  });
   try {
     expect(isManagedClaudeTranscriptStaging(staging.directory)).toBe(true);
     expect(staging.directory.startsWith(projectHome)).toBe(false);
@@ -66,7 +71,11 @@ test("stages the project's transcripts in a host-owned directory, not the projec
 test("never copies a symlink the project planted, in either direction", async () => {
   await symlink("/etc/passwd", join(transcripts, "-workspace", "link.jsonl"));
   await symlink(elsewhere, join(transcripts, "linkdir"));
-  const staging = await stageClaudeTranscripts({ projectHome, parts });
+  const staging = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+  });
   try {
     expect((await readdir(staging.directory)).sort()).toEqual(["-workspace"]);
     expect(await readdir(join(staging.directory, "-workspace"))).toEqual([
@@ -84,7 +93,11 @@ test("never copies a symlink the project planted, in either direction", async ()
 });
 
 test("copies new and changed transcripts back after a turn, and not unchanged ones", async () => {
-  const staging = await stageClaudeTranscripts({ projectHome, parts });
+  const staging = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+  });
   try {
     const saved = join(transcripts, "-workspace", "s.jsonl");
     // A copy writes a new file and renames it into place: a new inode.
@@ -119,7 +132,11 @@ test("copies new and changed transcripts back after a turn, and not unchanged on
 });
 
 test("copying back refuses a symlink the project swapped into its directory", async () => {
-  const staging = await stageClaudeTranscripts({ projectHome, parts });
+  const staging = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+  });
   await writeFile(join(staging.directory, "-workspace", "new.jsonl"), "n\n");
   // After staging, the project replaces an ancestor with a symlink elsewhere.
   const local = join(projectHome, ".local");
@@ -154,12 +171,16 @@ test("staging refuses a project whose transcript path goes through a symlink", a
   );
   await symlink(elsewhere, join(projectHome, ".local"));
   await expect(
-    stageClaudeTranscripts({ projectHome, parts }),
+    stageClaudeTranscripts({ projectId, projectHome, parts }),
   ).rejects.toThrow();
 });
 
 test("sync and close after close are no-ops", async () => {
-  const staging = await stageClaudeTranscripts({ projectHome, parts });
+  const staging = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+  });
   await staging.close();
   await staging.sync();
   await staging.close();
@@ -197,12 +218,13 @@ test("staging refuses a transcript tree larger than its byte bound", async () =>
     "x".repeat(4096),
   );
   await expect(
-    stageClaudeTranscripts({ projectHome, parts, maxBytes: 1024 }),
+    stageClaudeTranscripts({ projectId, projectHome, parts, maxBytes: 1024 }),
   ).rejects.toThrow(/EFBIG|larger than/);
 });
 
 test("growth past the byte bound fails the sync, and close drops the staged copy", async () => {
   const staging = await stageClaudeTranscripts({
+    projectId,
     projectHome,
     parts,
     maxBytes: 1024,
@@ -217,7 +239,11 @@ test("growth past the byte bound fails the sync, and close drops the staged copy
 });
 
 test("close keeps the staged copy when the copy back may succeed later", async () => {
-  const staging = await stageClaudeTranscripts({ projectHome, parts });
+  const staging = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+  });
   await writeFile(join(staging.directory, "-workspace", "late.jsonl"), "late");
   // A failure that may pass (here: permission), not an unsafe path.
   await chmod(join(transcripts, "-workspace"), 0o500);
@@ -238,4 +264,56 @@ test("close keeps the staged copy when the copy back may succeed later", async (
     await readFile(join(transcripts, "-workspace", "late.jsonl"), "utf8"),
   ).toBe("late");
   await expect(lstat(staging.directory)).rejects.toThrow();
+});
+
+test("staging refuses more controllers than allowed for a project or the host", async () => {
+  const first = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+    limits: { host: 100, project: 1 },
+  });
+  try {
+    await expect(
+      stageClaudeTranscripts({
+        projectId,
+        projectHome,
+        parts,
+        limits: { host: 100, project: 1 },
+      }),
+    ).rejects.toThrow(/Too many Claude controllers/);
+    // The refused staging directory is removed again.
+    const left = (await readdir(tmpdir())).filter((name) =>
+      name.startsWith(`cocalc-claude-transcripts-${projectId}-`),
+    );
+    expect(left).toEqual([first.directory.split("/").pop()]);
+  } finally {
+    await first.close();
+  }
+});
+
+test("a file that grows while staged counts at its staged size", async () => {
+  // Three 400-byte files fit in 1300 bytes only if each counts as 400.
+  for (const name of ["a", "b", "c"])
+    await writeFile(
+      join(transcripts, "-workspace", `${name}.jsonl`),
+      "x".repeat(400),
+    );
+  await rm(join(transcripts, "-workspace", "s.jsonl"));
+  const staging = await stageClaudeTranscripts({
+    projectId,
+    projectHome,
+    parts,
+    maxBytes: 1300,
+  });
+  try {
+    // Growth in the staged copy is counted at its real size on the next sync.
+    await writeFile(
+      join(staging.directory, "-workspace", "a.jsonl"),
+      "x".repeat(600),
+    );
+    await expect(staging.sync()).rejects.toThrow(/EFBIG|exceed|larger than/);
+  } finally {
+    await staging.close();
+  }
 });

@@ -268,7 +268,10 @@ export function isClaudeSubscriptionStatus(value: unknown): boolean {
 export class HarnessError extends Error {
   constructor(
     public readonly code:
-      "unavailable" | "outcome_unknown" | "unsupported" | "rejected",
+      | "unavailable"
+      | "outcome_unknown"
+      | "unsupported"
+      | "rejected",
     message: string,
     // The agent's process was killed (SIGKILL), e.g. at a memory limit.
     public readonly killed = false,
@@ -496,11 +499,12 @@ export class AcpHarnessClient {
     return await this.process.beginConnectorTurn?.(chat);
   }
 
-  /** Revoke the current turn's CoCalc connector credential. */
+  /** Persist the completed turn (see HarnessProcess.turnCompleted). */
   async turnCompleted(): Promise<void> {
     await this.process.turnCompleted?.();
   }
 
+  /** Revoke the current turn's CoCalc connector credential. */
   async endConnectorTurn(): Promise<void> {
     await this.process.endConnectorTurn?.();
   }
@@ -1062,7 +1066,8 @@ export class AcpHarnessClient {
       if (kind === "none" || kind === "account") return;
     }
     const status = this.authStatus as
-      { kind?: string; account?: { plan?: unknown } } | undefined;
+      | { kind?: string; account?: { plan?: unknown } }
+      | undefined;
     let message: string;
     if (status?.kind === "none")
       message =
