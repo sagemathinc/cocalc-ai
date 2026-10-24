@@ -1882,6 +1882,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "collaborator-authorized normal project runtime environment selection",
   },
+  "system.manageSiteFundedClaudeKeys": {
+    decision: "fresh-auth-required",
+    reason:
+      "adds, changes or removes the site API keys that pay for site-funded Claude",
+  },
   "system.setSiteSettings": {
     decision: "fresh-auth-required",
     reason:
