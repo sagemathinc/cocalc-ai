@@ -158,9 +158,12 @@ export const authFirstRequireAccountWithBoundSession =
     const opts = firstArg(args);
     if (context.auth_session_hash) {
       opts.session_hash = context.auth_session_hash;
-    } else {
+    } else if (context.auth_session_hash === undefined) {
+      // An internal call: arguments it reuses never carry a session here.
       delete opts.session_hash;
     }
+    // Otherwise bindAccount bound null: a caller without a session, which
+    // must not fall back to a browser it names.
     return args;
   });
 
