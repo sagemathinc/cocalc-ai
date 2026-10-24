@@ -259,6 +259,9 @@ echo "- Copy project bin scripts"
 mkdir -p "$OUT"/src/packages/project
 cp -r packages/project/bin "$OUT"/src/packages/project/
 
+echo "- Source for agents to read (source/, build-source-tree.sh)"
+bash "$ROOT/packages/project/sea/build-source-tree.sh" "$ROOT" "$OUT/source"
+
 echo "- Copy open helper into bundle bin"
 mkdir -p "$OUT"/bin
 cp packages/backend/dist/bin/open.js "$OUT"/bin/open

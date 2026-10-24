@@ -38,6 +38,15 @@ starting that kind of work; see the table at the end.
    **CoCalc's own UI:** browser exec, only when the task is about the UI.
    (references/browser-and-terminal.md)
 
+## CoCalc's Own Source
+
+The source of the CoCalc release running in this project is at
+`/opt/cocalc/project-bundle/source` (read-only; start with its `INDEX.md`,
+search it with `rg`). To answer how CoCalc behaves, use the docs first, then
+confirm in this source when it matters. It is exactly the running release:
+newer code on GitHub may differ. If the directory is missing, this host's
+release predates it.
+
 ## Disk Space: The Project Quota, Not `df`
 
 In a CoCalc project, `df` reports the host's filesystem, which many projects
