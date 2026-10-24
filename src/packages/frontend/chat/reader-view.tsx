@@ -82,6 +82,12 @@ export function useChatReaderMode(
 const toJS = (value: any) =>
   typeof value?.toJS === "function" ? value.toJS() : value;
 
+export interface ReaderItemInfo {
+  subject: string;
+  /** high: for the person; low: FYI, for the record. */
+  priority: "high" | "normal" | "low";
+}
+
 export function readerSender(message: ChatMessageTyped, userMap: any): string {
   const rpc = toJS(field<any>(message, "agent_rpc"));
   if (rpc?.source?.agent_id) {
@@ -141,6 +147,7 @@ export function ChatReaderView({
   renderItem,
   itemBadges,
   acpState,
+  itemInfo,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -169,6 +176,8 @@ export function ChatReaderView({
   itemBadges?: (item: ReaderItem) => ReactNode;
   /** The live state of agent turns: which are running. */
   acpState?: { get?: (key: string) => unknown };
+  /** Each item's subject and priority (what its agent said, or defaults). */
+  itemInfo?: (item: ReaderItem) => ReaderItemInfo;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
@@ -406,6 +415,7 @@ export function ChatReaderView({
           const first = item.messages[0];
           const date = dateValue(item.messages[item.messages.length - 1]);
           const replies = item.messages.length - 1;
+          const info = itemInfo?.(item);
           return (
             <div
               key={item.id}
@@ -426,6 +436,9 @@ export function ChatReaderView({
                   item.id === selectedId ? UI_COLORS.selected : undefined,
                 fontWeight: read ? undefined : 600,
                 opacity: isItemArchived(item, state) ? 0.6 : undefined,
+                // High: a mark down its side; low: quieter.
+                borderLeft: `3px solid ${info?.priority === "high" ? UI_COLORS.warning : "transparent"}`,
+                color: info?.priority === "low" ? UI_COLORS.muted : undefined,
               }}
             >
               <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
@@ -451,6 +464,30 @@ export function ChatReaderView({
                 >
                   {readerSender(first, userMap)}
                 </span>
+                {info?.priority === "high" ? (
+                  <span
+                    aria-label="For you"
+                    style={{
+                      color: UI_COLORS.warning,
+                      fontSize: 11,
+                      flex: "none",
+                    }}
+                  >
+                    for you
+                  </span>
+                ) : info?.priority === "low" ? (
+                  // Not by color alone: low is named too.
+                  <span
+                    aria-label="Low priority"
+                    style={{
+                      color: UI_COLORS.muted,
+                      fontSize: 11,
+                      flex: "none",
+                    }}
+                  >
+                    fyi
+                  </span>
+                ) : null}
                 {itemBadges?.(item)}
                 {date ? (
                   <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
@@ -468,10 +505,16 @@ export function ChatReaderView({
                   whiteSpace: "nowrap",
                 }}
               >
-                {replies > 0
-                  ? `(${replies} ${replies === 1 ? "reply" : "replies"}) `
-                  : ""}
-                {snippet(first)}
+                {info ? (
+                  info.subject || snippet(first)
+                ) : (
+                  <>
+                    {replies > 0
+                      ? `(${replies} ${replies === 1 ? "reply" : "replies"}) `
+                      : ""}
+                    {snippet(first)}
+                  </>
+                )}
               </div>
             </div>
           );
@@ -619,6 +662,20 @@ export function ChatReaderView({
           </Button>
         </Space>
       )}
+      {itemInfo?.(selected).subject ? (
+        <div
+          role="heading"
+          aria-level={2}
+          style={{
+            flex: "none",
+            fontWeight: 600,
+            fontSize: (fontSize ?? 14) + 2,
+            padding: renderItem ? "6px 16px 0" : "0 0 8px",
+          }}
+        >
+          {itemInfo(selected).subject}
+        </div>
+      ) : null}
       {renderItem ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
           {renderItem(selected)}

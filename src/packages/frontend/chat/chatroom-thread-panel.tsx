@@ -30,12 +30,14 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ChatReaderView } from "./reader-view";
 import {
+  isOpenAttention,
   readerItemAttention,
   readerItemThreadIndex,
   readerItemWaitsFor,
   readerItemWorking,
 } from "./reader-item-log";
 import { readerItems, type ReaderItem } from "./reader-model";
+import { itemPriority, itemSubject, itemTurnMeta } from "./reader-turn-meta";
 import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -3129,6 +3131,17 @@ export function ChatRoomThreadPanel({
             readOnly={readOnly}
             isVisible={isVisible}
             acpState={acpState}
+            itemInfo={(item: ReaderItem) => {
+              const meta = itemTurnMeta(item);
+              return {
+                subject: itemSubject(item, meta),
+                priority: itemPriority(
+                  item,
+                  meta,
+                  (readerAttention.get(item.id) ?? []).some(isOpenAttention),
+                ),
+              };
+            }}
             itemBadges={(item: ReaderItem) => (
               <ReaderItemBadges
                 working={readerItemWorking(item, readerRunningMessage)}

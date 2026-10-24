@@ -493,3 +493,35 @@ test("the open item can be shown by the log, and the list can mark items", () =>
   expect(within(options()[0]).getByText("Question")).toBeTruthy();
   expect(within(options()[1]).queryByText("Question")).toBeNull();
 });
+
+test("items show their subject; high ones are marked for you, and the open one is titled", () => {
+  const actions: any = {
+    getThreadReadCount: jest.fn(() => 0),
+    getReaderState: jest.fn(() => ({})),
+    updateReaderState: jest.fn(() => true),
+  };
+  render(
+    <ChatReaderView
+      actions={actions}
+      threadId="thread-1"
+      messages={thread}
+      accountId="acct"
+      itemInfo={(item) =>
+        item.id === "p3"
+          ? { subject: "Needs your decision", priority: "high" }
+          : { subject: `About ${item.id}`, priority: "low" }
+      }
+    />,
+  );
+  const [top, next] = options();
+  expect(top).toHaveTextContent("Needs your decision");
+  expect(within(top).getByLabelText("For you")).toBeTruthy();
+  expect(next).toHaveTextContent("About p2");
+  expect(within(next).queryByLabelText("For you")).toBeNull();
+  // Low is named, not shown by color alone.
+  expect(within(next).getByLabelText("Low priority")).toBeTruthy();
+  fireEvent.click(top);
+  expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
+    "Needs your decision",
+  );
+});

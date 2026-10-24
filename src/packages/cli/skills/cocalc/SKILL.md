@@ -143,6 +143,25 @@ cocalc agent send NAME --file message.md        # or --stdin; --attach FILE
 
 Details: references/messaging.md.
 
+## Turn Subject And Priority
+
+People read a busy agent thread like an inbox: one item per turn, with its
+subject and how much it is for them. Say both during the turn (the last call
+wins, so revise the subject at the end):
+
+```bash
+cocalc agent turn --subject "Fixed the shallow-clone cache bug" --priority high
+cocalc agent turn --priority low
+```
+
+- Subject: one line (at most 120 characters); without one, the first line of
+  your reply is used.
+- `high`: it needs the person (a decision, an approval, results they asked
+  for, a problem they must know about); use it sparingly. `normal` is the
+  default for a turn a person started; `low` (FYI) for one an agent message,
+  a sensor or a schedule started. An open question always shows as high.
+- Everyone who can read the chat sees them; never put secrets in them.
+
 ## Waiting For Something: Sensors
 
 Don't poll or sleep. Set a watcher and end your turn; it starts your next turn
