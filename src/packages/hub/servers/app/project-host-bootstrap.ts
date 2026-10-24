@@ -340,7 +340,13 @@ export default function init(router: Router) {
       }
       const tokenInfo = await redeemProjectHostBootstrapToken(token);
       if (!tokenInfo) {
+        // Visible for alerting: a host (or whoever read its startup script)
+        // tried to mint a master-conat token with a used bootstrap token.
+        const known = await verifyProjectHostToken(token, {
+          purpose: "bootstrap",
+        });
         logger.warn("bootstrap conat token refused", {
+          host_id: known?.host_id,
           token_id: token.split(".", 1)[0],
         });
         res.status(401).send("invalid or already used bootstrap token");
