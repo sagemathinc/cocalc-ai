@@ -1088,6 +1088,9 @@ main() {
   fi
 
   BAY_ROOT="${BAY_ROOT_BASE}/${BAY_ID}"
+  # Absolute, so paths derived from it stay valid in helpers that run from /
+  # (as_bay_node) and in the generated bay env.
+  INSTALL_BASE="$(realpath -m -- "$INSTALL_BASE")"
   RELEASES_DIR="${INSTALL_BASE}/releases"
   CURRENT_LINK="${INSTALL_BASE}/current"
   TARGET_RELEASE="${RELEASES_DIR}/${RELEASE_ID}"
