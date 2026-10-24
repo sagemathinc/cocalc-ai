@@ -162,3 +162,65 @@ describe("an identity as one account sees it", () => {
     expect(withOwnTurnStatus(none, mine)).toBe(none);
   });
 });
+
+describe("what a manager reads about a peer", () => {
+  it("says since when it is busy and how its last turn ended, in one line", () => {
+    const status = agentTurnStatusOf({
+      running: 1,
+      queued: 0,
+      runningSince: NOW - 90_000,
+      last: {
+        outcome: {
+          version: 1,
+          state: "failed",
+          failure: { kind: "error", code: "x" },
+          detail: "This agent turn could not run:\n  the model\trefused.",
+        },
+        at: NOW - 600_000,
+      },
+      now: NOW,
+    });
+    expect(status.running_since).toBe(NOW - 90_000);
+    expect(status.last).toEqual({
+      state: "failed",
+      kind: "error",
+      detail: "This agent turn could not run: the model refused.",
+      at: NOW - 600_000,
+    });
+    // Idle: no busy-since.
+    expect(
+      agentTurnStatusOf({
+        running: 0,
+        queued: 0,
+        runningSince: NOW - 90_000,
+        now: NOW,
+      }).running_since,
+    ).toBeUndefined();
+  });
+
+  it("parses the new fields bounded, and refuses wrong types", () => {
+    const parsed = parseAgentTurnStatus({
+      version: 1,
+      running: 1,
+      queued: 0,
+      running_since: NOW - 1,
+      last: { state: "completed", detail: "x".repeat(1000), at: NOW - 5 },
+      at: NOW,
+    });
+    expect(parsed?.running_since).toBe(NOW - 1);
+    expect(parsed?.last?.detail).toHaveLength(300);
+    for (const bad of [
+      { running_since: "soon" },
+      { last: { state: "completed", detail: 5, at: NOW } },
+    ])
+      expect(
+        parseAgentTurnStatus({
+          version: 1,
+          running: 0,
+          queued: 0,
+          at: NOW,
+          ...bad,
+        }),
+      ).toBeUndefined();
+  });
+});

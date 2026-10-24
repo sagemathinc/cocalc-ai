@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   friendlyAgentDestinations,
+  agentStatusReport,
   watchSentTurn,
   registerAgentCommands,
   registerChatAgentCommands,
@@ -657,6 +658,81 @@ test("a watcher that cannot be set leaves the send a success", async () => {
     stderr.mock.restore();
     transport.mock.restore();
   }
+});
+
+test("agent status says what each peer is doing and how its last turn ended", () => {
+  const now = Date.parse("2026-10-23T01:00:00Z");
+  const peer = (name: string, status?: any) => ({
+    member: {
+      kind: "registered" as const,
+      member_id: randomUUID(),
+      endpoint: { project_id: randomUUID(), agent_id: randomUUID() },
+      name,
+      available: true,
+      added_at: new Date().toISOString(),
+      ...(status ? { status } : {}),
+    },
+    networks: [
+      {
+        agent_network_id: randomUUID(),
+        title: "team",
+        delivery_mode: "live" as const,
+      },
+    ],
+  });
+  const directory: any = {
+    peers: [
+      peer("worker", {
+        version: 1,
+        running: 1,
+        queued: 2,
+        running_since: now - 5 * 60_000,
+        last: {
+          state: "failed",
+          kind: "error",
+          detail: "The tool crashed.",
+          at: now - 20 * 60_000,
+        },
+        at: now - 1000,
+      }),
+      peer("old", {
+        version: 1,
+        running: 1,
+        queued: 0,
+        at: now - 3 * 86_400_000,
+      }),
+      peer("quiet"),
+    ],
+  };
+  const all = agentStatusReport(directory, now).agents;
+  assert.deepEqual(all[0], {
+    name: "worker",
+    networks: ["team"],
+    state: "busy, 2 waiting",
+    running: 1,
+    queued: 2,
+    busy_since: new Date(now - 5 * 60_000).toISOString(),
+    busy_for: "5 min",
+    last_turn: {
+      ended: "failed",
+      kind: "error",
+      detail: "The tool crashed.",
+      at: new Date(now - 20 * 60_000).toISOString(),
+      ago: "20 min ago",
+    },
+  });
+  // A report older than a day says nothing.
+  assert.equal(all[1].state, "unknown (no report in the last day)");
+  assert.equal(all[1].running, undefined);
+  assert.equal(all[2].state, "unknown (no report in the last day)");
+  // One by name.
+  const one = agentStatusReport(directory, now, "@worker").agents;
+  assert.equal(one.length, 1);
+  assert.equal(one[0].name, "worker");
+  assert.throws(
+    () => agentStatusReport(directory, now, "nobody"),
+    /No approved/,
+  );
 });
 
 test("agent turn sets the current turn's subject and priority", async () => {
