@@ -686,7 +686,7 @@ export function createAgentMemory(
     const now = await usage(db, account_id, namespace);
     const full = (what: string) =>
       new Error(
-        `agent memory ${what}; merge related notes and delete outdated ones first`,
+        `agent memory ${what}; merge notes on the same topic into one, or delete stale ones first (memory export keeps a copy)`,
       );
     const agentScope = agentOfMemoryNamespace(namespace) != null;
     const namespaceLimit = agentScope
