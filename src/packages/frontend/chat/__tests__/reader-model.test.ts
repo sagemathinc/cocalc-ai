@@ -3,7 +3,6 @@ import {
   findItem,
   isItemArchived,
   isItemRead,
-  isItemRunning,
   markAllRead,
   markItemRead,
   markItemUnread,
@@ -400,57 +399,47 @@ describe("archive all", () => {
   });
 
   it("leaves a running turn in the inbox, unread if it was, after it ends too", () => {
-    const running = readerItems([
-      ...thread,
-      at("p9", 50),
-      { ...at("a9", 51, true), generating: true },
-    ]);
-    const last = running[running.length - 1];
-    expect(isItemRunning(last)).toBe(true);
-    expect(running.slice(0, -1).some((item) => isItemRunning(item))).toBe(
-      false,
-    );
+    const items = readerItems([...thread, at("p9", 50), at("a9", 51, true)]);
+    const last = items[items.length - 1];
+    // Which turn is running is the thread's call (its Working badge).
+    const running = (item: (typeof items)[number]) => item.id === "p9";
     const { state } = archiveAll(
-      running,
+      items,
       {},
       {
-        running: (item) => isItemRunning(item),
+        running,
         watermark: last.firstIndex - 1,
       },
     );
     expect(state).toEqual({ aw: 51, ax: ["p9"], u: ["p9"] });
-    expect(running.map((item) => isItemArchived(item, state))).toEqual([
+    expect(items.map((item) => isItemArchived(item, state))).toEqual([
       true,
       true,
       true,
       false,
     ]);
-    expect(isItemRead(last, running.length, state)).toBe(false);
-    // Finished, it is still there, until archived.
-    const done = readerItems([...thread, at("p9", 50), at("a9", 51, true)]);
-    expect(isItemArchived(done[done.length - 1], state)).toBe(false);
+    expect(isItemRead(last, items.length, state)).toBe(false);
     // A turn that was read stays read.
     expect(
-      archiveAll(
-        running,
-        {},
-        {
-          running: (item) => isItemRunning(item),
-          watermark: running.length + 10,
-        },
-      ).state,
+      archiveAll(items, {}, { running, watermark: items.length + 10 }).state,
     ).toEqual({ aw: 51, ax: ["p9"] });
   });
 
-  it("knows a running turn by its live ACP state too", () => {
+  it("brings back no running turn that was archived already", () => {
     const items = readerItems([...thread, at("p9", 50), at("a9", 51, true)]);
     const last = items[items.length - 1];
-    expect(isItemRunning(last)).toBe(false);
-    expect(
-      isItemRunning(last, {
-        get: (key) => (key === "message:a9" ? "running" : undefined),
-      }),
-    ).toBe(true);
+    const running = (item: (typeof items)[number]) => item.id === "p9";
+    for (const before of [
+      setItemArchived(last, true, {}),
+      archiveAll(items, {}).state,
+    ]) {
+      const { state } = archiveAll(items, before, {
+        running,
+        watermark: items.length,
+      });
+      expect(state.ax).toBeUndefined();
+      expect(items.every((item) => isItemArchived(item, state))).toBe(true);
+    }
   });
 
   it("if the read watermark cannot move, archiving still holds", () => {

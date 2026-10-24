@@ -230,19 +230,6 @@ export function itemLastDate(item: ReaderItem): number {
   return last;
 }
 
-/** Whether an item's agent turn is running now (it shows "working..."). */
-export function isItemRunning(
-  item: ReaderItem,
-  acpState?: AcpStateMap,
-): boolean {
-  return item.messages.some(
-    (message) =>
-      isAgentReply(message) &&
-      (field<boolean>(message, "generating") === true ||
-        acpStateOf(message, acpState) === "running"),
-  );
-}
-
 export function isItemArchived(item: ReaderItem, state: ReaderState): boolean {
   if (state.a?.[item.id] === item.lastId) return true;
   // Archive all: up to its time, unless moved back since; a newer reply
@@ -393,7 +380,10 @@ export function archiveAll(
     watermark?: number;
   } = {},
 ): ReturnType<ReaderChange> {
-  const kept = items.filter(running);
+  // Not one archived already: archiving everything brings nothing back.
+  const kept = items.filter(
+    (item) => running(item) && !isItemArchived(item, state),
+  );
   const keptIds = kept.map((item) => item.id);
   const keptUnread =
     watermark == null

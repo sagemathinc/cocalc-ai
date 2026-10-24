@@ -34,7 +34,6 @@ import {
   archiveAll,
   findItem,
   isItemArchived,
-  isItemRunning,
   isItemRead,
   markAllRead,
   markItemRead,
@@ -186,6 +185,7 @@ export function ChatReaderView({
   itemBadges,
   acpState,
   itemInfo,
+  isItemWorking = () => false,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -216,6 +216,8 @@ export function ChatReaderView({
   acpState?: { get?: (key: string) => unknown };
   /** Each item's subject and priority (what its agent said, or defaults). */
   itemInfo?: (item: ReaderItem) => ReaderItemInfo;
+  /** Whether an item holds the thread's running turn (its Working badge). */
+  isItemWorking?: (item: ReaderItem) => boolean;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
@@ -297,10 +299,9 @@ export function ChatReaderView({
   const archivableCount = useMemo(
     () =>
       items.filter(
-        (item) =>
-          !isItemArchived(item, state) && !isItemRunning(item, acpState),
+        (item) => !isItemArchived(item, state) && !isItemWorking(item),
       ).length,
-    [items, state, acpState],
+    [items, state, isItemWorking],
   );
   const [selectedId, setSelectedId] = useState<string>();
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
@@ -884,7 +885,7 @@ export function ChatReaderView({
             onConfirm={() => {
               save((current, watermark) =>
                 archiveAll(items, current, {
-                  running: (item) => isItemRunning(item, acpState),
+                  running: isItemWorking,
                   watermark,
                 }),
               );
