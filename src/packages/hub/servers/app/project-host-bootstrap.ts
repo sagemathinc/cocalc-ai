@@ -340,7 +340,7 @@ export default function init(router: Router) {
         // otherwise worth a look.
         logger.warn("bootstrap conat token refused", {
           host_id: exchanged.host_id,
-          token_id: token.split(".", 1)[0],
+          token_id: exchanged.token_id,
           reason: exchanged.reason,
         });
         res.status(401).send("invalid or already used bootstrap token");

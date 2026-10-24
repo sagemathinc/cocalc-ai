@@ -91,6 +91,7 @@ describeDb("bootstrap token exchange", () => {
       ok: false,
       reason: "exchange_closed",
       host_id: host,
+      token_id,
     });
     expect(await isMasterValid(second.master.token)).toBe(true);
     // ...but the token still authenticates status and payload requests.

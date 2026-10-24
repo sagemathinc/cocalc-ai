@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 
 const exchangeMock = jest.fn();
+const warnMock = jest.fn();
 const verifyMock = jest.fn();
 const mergeMetadataMock = jest.fn();
 
@@ -42,7 +43,7 @@ jest.mock(
     getLogger: () => ({
       debug: jest.fn(),
       info: jest.fn(),
-      warn: jest.fn(),
+      warn: (...args: any[]) => warnMock(...args),
     }),
   }),
   { virtual: true },
@@ -113,6 +114,14 @@ describe("project-host bootstrap token exchange routes", () => {
     });
     const response = await request("/project-host/bootstrap/conat");
     expect(response.status).toBe(401);
+  });
+
+  it("never logs any part of an unverified bearer value", async () => {
+    exchangeMock.mockResolvedValue({ ok: false, reason: "invalid" });
+    const response = await request("/project-host/bootstrap/conat");
+    expect(response.status).toBe(401);
+    const logged = JSON.stringify(warnMock.mock.calls);
+    expect(logged).not.toContain("boot-token");
   });
 
   it("accepts status reports without touching the exchange", async () => {

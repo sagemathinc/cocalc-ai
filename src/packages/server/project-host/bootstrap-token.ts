@@ -176,7 +176,13 @@ export async function exchangeProjectHostBootstrapToken(
   opts: { hostId?: string; ttlMs: number },
 ): Promise<
   | { ok: true; host_id: string; master: ProjectHostTokenInfo }
-  | { ok: false; reason: "invalid" | "exchange_closed"; host_id?: string }
+  | {
+      ok: false;
+      reason: "invalid" | "exchange_closed";
+      host_id?: string;
+      // Only for a verified token: never log anything from an unverified one.
+      token_id?: string;
+    }
 > {
   const info = await verifyProjectHostToken(token, { purpose: "bootstrap" });
   if (!info || (opts.hostId != null && info.host_id !== opts.hostId)) {
@@ -203,7 +209,12 @@ export async function exchangeProjectHostBootstrapToken(
     });
   });
   if (!master) {
-    return { ok: false, reason: "exchange_closed", host_id: info.host_id };
+    return {
+      ok: false,
+      reason: "exchange_closed",
+      host_id: info.host_id,
+      token_id: info.token_id,
+    };
   }
   await refreshLaunchpadOnPremAuthorizedKeys();
   return { ok: true, host_id: info.host_id, master };
