@@ -266,6 +266,28 @@ running a Claude turn gets that turn's key with
 `hosts.getSiteFundedClaudeKey`: only that host, only while the turn is active,
 and only the key it was admitted on.
 
+On the project host, a site-funded Claude agent (harness credential mode
+`site-funded`, chosen as "CoCalc Membership") runs Claude Code against the
+same in-container bridge as an account API key. The bridge reaches the
+host-side funded relay (`project-host/acp/site-funded-claude-relay.ts`),
+which:
+
+- funds requests only while a turn is admitted: each turn reserves (provider
+  `anthropic`), fetches its key, and is settled through the same durable
+  outbox as Codex when it ends (`site-funded-claude-turns.ts`);
+- forwards only `POST /v1/messages` and `/v1/messages/count_tokens`, forces
+  the funded model, caps `max_tokens` (and any thinking budget), drops
+  `inference_geo` and `service_tier`, and refuses `mcp_servers`, `container`
+  and hosted tools other than web search (metered) and web fetch;
+- adds the site key itself, which never reaches the container;
+- meters every response exactly, from JSON or from the stream
+  (`message_start` plus `message_delta`), numbering usage in completion order;
+- stops a turn at its request, duration and cost limits.
+
+Claude Code is also told (environment) to use the funded model for everything,
+to compact at 80% of a 100,000-token window, and to send no nonessential
+traffic, but nothing depends on that: the relay enforces it.
+
 ### Accounting and reconciliation
 
 Funded costs use integer micro-US-dollars and a versioned Luna price catalog.

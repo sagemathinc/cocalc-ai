@@ -68,6 +68,13 @@ export type AcpHarnessCredential =
       credentialId: string;
       /** Account-local preference; omitted/true keeps provider connectors enabled. */
       claudeAiConnectors?: boolean;
+    }
+  | {
+      version: 1;
+      provider: "anthropic";
+      /** Paid by the site from the account's included AI (CoCalc
+       * membership), one admitted turn at a time. */
+      mode: "site-funded";
     };
 
 export function parseAcpHarnessCredential(
@@ -102,12 +109,13 @@ export function parseAcpHarnessCredential(
     obj.version !== 1 ||
     obj.provider !== "anthropic" ||
     (obj.mode !== "project-secret" &&
+      obj.mode !== "site-funded" &&
       obj.mode !== "account-api-key" &&
       obj.mode !== "account-subscription")
   ) {
     throw Error("Unsupported ACP harness credential selection");
   }
-  if (obj.mode === "project-secret") {
+  if (obj.mode === "project-secret" || obj.mode === "site-funded") {
     if (
       Object.keys(obj).some(
         (key) => !["version", "provider", "mode"].includes(key),
@@ -115,7 +123,7 @@ export function parseAcpHarnessCredential(
     ) {
       throw Error("Unsupported ACP harness credential field");
     }
-    return { version: 1, provider: "anthropic", mode: "project-secret" };
+    return { version: 1, provider: "anthropic", mode: obj.mode };
   }
   if (
     Object.keys(obj).some(

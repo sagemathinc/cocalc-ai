@@ -67,6 +67,12 @@ function unsupportedCallback(method: string): () => Promise<never> {
   };
 }
 
+/** How a funded turn ended, for its settlement. */
+export type HarnessFundedTurnEnd = {
+  status: "committed" | "interrupted" | "failed" | "released";
+  outcome?: string;
+};
+
 export interface HarnessProcess {
   /** Trusted launcher-owned instructions, never a user-supplied session option. */
   systemPromptAppend?: string;
@@ -97,6 +103,12 @@ export interface HarnessProcess {
    */
   beginConnectorTurn?(chat: AcpChatContext): Promise<string | void>;
   endConnectorTurn?(): Promise<void>;
+  /**
+   * Site-funded Claude: admit and fund one turn (it throws, with the reason,
+   * when the turn is not admitted), and settle it when the turn ends.
+   */
+  beginFundedTurn?(chat?: AcpChatContext): Promise<void>;
+  endFundedTurn?(end: HarnessFundedTurnEnd): Promise<void>;
   /**
    * The running turn's publication context, or undefined between turns. A
    * launcher whose processes outlive turns (the Claude controller) gives it
@@ -495,6 +507,16 @@ export class AcpHarnessClient {
   /** Revoke the current turn's CoCalc connector credential. */
   async endConnectorTurn(): Promise<void> {
     await this.process.endConnectorTurn?.();
+  }
+
+  /** Admit and fund this turn, if the launcher funds turns (site-funded). */
+  async beginFundedTurn(chat?: AcpChatContext): Promise<void> {
+    await this.process.beginFundedTurn?.(chat);
+  }
+
+  /** Settle the current funded turn. */
+  async endFundedTurn(end: HarnessFundedTurnEnd): Promise<void> {
+    await this.process.endFundedTurn?.(end);
   }
 
   /** The running turn's publication context, for the launcher's commands. */
