@@ -1891,6 +1891,46 @@ describe("host reads across bays", () => {
     );
   });
 
+  it("lists and stops a host's projects on the host's bay", async () => {
+    // The host's projects are listed where the host lives; the bulk stop
+    // (fresh auth from alice's home bay) queues its operation there too.
+    const forwarded = async (name) =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND account_id=$3 AND finished IS NOT NULL",
+           [${JSON.stringify(name)}, ${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const listBefore = await forwarded("hosts.listHostProjects");
+    const listed = await alice.client.call("hosts.listHostProjects", {
+      id: host_id,
+    });
+    assert.deepEqual(listed.rows, []);
+    assert.equal(listed.summary?.total, 0);
+    assert.equal(await forwarded("hosts.listHostProjects"), listBefore + 1);
+
+    const stopBefore = await forwarded("hosts.stopHostProjects");
+    const op = await alice.client.call("hosts.stopHostProjects", {
+      id: host_id,
+      state_filter: "running",
+    });
+    assert.ok(op?.op_id, "a stop operation was queued");
+    assert.equal(await forwarded("hosts.stopHostProjects"), stopBefore + 1);
+    const kind = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT kind FROM long_running_operations WHERE op_id=$1",
+         [${JSON.stringify(op.op_id)}]);
+       return rows[0]?.kind ?? null;`,
+    );
+    assert.equal(kind, "host-stop-projects");
+  });
+
   it("queues a host start on the host's bay", async () => {
     // Last in this group: the start itself then fails (this host has no
     // cloud provider), so only where it is queued is checked.
