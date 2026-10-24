@@ -455,7 +455,6 @@ import {
   recordAcpAdmissionDenialLocal,
   recordServiceAdmissionDenialLocal,
   recordServiceAdmissionNearLimitLocal,
-  listHostProjects,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   markProjectChanged as markProjectChangedLocal,
@@ -2827,26 +2826,6 @@ async function startHostConnectionService(): Promise<void> {
       await syncProjectBackupIndexesLocal({ host_id, project_id, backup_ids }),
     deleteProjectBackupIndex: async ({ host_id, project_id, backup_id }) =>
       await deleteProjectBackupIndexLocal({ host_id, project_id, backup_id }),
-    listHostProjects: async ({
-      account_id,
-      id,
-      limit,
-      cursor,
-      risk_only,
-      free_only,
-      state_filter,
-      project_state,
-    }) =>
-      await listHostProjects({
-        account_id,
-        id,
-        limit,
-        cursor,
-        risk_only,
-        free_only,
-        state_filter,
-        project_state,
-      }),
     ensureHostOwnerSshTrust: async ({ account_id, host_id, host }) =>
       await ensureHostOwnerSshTrustOnBay({
         account_id,

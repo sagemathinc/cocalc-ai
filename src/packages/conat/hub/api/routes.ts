@@ -140,6 +140,7 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.listHostAccess": hostFromOpts,
   "hosts.listHostRuntimeDeployments": hostDeploymentScope,
   "hosts.getHostManagedComponentStatus": hostFromOpts,
+  "hosts.listHostProjects": hostFromOpts,
   // Host changes run on the host's owning bay too.
   "hosts.setHostAccess": hostFromOpts,
   "hosts.removeHostAccess": hostFromOpts,
@@ -171,6 +172,8 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.restartHost": hostFromOpts,
   "hosts.drainHost": hostFromOpts,
   "hosts.backupHostProjects": hostFromOpts,
+  "hosts.stopHostProjects": hostFromOpts,
+  "hosts.restartHostProjects": hostFromOpts,
   "hosts.deleteHost": hostFromOpts,
   "hosts.forceDeprovisionHost": hostFromOpts,
   "hosts.refreshHostCloudState": hostFromOpts,
