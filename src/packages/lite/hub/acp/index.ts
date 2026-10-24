@@ -11655,9 +11655,6 @@ async function trySteerCandidateIds({
         if (typeof agent.steer !== "function") {
           continue;
         }
-        if (claimGuard && !claimGuard()) {
-          throw new Error("durable ACP steer claim was lost");
-        }
         try {
           // Authorized RPC guidance, and a sensor wake joining the turn,
           // inherit the actual live turn's funding, not next-turn
@@ -11695,6 +11692,11 @@ async function trySteerCandidateIds({
             deliveredRequest = { ...steerRequest, prompt, image_attachments };
           }
           if (!sameContext()) return { state: "not_steerable" };
+          // After the last await: a claim (or its lease) can end during any.
+          if (claimGuard && !claimGuard())
+            throw Object.assign(Error("durable ACP steer claim was lost"), {
+              code: "steer_claim_lost",
+            });
           const result = await agent.steer(id, deliveredRequest);
           if (result.state === "steered") {
             return {
@@ -11706,7 +11708,8 @@ async function trySteerCandidateIds({
             sawNotSteerable = true;
           }
         } catch (err) {
-          if ((err as { code?: string }).code === "principal_mismatch")
+          const code = (err as { code?: string }).code;
+          if (code === "principal_mismatch" || code === "steer_claim_lost")
             throw err;
           if (firstError === undefined) {
             firstError = err;
@@ -13171,6 +13174,7 @@ async function attemptAcpSteerRequest(
     phase: "claim",
   });
   let deliveryTried = false;
+  // Checked immediately before each steer, after every await.
   const leaseGuard = () => {
     if (Date.now() >= leaseEnds) throw new SensorWakeClaimExpired();
     const owned = !claimGuard || claimGuard();
@@ -13225,6 +13229,7 @@ async function attemptAcpSteerRequest(
 }
 
 class SensorWakeClaimExpired extends Error {
+  code = "steer_claim_lost";
   constructor() {
     super("sensor wake claim lease ended before it was delivered");
   }

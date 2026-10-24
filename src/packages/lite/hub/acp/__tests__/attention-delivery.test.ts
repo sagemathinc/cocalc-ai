@@ -7,6 +7,7 @@ import {
   configureAcpDetachedWorkerRunning,
   disposeAcpAgents,
   disposeAllChatWritersForTests,
+  setAttachmentBlobReader,
 } from "../index";
 import {
   closeAcpDatabase,
@@ -2077,6 +2078,38 @@ describe("a sensor wake joining a running turn", () => {
         now.mockRestore();
       }
       expect(mockSteer).not.toHaveBeenCalled();
+      expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
+    });
+
+    it("never steers once the lease ends while an image is materialized", async () => {
+      const request = wakeRequest();
+      request.prompt = request.chat.user_message_content =
+        "[Sensor wake] see ![](/blobs/a.png?uuid=11111111-1111-4111-8111-111111111111)";
+      // Only a harness agent (Claude) materializes images before steering.
+      mockLiveRuntime(config).running.clear();
+      const harnessSteer = jest.fn(async () => ({ state: "steered" }));
+      const unregister = acpTestInternals.registerInterruptAgentForTests(
+        "lease-harness",
+        projectId,
+        { steer: harnessSteer } as any,
+        true,
+      );
+      const now = jest.spyOn(Date, "now");
+      setAttachmentBlobReader(async () => {
+        // A slow read: the lease ends before the steer would be sent.
+        now.mockReturnValue(Date.now() + SENSOR_WAKE_CLAIM_LEASE_MS + 1);
+        return Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
+      });
+      recordPhases(request);
+      try {
+        await acpTestInternals.handleAcpSteerRequest(request).catch(() => {});
+      } finally {
+        now.mockRestore();
+        setAttachmentBlobReader(undefined);
+        unregister();
+      }
+      expect(harnessSteer).not.toHaveBeenCalled();
+      // No steer was started, so nothing was injected: released.
       expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
     });
   });
