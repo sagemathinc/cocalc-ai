@@ -351,7 +351,8 @@ export async function getSiteFundedProviderKeyForReservation({
 }): Promise<string> {
   if (!isValidUUID(reservationId)) throw new Error("invalid reservation id");
   const { rows } = await getPool().query(
-    `SELECT host_id, status, provider, provider_key_id
+    `SELECT host_id, status, provider, provider_key_id,
+            expires_at <= NOW() AS expired
      FROM site_ai_turn_reservations WHERE reservation_id = $1`,
     [reservationId],
   );
@@ -361,6 +362,11 @@ export async function getSiteFundedProviderKeyForReservation({
   }
   if (row.status !== "active") {
     throw new Error(`site-funded reservation is not active (${row.status})`);
+  }
+  // Expiry is applied lazily: past its deadline, a turn may still be marked
+  // active, but its key is not handed out again.
+  if (row.expired) {
+    throw new Error("site-funded reservation has expired");
   }
   if (row.provider !== "anthropic" || !row.provider_key_id) {
     throw new Error("site-funded reservation is not funded by a site key");

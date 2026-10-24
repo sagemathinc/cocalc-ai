@@ -211,6 +211,14 @@ describe("site-funded provider keys", () => {
         hostId: host,
       }),
     ).rejects.toThrow("not funded by a site key");
+    // Past its deadline, though not yet marked expired.
+    await getPool().query(
+      "UPDATE site_ai_turn_reservations SET expires_at = NOW() - interval '1 second' WHERE reservation_id = $1",
+      [reservationId],
+    );
+    await expect(
+      getSiteFundedProviderKeyForReservation({ reservationId, hostId: host }),
+    ).rejects.toThrow("has expired");
     await finishSiteFundedCodexTurn({ reservationId, status: "committed" });
     await expect(
       getSiteFundedProviderKeyForReservation({ reservationId, hostId: host }),
