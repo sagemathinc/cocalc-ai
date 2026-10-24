@@ -13,7 +13,7 @@ import {
 import { agentNetworkSelfContext } from "./agent-network-self";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, join, isAbsolute } from "node:path";
 import { URL } from "node:url";
 import getLogger from "@cocalc/backend/logger";
@@ -616,6 +616,23 @@ export type ProjectCliTokenLease = {
   close: () => Promise<void>;
 };
 
+// The host writes a runtime's private files (CLI tokens, an isolated Codex
+// home) into the project's scratch volume. Without one they would go under
+// the project's home, by paths whose directories the project controls: a
+// symlinked ~/.local or ~/.cocalc would make the host create, chmod and write
+// files wherever it points. Only the workspace runtime (COCALC_PROJECT_PATH)
+// has no scratch, and there projects already run as the host's user, so the
+// home is no worse. Anywhere else, refuse.
+export function assertHostWritableRuntimeRoot(
+  scratch: string | undefined,
+  what: string,
+): void {
+  if (scratch || `${process.env.COCALC_PROJECT_PATH ?? ""}`.trim()) return;
+  throw new Error(
+    `${what}: the project has no scratch volume; refusing to write host runtime files under the project home`,
+  );
+}
+
 export async function createProjectCliTokenLease({
   projectId,
   accountId,
@@ -649,6 +666,7 @@ export async function createProjectCliTokenLease({
     `${currentEnv?.COCALC_AGENT_TOKEN ?? ""}`.trim();
   const initialToken = issued?.token || fallbackToken;
   if (!initialToken) return;
+  assertHostWritableRuntimeRoot(scratch, "CLI token lease");
 
   const leaseName = `.cocalc-agent-${randomUUID()}`;
   const relativeHomeDir = join(
@@ -1218,17 +1236,14 @@ export async function getBuiltinLaunchpadSkillMounts(
 ): Promise<OptionalBindMount[]> {
   const skillsRoot = await resolvePackagedSkillsRoot(packagedSkillsRoot);
 
-  const projectSkillsRoot = join(projectHome, ".codex", "skills");
-  try {
-    await fs.mkdir(projectSkillsRoot, { recursive: true, mode: 0o700 });
-  } catch {
-    // Best effort: project home mount may already provide this path.
-  }
+  // Best effort: the project home mount may already provide this path.
+  await ensureDirectoryBeneath(projectHome, [".codex", "skills"]);
 
   const mounts: OptionalBindMount[] = [];
   for (const skillName of BUILTIN_LAUNCHPAD_SKILLS) {
     const source = join(skillsRoot, skillName);
-    if (await hasProjectSkill(join(projectSkillsRoot, skillName))) continue;
+    if (await hasProjectSkill(projectHome, [".codex", "skills", skillName]))
+      continue;
     mounts.push({
       source,
       target: join(PROJECT_RUNTIME_CODEX_HOME, "skills", skillName),
@@ -1239,16 +1254,82 @@ export async function getBuiltinLaunchpadSkillMounts(
 }
 
 /**
- * A project overrides a packaged skill only with a real one: a SKILL.md.
- * Mounting the packaged skill leaves its (empty) mount point in the
- * project's home, and that must not count as an override, or the skill would
- * mount only on the first start.
+ * Walk `parts` beneath `root` (the project's home: ours, not the project's)
+ * without following any symlink the project controls, even one swapped in
+ * mid-walk: each directory is opened with O_NOFOLLOW and the next name is
+ * resolved relative to that open directory (/proc/self/fd/N/name), never by
+ * a path that crosses project-controlled components again. Calls `last` with
+ * the path of the final component, relative to its open parent.
  */
-async function hasProjectSkill(dir: string): Promise<boolean> {
+async function withParentBeneath<T>(
+  root: string,
+  parts: string[],
+  last: (path: string) => Promise<T>,
+  { create = false }: { create?: boolean } = {},
+): Promise<T> {
+  const flags =
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW;
+  let dir = await fs.open(root, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY);
   try {
-    return (await fs.stat(join(dir, "SKILL.md"))).isFile();
+    for (const part of parts.slice(0, -1)) {
+      const at = `/proc/self/fd/${dir.fd}/${part}`;
+      if (create) {
+        // mkdir never follows a symlink in its last component.
+        await fs.mkdir(at, { mode: 0o700 }).catch((err) => {
+          if (err?.code !== "EEXIST") throw err;
+        });
+      }
+      const next = await fs.open(at, flags);
+      await dir.close();
+      dir = next;
+    }
+    return await last(`/proc/self/fd/${dir.fd}/${parts[parts.length - 1]}`);
+  } finally {
+    await dir.close().catch(() => {});
+  }
+}
+
+/** Create a directory beneath the project's home, never through a symlink. */
+async function ensureDirectoryBeneath(
+  root: string,
+  parts: string[],
+): Promise<void> {
+  try {
+    await withParentBeneath(
+      root,
+      parts,
+      async (path) => {
+        await fs.mkdir(path, { mode: 0o700 }).catch((err) => {
+          if (err?.code !== "EEXIST") throw err;
+        });
+      },
+      { create: true },
+    );
   } catch {
-    // Missing (or unreadable) project-local skill is the normal case.
+    // Best effort, as before: a symlink anywhere is simply left alone.
+  }
+}
+
+/**
+ * A project overrides a packaged skill only with a real one: a regular
+ * SKILL.md in real directories of its home. Mounting the packaged skill
+ * leaves its (empty) mount point there, and that must not count, or the
+ * skill would mount only on the first start. A symlink anywhere on the way
+ * is not an override, and is never followed: whether the mount appears must
+ * not tell the project anything about host paths.
+ */
+async function hasProjectSkill(
+  projectHome: string,
+  parts: string[],
+): Promise<boolean> {
+  try {
+    return await withParentBeneath(
+      projectHome,
+      [...parts, "SKILL.md"],
+      async (path) => (await fs.lstat(path)).isFile(),
+    );
+  } catch {
+    // Missing, unreadable or not verifiable: the packaged skill.
     return false;
   }
 }
@@ -1268,13 +1349,10 @@ export async function getBuiltinClaudeSkillMount(
   projectHome: string,
   packagedSkillsRoot?: string,
 ): Promise<OptionalBindMount[]> {
-  const projectSkillsRoot = join(projectHome, ".claude", "skills");
-  try {
-    await fs.mkdir(projectSkillsRoot, { recursive: true, mode: 0o700 });
-  } catch {
-    // Best effort: project home mount may already provide this path.
-  }
-  if (await hasProjectSkill(join(projectSkillsRoot, "cocalc"))) return [];
+  // Best effort: the project home mount may already provide this path.
+  await ensureDirectoryBeneath(projectHome, [".claude", "skills"]);
+  if (await hasProjectSkill(projectHome, [".claude", "skills", "cocalc"]))
+    return [];
   const skillsRoot = await resolvePackagedSkillsRoot(packagedSkillsRoot);
   return [
     {
@@ -2446,6 +2524,7 @@ async function spawnCodexAppServerInProjectRuntime({
         "codex-account-status",
         randomUUID(),
       );
+      assertHostWritableRuntimeRoot(scratch, "isolated Codex home");
       const hostRoot = scratch ?? home;
       isolatedCodexHomeHostPath = join(hostRoot, relativePath);
       await fs.mkdir(isolatedCodexHomeHostPath, {
