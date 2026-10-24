@@ -407,24 +407,27 @@ rm -rf "$OUT"/*
 
 cd "$ROOT"
 
+# pnpm filters run within the workspace (packages/): from src/ pnpm has no
+# workspace file and would also match generated copies such as the project
+# bundle's source/.
 if [[ "$COPY_STATIC" -eq 1 ]]; then
   echo "- Build CDN assets"
-  pnpm --filter @cocalc/cdn run build
+  pnpm --dir "$ROOT/packages" --filter @cocalc/cdn run build
 fi
 
 if [[ -n "$PACKAGE_FILTER" ]]; then
   echo "- Build package ${PACKAGE_FILTER}"
-  pnpm --filter "$PACKAGE_FILTER" run build
+  pnpm --dir "$ROOT/packages" --filter "$PACKAGE_FILTER" run build
 fi
 
 echo "- Build common control-plane runtime dependencies"
-pnpm --filter @cocalc/database run build
-pnpm --filter @cocalc/ai run build
-pnpm --filter @cocalc/server run build
+pnpm --dir "$ROOT/packages" --filter @cocalc/database run build
+pnpm --dir "$ROOT/packages" --filter @cocalc/ai run build
+pnpm --dir "$ROOT/packages" --filter @cocalc/server run build
 echo "- Clean HTTP API build output"
 rm -rf packages/http-api/dist packages/http-api/dist-types
-pnpm --filter @cocalc/http-api run build
-pnpm --filter @cocalc/hub run build
+pnpm --dir "$ROOT/packages" --filter @cocalc/http-api run build
+pnpm --dir "$ROOT/packages" --filter @cocalc/hub run build
 
 prune_dist_source_maps_for_ncc
 

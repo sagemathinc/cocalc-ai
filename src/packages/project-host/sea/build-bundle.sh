@@ -118,7 +118,10 @@ rm -rf "$OUT"/*
 cd "$ROOT"
 
 echo "- Build project-host"
-pnpm --filter @cocalc/project-host run build
+# Filter within the workspace (packages/), not from src/: without a workspace
+# file pnpm scans every directory, including the project bundle's source/ copy,
+# whose package is also named @cocalc/project-host.
+pnpm --dir "$ROOT/packages" --filter @cocalc/project-host run build
 
 # The ncc bundles are independent (separate entry points and output
 # directories), so they are built in parallel.
