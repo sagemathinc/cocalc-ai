@@ -20,6 +20,7 @@ import {
   ensureSiteFundedProviderKeyTable,
   getSiteFundedProviderKeyForReservation,
   listSiteFundedProviderKeys,
+  manageSiteFundedProviderKeys,
   removeSiteFundedProviderKey,
   updateSiteFundedProviderKey,
 } from "./site-funded-provider-keys";
@@ -247,5 +248,72 @@ describe("site-funded provider keys", () => {
         resetHour: 0,
       }),
     ).rejects.toThrow("Anthropic only");
+  });
+});
+
+describe("admin changes to the site's keys", () => {
+  it("adds, edits, reorders and removes keys, in dollars", async () => {
+    let keys = await manageSiteFundedProviderKeys("anthropic", {
+      op: "add",
+      label: "first",
+      apiKey: "sk-ant-test-first-0123456789",
+      monthlyLimitUsd: 250.5,
+      resetDay: 15,
+      resetHour: 8,
+    });
+    keys = await manageSiteFundedProviderKeys("anthropic", {
+      op: "add",
+      label: "second",
+      apiKey: "sk-ant-test-second-0123456789",
+      monthlyLimitUsd: 100,
+      resetDay: 1,
+      resetHour: 0,
+    });
+    expect(keys.map(({ label }) => label)).toEqual(["first", "second"]);
+    expect(keys[0]).toMatchObject({
+      monthlyLimitMicrousd: 250_500_000,
+      resetDay: 15,
+      resetHour: 8,
+    });
+    const [first, second] = keys.map(({ keyId }) => keyId);
+    keys = await manageSiteFundedProviderKeys("anthropic", {
+      op: "reorder",
+      keyIds: [second, first],
+    });
+    expect(keys.map(({ label }) => label)).toEqual(["second", "first"]);
+    keys = await manageSiteFundedProviderKeys("anthropic", {
+      op: "update",
+      keyId: first,
+      label: "renamed",
+      monthlyLimitUsd: 10,
+      enabled: false,
+    });
+    expect(keys[1]).toMatchObject({
+      label: "renamed",
+      monthlyLimitMicrousd: 10_000_000,
+      enabled: false,
+    });
+    keys = await manageSiteFundedProviderKeys("anthropic", {
+      op: "remove",
+      keyId: second,
+    });
+    expect(keys.map(({ label }) => label)).toEqual(["renamed"]);
+  });
+
+  it("refuses a new order that is not every key exactly once", async () => {
+    const keys = await manageSiteFundedProviderKeys("anthropic", {
+      op: "add",
+      label: "only",
+      apiKey: "sk-ant-test-only-0123456789",
+      monthlyLimitUsd: 1,
+      resetDay: 1,
+      resetHour: 0,
+    });
+    const only = keys[0].keyId;
+    for (const keyIds of [[], [only, only], [uuid()]]) {
+      await expect(
+        manageSiteFundedProviderKeys("anthropic", { op: "reorder", keyIds }),
+      ).rejects.toThrow("every key exactly once");
+    }
   });
 });

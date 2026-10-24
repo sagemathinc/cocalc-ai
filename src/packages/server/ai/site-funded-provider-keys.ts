@@ -16,26 +16,18 @@ import {
   decryptSecretStorageValue,
   encryptSecretStorageValue,
 } from "@cocalc/database/settings/secret-settings";
-import { siteFundedKeyPeriodBounds } from "@cocalc/util/ai/site-funded-claude";
-import type { SiteFundedProvider } from "@cocalc/util/ai/site-funded-codex";
+import {
+  siteFundedKeyPeriodBounds,
+  type SiteFundedProviderKeyAction,
+  type SiteFundedProviderKeyInfo,
+} from "@cocalc/util/ai/site-funded-claude";
+import {
+  usdToMicrousd,
+  type SiteFundedProvider,
+} from "@cocalc/util/ai/site-funded-codex";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 
-export type SiteFundedProviderKeyInfo = {
-  keyId: string;
-  provider: SiteFundedProvider;
-  label: string;
-  /** The key's last four characters, to tell keys apart. */
-  last4: string;
-  monthlyLimitMicrousd: number;
-  resetDay: number;
-  resetHour: number;
-  position: number;
-  enabled: boolean;
-  periodStart: string;
-  periodEnd: string;
-  /** Committed spend plus what running turns may still spend. */
-  exposureMicrousd: number;
-};
+export type { SiteFundedProviderKeyInfo };
 
 let tableReady: Promise<void> | undefined;
 
@@ -372,4 +364,88 @@ export async function getSiteFundedProviderKeyForReservation({
     throw new Error("site-funded reservation is not funded by a site key");
   }
   return await getSiteFundedProviderKeySecret(row.provider_key_id);
+}
+
+function usd(value: number | undefined): number | undefined {
+  if (value == null) return undefined;
+  if (!Number.isFinite(value)) throw new Error("invalid amount");
+  return usdToMicrousd(value);
+}
+
+async function reorderSiteFundedProviderKeys(
+  provider: SiteFundedProvider,
+  keyIds: string[],
+): Promise<void> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT key_id FROM site_ai_provider_keys WHERE provider = $1 FOR UPDATE`,
+      [provider],
+    );
+    const current = new Set(rows.map(({ key_id }) => `${key_id}`));
+    if (
+      !Array.isArray(keyIds) ||
+      keyIds.length !== current.size ||
+      new Set(keyIds).size !== keyIds.length ||
+      keyIds.some((keyId) => !current.has(keyId))
+    ) {
+      throw new Error("the new order must list every key exactly once");
+    }
+    for (const [position, keyId] of keyIds.entries()) {
+      await client.query(
+        `UPDATE site_ai_provider_keys SET position = $2, updated_at = NOW()
+         WHERE key_id = $1`,
+        [keyId, position],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Applies an admin's change to the site's keys, then lists them. */
+export async function manageSiteFundedProviderKeys(
+  provider: SiteFundedProvider,
+  action?: SiteFundedProviderKeyAction,
+): Promise<SiteFundedProviderKeyInfo[]> {
+  assertProvider(provider);
+  await ensureSiteFundedProviderKeyTable();
+  switch (action?.op) {
+    case undefined:
+      break;
+    case "add":
+      await addSiteFundedProviderKey({
+        provider,
+        label: action.label,
+        apiKey: action.apiKey,
+        monthlyLimitMicrousd: usd(action.monthlyLimitUsd)!,
+        resetDay: action.resetDay,
+        resetHour: action.resetHour,
+      });
+      break;
+    case "update":
+      await updateSiteFundedProviderKey({
+        keyId: action.keyId,
+        label: action.label,
+        monthlyLimitMicrousd: usd(action.monthlyLimitUsd),
+        resetDay: action.resetDay,
+        resetHour: action.resetHour,
+        enabled: action.enabled,
+      });
+      break;
+    case "remove":
+      await removeSiteFundedProviderKey(action.keyId);
+      break;
+    case "reorder":
+      await reorderSiteFundedProviderKeys(provider, action.keyIds);
+      break;
+    default:
+      throw new Error("unknown site key action");
+  }
+  return await listSiteFundedProviderKeys(provider);
 }
