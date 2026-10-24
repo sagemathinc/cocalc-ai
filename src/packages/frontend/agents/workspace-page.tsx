@@ -648,7 +648,7 @@ function NewAgentPanel({
     }
   });
   // Whether the runtime came from the source agent or the user's choice,
-  // rather than the Codex default.
+  // rather than the default.
   const runtimeChosen = useRef(
     sourceRuntime != null || restoredPreparation != null,
   );
@@ -1785,40 +1785,48 @@ function NewAgentPanel({
       setSignInOpen(true);
     }
   }
+  // Whether Codex would run on the user's own ChatGPT plan; undefined until
+  // that is known.
+  const codexOwnPlan =
+    paymentSource != null
+      ? subscriptions.length > 0 || !!paymentSource.hasSubscription
+      : lite || paymentSourceError
+        ? false
+        : undefined;
   useEffect(() => {
-    const candidate = (claudeConnected: boolean) =>
-      runtimeKind === "codex-native" &&
-      shouldDefaultToClaude({
-        firstRun: isFirstRun,
-        codexUnconfigured: paymentUnconfigured,
-        runtimeChosen: runtimeChosen.current,
-        claudeConnected,
-      });
-    if (!candidate(true)) return;
+    if (
+      runtimeKind !== "codex-native" ||
+      runtimeChosen.current ||
+      codexOwnPlan == null
+    )
+      return;
     let disposed = false;
-    void webapp_client.conat_client.hub.system
-      .listExternalCredentials({ provider: "anthropic", scope: "account" })
-      .then((rows) => {
-        if (disposed) return;
-        if (
-          candidate(
-            rows.some(
-              (row) =>
-                !row.revoked &&
-                (row.kind === "anthropic-api-key" ||
-                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
-            ),
-          )
-        )
-          setRuntimeKind("claude-code");
-      })
-      .catch(() => {
-        /* Keep the Codex default. */
-      });
+    void Promise.all([
+      webapp_client.conat_client.hub.system
+        .listExternalCredentials({ provider: "anthropic", scope: "account" })
+        .catch(() => undefined),
+      siteFundedClaudeAvailable(boundAccount.accountId),
+    ]).then(([rows, claudeIncluded]) => {
+      if (disposed) return;
+      if (
+        shouldDefaultToClaude({
+          runtimeChosen: runtimeChosen.current,
+          claudeConnected: (rows ?? []).some(
+            (row) =>
+              !row.revoked &&
+              (row.kind === "anthropic-api-key" ||
+                row.kind === CLAUDE_SUBSCRIPTION_KIND),
+          ),
+          claudeIncluded,
+          codexOwnPlan,
+        })
+      )
+        setRuntimeKind("claude-code");
+    });
     return () => {
       disposed = true;
     };
-  }, [isFirstRun, paymentUnconfigured, runtimeKind, boundAccount.accountId]);
+  }, [codexOwnPlan, runtimeKind, boundAccount.accountId]);
 
   function chooseRuntime(kind: NewAgentRuntimeKind) {
     runtimeChosen.current = true;
