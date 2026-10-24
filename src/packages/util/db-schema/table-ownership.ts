@@ -33,7 +33,10 @@ export type TableAuthorityKey =
   | "mixed";
 
 export type TablePortabilityStatus =
-  "portable" | "rebuildable" | "stable" | "unsupported";
+  | "portable"
+  | "rebuildable"
+  | "stable"
+  | "unsupported";
 
 export type TableReferenceField =
   | "account_id"
@@ -1229,6 +1232,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
         "Cluster-wide site-funded AI budget, hold, and reservation state. All admission and settlement operations route to the seed bay so concurrency and spending limits are enforced globally.",
     },
   ),
+
+  ...adHocEntries(["site_ai_provider_keys"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "server site-funded provider key bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "The site's ordered provider API keys for site-funded Claude, encrypted at rest with secret-storage encryption, each with its monthly spend limit and reset point. Read and changed only on the seed bay.",
+  }),
 
   ...adHocEntries(
     [
