@@ -2073,7 +2073,11 @@ describe("a sensor wake joining a running turn", () => {
               now.mockReturnValue(Date.now() + SENSOR_WAKE_CLAIM_LEASE_MS + 1);
           },
         ) as any;
-        await acpTestInternals.handleAcpSteerRequest(request);
+        // Then it falls back to a turn of its own, which may not start here
+        // (no Codex credential in this environment): not what this checks.
+        await acpTestInternals
+          .handleAcpSteerRequest(request)
+          .catch(() => undefined);
       } finally {
         now.mockRestore();
       }
