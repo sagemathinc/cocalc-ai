@@ -9,7 +9,7 @@
 // unread again; j and k move, u goes to the next unread one. The list never
 // scrolls by itself: new items wait behind an "N new" button.
 
-import { Badge, Button, Checkbox, Empty, Modal, Space } from "antd";
+import { Badge, Button, Checkbox, Empty, Modal, Segmented, Space } from "antd";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -40,6 +40,33 @@ import { getUserName } from "./user-name";
 import { newest_content } from "./utils";
 
 const READER_MODE_KEY = "cocalc-chat-reader-mode";
+const READER_VIEW_KEY = "cocalc-chat-reader-view";
+
+/**
+ * for-you: what is for the person (high and normal); all; filed: low, FYI.
+ * One choice for every chat, kept in this browser.
+ */
+export type ReaderListView = "for-you" | "all" | "filed";
+
+function useReaderListView(): [ReaderListView, (view: ReaderListView) => void] {
+  const [view, setView] = useState<ReaderListView>(() => {
+    try {
+      const stored = localStorage.getItem(READER_VIEW_KEY);
+      return stored === "all" || stored === "filed" ? stored : "for-you";
+    } catch {
+      return "for-you";
+    }
+  });
+  const choose = useCallback((next: ReaderListView) => {
+    setView(next);
+    try {
+      localStorage.setItem(READER_VIEW_KEY, next);
+    } catch {
+      // Kept for this session only.
+    }
+  }, []);
+  return [view, choose];
+}
 
 function readReaderMode(key: string): boolean {
   try {
@@ -199,33 +226,60 @@ export function ChatReaderView({
   );
   const [showArchived, setShowArchived] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
+  // Without priorities (no itemInfo) there is one view: all.
+  const [chosenView, setView] = useReaderListView();
+  const view: ReaderListView = itemInfo ? chosenView : "all";
+  // Keyed by its contents: itemInfo is a new function every render.
+  const filedKey = itemInfo
+    ? items
+        .filter((item) => itemInfo(item).priority === "low")
+        .map((item) => item.id)
+        .join("\0")
+    : "";
+  const filed = useMemo(
+    () => new Set(filedKey ? filedKey.split("\0") : []),
+    [filedKey],
+  );
+  const inView = (item: ReaderItem, which: ReaderListView = view) =>
+    which === "all" ||
+    (which === "filed" ? filed.has(item.id) : !filed.has(item.id));
   // Newest first, as in an inbox: j goes down the list, to older items.
   const visible = useMemo(
     () =>
-      (showArchived
-        ? items
-        : items.filter((item) => !isItemArchived(item, state))
-      )
-        .slice()
+      items
+        .filter(
+          (item) =>
+            (showArchived || !isItemArchived(item, state)) && inView(item),
+        )
         .reverse(),
-    [items, state, showArchived],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, state, showArchived, view, filed],
   );
-  // Counted over every item, as Mark all read reads every item; archived
-  // ones are named apart while hidden.
+  // Counted over every item that is for the person (filed ones are FYI and
+  // never counted), as Mark all read reads every item; archived ones are
+  // named apart while hidden.
+  const unreadIn = (which: ReaderListView, archived?: boolean) =>
+    items.filter(
+      (item) =>
+        inView(item, which) &&
+        (archived == null || isItemArchived(item, state) === archived) &&
+        !isItemRead(item, watermark, state),
+    ).length;
   const unread = useMemo(
-    () => items.filter((item) => !isItemRead(item, watermark, state)).length,
-    [items, watermark, state],
+    () => unreadIn("for-you"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, filed],
   );
   const hiddenUnread = useMemo(
-    () =>
-      showArchived
-        ? 0
-        : items.filter(
-            (item) =>
-              isItemArchived(item, state) &&
-              !isItemRead(item, watermark, state),
-          ).length,
-    [items, watermark, state, showArchived],
+    () => (showArchived ? 0 : unreadIn("for-you", true)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, showArchived, filed],
+  );
+  // As the Filed list shows them: archived ones too while they are shown.
+  const filedUnread = useMemo(
+    () => unreadIn("filed", showArchived ? undefined : false),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, filed, showArchived],
   );
   const [selectedId, setSelectedId] = useState<string>();
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
@@ -360,8 +414,9 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [seenCount, setSeenCount] = useState(visible.length);
-  // Another thread, or archived shown or hidden: nothing there is new.
-  const context = `${threadId}\0${showArchived}`;
+  // Another thread, archived shown or hidden, or another view: nothing there
+  // is new.
+  const context = `${threadId}\0${showArchived}\0${view}`;
   const contextRef = useRef(context);
   useEffect(() => {
     if (contextRef.current !== context) {
@@ -406,7 +461,14 @@ export function ChatReaderView({
           <Empty
             style={{ marginTop: 40 }}
             description={
-              items.length ? "Everything here is archived" : "No messages yet"
+              !items.length
+                ? "No messages yet"
+                : items.some((item) => inView(item))
+                  ? // This view has items: all archived.
+                    "Everything here is archived"
+                  : view === "for-you"
+                    ? "Nothing for you here: the rest is filed"
+                    : "Nothing filed"
             }
           />
         ) : null}
@@ -794,6 +856,25 @@ export function ChatReaderView({
           >
             Mark all read
           </Button>
+          {itemInfo ? (
+            <Segmented
+              size="small"
+              aria-label="Which messages"
+              value={view}
+              onChange={(value) => setView(value as ReaderListView)}
+              options={[
+                {
+                  value: "for-you",
+                  label: unread ? `For you (${unread})` : "For you",
+                },
+                { value: "all", label: "All" },
+                {
+                  value: "filed",
+                  label: filedUnread ? `Filed (${filedUnread})` : "Filed",
+                },
+              ]}
+            />
+          ) : null}
           <Checkbox
             checked={showArchived}
             onChange={(e) => setShowArchived(e.target.checked)}

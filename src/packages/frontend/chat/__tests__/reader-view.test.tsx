@@ -509,7 +509,7 @@ test("items show their subject; high ones are marked for you, and the open one i
       itemInfo={(item) =>
         item.id === "p3"
           ? { subject: "Needs your decision", priority: "high" }
-          : { subject: `About ${item.id}`, priority: "low" }
+          : { subject: `About ${item.id}`, priority: "normal" }
       }
     />,
   );
@@ -518,10 +518,124 @@ test("items show their subject; high ones are marked for you, and the open one i
   expect(within(top).getByLabelText("For you")).toBeTruthy();
   expect(next).toHaveTextContent("About p2");
   expect(within(next).queryByLabelText("For you")).toBeNull();
-  // Low is named, not shown by color alone.
-  expect(within(next).getByLabelText("Low priority")).toBeTruthy();
+  expect(within(next).queryByLabelText("Low priority")).toBeNull();
   fireEvent.click(top);
   expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
     "Needs your decision",
   );
+});
+
+describe("views: for you, all, filed", () => {
+  beforeEach(() => localStorage.removeItem("cocalc-chat-reader-view"));
+  const info = (item: { id: string }) =>
+    ({
+      subject: `About ${item.id}`,
+      priority: item.id === "p2" || item.id === "p1" ? "low" : "normal",
+    }) as const;
+  const show = (itemInfo = info) =>
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({})),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={itemInfo}
+      />,
+    );
+  const subjects = () => options().map((o) => o.textContent);
+
+  test("for you hides what is filed, and counts only what is for you", () => {
+    show();
+    expect(subjects()).toEqual([expect.stringContaining("About p3")]);
+    expect(screen.getByText("For you (1)")).toBeTruthy();
+    expect(screen.getByText("1 unread")).toBeTruthy();
+    // Filed: the low ones, with their own count.
+    fireEvent.click(screen.getByText("Filed (2)"));
+    expect(subjects()).toEqual([
+      expect.stringContaining("About p2"),
+      expect.stringContaining("About p1"),
+    ]);
+    fireEvent.click(screen.getByText("All"));
+    expect(options()).toHaveLength(3);
+  });
+
+  test("the choice is kept", () => {
+    const { unmount } = show();
+    fireEvent.click(screen.getByText("All"));
+    unmount();
+    show();
+    expect(options()).toHaveLength(3);
+  });
+
+  test("the switcher is a labelled group of choices the keyboard reaches", async () => {
+    const keys = user();
+    show();
+    const group = screen.getByRole("radiogroup", { name: "Which messages" });
+    const forYou = within(group).getByRole("radio", { name: /For you/ });
+    expect(forYou).toBeChecked();
+    // Tab reaches the checked choice; the arrow keys move between them.
+    forYou.focus();
+    await keys.keyboard("{ArrowRight}");
+    const all = within(group).getByRole("radio", { name: "All" });
+    expect(all).toBeChecked();
+    expect(options()).toHaveLength(3);
+  });
+
+  test("filed items that are archived are said to be archived", () => {
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({
+              a: { p1: "a1", p2: "p2" },
+            })),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={info}
+      />,
+    );
+    fireEvent.click(screen.getByText(/^Filed/));
+    expect(screen.getByText("Everything here is archived")).toBeTruthy();
+  });
+
+  test("the Filed count includes archived unread items while they are shown", () => {
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            // p1's item is archived (and unread: nothing has been read).
+            getReaderState: jest.fn(() => ({ a: { p1: "a1" } })),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        itemInfo={info}
+      />,
+    );
+    expect(screen.getByText("Filed (1)")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
+    expect(screen.getByText("Filed (2)")).toBeTruthy();
+  });
+
+  test("nothing for you says where the rest is", () => {
+    show(((item) => ({ subject: item.id, priority: "low" })) as any);
+    expect(
+      screen.getByText("Nothing for you here: the rest is filed"),
+    ).toBeTruthy();
+    expect(screen.getByText("No unread messages")).toBeTruthy();
+  });
 });
