@@ -8243,6 +8243,18 @@ async function resolveProjectContext(opts: {
   return project_id;
 }
 
+// Retired with private app hostnames (D9): nothing is ever released.  Kept
+// for one release so project code started before the upgrade, which calls
+// it before deleting an app, can still delete apps.
+export async function releaseProjectAppPrivateHostname(_opts: {
+  account_id?: string;
+  host_id?: string;
+  project_id: string;
+  app_id: string;
+}): Promise<{ released: boolean }> {
+  return { released: false };
+}
+
 export async function recordManagedProjectEgress({
   account_id,
   host_id,

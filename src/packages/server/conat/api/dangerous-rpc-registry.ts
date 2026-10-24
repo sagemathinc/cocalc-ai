@@ -1801,6 +1801,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "account ownership migration mutation",
   },
+  "system.releaseProjectAppPrivateHostname": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
   "system.removeBrowserSession": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

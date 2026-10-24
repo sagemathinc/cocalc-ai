@@ -10,6 +10,7 @@ import {
   authFirstRequireProject,
   authFirstRequireProjectOrHost,
   requireAccount,
+  authFirstRequireAccountOrProjectOrHost,
 } from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
@@ -181,6 +182,7 @@ export const system = {
   getProjectRootfsStates: authFirstRequireAccount,
   setProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirstRequireAuthenticated,
+  releaseProjectAppPrivateHostname: authFirstRequireAccountOrProjectOrHost,
   testR2Credentials: authFirstRequireAccount,
   testCloudflareVisitorLocationHeaders: authFirstRequireAccount,
   applyCloudflareTunnelSettings: authFirstRequireAccount,
@@ -3141,6 +3143,17 @@ export interface System {
     image_id?: string;
     account_id?: string;
   }) => Promise<ProjectRootfsStateEntry[]>;
+
+  // Retired with private app hostnames (D9): a no-op that only reports
+  // nothing was released.  Kept for one release so project code started
+  // before the upgrade, which calls it before deleting an app, can still
+  // delete apps; remove it in the next release.
+  releaseProjectAppPrivateHostname: (opts: {
+    account_id?: string;
+    host_id?: string;
+    project_id: string;
+    app_id: string;
+  }) => Promise<{ released: boolean }>;
 
   getPublicSiteUrl: (opts?: {
     account_id?: string;

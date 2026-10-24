@@ -980,4 +980,14 @@ describe("hub API argument transforms", () => {
       ).rejects.toThrow("user must be signed in with an account");
     }
   });
+
+  it("keeps the retired private-hostname release callable by old projects, with the caller's project", async () => {
+    await expect(
+      transformArgs({
+        name: "system.releaseProjectAppPrivateHostname",
+        args: [{ project_id: "spoofed-project", app_id: "app-1" }],
+        project_id: "project-1",
+      }),
+    ).resolves.toEqual([{ project_id: "project-1", app_id: "app-1" }]);
+  });
 });

@@ -13,8 +13,8 @@ Pages served by the project host itself run project-controlled code, so its
 own origin is approved only for proxied app routes (an app talking to
 itself) and for reading files (GET/HEAD: an HTML preview loading its relative
 images, CSS and scripts, PDF range requests, media seeking), never for
-uploads, the session bootstrap or Conat. On a private app hostname it is
-further bound to that app's project. On the host's public hostname
+uploads, the session bootstrap or Conat, and only on the host's own public
+hostname: any other hostname gets no allowance. On the host's public hostname
 (PROJECT_HOST_PUBLIC_URL) it is not bound to a project: path-based apps (e.g.
 JupyterLab at /<project_id>/port/...) need it, so any active content there can
 act on every project's app routes and read files the viewer can read. That
