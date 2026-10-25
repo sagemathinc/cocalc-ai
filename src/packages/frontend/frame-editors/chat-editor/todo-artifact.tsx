@@ -33,6 +33,7 @@ import {
 } from "@cocalc/util/todo/cocalc-todo";
 import { readableOn } from "./calendar-artifact";
 import type { FileArtifactAction } from "./file-artifact";
+import { FontScale, ParseProblems } from "./list-view-parts";
 
 const PREVIEW_LIMIT = 1024 * 1024;
 
@@ -48,10 +49,12 @@ export default function TodoArtifact({
   path,
   historical,
   onToolbarActions,
+  fontSize,
 }: {
   path: string;
   historical: boolean;
   onToolbarActions?: (actions: FileArtifactAction[]) => void;
+  fontSize?: number;
 }) {
   const { actions } = useProjectContext();
   const [text, setText] = useState<string>();
@@ -114,61 +117,51 @@ export default function TodoArtifact({
     onToolbarActions?.(tools);
   }, [onToolbarActions, actions, loading, path]);
   return (
-    <div
-      className="smc-vfill"
-      style={{
-        minHeight: 0,
-        padding: 12,
-        overflow: "auto",
-        color: UI_COLORS.text,
-        background: UI_COLORS.surface,
-      }}
-    >
-      {onToolbarActions === undefined && (
-        <Space wrap style={{ marginBottom: 8 }}>
-          {tools.map((tool) => (
-            <Button
-              key={tool.key}
-              disabled={tool.disabled}
-              onClick={tool.onClick}
-            >
-              {tool.label}
-            </Button>
-          ))}
-        </Space>
-      )}
-      <div role="status">
-        {loading ? "Loading current saved todo list..." : ""}
-      </div>
-      {historical && (
-        <div role="note">
-          Published file reference; the list shown is current, not a historical
-          snapshot.
+    <FontScale fontSize={fontSize}>
+      <div
+        className="smc-vfill"
+        style={{
+          minHeight: 0,
+          padding: 12,
+          overflow: "auto",
+          color: UI_COLORS.text,
+          background: UI_COLORS.surface,
+          fontSize,
+        }}
+      >
+        {onToolbarActions === undefined && (
+          <Space wrap style={{ marginBottom: 8 }}>
+            {tools.map((tool) => (
+              <Button
+                key={tool.key}
+                disabled={tool.disabled}
+                onClick={tool.onClick}
+              >
+                {tool.label}
+              </Button>
+            ))}
+          </Space>
+        )}
+        <div role="status">
+          {loading ? "Loading current saved todo list..." : ""}
         </div>
-      )}
-      {error && <Alert type="warning" title={error} />}
-      {parsed && parsed.problems.length > 0 && (
-        <Alert
-          type={todo ? "info" : "error"}
-          title={
-            todo
-              ? "Some of this list could not be read; the rest is shown."
-              : "This is not a todo list CoCalc can show."
-          }
-          description={
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {parsed.problems.slice(0, 10).map((p, i) => (
-                <li key={i}>
-                  {p.path ? <code>{p.path}</code> : null} {p.message}
-                </li>
-              ))}
-            </ul>
-          }
-          style={{ marginBottom: 8 }}
-        />
-      )}
-      {todo && <TodoList todo={todo} />}
-    </div>
+        {historical && (
+          <div role="note">
+            Published file reference; the list shown is current, not a
+            historical snapshot.
+          </div>
+        )}
+        {error && <Alert type="warning" title={error} />}
+        {parsed && (
+          <ParseProblems
+            problems={parsed.problems}
+            shown={!!todo}
+            what="todo list"
+          />
+        )}
+        {todo && <TodoList todo={todo} />}
+      </div>
+    </FontScale>
   );
 }
 
@@ -184,7 +177,7 @@ export function TodoList({ todo }: { todo: CocalcTodo }) {
   const updated = todo.updated ? new Date(todo.updated) : undefined;
   return (
     <div>
-      <h3 style={{ margin: "0 0 4px" }}>{todo.title}</h3>
+      <h3 style={{ margin: "0 0 4px", fontSize: "1.3em" }}>{todo.title}</h3>
       {todo.description && <StaticMarkdown value={todo.description} />}
       <div
         style={{
@@ -241,13 +234,13 @@ export function TodoList({ todo }: { todo: CocalcTodo }) {
             style={{ marginTop: 12 }}
           >
             {(group.section || groups.length > 1) && (
-              <h4 style={{ margin: "0 0 4px" }}>
+              <h4 style={{ margin: "0 0 4px", fontSize: "1.1em" }}>
                 {group.section?.title ?? "Other"}{" "}
                 <span
                   style={{
                     color: UI_COLORS.secondary,
                     fontWeight: 400,
-                    fontSize: 12,
+                    fontSize: "0.85em",
                   }}
                 >
                   {sectionProgress.done}/{sectionProgress.total}
@@ -263,7 +256,7 @@ export function TodoList({ todo }: { todo: CocalcTodo }) {
               <Item key={item.id} item={item} todo={todo} />
             ))}
             {items.length === 0 && (
-              <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
+              <div style={{ color: UI_COLORS.secondary, fontSize: "0.85em" }}>
                 All finished.
               </div>
             )}
@@ -276,7 +269,7 @@ export function TodoList({ todo }: { todo: CocalcTodo }) {
 
 function StatusIcon({ status }: { status: TodoStatus }) {
   const label = STATUS_LABEL[status];
-  const style = { fontSize: 14, flexShrink: 0 } as const;
+  const style = { fontSize: "1em", flexShrink: 0 } as const;
   switch (status) {
     case "done":
       return (
@@ -315,8 +308,8 @@ function StatusIcon({ status }: { status: TodoStatus }) {
           style={{
             ...style,
             display: "inline-block",
-            width: 14,
-            height: 14,
+            width: "1em",
+            height: "1em",
             borderRadius: "50%",
             border: `2px solid ${UI_COLORS.secondary}`,
             boxSizing: "border-box",

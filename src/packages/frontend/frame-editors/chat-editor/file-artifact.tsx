@@ -219,6 +219,7 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
           path={path}
           historical={props.historical}
           onToolbarActions={props.onToolbarActions}
+          fontSize={props.fontSize}
         />
       </Suspense>
     );
@@ -230,6 +231,7 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
           path={path}
           historical={props.historical}
           onToolbarActions={props.onToolbarActions}
+          fontSize={props.fontSize}
         />
       </Suspense>
     );
