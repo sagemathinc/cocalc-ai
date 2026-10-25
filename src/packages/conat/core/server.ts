@@ -3433,21 +3433,19 @@ function socketSubjectRoom({ socket, subject }) {
   return JSON.stringify({ id: socket.id, subject });
 }
 
-const MAX_CLUSTER_DELIVERY_TARGETS = 10_000;
-
 /**
- * Cluster delivery targets as a peer server sends them: a bounded list of
+ * Cluster delivery targets as a peer server sends them: a list of
  * {pattern, target} where target is exactly the subscription room for that
  * pattern ({id, subject: pattern}) and the published subject matches it.
+ * There is no count limit: only cluster links and hubs may send targets, a
+ * legitimate list can be large (one hub may hold MAX_SUBSCRIPTIONS_PER_HUB
+ * subscriptions), and the socket payload limit already bounds the frame.
  */
 export function validClusterDeliveryTargets(
   subject: string,
   targets: unknown,
 ): boolean {
-  if (
-    !Array.isArray(targets) ||
-    targets.length > MAX_CLUSTER_DELIVERY_TARGETS
-  ) {
+  if (!Array.isArray(targets)) {
     return false;
   }
   for (const t of targets) {
