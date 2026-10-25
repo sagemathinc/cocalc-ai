@@ -459,8 +459,8 @@ export function ChatReaderView({
   const focusOpenMessage = (attempt: number) => {
     const target = paneRef.current ? messageScroller(paneRef.current) : null;
     if (target) {
+      // The browser's own focus ring (:focus-visible) stays.
       if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
-      target.style.outline = "none";
       target.focus({ preventScroll: true });
     } else if (attempt < 10 && selectedIdRef.current) {
       requestAnimationFrame(() => focusOpenMessage(attempt + 1));
