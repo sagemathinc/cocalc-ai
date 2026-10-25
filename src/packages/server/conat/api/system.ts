@@ -119,7 +119,10 @@ import {
   synthesizeChatSpeech as synthesizeChatSpeechLocal,
   transcribeChatAudio as transcribeChatAudioLocal,
 } from "@cocalc/server/ai/chat-speech";
-import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
+import {
+  getSiteFundedClaudeConfiguration,
+  getSiteFundedCodexConfiguration,
+} from "@cocalc/server/ai/site-funded-codex-policy";
 import {
   getSiteFundedCodexAccountReservationStatus,
   getSiteFundedCodexPoolStatus,
@@ -7628,6 +7631,39 @@ export async function getSiteFundedCodexAdminStatus({
     pools,
     reconciliation: await reconcileSiteFundedCodexCosts(pools),
   };
+}
+
+/**
+ * Whether this account can run Claude agents on included Claude: the site
+ * offers it and the account's membership includes AI usage. Admission still
+ * decides each turn (allowance left, site keys with room).
+ */
+export async function getSiteFundedClaudeAvailability({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<{ available: boolean; reason?: string }> {
+  if (!account_id) throw Error("must be signed in");
+  if (await isAiLaunchDisabled()) {
+    return { available: false, reason: "AI is temporarily disabled." };
+  }
+  try {
+    if (!(await getSiteFundedClaudeConfiguration()).enabled) {
+      return { available: false };
+    }
+  } catch {
+    return { available: false, reason: "Included Claude is not configured." };
+  }
+  const status = await getAIUsageStatusForAccountHome(account_id);
+  const limit = (window: "5h" | "7d") =>
+    status?.windows.find((entry) => entry.window === window)?.limit ?? 0;
+  if (!(limit("5h") > 0 && limit("7d") > 0)) {
+    return {
+      available: false,
+      reason: "Your CoCalc membership does not include AI usage.",
+    };
+  }
+  return { available: true };
 }
 
 async function siteFundedClaudeKeysOnSeed(

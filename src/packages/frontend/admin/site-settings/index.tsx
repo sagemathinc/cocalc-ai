@@ -140,7 +140,8 @@ export function isCodexPoolsSetting(name: string): boolean {
   return (
     name === "openai_section" ||
     name === "openai_api_key" ||
-    name.startsWith("site_funded_codex_")
+    name.startsWith("site_funded_codex_") ||
+    name.startsWith("site_funded_claude_")
   );
 }
 
