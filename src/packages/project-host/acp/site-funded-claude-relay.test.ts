@@ -180,7 +180,9 @@ function send(
       },
     );
     req.on("error", reject);
-    req.end(JSON.stringify(body));
+    // No body on a GET: Node sends it without a length, so the server would
+    // read it as a second, malformed request and drop the connection.
+    req.end(method === "GET" ? undefined : JSON.stringify(body));
   });
 }
 
