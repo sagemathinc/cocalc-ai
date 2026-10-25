@@ -9,7 +9,11 @@ import {
   allowsExternalAgentSubject,
   parseExternalAgentSubject,
 } from "./external";
-import { validateAgentRpcSource, agentRpcEnvelopeKey } from "./rpc";
+import {
+  validateAgentRpcSource,
+  agentRpcEnvelopeKey,
+  validateAgentRpcRequest,
+} from "./rpc";
 
 const account_id = randomUUID(),
   installation_id = randomUUID();
@@ -127,4 +131,22 @@ test("approval binds one finite installation to one two-way Agent Network", () =
       agent_network_id: "not-a-network",
     }),
   ).toThrow();
+});
+
+test("an inbox request may ask for acknowledged messages too", () => {
+  expect(() =>
+    validateAgentRpcRequest({
+      version: 3,
+      action: "inbox",
+      limit: 10,
+      include_acknowledged: true,
+    }),
+  ).not.toThrow();
+  expect(() =>
+    validateAgentRpcRequest({
+      version: 3,
+      action: "inbox",
+      include_acknowledged: "yes",
+    } as any),
+  ).toThrow("include_acknowledged must be a boolean");
 });

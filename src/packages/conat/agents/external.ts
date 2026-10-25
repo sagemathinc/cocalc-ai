@@ -44,6 +44,9 @@ export interface ExternalAgentInboxMessage {
   body: string;
   created_at: string;
   expires_at: string;
+  /** Listed with include_acknowledged only: whether it was acknowledged. */
+  state?: "pending" | "acknowledged";
+  acknowledged_at?: string;
 }
 
 /** What became of a message sent to an external inbox (for its sender). */

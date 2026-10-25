@@ -537,7 +537,11 @@ permissions do not isolate collaborators sharing the same project OS user.
 `--external-agent` pins both the installation and its approved site. It never
 falls back to ambient account/project credentials. The external identity can
 send to and receive from every member of its approved session through a bounded
-authenticated inbox. Acknowledge received messages with `agent ack-inbox`.
+authenticated inbox. Read messages with `agent inbox` first: its `data` is a
+list of `{message_id, created_at, source, body, ...}` with the full text.
+Then acknowledge each one with `agent ack-inbox`, which returns the message and
+hides it from `agent inbox`. `agent inbox --include-acknowledged` lists read
+messages again until they expire.
 External attachments are not supported. My Agents lists installations and
 supports immediate revocation.
 

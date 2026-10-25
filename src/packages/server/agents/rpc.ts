@@ -1334,7 +1334,9 @@ export async function acceptExternalAgentRpc(
         ),
     );
   if (request.action === "inbox")
-    return externalStore().inbox(account_id, installation_id, request.limit);
+    return externalStore().inbox(account_id, installation_id, request.limit, {
+      includeAcknowledged: request.include_acknowledged === true,
+    });
   if (request.action === "ack-inbox")
     return externalStore().acknowledge(
       account_id,
