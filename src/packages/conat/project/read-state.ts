@@ -64,6 +64,8 @@ export interface ChatReaderStateEntry {
   aw?: number;
   /** Moved back to the inbox although `aw` covers them. */
   ax?: string[];
+  /** Starred items (oldest first). A star stays whatever arrives later. */
+  s?: string[];
 }
 
 export function chatReaderStateKey(path: string, thread_id: string): string {

@@ -15,7 +15,7 @@
 // last message is at or before the thread's watermark (what the person has
 // read in order), or when it was opened since its last message arrived; and
 // not when it was marked unread again. Archived works the same way: a new
-// reply brings an item back.
+// reply brings an item back. A star stays, whatever arrives later.
 
 import type { ChatReaderStateEntry } from "@cocalc/conat/project/read-state";
 import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
@@ -70,6 +70,7 @@ export const READER_STATE_LIMITS = {
   unread: 1000,
   archived: 2000,
   unarchived: 1000,
+  starred: 1000,
 };
 
 export function readerMessageId(message: ChatMessageTyped): string {
@@ -281,6 +282,7 @@ function compact(state: ReaderState): ReaderState {
     ...(state.a && Object.keys(state.a).length ? { a: state.a } : {}),
     ...(state.aw != null ? { aw: state.aw } : {}),
     ...(state.ax?.length ? { ax: state.ax } : {}),
+    ...(state.s?.length ? { s: state.s } : {}),
   };
 }
 
@@ -341,6 +343,23 @@ export function markItemUnread(
     ...state,
     r: without(state.r, new Set([item.id])),
     u: u.slice(Math.max(0, u.length - READER_STATE_LIMITS.unread)),
+  });
+}
+
+export function isItemStarred(item: ReaderItem, state: ReaderState): boolean {
+  return !!state.s?.includes(item.id);
+}
+
+export function setItemStarred(
+  item: ReaderItem,
+  starred: boolean,
+  state: ReaderState,
+): ReaderState {
+  const s = (state.s ?? []).filter((id) => id !== item.id);
+  if (starred) s.push(item.id);
+  return compact({
+    ...state,
+    s: s.slice(Math.max(0, s.length - READER_STATE_LIMITS.starred)),
   });
 }
 
@@ -410,14 +429,15 @@ export function archiveAll(
   };
 }
 
-/** Everything read: the watermark covers every message; archives stay. */
+/** Everything read: the watermark covers every message; archives and stars
+ * stay. */
 export function markAllRead(
   items: ReaderItem[],
   state: ReaderState,
 ): { state: ReaderState; watermarkCount: number; unmoved: ReaderState } {
   const last = items[items.length - 1];
   return {
-    state: compact({ a: state.a, aw: state.aw, ax: state.ax }),
+    state: compact({ a: state.a, aw: state.aw, ax: state.ax, s: state.s }),
     watermarkCount: last ? last.lastIndex + 1 : 0,
     unmoved: state,
   };

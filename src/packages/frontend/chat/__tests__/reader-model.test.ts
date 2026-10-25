@@ -3,12 +3,14 @@ import {
   findItem,
   isItemArchived,
   isItemRead,
+  isItemStarred,
   markAllRead,
   markItemRead,
   markItemUnread,
   readerItems,
   READER_STATE_LIMITS,
   setItemArchived,
+  setItemStarred,
 } from "../reader-model";
 
 // A person's message, or an agent's reply (it has ACP metadata).
@@ -226,6 +228,36 @@ describe("read state", () => {
     const later = readerItems([...messages, agent("a3")]);
     expect(isItemArchived(later[2], state)).toBe(false);
     expect(setItemArchived(three, false, state)).toEqual({});
+  });
+
+  it("stars stay through new replies, mark all read and archive all", () => {
+    const state = setItemStarred(three, true, {});
+    expect(state).toEqual({ s: ["p3"] });
+    expect(isItemStarred(three, state)).toBe(true);
+    expect(isItemStarred(one, state)).toBe(false);
+    // Unlike archived: a new reply keeps the star.
+    const later = readerItems([...messages, agent("a3")]);
+    expect(isItemStarred(later[2], state)).toBe(true);
+    expect(markAllRead(items, state).state).toEqual({ s: ["p3"] });
+    expect(archiveAll(items, state).state.s).toEqual(["p3"]);
+    // Archiving one keeps it starred too.
+    expect(isItemStarred(three, setItemArchived(three, true, state))).toBe(
+      true,
+    );
+    expect(setItemStarred(three, false, state)).toEqual({});
+  });
+
+  it("keeps the starred list bounded, newest last", () => {
+    let state = {};
+    const many = readerItems(
+      Array.from({ length: READER_STATE_LIMITS.starred + 3 }, (_, i) =>
+        person(`p${i}`),
+      ),
+    );
+    for (const item of many) state = setItemStarred(item, true, state);
+    const starred = (state as any).s as string[];
+    expect(starred).toHaveLength(READER_STATE_LIMITS.starred);
+    expect(starred.at(-1)).toBe(`p${READER_STATE_LIMITS.starred + 2}`);
   });
 
   it("mark all read keeps archives and drops the exceptions", () => {

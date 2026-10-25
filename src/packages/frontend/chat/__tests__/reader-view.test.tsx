@@ -784,3 +784,151 @@ describe("views: for you, all, filed", () => {
     expect(screen.getByText("No unread messages")).toBeTruthy();
   });
 });
+
+describe("stars", () => {
+  beforeEach(() => localStorage.removeItem("cocalc-chat-reader-view"));
+
+  test("s stars the open message; Starred lists starred ones, archived too", async () => {
+    const { state } = setup(thread, 0, { autoFocus: true });
+    const keys = user();
+    await keys.keyboard("u");
+    expect(screen.getByRole("article")).toHaveTextContent("third question");
+    await keys.keyboard("s");
+    expect(state().s).toEqual(["p3"]);
+    // Marked in the list, not by color alone: it is named.
+    expect(within(options()[0]).getByLabelText("Starred")).toBeTruthy();
+    const unstar = screen.getByRole("button", { name: "Unstar" });
+    expect(unstar).toHaveAttribute("aria-pressed", "true");
+    // Archived, it stays starred, and the Starred view still has it.
+    await keys.keyboard("y");
+    expect(state().s).toEqual(["p3"]);
+    fireEvent.click(screen.getByRole("radio", { name: "Starred (1)" }));
+    expect(options()).toHaveLength(1);
+    expect(options()[0]).toHaveTextContent("Alice");
+  });
+
+  test("the Star button works from the keyboard, and unstars", async () => {
+    const { state } = setup(thread, 0);
+    fireEvent.click(options()[0]);
+    // Opening it moves the focus to the message on the next frames.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    const keys = user();
+    const starButton = screen.getByRole("button", { name: "Star" });
+    expect(starButton).toHaveAttribute("aria-pressed", "false");
+    starButton.focus();
+    await keys.keyboard("{Enter}");
+    expect(state().s).toEqual(["p3"]);
+    screen.getByRole("button", { name: "Unstar" }).focus();
+    await keys.keyboard("{Enter}");
+    expect(state().s).toBeUndefined();
+    fireEvent.click(screen.getByRole("radio", { name: "Starred" }));
+    expect(
+      screen.getByText("No starred messages (s stars the open one)"),
+    ).toBeTruthy();
+  });
+
+  test("phone: the bar stars the open message", async () => {
+    const { state } = setup(thread, 0, { narrow: true });
+    await waitFor(() => expect(screen.getByRole("article")).toBeTruthy());
+    fireEvent.click(
+      within(
+        screen.getByRole("toolbar", { name: "Message navigation" }),
+      ).getByRole("button", { name: "Star" }),
+    );
+    expect(state().s).toHaveLength(1);
+  });
+});
+
+describe("the list's width", () => {
+  beforeEach(() => localStorage.removeItem("cocalc-chat-reader-list-width"));
+  const handle = () =>
+    screen.getByRole("separator", { name: /Resize the message list/ });
+  const width = () => Number(handle().getAttribute("aria-valuenow"));
+
+  test("arrow keys on its edge resize it, within bounds, and it is kept", () => {
+    const { unmount } = render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({})),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+      />,
+    );
+    expect(width()).toBe(340);
+    expect(handle()).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(handle(), { key: "ArrowRight" });
+    expect(width()).toBe(364);
+    fireEvent.keyDown(handle(), { key: "ArrowLeft", shiftKey: true });
+    expect(width()).toBe(284);
+    for (let i = 0; i < 10; i++)
+      fireEvent.keyDown(handle(), { key: "ArrowLeft" });
+    expect(width()).toBe(220);
+    expect(localStorage.getItem("cocalc-chat-reader-list-width")).toBe("220");
+    unmount();
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({})),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+      />,
+    );
+    expect(width()).toBe(220);
+  });
+
+  test("dragging its edge resizes it, leaving the open message room", () => {
+    // jsdom has no PointerEvent: a mouse event carries the position.
+    const hadPointerEvent = "PointerEvent" in window;
+    if (!hadPointerEvent) (window as any).PointerEvent = MouseEvent;
+    render(
+      <ChatReaderView
+        actions={
+          {
+            getThreadReadCount: jest.fn(() => 0),
+            getReaderState: jest.fn(() => ({})),
+            updateReaderState: jest.fn(() => true),
+          } as any
+        }
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+      />,
+    );
+    fireEvent.pointerDown(handle(), { clientX: 340 });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 440 }));
+    });
+    expect(width()).toBe(440);
+    // Not past what leaves the open message its room.
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 5000 }));
+    });
+    expect(width()).toBe(window.innerWidth - 320);
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+    expect(localStorage.getItem("cocalc-chat-reader-list-width")).toBe(
+      `${window.innerWidth - 320}`,
+    );
+    if (!hadPointerEvent) delete (window as any).PointerEvent;
+  });
+
+  test("phone: no edge to drag", () => {
+    setup(thread, 0, { narrow: true });
+    expect(
+      screen.queryByRole("separator", { name: /Resize the message list/ }),
+    ).toBeNull();
+  });
+});
