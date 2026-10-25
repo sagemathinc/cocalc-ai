@@ -1512,9 +1512,13 @@ export function createAgentMemory(
       account_id: string,
       project_id: string,
       agent?: AgentMemoryCaller,
-    ): Promise<{ notes: number; index: string } | undefined> {
+      { reportOff = false }: { reportOff?: boolean } = {},
+    ): Promise<{ notes: number; index: string; off?: true } | undefined> {
       const settings = await settingsOf(account_id);
-      if (!settings.enabled) return undefined;
+      // A host that asks gets { off: true }, so its agents can mention that
+      // memory exists; older hosts keep getting nothing.
+      if (!settings.enabled)
+        return reportOff ? { notes: 0, index: "", off: true } : undefined;
       await deps.charge(account_id, "read");
       const caller = agent ? await resolveCaller(account_id, agent) : undefined;
       const projectNamespaces = projectMemoryNamespaces(settings, project_id);

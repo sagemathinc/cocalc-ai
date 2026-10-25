@@ -126,7 +126,7 @@ export default function ProjectAgentsScreen() {
         host: hostId,
         chatPath: item.chat_path,
         thread: item.thread_key,
-        title: item.title || "Codex chat",
+        title: item.title || "Agent chat",
       },
     });
   };
@@ -211,14 +211,14 @@ export default function ProjectAgentsScreen() {
         }
         renderItem={({ item }) => (
           <Pressable
-            accessibilityLabel={`Open ${item.title || "Codex session"}, ${item.status}`}
+            accessibilityLabel={`Open ${item.title || "Agent session"}, ${item.status}`}
             accessibilityRole="button"
             onPress={() => openChat(item)}
             style={({ pressed }) => [styles.row, pressed && styles.pressed]}
           >
             <View style={styles.rowHeader}>
               <Text numberOfLines={1} style={styles.title}>
-                {item.title || "Codex session"}
+                {item.title || "Agent session"}
               </Text>
               <Text
                 style={[

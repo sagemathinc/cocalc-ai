@@ -6,6 +6,7 @@ const mockExec = jest.fn();
 const mockRead = jest.fn();
 const mockLstat = jest.fn();
 const mockRm = jest.fn();
+const mockReaddir = jest.fn();
 jest.mock("node:child_process", () => ({
   execFile: (...args) => mockExec(...args),
 }));
@@ -13,6 +14,7 @@ jest.mock("node:fs/promises", () => ({
   readFile: (...args) => mockRead(...args),
   lstat: (...args) => mockLstat(...args),
   rm: (...args) => mockRm(...args),
+  readdir: (...args) => mockReaddir(...args),
 }));
 jest.mock("@cocalc/backend/podman/env", () => ({ podmanEnv: () => ({}) }));
 jest.mock("@cocalc/backend/logger", () => () => ({
@@ -39,6 +41,7 @@ beforeEach(() => {
     isSymbolicLink: () => false,
   });
   mockRm.mockResolvedValue(undefined);
+  mockReaddir.mockResolvedValue([]);
 });
 
 test("reaper removes only a generated Claude controller credential home", async () => {
@@ -55,6 +58,40 @@ test("reaper removes only a generated Claude controller credential home", async 
   await reapAbandonedHarnesses();
   expect(mockRm).toHaveBeenCalledTimes(1);
   expect(mockRm).toHaveBeenCalledWith(home, { recursive: true, force: true });
+});
+
+test("reaper removes only a generated Claude transcript staging directory", async () => {
+  const staging = join(
+    tmpdir(),
+    "cocalc-claude-transcripts-00000000-0000-4000-8000-000000000001-Ab12Cd",
+  );
+  mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
+    cb(
+      null,
+      JSON.stringify([
+        {
+          Id: "a".repeat(64),
+          Labels: {
+            "cocalc.acp.owner": `10:${boot}:998`,
+            "cocalc.acp.transcript-staging": staging,
+          },
+        },
+        {
+          Id: "b".repeat(64),
+          Labels: {
+            "cocalc.acp.owner": `10:${boot}:998`,
+            "cocalc.acp.transcript-staging": join(tmpdir(), "project-home"),
+          },
+        },
+      ]),
+    ),
+  );
+  await reapAbandonedHarnesses();
+  expect(mockRm).toHaveBeenCalledTimes(1);
+  expect(mockRm).toHaveBeenCalledWith(staging, {
+    recursive: true,
+    force: true,
+  });
 });
 
 test("reaper refuses a symlinked Claude controller home", async () => {
@@ -180,4 +217,61 @@ test("failed removals are retried on a later sweep with fresh owner checks", asy
     "a".repeat(64),
     "b".repeat(64),
   ]);
+});
+
+describe("orphaned Claude transcript staging", () => {
+  const project = "00000000-0000-4000-8000-000000000001";
+  const name = (suffix: string) =>
+    `cocalc-claude-transcripts-${project}-${suffix}`;
+  const live = join(tmpdir(), name("Live01"));
+  const oldOrphan = join(tmpdir(), name("Old001"));
+  const newOrphan = join(tmpdir(), name("New001"));
+
+  beforeEach(() => {
+    mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
+      cb(
+        null,
+        JSON.stringify([
+          {
+            Id: "c".repeat(64),
+            Labels: {
+              "cocalc.acp.owner": `10:${boot}:999`,
+              "cocalc.acp.transcript-staging": live,
+            },
+          },
+        ]),
+      ),
+    );
+    mockReaddir.mockResolvedValue([
+      name("Live01"),
+      name("Old001"),
+      name("New001"),
+      "cocalc-claude-transcripts-not-a-project-Abc123",
+      "unrelated",
+    ]);
+    mockLstat.mockImplementation(async (path) => ({
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+      mtimeMs: path === newOrphan ? Date.now() : Date.now() - 7 * 3600_000,
+    }));
+  });
+
+  test("removes only old staging no container refers to", async () => {
+    await reapAbandonedHarnesses();
+    expect(mockRm).toHaveBeenCalledTimes(1);
+    expect(mockRm).toHaveBeenCalledWith(oldOrphan, {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  test("never removes a symlink in place of a staging directory", async () => {
+    mockLstat.mockImplementation(async () => ({
+      isDirectory: () => false,
+      isSymbolicLink: () => true,
+      mtimeMs: 0,
+    }));
+    await reapAbandonedHarnesses();
+    expect(mockRm).not.toHaveBeenCalled();
+  });
 });

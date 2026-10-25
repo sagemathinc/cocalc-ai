@@ -26,6 +26,7 @@ import {
   type CocalcCalendar,
 } from "@cocalc/util/calendar/cocalc-calendar";
 import type { FileArtifactAction } from "./file-artifact";
+import { FontScale, ParseProblems } from "./list-view-parts";
 
 const PREVIEW_LIMIT = 1024 * 1024;
 // Rows the agenda draws at most; the rest are named, not drawn.
@@ -43,15 +44,29 @@ export function readableOn(hex: string): string {
   return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? "#000000" : "#ffffff";
 }
 
+/** Saves the calendar as foo.ics, for Google, Apple or Outlook calendars. */
+export function downloadCalendarIcs(calendar: CocalcCalendar, path: string) {
+  const url = URL.createObjectURL(
+    new Blob([calendarToIcs(calendar)], { type: "text/calendar" }),
+  );
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${(path.split("/").pop() ?? "calendar").replace(/\.cal\.json$/i, "")}.ics`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function CalendarArtifact({
   path,
   historical,
   onToolbarActions,
+  fontSize,
   now: nowOverride,
 }: {
   path: string;
   historical: boolean;
   onToolbarActions?: (actions: FileArtifactAction[]) => void;
+  fontSize?: number;
   /** For tests: the time the agenda is shown at. */
   now?: number;
 }) {
@@ -97,15 +112,7 @@ export default function CalendarArtifact({
   const openInProject = () =>
     void actions?.open_file({ path }).catch((err) => setError(`${err}`));
   const downloadIcs = () => {
-    if (!calendar) return;
-    const url = URL.createObjectURL(
-      new Blob([calendarToIcs(calendar)], { type: "text/calendar" }),
-    );
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(path.split("/").pop() ?? "calendar").replace(/\.cal\.json$/i, "")}.ics`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (calendar) downloadCalendarIcs(calendar, path);
   };
   const tools: FileArtifactAction[] = [
     {
@@ -135,66 +142,56 @@ export default function CalendarArtifact({
     onToolbarActions?.(tools);
   }, [onToolbarActions, actions, calendar, loading, path]);
   return (
-    <div
-      className="smc-vfill"
-      style={{
-        minHeight: 0,
-        padding: 12,
-        overflow: "auto",
-        color: UI_COLORS.text,
-        background: UI_COLORS.surface,
-      }}
-    >
-      {onToolbarActions === undefined && (
-        <Space wrap style={{ marginBottom: 8 }}>
-          {tools.map((tool) => (
-            <Button
-              key={tool.key}
-              disabled={tool.disabled}
-              onClick={tool.onClick}
-            >
-              {tool.label}
-            </Button>
-          ))}
-        </Space>
-      )}
-      {/* Announced in the full-size page too, whose header has the tools. */}
-      <div role="status">
-        {loading ? "Loading current saved calendar..." : ""}
-      </div>
-      {historical && (
-        <div role="note">
-          Published file reference; the calendar shown is current, not a
-          historical snapshot.
+    <FontScale fontSize={fontSize}>
+      <div
+        className="smc-vfill"
+        style={{
+          minHeight: 0,
+          padding: 12,
+          overflow: "auto",
+          color: UI_COLORS.text,
+          background: UI_COLORS.surface,
+          fontSize,
+        }}
+      >
+        {onToolbarActions === undefined && (
+          <Space wrap style={{ marginBottom: 8 }}>
+            {tools.map((tool) => (
+              <Button
+                key={tool.key}
+                disabled={tool.disabled}
+                onClick={tool.onClick}
+              >
+                {tool.label}
+              </Button>
+            ))}
+          </Space>
+        )}
+        {/* Announced in the full-size page too, whose header has the tools. */}
+        <div role="status">
+          {loading ? "Loading current saved calendar..." : ""}
         </div>
-      )}
-      {error && <Alert type="warning" title={error} />}
-      {parsed && parsed.problems.length > 0 && (
-        <Alert
-          type={calendar ? "info" : "error"}
-          title={
-            calendar
-              ? "Some of this calendar could not be read; the rest is shown."
-              : "This is not a calendar CoCalc can show."
-          }
-          description={
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {parsed.problems.slice(0, 10).map((p, i) => (
-                <li key={i}>
-                  {p.path ? <code>{p.path}</code> : null} {p.message}
-                </li>
-              ))}
-            </ul>
-          }
-          style={{ marginBottom: 8 }}
-        />
-      )}
-      {calendar && <Agenda calendar={calendar} now={nowOverride} />}
-    </div>
+        {historical && (
+          <div role="note">
+            Published file reference; the calendar shown is current, not a
+            historical snapshot.
+          </div>
+        )}
+        {error && <Alert type="warning" title={error} />}
+        {parsed && (
+          <ParseProblems
+            problems={parsed.problems}
+            shown={!!calendar}
+            what="calendar"
+          />
+        )}
+        {calendar && <Agenda calendar={calendar} now={nowOverride} />}
+      </div>
+    </FontScale>
   );
 }
 
-function Agenda({
+export function Agenda({
   calendar,
   now: nowOverride,
 }: {
@@ -243,14 +240,20 @@ function Agenda({
     }).format(new Date(`${date}T12:00:00Z`));
   return (
     <div>
-      <h3 style={{ margin: "0 0 4px" }}>{calendar.title}</h3>
+      <h3 style={{ margin: "0 0 4px", fontSize: "1.3em" }}>{calendar.title}</h3>
       {calendar.description && <StaticMarkdown value={calendar.description} />}
       <div style={{ color: UI_COLORS.secondary, marginBottom: 12 }}>
         Times in {calendar.timezone}
       </div>
       {agenda.overdue.length > 0 && (
         <section aria-label="Overdue">
-          <h4 style={{ color: UI_COLORS.danger, margin: "8px 0 4px" }}>
+          <h4
+            style={{
+              color: UI_COLORS.danger,
+              margin: "8px 0 4px",
+              fontSize: "1.1em",
+            }}
+          >
             Overdue
           </h4>
           {agenda.overdue.map((o) => (
@@ -269,7 +272,9 @@ function Agenda({
       )}
       {agenda.days.map((day) => (
         <section key={day.date} aria-label={dayLabel(day.date)}>
-          <h4 style={{ margin: "12px 0 4px" }}>{dayLabel(day.date)}</h4>
+          <h4 style={{ margin: "12px 0 4px", fontSize: "1.1em" }}>
+            {dayLabel(day.date)}
+          </h4>
           {day.occurrences.map((o) => (
             <Item key={`${o.event.id}@${o.date}`} o={o} calendar={calendar} />
           ))}

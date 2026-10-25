@@ -1,6 +1,12 @@
 /** @jest-environment jsdom */
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import {
   docsPath,
@@ -11,9 +17,36 @@ import {
 import PublicDocsApp from "../app";
 import { getDocsRouteFromPath } from "../routes";
 
+let mockMyAgentsBody: string | undefined;
+jest.mock("@cocalc/docs", () => {
+  const actual = jest.requireActual("@cocalc/docs");
+  return {
+    ...actual,
+    getDocsEntry: (...args: Parameters<typeof actual.getDocsEntry>) => {
+      const entry = actual.getDocsEntry(...args);
+      // Retain the real registry identity and access filtering; vary only
+      // the rendered Markdown to exercise deep links with optional queries.
+      return mockMyAgentsBody != null && entry?.id === "ai.my-agents"
+        ? { ...entry, body: mockMyAgentsBody }
+        : entry;
+    },
+  };
+});
+
+jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
+  appBasePath: "/",
+}));
+
 describe("public/docs", () => {
   beforeEach(() => {
+    mockMyAgentsBody = undefined;
     window.localStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    window.history.replaceState({}, "", "/");
   });
 
   it("parses docs routes", () => {
@@ -227,6 +260,130 @@ describe("public/docs", () => {
       }),
     ).toBeNull();
   });
+
+  it.each(["/", "/prefix", "/docs"])(
+    "renders a canonical deep link before navigating on base %s",
+    (basePath) => {
+      jest.replaceProperty(
+        jest.requireMock("@cocalc/frontend/customize/app-base-path"),
+        "appBasePath",
+        basePath,
+      );
+      const prefix = basePath === "/" ? "" : basePath;
+      window.history.replaceState({}, "", `${prefix}/docs/ai/my-agents`);
+      mockMyAgentsBody =
+        "[Answer questions from Codex](/docs/ai/codex-goals#answer-questions-from-codex)";
+      render(
+        <PublicDocsApp
+          config={{ site_name: "CoCalc" }}
+          initialRoute={{ slug: "ai/my-agents", view: "docs-detail" }}
+        />,
+      );
+      const link = within(screen.getByTestId("docs-markdown")).getByRole(
+        "link",
+        {
+          name: "Answer questions from Codex",
+        },
+      );
+      expect(link).toHaveAttribute(
+        "href",
+        `${prefix}/docs/ai/codex-goals#answer-questions-from-codex`,
+      );
+
+      fireEvent.click(link);
+
+      expect(window.location.pathname).toBe(`${prefix}/docs/ai/codex-goals`);
+      expect(window.location.search).toBe("");
+      expect(window.location.hash).toBe("#answer-questions-from-codex");
+    },
+  );
+
+  it.each([
+    { basePath: "/", alreadyPrefixed: false },
+    { basePath: "/prefix", alreadyPrefixed: false },
+    { basePath: "/prefix", alreadyPrefixed: true },
+    { basePath: "/docs", alreadyPrefixed: false },
+    { basePath: "/docs", alreadyPrefixed: true },
+  ])(
+    "preserves query and fragment without duplicating $basePath (already prefixed: $alreadyPrefixed)",
+    ({ basePath, alreadyPrefixed }) => {
+      jest.replaceProperty(
+        jest.requireMock("@cocalc/frontend/customize/app-base-path"),
+        "appBasePath",
+        basePath,
+      );
+      const prefix = basePath === "/" ? "" : basePath;
+      const suffix =
+        "/docs/ai/codex-goals?from=sidebar#answer-questions-from-codex";
+      const inputHref = alreadyPrefixed ? `${prefix}${suffix}` : suffix;
+      mockMyAgentsBody = `[Read the answer section](${inputHref})`;
+      window.history.replaceState({}, "", `${prefix}/docs/ai/my-agents`);
+      render(
+        <PublicDocsApp
+          config={{ site_name: "CoCalc" }}
+          initialRoute={{ slug: "ai/my-agents", view: "docs-detail" }}
+        />,
+      );
+      const link = within(screen.getByTestId("docs-markdown")).getByRole(
+        "link",
+        {
+          name: "Read the answer section",
+        },
+      );
+      // This href must also work for native new-tab navigation or copying;
+      // the click handler must not be needed to repair its destination.
+      expect(link).toHaveAttribute("href", `${prefix}${suffix}`);
+
+      fireEvent.click(link);
+
+      expect(window.location.pathname).toBe(`${prefix}/docs/ai/codex-goals`);
+      expect(window.location.search).toBe("?from=sidebar");
+      expect(window.location.hash).toBe("#answer-questions-from-codex");
+    },
+  );
+
+  it.each([
+    { basePath: "/", alreadyPrefixed: false },
+    { basePath: "/prefix", alreadyPrefixed: false },
+    { basePath: "/prefix", alreadyPrefixed: true },
+    { basePath: "/docs", alreadyPrefixed: false },
+    { basePath: "/docs", alreadyPrefixed: true },
+  ])(
+    "uses configured site access for profile-only links on $basePath (already prefixed: $alreadyPrefixed)",
+    ({ basePath, alreadyPrefixed }) => {
+      jest.replaceProperty(
+        jest.requireMock("@cocalc/frontend/customize/app-base-path"),
+        "appBasePath",
+        basePath,
+      );
+      // jsdom is not hosted at cocalc.ai; access comes from site config.
+      expect(window.location.hostname).not.toBe("cocalc.ai");
+      const prefix = basePath === "/" ? "" : basePath;
+      const suffix = "/docs/projects/rstudio-project?from=agents#open-rstudio";
+      mockMyAgentsBody = `[Open RStudio guide](${alreadyPrefixed ? prefix : ""}${suffix})`;
+      window.history.replaceState({}, "", `${prefix}/docs/ai/my-agents`);
+      render(
+        <PublicDocsApp
+          config={{ dns: "cocalc.ai", site_name: "CoCalc" }}
+          initialRoute={{ slug: "ai/my-agents", view: "docs-detail" }}
+        />,
+      );
+      const link = within(screen.getByTestId("docs-markdown")).getByRole(
+        "link",
+        { name: "Open RStudio guide" },
+      );
+      expect(link).toHaveAttribute("href", `${prefix}${suffix}`);
+      // The corrected href must also work when the browser handles Cmd-click.
+      fireEvent.click(link, { metaKey: true });
+      expect(window.location.pathname).toBe(`${prefix}/docs/ai/my-agents`);
+      fireEvent.click(link);
+      expect(
+        window.location.pathname +
+          window.location.search +
+          window.location.hash,
+      ).toBe(`${prefix}${suffix}`);
+    },
+  );
 
   it("renders crawlable navigation on public docs detail pages", () => {
     const entry = getDocsEntry("projects/create-project");

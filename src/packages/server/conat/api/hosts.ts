@@ -290,6 +290,7 @@ import {
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { assertHostOwnedHere } from "@cocalc/server/inter-bay/host-owned-here";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { validateHostActionAuth } from "@cocalc/server/auth/host-action-auth";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -1108,10 +1109,6 @@ async function loadHostForAvailability(
   return { row, full_view: false };
 }
 
-function isHostNotFoundError(err: unknown): boolean {
-  return err instanceof Error && err.message === "host not found";
-}
-
 async function resolveRemoteHostBayIfAuthoritative(
   host_id: string,
 ): Promise<string | undefined> {
@@ -1121,54 +1118,6 @@ async function resolveRemoteHostBayIfAuthoritative(
     return;
   }
   return bay_id;
-}
-
-// A method routed to the host's owning bay refuses to run anywhere else: a
-// stale route, which the caller retries after re-resolving the owner.
-async function assertHostOwnedHere(host_id: string): Promise<void> {
-  const owner = await resolveRemoteHostBayIfAuthoritative(host_id);
-  if (owner) {
-    throw Object.assign(
-      new Error(
-        `stale route: host ${host_id} is owned by ${owner}, not ${getConfiguredBayId()}; retry`,
-      ),
-      { code: 409 },
-    );
-  }
-}
-
-async function resolveHostProjectListingTarget({
-  id,
-  account_id,
-}: {
-  id: string;
-  account_id?: string;
-}): Promise<
-  | { kind: "local"; host: Awaited<ReturnType<typeof loadHostForListing>> }
-  | { kind: "remote"; bay_id: string }
-> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return { kind: "remote", bay_id: remoteBay };
-  }
-  try {
-    const host = await loadHostForListing(id, account_id);
-    const bay_id = `${host?.bay_id ?? ""}`.trim();
-    if (bay_id && bay_id !== getConfiguredBayId()) {
-      return { kind: "remote", bay_id };
-    }
-    return { kind: "local", host };
-  } catch (err) {
-    if (!isHostNotFoundError(err)) {
-      throw err;
-    }
-  }
-
-  const ownership = await resolveHostBay(id);
-  if (!ownership || ownership.bay_id === getConfiguredBayId()) {
-    throw new Error("host not found");
-  }
-  return { kind: "remote", bay_id: ownership.bay_id };
 }
 
 type HostProjectsCursor = {
@@ -3120,13 +3069,15 @@ export async function getAgentMemoryContext({
   owner_account_id,
   chat_path,
   thread_id,
+  report_off,
 }: {
   host_id?: string;
   project_id: string;
   owner_account_id: string;
   chat_path?: string;
   thread_id?: string;
-}): Promise<{ notes: number; index: string } | null> {
+  report_off?: boolean;
+}): Promise<{ notes: number; index: string; off?: true } | null> {
   if (!host_id) throw new Error("host_id must be specified");
   if (!project_id) throw new Error("project_id must be specified");
   if (!isValidUUID(owner_account_id))
@@ -3162,6 +3113,7 @@ export async function getAgentMemoryContext({
       kind: "turn-index",
       project_id,
       ...(agent ? { agent } : {}),
+      ...(report_off === true ? { report_off: true } : {}),
     })) ?? null
   );
 }
@@ -5065,22 +5017,9 @@ export async function listHostProjects({
   state_filter?: HostProjectStateFilter;
   project_state?: string;
 }): Promise<HostProjectsResponse> {
-  const target = await resolveHostProjectListingTarget({ id, account_id });
-  if (target.kind === "remote") {
-    return await getInterBayBridge()
-      .hostConnection(target.bay_id)
-      .listHostProjects({
-        account_id,
-        id,
-        limit,
-        cursor,
-        risk_only,
-        free_only,
-        state_filter,
-        project_state,
-      });
-  }
-  const { host } = target;
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
+  const host = await loadHostForListing(id, account_id);
   const cappedLimit = normalizeHostProjectsLimit(limit);
   const snapshot = await listHostProjectsLocalSnapshot({
     id,
@@ -5308,43 +5247,13 @@ async function selectHostProjectActionRows({
   project_state?: string;
   rows: Array<{ project_id: string; state: string }>;
 }> {
-  const target = await resolveHostProjectListingTarget({ id, account_id });
+  const host = await loadHostForListing(id, account_id);
   const { normalizedStateFilter, normalizedProjectState } =
     buildHostProjectsBaseQuery({
       host_id: id,
       state_filter,
       project_state,
     });
-  if (target.kind === "remote") {
-    const rows: HostProjectRow[] = [];
-    let cursor: string | undefined;
-    do {
-      const response = await getInterBayBridge()
-        .hostConnection(target.bay_id)
-        .listHostProjects({
-          account_id,
-          id,
-          limit: HOST_PROJECTS_MAX_LIMIT,
-          cursor,
-          risk_only,
-          free_only,
-          state_filter,
-          project_state,
-        });
-      rows.push(...response.rows);
-      cursor = response.next_cursor;
-    } while (cursor);
-    return {
-      host: { id },
-      state_filter: normalizedStateFilter,
-      project_state: normalizedProjectState || undefined,
-      rows: rows.map((row) => ({
-        project_id: row.project_id,
-        state: row.state ?? "",
-      })),
-    };
-  }
-
   const snapshot = await listHostProjectsLocalSnapshot({
     id,
     risk_only,
@@ -5355,7 +5264,7 @@ async function selectHostProjectActionRows({
   const rows = snapshot.rows.sort(compareHostProjectRows);
 
   return {
-    host: target.host,
+    host,
     state_filter: normalizedStateFilter,
     project_state: normalizedProjectState || undefined,
     rows: rows.map((row) => ({
@@ -5601,6 +5510,8 @@ export async function stopHostProjects({
   free_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
@@ -5638,6 +5549,8 @@ export async function restartHostProjects({
   risk_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,

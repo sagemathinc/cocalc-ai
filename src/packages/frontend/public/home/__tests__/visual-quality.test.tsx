@@ -64,9 +64,9 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(getDirectCards(codexGrid)).toHaveLength(3);
     expectGridTemplate(codexGrid, "repeat(3, minmax(0, 1fr))");
     expect(getCardTitles(codexGrid, "h3")).toEqual([
-      "Work with files and services",
-      "Review agent changes",
-      "Integrated chat or terminal",
+      "Describe the outcome",
+      "Review the result",
+      "Refine or take over",
     ]);
 
     // The tool catalogue, the audience cards and the product list are not on
@@ -183,13 +183,13 @@ describe("PublicHomeApp visual quality contract", () => {
     const heroImage = within(
       screen.getByRole("region", { name: "CoCalc hero" }),
     ).getByRole("img", {
-      name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
+      name: "An agent conversation in CoCalc beside the dispatch reliability review it published, a dashboard of charts the reader can open, download, or comment on",
     });
     expect(heroImage.getAttribute("src")).toBe(
-      "/public/landing/project-notebook-20260916.jpg",
+      "/public/docs/agents-workspace-dispatch-review-20260924.jpg",
     );
     expect(heroImage.getAttribute("style") ?? "").toContain(
-      "aspect-ratio: 1050 / 650;",
+      "aspect-ratio: 1180 / 630;",
     );
     expect(heroImage.getAttribute("style") ?? "").toContain(
       "object-fit: contain;",

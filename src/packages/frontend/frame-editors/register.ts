@@ -21,6 +21,7 @@ import "./jupyter-editor/register";
 import "./time-travel-editor/register";
 import "./course-editor/register";
 import "./csv-editor/register";
+import "./calendar-todo-editor/register";
 import "./slides-editor/register";
 import "./whiteboard-editor/register";
 

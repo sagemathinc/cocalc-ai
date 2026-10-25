@@ -4,6 +4,7 @@ import { UNPUBLISHED_TEAM_PROFILE_SLUGS } from "@cocalc/util/public-about-conten
 
 import {
   attachPublicNavigationInterceptor,
+  landOnPublicPage,
   navigatePublic,
   setPublicNavigationListener,
 } from "./navigation";
@@ -264,5 +265,181 @@ describe("isPublicTarget", () => {
     // A two-letter base-path prefix must not be mistaken for a locale page.
     expect(isPublicTarget("/hb/projects/123")).toBe(false);
     expect(isPublicTarget("/hb/admin")).toBe(false);
+  });
+});
+
+// Where a page that the public app opens starts: at the section its address
+// names, once the page has rendered it, or at its top.
+describe("landing on a page the public app opens", () => {
+  const scrollIntoView = jest.fn();
+  let scrollTo: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    // jsdom lays nothing out, and has no scrollIntoView.
+    Element.prototype.scrollIntoView = scrollIntoView;
+    scrollIntoView.mockClear();
+    scrollTo = jest
+      .spyOn(window, "scrollTo")
+      .mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+    scrollTo.mockRestore();
+    window.history.replaceState({}, "", "/");
+    document.body.innerHTML = "";
+  });
+
+  // A page whose code is still loading renders its sections later.
+  it("waits for a section that the page renders later", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/docs/ai/agent-features#agent-networks",
+    );
+    landOnPublicPage();
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+
+    const heading = document.createElement("h3");
+    heading.id = "agent-networks";
+    document.body.appendChild(heading);
+    await Promise.resolve(); // the mutation observer's callback
+    jest.runOnlyPendingTimers(); // the animation frame
+
+    expect(scrollIntoView.mock.contexts).toEqual([heading]);
+    expect(heading).toHaveFocus();
+    expect(heading.getAttribute("tabindex")).toBe("-1");
+  });
+
+  // The public app passes its container, where its pages render.
+  it("waits for the section within the root it is given", async () => {
+    window.history.replaceState({}, "", "/features/api#install-the-cli");
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    landOnPublicPage(root);
+
+    const section = document.createElement("section");
+    section.id = "install-the-cli";
+    root.appendChild(section);
+    await Promise.resolve(); // the mutation observer's callback
+    jest.runOnlyPendingTimers(); // the animation frame
+
+    expect(scrollIntoView.mock.contexts).toEqual([section]);
+    expect(section).toHaveFocus();
+  });
+
+  it("leaves the tabindex of a section that has one", async () => {
+    window.history.replaceState({}, "", "/products/cocalc-star#install");
+    const card = document.createElement("div");
+    card.id = "install";
+    card.tabIndex = -1;
+    document.body.appendChild(card);
+    landOnPublicPage();
+    jest.runOnlyPendingTimers();
+
+    expect(card).toHaveFocus();
+    expect(card.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("stops waiting once another page opens", async () => {
+    window.history.replaceState({}, "", "/features/ai#agent-workflow");
+    const stop = landOnPublicPage();
+    stop();
+
+    const section = document.createElement("section");
+    section.id = "agent-workflow";
+    document.body.appendChild(section);
+    await Promise.resolve();
+    jest.runOnlyPendingTimers();
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(section).not.toHaveFocus();
+  });
+
+  it("gives up on a section that never appears", async () => {
+    window.history.replaceState({}, "", "/features/ai#no-such-section");
+    landOnPublicPage();
+    jest.advanceTimersByTime(10_000);
+
+    const late = document.createElement("section");
+    late.id = "no-such-section";
+    document.body.appendChild(late);
+    await Promise.resolve();
+    jest.runOnlyPendingTimers();
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("ignores a matching ID outside the supplied page container", async () => {
+    window.history.replaceState({}, "", "/about#details");
+    const outside = document.createElement("h2");
+    outside.id = "details";
+    const root = document.createElement("main");
+    const inside = document.createElement("h2");
+    inside.id = "details";
+    root.appendChild(inside);
+    document.body.append(outside, root);
+    landOnPublicPage(root);
+    jest.runOnlyPendingTimers();
+    expect(scrollIntoView.mock.contexts).toEqual([inside]);
+    expect(inside).toHaveFocus();
+    expect(outside).not.toHaveFocus();
+  });
+
+  it("lands on the replacement if a heading changes before the frame runs", async () => {
+    window.history.replaceState({}, "", "/about#details");
+    const original = document.createElement("h2");
+    original.id = "details";
+    document.body.appendChild(original);
+    landOnPublicPage();
+    const replacement = document.createElement("h2");
+    replacement.id = "details";
+    original.replaceWith(replacement);
+    await Promise.resolve();
+    jest.runOnlyPendingTimers();
+    expect(scrollIntoView.mock.contexts).toEqual([replacement]);
+    expect(replacement).toHaveFocus();
+  });
+
+  it("keeps waiting if a heading disappears before landing", async () => {
+    window.history.replaceState({}, "", "/about#details");
+    const original = document.createElement("h2");
+    original.id = "details";
+    document.body.appendChild(original);
+    landOnPublicPage();
+    original.remove();
+    await Promise.resolve();
+    jest.advanceTimersByTime(20);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    const replacement = document.createElement("h2");
+    replacement.id = "details";
+    document.body.appendChild(replacement);
+    await Promise.resolve();
+    jest.advanceTimersByTime(20);
+    expect(scrollIntoView.mock.contexts).toEqual([replacement]);
+    expect(replacement).toHaveFocus();
+  });
+
+  it("cancels a pending frame when another page opens", () => {
+    window.history.replaceState({}, "", "/about#details");
+    const section = document.createElement("h2");
+    section.id = "details";
+    document.body.appendChild(section);
+    const stop = landOnPublicPage();
+    stop();
+    jest.runOnlyPendingTimers();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(section).not.toHaveFocus();
+  });
+
+  it("opens a page without a section at its top", () => {
+    window.history.replaceState({}, "", "/features/ai");
+    landOnPublicPage();
+    jest.runOnlyPendingTimers();
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });
