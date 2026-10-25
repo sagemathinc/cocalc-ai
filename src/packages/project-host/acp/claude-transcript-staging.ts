@@ -20,6 +20,13 @@ files and directories cross, in either direction, each file copied from the
 descriptor openat2 opened, so a symlink or FIFO is never copied or followed,
 even one swapped in mid-copy. The staged tree is bounded in size: the host's
 disk is not the project's quota.
+
+Every conversation of the account in the project shares the transcript tree,
+so it grows with all of them. Only what this conversation needs is staged:
+the session it resumes (its transcript and its own directory, e.g. subagent
+transcripts), and the files that are no one session's (Claude's project
+memory). Other sessions' transcripts stay in the project. Copying back
+copies only what the controller changed or created.
 */
 
 import { mkdtemp, readdir, readFile, rm, utimes } from "node:fs/promises";
@@ -44,13 +51,40 @@ const logger = getLogger("project-host:claude-transcript-staging");
 // host walk (or copy) without end.
 export const MAX_TRANSCRIPT_ENTRIES = 100_000;
 
-// The staged tree may hold at most this many bytes (copied in, or written by
-// the controller and checked when a turn completes).
+// The staged tree (one conversation's transcripts: copied in, or written by
+// the controller and checked when a turn completes) may hold at most this
+// many bytes. Long-lived conversations have transcripts of most of a GiB, so
+// the default is well above that; it bounds abuse of the host's disk, not
+// normal use.
+export const DEFAULT_MAX_TRANSCRIPT_BYTES = 8 * 1024 ** 3;
+
 export function maxTranscriptBytes(): number {
   const configured = Number(process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_BYTES);
   return Number.isSafeInteger(configured) && configured > 0
     ? configured
-    : 1024 ** 3;
+    : DEFAULT_MAX_TRANSCRIPT_BYTES;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Whether `rel` (a path in the transcript tree) is part of what a controller
+// for the session `sessionId` (none: a new conversation) needs. Claude keeps
+// a session's transcript at <project>/<session>.jsonl and its own files under
+// <project>/<session>/, where <project> is the directory for the controller's
+// working directory: those of other sessions are left out, everything else
+// is kept.
+export function stagedForSession(
+  rel: string,
+  kind: "dir" | "file",
+  sessionId?: string,
+): boolean {
+  const parts = rel.split("/");
+  if (parts.length !== 2) return true;
+  const name = parts[1];
+  const session =
+    kind === "file" && name.endsWith(".jsonl") ? name.slice(0, -6) : name;
+  if (!UUID.test(session)) return true;
+  return session.toLowerCase() === sessionId?.toLowerCase();
 }
 
 function positiveSetting(name: string, fallback: number): number {
@@ -204,8 +238,9 @@ const identityKey = ({ size, ctimeNs }: FileIdentity) => `${ctimeNs}:${size}`;
 // symlink. `staged` records, for each file, the identity (change time and
 // size, which a writer cannot set back) of its staged copy when it last
 // crossed; `stagedSide` says which side is the staging directory. A staged
-// file whose identity is unchanged is not copied out again. Throws EFBIG once
-// the tree holds more than `maxBytes`.
+// file whose identity is unchanged is not copied out again. Only paths that
+// `include` accepts are copied (and walked). Throws EFBIG once the tree holds
+// more than `maxBytes`.
 async function copyTree({
   fromRoot,
   fromBase,
@@ -214,6 +249,7 @@ async function copyTree({
   staged,
   stagedSide,
   maxBytes,
+  include = () => true,
 }: {
   fromRoot: string;
   fromBase: string;
@@ -222,9 +258,17 @@ async function copyTree({
   staged: Map<string, string>;
   stagedSide: "from" | "to";
   maxBytes: number;
+  include?: (rel: string, kind: "dir" | "file") => boolean;
 }): Promise<void> {
   let entries = 0;
   let bytes = 0;
+  const tooLarge = (): NodeJS.ErrnoException => {
+    const error: NodeJS.ErrnoException = Error(
+      `EFBIG: this conversation's Claude transcripts are larger than ${maxBytes} bytes (COCALC_CLAUDE_TRANSCRIPT_MAX_BYTES on the project host)`,
+    );
+    error.code = "EFBIG";
+    return error;
+  };
   const visit = async (rel: string): Promise<void> => {
     for (const name of await listBeneath(fromRoot, joinRel(fromBase, rel))) {
       if (++entries > MAX_TRANSCRIPT_ENTRIES)
@@ -233,30 +277,30 @@ async function copyTree({
       const from = joinRel(fromBase, child);
       const kind = await kindBeneath(fromRoot, from);
       if (kind === "dir") {
-        await visit(child);
+        if (include(child, "dir")) await visit(child);
         continue;
       }
-      if (kind !== "file") continue;
-      const result = await copyRegularFileBeneath({
-        src: { root: fromRoot, path: from },
-        dest: { root: toRoot, path: joinRel(toBase, child) },
-        maxBytes: maxBytes - bytes,
-        skip: (source) =>
-          stagedSide === "from" && staged.get(child) === identityKey(source),
-      });
+      if (kind !== "file" || !include(child, "file")) continue;
+      let result: Awaited<ReturnType<typeof copyRegularFileBeneath>>;
+      try {
+        result = await copyRegularFileBeneath({
+          src: { root: fromRoot, path: from },
+          dest: { root: toRoot, path: joinRel(toBase, child) },
+          maxBytes: maxBytes - bytes,
+          skip: (source) =>
+            stagedSide === "from" && staged.get(child) === identityKey(source),
+        });
+      } catch (error) {
+        if (errorCode(error) === "EFBIG") throw tooLarge();
+        throw error;
+      }
       if (result.kind === "not-regular") continue;
       // What the staging side really holds: a file can grow while copied.
       bytes +=
         result.kind === "copied"
           ? Math.max(result.source.size, result.dest.size)
           : result.source.size;
-      if (bytes > maxBytes) {
-        const error: NodeJS.ErrnoException = Error(
-          `EFBIG: Claude transcripts exceed ${maxBytes} bytes`,
-        );
-        error.code = "EFBIG";
-        throw error;
-      }
+      if (bytes > maxBytes) throw tooLarge();
       if (result.kind === "copied")
         staged.set(
           child,
@@ -268,19 +312,22 @@ async function copyTree({
 }
 
 /**
- * Stage the transcript directory at `parts` beneath `projectHome` (located by
- * ensureClaudeTranscriptDirectory) in a new host-owned directory.
+ * Stage what a controller resuming `sessionId` (none: a new conversation)
+ * needs of the transcript directory at `parts` beneath `projectHome` (located
+ * by ensureClaudeTranscriptDirectory) in a new host-owned directory.
  */
 export async function stageClaudeTranscripts({
   projectId,
   projectHome,
   parts,
+  sessionId,
   maxBytes = maxTranscriptBytes(),
   limits,
 }: {
   projectId: string;
   projectHome: string;
   parts: string[];
+  sessionId?: string;
   maxBytes?: number;
   limits?: { host: number; project: number };
 }): Promise<ClaudeTranscriptStaging> {
@@ -301,6 +348,7 @@ export async function stageClaudeTranscripts({
       staged,
       stagedSide: "to",
       maxBytes,
+      include: (rel, kind) => stagedForSession(rel, kind, sessionId),
     });
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
