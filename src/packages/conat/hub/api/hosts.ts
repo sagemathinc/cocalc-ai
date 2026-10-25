@@ -808,6 +808,22 @@ export interface HostKernelSysctlTextMismatch {
   actual: string | null;
 }
 
+export interface HostKernelHardeningCheck {
+  key: string;
+  // ">= 2", "= 0", ...
+  expected: string;
+  actual: number | null;
+  ok: boolean;
+  // Written by the host (sysctl.d); otherwise only checked.
+  managed: boolean;
+}
+
+export interface HostKernelHardeningSnapshot {
+  ok: boolean;
+  config_path: string;
+  checks: HostKernelHardeningCheck[];
+}
+
 export interface HostKernelSysctlSnapshot {
   collected_at?: string;
   config_path?: string;
@@ -818,6 +834,9 @@ export interface HostKernelSysctlSnapshot {
   ok: boolean;
   mismatches: HostKernelSysctlMismatch[];
   text_mismatches?: HostKernelSysctlTextMismatch[];
+  // Kernel attack-surface settings; not part of `ok`, which covers the
+  // capacity limits above.
+  hardening?: HostKernelHardeningSnapshot;
   apply_attempted?: boolean;
   apply_succeeded?: boolean;
   error?: string;
@@ -2372,13 +2391,16 @@ export interface Hosts {
   // owner_account_id because host auth reserves account_id for the caller.
   // With the turn's chat path and thread, the index also lists that agent's
   // own scope.
+  // With report_off, an account whose memory is off gets { off: true } (an
+  // older hub ignores it and answers null).
   getAgentMemoryContext: (opts: {
     host_id?: string;
     project_id: string;
     owner_account_id: string;
     chat_path?: string;
     thread_id?: string;
-  }) => Promise<{ notes: number; index: string } | null>;
+    report_off?: boolean;
+  }) => Promise<{ notes: number; index: string; off?: true } | null>;
   // Claude subscription limits reported during a turn, saved on the
   // credential. The owner is owner_account_id: host auth strips account_id.
   recordClaudeSubscriptionUsage: (opts: {

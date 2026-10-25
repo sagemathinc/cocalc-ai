@@ -173,6 +173,10 @@ describeDb("agent memory", () => {
       AGENT_MEMORY_DISABLED,
     );
     expect(await memory.turnIndex(account, P1)).toBeUndefined();
+    // A host that asks learns that memory is off (to hint that it exists).
+    expect(
+      await memory.turnIndex(account, P1, undefined, { reportOff: true }),
+    ).toEqual({ notes: 0, index: "", off: true });
     // An account that never used memory gets no row from turns.
     const { rows } = await getPool().query(
       "SELECT 1 FROM agent_memory_accounts WHERE account_id=$1",

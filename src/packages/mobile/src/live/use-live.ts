@@ -173,10 +173,13 @@ export function useLiveVoice(
           throw new Error(
             "The chat or selected agent changed. Start a new voice call.",
           );
-        if (!isPreviewProfile(profile)) {
-          const config = current.current.snapshot.threads.find(
-            (t) => t.thread_id === thread,
-          )?.acp_config;
+        const agentThread = current.current.snapshot.threads.find(
+          (t) => t.thread_id === thread,
+        );
+        // A harness agent (Claude Code) is paid by its payment selection,
+        // which admission checks; its refusal is reported by the send.
+        if (!isPreviewProfile(profile) && !agentThread?.agent_runtime) {
+          const config = agentThread?.acp_config;
           const site = await getActiveSiteSession(profile);
           const payment = await site.hubApi.system.getCodexPaymentSource({
             project_id: project,
@@ -253,7 +256,11 @@ export function useLiveVoice(
         return {
           message_id: message.message_id,
           message_date: message.date,
-          session_id: activeThread.acp_config?.sessionId,
+          // A harness turn's session is not in acp_config; the message
+          // identifies it.
+          ...(activeThread.agent_runtime
+            ? {}
+            : { session_id: activeThread.acp_config?.sessionId }),
         };
       },
     );

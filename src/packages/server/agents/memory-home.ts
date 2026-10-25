@@ -70,11 +70,9 @@ export const memoryHomeControl: AgentRpcControlApi["memory"] = async ({
       );
     case "turn-index":
       return (
-        (await memory.turnIndex(
-          account_id,
-          request.project_id,
-          request.agent,
-        )) ?? null
+        (await memory.turnIndex(account_id, request.project_id, request.agent, {
+          reportOff: request.report_off === true,
+        })) ?? null
       );
     case "owner":
       return await memory.owner(account_id, request.request);

@@ -248,12 +248,88 @@ export interface AuthorizePublicDirectoryShareReadOptions {
   host_id?: string;
   project_id: string;
   share_id: string;
+  // Internal, between bays: false for a check that is not itself a read of
+  // the share, so it isn't recorded as a view. The hub API ignores it.
+  record_view?: boolean;
 }
 
 export interface AuthorizePublicDirectoryShareReadResponse {
   project_id: string;
   share_id: string;
   read_policy: ProjectViewerReadPolicy;
+}
+
+// Who read a share, recorded at most once per (share, account, UTC day):
+// the share's project's owner, a collaborator, or anybody else.
+export type PublicDirectoryShareViewerRole = "owner" | "collaborator" | "other";
+
+export interface PublicDirectoryShareViewCounts {
+  viewers: number;
+  owner: number;
+  collaborator: number;
+  other: number;
+}
+
+export interface GetPublicDirectoryShareViewsOptions {
+  account_id?: string;
+  project_id: string;
+  share_id: string;
+  // the last this many days, today included (default 30)
+  days?: number;
+}
+
+// For a share's owners and collaborators: counts only, never who the other
+// viewers were.
+export interface GetPublicDirectoryShareViewsResponse {
+  project_id: string;
+  share_id: string;
+  since: string; // first day included, YYYY-MM-DD (UTC)
+  by_day: (PublicDirectoryShareViewCounts & { day: string })[];
+  // each viewer once, with the role (and below, the region) recorded on
+  // their latest day in the range, as of their first read that day (a view
+  // is recorded once a day), so the splits add up to the total
+  distinct_viewers: PublicDirectoryShareViewCounts;
+  // Where they are, only as coarsely as the six regions of R2_REGIONS
+  // (@cocalc/util/consts/r2-regions; null when not known), and only regions
+  // with at least 5 viewers. Comparing two ranges can still sometimes tell
+  // one viewer's region (accepted for a region this coarse).
+  by_region: { region: string | null; viewers: number }[];
+}
+
+export interface GetPublicDirectoryShareViewAggregatesOptions {
+  account_id?: string;
+  // Only this share (with its project_id, to find the share's bay);
+  // otherwise all shares stored on the bay that receives the call.
+  share_id?: string;
+  project_id?: string;
+  viewer_role?: PublicDirectoryShareViewerRole;
+  days?: number;
+  // one dimension per report (default "day")
+  group_by?: "day" | "region";
+}
+
+export interface PublicDirectoryShareViewAggregate {
+  viewer_days: number;
+  distinct_viewers: number;
+}
+
+// For admins: aggregates over one dimension, days or regions. A bucket
+// made up of fewer than min_count distinct accounts is not listed at all,
+// so not even its existence shows. The totals are given only when no bucket
+// was left out, so nothing in one report can be subtracted to recover a
+// suppressed count. Several reports (other ranges, role filters or
+// dimensions) can still be compared to recover one: review a set of reports
+// together before handing them on.
+export interface GetPublicDirectoryShareViewAggregatesResponse {
+  since: string;
+  until: string;
+  min_count: number;
+  group_by: "day" | "region";
+  totals: PublicDirectoryShareViewAggregate | null;
+  // key: the day (YYYY-MM-DD), or the region (one of R2_REGIONS in
+  // @cocalc/util/consts/r2-regions, null when it isn't known); a viewer seen
+  // in two regions counts in both
+  buckets: (PublicDirectoryShareViewAggregate & { key: string | null })[];
 }
 
 export interface GrantTemporaryViewerAccessOptions {
@@ -422,6 +498,12 @@ export interface PublicDirectoryShares {
   getTemporaryViewerReadPolicy: (
     opts: GetTemporaryViewerReadPolicyOptions,
   ) => Promise<GetTemporaryViewerReadPolicyResponse>;
+  getViews: (
+    opts: GetPublicDirectoryShareViewsOptions,
+  ) => Promise<GetPublicDirectoryShareViewsResponse>;
+  getViewAggregates: (
+    opts: GetPublicDirectoryShareViewAggregatesOptions,
+  ) => Promise<GetPublicDirectoryShareViewAggregatesResponse>;
 }
 
 export const publicDirectoryShares = {
@@ -441,4 +523,6 @@ export const publicDirectoryShares = {
   authorizeRead: authFirstRequireAccountOrHostWithAccountTarget,
   grantTemporaryViewerAccess: authFirstRequireAccount,
   getTemporaryViewerReadPolicy: authFirstRequireAccountOrHostWithAccountTarget,
+  getViews: authFirstRequireAccount,
+  getViewAggregates: authFirstRequireAccount,
 } as const;

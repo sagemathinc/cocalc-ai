@@ -13,6 +13,7 @@ import {
   codexPaymentCredential,
   codexPaymentPreference,
 } from "./codex-payment";
+import { describeClaudePayment, loadClaudePayment } from "./claude-payment";
 
 const labels = {
   subscription: "ChatGPT plan",
@@ -29,6 +30,7 @@ export function PaymentSummary({
   thread,
   config,
   revision = 0,
+  harness,
   onPress,
 }: {
   profile: string;
@@ -38,6 +40,9 @@ export function PaymentSummary({
   /** Changes when settings may have changed the agent's payment selection,
    * which is account state that the shared config does not reflect. */
   revision?: number;
+  /** A harness agent: Claude Code is paid by its claude-code payment
+   * selection; other harnesses by credentials managed in the project. */
+  harness?: "claude-code" | "project-managed";
   onPress: () => void;
 }) {
   const colors = usePalette();
@@ -52,6 +57,16 @@ export function PaymentSummary({
       }
       void (async () => {
         const site = await getActiveSiteSession(profile);
+        if (harness === "project-managed") {
+          if (active) setLabel("Project-managed credentials");
+          return;
+        }
+        if (harness === "claude-code") {
+          if (!thread) return;
+          const payment = await loadClaudePayment(site.hubApi, project, thread);
+          if (active) setLabel(describeClaudePayment(payment));
+          return;
+        }
         // The subscription is the account's choice for this agent, as at
         // admission; a thread's saved credential counts only when the hub
         // cannot answer.
@@ -85,6 +100,7 @@ export function PaymentSummary({
       project,
       thread,
       revision,
+      harness,
       config?.paymentSource,
       config?.credentialId,
     ]),
