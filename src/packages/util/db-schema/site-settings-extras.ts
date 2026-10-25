@@ -1397,7 +1397,7 @@ export const EXTRAS: SettingsExtras = {
   },
   password_kdf: {
     name: "Password Hashing",
-    desc: "How new account passwords and recovery codes are hashed. Every release since password hashing gained scrypt can verify all formats. 'legacy' writes the old format, which older releases can also verify. 'scrypt' writes scrypt hashes, upgrades a password's hash when its owner signs in, and strengthens every remaining legacy hash in the background (scrypt over the old hash). The switch is one-way: once any scrypt hash exists, scrypt stays in effect even if this is set back to 'legacy', so failed sign-ins keep a uniform cost. Once 'scrypt' is on, do not roll the bay back to a release that cannot verify scrypt hashes: those accounts could no longer sign in.",
+    desc: "How new account passwords and recovery codes are hashed. Every release since password hashing gained scrypt can verify all formats. 'legacy' writes the old format, which older releases can also verify. 'scrypt' writes scrypt hashes, upgrades a password's hash when its owner signs in, and strengthens every remaining legacy hash in the background (scrypt over the old hash). The switch is one-way: once it is 'scrypt' it cannot be set back, so new hashes stay strong and failed sign-ins keep a uniform cost. Once 'scrypt' is on, do not roll the bay back to a release that cannot verify scrypt hashes: those accounts could no longer sign in.",
     default: "legacy",
     valid: ["legacy", "scrypt"],
     tags: ["Security"],

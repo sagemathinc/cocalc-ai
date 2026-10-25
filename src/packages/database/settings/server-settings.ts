@@ -150,11 +150,17 @@ export async function load_server_settings_from_env(
         }
       }
 
-      await cb2(db.set_server_setting, {
-        name: key,
-        value: envval,
-        readonly: true,
-      });
+      try {
+        await cb2(db.set_server_setting, {
+          name: key,
+          value: envval,
+          readonly: true,
+        });
+      } catch (err) {
+        // password_kdf is one-way: a stale env value must not stop the hub.
+        if (key !== "password_kdf") throw err;
+        L.error(`ignoring $${envvar}: ${err}`);
+      }
     }
   }
 }

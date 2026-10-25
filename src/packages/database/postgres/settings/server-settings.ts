@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { passwordKdfChangeError } from "@cocalc/util/db-schema/password-kdf";
 import { AllSiteSettings } from "@cocalc/util/db-schema/types";
 import { callback2 } from "@cocalc/util/async-utils";
 import { db } from "@cocalc/database";
@@ -37,6 +38,14 @@ export async function set_server_setting(
   db: PostgreSQL,
   opts: SetServerSettingOptions,
 ): Promise<void> {
+  if (opts.name === "password_kdf") {
+    const { rows } = await callback2(db._query.bind(db), {
+      query: "SELECT value FROM server_settings",
+      where: { "name = $::TEXT": opts.name },
+    });
+    const error = passwordKdfChangeError(rows?.[0]?.value, opts.value);
+    if (error) throw new Error(error);
+  }
   const encryptedValue = await encryptSettingValue(opts.name, opts.value);
 
   // Insert the setting
