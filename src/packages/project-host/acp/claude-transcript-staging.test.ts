@@ -272,11 +272,12 @@ test("close keeps the staged copy when the copy back may succeed later", async (
 
 test("the default caps follow the host's CPUs and memory and the project's memory limit", () => {
   const GiB = 1024 ** 3;
-  // A 16 CPU, 64 GiB host: memory bounds it, at 0.5 GiB per controller.
+  // A 16 CPU, 64 GiB host: memory bounds it, at 0.5 GiB per controller and
+  // half the memory left for the projects' own work.
   expect(
     defaultTranscriptStagings({ cpus: 16, memoryBytes: 64 * GiB }),
-  ).toEqual({ host: 128, project: 128 });
-  // A host with little memory per CPU is bounded by its CPUs.
+  ).toEqual({ host: 64, project: 64 });
+  // A host with lots of memory per CPU is bounded by its CPUs.
   expect(
     defaultTranscriptStagings({ cpus: 2, memoryBytes: 256 * GiB }),
   ).toEqual({ host: 64, project: 64 });
@@ -287,15 +288,15 @@ test("the default caps follow the host's CPUs and memory and the project's memor
       memoryBytes: 64 * GiB,
       projectMemoryBytes: 8 * GiB,
     }),
-  ).toEqual({ host: 128, project: 16 });
-  // A small project still gets two, but never more than the host.
+  ).toEqual({ host: 64, project: 8 });
+  // Every project may run one, but never more than the host.
   expect(
     defaultTranscriptStagings({
       cpus: 16,
       memoryBytes: 64 * GiB,
       projectMemoryBytes: GiB / 2,
     }),
-  ).toEqual({ host: 128, project: 2 });
+  ).toEqual({ host: 64, project: 1 });
   expect(
     defaultTranscriptStagings({
       cpus: 1,
@@ -320,12 +321,12 @@ test("the caps read the pool's and the project's cgroup memory limits, and the e
     // The pool's own limit bounds the host's (here below any real host's RAM).
     await writeFile(join(pool, "memory.max"), `${4 * 1024 ** 3}\n`);
     expect(await maxTranscriptStagings(projectId, pool)).toEqual({
-      host: Math.min(8, 32 * availableParallelism()),
-      project: Math.min(6, 8, 32 * availableParallelism()),
+      host: Math.min(4, 32 * availableParallelism()),
+      project: Math.min(3, 4, 32 * availableParallelism()),
     });
     await writeFile(join(pool, "memory.max"), "max\n");
     const limits = await maxTranscriptStagings(projectId, pool);
-    expect(limits.project).toBe(Math.min(6, limits.host));
+    expect(limits.project).toBe(Math.min(3, limits.host));
     // By default the pool is the one the project runner uses.
     const savedPool = process.env.COCALC_PROJECT_POOL_CGROUP;
     process.env.COCALC_PROJECT_POOL_CGROUP = pool;

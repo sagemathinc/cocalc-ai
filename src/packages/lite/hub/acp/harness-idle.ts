@@ -11,10 +11,21 @@
 export interface HarnessIdleDisposerOptions<T> {
   /** Idle time before disposal; 0 or less disables it. */
   idleMs: number;
-  /** Called once the agent has been idle for idleMs. */
-  dispose: (key: string, agent: T) => Promise<void>;
-  onError?: (key: string, err: unknown) => void;
+  /** Once the agent has been idle for idleMs: stop retaining it (so the next
+   * turn starts a fresh one), returning false if it is no longer retained. */
+  retire: (key: string, agent: T) => boolean;
+  /** Then stop it. A failure is retried (the harness's cleanup may succeed
+   * later), so the process and its staging slot are not leaked. */
+  dispose: (agent: T) => Promise<void>;
+  onError?: (key: string, err: unknown, attempt: number) => void;
+  /** First retry delay, doubled for each later one. */
+  retryMs?: number;
+  /** Attempts in all before giving up. */
+  maxAttempts?: number;
 }
+
+const DEFAULT_RETRY_MS = 60_000;
+const DEFAULT_MAX_ATTEMPTS = 5;
 
 export class HarnessIdleDisposer<T> {
   private readonly timers = new Map<
@@ -23,6 +34,8 @@ export class HarnessIdleDisposer<T> {
   >();
   // Turns using each key's agent now: it is idle only when none are.
   private readonly inUse = new Map<string, number>();
+  // Retired agents whose disposal failed, waiting to be tried again.
+  private retries = 0;
 
   constructor(private readonly options: HarnessIdleDisposerOptions<T>) {}
 
@@ -52,12 +65,24 @@ export class HarnessIdleDisposer<T> {
     const timer = setTimeout(() => {
       if (this.timers.get(key)?.timer !== timer) return;
       this.timers.delete(key);
-      this.options.dispose(key, agent).catch((err) => {
-        this.options.onError?.(key, err);
-      });
+      if (this.options.retire(key, agent)) this.dispose(key, agent, 1);
     }, this.options.idleMs);
     timer.unref?.();
     this.timers.set(key, { agent, timer });
+  }
+
+  private dispose(key: string, agent: T, attempt: number): void {
+    this.options.dispose(agent).catch((err) => {
+      this.options.onError?.(key, err, attempt);
+      if (attempt >= (this.options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)) return;
+      this.retries++;
+      const delay =
+        (this.options.retryMs ?? DEFAULT_RETRY_MS) * 2 ** (attempt - 1);
+      setTimeout(() => {
+        this.retries--;
+        this.dispose(key, agent, attempt + 1);
+      }, delay).unref?.();
+    });
   }
 
   private cancel(key: string): void {
@@ -70,6 +95,11 @@ export class HarnessIdleDisposer<T> {
   /** Agents waiting to be disposed. */
   get size(): number {
     return this.timers.size;
+  }
+
+  /** Disposals that failed and will be tried again. */
+  get pendingRetries(): number {
+    return this.retries;
   }
 }
 

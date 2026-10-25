@@ -65,9 +65,9 @@ function positiveSetting(name: string, fallback: number): number {
 // bounds how many can run.
 const CONTROLLER_MEMORY_BYTES = 512 * 1024 ** 2;
 const CONTROLLERS_PER_CPU = 32;
-// Even a small project can hold a second conversation while an idle one waits
-// to be disposed.
-const MIN_PROJECT_STAGINGS = 2;
+// Controllers share their cgroups with the projects' own work: they may take at
+// most this share of a memory limit, leaving the rest for it.
+const CONTROLLER_MEMORY_SHARE = 0.5;
 
 // The default limits for a host with this many CPUs and this much memory for
 // projects (controllers run in the project pool's cgroup, so it is the pool's
@@ -83,23 +83,20 @@ export function defaultTranscriptStagings({
   memoryBytes: number;
   projectMemoryBytes?: number;
 }): { host: number; project: number } {
-  const host = Math.max(
-    1,
-    Math.min(
-      CONTROLLERS_PER_CPU * cpus,
-      Math.floor(memoryBytes / CONTROLLER_MEMORY_BYTES),
-    ),
+  // Every project may run at least one.
+  const controllers = (bytes: number) =>
+    Math.max(
+      1,
+      Math.floor((bytes * CONTROLLER_MEMORY_SHARE) / CONTROLLER_MEMORY_BYTES),
+    );
+  const host = Math.min(
+    CONTROLLERS_PER_CPU * Math.max(1, cpus),
+    controllers(memoryBytes),
   );
   const project =
     projectMemoryBytes == null
       ? host
-      : Math.min(
-          host,
-          Math.max(
-            MIN_PROJECT_STAGINGS,
-            Math.floor(projectMemoryBytes / CONTROLLER_MEMORY_BYTES),
-          ),
-        );
+      : Math.min(host, controllers(projectMemoryBytes));
   return { host, project };
 }
 

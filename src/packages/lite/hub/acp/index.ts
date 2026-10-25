@@ -542,14 +542,19 @@ const harnessAgents = new WeakSet<AcpAgent>();
 // that has been idle a while. Its conversation's next turn starts a fresh one.
 const harnessIdle = new HarnessIdleDisposer<AcpAgent>({
   idleMs: harnessIdleDisposeMs(),
-  dispose: async (key, agent) => {
-    if (agents.get(key) !== agent) return;
+  retire: (key, agent) => {
+    if (agents.get(key) !== agent) return false;
     agents.delete(key);
     agentProjectIds.delete(agent);
-    await agent.dispose?.();
+    return true;
   },
-  onError: (key, err) =>
-    logger.warn("failed to dispose idle ACP harness agent", { key, err }),
+  dispose: async (agent) => await agent.dispose?.(),
+  onError: (key, err, attempt) =>
+    logger.warn("failed to dispose idle ACP harness agent", {
+      key,
+      err,
+      attempt,
+    }),
 });
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
