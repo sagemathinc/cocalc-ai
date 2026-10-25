@@ -1,5 +1,9 @@
 import getLogger from "@cocalc/backend/logger";
-import type { HostKernelSysctlSnapshot } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostKernelHardeningCheck,
+  HostKernelHardeningSnapshot,
+  HostKernelSysctlSnapshot,
+} from "@cocalc/conat/hub/api/hosts";
 import { execFile as execFileCb } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -8,7 +12,29 @@ const logger = getLogger("project-host:host-sysctl");
 const execFile = promisify(execFileCb);
 
 const CONFIG_PATH = "/etc/sysctl.d/90-cocalc-project-host.conf";
+const HARDENING_CONFIG_PATH =
+  "/etc/sysctl.d/92-cocalc-project-host-hardening.conf";
 const ROOTCTL_PATH = "/usr/local/sbin/cocalc-project-host-rootctl";
+
+// Kernel attack-surface settings. Keep in sync with KERNEL_HARDENING_SYSCTLS
+// and KERNEL_HARDENING_MINIMUMS in server/cloud/bootstrap/bootstrap.py, which
+// also writes the managed ones. The others are only checked: the supported
+// images' defaults are at least this strict, and writing them could lower a
+// stricter default.
+export const PROJECT_HOST_KERNEL_HARDENING: {
+  key: string;
+  min?: number;
+  max?: number;
+  managed?: number;
+}[] = [
+  // Nothing on the host needs io_uring; project containers get ENOSYS from
+  // seccomp regardless.
+  { key: "kernel.io_uring_disabled", min: 2, managed: 2 },
+  { key: "vm.unprivileged_userfaultfd", max: 0, managed: 0 },
+  { key: "kernel.apparmor_restrict_unprivileged_userns", min: 1 },
+  { key: "kernel.unprivileged_bpf_disabled", min: 1 },
+  { key: "kernel.perf_event_paranoid", min: 3 },
+];
 
 export const PROJECT_HOST_SYSCTL_TARGETS: Record<string, number> = {
   "fs.inotify.max_user_instances": 8192,
@@ -67,8 +93,57 @@ export function buildProjectHostSysctlConfig(): string {
   ].join("\n");
 }
 
+export function buildProjectHostHardeningSysctlConfig(): string {
+  return [
+    "# Managed by CoCalc project-host: kernel attack surface reduction.",
+    ...PROJECT_HOST_KERNEL_HARDENING.filter(
+      ({ managed }) => managed != null,
+    ).map(({ key, managed }) => `${key} = ${managed}`),
+    "",
+  ].join("\n");
+}
+
+function evaluateHardening(
+  values: Record<string, number | null>,
+): HostKernelHardeningSnapshot {
+  const checks: HostKernelHardeningCheck[] = PROJECT_HOST_KERNEL_HARDENING.map(
+    ({ key, min, max, managed }) => {
+      const actual = values[key] ?? null;
+      const ok =
+        actual != null &&
+        (min == null || actual >= min) &&
+        (max == null || actual <= max);
+      return {
+        key,
+        expected: min != null ? `>= ${min}` : `<= ${max}`,
+        actual,
+        ok,
+        managed: managed != null,
+      };
+    },
+  );
+  return {
+    ok: checks.every(({ ok }) => ok),
+    config_path: HARDENING_CONFIG_PATH,
+    checks,
+  };
+}
+
+async function readProjectHostKernelHardening(): Promise<HostKernelHardeningSnapshot> {
+  const entries = await Promise.all(
+    PROJECT_HOST_KERNEL_HARDENING.map(
+      async ({ key }) => [key, await readSysctlValue(key)] as const,
+    ),
+  );
+  return evaluateHardening(Object.fromEntries(entries));
+}
+
+function managedHardeningDrift(snapshot: HostKernelSysctlSnapshot): boolean {
+  return !!snapshot.hardening?.checks.some(({ ok, managed }) => managed && !ok);
+}
+
 export async function readProjectHostKernelSysctls(): Promise<HostKernelSysctlSnapshot> {
-  const [entries, textEntries] = await Promise.all([
+  const [entries, textEntries, hardening] = await Promise.all([
     Promise.all(
       Object.keys(PROJECT_HOST_SYSCTL_TARGETS).map(
         async (key) => [key, await readSysctlValue(key)] as const,
@@ -79,6 +154,7 @@ export async function readProjectHostKernelSysctls(): Promise<HostKernelSysctlSn
         async (key) => [key, await readTextSysctlValue(key)] as const,
       ),
     ),
+    readProjectHostKernelHardening(),
   ]);
   const values = Object.fromEntries(entries) as Record<string, number | null>;
   const textValues = Object.fromEntries(textEntries) as Record<
@@ -109,6 +185,7 @@ export async function readProjectHostKernelSysctls(): Promise<HostKernelSysctlSn
     ok: mismatches.length === 0 && textMismatches.length === 0,
     mismatches,
     text_mismatches: textMismatches,
+    hardening,
   };
 }
 
@@ -116,6 +193,11 @@ async function applySysctlConfigAsRoot(): Promise<void> {
   await writeFile(CONFIG_PATH, buildProjectHostSysctlConfig(), {
     mode: 0o644,
   });
+  await writeFile(
+    HARDENING_CONFIG_PATH,
+    buildProjectHostHardeningSysctlConfig(),
+    { mode: 0o644 },
+  );
   await execFile("sysctl", ["--system"]);
 }
 
@@ -125,7 +207,12 @@ async function applySysctlConfigWithSudo(): Promise<void> {
 
 export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctlSnapshot> {
   const before = await readProjectHostKernelSysctls();
-  if (before.ok) return before;
+  if (before.hardening && !before.hardening.ok) {
+    logger.warn("project-host kernel hardening drift", {
+      failed: before.hardening.checks.filter(({ ok }) => !ok),
+    });
+  }
+  if (before.ok && !managedHardeningDrift(before)) return before;
 
   logger.warn("project-host kernel sysctl limits are below target", {
     mismatches: before.mismatches,
@@ -141,7 +228,7 @@ export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctl
       await applySysctlConfigWithSudo();
     }
     const after = await readProjectHostKernelSysctls();
-    if (after.ok) {
+    if (after.ok && !managedHardeningDrift(after)) {
       logger.info("project-host kernel sysctl limits applied", {
         config_path: CONFIG_PATH,
       });
@@ -149,12 +236,13 @@ export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctl
       logger.warn("project-host kernel sysctl limits still below target", {
         mismatches: after.mismatches,
         text_mismatches: after.text_mismatches,
+        hardening_failed: after.hardening?.checks.filter(({ ok }) => !ok),
       });
     }
     return {
       ...after,
       apply_attempted: true,
-      apply_succeeded: after.ok,
+      apply_succeeded: after.ok && !managedHardeningDrift(after),
     };
   } catch (err) {
     logger.warn("failed to apply project-host kernel sysctl limits", {
@@ -172,6 +260,9 @@ export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctl
 
 export const _test = {
   buildProjectHostSysctlConfig,
+  buildProjectHostHardeningSysctlConfig,
+  evaluateHardening,
+  managedHardeningDrift,
   normalizeTextSysctlValue,
   procPathForKey,
 };
