@@ -192,7 +192,8 @@ export const privacyPolicy: PublicPolicy = {
             keep at most one record per account, share and day. We use these
             records to investigate security problems and abuse, and to show the
             owners and collaborators of the shared project how often the share
-            is viewed and from which regions; they see counts only, never which
+            is viewed and from which regions (a region is shown only when at
+            least five viewers come from it); they see counts only, never which
             accounts viewed it. We rely on our legitimate interests in securing
             the Services and in providing these statistics, and we delete these
             records after 13 months.
