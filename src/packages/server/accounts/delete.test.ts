@@ -7,6 +7,7 @@ const poolQueryMock = jest.fn();
 const disposeOwnedProjectsForAccountDeletionMock = jest.fn();
 const deleteRootfsImagesForAccountDeletionMock = jest.fn();
 const deleteBlobsForAccountDeletionMock = jest.fn();
+const deleteShareViewsForAccountMock = jest.fn();
 const endAllSignInSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const withAccountRehomeWriteFenceMock = jest.fn();
@@ -26,6 +27,12 @@ jest.mock("@cocalc/server/projects/ownership", () => ({
   __esModule: true,
   disposeOwnedProjectsForAccountDeletion: (...args: any[]) =>
     disposeOwnedProjectsForAccountDeletionMock(...args),
+}));
+
+jest.mock("@cocalc/server/public-directory-shares/views", () => ({
+  __esModule: true,
+  deleteShareViewsForAccount: (...args: any[]) =>
+    deleteShareViewsForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/server/rootfs/catalog", () => ({
@@ -99,6 +106,7 @@ describe("delete account", () => {
     disposeOwnedProjectsForAccountDeletionMock.mockReset();
     deleteRootfsImagesForAccountDeletionMock.mockReset();
     deleteBlobsForAccountDeletionMock.mockReset();
+    deleteShareViewsForAccountMock.mockReset().mockResolvedValue(0);
     endAllSignInSessionsMock.mockReset();
     recordAccountRevocationMock.mockReset();
     withAccountRehomeWriteFenceMock.mockReset();
@@ -254,6 +262,9 @@ describe("delete account", () => {
     deleteBlobsForAccountDeletionMock.mockImplementation(async () => {
       calls.push("delete-blobs");
     });
+    deleteShareViewsForAccountMock.mockImplementation(async () => {
+      calls.push("delete-share-views");
+    });
     withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
       calls.push("mark-deleted");
       await fn({
@@ -307,6 +318,7 @@ describe("delete account", () => {
       "dispose-projects",
       "delete-rootfs-images",
       "delete-blobs",
+      "delete-share-views",
       "mark-deleted",
       "delete-directory-entry",
     ]);

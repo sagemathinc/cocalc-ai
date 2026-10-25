@@ -151,7 +151,8 @@ async function hasPublicShareProjectHostTokenAccess({
 }): Promise<boolean> {
   if (public_directory_share_id) {
     try {
-      const response = await publicDirectoryShares.authorizeRead({
+      // (issuing a token is not a read of the share)
+      const response = await publicDirectoryShares.authorizeReadWithoutView({
         account_id,
         project_id,
         share_id: public_directory_share_id,
@@ -212,7 +213,7 @@ async function hasPublicShareProjectHostTokenAccess({
   );
   for (const { id } of rows) {
     try {
-      await publicDirectoryShares.authorizeRead({
+      await publicDirectoryShares.authorizeReadWithoutView({
         account_id,
         project_id,
         share_id: id,

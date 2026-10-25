@@ -3972,3 +3972,104 @@ describe("billing exposure in admin health across bays", () => {
     );
   });
 });
+
+describe("public share views for a share stored off its project's bay", () => {
+  // A legacy placement: the share's row is on the attached bay, while its
+  // project (and so who is owner or collaborator) is on the seed.
+  let dana; // homed on the seed, owns the project (alice is at her project limit)
+  let carol; // homed on the seed, not in the project
+  let project_id;
+  const share_id = randomUUID();
+
+  const viewsOn = async (bay) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows: exists } = await getPool().query(
+         "SELECT to_regclass('public_share_views') IS NOT NULL AS ok");
+       if (!exists[0].ok) return [];
+       const { rows } = await getPool().query(
+         "SELECT account_id, viewer_role FROM public_share_views WHERE share_id=$1 ORDER BY viewer_role",
+         [${JSON.stringify(share_id)}]);
+       return rows;`,
+    );
+
+  before(async () => {
+    dana = await createAccount(cluster, { home_bay_id: SEED, name: "dana" });
+    dana.client = await client(dana);
+    carol = await createAccount(cluster, { home_bay_id: SEED, name: "carol" });
+    carol.client = await client(carol);
+    project_id = await createProject(dana.client, "shared with views");
+    assert.equal(await owningBay(project_id), SEED);
+    await invite(dana, bob, project_id);
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `await server("public-directory-shares/index.js").ensurePublicDirectorySharesSchema();
+       const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`INSERT INTO public_project_paths (
+            id, project_id, path, slug, visibility, requires_auth,
+            availability_status, created_by, updated_by, disabled)
+          VALUES ($1, $2, 'shared', $3, 'unlisted', TRUE, 'available', $4, $4, FALSE)\`,
+         [${JSON.stringify(share_id)}, ${JSON.stringify(project_id)},
+          ${JSON.stringify(`views-${share_id.slice(0, 8)}`)},
+          ${JSON.stringify(dana.account_id)}]);`,
+    );
+  });
+
+  it("records each read on the share's bay, with the role the project's bay has", async () => {
+    for (const [name, viewer] of Object.entries({ dana, bob, carol })) {
+      await eventually(
+        async () =>
+          (
+            await viewer.client.call("publicDirectoryShares.authorizeRead", {
+              project_id,
+              share_id,
+            })
+          )?.share_id === share_id,
+        { what: `${name} reading the share` },
+      );
+    }
+    const rows = await eventually(
+      async () => {
+        const rows = await viewsOn(ATTACHED);
+        return rows.length === 3 ? rows : undefined;
+      },
+      { what: "three views on the attached bay" },
+    );
+    assert.deepEqual(
+      Object.fromEntries(rows.map((r) => [r.account_id, r.viewer_role])),
+      {
+        [dana.account_id]: "owner",
+        [bob.account_id]: "collaborator",
+        [carol.account_id]: "other",
+      },
+    );
+    assert.deepEqual(await viewsOn(SEED), []);
+  });
+
+  it("reports the views to the project's owner and collaborator, from either bay, and to no one else", async () => {
+    for (const viewer of [dana, bob]) {
+      const views = await viewer.client.call("publicDirectoryShares.getViews", {
+        project_id,
+        share_id,
+      });
+      assert.deepEqual(views.distinct_viewers, {
+        viewers: 3,
+        owner: 1,
+        collaborator: 1,
+        other: 1,
+      });
+      assert.ok(!JSON.stringify(views).includes(carol.account_id));
+    }
+    await assert.rejects(
+      carol.client.call("publicDirectoryShares.getViews", {
+        project_id,
+        share_id,
+      }),
+      /public directory share not found/,
+    );
+  });
+});
