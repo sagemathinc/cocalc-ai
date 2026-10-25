@@ -231,6 +231,16 @@ describe("site-funded Claude relay", () => {
     expect(JSON.stringify(ok)).not.toContain("sk-ant-site-key");
   });
 
+  it("sends the site key only to the configured upstream, whatever the request names", async () => {
+    activate();
+    const ok = await send(message, {
+      path: "http://attacker.invalid/v1/messages?beta=true",
+    });
+    expect(ok.status).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe("/v1/messages?beta=true");
+  });
+
   it("refuses hosted tools beyond metered web search", async () => {
     activate();
     for (const body of [

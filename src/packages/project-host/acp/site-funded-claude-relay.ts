@@ -423,6 +423,18 @@ export async function createSiteFundedClaudeRelay({
     upstreamUrl.protocol === "https:"
       ? httpsRequest
       : (await import("node:http")).request;
+  // Where a request goes: the configured upstream, one of the two allowed
+  // paths, and the request's beta flags. Only constants make up the part
+  // before the query, so nothing in a request can choose who gets the key.
+  const upstreamTarget = (
+    path: typeof MESSAGES_PATH | typeof COUNT_TOKENS_PATH,
+    query: URLSearchParams,
+  ): string => {
+    const betas = new URLSearchParams();
+    for (const beta of query.getAll("beta")) betas.append("beta", beta);
+    const search = betas.toString();
+    return `${upstreamUrl.origin}${path}${search ? `?${search}` : ""}`;
+  };
   const token = randomBytes(32).toString("base64url");
   let turn: ActiveTurn | undefined;
   let closing = false;
@@ -505,7 +517,7 @@ export async function createSiteFundedClaudeRelay({
   /** One request to Anthropic; resolves once its response is metered. */
   const forward = (
     active: ActiveTurn,
-    path: string,
+    target: string,
     payload: Buffer,
     headers: Record<string, string>,
     response: ServerResponse,
@@ -537,7 +549,7 @@ export async function createSiteFundedClaudeRelay({
       let providerRequest: ClientRequest;
       try {
         providerRequest = send(
-          new URL(path, upstreamUrl).toString(),
+          target,
           { method: "POST", headers },
           (providerResponse) => {
             const providerRequestId =
@@ -649,7 +661,7 @@ export async function createSiteFundedClaudeRelay({
    */
   const countPromptTokens = (
     active: ActiveTurn,
-    search: string,
+    query: URLSearchParams,
     funded: Record<string, unknown>,
     headers: Record<string, string>,
   ) =>
@@ -679,7 +691,7 @@ export async function createSiteFundedClaudeRelay({
       let countRequest: ClientRequest;
       try {
         countRequest = send(
-          new URL(`${COUNT_TOKENS_PATH}${search}`, upstreamUrl).toString(),
+          upstreamTarget(COUNT_TOKENS_PATH, query),
           {
             method: "POST",
             headers: { ...headers, "content-length": `${body.length}` },
@@ -818,7 +830,7 @@ export async function createSiteFundedClaudeRelay({
           // It may be over the cap: count it exactly first.
           const counted = await countPromptTokens(
             active,
-            url.search,
+            url.searchParams,
             funded,
             headers,
           );
@@ -869,7 +881,10 @@ export async function createSiteFundedClaudeRelay({
       }
       await forward(
         active,
-        `${url.pathname}${url.search}`,
+        upstreamTarget(
+          countTokens ? COUNT_TOKENS_PATH : MESSAGES_PATH,
+          url.searchParams,
+        ),
         payload,
         headers,
         response,
