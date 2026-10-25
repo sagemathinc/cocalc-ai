@@ -295,10 +295,14 @@ export async function getViews({
     since,
     by_day: byDay.map((row) => ({ day: row.day, ...counts(row) })),
     distinct_viewers: counts(distinct[0]),
-    by_region: byRegion.map((row) => ({
-      region: row.region ?? null,
-      viewers: count(row.viewers),
-    })),
+    // Only regions with at least MIN_AGGREGATE_COUNT viewers: an owner who
+    // knows who they shared with could otherwise tell where one of them is.
+    by_region: byRegion
+      .filter((row) => count(row.viewers) >= MIN_AGGREGATE_COUNT)
+      .map((row) => ({
+        region: row.region ?? null,
+        viewers: count(row.viewers),
+      })),
   };
 }
 

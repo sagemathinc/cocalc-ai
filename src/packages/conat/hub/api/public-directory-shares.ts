@@ -289,7 +289,8 @@ export interface GetPublicDirectoryShareViewsResponse {
   // view in the range, so the splits add up to the total
   distinct_viewers: PublicDirectoryShareViewCounts;
   // where they are, only as coarsely as the six regions of R2_REGIONS
-  // (@cocalc/util/consts/r2-regions); null when not known
+  // (@cocalc/util/consts/r2-regions; null when not known), and only regions
+  // with at least 5 viewers, so no one viewer's region shows
   by_region: { region: string | null; viewers: number }[];
 }
 
