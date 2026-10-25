@@ -56,6 +56,10 @@ import {
   verifyProjectContainerInPool,
 } from "@cocalc/project-runner/run/podman";
 import { mountArg } from "@cocalc/backend/podman";
+import {
+  purgeCredentialShellSnapshots,
+  SHELL_ENVIRONMENT_EXCLUDE_CONFIG,
+} from "./shell-snapshots";
 import { BeneathDir } from "../beneath-copy";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
@@ -2137,7 +2141,13 @@ export async function spawnCodexInProjectContainer({
       preference: paymentSource,
       credentialId,
     }));
-  let codexArgs = args;
+  if (authRuntime.source === "site-api-key") {
+    // The site's OpenAI key reaches Codex only through the funded proxy
+    // (spawnCodexAppServerInProjectRuntime); never put it in a project
+    // container's environment.
+    throw new Error("site-funded Codex is not available through this path");
+  }
+  let codexArgs = ["--config", SHELL_ENVIRONMENT_EXCLUDE_CONFIG, ...args];
   const providerArgs = getManagedOpenAiProviderArgs(authRuntime);
   if (providerArgs) {
     codexArgs = [...codexArgs, ...providerArgs];
@@ -2371,6 +2381,7 @@ async function spawnCodexAppServerInProjectRuntime({
   await ensureProjectContainerRunning({ projectId, accountId });
   const { home, scratch } = await localPath({ project_id: projectId });
   await scrubBrokenProjectCodexAuthArtifacts(home, authRuntime);
+  await purgeCredentialShellSnapshots(home);
   const initialExecEnv = toStringEnv(extraEnv);
   if (
     isolatedCodexHome &&
@@ -2575,6 +2586,8 @@ async function spawnCodexAppServerInProjectRuntime({
   if (restrictedEgress) {
     codexArgs.push("--config", RESPECT_SYSTEM_PROXY_CONFIG);
   }
+  // Every mode: Codex's shell must never see a credential in its env.
+  codexArgs.push("--config", SHELL_ENVIRONMENT_EXCLUDE_CONFIG);
   if (shouldForceEphemeralAppServerAuthStorage(authRuntime)) {
     // Host-managed auth must stay in-process only. Otherwise app-server's
     // apiKey login path can write credentials into the collaborative

@@ -356,6 +356,14 @@ describe("initCodexProjectRunner", () => {
     );
     const home = await mkTempDir("codex-project-site-funded-tools-");
     filesystem.localPath.mockResolvedValue({ home });
+    // A snapshot an older runtime wrote with the proxy token in it.
+    const snapshots = path.join(home, ".codex", "shell_snapshots");
+    await fs.mkdir(snapshots, { recursive: true });
+    await fs.writeFile(
+      path.join(snapshots, "old.sh"),
+      "export OPENAI_API_KEY='old-proxy-token'\n",
+    );
+    await fs.writeFile(path.join(snapshots, "clean.sh"), "export A=1\n");
     auth.resolveCodexAuthRuntime.mockResolvedValue({
       source: "site-api-key",
       contextId: "site-funded-tools",
@@ -381,9 +389,37 @@ describe("initCodexProjectRunner", () => {
       expect(args).toContain("OPENAI_API_KEY=site-funded-proxy-token");
       expect(args).not.toContain("OPENAI_API_KEY=real-site-key");
       expect(spawned.runtimeEnv?.OPENAI_API_KEY).toBeUndefined();
+      // Codex's shell never records the token, and an old snapshot that did
+      // is gone before the app-server starts.
+      expect(args).toEqual(
+        expect.arrayContaining([
+          "--config",
+          'shell_environment_policy.exclude=["OPENAI_API_KEY","HTTPS_PROXY","https_proxy"]',
+        ]),
+      );
+      expect(await fs.readdir(snapshots)).toEqual(["clean.sh"]);
     } finally {
       for (const listener of proc.listeners("exit")) await listener(0);
     }
+  });
+
+  it("never puts the site key in a project container through the exec path", async () => {
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "site-api-key",
+      contextId: "site-exec",
+      env: { OPENAI_API_KEY: "real-site-key" },
+    });
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    await expect(
+      getCodexProjectSpawner()!.spawnCodexExec({
+        projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        cwd: "/home/user",
+        args: ["exec", "--full-auto", "hi"],
+      } as any),
+    ).rejects.toThrow("site-funded Codex is not available through this path");
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("releases a site-funded reservation when agent identity setup fails", async () => {
