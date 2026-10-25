@@ -21,6 +21,8 @@ import {
 } from "antd";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -45,6 +47,7 @@ import {
   type ReaderItem,
   type ReaderState,
 } from "./reader-model";
+import { ReaderFullScreenContext } from "./reader-full-screen";
 import type { ChatMessageTyped } from "./types";
 import { getUserName } from "./user-name";
 import { newest_content } from "./utils";
@@ -201,6 +204,8 @@ export function ChatReaderView({
   itemInfo,
   isItemWorking = () => false,
   runningStatus,
+  searchJump,
+  searchDates,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -239,6 +244,13 @@ export function ChatReaderView({
    * a click meant for Archive all never lands on Interrupt.
    */
   runningStatus?: ReactNode;
+  /**
+   * The thread search's current hit (its message's date, ms): its item opens,
+   * shown even if archived or filed. A new token is a new jump.
+   */
+  searchJump?: { date: string; token: number };
+  /** Every hit's message date (ms): their items are marked in the list. */
+  searchDates?: ReadonlySet<string>;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
@@ -325,10 +337,14 @@ export function ChatReaderView({
     [items, state, isItemWorking],
   );
   const [selectedId, setSelectedId] = useState<string>();
+  // The open message over the whole window, as the reader shows it: paging
+  // with Newer and Older (or j and k) stays full screen.
+  const [fullScreenWanted, setFullScreen] = useState(false);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
   const selected: ReaderItem | undefined = visible[selectedIndex];
+  const fullScreen = fullScreenWanted && !!selected && !narrow;
 
   // A change is applied to the stored state, which may differ from what is
   // shown here (another device, or not loaded yet).
@@ -355,6 +371,27 @@ export function ChatReaderView({
     setSelectedId(first.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, narrow, threadId, visible.length, readStateVersion]);
+
+  // A search hit opens its item, wherever it is; its messages may arrive
+  // after the jump (a hit loaded from the backend).
+  const jumpedRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!searchJump?.date || jumpedRef.current === searchJump.token) return;
+    const item = items.find((candidate) =>
+      candidate.messages.some(
+        (message) => `${dateValue(message)?.valueOf()}` === searchJump.date,
+      ),
+    );
+    if (!item) return;
+    jumpedRef.current = searchJump.token;
+    if (isItemArchived(item, state)) setShowArchived(true);
+    if (!inView(item)) setView("all");
+    setSelectedId(item.id);
+    listRef.current
+      ?.querySelector(`[data-reader-item="${item.id}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchJump?.token, searchJump?.date, items]);
 
   // Opening an item, or a new reply arriving while it is open, reads it.
   // Not while the chat is hidden: then once it is shown.
@@ -431,6 +468,16 @@ export function ChatReaderView({
           return !!selected;
         case "?":
           setShowKeys(true);
+          return true;
+        case "f":
+          if (!selected || narrow) return false;
+          setFullScreen(!fullScreen);
+          focusKeys();
+          return true;
+        case "Escape":
+          if (!fullScreen) return false;
+          setFullScreen(false);
+          focusKeys();
           return true;
       }
       return false;
@@ -622,6 +669,19 @@ export function ChatReaderView({
                     fyi
                   </span>
                 ) : null}
+                {searchDates &&
+                searchDates.size > 0 &&
+                item.messages.some((message) =>
+                  searchDates.has(`${dateValue(message)?.valueOf()}`),
+                ) ? (
+                  <span
+                    aria-label="Matches the search"
+                    title="Matches the search"
+                    style={{ color: UI_COLORS.primary, flex: "none" }}
+                  >
+                    <Icon name="search" />
+                  </span>
+                ) : null}
                 {itemBadges?.(item)}
                 {date ? (
                   <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
@@ -748,6 +808,43 @@ export function ChatReaderView({
     </div>
   ) : null;
 
+  // Tab and Shift+Tab wrap around inside the full-screen dialog.
+  const containTab = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...event.currentTarget.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ];
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const inside = event.currentTarget.contains(active);
+    if (event.shiftKey && (active === first || !inside)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !inside)) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  const fullScreenControl = useMemo(
+    () =>
+      narrow
+        ? null
+        : {
+            open: () => {
+              setFullScreen(true);
+              focusKeys();
+            },
+          },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [narrow],
+  );
   const pane = selected ? (
     <div
       key={selected.id}
@@ -795,6 +892,21 @@ export function ChatReaderView({
           <Button size="small" onClick={() => markUnread(selected)}>
             Mark unread
           </Button>
+          <Button
+            size="small"
+            icon={<Icon name={fullScreen ? "compress" : "expand-arrows"} />}
+            onClick={() => {
+              setFullScreen(!fullScreen);
+              focusKeys();
+            }}
+          >
+            {fullScreen ? "Exit full screen" : "Full screen"}
+          </Button>
+          {fullScreen ? (
+            <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
+              {selectedIndex + 1} of {visible.length}
+            </span>
+          ) : null}
         </Space>
       )}
       {itemInfo?.(selected).subject ? (
@@ -813,7 +925,9 @@ export function ChatReaderView({
       ) : null}
       {renderItem ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-          {renderItem(selected)}
+          <ReaderFullScreenContext.Provider value={fullScreenControl}>
+            {renderItem(selected)}
+          </ReaderFullScreenContext.Provider>
         </div>
       ) : null}
       {renderItem
@@ -1002,7 +1116,43 @@ export function ChatReaderView({
       )}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {narrow && selected ? null : list}
-        {pane}
+        {fullScreen ? (
+          <>
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: UI_COLORS.muted,
+              }}
+            >
+              Shown full screen (f or Esc to return)
+            </div>
+            {createPortal(
+              <KeyboardBoundary
+                role="dialog"
+                aria-modal="true"
+                aria-label="Message, full screen"
+                // The keys stay inside while it is open: Tab cycles in it.
+                onKeyDown={containTab}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 1000,
+                  background: UI_COLORS.surface,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                {pane}
+              </KeyboardBoundary>,
+              document.body,
+            )}
+          </>
+        ) : (
+          pane
+        )}
       </div>
       <Modal
         title="Reader keyboard shortcuts"
@@ -1039,5 +1189,6 @@ const READER_KEYS: [string, string][] = [
   ["u", "Next unread message"],
   ["y", "Archive the open message (again: back to the inbox)"],
   ["m", "Mark the open message unread"],
+  ["f", "Full screen for the open message (again, or Esc: back)"],
   ["?", "Show these shortcuts"],
 ];
