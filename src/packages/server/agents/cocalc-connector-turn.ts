@@ -8,9 +8,7 @@ import getPool from "@cocalc/database/pool";
 import { assertAccountNotRehoming } from "@cocalc/database/postgres/account-rehome-fence";
 import { allocateApiKeyIssuanceSequence } from "@cocalc/server/api/issuance-sequence";
 import { assertApiKeyProjectMembership } from "@cocalc/server/api/project-membership-revocation";
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { tokenHash, verifyToken } from "@cocalc/backend/auth/password-hash";
 import {
   decryptSecretStorageValue,
   encryptSecretStorageValue,
@@ -269,7 +267,7 @@ export async function beginManagedCocalcConnectorTurn({
   const turn_id = randomUUID();
   const key_id = randomBytes(12).toString("base64url");
   const secret = createApiKeySecret({ key_id });
-  const hash = passwordHash(secret);
+  const hash = tokenHash(secret);
   const ciphertext = await encryptSecretStorageValue(
     secretName(turn_id),
     secret,
@@ -438,7 +436,7 @@ export async function beginManagedCocalcConnectorTurn({
   if (
     !resolvedSecret ||
     !result.key.hash ||
-    !verifyPassword(resolvedSecret, result.key.hash)
+    !verifyToken(resolvedSecret, result.key.hash)
   ) {
     throw Error("managed CoCalc connector credential is unavailable");
   }

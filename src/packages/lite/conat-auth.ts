@@ -9,7 +9,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import type { AllowFunction, UserFunction } from "@cocalc/conat/core/server";
-import { verifyPassword } from "@cocalc/backend/auth/password-hash";
+import { verifyToken } from "@cocalc/backend/auth/password-hash";
 import {
   checkCommonPermissions,
   extractProjectSubject,
@@ -212,7 +212,7 @@ export function createLiteConatAuth({
     if (AUTH_TOKEN) {
       const cookieName = getAuthCookieName(socket?.handshake?.headers?.host);
       const cookieValue = cookies[cookieName];
-      if (verifyPassword(AUTH_TOKEN, cookieValue)) {
+      if (verifyToken(AUTH_TOKEN, cookieValue)) {
         return {
           account_id,
           auth_actor: "account",

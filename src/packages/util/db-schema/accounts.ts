@@ -192,7 +192,7 @@ Table({
     password_hash: {
       type: "string",
       pg_type: "VARCHAR(173)",
-      desc: "Hash of the password. This is 1000 iterations of sha512 with salt of length 32.",
+      desc: "Hash of the password (see backend/auth/password-hash.ts for the formats).",
     },
     deleted: {
       type: "boolean",

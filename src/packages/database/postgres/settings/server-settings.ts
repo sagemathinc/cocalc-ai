@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { PASSWORD_KDF_ONE_WAY_ERROR } from "@cocalc/util/db-schema/password-kdf";
 import { AllSiteSettings } from "@cocalc/util/db-schema/types";
 import { callback2 } from "@cocalc/util/async-utils";
 import { db } from "@cocalc/database";
@@ -39,20 +40,40 @@ export async function set_server_setting(
 ): Promise<void> {
   const encryptedValue = await encryptSettingValue(opts.name, opts.value);
 
-  // Insert the setting
-  const values: any = {
-    "name::TEXT": opts.name,
-    "value::TEXT": encryptedValue,
-  };
-  if (opts.readonly != null) {
-    values.readonly = !!opts.readonly;
-  }
+  if (opts.name === "password_kdf") {
+    // One-way (see util/db-schema/password-kdf.ts), enforced in the same
+    // statement as the write, so a concurrent "scrypt" can never be undone
+    // by a write that checked first.
+    const readonly = opts.readonly != null;
+    const { rows } = await callback2(db._query.bind(db), {
+      query: `INSERT INTO server_settings (name, value${readonly ? ", readonly" : ""})
+               VALUES ($1::TEXT, $2::TEXT${readonly ? ", $3::BOOLEAN" : ""})
+               ON CONFLICT (name) DO UPDATE
+                 SET value = EXCLUDED.value${readonly ? ", readonly = EXCLUDED.readonly" : ""}
+               WHERE server_settings.value IS DISTINCT FROM 'scrypt'
+                  OR EXCLUDED.value = 'scrypt'
+               RETURNING name`,
+      params: readonly
+        ? [opts.name, encryptedValue, !!opts.readonly]
+        : [opts.name, encryptedValue],
+    });
+    if (!rows?.length) throw new Error(PASSWORD_KDF_ONE_WAY_ERROR);
+  } else {
+    // Insert the setting
+    const values: any = {
+      "name::TEXT": opts.name,
+      "value::TEXT": encryptedValue,
+    };
+    if (opts.readonly != null) {
+      values.readonly = !!opts.readonly;
+    }
 
-  await callback2(db._query.bind(db), {
-    query: "INSERT INTO server_settings",
-    values,
-    conflict: "name",
-  });
+    await callback2(db._query.bind(db), {
+      query: "INSERT INTO server_settings",
+      values,
+      conflict: "name",
+    });
+  }
 
   // Set the _last_update timestamp
   await callback2(db._query.bind(db), {
