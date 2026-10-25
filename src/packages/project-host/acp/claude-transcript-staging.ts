@@ -53,10 +53,11 @@ export const MAX_TRANSCRIPT_ENTRIES = 100_000;
 
 // The staged tree (one conversation's transcripts: copied in, or written by
 // the controller and checked when a turn completes) may hold at most this
-// many bytes. Long-lived conversations have transcripts of most of a GiB, so
-// the default is well above that; it bounds abuse of the host's disk, not
+// many bytes. A long-lived conversation's transcripts were measured at about
+// 750 MB (October 2026), so the default leaves several times that; it bounds
+// abuse of the host's disk (every live controller holds one staged tree), not
 // normal use.
-export const DEFAULT_MAX_TRANSCRIPT_BYTES = 8 * 1024 ** 3;
+export const DEFAULT_MAX_TRANSCRIPT_BYTES = 4 * 1024 ** 3;
 
 export function maxTranscriptBytes(): number {
   const configured = Number(process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_BYTES);
