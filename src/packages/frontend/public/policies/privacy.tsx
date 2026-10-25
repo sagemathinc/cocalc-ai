@@ -842,7 +842,9 @@ export const privacyPolicy: PublicPolicy = {
         </p>
         <p>
           Records of which accounts viewed a public share are deleted 13 months
-          after the view.
+          after the view. Deleting your account also deletes these records
+          (records about shares stored in another region of our service are
+          deleted within those 13 months).
         </p>
       </PolicySection>{" "}
       <PolicySection
