@@ -63,6 +63,22 @@ function askUserQuestionForm(
   const properties = object(schema.properties);
   const ids = Object.keys(properties);
   if (!ids.length || !ids.every((id) => ASK_FIELD.test(id))) return undefined;
+  // Its signature, beyond the names: nothing required, and every question
+  // offers its choices as oneOf (or items.anyOf). Any other form with such
+  // names (enum choices, required fields) is a generic form, checked below.
+  if (Array.isArray(schema.required) && schema.required.length)
+    return undefined;
+  const signature = ids
+    .filter((id) => !id.endsWith("_custom"))
+    .every((id) => {
+      const field = properties[id] as Record<string, unknown> | null;
+      if (!field || typeof field !== "object") return false;
+      const items = field.items as Record<string, unknown> | null | undefined;
+      return field.type === "array"
+        ? items != null && typeof items === "object" && "anyOf" in items
+        : "oneOf" in field;
+    });
+  if (!signature) return undefined;
   keys(schema, [
     "type",
     "title",

@@ -474,6 +474,28 @@ test("Claude's AskUserQuestion: a single question is asked by the message; witho
     form.response({ question_0: { answers: ["Something else"] } }),
   );
 });
+test("a generic form that only uses question_N names keeps the generic check", () => {
+  const form = harnessQuestionForm({
+    mode: "form",
+    sessionId: "native-session",
+    message: "Proceed?",
+    requestedSchema: {
+      type: "object",
+      required: ["question_0"],
+      properties: {
+        question_0: { type: "string", title: "Proceed", enum: ["yes", "no"] },
+      },
+    },
+  });
+  assert.deepEqual(
+    form.questions[0].options.map(({ label }) => label),
+    ["yes", "no"],
+  );
+  assert.deepEqual(form.response({ question_0: { answers: ["yes"] } }), {
+    action: "accept",
+    content: { question_0: "yes" },
+  });
+});
 test("Claude's AskUserQuestion: anything beyond its shape is refused", () => {
   for (const mutate of [
     (x) => (x.requestedSchema.required = ["question_0"]),
