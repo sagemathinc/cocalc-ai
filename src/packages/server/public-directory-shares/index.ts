@@ -168,6 +168,8 @@ type TemporaryViewerGrantRow = {
   read_policy: ProjectViewerReadPolicy;
   status: string;
   expires_at: Date | string;
+  share_path: string;
+  share_path_type?: PublicDirectorySharePathType | null;
   created_by?: string | null;
   updated_by?: string | null;
   project_users?: Record<string, { group?: string } | null> | null;
@@ -605,6 +607,18 @@ function isHostPlacementFailure(err: unknown): boolean {
   );
 }
 
+// Hidden entries at the top of the home are never public: ".**" excludes
+// every path that starts with a dot, which is where tools keep credentials
+// (.config/cocalc, .config/gh, .netrc, .codex, ...). It only affects shares of
+// the whole home, which copy already walks because of the excludes below.
+// Credential names deeper in a shared folder (.env, .ssh, ...) are not
+// excluded yet: copying a share refuses a folder with any excluded entry and
+// walks every folder a glob rule may reach, so that waits until copy can skip
+// excluded entries.
+const PUBLIC_SHARE_HIDDEN_EXCLUDES: ProjectViewerReadPolicy["rules"] = [
+  { action: "exclude", path: ".**" },
+];
+
 export function publicDirectoryShareReadPolicyForPath(
   path: string,
   pathType: PublicDirectorySharePathType = "directory",
@@ -621,6 +635,7 @@ export function publicDirectoryShareReadPolicyForPath(
   return {
     rules: [
       ...include,
+      ...PUBLIC_SHARE_HIDDEN_EXCLUDES,
       { action: "exclude", path: ".snapshots" },
       { action: "exclude", path: ".snapshots/**" },
       { action: "exclude", path: ".backups" },
@@ -1711,6 +1726,8 @@ export async function getTemporaryViewerReadPolicy({
     `
       SELECT
         g.*,
+        p.path AS share_path,
+        p.path_type AS share_path_type,
         p.created_by,
         p.updated_by,
         projects.users AS project_users
@@ -1733,8 +1750,15 @@ export async function getTemporaryViewerReadPolicy({
       allowedRows.push(row);
     }
   }
-  const rules = allowedRows.flatMap((row) =>
-    Array.isArray(row.read_policy?.rules) ? row.read_policy.rules : [],
+  // Authorize with the share's current policy, never the one stored when
+  // the grant was made: a grant outlives policy changes (such as new
+  // excludes) by up to its lifetime.
+  const rules = allowedRows.flatMap(
+    (row) =>
+      publicDirectoryShareReadPolicyForPath(
+        row.share_path,
+        row.share_path_type ?? "directory",
+      ).rules,
   );
   return {
     project_id,

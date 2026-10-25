@@ -28,7 +28,10 @@ import {
   publicDirectoryShareLabelsFromProjectLabels,
   publicDirectoryShareProjectLabelKey,
 } from "@cocalc/util/public-directory-share-labels";
-import { viewerReadPolicyAllowsPath } from "@cocalc/util/project-access";
+import {
+  viewerReadPolicyAllowsPath,
+  viewerReadPolicyMayAllowDescendant,
+} from "@cocalc/util/project-access";
 
 let mockGetProjectFsClient: jest.Mock;
 let mockGetProjectShareFsClient: jest.Mock;
@@ -251,6 +254,63 @@ describe("public directory share normalization", () => {
         path: ".cache/cocalc/project/secrets",
       }),
     ).toBe(false);
+  });
+
+  it("excludes every top-level hidden entry from root shares", () => {
+    const policy = publicDirectoryShareReadPolicyForPath(".");
+    for (const path of [
+      ".config",
+      ".config/cocalc/agents/profile.json",
+      ".config/gh/hosts.yml",
+      ".config/gcloud/credentials.db",
+      ".codex/sessions/2026/10/24/rollout.jsonl",
+      ".claude/projects/session.jsonl",
+      ".cocalc/state.json",
+      ".netrc",
+      ".git-credentials",
+      ".bash_history",
+      ".env",
+    ]) {
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(false);
+    }
+    for (const path of [
+      "README.md",
+      "notebooks/intro.ipynb",
+      "repo/.gitignore",
+      "repo/.github/workflows/ci.yml",
+      "not.hidden/file.txt",
+    ]) {
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(true);
+    }
+  });
+
+  it("hides top-level hidden directories from root share listings", () => {
+    const policy = publicDirectoryShareReadPolicyForPath(".");
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "" })).toBe(true);
+    for (const path of [".config", ".codex", ".config/cocalc"]) {
+      expect(viewerReadPolicyMayAllowDescendant({ policy, path })).toBe(false);
+    }
+  });
+
+  it("keeps folder shares unchanged, so their copies need no tree walk", () => {
+    const policy = publicDirectoryShareReadPolicyForPath("work");
+    for (const path of [
+      "work/analysis.ipynb",
+      "work/repo/.gitignore",
+      "work/repo/.github/workflows/ci.yml",
+    ]) {
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(true);
+    }
+    expect(viewerReadPolicyAllowsPath({ policy, path: ".config/x" })).toBe(
+      false,
+    );
+  });
+
+  it("refuses to publish a hidden top-level path directly", () => {
+    for (const path of [".config", ".codex", ".config/cocalc"]) {
+      const policy = publicDirectoryShareReadPolicyForPath(path);
+      expect(viewerReadPolicyAllowsPath({ policy, path })).toBe(false);
+    }
   });
 
   it("excludes snapshot and backup paths even when directly shared", () => {
@@ -785,6 +845,41 @@ describe("public directory temporary viewer grants", () => {
       project_id: PROJECT_ID,
     });
     expect(policy.read_policy).toEqual(grant.read_policy);
+  });
+
+  it("authorizes a temporary grant with the share's current policy, not the stored one", async () => {
+    await insertShare();
+    await grantTemporaryViewerAccess({
+      account_id: ACCOUNT_ID,
+      slug: "test2",
+    });
+    // A grant made before a policy change: its stored policy is broader.
+    await getPool().query(
+      `UPDATE public_project_path_viewer_grants SET read_policy=$1 WHERE account_id=$2`,
+      [
+        JSON.stringify({ rules: [{ action: "include", path: "**" }] }),
+        ACCOUNT_ID,
+      ],
+    );
+
+    const policy = await getTemporaryViewerReadPolicy({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(policy.read_policy).toEqual(
+      publicDirectoryShareReadPolicyForPath("share"),
+    );
+    expect(
+      viewerReadPolicyAllowsPath({
+        policy: policy.read_policy,
+        path: "share/a.ipynb",
+      }),
+    ).toBe(true);
+    for (const path of ["private/a.ipynb", ".config/cocalc/agents/x.json"]) {
+      expect(
+        viewerReadPolicyAllowsPath({ policy: policy.read_policy, path }),
+      ).toBe(false);
+    }
   });
 
   it("lists directories through the exact share-scoped filesystem", async () => {
