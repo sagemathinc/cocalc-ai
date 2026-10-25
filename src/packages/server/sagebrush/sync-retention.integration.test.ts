@@ -801,6 +801,26 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       expect(sent).toHaveLength(1);
     });
 
+    it("the escalation alert states the duplicate risk, and where to record the decision", async () => {
+      const { s, fetch } = fakeSagebrush();
+      await toFirstEmail(s, fetch);
+      await steps(fetch, {
+        send: async () => {
+          throw Error("connection reset");
+        },
+      });
+      const a = alertsRecorder();
+      await escalateUnresolvedRetentionEmails({ now, alert: a.alert });
+      const body = a.recorded[0].body.replace(/\s+/g, " ");
+      expect(body).toContain(
+        "A bay restart stops CoCalc-side work, but a provider may still finish an already-issued request. Without the provider's final outcome for that attempt, resending retains duplicate risk; accept it knowingly.",
+      );
+      expect(body).toContain(
+        "in psql on this bay (the one that sent this alert, which holds the delivery record)",
+      );
+      expect(body).not.toMatch(/establish that it can't/);
+    });
+
     it("the alert's psql decision works as written", async () => {
       const { s, fetch } = fakeSagebrush();
       const { account_id } = await toFirstEmail(s, fetch);
