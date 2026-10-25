@@ -290,26 +290,26 @@ export interface GetPublicDirectoryShareViewsResponse {
 
 export interface GetPublicDirectoryShareViewAggregatesOptions {
   account_id?: string;
-  // only this project's shares, or only this share (with its project_id)
-  project_id?: string;
+  // Only this share (with its project_id, to find the share's bay);
+  // otherwise all shares stored on the bay that receives the call.
   share_id?: string;
+  project_id?: string;
   viewer_role?: PublicDirectoryShareViewerRole;
   days?: number;
 }
 
-// A count is null (suppressed) when fewer than min_count distinct accounts
-// make it up.
 export interface PublicDirectoryShareViewAggregate {
-  viewer_days: number | null;
-  distinct_viewers: number | null;
-  suppressed: boolean;
+  viewer_days: number;
+  distinct_viewers: number;
 }
 
-// For admins: aggregates only, with small counts suppressed.
+// For admins: aggregates only. Anything made up of fewer than min_count
+// distinct accounts is left out: the totals are null, and such a day or
+// country is not listed at all, so not even its existence shows.
 export interface GetPublicDirectoryShareViewAggregatesResponse {
   since: string;
   min_count: number;
-  totals: PublicDirectoryShareViewAggregate;
+  totals: PublicDirectoryShareViewAggregate | null;
   by_day: (PublicDirectoryShareViewAggregate & { day: string })[];
   // country: ISO 3166-1 alpha-2, or null when it isn't known
   by_country: (PublicDirectoryShareViewAggregate & {

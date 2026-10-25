@@ -4,7 +4,11 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { authorizeRead, ensurePublicDirectorySharesSchema } from "./index";
+import {
+  authorizeRead,
+  copySourceForPublicDirectoryShare,
+  ensurePublicDirectorySharesSchema,
+} from "./index";
 import {
   MIN_AGGREGATE_COUNT,
   __test__,
@@ -73,15 +77,10 @@ describe("viewer classification and suppression", () => {
 
   it("suppresses counts made up of fewer than k accounts", () => {
     expect(MIN_AGGREGATE_COUNT).toBe(5);
-    expect(suppress({ viewer_days: "9", distinct_viewers: "4" })).toEqual({
-      viewer_days: null,
-      distinct_viewers: null,
-      suppressed: true,
-    });
+    expect(suppress({ viewer_days: "9", distinct_viewers: "4" })).toBeNull();
     expect(suppress({ viewer_days: "9", distinct_viewers: "5" })).toEqual({
       viewer_days: 9,
       distinct_viewers: 5,
-      suppressed: false,
     });
   });
 });
@@ -207,6 +206,35 @@ describe("public share views", () => {
     ]);
   });
 
+  it("looks up the viewer's role when the caller doesn't have the project's users", async () => {
+    for (const account_id of [OWNER_ID, VIEWER_ID]) {
+      await recordShareViewNow({
+        share_id: SHARE_ID,
+        project_id: PROJECT_ID,
+        account_id,
+      });
+    }
+    expect((await rows()).map((r) => [r.account_id, r.viewer_role])).toEqual(
+      expect.arrayContaining([
+        [OWNER_ID, "owner"],
+        [VIEWER_ID, "other"],
+      ]),
+    );
+  });
+
+  it("records a copy of the share, which reads it too", async () => {
+    await copySourceForPublicDirectoryShare({
+      account_id: VIEWER_ID,
+      share: { id: SHARE_ID, project_id: PROJECT_ID, path: "share" } as any,
+      relativePath: "a.txt",
+    });
+    await waitForRows(1);
+    expect((await rows())[0]).toMatchObject({
+      account_id: VIEWER_ID,
+      viewer_role: "other",
+    });
+  });
+
   it("does not record a check that is not a read", async () => {
     const inserts = countInserts();
     await read(VIEWER_ID, { record_view: false });
@@ -290,7 +318,7 @@ describe("public share views", () => {
     ).rejects.toThrow("public directory share not found");
   });
 
-  it("gives admins only aggregates, suppressing small counts", async () => {
+  it("gives admins only aggregates, leaving out anything under k accounts", async () => {
     const now = new Date("2026-10-25T12:00:00Z");
     for (let n = 0; n < MIN_AGGREGATE_COUNT; n++) {
       await recordShareViewNow({
@@ -301,6 +329,14 @@ describe("public share views", () => {
         now,
       });
     }
+    // a single viewer on another day
+    await recordShareViewNow({
+      share_id: SHARE_ID,
+      project_id: PROJECT_ID,
+      account_id: account(99),
+      country: "FR",
+      now: new Date("2026-10-23T12:00:00Z"),
+    });
     await expect(
       getViewAggregates({ account_id: VIEWER_ID, now }),
     ).rejects.toThrow("must be an admin");
@@ -308,51 +344,81 @@ describe("public share views", () => {
     const report = await getViewAggregates({
       account_id: VIEWER_ID,
       project_id: PROJECT_ID,
+      share_id: SHARE_ID,
       now,
     });
+    // all shares on this bay: the same here
+    expect(await getViewAggregates({ account_id: VIEWER_ID, now })).toEqual(
+      report,
+    );
+    // a share this bay doesn't store, so the caller tries other bays
+    await expect(
+      getViewAggregates({
+        account_id: VIEWER_ID,
+        project_id: PROJECT_ID,
+        share_id: COLLAB_ID,
+        now,
+      }),
+    ).rejects.toThrow("public directory share not found");
     expect(report.totals).toEqual({
-      viewer_days: MIN_AGGREGATE_COUNT,
-      distinct_viewers: MIN_AGGREGATE_COUNT,
-      suppressed: false,
+      viewer_days: MIN_AGGREGATE_COUNT + 1,
+      distinct_viewers: MIN_AGGREGATE_COUNT + 1,
     });
+    // 2026-10-23 had one viewer: not listed at all
     expect(report.by_day).toEqual([
       {
         day: "2026-10-25",
         viewer_days: MIN_AGGREGATE_COUNT,
         distinct_viewers: MIN_AGGREGATE_COUNT,
-        suppressed: false,
       },
     ]);
-    // 4 in DE, 1 unknown: both too small to show
-    expect(report.by_country).toEqual([
-      {
-        country: "DE",
-        viewer_days: null,
-        distinct_viewers: null,
-        suppressed: true,
-      },
-      {
-        country: null,
-        viewer_days: null,
-        distinct_viewers: null,
-        suppressed: true,
-      },
-    ]);
+    // 4 in DE, 1 unknown, 1 in FR: each too small, so no country shows
+    expect(report.by_country).toEqual([]);
+    expect(JSON.stringify(report)).not.toContain("DE");
+    expect(JSON.stringify(report)).not.toContain("FR");
+    expect(JSON.stringify(report)).not.toContain("2026-10-23");
+    // and too few in all: no totals either
+    expect(
+      (
+        await getViewAggregates({
+          account_id: VIEWER_ID,
+          viewer_role: "other",
+          days: 2,
+          now: new Date("2026-10-24T12:00:00Z"),
+        })
+      ).totals,
+    ).toBeNull();
     expect(JSON.stringify(report)).not.toContain(account(0));
   });
 
   it("deletes views older than the retention period", async () => {
-    for (const day of ["2025-09-24T12:00:00Z", "2025-09-26T12:00:00Z"]) {
+    for (const day of [
+      "2025-09-24",
+      "2025-09-26",
+      "2025-02-27",
+      "2025-02-28",
+      "2025-03-01",
+    ]) {
       await recordShareViewNow({
         share_id: SHARE_ID,
         project_id: PROJECT_ID,
         account_id: VIEWER_ID,
-        now: new Date(day),
+        now: new Date(`${day}T12:00:00Z`),
       });
     }
+    // 2026-03-31 minus 13 months is 2025-02-28, not 2025-03-03
+    expect(
+      await pruneShareViews({ now: new Date("2026-03-31T12:00:00Z") }),
+    ).toBe(1);
+    expect((await rows()).map((r) => r.day)).toEqual([
+      "2025-02-28",
+      "2025-03-01",
+      "2025-09-24",
+      "2025-09-26",
+    ]);
     expect(
       await pruneShareViews({ now: new Date("2026-10-25T12:00:00Z") }),
-    ).toBe(1);
+    ).toBe(3);
     expect((await rows()).map((r) => r.day)).toEqual(["2025-09-26"]);
   });
 });

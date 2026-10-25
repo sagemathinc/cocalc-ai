@@ -67,7 +67,8 @@ export async function ensurePublicShareViewsSchema(): Promise<void> {
         viewer_role VARCHAR(16) NOT NULL,
         country CHAR(2),
         first_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (share_id, account_id, day)
+        -- (day before account_id, so a share's report reads only its days)
+        PRIMARY KEY (share_id, day, account_id)
       )
     `);
     await pool.query(`
@@ -112,6 +113,20 @@ export function normalizeCountry(country?: string | null): string | null {
   return /^[A-Z]{2}$/.test(value) && value !== "XX" ? value : null;
 }
 
+async function lookUpViewerRole(
+  project_id: string,
+  account_id: string,
+): Promise<PublicDirectoryShareViewerRole> {
+  const { rows } = await getPool().query<{ group: string | null }>(
+    "SELECT users -> $2::text ->> 'group' AS \"group\" FROM projects WHERE project_id=$1",
+    [project_id, account_id],
+  );
+  return viewerRole(
+    { [account_id]: { group: rows[0]?.group ?? undefined } },
+    account_id,
+  );
+}
+
 let recordedDay = "";
 const recorded = new Set<string>();
 
@@ -119,6 +134,7 @@ export interface RecordShareViewOptions {
   share_id: string;
   project_id: string;
   account_id: string;
+  // the project's users, when the caller has them; otherwise looked up
   project_users?: Record<string, { group?: string } | null> | null;
   country?: string | null;
   now?: Date;
@@ -145,19 +161,23 @@ export async function recordShareViewNow({
   recorded.add(key);
   try {
     await ensurePublicShareViewsSchema();
+    const role =
+      project_users !== undefined
+        ? viewerRole(project_users, account_id)
+        : await lookUpViewerRole(project_id, account_id);
     await getPool().query(
       `
         INSERT INTO public_share_views
           (share_id, account_id, day, project_id, viewer_role, country, first_at)
         VALUES ($1, $2, $3::date, $4, $5, $6, $7)
-        ON CONFLICT (share_id, account_id, day) DO NOTHING
+        ON CONFLICT (share_id, day, account_id) DO NOTHING
       `,
       [
         share_id,
         account_id,
         day,
         project_id,
-        viewerRole(project_users, account_id),
+        role,
         normalizeCountry(country),
         now,
       ],
@@ -204,7 +224,8 @@ export async function getViews({
   if (!account_id) throw Error("user must be signed in");
   if (!isValidUUID(project_id)) throw Error("invalid project_id");
   if (!isValidUUID(share_id)) throw Error("invalid public directory share id");
-  const since = addDays(utcDay(now), 1 - normalizeDays(days));
+  const today = utcDay(now);
+  const since = addDays(today, 1 - normalizeDays(days));
   await ensurePublicShareViewsSchema();
   const pool = getPool();
   const { rows: shares } = await pool.query<{ allowed: boolean }>(
@@ -230,20 +251,20 @@ export async function getViews({
       SELECT to_char(day, 'YYYY-MM-DD') AS day, COUNT(*) AS viewers,
              ${roleCounts("COUNT(*)")}
       FROM public_share_views
-      WHERE share_id=$1 AND day >= $2::date
+      WHERE share_id=$1 AND day >= $2::date AND day <= $3::date
       GROUP BY day
       ORDER BY day
     `,
-    [share_id, since],
+    [share_id, since, today],
   );
   const { rows: distinct } = await pool.query(
     `
       SELECT COUNT(DISTINCT account_id) AS viewers,
              ${roleCounts("COUNT(DISTINCT account_id)")}
       FROM public_share_views
-      WHERE share_id=$1 AND day >= $2::date
+      WHERE share_id=$1 AND day >= $2::date AND day <= $3::date
     `,
-    [share_id, since],
+    [share_id, since, today],
   );
   const counts = (row: any) => ({
     viewers: count(row?.viewers),
@@ -260,19 +281,28 @@ export async function getViews({
   };
 }
 
+// The aggregate, or null when fewer than MIN_AGGREGATE_COUNT accounts make
+// it up.
 export function suppress(row: {
   viewer_days?: unknown;
   distinct_viewers?: unknown;
-}): PublicDirectoryShareViewAggregate {
+}): PublicDirectoryShareViewAggregate | null {
   const distinct_viewers = count(row.distinct_viewers);
-  if (distinct_viewers < MIN_AGGREGATE_COUNT) {
-    return { viewer_days: null, distinct_viewers: null, suppressed: true };
-  }
-  return {
-    viewer_days: count(row.viewer_days),
-    distinct_viewers,
-    suppressed: false,
-  };
+  if (distinct_viewers < MIN_AGGREGATE_COUNT) return null;
+  return { viewer_days: count(row.viewer_days), distinct_viewers };
+}
+
+// Rows whose aggregate is suppressed are left out, key and all.
+function shown<K extends string>(
+  rows: any[],
+  key: K,
+): (PublicDirectoryShareViewAggregate & Record<K, any>)[] {
+  return rows.flatMap((row) => {
+    const aggregate = suppress(row);
+    return aggregate == null
+      ? []
+      : [{ [key]: row[key] ?? null, ...aggregate } as any];
+  });
 }
 
 export async function getViewAggregates({
@@ -293,15 +323,25 @@ export async function getViewAggregates({
   if (share_id != null && !isValidUUID(share_id)) {
     throw Error("invalid public directory share id");
   }
+  if (share_id != null) {
+    // so the caller tries the bay that stores it (server/conat/api)
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM public_project_paths WHERE id=$1 AND project_id=$2",
+      [share_id, project_id],
+    );
+    if (rows.length === 0) throw Error("public directory share not found");
+  } else if (project_id != null) {
+    throw Error("project_id is only for finding share_id's bay");
+  }
   if (viewer_role != null && !VIEWER_ROLES.includes(viewer_role)) {
     throw Error("invalid viewer_role");
   }
-  const since = addDays(utcDay(now), 1 - normalizeDays(days));
+  const today = utcDay(now);
+  const since = addDays(today, 1 - normalizeDays(days));
   await ensurePublicShareViewsSchema();
-  const params: unknown[] = [since];
-  const clauses = ["day >= $1::date"];
+  const params: unknown[] = [since, today];
+  const clauses = ["day >= $1::date", "day <= $2::date"];
   for (const [column, value] of [
-    ["project_id", project_id],
     ["share_id", share_id],
     ["viewer_role", viewer_role],
   ] as const) {
@@ -339,11 +379,8 @@ export async function getViewAggregates({
     since,
     min_count: MIN_AGGREGATE_COUNT,
     totals: suppress(totals.rows[0] ?? {}),
-    by_day: byDay.rows.map((row) => ({ day: row.day, ...suppress(row) })),
-    by_country: byCountry.rows.map((row) => ({
-      country: row.country ?? null,
-      ...suppress(row),
-    })),
+    by_day: shown(byDay.rows, "day"),
+    by_country: shown(byCountry.rows, "country"),
   };
 }
 
@@ -352,11 +389,12 @@ export async function pruneShareViews({
   retentionMonths = RETENTION_MONTHS,
 }: { now?: Date; retentionMonths?: number } = {}): Promise<number> {
   await ensurePublicShareViewsSchema();
-  const cutoff = new Date(now);
-  cutoff.setUTCMonth(cutoff.getUTCMonth() - retentionMonths);
+  // (date minus months clamps to the month's end: 2026-03-31 minus 13 months
+  // is 2025-02-28)
   const { rowCount } = await getPool().query(
-    "DELETE FROM public_share_views WHERE day < $1::date",
-    [utcDay(cutoff)],
+    `DELETE FROM public_share_views
+      WHERE day < ($1::date - ($2::int * INTERVAL '1 month'))::date`,
+    [utcDay(now), retentionMonths],
   );
   return rowCount ?? 0;
 }

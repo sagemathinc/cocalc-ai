@@ -746,7 +746,7 @@ function entryAllowed({
   });
 }
 
-async function copySourceForPublicDirectoryShare({
+export async function copySourceForPublicDirectoryShare({
   account_id,
   share,
   relativePath,
@@ -759,6 +759,12 @@ async function copySourceForPublicDirectoryShare({
   path: string | string[];
   base_path?: string;
 }> {
+  // a copy reads the share as surely as a preview does
+  recordShareView({
+    share_id: share.id,
+    project_id: share.project_id,
+    account_id,
+  });
   const projectPath = joinProjectSharePath(share.path, relativePath);
   if (projectPath !== ".") {
     return {
