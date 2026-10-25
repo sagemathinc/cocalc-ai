@@ -653,6 +653,12 @@ export function ChatRoomThreadPanel({
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [threadSearchCursor, setThreadSearchCursor] = useState(0);
   const [threadSearchJumpToken, setThreadSearchJumpToken] = useState(0);
+  // In the reader, a hit opens the item that holds it: the current hit, or
+  // one opened from the backend's results once its message is loaded.
+  const [readerSearchJump, setReaderSearchJump] = useState<{
+    date: string;
+    token: number;
+  }>();
   const [archivedSearchLoading, setArchivedSearchLoading] = useState(false);
   const [archivedSearchHits, setArchivedSearchHits] = useState<
     ChatStoreSearchHit[]
@@ -1216,6 +1222,7 @@ export function ChatRoomThreadPanel({
             hit.date_ms,
         );
         if (!Number.isFinite(hydratedDateMs)) return;
+        setReaderSearchJump({ date: `${hydratedDateMs}`, token: Date.now() });
         actions.scrollToDate(hydratedDateMs);
       } catch (err) {
         setArchivedSearchError(`${err}`);
@@ -1443,6 +1450,18 @@ export function ChatRoomThreadPanel({
     if (!activeSearchMatchDate) return;
     setThreadSearchJumpToken((n) => n + 1);
   }, [activeSearchMatchDate]);
+
+  useEffect(() => {
+    if (!activeSearchMatchDate) return;
+    setReaderSearchJump({ date: activeSearchMatchDate, token: Date.now() });
+  }, [activeSearchMatchDate, threadSearchJumpToken]);
+  const readerSearchDates = useMemo(
+    () =>
+      threadSearchOpen && threadSearchMatches.length
+        ? new Set(threadSearchMatches)
+        : undefined,
+    [threadSearchOpen, threadSearchMatches],
+  );
 
   useEffect(() => {
     const query = threadSearchQuery.trim();
@@ -3145,6 +3164,8 @@ export function ChatRoomThreadPanel({
                 ? runningStatus(true)
                 : undefined
             }
+            searchJump={threadSearchOpen ? readerSearchJump : undefined}
+            searchDates={readerSearchDates}
             isItemWorking={(item: ReaderItem) =>
               readerItemWorking(item, readerRunningMessage)
             }
@@ -3187,6 +3208,11 @@ export function ChatRoomThreadPanel({
                 onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
                 attentionRecords={readerAttention.get(item.id) ?? []}
                 readOnly={readOnly}
+                // The search's current hit, scrolled to and highlighted.
+                selectedDate={activeSearchMatchDate}
+                searchJumpDate={activeSearchMatchDate}
+                searchJumpToken={threadSearchJumpToken}
+                searchQuery={threadSearchHighlightQuery}
                 // The panel shows the running turn's status already, as for
                 // the log.
                 suppressInlineCodexStatusDate={

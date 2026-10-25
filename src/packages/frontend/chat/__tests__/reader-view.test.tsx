@@ -62,7 +62,7 @@ const agent = (id: string, text: string, ms: number) =>
   }) as any;
 
 function setup(initial: any[], readCount = 0, props: object = {}) {
-  let state: ReaderState = {};
+  let state: ReaderState = (props as any).initialState ?? {};
   let count = readCount;
   const actions: any = {
     getThreadReadCount: jest.fn(() => count),
@@ -413,6 +413,28 @@ test("full screen: a message's own Focus button opens the reader's", async () =>
     within(dialog).getByRole("button", { name: "Exit full screen" }),
   );
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("search: the current hit opens its item, and items with hits are marked", () => {
+  setup(thread, 4, {
+    searchJump: { date: "2", token: 1 },
+    searchDates: new Set(["2", "4"]),
+  });
+  expect(screen.getByRole("article")).toHaveTextContent("first answer");
+  const marked = options().map(
+    (option) => within(option).queryByLabelText("Matches the search") != null,
+  );
+  // p3 (4) and p1 with its answer a1 (2); not p2.
+  expect(marked).toEqual([true, false, true]);
+});
+
+test("search: a hit in an archived item shows archived items to open it", () => {
+  setup(thread, 4, {
+    initialState: { a: { p2: "p2" } },
+    searchJump: { date: "3", token: 1 },
+  });
+  expect(screen.getByRole("checkbox", { name: "Show archived" })).toBeChecked();
+  expect(screen.getByRole("article")).toHaveTextContent("second question");
 });
 
 test("Keys, or ?, shows the keyboard shortcuts", async () => {

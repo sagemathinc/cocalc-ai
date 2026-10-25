@@ -203,6 +203,8 @@ export function ChatReaderView({
   itemInfo,
   isItemWorking = () => false,
   runningStatus,
+  searchJump,
+  searchDates,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -241,6 +243,13 @@ export function ChatReaderView({
    * a click meant for Archive all never lands on Interrupt.
    */
   runningStatus?: ReactNode;
+  /**
+   * The thread search's current hit (its message's date, ms): its item opens,
+   * shown even if archived or filed. A new token is a new jump.
+   */
+  searchJump?: { date: string; token: number };
+  /** Every hit's message date (ms): their items are marked in the list. */
+  searchDates?: ReadonlySet<string>;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
@@ -361,6 +370,27 @@ export function ChatReaderView({
     setSelectedId(first.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, narrow, threadId, visible.length, readStateVersion]);
+
+  // A search hit opens its item, wherever it is; its messages may arrive
+  // after the jump (a hit loaded from the backend).
+  const jumpedRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!searchJump?.date || jumpedRef.current === searchJump.token) return;
+    const item = items.find((candidate) =>
+      candidate.messages.some(
+        (message) => `${dateValue(message)?.valueOf()}` === searchJump.date,
+      ),
+    );
+    if (!item) return;
+    jumpedRef.current = searchJump.token;
+    if (isItemArchived(item, state)) setShowArchived(true);
+    if (!inView(item)) setView("all");
+    setSelectedId(item.id);
+    listRef.current
+      ?.querySelector(`[data-reader-item="${item.id}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchJump?.token, searchJump?.date, items]);
 
   // Opening an item, or a new reply arriving while it is open, reads it.
   // Not while the chat is hidden: then once it is shown.
@@ -636,6 +666,19 @@ export function ChatReaderView({
                     }}
                   >
                     fyi
+                  </span>
+                ) : null}
+                {searchDates &&
+                searchDates.size > 0 &&
+                item.messages.some((message) =>
+                  searchDates.has(`${dateValue(message)?.valueOf()}`),
+                ) ? (
+                  <span
+                    aria-label="Matches the search"
+                    title="Matches the search"
+                    style={{ color: UI_COLORS.primary, flex: "none" }}
+                  >
+                    <Icon name="search" />
                   </span>
                 ) : null}
                 {itemBadges?.(item)}
