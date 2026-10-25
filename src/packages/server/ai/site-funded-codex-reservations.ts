@@ -21,10 +21,7 @@ import {
 } from "@cocalc/util/ai/site-funded-codex";
 import { uuid } from "@cocalc/util/misc";
 import { ensureAiSessionsSchema } from "./acp-sessions";
-import {
-  ensureSiteFundedProviderKeyTable,
-  selectSiteFundedProviderKey,
-} from "./site-funded-provider-keys";
+import { selectSiteFundedProviderKey } from "./site-funded-provider-keys";
 
 const logger = getLogger("server:ai:site-funded-codex-reservations");
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -148,135 +145,6 @@ function reservationFromRow(row: any): SiteFundedCodexReservation {
     provider: row.provider ?? "openai",
     providerKeyId: row.provider_key_id ?? undefined,
   };
-}
-
-let reservationTablesReady: Promise<void> | undefined;
-
-// Create the tables once per process. The setup includes ALTER TABLE, which
-// takes an ACCESS EXCLUSIVE lock even when every column already exists, so
-// running it on every reservation, heartbeat and status read queued all of
-// those queries behind any open transaction on site_ai_turn_reservations
-// (production outage 2026-10-06).
-export async function ensureSiteFundedCodexReservationTables(): Promise<void> {
-  reservationTablesReady ??= createSiteFundedCodexReservationTables().catch(
-    (err) => {
-      reservationTablesReady = undefined;
-      throw err;
-    },
-  );
-  await reservationTablesReady;
-}
-
-async function createSiteFundedCodexReservationTables(): Promise<void> {
-  const statements = [
-    `
-    CREATE TABLE IF NOT EXISTS site_ai_funding_periods (
-      pool_id TEXT NOT NULL,
-      period_start TIMESTAMPTZ NOT NULL,
-      period_end TIMESTAMPTZ NOT NULL,
-      limit_microusd BIGINT NOT NULL CHECK (limit_microusd >= 0),
-      reserved_microusd BIGINT NOT NULL DEFAULT 0 CHECK (reserved_microusd >= 0),
-      committed_microusd BIGINT NOT NULL DEFAULT 0 CHECK (committed_microusd >= 0),
-      policy_version INTEGER NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (pool_id, period_start)
-    )`,
-    `
-    CREATE TABLE IF NOT EXISTS site_ai_turn_reservations (
-      reservation_id UUID PRIMARY KEY,
-      funded_turn_id UUID NOT NULL UNIQUE,
-      idempotency_key TEXT NOT NULL UNIQUE,
-      pool_id TEXT NOT NULL,
-      period_start TIMESTAMPTZ NOT NULL,
-      account_id UUID NOT NULL,
-      project_id UUID NOT NULL,
-      host_id UUID NOT NULL,
-      home_bay_id TEXT,
-      owning_bay_id TEXT,
-      membership_tier TEXT NOT NULL,
-      policy_version INTEGER NOT NULL,
-      model TEXT NOT NULL,
-      reasoning TEXT NOT NULL,
-      service_tier TEXT NOT NULL,
-      policy JSONB NOT NULL,
-      surface TEXT,
-      reserved_microusd BIGINT NOT NULL CHECK (reserved_microusd >= 0),
-      pool_reserved_microusd BIGINT NOT NULL CHECK (pool_reserved_microusd >= 0),
-      committed_microusd BIGINT NOT NULL DEFAULT 0 CHECK (committed_microusd >= 0),
-      last_request_sequence INTEGER NOT NULL DEFAULT 0 CHECK (last_request_sequence >= 0),
-      last_event_id UUID,
-      last_event_cost_microusd BIGINT NOT NULL DEFAULT 0 CHECK (last_event_cost_microusd >= 0),
-      last_event_price_version TEXT,
-      last_event_long_context BOOLEAN,
-      status TEXT NOT NULL CHECK (status IN ('active','committed','released','expired','interrupted','failed')),
-      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      expires_at TIMESTAMPTZ NOT NULL,
-      completed_at TIMESTAMPTZ,
-      outcome TEXT,
-      FOREIGN KEY (pool_id, period_start)
-        REFERENCES site_ai_funding_periods(pool_id, period_start)
-    )`,
-    `
-    CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_account_started_idx
-      ON site_ai_turn_reservations(account_id, started_at DESC)`,
-    `ALTER TABLE site_ai_turn_reservations
-       ADD COLUMN IF NOT EXISTS pool_reserved_microusd BIGINT NOT NULL DEFAULT 0`,
-    `ALTER TABLE site_ai_turn_reservations
-       ADD COLUMN IF NOT EXISTS last_request_sequence INTEGER NOT NULL DEFAULT 0`,
-    `ALTER TABLE site_ai_turn_reservations
-       ADD COLUMN IF NOT EXISTS last_event_id UUID`,
-    `ALTER TABLE site_ai_turn_reservations
-       ADD COLUMN IF NOT EXISTS last_event_cost_microusd BIGINT NOT NULL DEFAULT 0`,
-    `ALTER TABLE site_ai_turn_reservations
-       ADD COLUMN IF NOT EXISTS last_event_price_version TEXT`,
-    `ALTER TABLE site_ai_turn_reservations
-       ADD COLUMN IF NOT EXISTS last_event_long_context BOOLEAN`,
-    `ALTER TABLE site_ai_turn_reservations
-       ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'openai'`,
-    `ALTER TABLE site_ai_turn_reservations
-       ADD COLUMN IF NOT EXISTS provider_key_id UUID`,
-    `CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_provider_key_idx
-       ON site_ai_turn_reservations(provider_key_id, started_at)
-       WHERE provider_key_id IS NOT NULL`,
-    `UPDATE site_ai_turn_reservations
-       SET pool_reserved_microusd = reserved_microusd
-       WHERE status = 'active' AND pool_reserved_microusd = 0`,
-    `
-    CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_active_idx
-      ON site_ai_turn_reservations(status, expires_at)
-      WHERE status = 'active'`,
-    `
-    CREATE TABLE IF NOT EXISTS site_ai_speech_reservations (
-      request_id UUID PRIMARY KEY,
-      account_id UUID NOT NULL,
-      period_start TIMESTAMPTZ NOT NULL,
-      reserved_microusd BIGINT NOT NULL CHECK (reserved_microusd > 0),
-      committed_microusd BIGINT NOT NULL DEFAULT 0
-        CHECK (committed_microusd >= 0),
-      status TEXT NOT NULL
-        CHECK (status IN ('active', 'committed', 'released', 'expired')),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      expires_at TIMESTAMPTZ NOT NULL,
-      completed_at TIMESTAMPTZ
-    )`,
-    `
-    CREATE INDEX IF NOT EXISTS site_ai_speech_reservations_active_idx
-      ON site_ai_speech_reservations(status, expires_at)
-      WHERE status = 'active'`,
-    `
-    CREATE TABLE IF NOT EXISTS site_ai_account_holds (
-      account_id UUID PRIMARY KEY,
-      reason TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      created_by UUID,
-      expires_at TIMESTAMPTZ
-    )`,
-  ];
-  for (const statement of statements) {
-    await getPool().query(statement);
-  }
 }
 
 async function expireCurrentPeriodSpeechReservations({
@@ -527,11 +395,7 @@ export async function reserveSiteFundedCodexTurn(
 ): Promise<SiteFundedCodexAdmission> {
   const provider = opts.provider ?? "openai";
   const words = fundedWording(provider);
-  await Promise.all([
-    ensureSiteFundedCodexReservationTables(),
-    ensureAiSessionsSchema(),
-    provider === "anthropic" ? ensureSiteFundedProviderKeyTable() : undefined,
-  ]);
+  await ensureAiSessionsSchema();
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -816,7 +680,6 @@ export async function heartbeatSiteFundedCodexTurn({
 }: {
   reservationId: string;
 }): Promise<boolean> {
-  await ensureSiteFundedCodexReservationTables();
   const { rowCount } = await getPool().query(
     `
       UPDATE site_ai_turn_reservations
@@ -835,7 +698,6 @@ export async function assertSiteFundedCodexReservationHost({
   reservationId: string;
   hostId: string;
 }): Promise<void> {
-  await ensureSiteFundedCodexReservationTables();
   const { rows } = await getPool().query(
     `SELECT host_id FROM site_ai_turn_reservations WHERE reservation_id = $1`,
     [reservationId],
@@ -848,7 +710,6 @@ export async function assertSiteFundedCodexReservationHost({
 export async function recordSiteFundedCodexUsageEvent(
   event: SiteFundedCodexUsageEvent,
 ): Promise<SiteFundedCodexUsageRecordResult> {
-  await ensureSiteFundedCodexReservationTables();
   if (
     !Number.isSafeInteger(event.requestSequence) ||
     event.requestSequence < 1
@@ -960,7 +821,6 @@ export async function recordSiteFundedCodexUsageEvent(
 export async function finishSiteFundedCodexTurn(
   opts: FinishSiteFundedCodexTurnOptions,
 ): Promise<SiteFundedCodexReservation> {
-  await ensureSiteFundedCodexReservationTables();
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -1022,7 +882,6 @@ export async function finishSiteFundedCodexTurn(
 export async function getSiteFundedCodexPoolStatus(): Promise<
   SiteFundedCodexPoolStatus[]
 > {
-  await ensureSiteFundedCodexReservationTables();
   const { start } = periodBounds();
   const { rows } = await getPool().query(
     `
@@ -1070,7 +929,6 @@ export async function getSiteFundedCodexAccountReservationStatus({
   activeCount: number;
   reservedMicrousd: number;
 }> {
-  await ensureSiteFundedCodexReservationTables();
   const { rows } = await getPool().query(
     `SELECT COUNT(*)::int AS active_count,
        COALESCE(SUM(reserved_microusd), 0) AS reserved_microusd
@@ -1094,10 +952,7 @@ export async function reconcileTerminalSiteFundedCodexReservations({
   staleHeartbeatMs?: number;
   orphanedHeartbeatMs?: number;
 } = {}): Promise<number> {
-  await Promise.all([
-    ensureSiteFundedCodexReservationTables(),
-    ensureAiSessionsSchema(),
-  ]);
+  await ensureAiSessionsSchema();
   const { rows } = await getPool().query(
     `SELECT DISTINCT pool_id, period_start
      FROM site_ai_turn_reservations
@@ -1135,7 +990,6 @@ export async function reconcileTerminalSiteFundedCodexReservations({
 }
 
 export async function expireAbandonedSiteFundedCodexReservations(): Promise<number> {
-  await ensureSiteFundedCodexReservationTables();
   const { rows } = await getPool().query(
     `SELECT DISTINCT pool_id, period_start FROM site_ai_turn_reservations
      WHERE status = 'active' AND expires_at <= NOW()`,

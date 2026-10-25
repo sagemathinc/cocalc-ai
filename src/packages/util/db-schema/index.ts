@@ -40,6 +40,7 @@ import "./account-entitlement-overrides";
 import "./admin-assigned-memberships";
 import "./membership-grants";
 import "./membership-claim-identities";
+import "./site-ai-funding";
 import "./membership-tiers";
 import "./legacy-migration";
 import "./messages";

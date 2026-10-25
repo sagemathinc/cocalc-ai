@@ -13,7 +13,6 @@ import {
 import { uuid } from "@cocalc/util/misc";
 import { ensureAiSessionsSchema } from "./acp-sessions";
 import {
-  ensureSiteFundedCodexReservationTables,
   expireAbandonedSiteFundedCodexReservations,
   finishSiteFundedCodexTurn,
   getSiteFundedCodexAccountReservationStatus,
@@ -25,7 +24,6 @@ import {
 
 beforeAll(async () => {
   await before({ noConat: true });
-  await ensureSiteFundedCodexReservationTables();
   await ensureAiSessionsSchema();
 }, 15_000);
 
@@ -77,11 +75,13 @@ function poolReservation(opts: ReturnType<typeof options>): number {
 }
 
 describe("site-funded Codex reservation tables", () => {
-  it("are set up once per process, not on every reservation call", async () => {
-    // ALTER TABLE takes an ACCESS EXCLUSIVE lock even when nothing changes.
+  it("are never altered at request time", async () => {
+    // They are db-schema tables, created and converged by startup schema
+    // sync. ALTER TABLE takes an ACCESS EXCLUSIVE lock even when nothing
+    // changes, which once queued every reservation behind it (outage
+    // 2026-10-06).
     const query = jest.spyOn(getPool(), "query");
     try {
-      await ensureSiteFundedCodexReservationTables();
       await getSiteFundedCodexPoolStatus();
       const ddl = query.mock.calls.filter(([sql]) =>
         /\b(ALTER|CREATE) (TABLE|INDEX)\b/.test(String(sql)),

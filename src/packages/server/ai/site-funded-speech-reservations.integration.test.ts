@@ -7,7 +7,6 @@ import getPool from "@cocalc/database/pool";
 import { after, before } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
 import {
-  ensureSiteFundedSpeechReservationTable,
   finishSiteFundedSpeechGlobalLocal,
   reserveSiteFundedSpeechGlobalLocal,
 } from "./site-funded-speech-reservations";
@@ -21,7 +20,6 @@ afterAll(after);
 
 describe("site-funded speech global reservations", () => {
   beforeEach(async () => {
-    await ensureSiteFundedSpeechReservationTable();
     await getPool().query("DELETE FROM site_ai_speech_reservations");
     await getPool().query("DELETE FROM site_ai_funding_periods");
   });

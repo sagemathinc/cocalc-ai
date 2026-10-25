@@ -29,33 +29,6 @@ import { isValidUUID, uuid } from "@cocalc/util/misc";
 
 export type { SiteFundedProviderKeyInfo };
 
-let tableReady: Promise<void> | undefined;
-
-export async function ensureSiteFundedProviderKeyTable(): Promise<void> {
-  tableReady ??= (async () => {
-    await getPool().query(`
-      CREATE TABLE IF NOT EXISTS site_ai_provider_keys (
-        key_id UUID PRIMARY KEY,
-        provider TEXT NOT NULL,
-        label TEXT NOT NULL,
-        encrypted_key TEXT NOT NULL,
-        key_last4 TEXT NOT NULL,
-        monthly_limit_microusd BIGINT NOT NULL
-          CHECK (monthly_limit_microusd >= 0),
-        reset_day INTEGER NOT NULL CHECK (reset_day BETWEEN 1 AND 28),
-        reset_hour INTEGER NOT NULL CHECK (reset_hour BETWEEN 0 AND 23),
-        position INTEGER NOT NULL,
-        enabled BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )`);
-  })().catch((err) => {
-    tableReady = undefined;
-    throw err;
-  });
-  await tableReady;
-}
-
 const aadName = (keyId: string) => `site_ai_provider_keys:${keyId}`;
 
 function int(value: unknown): number {
@@ -141,7 +114,6 @@ export async function addSiteFundedProviderKey({
   if (secret.length < 8 || secret.length > 512 || /\s/.test(secret)) {
     throw new Error("an API key must be 8-512 characters without spaces");
   }
-  await ensureSiteFundedProviderKeyTable();
   const keyId = uuid();
   await getPool().query(
     `INSERT INTO site_ai_provider_keys
@@ -186,7 +158,6 @@ export async function updateSiteFundedProviderKey({
   if (position != null && (!Number.isSafeInteger(position) || position < 0)) {
     throw new Error("a key's position must be a nonnegative integer");
   }
-  await ensureSiteFundedProviderKeyTable();
   const { rowCount } = await getPool().query(
     `UPDATE site_ai_provider_keys SET
        label = COALESCE($2, label),
@@ -218,7 +189,6 @@ export async function removeSiteFundedProviderKey(
   keyId: string,
 ): Promise<void> {
   if (!isValidUUID(keyId)) throw new Error("invalid key id");
-  await ensureSiteFundedProviderKeyTable();
   await getPool().query(`DELETE FROM site_ai_provider_keys WHERE key_id = $1`, [
     keyId,
   ]);
@@ -229,7 +199,6 @@ export async function listSiteFundedProviderKeys(
   now = new Date(),
 ): Promise<SiteFundedProviderKeyInfo[]> {
   assertProvider(provider);
-  await ensureSiteFundedProviderKeyTable();
   const pool = getPool();
   const { rows } = await pool.query(
     `SELECT key_id, provider, label, key_last4, monthly_limit_microusd,
@@ -314,7 +283,6 @@ export async function getSiteFundedProviderKeySecret(
   keyId: string,
 ): Promise<string> {
   if (!isValidUUID(keyId)) throw new Error("invalid key id");
-  await ensureSiteFundedProviderKeyTable();
   const { rows } = await getPool().query(
     `SELECT encrypted_key FROM site_ai_provider_keys WHERE key_id = $1`,
     [keyId],
@@ -416,7 +384,6 @@ export async function manageSiteFundedProviderKeys(
   action?: SiteFundedProviderKeyAction,
 ): Promise<SiteFundedProviderKeyInfo[]> {
   assertProvider(provider);
-  await ensureSiteFundedProviderKeyTable();
   switch (action?.op) {
     case undefined:
       break;
