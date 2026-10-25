@@ -33,6 +33,7 @@ import {
   AttentionPanel,
   AttentionPanelButton,
   isFailedDelivery,
+  isWaitingAttention,
 } from "./attention-panel";
 import {
   isOpenAttention,
@@ -878,8 +879,9 @@ export function ChatRoomThreadPanel({
     id?: string;
     token: number;
   }>({ token: 0 });
+  // Open requests and late questions (still answerable as a new message).
   const openAttention = useMemo(
-    () => attentionRecords.filter(isOpenAttention),
+    () => attentionRecords.filter(isWaitingAttention),
     [attentionRecords],
   );
   const projectedAttention = useMemo(() => {

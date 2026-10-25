@@ -8,6 +8,8 @@ import {
   AttentionPanel,
   AttentionPanelButton,
   attentionPanelRecords,
+  isFailedDelivery,
+  isLateQuestion,
 } from "../attention-panel";
 
 // The card itself is tested on its own: here, what the panel does with it.
@@ -49,8 +51,8 @@ describe("the panel's requests", () => {
       record("here", { response_submitted_at: "x", state: "resolved" }),
       record("stale", { state: "stale", response_submitted_at: "x" }),
       record("in-log", { state: "stale", response_submitted_at: "x" }),
-      // Stale without an answer: over, not a failed delivery.
-      record("expired", { state: "stale", source_kind: "codex_sync_question" }),
+      // Its turn ended unanswered: still answerable, as a new message.
+      record("late", { state: "stale", source_kind: "codex_sync_question" }),
     ];
     const drafts = {
       here: {
@@ -63,7 +65,10 @@ describe("the panel's requests", () => {
       attentionPanelRecords(records, drafts, new Set(["in-log"])).map(
         ({ attention_id }) => attention_id,
       ),
-    ).toEqual(["open", "here", "stale"]);
+    ).toEqual(["open", "here", "stale", "late"]);
+    // Waiting, not undelivered.
+    expect(isLateQuestion(records[5])).toBe(true);
+    expect(isFailedDelivery(records[5], new Set())).toBe(false);
   });
 });
 
@@ -181,6 +186,12 @@ describe("the panel", () => {
     expect(Number(handle.getAttribute("aria-valuenow"))).toBe(before + 24);
     fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
     expect(Number(handle.getAttribute("aria-valuenow"))).toBe(before - 56);
+    // Never past the chat's width.
+    for (let i = 0; i < 200; i++)
+      fireEvent.keyDown(handle, { key: "ArrowLeft" });
+    expect(Number(handle.getAttribute("aria-valuenow"))).toBe(
+      Number(handle.getAttribute("aria-valuemax")),
+    );
   });
 
   it("opens at a request it is sent to", () => {

@@ -39,6 +39,23 @@ function storedWidth(): number {
   }
 }
 
+/**
+ * A question its turn outlived, still unanswered: it can be answered as a new
+ * message (the card says so), so it still waits for the person.
+ */
+export function isLateQuestion(record: AcpAttentionRecord): boolean {
+  return (
+    record.state === "stale" &&
+    record.source_kind === "codex_sync_question" &&
+    record.response_submitted_at == null
+  );
+}
+
+/** What still waits for the person to answer: open, or a late question. */
+export function isWaitingAttention(record: AcpAttentionRecord): boolean {
+  return isOpenAttention(record) || isLateQuestion(record);
+}
+
 /** A question whose saved answer did not reach the agent: retried here. */
 export function isFailedDelivery(
   record: AcpAttentionRecord,
@@ -67,7 +84,7 @@ export function attentionPanelRecords(
 ): AcpAttentionRecord[] {
   return records.filter(
     (record) =>
-      isOpenAttention(record) ||
+      isWaitingAttention(record) ||
       isFailedDelivery(record, projected) ||
       (!projected.has(record.attention_id) &&
         drafts[record.attention_id]?.submitted != null),
@@ -148,12 +165,18 @@ export function AttentionPanel({
   const shown = attentionPanelRecords(records, drafts, projected);
   // What still needs the person: open ones and undelivered answers.
   const actionable = shown.filter(
-    (record) => isOpenAttention(record) || isFailedDelivery(record, projected),
+    (record) =>
+      isWaitingAttention(record) || isFailedDelivery(record, projected),
   ).length;
-  // As wide as the chat it covers (its maxWidth is 100%).
-  const maxWidth =
+  // At most as wide as the chat it covers.
+  const maxWidth = Math.max(
+    MIN_WIDTH,
     panelRef.current?.offsetParent?.clientWidth ??
-    (typeof window === "undefined" ? 2000 : window.innerWidth);
+      (typeof window === "undefined" ? 2000 : window.innerWidth),
+  );
+  const clamp = (value: number) =>
+    Math.min(maxWidth, Math.max(MIN_WIDTH, value));
+  const shownWidth = clamp(width);
 
   useEffect(() => {
     if (!open) return;
@@ -181,10 +204,10 @@ export function AttentionPanel({
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
-    const startWidth = width;
+    const startWidth = shownWidth;
     let next = startWidth;
     const move = (e: PointerEvent) => {
-      next = Math.max(MIN_WIDTH, startWidth + (startX - e.clientX));
+      next = clamp(startWidth + (startX - e.clientX));
       setWidth(next);
     };
     const up = () => {
@@ -206,7 +229,7 @@ export function AttentionPanel({
       event.key === "ArrowLeft" ? step : event.key === "ArrowRight" ? -step : 0;
     if (!change) return;
     event.preventDefault();
-    const next = Math.max(MIN_WIDTH, width + change);
+    const next = clamp(shownWidth + change);
     setWidth(next);
     try {
       localStorage.setItem(WIDTH_KEY, `${Math.round(next)}`);
@@ -227,7 +250,7 @@ export function AttentionPanel({
         top,
         right: 0,
         bottom: 0,
-        width,
+        width: shownWidth,
         maxWidth: "100%",
         zIndex: 13,
         display: open ? "flex" : "none",
@@ -241,9 +264,9 @@ export function AttentionPanel({
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize the panel (left and right arrow keys)"
-        aria-valuenow={Math.round(width)}
+        aria-valuenow={Math.round(shownWidth)}
         aria-valuemin={MIN_WIDTH}
-        aria-valuemax={Math.max(MIN_WIDTH, Math.round(maxWidth))}
+        aria-valuemax={Math.round(maxWidth)}
         tabIndex={0}
         onPointerDown={startResize}
         onKeyDown={resizeWithKeys}
