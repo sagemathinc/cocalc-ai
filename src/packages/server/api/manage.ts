@@ -13,9 +13,7 @@ they have no password, then the provided one is ignored.
 import getPool from "@cocalc/database/pool";
 import { randomBytes } from "node:crypto";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { tokenHash, verifyToken } from "@cocalc/backend/auth/password-hash";
 import { getLogger } from "@cocalc/backend/logger";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import type {
@@ -49,6 +47,7 @@ import {
   recordApiKeyAuditEventSoon,
 } from "./api-key-audit";
 
+import { assertSchemaColumns } from "./schema-columns";
 const log = getLogger("server:api:manage");
 
 // Global per user limit to avoid abuse/bugs. Nobody should ever hit this.
@@ -58,55 +57,20 @@ const API_KEY_V2_LEGACY_PREFIXES = new Set(["sk-cocalc-v2"]);
 const API_KEY_ID_BYTES = 12;
 const API_KEY_SECRET_BYTES = 32;
 
-let apiKeysV2SchemaReady: Promise<void> | undefined;
-
 export async function ensureApiKeysV2Schema(): Promise<void> {
-  apiKeysV2SchemaReady ??= (async () => {
-    const pool = getPool();
-    await pool.query(
-      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence BIGINT",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS issuance_sequence BIGINT",
-    );
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
-    );
-    await pool.query(
-      "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx ON api_keys(key_id)",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS capabilities TEXT[] NOT NULL DEFAULT '{}'::TEXT[]",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope JSONB",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1",
-    );
-    await pool.query(
-      "UPDATE api_keys SET scope_revision=1 WHERE scope_revision IS NULL",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ALTER COLUMN scope_revision SET DEFAULT 1",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ALTER COLUMN scope_revision SET NOT NULL",
-    );
-    await pool.query(
-      "CREATE INDEX IF NOT EXISTS api_keys_capabilities_gin_idx ON api_keys USING GIN(capabilities)",
-    );
-    await pool.query(
-      "CREATE INDEX IF NOT EXISTS api_keys_allowed_project_ids_gin_idx ON api_keys USING GIN(allowed_project_ids)",
-    );
-  })();
-  return await apiKeysV2SchemaReady;
+  // Declared in util/db-schema (accounts, api_keys); see schema-columns.ts.
+  await Promise.all([
+    assertSchemaColumns("accounts", ["api_key_issuance_sequence"]),
+    assertSchemaColumns("api_keys", [
+      "issuance_sequence",
+      "api_search_next_ms",
+      "key_id",
+      "capabilities",
+      "allowed_project_ids",
+      "scope",
+      "scope_revision",
+    ]),
+  ]);
 }
 
 function randomBase64Url(bytes: number): string {
@@ -356,12 +320,12 @@ async function createApiKey({
         ],
       );
       const { id, key_id } = rows[0];
-      // Note that passwordHash is NOT a "function" -- due to salt every time you call it, the output is different!
+      // Note that tokenHash is NOT a "function" -- due to salt every time you call it, the output is different!
       // Thus we have to do this little trick.
       // v2 keys use a random key_id for lookup, not the local integer id.
       const secret = createApiKeySecret({ key_id });
       const trunc = truncApiKey(secret);
-      const hash = passwordHash(secret);
+      const hash = tokenHash(secret);
       await client.query("UPDATE api_keys SET trunc=$1,hash=$2 WHERE id=$3", [
         trunc,
         hash,
@@ -639,7 +603,7 @@ async function checkApiKeyRows({
     });
     return;
   }
-  if (verifyPassword(secret, rows[0].hash)) {
+  if (verifyToken(secret, rows[0].hash)) {
     const { expire } = rows[0];
     if (expire != null && expire.valueOf() <= Date.now()) {
       // Renewal may have committed since this read. Deny the stale request;
@@ -768,7 +732,7 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     });
     return undefined;
   }
-  if (!verifyPassword(secret, entry.hash)) {
+  if (!verifyToken(secret, entry.hash)) {
     recordApiKeyAuditEventSoon({
       event: "api_key_denied",
       value: {

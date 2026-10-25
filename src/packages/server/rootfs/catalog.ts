@@ -1701,11 +1701,11 @@ async function upsertRootfsRow({
      VALUES
       ($1, $2, $3::UUID, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
        CASE WHEN $15 THEN NOW() ELSE NULL END,
-       CASE WHEN $15 THEN $3::UUID ELSE NULL END,
+       CASE WHEN $15 THEN $31::UUID ELSE NULL END,
        $16,
        CASE WHEN $16 THEN $17 ELSE NULL END,
        CASE WHEN $16 THEN NOW() ELSE NULL END,
-       CASE WHEN $16 THEN $3::UUID ELSE NULL END,
+       CASE WHEN $16 THEN $31::UUID ELSE NULL END,
        false, NULL, NULL, NULL, $18, $19, $20, $21::TEXT[], $22, $23, false, NULL, $24, $25::JSONB, $26::JSONB, $27::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
@@ -1722,28 +1722,33 @@ async function upsertRootfsRow({
       description = EXCLUDED.description,
       default_jupyter_kernel = EXCLUDED.default_jupyter_kernel,
       visibility = EXCLUDED.visibility,
+      -- Curation: an owner's edit (which may point the entry at another
+      -- artifact) revokes official and prepull; only an admin save sets them.
       official = EXCLUDED.official,
       prepull = EXCLUDED.prepull,
-      hidden = EXCLUDED.hidden,
+      -- Moderation: hidden and blocked change only on an admin save
+      -- ($30 = admin); an owner re-saving the image keeps them. $31 is the
+      -- account doing the save, recorded as the moderator.
+      hidden = CASE WHEN $30 THEN EXCLUDED.hidden ELSE rootfs_images.hidden END,
       hidden_at = CASE
-        WHEN EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN NOW()
+        WHEN $30 AND EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN NOW()
         ELSE rootfs_images.hidden_at
       END,
       hidden_by = CASE
-        WHEN EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN EXCLUDED.owner_id
+        WHEN $30 AND EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN $31::UUID
         ELSE rootfs_images.hidden_by
       END,
-      blocked = EXCLUDED.blocked,
+      blocked = CASE WHEN $30 THEN EXCLUDED.blocked ELSE rootfs_images.blocked END,
       blocked_reason = CASE
-        WHEN EXCLUDED.blocked THEN COALESCE(EXCLUDED.blocked_reason, rootfs_images.blocked_reason)
+        WHEN $30 AND EXCLUDED.blocked THEN COALESCE(EXCLUDED.blocked_reason, rootfs_images.blocked_reason)
         ELSE rootfs_images.blocked_reason
       END,
       blocked_at = CASE
-        WHEN EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN NOW()
+        WHEN $30 AND EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN NOW()
         ELSE rootfs_images.blocked_at
       END,
       blocked_by = CASE
-        WHEN EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN EXCLUDED.owner_id
+        WHEN $30 AND EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN $31::UUID
         ELSE rootfs_images.blocked_by
       END,
       arch = EXCLUDED.arch,
@@ -1787,6 +1792,8 @@ async function upsertRootfsRow({
       content_warnings ? JSON.stringify(content_warnings) : null,
       contentMetadataSpecified,
       supersedesSpecified,
+      admin,
+      account_id,
     ],
   );
 
@@ -1820,7 +1827,8 @@ async function upsertRootfsRow({
         visibility,
       },
     });
-  } else {
+  } else if (admin) {
+    // Only an admin save changes moderation flags (see the upsert above).
     if (!!previous.hidden !== hidden) {
       await appendRootfsImageEvent({
         image_id,

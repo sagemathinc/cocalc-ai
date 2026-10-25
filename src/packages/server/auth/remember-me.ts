@@ -1,5 +1,5 @@
 import { v4 } from "uuid";
-import passwordHash from "@cocalc/backend/auth/password-hash";
+import { tokenHash } from "@cocalc/backend/auth/password-hash";
 import {
   getSessionLimits,
   newSessionExpiry,
@@ -47,7 +47,7 @@ export async function createRememberMeCookie(
   }
   // compute the value and ttl_s:
   const session_id: string = v4();
-  const hash_session_id: string = passwordHash(session_id);
+  const hash_session_id: string = tokenHash(session_id);
   const x: string[] = hash_session_id.split("$");
   const value = [x[0], x[1], x[2], session_id].join("$");
   // The site's maximum session lifetime, or less if the caller asks for less

@@ -224,7 +224,7 @@ describe("/api/v2/auth/sign-in", () => {
     jest.resetModules();
     mockHasActiveSecondFactor.mockResolvedValue(true);
     jest.doMock("@cocalc/backend/auth/password-hash", () => ({
-      verifyPassword: jest.fn().mockReturnValue(true),
+      checkPassword: jest.fn().mockResolvedValue(true),
     }));
     jest.doMock("@cocalc/server/bay-public-origin", () => ({
       getBayPublicOriginForRequest: jest
@@ -273,7 +273,7 @@ describe("/api/v2/auth/sign-in", () => {
       new Error("too many recent second factor attempts"),
     );
     jest.doMock("@cocalc/backend/auth/password-hash", () => ({
-      verifyPassword: jest.fn().mockReturnValue(true),
+      checkPassword: jest.fn().mockResolvedValue(true),
     }));
     jest.doMock("@cocalc/database/pool", () => ({
       __esModule: true,
@@ -311,7 +311,7 @@ describe("/api/v2/auth/sign-in", () => {
     jest.resetModules();
     mockEmailRequiresCocalc2fa.mockResolvedValue(true);
     jest.doMock("@cocalc/backend/auth/password-hash", () => ({
-      verifyPassword: jest.fn().mockReturnValue(true),
+      checkPassword: jest.fn().mockResolvedValue(true),
     }));
     jest.doMock("@cocalc/database/pool", () => ({
       __esModule: true,
@@ -377,4 +377,39 @@ describe("/api/v2/auth/sign-in", () => {
     });
     expect(mockRecordFail).toHaveBeenCalledWith("user@example.com", req.ip);
   });
+
+  it.each([
+    [
+      "locally",
+      Object.assign(new Error("busy"), { code: "password_hash_busy" }),
+    ],
+    [
+      "from another bay",
+      new Error(
+        "The server is busy checking passwords. Please try again shortly.",
+      ),
+    ],
+  ])(
+    "reports password-check overload %s as busy, not a failed sign-in",
+    async (_where, err) => {
+      mockGetClusterAccountByEmail.mockResolvedValue({
+        account_id: "11111111-1111-1111-1111-111111111111",
+        email_address: "user@example.com",
+        home_bay_id: "bay-1",
+      });
+      mockVerifyClusterAccountSignInPassword.mockRejectedValue(err);
+      const { req, res } = createMocks({
+        method: "POST",
+        url: "/api/v2/auth/sign-in",
+        body: { email: "user@example.com", password: "right password" },
+      });
+      const { default: handler } = await import("./sign-in");
+      await handler(req, res);
+      expect(res._getJSONData()).toEqual({
+        error:
+          "The server is busy checking passwords. Please try again shortly.",
+      });
+      expect(mockRecordFail).not.toHaveBeenCalled();
+    },
+  );
 });

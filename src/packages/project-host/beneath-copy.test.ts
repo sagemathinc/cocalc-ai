@@ -449,3 +449,29 @@ describe("copyBeneath", () => {
     expect(await readdir(dest)).toEqual([]);
   });
 });
+
+describe("BeneathDir.listUpTo", () => {
+  it("stops enumerating at the limit", async () => {
+    const {
+      mkdtemp,
+      writeFile: write,
+      rm: remove,
+    } = await import("node:fs/promises");
+    const { tmpdir: osTmp } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const { BeneathDir } = await import("./beneath-copy");
+    const root = await mkdtemp(joinPath(osTmp(), "beneath-list-"));
+    try {
+      for (let i = 0; i < 50; i++) await write(joinPath(root, `f${i}`), "");
+      const dir = new BeneathDir(root);
+      const some = await dir.listUpTo(10);
+      expect(some.complete).toBe(false);
+      expect(some.names).toHaveLength(10);
+      const all = await dir.listUpTo(50);
+      expect(all.complete).toBe(true);
+      expect(all.names.sort()).toEqual((await dir.list()).sort());
+    } finally {
+      await remove(root, { recursive: true, force: true });
+    }
+  });
+});

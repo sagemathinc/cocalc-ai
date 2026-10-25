@@ -95,6 +95,12 @@ export default async function signIn(req: Request, res: Response) {
       });
       return;
     }
+    if (isPasswordHashBusy(err)) {
+      // Overload, not a bad credential: say so (account-agnostic) and do not
+      // count it toward the sign-in failure throttle.
+      res.json({ error: PASSWORD_HASH_BUSY_MESSAGE });
+      return;
+    }
     res.json(await getSignInErrorPayload(err, { email, requiresToken }));
     recordFail(email, req.ip);
     return;
@@ -190,6 +196,18 @@ function getSignInErrorMessage(
   return "Problem signing into account.";
 }
 
+const PASSWORD_HASH_BUSY_MESSAGE =
+  "The server is busy checking passwords. Please try again shortly.";
+
+// By code locally; by message when the error came back from another bay.
+function isPasswordHashBusy(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  return (
+    e?.code === "password_hash_busy" ||
+    `${e?.message ?? ""}`.startsWith(PASSWORD_HASH_BUSY_MESSAGE)
+  );
+}
+
 function signInErrorIsMissingAccount(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err ?? "");
   return message.startsWith("no account with email address");
@@ -254,9 +272,10 @@ export async function getAccount(
       });
     } catch (err) {
       if (
-        err instanceof Error &&
-        (err.message.includes("is banned") ||
-          err.message.startsWith("The password must be shorter than"))
+        isPasswordHashBusy(err) ||
+        (err instanceof Error &&
+          (err.message.includes("is banned") ||
+            err.message.startsWith("The password must be shorter than")))
       ) {
         throw err;
       }

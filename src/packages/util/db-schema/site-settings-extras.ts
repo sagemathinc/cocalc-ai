@@ -224,6 +224,7 @@ function custom_ai_model_display(value: string): string {
 
 export type SiteSettingsExtrasKeys =
   | "pii_retention"
+  | "password_kdf"
   | "launch_emergency_heading"
   | "launch_read_mostly_maintenance"
   | "launch_disable_project_creation"
@@ -353,10 +354,6 @@ export type SiteSettingsExtrasKeys =
   | "zendesk_username"
   | "zendesk_uri"
   | "support_account_id"
-  | "github_heading"
-  | "github_project_id"
-  | "github_username"
-  | "github_token"
   | "agent_connectors_heading"
   | "github_connector_client_id"
   | "github_connector_client_secret"
@@ -369,7 +366,6 @@ export type SiteSettingsExtrasKeys =
   | "sagebrush_purge_url"
   | "sagebrush_purge_secret"
   | "sagebrush_purge_obligation"
-  | "github_block"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
   | "pay_as_you_go_section"
@@ -1482,6 +1478,14 @@ export const EXTRAS: SettingsExtras = {
     to_val: pii_retention_parse,
     to_display: pii_retention_display,
   },
+  password_kdf: {
+    name: "Password Hashing",
+    desc: "How new account passwords and recovery codes are hashed. A fresh standalone (single-bay) install starts on 'scrypt'; an existing standalone deployment that already had password hashes starts on 'legacy'. A multibay cluster stays 'legacy' until an admin sets this on the seed bay (also do that after turning a standalone install into a cluster, so the value propagates to every bay). Every release since password hashing gained scrypt can verify all formats. 'legacy' writes the old format, which older releases can also verify. 'scrypt' writes scrypt hashes, upgrades a password's hash when its owner signs in, and strengthens every remaining legacy hash in the background (scrypt over the old hash). The switch is one-way: once it is 'scrypt' it cannot be set back, so new hashes stay strong and failed sign-ins keep a uniform cost. Once 'scrypt' is on, do not roll the bay back to a release that cannot verify scrypt hashes: those accounts could no longer sign in.",
+    default: "legacy",
+    valid: ["legacy", "scrypt"],
+    tags: ["Security"],
+    group: "System / Advanced",
+  },
   stripe_heading: {
     // this is consmetic, otherwise it looks weird.
     name: "Stripe Keys",
@@ -1768,52 +1772,6 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Support"],
     group: "Support / Integrations",
     subgroup: "Support Messaging",
-  },
-  github_heading: {
-    name: "GitHub API Configuration",
-    desc: "CoCalc can mirror content from  GitHub at `https://yoursite.com/github/[url to github]`. This is just like what https://nbviewer.org does.",
-    default: "",
-    type: "header",
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
-  },
-  github_project_id: {
-    name: "GitHub Project ID",
-    desc: "If this is set to a `project_id` (a UUID v4 of a project on your server), then the share server will proxy GitHub URL's.  For example, when a user visits https://yoursite.com/github/sagemathinc/cocalc they see a rendered version.  They can star the repo from cocalc, edit it in cocalc, etc.  This extends your CoCalc server to provide similar functionality to what nbviewer.org provides.  Optionally set a GitHub username and personal access token below to massively increase GitHub's API rate limits.",
-    default: "",
-    valid: isValidUUID,
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
-  },
-  github_username: {
-    name: "GitHub Username",
-    desc: "This is a username for a GitHub Account.",
-    default: "",
-    show: () => true,
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
-  },
-  github_token: {
-    name: "GitHub Token",
-    desc: "This is a Personal Access token for the above GitHub account.  You can get one at https://github.com/settings/tokens -- you do not have to enable any scopes -- it used only to increase rate limits from 60/hour to 5000/hour.",
-    default: "",
-    password: true,
-    show: () => true,
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
-  },
-  github_block: {
-    name: "GitHub Abuse Block",
-    desc: "In case of **abuse**, you can block proxying of any GitHub URL that contains any string in this comma separated list.",
-    default: "",
-    show: () => true,
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
   },
   email_section: {
     name: "Email Configuration",

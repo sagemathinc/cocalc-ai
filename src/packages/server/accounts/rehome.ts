@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { assertSchemaColumns } from "@cocalc/server/api/schema-columns";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
@@ -174,12 +175,11 @@ async function ensureAccountRehomeSchema(): Promise<void> {
   if (accountRehomeSchemaReady.has(bay))
     return accountRehomeSchemaReady.get(bay);
   const pending = (async () => {
-    await getPool().query(
-      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence BIGINT",
-    );
-    await getPool().query(
-      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
-    );
+    // accounts columns come from util/db-schema; see api/schema-columns.ts.
+    await assertSchemaColumns("accounts", [
+      "api_key_issuance_sequence",
+      "api_search_next_ms",
+    ]);
     await getPool().query(`
       CREATE TABLE IF NOT EXISTS ${ACCOUNT_REHOME_OPERATIONS_TABLE} (
         op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -227,30 +227,15 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
   if (accountRehomeApiKeysSchemaReady.has(bay))
     return accountRehomeApiKeysSchemaReady.get(bay);
   const pending = (async () => {
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS issuance_sequence BIGINT",
-    );
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
-    );
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
-    );
-    await getPool().query(
-      "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx ON api_keys(key_id)",
-    );
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS capabilities TEXT[] NOT NULL DEFAULT '{}'::TEXT[]",
-    );
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
-    );
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope JSONB",
-    );
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1",
-    );
+    await assertSchemaColumns("api_keys", [
+      "issuance_sequence",
+      "api_search_next_ms",
+      "key_id",
+      "capabilities",
+      "allowed_project_ids",
+      "scope",
+      "scope_revision",
+    ]);
     await new ApiKeyActionStore(getPool()).ensureSchema();
   })();
   accountRehomeApiKeysSchemaReady.set(bay, pending);
