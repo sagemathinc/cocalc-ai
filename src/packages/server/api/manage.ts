@@ -49,6 +49,7 @@ import {
   recordApiKeyAuditEventSoon,
 } from "./api-key-audit";
 
+import { assertSchemaColumns } from "./schema-columns";
 const log = getLogger("server:api:manage");
 
 // Global per user limit to avoid abuse/bugs. Nobody should ever hit this.
@@ -58,55 +59,20 @@ const API_KEY_V2_LEGACY_PREFIXES = new Set(["sk-cocalc-v2"]);
 const API_KEY_ID_BYTES = 12;
 const API_KEY_SECRET_BYTES = 32;
 
-let apiKeysV2SchemaReady: Promise<void> | undefined;
-
 export async function ensureApiKeysV2Schema(): Promise<void> {
-  apiKeysV2SchemaReady ??= (async () => {
-    const pool = getPool();
-    await pool.query(
-      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence BIGINT",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS issuance_sequence BIGINT",
-    );
-    await getPool().query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
-    );
-    await pool.query(
-      "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx ON api_keys(key_id)",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS capabilities TEXT[] NOT NULL DEFAULT '{}'::TEXT[]",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope JSONB",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1",
-    );
-    await pool.query(
-      "UPDATE api_keys SET scope_revision=1 WHERE scope_revision IS NULL",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ALTER COLUMN scope_revision SET DEFAULT 1",
-    );
-    await pool.query(
-      "ALTER TABLE api_keys ALTER COLUMN scope_revision SET NOT NULL",
-    );
-    await pool.query(
-      "CREATE INDEX IF NOT EXISTS api_keys_capabilities_gin_idx ON api_keys USING GIN(capabilities)",
-    );
-    await pool.query(
-      "CREATE INDEX IF NOT EXISTS api_keys_allowed_project_ids_gin_idx ON api_keys USING GIN(allowed_project_ids)",
-    );
-  })();
-  return await apiKeysV2SchemaReady;
+  // Declared in util/db-schema (accounts, api_keys); see schema-columns.ts.
+  await Promise.all([
+    assertSchemaColumns("accounts", ["api_key_issuance_sequence"]),
+    assertSchemaColumns("api_keys", [
+      "issuance_sequence",
+      "api_search_next_ms",
+      "key_id",
+      "capabilities",
+      "allowed_project_ids",
+      "scope",
+      "scope_revision",
+    ]),
+  ]);
 }
 
 function randomBase64Url(bytes: number): string {

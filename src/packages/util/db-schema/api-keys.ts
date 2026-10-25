@@ -90,11 +90,17 @@ Table({
     capabilities: {
       type: "array",
       pg_type: "TEXT[]",
+      not_null: true,
+      pg_default: "'{}'::text[]",
+      pg_null_backfill: "'{}'::text[]",
       desc: "Explicit allow-list of capabilities granted to this API key.",
     },
     allowed_project_ids: {
       type: "array",
       pg_type: "UUID[]",
+      not_null: true,
+      pg_default: "'{}'::uuid[]",
+      pg_null_backfill: "'{}'::uuid[]",
       desc: "Explicit allow-list of project IDs this API key can access for project-scoped capabilities.",
     },
     scope: {
@@ -104,6 +110,9 @@ Table({
     },
     scope_revision: {
       type: "integer",
+      not_null: true,
+      pg_default: "1",
+      pg_null_backfill: "1",
       desc: "Monotonically increasing revision invalidating derived credentials.",
     },
     issuance_sequence: {
@@ -118,7 +127,12 @@ Table({
   },
   rules: {
     primary_key: "id",
-    pg_indexes: ["((created IS NOT NULL))", "((account_id IS NOT NULL))"],
+    pg_indexes: [
+      "((created IS NOT NULL))",
+      "((account_id IS NOT NULL))",
+      "USING GIN (capabilities)",
+      "USING GIN (allowed_project_ids)",
+    ],
     pg_unique_indexes: ["key_id"],
   },
 });

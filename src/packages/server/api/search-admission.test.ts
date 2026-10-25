@@ -42,10 +42,10 @@ describeDb("durable account-home search admission", () => {
   const account_id = randomUUID();
   beforeAll(async () => {
     await pool.query(
-      "CREATE TABLE IF NOT EXISTS api_keys(account_id UUID, key_id TEXT, scope_revision INTEGER, expire TIMESTAMPTZ)",
+      "CREATE TABLE IF NOT EXISTS api_keys(account_id UUID, key_id TEXT, scope_revision INTEGER, expire TIMESTAMPTZ, api_search_next_ms BIGINT)",
     );
     await pool.query(
-      "CREATE TABLE IF NOT EXISTS accounts(account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
+      "CREATE TABLE IF NOT EXISTS accounts(account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN, api_search_next_ms BIGINT)",
     );
     await ensureSearchAdmissionSchema();
     await pool.query("INSERT INTO accounts(account_id) VALUES($1)", [

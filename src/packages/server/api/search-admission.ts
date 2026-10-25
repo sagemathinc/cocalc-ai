@@ -9,32 +9,18 @@ import {
   assertAccountWriteOnHomeBay,
 } from "@cocalc/database/postgres/account-rehome-fence";
 import { isValidUUID } from "@cocalc/util/misc";
+import { assertSchemaColumns } from "./schema-columns";
 
 // A token bucket: 300 admissions/minute sustained, with a burst of 30.
 const INTERVAL_MS = 200;
 const BURST = 30;
-const schemas = new WeakMap<object, Promise<void>>();
 
 export async function ensureSearchAdmissionSchema(): Promise<void> {
-  const pool = getPool();
-  let pending = schemas.get(pool);
-  if (!pending) {
-    pending = pool
-      .query(
-        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
-      )
-      .then(async () => {
-        await pool.query(
-          "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
-        );
-      })
-      .catch((error) => {
-        schemas.delete(pool);
-        throw error;
-      });
-    schemas.set(pool, pending);
-  }
-  await pending;
+  // Declared in util/db-schema (accounts, api_keys); see schema-columns.ts.
+  await Promise.all([
+    assertSchemaColumns("accounts", ["api_search_next_ms"]),
+    assertSchemaColumns("api_keys", ["api_search_next_ms"]),
+  ]);
 }
 
 export function nextSearchAdmission(

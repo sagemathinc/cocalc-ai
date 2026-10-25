@@ -23,6 +23,10 @@ let clearAccountPersistStateMock: jest.Mock;
 let createInterBayAccountLocalClientMock: jest.Mock;
 let personalRehomeGuardMock: jest.Mock;
 
+jest.mock("@cocalc/server/api/schema-columns", () => ({
+  assertSchemaColumns: jest.fn(async () => undefined),
+}));
+
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({
