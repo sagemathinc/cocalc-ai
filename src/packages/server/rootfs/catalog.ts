@@ -1722,28 +1722,30 @@ async function upsertRootfsRow({
       description = EXCLUDED.description,
       default_jupyter_kernel = EXCLUDED.default_jupyter_kernel,
       visibility = EXCLUDED.visibility,
-      official = EXCLUDED.official,
-      prepull = EXCLUDED.prepull,
-      hidden = EXCLUDED.hidden,
+      -- Moderation and curation flags change only on an admin save; an
+      -- owner re-saving an image keeps what an admin set ($30 = admin).
+      official = CASE WHEN $30 THEN EXCLUDED.official ELSE rootfs_images.official END,
+      prepull = CASE WHEN $30 THEN EXCLUDED.prepull ELSE rootfs_images.prepull END,
+      hidden = CASE WHEN $30 THEN EXCLUDED.hidden ELSE rootfs_images.hidden END,
       hidden_at = CASE
-        WHEN EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN NOW()
+        WHEN $30 AND EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN NOW()
         ELSE rootfs_images.hidden_at
       END,
       hidden_by = CASE
-        WHEN EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN EXCLUDED.owner_id
+        WHEN $30 AND EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN EXCLUDED.owner_id
         ELSE rootfs_images.hidden_by
       END,
-      blocked = EXCLUDED.blocked,
+      blocked = CASE WHEN $30 THEN EXCLUDED.blocked ELSE rootfs_images.blocked END,
       blocked_reason = CASE
-        WHEN EXCLUDED.blocked THEN COALESCE(EXCLUDED.blocked_reason, rootfs_images.blocked_reason)
+        WHEN $30 AND EXCLUDED.blocked THEN COALESCE(EXCLUDED.blocked_reason, rootfs_images.blocked_reason)
         ELSE rootfs_images.blocked_reason
       END,
       blocked_at = CASE
-        WHEN EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN NOW()
+        WHEN $30 AND EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN NOW()
         ELSE rootfs_images.blocked_at
       END,
       blocked_by = CASE
-        WHEN EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN EXCLUDED.owner_id
+        WHEN $30 AND EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN EXCLUDED.owner_id
         ELSE rootfs_images.blocked_by
       END,
       arch = EXCLUDED.arch,
@@ -1787,6 +1789,7 @@ async function upsertRootfsRow({
       content_warnings ? JSON.stringify(content_warnings) : null,
       contentMetadataSpecified,
       supersedesSpecified,
+      admin,
     ],
   );
 
@@ -1820,7 +1823,8 @@ async function upsertRootfsRow({
         visibility,
       },
     });
-  } else {
+  } else if (admin) {
+    // Only an admin save changes moderation flags (see the upsert above).
     if (!!previous.hidden !== hidden) {
       await appendRootfsImageEvent({
         image_id,
