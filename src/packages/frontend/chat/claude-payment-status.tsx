@@ -1,4 +1,5 @@
 import { Button, Popover, Progress, Typography } from "antd";
+import { MembershipAIAllowance } from "./membership-ai-allowance";
 import { useEffect, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -293,6 +294,9 @@ function PaymentStatus({
                   View usage on Claude
                 </a>
               </>
+            ) : mode === "site-funded" ? (
+              // Opening the details reloads the allowance.
+              <MembershipAIAllowance variant="full" reload={open ? 1 : 0} />
             ) : (
               <p>Anthropic bills API usage to the key owner.</p>
             )}
