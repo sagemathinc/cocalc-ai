@@ -119,4 +119,96 @@ describeDb("api_keys schema upgrade by the schema synchronization", () => {
       ).toEqual(rows);
     },
   );
+
+  // Production shape (checked on prod 2026-10-25): the schema sync created
+  // the arrays nullable without defaults before the old request-time DDL
+  // ran, so its ADD COLUMN IF NOT EXISTS ... NOT NULL DEFAULT never applied;
+  // scope_revision was fixed by its explicit UPDATE/ALTER; and the old DDL
+  // created legacy-named GIN indexes.
+  it("upgrades the production-shaped table and adopts its legacy GIN indexes", async () => {
+    const owner = randomUUID();
+    await pool().query(
+      `ALTER TABLE api_keys
+         ADD COLUMN capabilities TEXT[],
+         ADD COLUMN allowed_project_ids UUID[],
+         ADD COLUMN scope JSONB,
+         ADD COLUMN scope_revision INTEGER NOT NULL DEFAULT 1,
+         ADD COLUMN key_id TEXT,
+         ADD COLUMN issuance_sequence BIGINT,
+         ADD COLUMN api_search_next_ms BIGINT`,
+    );
+    await pool().query(
+      "CREATE UNIQUE INDEX api_keys_key_id_unique_idx ON api_keys(key_id)",
+    );
+    await pool().query(
+      "CREATE INDEX api_keys_capabilities_gin_idx ON api_keys USING GIN(capabilities)",
+    );
+    await pool().query(
+      "CREATE INDEX api_keys_allowed_project_ids_gin_idx ON api_keys USING GIN(allowed_project_ids)",
+    );
+    await pool().query(
+      `INSERT INTO api_keys(id,account_id,hash,capabilities,allowed_project_ids)
+       VALUES (1,$1,'h1',NULL,NULL), (2,$1,'h2',ARRAY['file:read'],'{}')`,
+      [owner],
+    );
+    const indexesBefore = (
+      await pool().query(
+        "SELECT indexname FROM pg_indexes WHERE tablename='api_keys' ORDER BY 1",
+      )
+    ).rows.map(({ indexname }) => indexname);
+
+    await syncSchema({ api_keys: SCHEMA.api_keys });
+
+    const rows = (
+      await pool().query(
+        "SELECT id, capabilities, allowed_project_ids FROM api_keys ORDER BY id",
+      )
+    ).rows;
+    expect(rows).toEqual([
+      { id: 1, capabilities: [], allowed_project_ids: [] },
+      { id: 2, capabilities: ["file:read"], allowed_project_ids: [] },
+    ]);
+    const columns = (
+      await pool().query(
+        `SELECT column_name, is_nullable, column_default
+         FROM information_schema.columns
+         WHERE table_name='api_keys'
+           AND column_name IN ('capabilities','allowed_project_ids')
+         ORDER BY 1`,
+      )
+    ).rows;
+    expect(columns).toEqual([
+      {
+        column_name: "allowed_project_ids",
+        is_nullable: "NO",
+        column_default: "'{}'::uuid[]",
+      },
+      {
+        column_name: "capabilities",
+        is_nullable: "NO",
+        column_default: "'{}'::text[]",
+      },
+    ]);
+    // The legacy indexes are adopted, not duplicated or rebuilt.
+    const indexesAfter = (
+      await pool().query(
+        "SELECT indexname, indexdef FROM pg_indexes WHERE tablename='api_keys' ORDER BY 1",
+      )
+    ).rows;
+    for (const name of [
+      "api_keys_capabilities_gin_idx",
+      "api_keys_allowed_project_ids_gin_idx",
+      "api_keys_key_id_unique_idx",
+    ]) {
+      expect(indexesBefore).toContain(name);
+      expect(indexesAfter.map(({ indexname }) => indexname)).toContain(name);
+    }
+    for (const column of ["capabilities", "allowed_project_ids"]) {
+      expect(
+        indexesAfter.filter(({ indexdef }) =>
+          new RegExp(`USING gin \\(${column}\\)`).test(indexdef),
+        ),
+      ).toHaveLength(1);
+    }
+  });
 });
