@@ -79,6 +79,12 @@ describe("site master key rotation re-encryption", () => {
       "INSERT INTO server_settings(name, value) VALUES ('stripe_secret_key', $1)",
       [enc("stripe_secret_key", "sk_live_x")],
     );
+    // A retired secret setting (its definition is gone, its row is not):
+    // rotation must still move it to the new key.
+    await pool.query(
+      "INSERT INTO server_settings(name, value) VALUES ('github_token', $1)",
+      [enc("github_token", "ghp_retired")],
+    );
     await pool.query(
       "INSERT INTO account_second_factors(id, secret_encrypted) VALUES ($1, $2)",
       [FACTOR, enc(`account_second_factor_secret:${FACTOR}`, "totp-seed")],
@@ -151,7 +157,7 @@ describe("site master key rotation re-encryption", () => {
     const report = await runMasterKeyMigration();
     expect(report.totals.errors).toBe(0);
     expect(report.totals.to_migrate).toBe(0);
-    expect(report.totals.current).toBe(10);
+    expect(report.totals.current).toBe(11);
   });
 
   it("moves every store from a retired key to the new active key", async () => {
@@ -168,21 +174,23 @@ describe("site master key rotation re-encryption", () => {
     ]);
     expect(dry.totals).toMatchObject({
       errors: 0,
-      rotated: 10,
-      to_migrate: 10,
+      rotated: 11,
+      to_migrate: 11,
     });
     for (const table of dry.tables.filter((t) => t.total > 0)) {
-      expect(table.by_key).toEqual({ [id1]: 1 });
+      expect(table.by_key).toEqual({
+        [id1]: table.table === "server_settings" ? 2 : 1,
+      });
     }
 
     const executed = await runMasterKeyMigration({ execute: true });
-    expect(executed.totals.migrated).toBe(10);
+    expect(executed.totals.migrated).toBe(11);
     const after = await runMasterKeyMigration();
     expect(after.totals).toMatchObject({
       rotated: 0,
       to_migrate: 0,
       errors: 0,
-      current: 10,
+      current: 11,
     });
 
     // Everything now decrypts with K2 alone.
@@ -200,6 +208,17 @@ describe("site master key rotation re-encryption", () => {
         settings2,
       ),
     ).toBe("sk_live_x");
+    expect(
+      decryptSecretSettingValue(
+        "github_token",
+        (
+          await one(
+            "SELECT value FROM server_settings WHERE name='github_token'",
+          )
+        ).value,
+        settings2,
+      ),
+    ).toBe("ghp_retired");
     const invite = await one(
       "SELECT email_ciphertext, email_hash, token_ciphertext FROM project_collab_invites",
     );
