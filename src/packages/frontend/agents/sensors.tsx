@@ -59,6 +59,7 @@ const STATUS_COLOR: Record<AgentSensor["status"], string> = {
 const OUTCOME: Record<string, string> = {
   quiet: "Nothing to report",
   wake: "Woke the agent",
+  "wake-guidance": "Woke the agent in its running turn",
   "wake-limited": "Wanted to wake; daily limit reached",
   "wake-failed": "Wake failed",
   "wake-coalesced": "Held while an earlier wake waited; goes with the next",

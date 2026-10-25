@@ -11,6 +11,7 @@ import {
   syncCliConnectorTokens,
   writeCliConnectorTools,
 } from "./cli-connector-files";
+import { BeneathDir } from "../beneath-copy";
 
 let dir: string;
 let realBin: string;
@@ -30,7 +31,7 @@ beforeEach(async () => {
     '#!/bin/sh\necho "cf:${CLOUDFLARE_API_TOKEN-unset}"\n',
     { mode: 0o755 },
   );
-  await writeCliConnectorTools(dir);
+  await writeCliConnectorTools(new BeneathDir(dir));
 });
 
 afterEach(async () => {
@@ -80,17 +81,17 @@ it("runs the real command unchanged when no connector is on", () => {
 });
 
 it("supplies the tokens during a turn and removes them after", async () => {
-  await syncCliConnectorTokens(dir, tokens);
+  await syncCliConnectorTokens(new BeneathDir(dir), tokens);
   expect(run("gh", ["api", "user"]).trim()).toBe("gh:gho_test:api user");
   expect(run("cf").trim()).toBe("cf:cf_test");
   const stat = await fs.stat(join(dir, "cli", "github-token"));
   expect(stat.mode & 0o777).toBe(0o600);
 
-  await syncCliConnectorTokens(dir, [tokens[1]]);
+  await syncCliConnectorTokens(new BeneathDir(dir), [tokens[1]]);
   expect(run("gh").trim()).toBe("gh:unset:");
   expect(run("cf").trim()).toBe("cf:cf_test");
 
-  await syncCliConnectorTokens(dir, []);
+  await syncCliConnectorTokens(new BeneathDir(dir), []);
   expect(run("cf").trim()).toBe("cf:unset");
   expect(await fs.readdir(join(dir, "cli"))).toEqual(["bin"]);
 });
@@ -100,13 +101,17 @@ it("fails closed: a failed write leaves no token files", async () => {
   await fs.mkdir(join(dir, "cli", "cloudflare-token", "x"), {
     recursive: true,
   });
-  await expect(syncCliConnectorTokens(dir, tokens)).rejects.toThrow();
+  await expect(
+    syncCliConnectorTokens(new BeneathDir(dir), tokens),
+  ).rejects.toThrow();
   await expect(fs.stat(join(dir, "cli", "github-token"))).rejects.toThrow();
   expect(run("gh").trim()).toBe("gh:unset:");
 });
 
 it("ignores malformed tokens", async () => {
-  await syncCliConnectorTokens(dir, [{ ...tokens[0], token: "a b" }]);
+  await syncCliConnectorTokens(new BeneathDir(dir), [
+    { ...tokens[0], token: "a b" },
+  ]);
   expect(run("gh").trim()).toBe("gh:unset:");
 });
 
@@ -127,7 +132,7 @@ describe("git credential helper", () => {
     const ask = (host: string, protocol = "https") =>
       run(helper(), ["get"], `protocol=${protocol}\nhost=${host}\n\n`);
     expect(ask("github.com")).toBe("");
-    await syncCliConnectorTokens(dir, tokens);
+    await syncCliConnectorTokens(new BeneathDir(dir), tokens);
     expect(ask("github.com")).toBe(
       "username=x-access-token\npassword=gho_test\n",
     );
@@ -142,9 +147,9 @@ describe("git credential helper", () => {
   it("is used by git itself, only during a turn", async () => {
     const fill = () =>
       run("git", ["credential", "fill"], "protocol=https\nhost=github.com\n\n");
-    await syncCliConnectorTokens(dir, tokens);
+    await syncCliConnectorTokens(new BeneathDir(dir), tokens);
     expect(fill()).toContain("password=gho_test");
-    await syncCliConnectorTokens(dir, []);
+    await syncCliConnectorTokens(new BeneathDir(dir), []);
     // Without the connector, git is unchanged: no helper, so no credentials.
     expect(() =>
       execFileSync("git", ["credential", "fill"], {
@@ -163,7 +168,7 @@ describe("git credential helper", () => {
     );
     const store = join(dir, ".git-credentials");
     await fs.writeFile(store, "https://user:own-password@gitlab.com\n");
-    await syncCliConnectorTokens(dir, tokens);
+    await syncCliConnectorTokens(new BeneathDir(dir), tokens);
     const filled = run(
       "git",
       ["credential", "fill"],
@@ -185,9 +190,12 @@ describe("sweeping tokens of dead leases", () => {
     const runtime = await fs.mkdtemp(join(tmpdir(), "cli-runtime-"));
     try {
       const lease = (name: string) => join(runtime, `.cocalc-agent-${name}`);
+      const leaseDir = (name: string) =>
+        new BeneathDir(runtime, `.cocalc-agent-${name}`);
       for (const name of ["dead", "live", "own"]) {
-        await writeCliConnectorTools(lease(name));
-        await syncCliConnectorTokens(lease(name), tokens);
+        leaseDir(name).mkdir();
+        await writeCliConnectorTools(leaseDir(name));
+        await syncCliConnectorTokens(leaseDir(name), tokens);
       }
       const old = new Date(Date.now() - STALE_CLI_TOKEN_MS - 60_000);
       for (const name of ["dead", "own"]) {
@@ -197,7 +205,7 @@ describe("sweeping tokens of dead leases", () => {
       }
       await expect(
         sweepStaleCliConnectorTokens({
-          runtimeDir: runtime,
+          runtimeDir: new BeneathDir(runtime),
           ownLeaseName: ".cocalc-agent-own",
         }),
       ).resolves.toBe(2);
@@ -213,10 +221,35 @@ describe("sweeping tokens of dead leases", () => {
     }
   });
 
+  it("never sweeps through a symlink the project put on the way", async () => {
+    const target = await fs.mkdtemp(join(tmpdir(), "sweep-target-"));
+    const home = await fs.mkdtemp(join(tmpdir(), "sweep-home-"));
+    try {
+      const stale = join(target, ".cocalc-agent-other", "cli");
+      await fs.mkdir(stale, { recursive: true });
+      const token = join(stale, "github-token");
+      await fs.writeFile(token, "x");
+      const old = new Date(Date.now() - STALE_CLI_TOKEN_MS - 60_000);
+      await fs.utimes(token, old, old);
+      // The project's runtime directory is a symlink to another place.
+      await fs.symlink(target, join(home, "runtime"));
+      await expect(
+        sweepStaleCliConnectorTokens({
+          runtimeDir: new BeneathDir(home, "runtime"),
+          ownLeaseName: ".cocalc-agent-own",
+        }),
+      ).resolves.toBe(0);
+      await expect(fs.readFile(token, "utf8")).resolves.toBe("x");
+    } finally {
+      await fs.rm(target, { recursive: true, force: true });
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("is harmless when the runtime directory does not exist", async () => {
     await expect(
       sweepStaleCliConnectorTokens({
-        runtimeDir: join(dir, "missing"),
+        runtimeDir: new BeneathDir(dir, "missing"),
         ownLeaseName: "x",
       }),
     ).resolves.toBe(0);
@@ -229,7 +262,7 @@ describe("site connectors", () => {
   it("writes only the wrappers of connectors the site set up", async () => {
     const only = await fs.mkdtemp(join(tmpdir(), "cli-only-cf-"));
     try {
-      await writeCliConnectorTools(only, ["cloudflare"]);
+      await writeCliConnectorTools(new BeneathDir(only), ["cloudflare"]);
       expect((await fs.readdir(join(only, "cli", "bin"))).sort()).toEqual([
         "cf",
         "wrangler",
@@ -250,5 +283,62 @@ describe("site connectors", () => {
       }),
     ).resolves.toEqual([]);
     await expect(siteCliConnectors(undefined)).resolves.toEqual([]);
+  });
+});
+
+describe("lease files are never written through a symlink", () => {
+  it("refuses to write tokens into a lease directory swapped for a symlink", async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), "cli-lease-root-"));
+    const elsewhere = await fs.mkdtemp(join(tmpdir(), "cli-lease-elsewhere-"));
+    try {
+      const leaseDir = new BeneathDir(root, ".cocalc-agent-x");
+      leaseDir.mkdir();
+      await writeCliConnectorTools(leaseDir);
+      // The project replaces the lease directory with a symlink elsewhere.
+      await fs.rename(join(root, ".cocalc-agent-x"), join(root, "moved"));
+      await fs.symlink(elsewhere, join(root, ".cocalc-agent-x"));
+      await expect(syncCliConnectorTokens(leaseDir, tokens)).rejects.toThrow();
+      await expect(writeCliConnectorTools(leaseDir)).rejects.toThrow();
+      expect(await fs.readdir(elsewhere)).toEqual([]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("never sweeps through a lease directory swapped for a symlink", async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), "cli-sweep-root-"));
+    const elsewhere = await fs.mkdtemp(join(tmpdir(), "cli-sweep-elsewhere-"));
+    try {
+      await fs.mkdir(join(elsewhere, "cli"));
+      const token = join(elsewhere, "cli", "github-token");
+      await fs.writeFile(token, "x");
+      const old = new Date(Date.now() - STALE_CLI_TOKEN_MS - 60_000);
+      await fs.utimes(token, old, old);
+      await fs.symlink(elsewhere, join(root, ".cocalc-agent-other"));
+      await expect(
+        sweepStaleCliConnectorTokens({
+          runtimeDir: new BeneathDir(root),
+          ownLeaseName: ".cocalc-agent-own",
+        }),
+      ).resolves.toBe(0);
+      await expect(fs.readFile(token, "utf8")).resolves.toBe("x");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(elsewhere, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("BeneathDir.writeFile", () => {
+  it("writes the whole content, however large", async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), "beneath-write-"));
+    try {
+      const big = "x".repeat(4 * 1024 * 1024) + "end";
+      new BeneathDir(root).writeFile("big", big);
+      expect(await fs.readFile(join(root, "big"), "utf8")).toBe(big);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });

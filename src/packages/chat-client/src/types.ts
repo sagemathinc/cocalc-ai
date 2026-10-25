@@ -6,6 +6,11 @@
 import type { ChatThreadRuntimeState, CodexThreadConfig } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
+import type {
+  HarnessSessionControls,
+  HarnessSessionSettings,
+} from "@cocalc/util/ai/harness-controls";
+import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 
 export type { CodexThreadConfig } from "@cocalc/chat";
 
@@ -55,6 +60,10 @@ export interface ProjectedChatThread {
   agent_kind?: "acp" | "llm" | "none";
   agent_model?: string;
   acp_config?: CodexThreadConfig;
+  /** Set for an ACP harness agent such as Claude Code; absent for Codex. */
+  agent_runtime?: AcpHarnessRuntime;
+  /** The harness's settings catalog as last reported, when still current. */
+  agent_runtime_controls?: HarnessSessionControls;
   state: ChatThreadRuntimeState;
   active_message_id?: string;
   updated_at?: string;
@@ -101,6 +110,11 @@ export interface HeadlessChatClient {
   updateCodexThreadConfig(opts: {
     thread_id: string;
     acp_config: CodexThreadConfig;
+  }): Promise<void>;
+  /** Choices (model, effort, ...) for a harness agent's next turns. */
+  updateHarnessSettings(opts: {
+    thread_id: string;
+    settings: HarnessSessionSettings;
   }): Promise<void>;
   interrupt(
     thread_id: string,

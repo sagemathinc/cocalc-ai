@@ -114,13 +114,13 @@ echo "  tarball: $FINAL_TARBALL"
 cd "$ROOT"
 
 echo "- Build project-host bundle"
-pnpm --filter @cocalc/project-host run build:bundle
+pnpm --dir "$ROOT/packages" --filter @cocalc/project-host run build:bundle
 
 echo "- Build project bundle"
-pnpm --filter @cocalc/project run build:bundle
+pnpm --dir "$ROOT/packages" --filter @cocalc/project run build:bundle
 
 echo "- Build tools bundle"
-pnpm --filter @cocalc/project run build:tools
+pnpm --dir "$ROOT/packages" --filter @cocalc/project run build:tools
 
 echo "- Copy project-host software artifacts"
 mkdir -p \

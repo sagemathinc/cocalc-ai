@@ -135,3 +135,28 @@ describe("projectChatRows", () => {
     );
   });
 });
+
+test("projects the canonical thread-config row when a legacy one also exists", () => {
+  const canonical = {
+    event: "chat-thread-config",
+    sender_id: "__thread_config__:thread-1",
+    date: "1970-01-01T00:00:00.000Z",
+    thread_id: "thread-1",
+    agent_kind: "acp",
+    name: "Canonical",
+  };
+  const legacy = {
+    event: "chat-thread-config",
+    sender_id: "legacy-sender",
+    date: "2025-01-01T00:00:00.000Z",
+    thread_id: "thread-1",
+    agent_kind: "acp",
+    name: "Legacy",
+  };
+  for (const rows of [
+    [canonical, legacy],
+    [legacy, canonical],
+  ]) {
+    expect(projectChatRows(rows).threads[0]?.name).toBe("Canonical");
+  }
+});

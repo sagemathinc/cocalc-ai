@@ -3677,6 +3677,83 @@ def configure_kernel_module_hardening(
     run_best_effort(cfg, ["rmmod", "algif_aead"], "unload algif_aead")
 
 
+KERNEL_HARDENING_SYSCTL_CONF_NAME = "92-cocalc-project-host-hardening.conf"
+# Set on every project host. io_uring is a large kernel attack surface that
+# nothing on the host needs: io_uring_setup then fails with EPERM and libuv
+# (which creates a ring when an event loop starts) falls back to epoll;
+# project containers already get ENOSYS from seccomp. The setting only refuses
+# new rings, so it is applied before the project-host stack starts: here,
+# before every daemon start in the root helper, and at boot by systemd-sysctl.
+# userfaultfd stays limited to privileged users.
+KERNEL_HARDENING_SYSCTLS: dict[str, int] = {
+    "kernel.io_uring_disabled": 2,
+    "vm.unprivileged_userfaultfd": 0,
+}
+# Checked but not written: the supported images' defaults are at least this
+# strict, and writing these values could lower a stricter default (Ubuntu uses
+# unprivileged_bpf_disabled=2 and perf_event_paranoid=4).
+KERNEL_HARDENING_MINIMUMS: dict[str, int] = {
+    "kernel.apparmor_restrict_unprivileged_userns": 1,
+    "kernel.unprivileged_bpf_disabled": 1,
+    "kernel.perf_event_paranoid": 3,
+}
+
+
+def kernel_hardening_sysctl_conf() -> str:
+    lines = [
+        "# Managed by CoCalc project-host: kernel attack surface reduction.",
+        *(f"{key} = {value}" for key, value in KERNEL_HARDENING_SYSCTLS.items()),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def kernel_hardening_problems(proc_sys: Path = Path("/proc/sys")) -> list[str]:
+    problems: list[str] = []
+
+    def read(key: str) -> int | None:
+        try:
+            return int(
+                (proc_sys / key.replace(".", "/")).read_text(encoding="utf-8").strip()
+            )
+        except (OSError, ValueError):
+            return None
+
+    for key, value in KERNEL_HARDENING_SYSCTLS.items():
+        actual = read(key)
+        # A larger value is stricter for io_uring_disabled; userfaultfd must be 0.
+        ok = actual is not None and (
+            actual == 0 if value == 0 else actual >= value
+        )
+        if not ok:
+            problems.append(f"{key}={actual if actual is not None else 'missing'} (want {value})")
+    for key, minimum in KERNEL_HARDENING_MINIMUMS.items():
+        actual = read(key)
+        if actual is None or actual < minimum:
+            problems.append(
+                f"{key}={actual if actual is not None else 'missing'} (want >= {minimum})"
+            )
+    return problems
+
+
+def configure_kernel_sysctl_hardening(
+    cfg: BootstrapConfig,
+    *,
+    sysctl_dir: Path = Path("/etc/sysctl.d"),
+    proc_sys: Path = Path("/proc/sys"),
+) -> None:
+    log_line(cfg, "bootstrap: configuring kernel hardening sysctls")
+    sysctl_dir.mkdir(parents=True, exist_ok=True)
+    conf = sysctl_dir / KERNEL_HARDENING_SYSCTL_CONF_NAME
+    conf.write_text(kernel_hardening_sysctl_conf(), encoding="utf-8")
+    os.chmod(conf, 0o644)
+    # -e: a kernel without one of these keys must not fail the host.
+    run_best_effort(cfg, ["sysctl", "-e", "-p", str(conf)], "sysctl kernel hardening")
+    # Warn rather than fail: the host-agent reports the same checks in its
+    # metrics, and the hub's admin health raises them.
+    for problem in kernel_hardening_problems(proc_sys):
+        log_line(cfg, f"bootstrap: WARNING kernel hardening drift: {problem}")
+
+
 def configure_kernel_key_limits(
     cfg: BootstrapConfig,
     *,
@@ -12675,6 +12752,7 @@ MIN_PROJECT_POOL_CPU_CORES="__MIN_PROJECT_POOL_CPU_CORES__"
 PROJECT_POOL_CPU_PERIOD_US="__PROJECT_POOL_CPU_PERIOD_US__"
 SYSCTL_CONFIG_PATH="/etc/sysctl.d/90-cocalc-project-host.conf"
 CORE_SYSCTL_CONFIG_PATH="/etc/sysctl.d/91-cocalc-project-host-core.conf"
+HARDENING_SYSCTL_CONFIG_PATH="/etc/sysctl.d/92-cocalc-project-host-hardening.conf"
 LEGACY_CORE_SUDOERS_CONFIG_PATH="/etc/sudoers.d/cocalc-project-host-core"
 CORE_HANDLER="/usr/local/sbin/cocalc-project-host-core-handler"
 CORE_ORIGINAL_PATTERN="/var/lib/cocalc/project-host-core-pattern.original"
@@ -12736,6 +12814,23 @@ net.ipv4.ip_local_reserved_ports = 30000-59999
 SYSCTL
   chmod 0644 "${SYSCTL_CONFIG_PATH}"
   sysctl -p "${SYSCTL_CONFIG_PATH}"
+  apply_kernel_hardening_sysctls
+}
+
+# Before every daemon start: io_uring_disabled only refuses new rings, so a
+# daemon started first would keep the ring its event loop created. Never
+# fails the start: drift is reported by project-host and admin health.
+apply_kernel_hardening_sysctls() {
+  # Keep in sync with KERNEL_HARDENING_SYSCTLS (bootstrap.py) and
+  # PROJECT_HOST_KERNEL_HARDENING (conat/project-host/kernel-hardening.ts).
+  cat > "${HARDENING_SYSCTL_CONFIG_PATH}" <<'SYSCTL'
+# Managed by CoCalc project-host: kernel attack surface reduction.
+kernel.io_uring_disabled = 2
+vm.unprivileged_userfaultfd = 0
+SYSCTL
+  chmod 0644 "${HARDENING_SYSCTL_CONFIG_PATH}"
+  sysctl -e -p "${HARDENING_SYSCTL_CONFIG_PATH}" >/dev/null ||
+    echo "warning: unable to apply ${HARDENING_SYSCTL_CONFIG_PATH}" >&2
 }
 
 read_env_file_value() {
@@ -13717,6 +13812,7 @@ case "${cmd}" in
     repair_runtime_environment
     preflight_podman_runtime
     reconcile_app_core_dumps
+    apply_kernel_hardening_sysctls
     run_daemon "${cmd}" "$@"
     protect_pid
     attach_running_project_processes || true
@@ -13726,6 +13822,7 @@ case "${cmd}" in
     repair_runtime_environment
     preflight_podman_runtime
     reconcile_app_core_dumps
+    apply_kernel_hardening_sysctls
     run_daemon stop "$@" || true
     run_daemon start "$@"
     protect_pid
@@ -14763,6 +14860,7 @@ def run_provision(cfg: BootstrapConfig) -> int:
         report_bootstrap_status(cfg, "running", "Installing Ubuntu packages")
         apt_update_install(cfg)
         configure_kernel_module_hardening(cfg)
+        configure_kernel_sysctl_hardening(cfg)
         configure_kernel_key_limits(cfg)
         configure_inotify_limits(cfg)
         report_bootstrap_status(cfg, "running", "Configuring storage and containers")
@@ -14800,6 +14898,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         ensure_automatic_security_updates(cfg)
         configure_daily_root_cleanup(cfg)
         configure_kernel_module_hardening(cfg)
+        configure_kernel_sysctl_hardening(cfg)
         configure_kernel_key_limits(cfg)
         configure_inotify_limits(cfg)
         configure_journald_limits(cfg)
@@ -14885,6 +14984,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         ensure_bootstrap_paths(cfg)
         configure_rsyslog_limits(cfg)
         configure_daily_root_cleanup(cfg)
+        configure_kernel_sysctl_hardening(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)

@@ -62,7 +62,6 @@ let hostConnectionRecordProjectBackupIndexMock: jest.Mock;
 let hostConnectionGetProjectBackupIndexesMock: jest.Mock;
 let hostConnectionSyncProjectBackupIndexesMock: jest.Mock;
 let hostConnectionDeleteProjectBackupIndexMock: jest.Mock;
-let hostConnectionListHostProjectsMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let resolveProjectReferenceAllowRemoteMock: jest.Mock;
@@ -401,7 +400,11 @@ jest.mock("./project-host-token-auth", () => ({
 
 jest.mock("./public-directory-shares", () => ({
   __esModule: true,
-  authorizeRead: (...args: any[]) =>
+  // issuing a token is not a read of the share: no view is recorded
+  authorizeRead: async () => {
+    throw Error("a token check must not record a share view");
+  },
+  authorizeReadWithoutView: (...args: any[]) =>
     publicDirectorySharesAuthorizeReadMock(...args),
 }));
 
@@ -501,8 +504,6 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionSyncProjectBackupIndexesMock(...args),
       deleteProjectBackupIndex: (...args: any[]) =>
         hostConnectionDeleteProjectBackupIndexMock(...args),
-      listHostProjects: (...args: any[]) =>
-        hostConnectionListHostProjectsMock(...args),
     })),
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
@@ -1253,16 +1254,6 @@ beforeEach(() => {
   hostConnectionGetProjectBackupIndexesMock = jest.fn(async () => []);
   hostConnectionSyncProjectBackupIndexesMock = jest.fn(async () => undefined);
   hostConnectionDeleteProjectBackupIndexMock = jest.fn(async () => undefined);
-  hostConnectionListHostProjectsMock = jest.fn(async () => ({
-    rows: [],
-    summary: {
-      total: 0,
-      provisioned: 0,
-      running: 0,
-      provisioned_up_to_date: 0,
-      provisioned_needs_backup: 0,
-    },
-  }));
   getBackupConfigLocalInternalMock = jest.fn();
   getProjectBackupIndexesLocalInternalMock = jest.fn(async () => []);
   syncProjectBackupIndexesLocalInternalMock = jest.fn(async () => undefined);
@@ -1425,137 +1416,6 @@ describe("hosts.listHostProjects", () => {
     });
     expect(second.rows).toHaveLength(2);
     expect(second.next_cursor).toBeUndefined();
-  });
-
-  it("routes project listing to the host-owning bay", async () => {
-    queryMock.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM project_hosts")) {
-        return {
-          rows: [
-            {
-              id: HOST_ID,
-              bay_id: "bay-1",
-              metadata: { owner: ACCOUNT_ID },
-              last_seen: new Date("2026-01-05T00:00:00Z"),
-            },
-          ],
-        };
-      }
-      throw new Error(`unexpected local query: ${sql}`);
-    });
-    hostConnectionListHostProjectsMock.mockResolvedValueOnce({
-      rows: [
-        {
-          project_id: "proj-remote",
-          title: "Remote",
-          state: "running",
-          provisioned: true,
-          last_edited: "2026-01-04T00:00:00.000Z",
-          last_backup: "2026-01-03T00:00:00.000Z",
-          needs_backup: true,
-          collab_count: 4,
-        },
-      ],
-      summary: {
-        total: 1,
-        provisioned: 1,
-        running: 1,
-        provisioned_up_to_date: 0,
-        provisioned_needs_backup: 1,
-      },
-    });
-
-    const { listHostProjects } = await import("./hosts");
-    const result = await listHostProjects({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-      limit: 10,
-    });
-
-    expect(hostConnectionListHostProjectsMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        account_id: ACCOUNT_ID,
-        id: HOST_ID,
-        limit: 10,
-      }),
-    );
-    expect(result.rows.map((row) => row.project_id)).toEqual(["proj-remote"]);
-    expect(result.summary).toEqual({
-      total: 1,
-      provisioned: 1,
-      running: 1,
-      provisioned_up_to_date: 0,
-      provisioned_needs_backup: 1,
-    });
-  });
-
-  it("prefers authoritative remote ownership over a stale local host row", async () => {
-    resolveHostBayMock = jest.fn(async () => ({
-      bay_id: "bay-1",
-      epoch: 2,
-    }));
-    queryMock = jest.fn(async (sql: string) => {
-      if (sql.includes("FROM project_hosts")) {
-        return {
-          rows: [
-            {
-              id: HOST_ID,
-              metadata: { owner: ACCOUNT_ID },
-              last_seen: new Date("2026-01-05T00:00:00Z"),
-            },
-          ],
-        };
-      }
-      if (
-        sql.includes("LEFT(COALESCE(title") ||
-        sql.includes("COUNT(*) AS total")
-      ) {
-        throw new Error(
-          "should not query local host projects for remote-owned host",
-        );
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
-    hostConnectionListHostProjectsMock.mockResolvedValueOnce({
-      rows: [
-        {
-          project_id: "proj-authoritative-remote",
-          title: "Remote",
-          state: "running",
-          provisioned: true,
-          last_edited: "2026-01-04T00:00:00.000Z",
-          last_backup: "2026-01-03T00:00:00.000Z",
-          needs_backup: false,
-          collab_count: 1,
-        },
-      ],
-      summary: {
-        total: 1,
-        provisioned: 1,
-        running: 1,
-        provisioned_up_to_date: 1,
-        provisioned_needs_backup: 0,
-      },
-    });
-
-    const { listHostProjects } = await import("./hosts");
-    const result = await listHostProjects({
-      account_id: ACCOUNT_ID,
-      id: HOST_ID,
-      limit: 10,
-    });
-
-    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
-    expect(hostConnectionListHostProjectsMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        account_id: ACCOUNT_ID,
-        id: HOST_ID,
-        limit: 10,
-      }),
-    );
-    expect(result.rows.map((row) => row.project_id)).toEqual([
-      "proj-authoritative-remote",
-    ]);
   });
 
   it("adds the risk filter when requested", async () => {
@@ -1756,27 +1616,6 @@ describe("hosts.createHost", () => {
     resolveHostBayMock = jest.fn(async () => ({
       bay_id: "bay-0",
       epoch: 1,
-    }));
-    hostConnectionListHostProjectsMock = jest.fn(async () => ({
-      rows: [
-        {
-          project_id: "proj-remote",
-          title: "Remote",
-          state: "running",
-          provisioned: true,
-          last_edited: "2026-01-04T00:00:00.000Z",
-          last_backup: "2026-01-03T00:00:00.000Z",
-          needs_backup: true,
-          collab_count: 4,
-        },
-      ],
-      summary: {
-        total: 1,
-        provisioned: 1,
-        running: 1,
-        provisioned_up_to_date: 0,
-        provisioned_needs_backup: 1,
-      },
     }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
@@ -4396,27 +4235,6 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       epoch: 1,
     }));
     hostConnectionGetMock = jest.fn();
-    hostConnectionListHostProjectsMock = jest.fn(async () => ({
-      rows: [
-        {
-          project_id: "proj-remote",
-          title: "Remote",
-          state: "running",
-          provisioned: true,
-          last_edited: "2026-01-04T00:00:00.000Z",
-          last_backup: "2026-01-03T00:00:00.000Z",
-          needs_backup: true,
-          collab_count: 4,
-        },
-      ],
-      summary: {
-        total: 1,
-        provisioned: 1,
-        running: 1,
-        provisioned_up_to_date: 0,
-        provisioned_needs_backup: 1,
-      },
-    }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => [
@@ -5099,6 +4917,24 @@ describe("hosts.authoritative remote host actions", () => {
     ]) {
       expect(mock).not.toHaveBeenCalled();
     }
+  });
+
+  it("refuses host project listing and actions for a host owned by another bay", async () => {
+    // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes):
+    // never answered from a stale local copy.
+    const { listHostProjects, stopHostProjects, restartHostProjects } =
+      await import("./hosts");
+    const session = { account_id: ACCOUNT_ID, session_hash: "session-hash" };
+    await expect(
+      listHostProjects({ account_id: ACCOUNT_ID, id: HOST_ID, limit: 10 }),
+    ).rejects.toMatchObject({ code: 409 });
+    await expect(
+      stopHostProjects({ ...session, id: HOST_ID, state_filter: "running" }),
+    ).rejects.toMatchObject({ code: 409 });
+    await expect(
+      restartHostProjects({ ...session, id: HOST_ID, state_filter: "running" }),
+    ).rejects.toMatchObject({ code: 409 });
+    expect(createLroMock).not.toHaveBeenCalled();
   });
 
   it("refuses routed lro-backed host changes for a host owned by another bay", async () => {
@@ -5861,27 +5697,6 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
       epoch: 1,
     }));
     hostConnectionGetMock = jest.fn();
-    hostConnectionListHostProjectsMock = jest.fn(async () => ({
-      rows: [
-        {
-          project_id: "proj-remote",
-          title: "Remote",
-          state: "running",
-          provisioned: true,
-          last_edited: "2026-01-04T00:00:00.000Z",
-          last_backup: "2026-01-03T00:00:00.000Z",
-          needs_backup: true,
-          collab_count: 4,
-        },
-      ],
-      summary: {
-        total: 1,
-        provisioned: 1,
-        running: 1,
-        provisioned_up_to_date: 0,
-        provisioned_needs_backup: 1,
-      },
-    }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
@@ -6085,87 +5900,6 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
       }),
     ).rejects.toThrow("host project restart is limited to running projects");
     expect(createLroMock).not.toHaveBeenCalled();
-  });
-
-  it("routes host-scoped project actions to the host-owning bay", async () => {
-    queryMock.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM project_hosts")) {
-        return {
-          rows: [
-            {
-              id: HOST_ID,
-              bay_id: "bay-1",
-              status: "running",
-              metadata: { owner: ACCOUNT_ID },
-            },
-          ],
-        };
-      }
-      throw new Error(`unexpected local query: ${sql}`);
-    });
-    hostConnectionListHostProjectsMock
-      .mockResolvedValueOnce({
-        rows: [{ project_id: "proj-remote-1", state: "running" }],
-        summary: {
-          total: 2,
-          provisioned: 2,
-          running: 2,
-          provisioned_up_to_date: 0,
-          provisioned_needs_backup: 2,
-        },
-        next_cursor: "next",
-      })
-      .mockResolvedValueOnce({
-        rows: [{ project_id: "proj-remote-2", state: "off" }],
-        summary: {
-          total: 2,
-          provisioned: 2,
-          running: 2,
-          provisioned_up_to_date: 0,
-          provisioned_needs_backup: 2,
-        },
-      });
-
-    const { stopHostProjects } = await import("./hosts");
-    await stopHostProjects({
-      account_id: ACCOUNT_ID,
-      session_hash: "session-hash",
-      id: HOST_ID,
-      state_filter: "running",
-    });
-
-    expect(hostConnectionListHostProjectsMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        account_id: ACCOUNT_ID,
-        id: HOST_ID,
-        limit: 5000,
-        cursor: undefined,
-        state_filter: "running",
-      }),
-    );
-    expect(hostConnectionListHostProjectsMock).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        account_id: ACCOUNT_ID,
-        id: HOST_ID,
-        limit: 5000,
-        cursor: "next",
-        state_filter: "running",
-      }),
-    );
-    expect(createLroMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "host-stop-projects",
-        scope_id: HOST_ID,
-        input: expect.objectContaining({
-          projects: [
-            { project_id: "proj-remote-1", state: "running" },
-            { project_id: "proj-remote-2", state: "off" },
-          ],
-        }),
-      }),
-    );
   });
 });
 

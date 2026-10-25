@@ -99,3 +99,67 @@ export function attachPublicNavigationInterceptor(): () => void {
     document.removeEventListener("click", onClick);
   };
 }
+
+// How long a page opened in the public app may take to render the section
+// its address names, for example while the page's code is still loading.
+const SECTION_WAIT_MS = 10_000;
+
+function sectionId(hash: string): string {
+  if (!hash || hash === "#") return "";
+  try {
+    return decodeURIComponent(hash.slice(1));
+  } catch {
+    return hash.slice(1);
+  }
+}
+
+// Where a page that the public app opens should start. A link to a section
+// of another page, such as features/ai#agent-workflow, lands on that section
+// once the page has rendered it, and moves focus there, so the next Tab goes
+// on from the section; any other page opens at its top. Returns a function
+// that stops waiting for the section, for when another page opens first.
+// It waits for changes within root, where the page renders.
+export function landOnPublicPage(
+  root: HTMLElement = document.body,
+): () => void {
+  window.scrollTo({ top: 0 });
+  const id = sectionId(window.location.hash);
+  if (!id) return () => {};
+  let stopped = false;
+  let frame: number | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => {
+    stopped = true;
+    observer.disconnect();
+    if (timeout != null) clearTimeout(timeout);
+    if (frame != null) window.cancelAnimationFrame(frame);
+    timeout = undefined;
+    frame = undefined;
+  };
+  const scheduleLanding = () => {
+    if (stopped || frame != null) return;
+    frame = window.requestAnimationFrame(() => {
+      frame = undefined;
+      // Resolve at the moment of landing: rendering may have replaced the
+      // original element. A matching ID elsewhere is not this page's target.
+      const section =
+        root.id === id
+          ? root
+          : Array.from(root.querySelectorAll<HTMLElement>("[id]")).find(
+              (element) => element.id === id,
+            );
+      if (section == null || !section.isConnected) return;
+      section.scrollIntoView?.({ block: "start" });
+      if (section.tabIndex < 0 && !section.hasAttribute("tabindex")) {
+        section.setAttribute("tabindex", "-1");
+      }
+      section.focus({ preventScroll: true });
+      stop();
+    });
+  };
+  const observer = new MutationObserver(scheduleLanding);
+  observer.observe(root, { childList: true, subtree: true });
+  timeout = setTimeout(stop, SECTION_WAIT_MS);
+  scheduleLanding();
+  return stop;
+}

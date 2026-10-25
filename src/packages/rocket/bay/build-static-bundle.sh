@@ -147,7 +147,7 @@ echo "- Clean static frontend outputs"
 rm -rf packages/static/dist
 
 echo "- Build CDN assets"
-pnpm --filter @cocalc/cdn run build
+pnpm --dir "$ROOT/packages" --filter @cocalc/cdn run build
 
 echo "- Build static frontend assets"
 pnpm static

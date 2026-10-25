@@ -159,8 +159,11 @@ describe("PublicHomeApp", () => {
     const heroLead = hero.querySelector(".cocalc-public-home-hero-title + *");
     expect(heroLead).not.toBeNull();
     expect(textLength(heroLead as Element)).toBeLessThanOrEqual(210);
-    expect(heroLead?.textContent ?? "").toMatch(/shared project/i);
-    expect(heroLead?.textContent ?? "").toMatch(/take over the work yourself/i);
+    expect(heroLead?.textContent ?? "").toMatch(
+      /an agent builds it in a project/i,
+    );
+    expect(heroLead?.textContent ?? "").toMatch(/beside the conversation/i);
+    expect(heroLead?.textContent ?? "").toMatch(/take over yourself/i);
     expect(hero.textContent ?? "").not.toMatch(/Jupyter notebooks/i);
     expect(hero.textContent ?? "").not.toMatch(/Linux terminals/i);
     expect(hero.textContent ?? "").not.toMatch(/isolated project/i);
@@ -169,10 +172,10 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero)
         .getByRole("img", {
-          name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
+          name: "An agent conversation in CoCalc beside the dispatch reliability review it published, a dashboard of charts the reader can open, download, or comment on",
         })
         .getAttribute("src"),
-    ).toBe("/public/landing/project-notebook-20260916.jpg");
+    ).toBe("/public/docs/agents-workspace-dispatch-review-20260924.jpg");
     // The image keeps its alt text and has no caption.
     expect(hero.querySelector("figcaption")).toBeNull();
     expect(
@@ -202,11 +205,11 @@ describe("PublicHomeApp", () => {
     const agents = screen.getByRole("region", {
       name: "AI agents in CoCalc",
     });
-    expect(agents.textContent ?? "").toMatch(/Agent-ready by design/i);
+    expect(agents.textContent ?? "").toMatch(/How it works/i);
     expect(
       within(agents).getByRole("heading", {
         level: 2,
-        name: "Give AI agents the files and tools they need.",
+        name: "From an idea to something you can use.",
       }),
     ).not.toBeNull();
     expect(agents.textContent ?? "").toMatch(
@@ -215,15 +218,23 @@ describe("PublicHomeApp", () => {
     expect(
       within(agents).getByRole("link", { name: "See agent workflows" }),
     ).toHaveAttribute("href", "/features/ai");
+    // the starter tasks in the Agents guide (hosted sites)
     expect(
-      within(agents).getByRole("link", {
-        name: "Compare with agent sandboxes",
-      }),
-    ).toHaveAttribute("href", "/features/compare");
+      within(agents).getByRole("link", { name: "Try an app task" }),
+    ).toHaveAttribute(
+      "href",
+      "/docs/ai/my-agents#turn-a-recurring-task-into-an-app",
+    );
+    expect(
+      within(agents).getByRole("link", { name: "Try an analysis task" }),
+    ).toHaveAttribute(
+      "href",
+      "/docs/ai/my-agents#investigate-a-change-in-your-data",
+    );
     for (const title of [
-      "Work with files and services",
-      "Review agent changes",
-      "Integrated chat or terminal",
+      "Describe the outcome",
+      "Review the result",
+      "Refine or take over",
     ]) {
       expect(
         within(agents).getByRole("heading", { level: 3, name: title }),
@@ -490,7 +501,7 @@ describe("PublicHomeApp", () => {
       );
       const compare = within(
         screen.getByRole("region", { name: "AI agents in CoCalc" }),
-      ).getByRole("link", { name: "Compare with agent sandboxes" });
+      ).getByRole("link", { name: "Try an analysis task" });
       compare.focus();
       expect(compare).toHaveFocus();
 
@@ -721,5 +732,38 @@ describe("PublicHomeApp ways to run CoCalc", () => {
     ).not.toBeNull();
     expect(dialog.textContent).not.toMatch(/Star|Compare who runs it/);
     expect(kinds).not.toMatch(/local|single-VM/);
+  });
+});
+
+// CoCalc Plus has no Agents workspace: it keeps the notebook image and links
+// the agent comparison rather than the Agents guide's starter tasks.
+describe("PublicHomeApp on CoCalc Plus", () => {
+  it("shows the project notebook and no Agents workspace tasks", () => {
+    render(
+      <PublicHomeApp
+        config={{
+          cocalc_product: "plus",
+          dns: "localhost",
+          site_name: "CoCalc",
+        }}
+      />,
+    );
+    const hero = screen.getByRole("region", { name: "CoCalc hero" });
+    expect(
+      within(hero)
+        .getByRole("img", {
+          name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
+        })
+        .getAttribute("src"),
+    ).toBe("/public/landing/project-notebook-20260916.jpg");
+    const agents = screen.getByRole("region", { name: "AI agents in CoCalc" });
+    expect(
+      within(agents).getByRole("link", {
+        name: "Compare with agent sandboxes",
+      }),
+    ).toHaveAttribute("href", "/features/compare");
+    expect(
+      within(agents).queryByRole("link", { name: "Try an app task" }),
+    ).toBeNull();
   });
 });

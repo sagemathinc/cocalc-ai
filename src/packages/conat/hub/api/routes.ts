@@ -129,6 +129,8 @@ const leftOrDeletedProjects: HubApiRoute = {
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "lro.get": hostLroScope,
   "lro.list": hostLroScope,
+  "lro.cancel": hostLroScope,
+  "lro.dismiss": hostLroScope,
   // Host reads run on the host's owning bay.
   "hosts.getHostLog": hostFromOpts,
   "hosts.getHostAvailability": hostFromOpts,
@@ -140,6 +142,7 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.listHostAccess": hostFromOpts,
   "hosts.listHostRuntimeDeployments": hostDeploymentScope,
   "hosts.getHostManagedComponentStatus": hostFromOpts,
+  "hosts.listHostProjects": hostFromOpts,
   // Host changes run on the host's owning bay too.
   "hosts.setHostAccess": hostFromOpts,
   "hosts.removeHostAccess": hostFromOpts,
@@ -171,6 +174,8 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.restartHost": hostFromOpts,
   "hosts.drainHost": hostFromOpts,
   "hosts.backupHostProjects": hostFromOpts,
+  "hosts.stopHostProjects": hostFromOpts,
+  "hosts.restartHostProjects": hostFromOpts,
   "hosts.deleteHost": hostFromOpts,
   "hosts.forceDeprovisionHost": hostFromOpts,
   "hosts.refreshHostCloudState": hostFromOpts,

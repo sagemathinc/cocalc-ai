@@ -93,9 +93,9 @@ test("Claude transcript survives a controller restart without entering the auth 
     credentialId: "00000000-0000-4000-8000-000000000003",
   };
   try {
-    const first = await ensureClaudeTranscriptDirectory(options);
+    const first = (await ensureClaudeTranscriptDirectory(options)).path;
     await writeFile(join(first, "turn.jsonl"), "transcript");
-    const second = await ensureClaudeTranscriptDirectory(options);
+    const second = (await ensureClaudeTranscriptDirectory(options)).path;
     expect(second).toBe(first);
     expect(await readFile(join(second, "turn.jsonl"), "utf8")).toBe(
       "transcript",
@@ -130,11 +130,13 @@ describe("Claude transcript lookup after reconnect", () => {
   let oldDirectory: string;
   beforeEach(async () => {
     projectHome = await mkdtemp(join(tmpdir(), "claude-reconnect-test-"));
-    oldDirectory = await ensureClaudeTranscriptDirectory({
-      projectHome,
-      accountId,
-      credentialId: oldCredential,
-    });
+    oldDirectory = (
+      await ensureClaudeTranscriptDirectory({
+        projectHome,
+        accountId,
+        credentialId: oldCredential,
+      })
+    ).path;
     await mkdir(join(oldDirectory, "-workspace"));
     await writeFile(
       join(oldDirectory, "-workspace", `${sessionId}.jsonl`),
@@ -151,7 +153,7 @@ describe("Claude transcript lookup after reconnect", () => {
       credentialId,
       sessionId,
       ...extra,
-    });
+    }).then((result) => result.path);
 
   test("resume and fork use the original tree without moving or replacing context", async () => {
     const copyId = "00000000-0000-4000-8000-000000000006";
