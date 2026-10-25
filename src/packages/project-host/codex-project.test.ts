@@ -1442,6 +1442,50 @@ describe("initCodexProjectRunner", () => {
     expect(await fs.readdir(elsewhere)).toEqual([]);
   });
 
+  it("never writes or removes lease files through a lease directory swapped for a symlink", async () => {
+    const home = await mkTempDir("codex-project-lease-home-");
+    const scratch = await mkTempDir("codex-project-lease-scratch-");
+    const elsewhere = await mkTempDir("codex-project-lease-elsewhere-");
+    hubApi.hosts.issueProjectHostAgentAuthToken.mockResolvedValueOnce({
+      token: "project-token",
+      expires_at: Date.now() + 60_000,
+    });
+    const { createProjectCliTokenLease } =
+      await import("./codex/codex-project");
+    const lease = await createProjectCliTokenLease({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      currentEnv: {},
+      home,
+      scratch,
+    });
+    expect(lease).toBeDefined();
+    const [leaseName] = (await fs.readdir(scratch)).filter((name) =>
+      name.startsWith(".cocalc-agent-"),
+    );
+    expect(
+      await fs.readFile(path.join(scratch, leaseName, "token"), "utf8"),
+    ).toBe("project-token\n");
+    // The project swaps its lease directory for a symlink to files the host
+    // must never touch.
+    await fs.writeFile(path.join(elsewhere, "connector-key"), "keep");
+    await fs.writeFile(path.join(elsewhere, "token"), "keep");
+    await fs.rename(path.join(scratch, leaseName), path.join(scratch, "moved"));
+    await fs.symlink(elsewhere, path.join(scratch, leaseName));
+    await lease!.clearConnectorKey().catch(() => undefined);
+    await lease!.close().catch(() => undefined);
+    expect((await fs.readdir(elsewhere)).sort()).toEqual([
+      "connector-key",
+      "token",
+    ]);
+    expect(
+      await fs.readFile(path.join(elsewhere, "connector-key"), "utf8"),
+    ).toBe("keep");
+    expect(await fs.readFile(path.join(elsewhere, "token"), "utf8")).toBe(
+      "keep",
+    );
+  });
+
   it("allows the home fallback only in the workspace runtime", async () => {
     const { assertHostWritableRuntimeRoot } =
       await import("./codex/codex-project");
@@ -2614,6 +2658,36 @@ describe("project skill overrides never follow a project's symlinks", () => {
     await expect(
       getBuiltinClaudeSkillMount(projectHome, packagedSkills),
     ).resolves.toHaveLength(1);
+  });
+
+  it("a lease or status directory is never made through a symlink", async () => {
+    const { tmp, projectHome } = await setup();
+    const { makeDirectoryBeneath } = await import("./codex/codex-project");
+    const elsewhere = path.join(tmp, "elsewhere-host");
+    await fs.mkdir(elsewhere);
+    // An ancestor symlink (as for ~/.local/share/cocalc/runtime/...).
+    await fs.symlink(elsewhere, path.join(projectHome, ".local"));
+    await expect(
+      makeDirectoryBeneath(projectHome, [
+        ".local",
+        "share",
+        "cocalc",
+        "runtime",
+        ".cocalc-agent-x",
+      ]),
+    ).rejects.toThrow();
+    await expect(fs.readdir(elsewhere)).resolves.toEqual([]);
+    // The leaf itself planted as a symlink.
+    await fs.mkdir(path.join(projectHome, ".cocalc"));
+    await fs.symlink(elsewhere, path.join(projectHome, ".cocalc", "status"));
+    await expect(
+      makeDirectoryBeneath(projectHome, [".cocalc", "status"]),
+    ).rejects.toThrow();
+    // Real directories are made, with owner-only access.
+    await makeDirectoryBeneath(projectHome, [".cocalc", "a", "b"]);
+    const made = await fs.lstat(path.join(projectHome, ".cocalc", "a", "b"));
+    expect(made.isDirectory()).toBe(true);
+    expect(made.mode & 0o777).toBe(0o700);
   });
 
   it("creates the skills directory, but never through a symlink", async () => {

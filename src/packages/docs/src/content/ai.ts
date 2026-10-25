@@ -128,6 +128,51 @@ underlying files, software, or complete project view.
 This example shows a reviewable image result beside the conversation. The
 underlying file remains in the project.
 
+## Turn a recurring task into an app
+
+Start in an agent conversation with a non-sensitive copy of a request tracker
+that has request, owner, status and due-date columns. Put the copy in the project
+using [Files](/docs/files/explorer), then give the agent its path.
+Keep the original unchanged. You can start with a request like this:
+
+> Build an app for reviewing this request tracker. Let me filter by owner and
+> status and find overdue requests. Keep the input file unchanged. Open the app
+> in the project browser and test those actions, including missing due dates.
+
+On sites with the project browser, ask the agent to share the running app's
+browser card in the conversation. Try a filter and inspect an overdue request.
+A screenshot or saved file preview is not a running app: check that the controls
+work and ask which address and process serve it. If it does not open, ask the
+agent to check that process and its logs before retrying. The
+[browser guide](/docs/projects/web-browser) explains access and handoff.
+
+Then request a change, such as: "Add a view for unassigned requests and make
+overdue items easier to find." Check the changed view and the original input
+again. When finished, ask the agent to stop the app's server; keep the code and
+output you want to continue using, and remove only disposable copies.
+
+## Investigate a change in your data
+
+Use a non-sensitive export of measurements you already track, with dates,
+categories and values. Put a copy in the project and give the agent its path,
+the units and the comparison you want. For example:
+
+> Compare the latest complete period with the previous one. Check missing
+> values and duplicates first. Show which categories explain the largest change,
+> include a chart and save a short explanation of the calculation. Keep the
+> input unchanged and identify any assumptions you need me to confirm.
+
+Ask for the chart and calculation note as saved results you can open beside the
+conversation. Check the date range, units, missing-data handling and at least one
+aggregate against the input. If the dates or units are unclear, settle those
+questions before using the comparison.
+
+Try a follow-up such as: "Compare periods of the same length, exclude incomplete
+records and show how the conclusion changes." Keep the input, calculation and
+outputs together so you can revisit the result. Remove only disposable copies
+when finished. For work that exceeds the project's resources, consult
+[compute selection](/docs/hosts/choose-compute).
+
 ## Share an agent with people
 
 Open the agent's actions menu and choose **Share with people…**. Select the

@@ -1295,6 +1295,19 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Project public-directory share grant state keyed through public_project_paths. Reads/writes must follow the owning project path; rehome is unsafe until explicitly audited.",
   }),
 
+  ...adHocEntries(["public_share_views"], {
+    ownership: "project-owning",
+    authority: "mixed",
+    portability: "unsupported",
+    source: "server public directory share views bootstrap",
+    migrate_to_schema: true,
+    secondary_reference_fields: {
+      account_id: "The viewer, a reference, not placement authority.",
+    },
+    notes:
+      "Who read a public share, one row per (share, account, UTC day), kept 13 months. Stored on the bay that stores the share's public_project_paths row (normally the project's owning bay); account_id is a reference, and the rows are deleted with the account.",
+  }),
+
   ...adHocEntries(
     ["project_host_availability_events", "project_host_rehome_operations"],
     {

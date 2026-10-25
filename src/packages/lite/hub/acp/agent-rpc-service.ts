@@ -729,8 +729,9 @@ export function createLocalAgentRpcService(
           await releaseChatSyncDB(e.target.project_id, e.path);
         }
       },
-      admit: (prepared) =>
-        admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 }),
+      admit: async (prepared) => {
+        await admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 });
+      },
     },
     attempts,
     capacity,

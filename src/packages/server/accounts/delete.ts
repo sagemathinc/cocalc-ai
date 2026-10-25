@@ -7,6 +7,7 @@ import { deleteBlobsForAccountDeletion } from "@cocalc/server/membership/blob-li
 import { cleanupSiteLicenseAccessForAccountDeletion } from "@cocalc/server/membership/account-deletion";
 import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
 import { deleteRootfsImagesForAccountDeletion } from "@cocalc/server/rootfs/catalog";
+import { deleteShareViewsForAccount } from "@cocalc/server/public-directory-shares/views";
 import {
   executeBillingAuthorityCommand,
   setBillingAccountFrozen,
@@ -70,6 +71,11 @@ export default async function deleteAccount(
   // Account-attributed blobs count against membership quota and can be costly
   // if left behind. Project-attributed blobs are handled by project hard delete.
   await deleteBlobsForAccountDeletion({ account_id });
+
+  // Which public shares the account viewed. Views of shares stored on other
+  // bays are deleted with the rest after 13 months (public-directory-shares/
+  // views.ts).
+  await deleteShareViewsForAccount(account_id);
 
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.

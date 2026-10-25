@@ -36,7 +36,12 @@ import {
 import { publicHomeTitle } from "@cocalc/util/public-site-metadata";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  getPublicHomeAgentLinks,
+  getPublicHomeHeroImage,
   getPublicHomeHighlights,
+  PUBLIC_HOME_AGENT_BODY,
+  PUBLIC_HOME_AGENT_STEPS,
+  PUBLIC_HOME_AGENT_TITLE,
   PUBLIC_HOME_EYEBROW,
   PUBLIC_HOME_HEADLINE,
   PUBLIC_HOME_INTRO,
@@ -51,7 +56,6 @@ interface HomeConfig extends PublicConfig {
   site_description?: string;
 }
 
-const HERO_IMAGE_URL = "/public/landing/project-notebook-20260916.jpg";
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
 const PANEL_RADIUS = 8;
 const CARD_TITLE_STYLE = {
@@ -157,31 +161,12 @@ const PROJECT_FACTS = [
   },
 ] as const;
 
-const AGENT_DEFINITION_CARDS = [
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Codex works in project chat, while terminal-based agents run beside the files, notebooks, terminals, and services they need.",
-    icon: "robot",
-    title: "Work with files and services",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Patches, notes, and run output stay visible in the project, so your team can inspect the work.",
-    icon: "search",
-    title: "Review agent changes",
-  },
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Use the integrated Codex agent or Claude Code (experimental preview, where enabled), or run other command-line agents in a terminal, without moving the project somewhere else.",
-    icon: "terminal",
-    title: "Integrated chat or terminal",
-  },
-] satisfies Array<{
-  accent: string;
-  body: string;
-  icon: IconName;
-  title: string;
-}>;
+// The look of each step of PUBLIC_HOME_AGENT_STEPS, in order.
+const AGENT_STEP_STYLES = [
+  { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot" },
+  { accent: COLORS.RUN, icon: "search" },
+  { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "edit" },
+] satisfies Array<{ accent: string; icon: IconName }>;
 
 const DIFFERENCE_SIGNALS = [
   { icon: "files", label: "Shared context" },
@@ -401,7 +386,9 @@ function Hero({
   highlights: readonly string[];
   siteName: string;
 }) {
-  const signUpLabel = getPublicSignUpLabel(usePublicConfig());
+  const config = usePublicConfig();
+  const signUpLabel = getPublicSignUpLabel(config);
+  const image = getPublicHomeHeroImage(config);
   return (
     <section
       aria-label={`${siteName} hero`}
@@ -492,12 +479,15 @@ function Hero({
       </Flex>
       <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
         <img
-          alt="A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls"
+          alt={image.alt}
           className="cocalc-public-home-hero-image"
           decoding="async"
-          src={HERO_IMAGE_URL}
+          height={image.height}
+          src={image.src}
+          width={image.width}
           style={{
-            aspectRatio: "1050 / 650",
+            aspectRatio: `${image.width} / ${image.height}`,
+            height: "auto",
             border: `1px solid ${PUBLIC_COLORS.border}`,
             borderRadius: PANEL_RADIUS,
             boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.08)}`,
@@ -512,21 +502,23 @@ function Hero({
 }
 
 function AgentDefinitionSection() {
+  const links = getPublicHomeAgentLinks(usePublicConfig());
   return (
     <section
       aria-label="AI agents in CoCalc"
       style={{ padding: "22px 0 24px" }}
     >
       <SectionIntro
-        body="Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription."
-        eyebrow="Agent-ready by design"
-        title="Give AI agents the files and tools they need."
+        body={PUBLIC_HOME_AGENT_BODY}
+        eyebrow="How it works"
+        title={PUBLIC_HOME_AGENT_TITLE}
       />
       <Flex gap={12} style={{ marginTop: 18 }} wrap>
-        <Button href={appPath("features/ai")}>See agent workflows</Button>
-        <Button href={appPath("features/compare")}>
-          Compare with agent sandboxes
-        </Button>
+        {links.map((link) => (
+          <Button href={appPath(link.href)} key={link.href}>
+            {link.label}
+          </Button>
+        ))}
       </Flex>
       <div
         className="cocalc-public-home-codex-grid"
@@ -537,29 +529,32 @@ function AgentDefinitionSection() {
           marginTop: 22,
         }}
       >
-        {AGENT_DEFINITION_CARDS.map((card) => (
-          <div
-            key={card.title}
-            style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${alpha(card.accent, 0.18)}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
-              minHeight: 190,
-              padding: 18,
-            }}
-          >
-            <Flex vertical gap={14}>
-              <IconTile accent={card.accent} icon={card.icon} />
-              <div>
-                <Title level={3} style={CARD_TITLE_STYLE}>
-                  {card.title}
-                </Title>
-                <Paragraph style={{ margin: 0 }}>{card.body}</Paragraph>
-              </div>
-            </Flex>
-          </div>
-        ))}
+        {PUBLIC_HOME_AGENT_STEPS.map((step, index) => {
+          const card = { ...step, ...AGENT_STEP_STYLES[index] };
+          return (
+            <div
+              key={card.title}
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${alpha(card.accent, 0.18)}`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
+                minHeight: 190,
+                padding: 18,
+              }}
+            >
+              <Flex vertical gap={14}>
+                <IconTile accent={card.accent} icon={card.icon} />
+                <div>
+                  <Title level={3} style={CARD_TITLE_STYLE}>
+                    {card.title}
+                  </Title>
+                  <Paragraph style={{ margin: 0 }}>{card.body}</Paragraph>
+                </div>
+              </Flex>
+            </div>
+          );
+        })}
       </div>
     </section>
   );

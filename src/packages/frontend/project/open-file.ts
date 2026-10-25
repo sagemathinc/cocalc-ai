@@ -7,6 +7,7 @@
 
 import type { Filesystem } from "@cocalc/conat/files/fs";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { editorExtension } from "@cocalc/frontend/file-editors";
 import { redux } from "@cocalc/frontend/app-framework";
 import { local_storage } from "@cocalc/frontend/editor-local-storage";
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
@@ -509,7 +510,7 @@ export async function open_file(
     const changeHistory = publicDirectoryShareOpen
       ? false
       : opts.change_history;
-    const ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
+    const ext = opts.ext ?? editorExtension(displayPath);
     let syncPath = displayPath;
     try {
       mark_file_open_v2_phase(
@@ -642,7 +643,7 @@ export async function open_file(
     // Editor selection must use the user-facing file path extension.
     // syncPath may be canonicalized to backend identities, which are not
     // necessarily editor extensions.
-    let ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
+    let ext = opts.ext ?? editorExtension(displayPath);
 
     let store = actions.get_store();
     if (store == null) {
@@ -731,7 +732,9 @@ export async function open_file(
         "editor_tab_activated",
       );
     } else if (opts.wait_for_ready || PRELOAD_BACKGROUND_TABS) {
-      await actions.initFileRedux(syncPath, undefined, {
+      // Editor selection uses the display path's extension (or an explicit
+      // one), since the sync identity need not keep the name.
+      await actions.initFileRedux(syncPath, ext, {
         syncIdentityPathIsCanonical: true,
       });
     }

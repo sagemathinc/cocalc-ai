@@ -228,6 +228,39 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
+  it("says a lone question once, and nothing about the agent going on", () => {
+    render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          source_kind: "codex_async_question",
+          is_blocking: false,
+          title: "Question 1",
+          summary: "Claude may continue while it waits for your reply.",
+          questions: [{ ...questionRecord.questions[0], header: "Question 1" }],
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Question" }),
+    ).toBeInTheDocument();
+    // Shown nowhere: only the fieldset's legend (for screen readers) says it.
+    expect(
+      screen
+        .queryAllByText("Question 1")
+        .every(
+          (element) =>
+            element.tagName === "LEGEND" &&
+            element.style.position === "absolute",
+        ),
+    ).toBe(true);
+    expect(screen.queryByText(/may continue while it waits/)).toBeNull();
+    // Still named for screen readers.
+    expect(
+      screen.getByRole("group", { name: "Question 1" }),
+    ).toBeInTheDocument();
+  });
+
   it("names the agent, not Codex, while an async question waits", () => {
     const question = {
       ...questionRecord,
@@ -236,10 +269,10 @@ describe("Codex question attention", () => {
     };
     const unnamed = render(<CodexAttentionCard initialRecord={question} />);
     expect(
-      screen.getByText(
-        "The agent can keep working while you answer. Your response will be saved with this question and submitted to the agent.",
-      ),
+      screen.getByRole("region", { name: "The agent needs attention" }),
     ).toBeInTheDocument();
+    // No line about the agent working on: the running turn shows that.
+    expect(screen.queryByText(/can keep working while you answer/)).toBeNull();
     unnamed.unmount();
 
     mockNamedAgents.mockReturnValue({
@@ -264,11 +297,7 @@ describe("Codex question attention", () => {
     expect(
       screen.getByRole("region", { name: "@cocalc-acp needs attention" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "@cocalc-acp can keep working while you answer. Your response will be saved with this question and submitted to @cocalc-acp.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/can keep working while you answer/)).toBeNull();
   });
 
   it("keeps the submitted answer beside its question with keyboard focus and no false receipt", async () => {

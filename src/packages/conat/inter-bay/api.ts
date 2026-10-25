@@ -120,6 +120,10 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 import type {
   AuthorizePublicDirectoryShareReadOptions,
   AuthorizePublicDirectoryShareReadResponse,
+  GetPublicDirectoryShareViewAggregatesOptions,
+  GetPublicDirectoryShareViewAggregatesResponse,
+  GetPublicDirectoryShareViewsOptions,
+  GetPublicDirectoryShareViewsResponse,
   CopyPublicDirectoryShareToNewProjectOptions,
   CopyPublicDirectoryShareToNewProjectResult,
   CopyPublicDirectoryShareToProjectOptions,
@@ -2627,7 +2631,6 @@ export type HostConnectionMethod =
   | "get-project-backup-indexes"
   | "sync-project-backup-indexes"
   | "delete-project-backup-index"
-  | "list-host-projects"
   | "ensure-host-owner-ssh-trust"
   | "rehome-host"
   | "prepare-host-rehome"
@@ -2887,6 +2890,8 @@ export type AccountLocalMethod =
   | "public-directory-share-upsert"
   | "public-directory-share-disable-for-banned-actor"
   | "public-directory-share-authorize-read"
+  | "public-directory-share-get-views"
+  | "public-directory-share-get-view-aggregates"
   | "public-directory-share-list-directory"
   | "public-directory-share-copy-to-project"
   | "public-directory-share-copy-to-new-project"
@@ -3393,19 +3398,6 @@ export interface InterBayHostConnectionApi {
   deleteProjectBackupIndex: (
     opts: Parameters<Hosts["deleteProjectBackupIndex"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["deleteProjectBackupIndex"]>>>;
-  listHostProjects: (
-    opts: Pick<
-      Parameters<Hosts["listHostProjects"]>[0],
-      | "account_id"
-      | "id"
-      | "limit"
-      | "cursor"
-      | "risk_only"
-      | "free_only"
-      | "state_filter"
-      | "project_state"
-    >,
-  ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
   ensureHostOwnerSshTrust: (
     opts: HostOwnerSshTrustRequest,
   ) => Promise<HostOwnerSshTrustResponse>;
@@ -3489,10 +3481,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "deleteProjectBackupIndex",
     method: "delete-project-backup-index",
-  },
-  {
-    name: "listHostProjects",
-    method: "list-host-projects",
   },
   {
     name: "ensureHostOwnerSshTrust",
@@ -4557,6 +4545,12 @@ export interface InterBayAccountLocalApi
   publicDirectoryShareAuthorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
+  publicDirectoryShareGetViews: (
+    opts: GetPublicDirectoryShareViewsOptions,
+  ) => Promise<GetPublicDirectoryShareViewsResponse>;
+  publicDirectoryShareGetViewAggregates: (
+    opts: GetPublicDirectoryShareViewAggregatesOptions,
+  ) => Promise<GetPublicDirectoryShareViewAggregatesResponse>;
   publicDirectoryShareListDirectory: (
     opts: ListPublicDirectoryShareDirectoryOptions,
   ) => Promise<ListPublicDirectoryShareDirectoryResponse>;
@@ -8034,6 +8028,24 @@ export function createInterBayAccountLocalClient({
       method: "public-directory-share-authorize-read",
     }),
   });
+  const publicDirectoryShareGetViewsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViews">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-get-views",
+    }),
+  });
+  const publicDirectoryShareGetViewAggregatesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViewAggregates">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-get-view-aggregates",
+    }),
+  });
   const publicDirectoryShareListDirectoryClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "publicDirectoryShareListDirectory">
   >({
@@ -8594,6 +8606,14 @@ export function createInterBayAccountLocalClient({
       ),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShareAuthorizeReadClient.publicDirectoryShareAuthorizeRead(
+        opts,
+      ),
+    publicDirectoryShareGetViews: async (opts) =>
+      await publicDirectoryShareGetViewsClient.publicDirectoryShareGetViews(
+        opts,
+      ),
+    publicDirectoryShareGetViewAggregates: async (opts) =>
+      await publicDirectoryShareGetViewAggregatesClient.publicDirectoryShareGetViewAggregates(
         opts,
       ),
     publicDirectoryShareListDirectory: async (opts) =>
@@ -10795,6 +10815,34 @@ export function createInterBayAccountLocalHandler({
       impl: {
         publicDirectoryShareAuthorizeRead: async (opts) =>
           await impl.publicDirectoryShareAuthorizeRead(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViews">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-get-views",
+      }),
+      impl: {
+        publicDirectoryShareGetViews: async (opts) =>
+          await impl.publicDirectoryShareGetViews(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViewAggregates">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-get-view-aggregates",
+      }),
+      impl: {
+        publicDirectoryShareGetViewAggregates: async (opts) =>
+          await impl.publicDirectoryShareGetViewAggregates(opts),
       },
     }),
     createServiceHandler<

@@ -118,6 +118,13 @@ export interface HarnessProcess {
   setTurnPublicationContext?(
     context: HarnessTurnPublicationContext | undefined,
   ): void;
+  /**
+   * The turn's prompt completed; awaited before the turn reports success. A
+   * launcher that keeps turn state outside the project (the Claude
+   * controller's staged transcripts) persists it here. Rejecting fails the
+   * turn.
+   */
+  turnCompleted?(): Promise<void>;
   /** Launcher must terminate the execution boundary, including descendants. */
   stop(): Promise<void>;
   /**
@@ -502,6 +509,11 @@ export class AcpHarnessClient {
   /** Issue this turn's CoCalc connector credential, if the launcher supports it. */
   async beginConnectorTurn(chat: AcpChatContext): Promise<string | void> {
     return await this.process.beginConnectorTurn?.(chat);
+  }
+
+  /** Persist the completed turn (see HarnessProcess.turnCompleted). */
+  async turnCompleted(): Promise<void> {
+    await this.process.turnCompleted?.();
   }
 
   /** Revoke the current turn's CoCalc connector credential. */
