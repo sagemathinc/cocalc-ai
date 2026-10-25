@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { createPortal } from "react-dom";
 import { agentWorkingDirectory } from "./agent-working-directory";
 import {
   Alert,
@@ -573,6 +574,8 @@ interface ChatRoomThreadPanelProps {
   mobile?: boolean;
   /** Show the selected thread in the reader instead of the log. */
   readerMode?: boolean;
+  /** Over the whole chat (its composer too): where the questions panel goes. */
+  attentionPanelHost?: HTMLElement | null;
   onReaderModeChange?: (on: boolean) => void;
   /** Move the keyboard focus into the reader as it appears. */
   readerAutoFocus?: boolean;
@@ -628,6 +631,7 @@ export function ChatRoomThreadPanel({
   readOnly = false,
   mobile = false,
   readerMode = false,
+  attentionPanelHost,
   onReaderModeChange,
   readerAutoFocus = false,
   readStateVersion,
@@ -3357,17 +3361,25 @@ export function ChatRoomThreadPanel({
                 />
               )}
             </span>
-            <AttentionPanel
-              key={selectedThreadKey ?? ""}
-              records={attentionRecords}
-              projected={projectedAttention}
-              open={attentionPanelOpen}
-              onClose={closeAttentionPanel}
-              // Below the chat's toolbar, which sits over the content's top.
-              top={contentTopInset}
-              focusAttentionId={attentionFocus.id}
-              focusToken={attentionFocus.token}
-            />
+            {(() => {
+              const panel = (
+                <AttentionPanel
+                  key={selectedThreadKey ?? ""}
+                  records={attentionRecords}
+                  projected={projectedAttention}
+                  open={attentionPanelOpen}
+                  onClose={closeAttentionPanel}
+                  // Below the chat's toolbar, which sits over the content's top.
+                  top={contentTopInset}
+                  focusAttentionId={attentionFocus.id}
+                  focusToken={attentionFocus.token}
+                />
+              );
+              // Over the composer too, when the chat gives it a place.
+              return attentionPanelHost
+                ? createPortal(panel, attentionPanelHost)
+                : panel;
+            })()}
           </>
         ) : null}
       </div>

@@ -72,6 +72,20 @@ describe("the panel's requests", () => {
   });
 });
 
+describe("the panel's order", () => {
+  it("lists requests in the order they were asked", () => {
+    const records = [
+      record("second", { created_at: 2 }),
+      record("first", { created_at: 1 }),
+    ];
+    expect(
+      attentionPanelRecords(records, {}, new Set()).map(
+        ({ attention_id }) => attention_id,
+      ),
+    ).toEqual(["first", "second"]);
+  });
+});
+
 describe("the button", () => {
   it("says how many questions wait, and nothing when none do", () => {
     const onOpen = jest.fn();
