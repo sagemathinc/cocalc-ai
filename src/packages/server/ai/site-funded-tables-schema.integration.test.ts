@@ -232,6 +232,68 @@ describe("site-funded AI tables in db-schema", () => {
     expect(await structure()).toEqual(legacy);
   });
 
+  it("a table from before the later columns gets them, filled in as before", async () => {
+    // The first version had none of the columns later added by ALTER TABLE.
+    // The old code added them with defaults and gave running turns their
+    // whole reservation as pool_reserved_microusd.
+    await dropTables();
+    const original = LEGACY_DDL.slice(0, 2).map((ddl) =>
+      ddl
+        .split("\n")
+        .filter(
+          (line) =>
+            !/^\s*(pool_reserved_microusd|last_request_sequence|last_event_id|last_event_cost_microusd|last_event_price_version|last_event_long_context) /.test(
+              line,
+            ),
+        )
+        .join("\n"),
+    );
+    for (const statement of original) await getPool().query(statement);
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO site_ai_funding_periods
+         (pool_id, period_start, period_end, limit_microusd, policy_version)
+       VALUES ('p', '2026-10-01', '2026-11-01', 1000000, 1)`,
+    );
+    const row = (id: string, status: string) =>
+      pool.query(
+        `INSERT INTO site_ai_turn_reservations
+           (reservation_id, funded_turn_id, idempotency_key, pool_id,
+            period_start, account_id, project_id, host_id, membership_tier,
+            policy_version, model, reasoning, service_tier, policy,
+            reserved_microusd, status, expires_at)
+         VALUES ($1::uuid, gen_random_uuid(), $1::text, 'p', '2026-10-01',
+           gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'free',
+           1, 'm', 'r', 's', '{}', 500, $2::text, now())`,
+        [id, status],
+      );
+    await row("00000000-0000-4000-8000-000000000001", "active");
+    await row("00000000-0000-4000-8000-000000000002", "committed");
+    await syncSchema(siteAiSchema);
+    const { rows } = await pool.query(
+      `SELECT status, pool_reserved_microusd, last_request_sequence,
+              last_event_cost_microusd, provider
+         FROM site_ai_turn_reservations ORDER BY reservation_id`,
+    );
+    expect(rows).toEqual([
+      {
+        status: "active",
+        pool_reserved_microusd: "500",
+        last_request_sequence: 0,
+        last_event_cost_microusd: "0",
+        provider: "openai",
+      },
+      {
+        status: "committed",
+        pool_reserved_microusd: "0",
+        last_request_sequence: 0,
+        last_event_cost_microusd: "0",
+        provider: "openai",
+      },
+    ]);
+    expect(await schemaNeedsSync(siteAiSchema)).toBe(false);
+  });
+
   it("a fresh database built from the schema is the same", async () => {
     await dropTables();
     await syncSchema(siteAiSchema);

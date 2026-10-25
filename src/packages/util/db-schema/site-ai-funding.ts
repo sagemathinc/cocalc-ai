@@ -270,6 +270,10 @@ Table({
       type: "integer",
       pg_type: BIGINT,
       not_null: true,
+      // Upgrading a table from before this column: running turns hold their
+      // whole reservation, others nothing (what the old migration did).
+      pg_null_backfill:
+        "CASE WHEN status = 'active' THEN reserved_microusd ELSE 0 END",
       desc: "What it holds of its pool's period budget while running.",
     },
     committed_microusd: {
@@ -283,6 +287,7 @@ Table({
       type: "integer",
       pg_default: "0",
       not_null: true,
+      pg_null_backfill: "0",
       desc: "Sequence number of the last metered provider request, so a repeated usage report counts once.",
     },
     last_event_id: {
@@ -294,6 +299,7 @@ Table({
       pg_type: BIGINT,
       pg_default: "0",
       not_null: true,
+      pg_null_backfill: "0",
       desc: "Cost of the last metered usage event.",
     },
     last_event_price_version: {
@@ -342,6 +348,7 @@ Table({
       type: "string",
       pg_default: "'openai'::text",
       not_null: true,
+      pg_null_backfill: "'openai'",
       desc: "openai (Codex) or anthropic (Claude).",
     },
     provider_key_id: {
