@@ -168,6 +168,8 @@ export function forgetSubvolumePaths(...paths: string[]): void {
   for (const path of paths) {
     invalidateBtrfsSubvolumeShow(path);
     invalidateQgroupScan(path);
+    // (a home's snapshots move with it)
+    forgetReadonlySnapshotsUnder(path);
   }
 }
 
@@ -199,6 +201,64 @@ export function invalidateBtrfsSubvolumeShow(path: string): void {
     subvolumeShowCache.delete(key);
     subvolumeShowInflight.delete(key);
     subvolumeShowReads.delete(key);
+  }
+  readonlySnapshots.delete(path);
+  readonlySnapshotReads.delete(path);
+}
+
+// Paths in a snapshots directory known to be read-only snapshots, each with
+// the identity it had when `btrfs subvolume show` said so: its st_dev (every
+// btrfs subvolume has its own), inode (256 for a subvolume root) and ctime.
+// A scheduled snapshot update lists the directory several times, and each
+// listing otherwise runs one btrfs process per retained snapshot.
+// Only read-only is remembered: making a snapshot writable goes through
+// invalidateBtrfsSubvolumeShow (subvolume-snapshots.ts setReadOnly), and a
+// deleted and recreated snapshot has a new identity.
+const readonlySnapshots = new Map<string, string>();
+// the read under way for each path, while it is (as subvolumeShowReads)
+const readonlySnapshotReads = new Map<string, symbol>();
+const MAX_READONLY_SNAPSHOTS = 100_000;
+
+export function knownReadonlySnapshot(path: string, identity: string): boolean {
+  return readonlySnapshots.get(path) === identity;
+}
+
+export function beginReadonlySnapshotRead(path: string): symbol {
+  const token = Symbol(path);
+  readonlySnapshotReads.set(path, token);
+  return token;
+}
+
+export function rememberReadonlySnapshot(
+  path: string,
+  identity: string,
+  token: symbol,
+): void {
+  if (readonlySnapshotReads.get(path) !== token) return;
+  readonlySnapshotReads.delete(path);
+  readonlySnapshots.delete(path);
+  if (readonlySnapshots.size >= MAX_READONLY_SNAPSHOTS) {
+    const oldest = readonlySnapshots.keys().next().value;
+    if (oldest != null) readonlySnapshots.delete(oldest);
+  }
+  readonlySnapshots.set(path, identity);
+}
+
+export function endReadonlySnapshotRead(path: string, token: symbol): void {
+  if (readonlySnapshotReads.get(path) === token) {
+    readonlySnapshotReads.delete(path);
+  }
+}
+
+function forgetReadonlySnapshotsUnder(path: string): void {
+  const prefix = path.endsWith("/") ? path : `${path}/`;
+  for (const key of readonlySnapshots.keys()) {
+    if (key === path || key.startsWith(prefix)) readonlySnapshots.delete(key);
+  }
+  for (const key of readonlySnapshotReads.keys()) {
+    if (key === path || key.startsWith(prefix)) {
+      readonlySnapshotReads.delete(key);
+    }
   }
 }
 
@@ -444,6 +504,8 @@ export function clearBtrfsOperationCachesForTest(): void {
   subvolumeShowCache.clear();
   subvolumeShowInflight.clear();
   subvolumeShowReads.clear();
+  readonlySnapshots.clear();
+  readonlySnapshotReads.clear();
   for (const state of mutationLocks.values()) {
     for (const waiter of state.waiters) {
       clearTimeout(waiter.timeout);
