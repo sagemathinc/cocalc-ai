@@ -125,3 +125,41 @@ test("only web and mail links are allowed", () => {
   expect(todoLinkAllowed("data:text/html,x")).toBe(false);
   expect(todoLinkAllowed(3)).toBe(false);
 });
+
+test("ids must be strings; a number never matches a string id", () => {
+  const { todo, problems } = parseTodo(
+    JSON.stringify({
+      ...list,
+      sections: [{ id: 1, title: "Numbered" }],
+      items: [
+        { id: 1, title: "Number", status: "todo" },
+        { id: "1", title: "String", status: "todo", section: 1 },
+      ],
+    }),
+  );
+  expect(todo?.sections).toBeUndefined();
+  expect(todo?.items.map((i) => i.id)).toEqual(["1"]);
+  expect(todo?.items[0].section).toBeUndefined();
+  expect(problems.map((p) => p.path)).toEqual([
+    "sections[0].id",
+    "items[0].id",
+    "items[1].section",
+  ]);
+});
+
+test("a category must be one of the list's own, not an inherited name", () => {
+  const { todo, problems } = parseTodo(
+    JSON.stringify({
+      ...list,
+      items: [
+        { id: "a", title: "A", status: "todo", category: "constructor" },
+        { id: "b", title: "B", status: "todo", category: "toString" },
+      ],
+    }),
+  );
+  expect(todo?.items.map((i) => i.category)).toEqual([undefined, undefined]);
+  expect(problems.map((p) => p.path)).toEqual([
+    "items[0].category",
+    "items[1].category",
+  ]);
+});

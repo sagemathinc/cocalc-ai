@@ -113,6 +113,11 @@ export function todoLinkAllowed(url: unknown): boolean {
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 
+/** Ids are strings, so 1 and "1" can't both name an item. */
+function isId(value: unknown): value is string {
+  return typeof value === "string" && ID.test(value);
+}
+
 function nonEmpty(value: unknown, max: number): value is string {
   return (
     typeof value === "string" && value.trim().length > 0 && value.length <= max
@@ -175,7 +180,7 @@ export function parseTodo(text: string): {
     TODO_LIMITS.maxDetails,
   );
   const updated = optionalText("updated", value.updated, 100);
-  if (value.id != null && !(typeof value.id === "string" && ID.test(value.id)))
+  if (value.id != null && !isId(value.id))
     problem("id", "must be letters, digits, '.', '_', ':' or '-'");
 
   const categories: Record<string, TodoCategory> = {};
@@ -216,7 +221,7 @@ export function parseTodo(text: string): {
         .slice(0, TODO_LIMITS.maxSections)
         .forEach((raw: any, i: number) => {
           const path = `sections[${i}]`;
-          if (!raw || typeof raw !== "object" || !ID.test(`${raw.id ?? ""}`)) {
+          if (!raw || typeof raw !== "object" || !isId(raw.id)) {
             problem(`${path}.id`, "must be an id");
             return;
           }
@@ -256,7 +261,7 @@ export function parseTodo(text: string): {
           problem(path, "must be an object");
           return;
         }
-        if (!ID.test(`${raw.id ?? ""}`)) {
+        if (!isId(raw.id)) {
           problem(`${path}.id`, "must be an id");
           return;
         }
@@ -286,7 +291,10 @@ export function parseTodo(text: string): {
           else problem(`${path}.section`, "must be a section id");
         }
         if (raw.category != null) {
-          if (typeof raw.category === "string" && categories[raw.category])
+          if (
+            typeof raw.category === "string" &&
+            Object.prototype.hasOwnProperty.call(categories, raw.category)
+          )
             item.category = raw.category;
           else problem(`${path}.category`, "must be one of the categories");
         }
@@ -349,9 +357,7 @@ export function parseTodo(text: string): {
           todo: {
             format: TODO_FORMAT,
             version: TODO_VERSION,
-            ...(typeof value.id === "string" && ID.test(value.id)
-              ? { id: value.id }
-              : {}),
+            ...(isId(value.id) ? { id: value.id } : {}),
             title: value.title,
             ...(description ? { description } : {}),
             ...(updated ? { updated } : {}),
