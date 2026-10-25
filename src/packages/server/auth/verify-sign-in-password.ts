@@ -25,8 +25,10 @@ export interface SignInPasswordVerification {
 // real check costs, so response time does not reveal whether an account exists.
 const dummyHashes: Partial<Record<PasswordKdf, Promise<string>>> = {};
 
-async function spendLikeARealCheck(password: string): Promise<void> {
-  const kdf = await getPasswordKdf();
+async function spendLikeARealCheck(
+  password: string,
+  kdf: PasswordKdf,
+): Promise<void> {
   let dummy = dummyHashes[kdf];
   if (dummy == null) {
     const created = hashPassword(`no account ${Math.random()} ${Date.now()}`, {
@@ -56,24 +58,31 @@ export async function verifyLocalSignInPassword({
     );
   }
 
+  // Read once, so every branch below charges the same format.
+  const kdf = await getPasswordKdf();
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT account_id, password_hash, banned, home_bay_id FROM accounts WHERE email_address=$1",
     [email],
   );
   if (rows.length == 0) {
-    await spendLikeARealCheck(password);
+    await spendLikeARealCheck(password, kdf);
     throw Error(`no account with email address '${email}'`);
   }
   const { account_id, password_hash, banned, home_bay_id } = rows[0];
   if (!password_hash) {
-    await spendLikeARealCheck(password);
+    await spendLikeARealCheck(password, kdf);
   }
   if (!(await checkPassword(password, password_hash))) {
-    // While scrypt is on, a legacy hash not yet wrapped fails fast; pay a
-    // dummy check so every failure costs one KDF (see spendLikeARealCheck).
-    if (password_hash && !isStrongPasswordHash(password_hash)) {
-      await spendLikeARealCheck(password);
+    // While scrypt is on, a legacy (or malformed) hash fails without any
+    // scrypt; pay the dummy so every failure costs one scrypt. Under legacy
+    // the real check already costs what the dummy does.
+    if (
+      password_hash &&
+      kdf === "scrypt" &&
+      !isStrongPasswordHash(password_hash)
+    ) {
+      await spendLikeARealCheck(password, kdf);
     }
     throw Error(`password for '${email}' is incorrect`);
   }

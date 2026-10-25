@@ -355,12 +355,15 @@ function parseWrap(
   return { outer, legacy: { algorithm, salt, iterations } };
 }
 
-/** Whether a stored hash is in a strong (scrypt) format. */
+/** Whether a stored hash is a well-formed scrypt or scrypt-wrap hash. */
 export function isStrongPasswordHash(stored: unknown): boolean {
-  return (
-    typeof stored == "string" &&
-    (stored.startsWith(SCRYPT_PREFIX) || stored.startsWith(WRAP_PREFIX))
-  );
+  if (typeof stored != "string") return false;
+  if (stored.startsWith(SCRYPT_PREFIX)) {
+    return (
+      parseScryptFields(stored.slice(SCRYPT_PREFIX.length).split("$")) != null
+    );
+  }
+  return stored.startsWith(WRAP_PREFIX) && parseWrap(stored) != null;
 }
 
 /** Check a human-chosen secret against a stored hash in any format. */
