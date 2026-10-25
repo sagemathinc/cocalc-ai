@@ -8,22 +8,18 @@ import { after, before } from "@cocalc/server/test";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import { uuid } from "@cocalc/util/misc";
 import {
-  ensureSiteFundedAdmissionTable,
   getSiteFundedFunnel,
   pruneSiteFundedAdmissions,
   recordSiteFundedAdmissionLocal,
   SITE_FUNDED_ADMISSION_RETENTION_DAYS,
 } from "./site-funded-admissions";
 import {
-  ensureSiteFundedCodexReservationTables,
   finishSiteFundedCodexTurn,
   reserveSiteFundedCodexTurn,
 } from "./site-funded-codex-reservations";
 
 beforeAll(async () => {
   await before({ noConat: true });
-  await ensureSiteFundedCodexReservationTables();
-  await ensureSiteFundedAdmissionTable();
 }, 15_000);
 
 afterAll(after);
