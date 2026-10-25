@@ -1,4 +1,12 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup as cleanupAll,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { ChatReaderView } from "../reader-view";
@@ -126,8 +134,11 @@ test("items are unread past the watermark; opening one reads it", async () => {
   // An item shows its replies in the reading pane.
   await keys.click(screen.getByText(/first question/));
   expect(screen.getByRole("article")).toHaveTextContent("first answer");
-  // Clicking an item leaves the focus where the keys work.
-  expect(document.activeElement).toBe(screen.getByRole("listbox"));
+  // Clicking an item gives the open message the focus: Space pages it, and
+  // the keys still work from there.
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole("article")),
+  );
   // k goes up to the newer one: read, and the watermark moves over it.
   await keys.keyboard("k");
   expect(screen.getByRole("article")).toHaveTextContent("second question");
@@ -210,13 +221,17 @@ test("archive all: a clean slate, after confirming", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Archive all" }));
   // Nothing happens until it is confirmed.
   expect(options()).toHaveLength(3);
-  expect(await screen.findByText("Archive all 3 messages?")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Archive all 3 messages?"),
+  ).toBeInTheDocument();
   const [, confirm] = screen.getAllByRole("button", { name: "Archive all" });
   fireEvent.click(confirm);
   expect(screen.queryAllByRole("option")).toHaveLength(0);
   expect(screen.getByText("No unread messages")).toBeInTheDocument();
   expect(count()).toBe(4);
-  expect(screen.getAllByRole("button", { name: "Archive all" })[0]).toBeDisabled();
+  expect(
+    screen.getAllByRole("button", { name: "Archive all" })[0],
+  ).toBeDisabled();
   // A new message is in the inbox.
   setMessages([...thread, person("p4", "fourth question", 5)]);
   expect(options()).toHaveLength(1);
@@ -309,7 +324,9 @@ test("Newer and Older keep the keys working, though the pane is replaced", async
   await keys.click(screen.getByText(/second question/));
   await keys.click(screen.getByRole("button", { name: "Older" }));
   expect(screen.getByRole("article")).toHaveTextContent("first question");
-  expect(document.activeElement).toBe(screen.getByRole("listbox"));
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole("article")),
+  );
   await keys.keyboard("k");
   expect(screen.getByRole("article")).toHaveTextContent("second question");
 });
@@ -320,9 +337,35 @@ test("archiving the open item with the pane's button keeps the keys working", as
   await keys.click(screen.getByText(/second question/));
   await keys.click(screen.getByRole("button", { name: "Archive" }));
   expect(screen.getByRole("article")).toHaveTextContent("first question");
-  expect(document.activeElement).toBe(screen.getByRole("listbox"));
+  // The next message has the focus, so Space pages it after y too.
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole("article")),
+  );
   await keys.keyboard("k");
   expect(screen.getByRole("article")).toHaveTextContent("third question");
+});
+
+test("the running turn's place in the toolbar is kept, so nothing moves", () => {
+  setup(thread, 4);
+  // Nothing running: the place is there, empty, before the unread count.
+  const slot = screen.getByRole("group", { name: "Running turn" });
+  expect(slot).toBeEmptyDOMElement();
+  expect(slot.nextElementSibling).toHaveTextContent("No unread messages");
+  cleanupAll();
+  setup(thread, 4, {
+    runningStatus: <button type="button">Interrupt</button>,
+  });
+  const running = screen.getByRole("group", { name: "Running turn" });
+  expect(
+    within(running).getByRole("button", { name: "Interrupt" }),
+  ).toBeInTheDocument();
+  expect(running.nextElementSibling).toHaveTextContent("No unread messages");
+});
+
+test("narrow: no place is kept (the status shows above)", () => {
+  setup(thread, 4, { narrow: true });
+  fireEvent.click(screen.getByRole("button", { name: "All messages" }));
+  expect(screen.queryByRole("group", { name: "Running turn" })).toBeNull();
 });
 
 test("Keys, or ?, shows the keyboard shortcuts", async () => {
