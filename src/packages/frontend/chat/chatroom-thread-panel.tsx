@@ -902,11 +902,22 @@ export function ChatRoomThreadPanel({
   const attentionButtonRef = useRef<HTMLSpanElement>(null);
   const closeAttentionPanel = useCallback(() => {
     setAttentionPanelOpen(false);
-    requestAnimationFrame(() =>
-      attentionButtonRef.current
-        ?.querySelector<HTMLElement>("button")
-        ?.focus({ preventScroll: true }),
-    );
+    requestAnimationFrame(() => {
+      // The button, else (nothing waits any more) the chat itself.
+      const content = attentionButtonRef.current?.parentElement;
+      const target =
+        attentionButtonRef.current?.querySelector<HTMLElement>("button") ??
+        content?.querySelector<HTMLElement>("[data-virtuoso-scroller]") ??
+        content?.querySelector<HTMLElement>('[role="listbox"]') ??
+        panelRef.current;
+      if (
+        target &&
+        !target.hasAttribute("tabindex") &&
+        target.tagName !== "BUTTON"
+      )
+        target.tabIndex = -1;
+      target?.focus({ preventScroll: true });
+    });
   }, []);
   useEffect(() => {
     setAttentionPanelOpen(false);

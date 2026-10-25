@@ -46,6 +46,8 @@ export function isFailedDelivery(
 ): boolean {
   return (
     record.state === "stale" &&
+    // Answered and saved: a question that went stale unanswered is just over.
+    record.response_submitted_at != null &&
     ["codex_sync_question", "codex_async_question"].includes(
       record.source_kind,
     ) &&
@@ -85,7 +87,8 @@ export function AttentionPanelButton({
   onOpen: () => void;
 }) {
   const count = openRecords.length;
-  if (count <= 0 && failed.length <= 0) return null;
+  const total = count + failed.length;
+  if (total <= 0) return null;
   const questions = openRecords.every(
     (record) =>
       record.questions?.length > 0 || record.source_kind.endsWith("_question"),
@@ -96,11 +99,7 @@ export function AttentionPanelButton({
       shape="round"
       icon={<Icon name="question-circle" />}
       onClick={onOpen}
-      aria-label={
-        count > 0
-          ? `${count} ${count === 1 ? "request waits" : "requests wait"} for you: open them`
-          : "An answer did not reach the agent: open it to send again"
-      }
+      aria-label={`${total} ${total === 1 ? "request waits" : "requests wait"} for you: open them`}
       style={{
         position: "absolute",
         right: 16,
@@ -110,10 +109,12 @@ export function AttentionPanelButton({
       }}
     >
       {count <= 0
-        ? "Answer not delivered"
-        : questions
+        ? failed.length === 1
+          ? "Answer not delivered"
+          : `${failed.length} answers not delivered`
+        : failed.length === 0 && questions
           ? `${count} ${count === 1 ? "question" : "questions"} waiting`
-          : `${count} waiting for you`}
+          : `${total} waiting for you`}
     </Button>
   );
 }
@@ -145,6 +146,14 @@ export function AttentionPanel({
   const [width, setWidth] = useState(storedWidth);
   const bodyRef = useRef<HTMLDivElement>(null);
   const shown = attentionPanelRecords(records, drafts, projected);
+  // What still needs the person: open ones and undelivered answers.
+  const actionable = shown.filter(
+    (record) => isOpenAttention(record) || isFailedDelivery(record, projected),
+  ).length;
+  // As wide as the chat it covers (its maxWidth is 100%).
+  const maxWidth =
+    panelRef.current?.offsetParent?.clientWidth ??
+    (typeof window === "undefined" ? 2000 : window.innerWidth);
 
   useEffect(() => {
     if (!open) return;
@@ -234,6 +243,7 @@ export function AttentionPanel({
         aria-label="Resize the panel (left and right arrow keys)"
         aria-valuenow={Math.round(width)}
         aria-valuemin={MIN_WIDTH}
+        aria-valuemax={Math.max(MIN_WIDTH, Math.round(maxWidth))}
         tabIndex={0}
         onPointerDown={startResize}
         onKeyDown={resizeWithKeys}
@@ -258,7 +268,7 @@ export function AttentionPanel({
       >
         <b style={{ flex: 1 }}>
           Waiting for you
-          {shown.length ? ` (${shown.filter(isOpenAttention).length})` : ""}
+          {actionable ? ` (${actionable})` : ""}
         </b>
         <Tooltip title="Hide: what you typed is kept">
           <Button

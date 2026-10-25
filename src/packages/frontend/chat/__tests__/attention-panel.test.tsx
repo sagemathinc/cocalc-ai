@@ -49,6 +49,8 @@ describe("the panel's requests", () => {
       record("here", { response_submitted_at: "x", state: "resolved" }),
       record("stale", { state: "stale", response_submitted_at: "x" }),
       record("in-log", { state: "stale", response_submitted_at: "x" }),
+      // Stale without an answer: over, not a failed delivery.
+      record("expired", { state: "stale", source_kind: "codex_sync_question" }),
     ];
     const drafts = {
       here: {
@@ -95,6 +97,15 @@ describe("the button", () => {
       />,
     );
     expect(screen.getByText("Answer not delivered")).toBeInTheDocument();
+    // Open and undelivered together: all of them are counted.
+    rerender(
+      <AttentionPanelButton
+        open={[record("a")]}
+        failed={[record("stale", { state: "stale" })]}
+        onOpen={onOpen}
+      />,
+    );
+    expect(screen.getByText("2 waiting for you")).toBeInTheDocument();
   });
 });
 
@@ -135,6 +146,20 @@ describe("the panel", () => {
     expect(screen.getByLabelText("answer second")).toBeInTheDocument();
   });
 
+  it("counts an undelivered answer as waiting", () => {
+    render(
+      <AttentionPanel
+        records={[
+          record("stale", { state: "stale", response_submitted_at: "x" }),
+        ]}
+        projected={new Set()}
+        onClose={jest.fn()}
+        open
+      />,
+    );
+    expect(screen.getByText("Waiting for you (1)")).toBeInTheDocument();
+  });
+
   it("takes the keys when opened, and resizes with the arrow keys", () => {
     const props = {
       records: [record("first")],
@@ -148,6 +173,9 @@ describe("the panel", () => {
     });
     expect(document.activeElement).toBe(panel);
     const handle = screen.getByRole("separator");
+    expect(Number(handle.getAttribute("aria-valuemax"))).toBeGreaterThanOrEqual(
+      Number(handle.getAttribute("aria-valuemin")),
+    );
     const before = Number(handle.getAttribute("aria-valuenow"));
     fireEvent.keyDown(handle, { key: "ArrowLeft" });
     expect(Number(handle.getAttribute("aria-valuenow"))).toBe(before + 24);
