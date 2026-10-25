@@ -336,8 +336,12 @@ GET https://sagebrush.space/api/admin/sync-retention/<account_id>   (signed, emp
 2. **The second email**, "Your Sagebrush synced data will be deleted on
    <date>", goes 14 days before `purge_after`. If that time has already passed, it
    goes at once.
-3. **Before each email, CoCalc reads again** and sends nothing if any of these is
-   true:
+3. **Before each email, CoCalc checks again.** First its own answer: it resolves
+   the account's membership on its home bay, and if sync is back (a renewal
+   Sagebrush may not have heard of yet), it records the change, which queues
+   the notice and ends the emails. If the membership can't be resolved, the step
+   is retried later; nothing is sent. Then it reads Sagebrush's answer again,
+   and sends nothing if any of these is true:
    - the answer is a 404;
    - the state is no longer `readonly`;
    - `readonly_since` is null (renewed);
@@ -346,8 +350,40 @@ GET https://sagebrush.space/api/admin/sync-retention/<account_id>   (signed, emp
 
    A renewal that CoCalc sees itself sends a notice and cancels the emails.
 
-Failed reads and sends are retried with the same backoff and alerts. The emails
-go to the account's email address, through the site's transactional email.
+Failed reads and sends are retried with the same backoff. Admins are alerted at
+once on a 401, and once per notice and per email when it is a day overdue. The
+emails go to the account's email address, through the site's transactional
+email.
+
+### Cycles, claims and delivery
+
+- The emails after one ending of sync form a **cycle**, named by the request id
+  of the notice that ended it. A renewal ends the cycle; a later lapse starts a
+  new one.
+- A pass **claims** a due step for 5 minutes. Every update of the step names its
+  cycle, its stage and the claim, so a pass that was superseded (renewed, a new
+  cycle, or reclaimed after its lease) changes nothing.
+- Each email of each cycle has one **delivery record** in
+  `sagebrush_sync_emails`, whose id is derived from the cycle and the stage.
+  - Before the email is handed to the mail transport, the attempt is admitted.
+    In one statement, with the step's row locked and still this cycle, stage and
+    claim, the record goes to `sending`.
+  - When the transport returns, the record becomes `sent` and the step
+    advances, in one statement. When it throws, the record becomes `failed`
+    and the step is retried.
+- The mail transport (SMTP or SendGrid) takes no idempotency key and confirms
+  nothing later, so exactly-once delivery isn't possible. Each email is sent
+  **at most once** instead. A record left in `sending` (the process died, or
+  recording the outcome failed) becomes `unknown` at the next claim. The email
+  may have been delivered, so it isn't sent again: the step advances, and the
+  admins are told.
+
+Failures are kept as codes and HTTP statuses only, such as `http_error 503`,
+`malformed_response 200`, `send_failed` or `entitlement_unknown`. That covers
+logs, `last_error` and admin alerts: a response body or an exception's text,
+which could hold an address or a credential, is never kept. Logs name a
+notice's request id or a step's cycle, not the account; admin alerts name the
+account, as the purge alerts do.
 
 ## Implementation in CoCalc
 
@@ -376,8 +412,8 @@ go to the account's email address, through the site's transactional email.
 - `src/packages/server/auth/oauth/purge.ts`: the purge queue, its signing and
   its worker.
 - `src/packages/server/sagebrush/sync-retention.ts`: section 4's checks, notices
-  and emails, run on the primary bay worker, and their table,
-  `sagebrush_sync_states`.
+  and emails, run on the primary bay worker, and their tables,
+  `sagebrush_sync_states` and `sagebrush_sync_emails`.
 - The deletion dialog lists the approved clients through
   `/api/v2/accounts/oauth-client-approvals`, to say their shared files are
   deleted too.

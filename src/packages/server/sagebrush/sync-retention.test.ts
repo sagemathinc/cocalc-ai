@@ -16,6 +16,7 @@ import { createHmac } from "node:crypto";
 
 import {
   deletionPending,
+  deliveryId,
   getSyncNoticeConfig,
   readSyncRetention,
   retentionEmail,
@@ -108,28 +109,29 @@ describe("sendSyncNotice", () => {
     ).toBe(true);
   });
 
-  it("fails on anything else", async () => {
-    for (const response of [
-      new Response("bad signature", { status: 401 }),
-      new Response("{}", { status: 200 }),
-      new Response("<html>", { status: 200 }),
-    ]) {
+  it("fails on anything else, with a code and status only", async () => {
+    for (const [response, message] of [
+      [new Response("bad signature", { status: 401 }), "http_error 401"],
+      [new Response("{}", { status: 200 }), "malformed_response 200"],
+      [new Response("<html>", { status: 200 }), "malformed_response 200"],
+    ] as const) {
       const r = await sendSyncNotice({
         config,
         notice,
         fetch: (async () => response) as any,
       });
       expect(r.accepted).toBeUndefined();
-      expect(r.error).toMatch(/^HTTP/);
+      expect(r.failure?.message).toBe(message);
     }
     const thrown = await sendSyncNotice({
       config,
       notice,
       fetch: (async () => {
-        throw Error("down");
+        throw Error("down for someone@example.com");
       }) as any,
     });
-    expect(thrown.error).toMatch(/request failed/);
+    expect(thrown.failure?.code).toBe("request_failed");
+    expect(thrown.failure?.message).toBe("request_failed");
   });
 });
 
@@ -192,6 +194,7 @@ describe("readSyncRetention", () => {
         }),
         { status: 200 },
       ),
+      new Response("{not json", { status: 200 }),
     ]) {
       await expect(
         readSyncRetention({
@@ -199,8 +202,22 @@ describe("readSyncRetention", () => {
           account_id: ACCOUNT,
           fetch: (async () => response) as any,
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/^(http_error 401|malformed_response 200)$/);
     }
+  });
+});
+
+describe("deliveryId", () => {
+  const cycle = "00000000-0000-4000-8000-000000000003";
+  it("is one stable UUID per email of a cycle", () => {
+    expect(deliveryId(cycle, "ended")).toBe(deliveryId(cycle, "ended"));
+    expect(deliveryId(cycle, "ended")).not.toBe(deliveryId(cycle, "before"));
+    expect(deliveryId(cycle, "ended")).not.toBe(
+      deliveryId("00000000-0000-4000-8000-000000000004", "ended"),
+    );
+    expect(deliveryId(cycle, "before")).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
   });
 });
 

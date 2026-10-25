@@ -492,6 +492,14 @@ export const TABLE_OWNERSHIP = {
       "Which OAuth clients an account has approved, recorded under the rehome fence by the home bay when it issues the approval proof. It only decides whether the deletion dialog offers to keep a client's data: deletion purges every enabled client regardless, so a row left on an old home bay by a rehome cannot skip a purge.",
   }),
 
+  ...entries(["sagebrush_sync_emails"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    notes:
+      "Sagebrush retention emails (docs/sagebrush.md): one delivery record per email of each retention cycle, so an email the mail transport may have accepted is never sent again. Kept with sagebrush_sync_states; a rehome leaves them behind.",
+  }),
+
   ...entries(["sagebrush_sync_states"], {
     ownership: "account-home",
     authority: "account_id",

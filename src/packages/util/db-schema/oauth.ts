@@ -209,13 +209,81 @@ Table({
       type: "timestamp",
       desc: "When the email about two weeks before deletion was sent.",
     },
+    email_cycle: {
+      type: "uuid",
+      desc: "The retention cycle the emails belong to: the request id of the accepted notice that ended sync. A later change starts a new cycle, and work for an older one is ignored.",
+    },
+    email_claim: {
+      type: "uuid",
+      desc: "The pass that holds the current retention step; every update of the step requires it, so a superseded pass changes nothing.",
+    },
+    email_due_at: {
+      type: "timestamp",
+      desc: "When the current retention step became due (for the overdue alert).",
+    },
     last_error: {
       type: "string",
-      desc: "Why the last notice or retention step failed.",
+      desc: "Why the last notice or retention step failed: a failure code and HTTP status only, never a response body or exception text.",
     },
-    alerted_at: {
+    notice_alerted_at: {
       type: "timestamp",
-      desc: "When admins were alerted that a notice or retention step is overdue.",
+      desc: "When admins were alerted that the current notice is overdue; reset by each new notice.",
+    },
+    email_alerted_at: {
+      type: "timestamp",
+      desc: "When admins were alerted that the current retention step is overdue; reset by each new step and cycle.",
+    },
+  },
+});
+
+Table({
+  name: "sagebrush_sync_emails",
+  rules: {
+    primary_key: "delivery_id",
+    pg_indexes: ["account_id"],
+  },
+  fields: {
+    delivery_id: {
+      type: "uuid",
+      desc: "Derived from (cycle_id, stage), so each email of each retention cycle has exactly one delivery record.",
+    },
+    account_id: {
+      type: "uuid",
+      desc: "The account emailed.",
+    },
+    cycle_id: {
+      type: "uuid",
+      desc: "sagebrush_sync_states.email_cycle of the email.",
+    },
+    stage: {
+      type: "string",
+      pg_type: "varchar(16)",
+      desc: "'ended' or 'before'.",
+    },
+    state: {
+      type: "string",
+      pg_type: "varchar(16)",
+      desc: "'pending', 'sending' (handed to the mail transport, outcome not yet recorded), 'sent', 'failed' (the transport refused it; it may be tried again) or 'unknown' (an attempt ended without a recorded outcome; it is never tried again).",
+    },
+    claim_id: {
+      type: "uuid",
+      desc: "The pass that admitted the current attempt.",
+    },
+    attempts: {
+      type: "integer",
+      desc: "Attempts handed to the mail transport.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "When the record was created.",
+    },
+    admitted_at: {
+      type: "timestamp",
+      desc: "When the last attempt was handed to the mail transport.",
+    },
+    sent_at: {
+      type: "timestamp",
+      desc: "When the mail transport accepted the email.",
     },
   },
 });
