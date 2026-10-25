@@ -4,6 +4,7 @@ import type {
   HostKernelHardeningSnapshot,
   HostKernelSysctlSnapshot,
 } from "@cocalc/conat/hub/api/hosts";
+import { PROJECT_HOST_KERNEL_HARDENING } from "@cocalc/conat/project-host/kernel-hardening";
 import { execFile as execFileCb } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -15,26 +16,6 @@ const CONFIG_PATH = "/etc/sysctl.d/90-cocalc-project-host.conf";
 const HARDENING_CONFIG_PATH =
   "/etc/sysctl.d/92-cocalc-project-host-hardening.conf";
 const ROOTCTL_PATH = "/usr/local/sbin/cocalc-project-host-rootctl";
-
-// Kernel attack-surface settings. Keep in sync with KERNEL_HARDENING_SYSCTLS
-// and KERNEL_HARDENING_MINIMUMS in server/cloud/bootstrap/bootstrap.py, which
-// also writes the managed ones. The others are only checked: the supported
-// images' defaults are at least this strict, and writing them could lower a
-// stricter default.
-export const PROJECT_HOST_KERNEL_HARDENING: {
-  key: string;
-  min?: number;
-  max?: number;
-  managed?: number;
-}[] = [
-  // Nothing on the host needs io_uring; project containers get ENOSYS from
-  // seccomp regardless.
-  { key: "kernel.io_uring_disabled", min: 2, managed: 2 },
-  { key: "vm.unprivileged_userfaultfd", max: 0, managed: 0 },
-  { key: "kernel.apparmor_restrict_unprivileged_userns", min: 1 },
-  { key: "kernel.unprivileged_bpf_disabled", min: 1 },
-  { key: "kernel.perf_event_paranoid", min: 3 },
-];
 
 export const PROJECT_HOST_SYSCTL_TARGETS: Record<string, number> = {
   "fs.inotify.max_user_instances": 8192,
@@ -232,6 +213,14 @@ export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctl
       logger.info("project-host kernel sysctl limits applied", {
         config_path: CONFIG_PATH,
       });
+      if (managedHardeningDrift(before)) {
+        // io_uring_disabled only refuses new rings: this process (and other
+        // running services) keep any they already have until they restart.
+        // The root helper applies it before every daemon start.
+        logger.warn(
+          "kernel hardening applied after this process started; running services keep existing io_uring rings until they restart",
+        );
+      }
     } else {
       logger.warn("project-host kernel sysctl limits still below target", {
         mismatches: after.mismatches,
@@ -257,6 +246,8 @@ export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctl
     };
   }
 }
+
+export { PROJECT_HOST_KERNEL_HARDENING };
 
 export const _test = {
   buildProjectHostSysctlConfig,

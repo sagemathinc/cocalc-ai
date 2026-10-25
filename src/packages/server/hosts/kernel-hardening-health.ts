@@ -13,6 +13,7 @@ import getPool from "@cocalc/database/pool";
 import type { HostKernelHardeningSnapshot } from "@cocalc/conat/hub/api/hosts";
 import type { LaunchHealthLevel } from "@cocalc/conat/hub/api/system";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { PROJECT_HOST_KERNEL_HARDENING } from "@cocalc/conat/project-host/kernel-hardening";
 
 const HOST_ONLINE_WINDOW_MS = 5 * 60 * 1000;
 
@@ -35,16 +36,26 @@ export function summarizeHostKernelHardening(
   const failing: HostKernelHardeningSummary["failing"] = [];
   let unreported = 0;
   for (const { host_id, host_name, hardening } of rows) {
-    if (!hardening || !Array.isArray(hardening.checks)) {
+    if (hardening == null) {
       unreported += 1;
       continue;
     }
-    const failed = hardening.checks
+    const checks = Array.isArray(hardening.checks) ? hardening.checks : [];
+    const failed = checks
       .filter((check) => !check?.ok)
       .map(
         (check) =>
-          `${check.key}=${check.actual ?? "missing"} (want ${check.expected})`,
+          `${check?.key}=${check?.actual ?? "missing"} (want ${check?.expected})`,
       );
+    // A report that skips a setting, or says it is not ok without saying why,
+    // is a reporting regression, not a pass.
+    const reported = new Set(checks.map((check) => check?.key));
+    for (const { key } of PROJECT_HOST_KERNEL_HARDENING) {
+      if (!reported.has(key)) failed.push(`${key} not reported`);
+    }
+    if (hardening.ok !== true && failed.length === 0) {
+      failed.push("report says not ok but lists no failed setting");
+    }
     if (failed.length > 0) {
       failing.push({ host_id, host_name, failed });
     }

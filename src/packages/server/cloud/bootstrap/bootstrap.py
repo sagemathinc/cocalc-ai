@@ -3679,8 +3679,11 @@ def configure_kernel_module_hardening(
 
 KERNEL_HARDENING_SYSCTL_CONF_NAME = "92-cocalc-project-host-hardening.conf"
 # Set on every project host. io_uring is a large kernel attack surface that
-# nothing on the host needs (libuv and the container runtime fall back when it
-# is unavailable; project containers already get ENOSYS from seccomp), and
+# nothing on the host needs: io_uring_setup then fails with EPERM and libuv
+# (which creates a ring when an event loop starts) falls back to epoll;
+# project containers already get ENOSYS from seccomp. The setting only refuses
+# new rings, so it is applied before the project-host stack starts: here,
+# before every daemon start in the root helper, and at boot by systemd-sysctl.
 # userfaultfd stays limited to privileged users.
 KERNEL_HARDENING_SYSCTLS: dict[str, int] = {
     "kernel.io_uring_disabled": 2,
@@ -12811,15 +12814,23 @@ net.ipv4.ip_local_reserved_ports = 30000-59999
 SYSCTL
   chmod 0644 "${SYSCTL_CONFIG_PATH}"
   sysctl -p "${SYSCTL_CONFIG_PATH}"
+  apply_kernel_hardening_sysctls
+}
+
+# Before every daemon start: io_uring_disabled only refuses new rings, so a
+# daemon started first would keep the ring its event loop created. Never
+# fails the start: drift is reported by project-host and admin health.
+apply_kernel_hardening_sysctls() {
   # Keep in sync with KERNEL_HARDENING_SYSCTLS (bootstrap.py) and
-  # PROJECT_HOST_KERNEL_HARDENING (project-host/host-sysctl.ts).
+  # PROJECT_HOST_KERNEL_HARDENING (conat/project-host/kernel-hardening.ts).
   cat > "${HARDENING_SYSCTL_CONFIG_PATH}" <<'SYSCTL'
 # Managed by CoCalc project-host: kernel attack surface reduction.
 kernel.io_uring_disabled = 2
 vm.unprivileged_userfaultfd = 0
 SYSCTL
   chmod 0644 "${HARDENING_SYSCTL_CONFIG_PATH}"
-  sysctl -e -p "${HARDENING_SYSCTL_CONFIG_PATH}"
+  sysctl -e -p "${HARDENING_SYSCTL_CONFIG_PATH}" >/dev/null ||
+    echo "warning: unable to apply ${HARDENING_SYSCTL_CONFIG_PATH}" >&2
 }
 
 read_env_file_value() {
@@ -13801,6 +13812,7 @@ case "${cmd}" in
     repair_runtime_environment
     preflight_podman_runtime
     reconcile_app_core_dumps
+    apply_kernel_hardening_sysctls
     run_daemon "${cmd}" "$@"
     protect_pid
     attach_running_project_processes || true
@@ -13810,6 +13822,7 @@ case "${cmd}" in
     repair_runtime_environment
     preflight_podman_runtime
     reconcile_app_core_dumps
+    apply_kernel_hardening_sysctls
     run_daemon stop "$@" || true
     run_daemon start "$@"
     protect_pid
@@ -14971,6 +14984,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         ensure_bootstrap_paths(cfg)
         configure_rsyslog_limits(cfg)
         configure_daily_root_cleanup(cfg)
+        configure_kernel_sysctl_hardening(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)

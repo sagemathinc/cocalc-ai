@@ -11,6 +11,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
 
+import { PROJECT_HOST_KERNEL_HARDENING } from "@cocalc/conat/project-host/kernel-hardening";
 import {
   kernelHardeningHealth,
   summarizeHostKernelHardening,
@@ -24,6 +25,10 @@ const check = (key: string, ok: boolean, actual: number | null) => ({
   managed: true,
 });
 
+// A complete, passing report of every expected setting.
+const allChecks = () =>
+  PROJECT_HOST_KERNEL_HARDENING.map(({ key }) => check(key, true, 2));
+
 describe("project host kernel hardening health", () => {
   const rows = [
     {
@@ -32,7 +37,7 @@ describe("project host kernel hardening health", () => {
       hardening: {
         ok: true,
         config_path: "/etc/sysctl.d/92-cocalc-project-host-hardening.conf",
-        checks: [check("kernel.io_uring_disabled", true, 2)],
+        checks: allChecks(),
       },
     },
     {
@@ -41,10 +46,13 @@ describe("project host kernel hardening health", () => {
       hardening: {
         ok: false,
         config_path: "/etc/sysctl.d/92-cocalc-project-host-hardening.conf",
-        checks: [
-          check("kernel.io_uring_disabled", false, 0),
-          check("kernel.unprivileged_bpf_disabled", false, null),
-        ],
+        checks: allChecks().map((c) =>
+          c.key === "kernel.io_uring_disabled"
+            ? check(c.key, false, 0)
+            : c.key === "kernel.unprivileged_bpf_disabled"
+              ? check(c.key, false, null)
+              : c,
+        ),
       },
     },
     { host_id: "h3", host_name: null, hardening: null },
@@ -88,6 +96,53 @@ describe("project host kernel hardening health", () => {
         "1/2 active hosts report the expected kernel hardening. 1 host does not report it yet.",
       details: [],
     });
+  });
+
+  it("treats a partial or inconsistent report as failing", () => {
+    const config_path = "/etc/sysctl.d/92-cocalc-project-host-hardening.conf";
+    const summary = summarizeHostKernelHardening([
+      {
+        host_id: "p",
+        host_name: "partial",
+        hardening: {
+          ok: true,
+          config_path,
+          checks: allChecks().filter(
+            ({ key }) => key !== "kernel.perf_event_paranoid",
+          ),
+        },
+      },
+      {
+        host_id: "e",
+        host_name: "empty",
+        hardening: { ok: false, config_path, checks: [] },
+      },
+      {
+        host_id: "i",
+        host_name: "inconsistent",
+        hardening: { ok: false, config_path, checks: allChecks() },
+      },
+    ]);
+    expect(summary.unreported_hosts).toBe(0);
+    expect(summary.failing).toEqual([
+      {
+        host_id: "p",
+        host_name: "partial",
+        failed: ["kernel.perf_event_paranoid not reported"],
+      },
+      {
+        host_id: "e",
+        host_name: "empty",
+        failed: PROJECT_HOST_KERNEL_HARDENING.map(
+          ({ key }) => `${key} not reported`,
+        ),
+      },
+      {
+        host_id: "i",
+        host_name: "inconsistent",
+        failed: ["report says not ok but lists no failed setting"],
+      },
+    ]);
   });
 
   it("is unknown when the reports can't be read", () => {

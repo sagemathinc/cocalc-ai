@@ -1746,17 +1746,100 @@ class BootstrapKernelSysctlHardeningTest(unittest.TestCase):
 
     def test_rootctl_apply_sysctls_writes_the_same_hardening_file(self) -> None:
         body = Path(bootstrap.__file__).read_text(encoding="utf-8")
-        apply = body.split("apply_project_host_sysctls() {", 1)[1].split("\n}\n", 1)[0]
+        sysctls = body.split("apply_project_host_sysctls() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertIn("apply_kernel_hardening_sysctls", sysctls)
+        apply = body.split("apply_kernel_hardening_sysctls() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
         heredoc = apply.split(
             'cat > "${HARDENING_SYSCTL_CONFIG_PATH}" <<\'SYSCTL\'\n', 1
         )[1].split("SYSCTL\n", 1)[0]
         self.assertEqual(heredoc, bootstrap.kernel_hardening_sysctl_conf())
         self.assertIn('sysctl -e -p "${HARDENING_SYSCTL_CONFIG_PATH}"', apply)
+        # A drifted or missing key must never fail a daemon start.
+        self.assertIn('-p "${HARDENING_SYSCTL_CONFIG_PATH}" >/dev/null ||', apply)
+        self.assertIn(
+            'echo "warning: unable to apply ${HARDENING_SYSCTL_CONFIG_PATH}" >&2',
+            apply,
+        )
         self.assertIn(
             'HARDENING_SYSCTL_CONFIG_PATH="/etc/sysctl.d/'
             + bootstrap.KERNEL_HARDENING_SYSCTL_CONF_NAME
             + '"',
             body,
+        )
+
+
+class BootstrapKernelHardeningOrderTest(unittest.TestCase):
+    # io_uring_disabled only refuses new rings: the project-host daemon's
+    # event loop creates one at startup, so the setting must be in place
+    # before any daemon start.
+    def test_rootctl_applies_hardening_before_every_daemon_start(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        dispatch = body.split('case "${cmd}" in\n  start|ensure)', 1)[1]
+        start = dispatch.split(";;", 1)[0]
+        restart = dispatch.split("  restart)", 1)[1].split(";;", 1)[0]
+        for name, branch in (("start|ensure", start), ("restart", restart)):
+            self.assertIn("apply_kernel_hardening_sysctls", branch, name)
+            self.assertLess(
+                branch.index("apply_kernel_hardening_sysctls"),
+                branch.index("run_daemon"),
+                name,
+            )
+
+    def test_bootstrap_applies_hardening_before_starting_project_host(
+        self,
+    ) -> None:
+        reconcile = inspect.getsource(bootstrap.run_reconcile)
+        self.assertLess(
+            reconcile.index("configure_kernel_sysctl_hardening("),
+            reconcile.index("start_project_host("),
+        )
+        provision = inspect.getsource(bootstrap.run_provision)
+        self.assertIn("configure_kernel_sysctl_hardening(", provision)
+        bootstrap_flow = inspect.getsource(bootstrap.run_bootstrap)
+        self.assertLess(
+            bootstrap_flow.index("run_provision("),
+            bootstrap_flow.index("start_project_host("),
+        )
+
+    def test_rootctl_hardening_never_fails_a_daemon_start(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        function = "apply_kernel_hardening_sysctls() {" + body.split(
+            "apply_kernel_hardening_sysctls() {", 1
+        )[1].split("\n}\n", 1)[0] + "\n}\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conf = Path(tmpdir) / "92.conf"
+            for sysctl_rc in (0, 1):
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        "set -euo pipefail\n"
+                        f"HARDENING_SYSCTL_CONFIG_PATH='{conf}'\n"
+                        f"sysctl() {{ return {sysctl_rc}; }}\n"
+                        + function
+                        + "apply_kernel_hardening_sysctls\necho started\n",
+                    ],
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "started\n")
+                self.assertEqual(
+                    conf.read_text(encoding="utf-8"),
+                    bootstrap.kernel_hardening_sysctl_conf(),
+                )
+                self.assertEqual(
+                    "unable to apply" in result.stderr, sysctl_rc != 0
+                )
+
+    def test_helper_only_reconcile_applies_hardening(self) -> None:
+        self.assertIn(
+            "configure_kernel_sysctl_hardening(",
+            inspect.getsource(bootstrap.run_reconcile_helpers),
         )
 
 
@@ -7717,6 +7800,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "ensure_bootstrap_paths",
                 "configure_rsyslog_limits",
                 "configure_daily_root_cleanup",
+                "configure_kernel_sysctl_hardening",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
                 "write_helpers",
@@ -7770,6 +7854,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "ensure_bootstrap_paths",
                     "configure_rsyslog_limits",
                     "configure_daily_root_cleanup",
+                    "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
                     "write_helpers",
