@@ -7,7 +7,10 @@
 
 import type { Filesystem } from "@cocalc/conat/files/fs";
 import { alert_message } from "@cocalc/frontend/alerts";
-import { editorExtension } from "@cocalc/frontend/file-editors";
+import {
+  compoundExtension,
+  editorExtension,
+} from "@cocalc/frontend/file-editors";
 import { redux } from "@cocalc/frontend/app-framework";
 import { local_storage } from "@cocalc/frontend/editor-local-storage";
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
@@ -732,9 +735,13 @@ export async function open_file(
         "editor_tab_activated",
       );
     } else if (opts.wait_for_ready || PRELOAD_BACKGROUND_TABS) {
-      await actions.initFileRedux(syncPath, undefined, {
-        syncIdentityPathIsCanonical: true,
-      });
+      // The sync identity need not keep a two-part name (foo.todo.json), so
+      // pass the editor that name picks; otherwise the identity's own.
+      await actions.initFileRedux(
+        syncPath,
+        ext === compoundExtension(displayPath) ? ext : undefined,
+        { syncIdentityPathIsCanonical: true },
+      );
     }
 
     if (alreadyOpened && opts.chat) {

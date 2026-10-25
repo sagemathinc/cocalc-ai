@@ -23,6 +23,10 @@ import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import * as alerts from "@cocalc/frontend/alerts";
+import {
+  register_file_editor,
+  unregister_file_editor,
+} from "@cocalc/frontend/file-editors";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -1141,5 +1145,69 @@ describe("open_file wait_for_ready", () => {
     expect(ensureProjectIsOpen).not.toHaveBeenCalled();
     expect(actions.foreground_project).not.toHaveBeenCalled();
     expect(actions.set_active_tab).not.toHaveBeenCalled();
+  });
+
+  it("a two-part name picks the editor even when the sync identity has another name", async () => {
+    // e.g. a link /home/user/links/work.todo.json whose canonical identity
+    // is /data/work.json: the todo viewer, not the JSON editor.
+    register_file_editor({ ext: "todo.json", component: () => null });
+    try {
+      const displayPath = "/home/user/links/work.todo.json";
+      const syncPath = "/data/work.json";
+      const { open_files, openFilesState, store } = makeOpenFilesHarness();
+      jest
+        .spyOn(redux as any, "getStore")
+        .mockImplementation((name: string) => {
+          if (name === "page") {
+            return { get: jest.fn().mockReturnValue(false) };
+          }
+          return undefined;
+        });
+      jest
+        .spyOn(redux as any, "getActions")
+        .mockImplementation((name: string) => {
+          if (name === "page") {
+            return { save_session: jest.fn() };
+          }
+          return {};
+        });
+      const actions = {
+        project_id: "project-1",
+        get_store: () => store,
+        open_files,
+        fs: () => ({
+          canonicalSyncIdentityPath: jest.fn().mockResolvedValue(syncPath),
+        }),
+        ensureProjectIsOpen: jest.fn().mockResolvedValue(undefined),
+        open_in_new_browser_window: jest.fn(),
+        foreground_project: jest.fn(),
+        set_active_tab: jest.fn(),
+        initFileRedux: jest.fn(),
+        gotoFragment: jest.fn(),
+        open_chat: jest.fn(),
+        set_activity: jest.fn(),
+      } as any;
+
+      await open_file(actions, {
+        path: displayPath,
+        embedded: true,
+        foreground: false,
+        foreground_project: false,
+        wait_for_ready: true,
+        change_history: false,
+      });
+
+      expect(openFilesState.get(displayPath)).toMatchObject({
+        ext: "todo.json",
+        sync_path: syncPath,
+      });
+      expect(actions.initFileRedux).toHaveBeenCalledWith(
+        syncPath,
+        "todo.json",
+        { syncIdentityPathIsCanonical: true },
+      );
+    } finally {
+      unregister_file_editor("todo.json");
+    }
   });
 });

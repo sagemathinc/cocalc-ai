@@ -51,7 +51,13 @@ test("a todo list shows from the live document and follows edits", () => {
   expect(screen.getByText("2 of 2 done")).toBeTruthy();
 });
 
-test("broken JSON names the problem; an empty file offers the JSON", () => {
+test("the frame's resolved font size applies on first render", () => {
+  render(<TodoViewer value={JSON.stringify(todo)} />);
+  const frame = screen.getByText("Agents polish").closest(".smc-vfill");
+  expect((frame as HTMLElement).style.fontSize).toBe("17px");
+});
+
+test("broken JSON names the problem; an empty file offers the JSON", async () => {
   const { rerender } = render(<TodoViewer value="{" />);
   expect(
     screen.getByText("This is not a todo list CoCalc can show."),
@@ -59,6 +65,28 @@ test("broken JSON names the problem; an empty file offers the JSON", () => {
   rerender(<TodoViewer value="" />);
   fireEvent.click(screen.getByRole("button", { name: "Edit the JSON" }));
   expect(show_focused_frame_of_type).toHaveBeenCalledWith("cm");
+});
+
+test("Edit the JSON works from the keyboard", async () => {
+  show_focused_frame_of_type.mockClear();
+  render(<TodoViewer value="" />);
+  const edit = screen.getByRole("button", { name: "Edit the JSON" });
+  const user = userEvent.setup();
+  await user.tab();
+  expect(document.activeElement).toBe(edit);
+  await user.keyboard("{Enter}");
+  expect(show_focused_frame_of_type).toHaveBeenCalledWith("cm");
+});
+
+test("the view comes from the editor, not the sync path's name", () => {
+  // this.path is the sync identity, e.g. a canonical /data/work.json.
+  const fake = { path: "/data/work.json" };
+  expect(CalendarActions.prototype._raw_default_frame_tree.call(fake)).toEqual({
+    type: "calendar",
+  });
+  expect(TodoActions.prototype._raw_default_frame_tree.call(fake)).toEqual({
+    type: "todo",
+  });
 });
 
 test("a calendar shows as an agenda with the .ics download", () => {
