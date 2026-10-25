@@ -168,6 +168,20 @@ function usePageVisible(): boolean {
   return visible;
 }
 
+/**
+ * What scrolls the open message: the log's scroller when the item is shown
+ * as the log, else the pane itself.
+ */
+function messageScroller(pane: HTMLElement): HTMLElement | null {
+  const log = pane.querySelector<HTMLElement>("[data-virtuoso-scroller]");
+  if (log) return log;
+  const overflow = getComputedStyle(pane).overflowY;
+  return overflow === "auto" || overflow === "scroll" ? pane : null;
+}
+
+// The list's width beside the open message.
+const LIST_WIDTH = 340;
+
 export function ChatReaderView({
   actions,
   threadId,
@@ -185,6 +199,8 @@ export function ChatReaderView({
   itemBadges,
   acpState,
   itemInfo,
+  isItemWorking = () => false,
+  runningStatus,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -215,6 +231,14 @@ export function ChatReaderView({
   acpState?: { get?: (key: string) => unknown };
   /** Each item's subject and priority (what its agent said, or defaults). */
   itemInfo?: (item: ReaderItem) => ReaderItemInfo;
+  /** Whether an item holds the thread's running turn (its Working badge). */
+  isItemWorking?: (item: ReaderItem) => boolean;
+  /**
+   * The running turn's status and Interrupt (wide only). Its place in the
+   * toolbar is kept while nothing runs, so nothing moves when a turn starts:
+   * a click meant for Archive all never lands on Interrupt.
+   */
+  runningStatus?: ReactNode;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
@@ -291,12 +315,18 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items, watermark, state, filed, showArchived],
   );
-  // In the inbox: not archived, in every view.
-  const inboxCount = useMemo(
-    () => items.filter((item) => !isItemArchived(item, state)).length,
-    [items, state],
+  // What Archive all archives: the inbox (not archived, in every view) but a
+  // turn still running.
+  const archivableCount = useMemo(
+    () =>
+      items.filter(
+        (item) => !isItemArchived(item, state) && !isItemWorking(item),
+      ).length,
+    [items, state, isItemWorking],
   );
   const [selectedId, setSelectedId] = useState<string>();
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
   const selected: ReaderItem | undefined = visible[selectedIndex];
 
@@ -422,10 +452,34 @@ export function ChatReaderView({
     listRef.current.focus({ preventScroll: true });
   }, [selected?.id]);
   // Narrow, the open item replaces the list: the whole reader takes the keys.
-  const focusKeys = () =>
-    (narrow ? rootRef : listRef).current?.focus({ preventScroll: true });
+  // Wide, the open message does, so Space pages it; j, k, y and the rest
+  // still reach the reader from there. Its log mounts after the selection
+  // changes, so this waits a few frames for it.
+  const paneRef = useRef<HTMLDivElement>(null);
+  const focusOpenMessage = (attempt: number) => {
+    const target = paneRef.current ? messageScroller(paneRef.current) : null;
+    if (target) {
+      // The browser's own focus ring (:focus-visible) stays.
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    } else if (attempt < 10 && selectedIdRef.current) {
+      requestAnimationFrame(() => focusOpenMessage(attempt + 1));
+    } else {
+      listRef.current?.focus({ preventScroll: true });
+    }
+  };
+  const focusKeys = () => {
+    if (narrow) {
+      rootRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    // After the new selection's pane is in place.
+    requestAnimationFrame(() => focusOpenMessage(0));
+  };
   useEffect(() => {
-    if (autoFocus) focusKeys();
+    // Nothing is open yet: the list takes the keys (j opens the first).
+    if (autoFocus)
+      (narrow ? rootRef : listRef).current?.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [seenCount, setSeenCount] = useState(visible.length);
@@ -460,7 +514,10 @@ export function ChatReaderView({
         minHeight: 0,
         ...(narrow
           ? { flex: 1 }
-          : { width: 340, borderRight: `1px solid ${UI_COLORS.border}` }),
+          : {
+              width: LIST_WIDTH,
+              borderRight: `1px solid ${UI_COLORS.border}`,
+            }),
       }}
     >
       <div
@@ -694,6 +751,7 @@ export function ChatReaderView({
   const pane = selected ? (
     <div
       key={selected.id}
+      ref={paneRef}
       role="article"
       aria-label="Message"
       style={{
@@ -852,6 +910,22 @@ export function ChatReaderView({
             flexWrap: "wrap",
           }}
         >
+          {narrow ? null : (
+            <div
+              role="group"
+              aria-label="Running turn"
+              style={{
+                // The rest starts above the list's edge.
+                minWidth: LIST_WIDTH - 24,
+                flex: "0 0 auto",
+                display: "flex",
+                alignItems: "center",
+                minHeight: 28,
+              }}
+            >
+              {runningStatus}
+            </div>
+          )}
           {/* Status, not a control: how much is left to read. */}
           <span
             style={
@@ -872,15 +946,20 @@ export function ChatReaderView({
             Mark all read
           </Button>
           <Popconfirm
-            title={`Archive all ${inboxCount} message${inboxCount === 1 ? "" : "s"}?`}
-            description="Everything in this thread is archived and read: a clean slate. A new reply brings a message back."
+            title={`Archive all ${archivableCount} message${archivableCount === 1 ? "" : "s"}?`}
+            description="Everything in this thread is archived and read: a clean slate. A turn still running stays in the inbox. A new reply brings a message back."
             okText="Archive all"
             onConfirm={() => {
-              save((current) => archiveAll(items, current));
+              save((current, watermark) =>
+                archiveAll(items, current, {
+                  running: isItemWorking,
+                  watermark,
+                }),
+              );
               if (!showArchived) setSelectedId(undefined);
             }}
           >
-            <Button size="small" disabled={!inboxCount}>
+            <Button size="small" disabled={!archivableCount}>
               Archive all
             </Button>
           </Popconfirm>
