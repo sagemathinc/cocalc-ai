@@ -280,7 +280,13 @@ export function registerAgentCommands(
       "enrolled external-agent profile",
     )
     .option("--limit <count>", "maximum messages to return", "50")
-    .description("list pending messages for an external network member")
+    .option(
+      "--include-acknowledged",
+      "also list acknowledged messages (until they expire), each with its state",
+    )
+    .description(
+      "list pending messages for an external network member, with their full text (data is a list of {message_id, created_at, source, body, ...}); read them here before ack-inbox, which hides a message from this list",
+    )
     .action(async (opts, cmd) => {
       const globals = globalsFrom(cmd);
       const limit = Number(opts.limit);
@@ -291,6 +297,7 @@ export function registerAgentCommands(
           version: 3,
           action: "inbox",
           limit,
+          ...(opts.includeAcknowledged ? { include_acknowledged: true } : {}),
         }),
       );
     });
@@ -300,7 +307,9 @@ export function registerAgentCommands(
       "--external-agent <profile>",
       "enrolled external-agent profile",
     )
-    .description("acknowledge one external-agent inbox message")
+    .description(
+      "acknowledge (mark read) one external-agent inbox message; it returns the message, and agent inbox lists it again only with --include-acknowledged",
+    )
     .action(async (message_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
       emitSuccess(

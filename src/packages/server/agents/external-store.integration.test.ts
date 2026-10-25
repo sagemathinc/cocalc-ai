@@ -211,10 +211,23 @@ describeDb("network-bound external agents", () => {
     ).resolves.toEqual({
       acknowledged: true,
       message_id: message.message_id,
+      // The acknowledgment returns the message, so it is never lost.
+      message,
     });
     expect(await store.inbox(account, installation.installation_id)).toEqual(
       [],
     );
+    // Acknowledged messages stay readable until they expire.
+    const read = await store.inbox(account, installation.installation_id, 50, {
+      includeAcknowledged: true,
+    });
+    expect(read).toEqual([
+      {
+        ...message,
+        state: "acknowledged",
+        acknowledged_at: expect.any(String),
+      },
+    ]);
   });
 
   test("the sender, and only the sender, learns whether its message was read", async () => {
