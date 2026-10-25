@@ -20,10 +20,12 @@ without waiting for it: a failed or slow write never blocks or fails a read.
 Reports:
 - getViews: for the share's owners and collaborators, counts per day and of
   distinct viewers, split by role. Never who the other viewers were.
-- getViewAggregates: for admins, aggregates only (per day, per country),
-  with counts made up of fewer than MIN_AGGREGATE_COUNT accounts suppressed.
-  Suppression protects each report handed on, not against an admin
-  subtracting overlapping reports: admins can read the table anyway.
+- getViewAggregates: for admins, aggregates over one dimension (days or
+  countries), leaving out buckets of fewer than MIN_AGGREGATE_COUNT accounts,
+  and the totals too when any bucket is left out, so one report holds
+  nothing to subtract. Comparing several reports can still recover a
+  suppressed count, which is why a set of reports needs review before it is
+  handed on.
 */
 
 import getLogger from "@cocalc/backend/logger";
@@ -287,25 +289,13 @@ export function suppress(row: {
   return { viewer_days: count(row.viewer_days), distinct_viewers };
 }
 
-// Rows whose aggregate is suppressed are left out, key and all.
-function shown<K extends string>(
-  rows: any[],
-  key: K,
-): (PublicDirectoryShareViewAggregate & Record<K, any>)[] {
-  return rows.flatMap((row) => {
-    const aggregate = suppress(row);
-    return aggregate == null
-      ? []
-      : [{ [key]: row[key] ?? null, ...aggregate } as any];
-  });
-}
-
 export async function getViewAggregates({
   account_id,
   project_id,
   share_id,
   viewer_role,
   days,
+  group_by = "day",
   now = new Date(),
 }: GetPublicDirectoryShareViewAggregatesOptions & {
   now?: Date;
@@ -331,6 +321,9 @@ export async function getViewAggregates({
   if (viewer_role != null && !VIEWER_ROLES.includes(viewer_role)) {
     throw Error("invalid viewer_role");
   }
+  if (group_by !== "day" && group_by !== "country") {
+    throw Error("invalid group_by");
+  }
   const today = utcDay(now);
   const since = addDays(today, 1 - normalizeDays(days));
   await ensurePublicShareViewsSchema();
@@ -348,34 +341,35 @@ export async function getViewAggregates({
   const where = clauses.join(" AND ");
   const aggregate = `COUNT(*) AS viewer_days,
     COUNT(DISTINCT account_id) AS distinct_viewers`;
+  const key = group_by === "day" ? "to_char(day, 'YYYY-MM-DD')" : "country";
   const pool = getPool();
-  const [totals, byDay, byCountry] = await Promise.all([
+  const [totals, grouped] = await Promise.all([
     pool.query(`SELECT ${aggregate} FROM public_share_views WHERE ${where}`, [
       ...params,
     ]),
     pool.query(
       `
-        SELECT to_char(day, 'YYYY-MM-DD') AS day, ${aggregate}
+        SELECT ${key} AS key, ${aggregate}
         FROM public_share_views WHERE ${where}
-        GROUP BY day ORDER BY day
-      `,
-      [...params],
-    ),
-    pool.query(
-      `
-        SELECT country, ${aggregate}
-        FROM public_share_views WHERE ${where}
-        GROUP BY country ORDER BY country NULLS LAST
+        GROUP BY 1 ORDER BY 1 NULLS LAST
       `,
       [...params],
     ),
   ]);
+  // A left-out bucket leaves out the totals as well: totals minus the
+  // listed buckets would give the left-out ones away.
+  const buckets = grouped.rows.flatMap((row) => {
+    const aggregate = suppress(row);
+    return aggregate == null ? [] : [{ key: row.key ?? null, ...aggregate }];
+  });
+  const complete = buckets.length === grouped.rows.length;
   return {
     since,
+    until: today,
     min_count: MIN_AGGREGATE_COUNT,
-    totals: suppress(totals.rows[0] ?? {}),
-    by_day: shown(byDay.rows, "day"),
-    by_country: shown(byCountry.rows, "country"),
+    group_by,
+    totals: complete ? suppress(totals.rows[0] ?? {}) : null,
+    buckets,
   };
 }
 

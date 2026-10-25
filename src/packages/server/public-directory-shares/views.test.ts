@@ -415,34 +415,51 @@ describe("public share views", () => {
         now,
       }),
     ).rejects.toThrow("public directory share not found");
-    expect(report.totals).toEqual({
-      viewer_days: MIN_AGGREGATE_COUNT + 1,
-      distinct_viewers: MIN_AGGREGATE_COUNT + 1,
+    // 2026-10-23 had one viewer: not listed at all, and as that leaves a
+    // bucket out, no totals either (6 - 5 would give it away)
+    expect(report).toEqual({
+      since: "2026-09-26",
+      until: "2026-10-25",
+      min_count: MIN_AGGREGATE_COUNT,
+      group_by: "day",
+      totals: null,
+      buckets: [
+        {
+          key: "2026-10-25",
+          viewer_days: MIN_AGGREGATE_COUNT,
+          distinct_viewers: MIN_AGGREGATE_COUNT,
+        },
+      ],
     });
-    // 2026-10-23 had one viewer: not listed at all
-    expect(report.by_day).toEqual([
-      {
-        day: "2026-10-25",
-        viewer_days: MIN_AGGREGATE_COUNT,
-        distinct_viewers: MIN_AGGREGATE_COUNT,
-      },
-    ]);
-    // 4 in DE, 1 unknown, 1 in FR: each too small, so no country shows
-    expect(report.by_country).toEqual([]);
-    expect(JSON.stringify(report)).not.toContain("DE");
-    expect(JSON.stringify(report)).not.toContain("FR");
     expect(JSON.stringify(report)).not.toContain("2026-10-23");
-    // and too few in all: no totals either
+    // 4 in DE, 1 unknown, 1 in FR: each too small, so no country shows
+    const byCountry = await getViewAggregates({
+      account_id: VIEWER_ID,
+      group_by: "country",
+      now,
+    });
+    expect(byCountry.buckets).toEqual([]);
+    expect(byCountry.totals).toBeNull();
+    expect(JSON.stringify(byCountry)).not.toMatch(/DE|FR/);
+    // with nothing left out, the totals are there
+    const lastDay = await getViewAggregates({
+      account_id: VIEWER_ID,
+      days: 1,
+      now,
+    });
+    expect(lastDay.totals).toEqual({
+      viewer_days: MIN_AGGREGATE_COUNT,
+      distinct_viewers: MIN_AGGREGATE_COUNT,
+    });
+    expect(lastDay.buckets).toHaveLength(1);
+    // too few in all: nothing
     expect(
-      (
-        await getViewAggregates({
-          account_id: VIEWER_ID,
-          viewer_role: "other",
-          days: 2,
-          now: new Date("2026-10-24T12:00:00Z"),
-        })
-      ).totals,
-    ).toBeNull();
+      await getViewAggregates({
+        account_id: VIEWER_ID,
+        days: 1,
+        now: new Date("2026-10-23T12:00:00Z"),
+      }),
+    ).toMatchObject({ totals: null, buckets: [] });
     expect(JSON.stringify(report)).not.toContain(account(0));
   });
 

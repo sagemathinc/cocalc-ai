@@ -296,6 +296,8 @@ export interface GetPublicDirectoryShareViewAggregatesOptions {
   project_id?: string;
   viewer_role?: PublicDirectoryShareViewerRole;
   days?: number;
+  // one dimension per report (default "day")
+  group_by?: "day" | "country";
 }
 
 export interface PublicDirectoryShareViewAggregate {
@@ -303,21 +305,22 @@ export interface PublicDirectoryShareViewAggregate {
   distinct_viewers: number;
 }
 
-// For admins: aggregates only. Anything made up of fewer than min_count
-// distinct accounts is left out: the totals are null, and such a day or
-// country is not listed at all, so not even its existence shows. This makes
-// one report safe to hand on (e.g. to an institution). It does not stop an
-// admin, who can read the table anyway, from subtracting overlapping reports
-// (a different role filter or range) to recover a suppressed count.
+// For admins: aggregates over one dimension, days or countries. A bucket
+// made up of fewer than min_count distinct accounts is not listed at all,
+// so not even its existence shows. The totals are given only when no bucket
+// was left out, so nothing in one report can be subtracted to recover a
+// suppressed count. Several reports (other ranges, role filters or
+// dimensions) can still be compared to recover one: review a set of reports
+// together before handing them on.
 export interface GetPublicDirectoryShareViewAggregatesResponse {
   since: string;
+  until: string;
   min_count: number;
+  group_by: "day" | "country";
   totals: PublicDirectoryShareViewAggregate | null;
-  by_day: (PublicDirectoryShareViewAggregate & { day: string })[];
-  // country: ISO 3166-1 alpha-2, or null when it isn't known
-  by_country: (PublicDirectoryShareViewAggregate & {
-    country: string | null;
-  })[];
+  // key: the day (YYYY-MM-DD), or the country (ISO 3166-1 alpha-2, null
+  // when it isn't known)
+  buckets: (PublicDirectoryShareViewAggregate & { key: string | null })[];
 }
 
 export interface GrantTemporaryViewerAccessOptions {
