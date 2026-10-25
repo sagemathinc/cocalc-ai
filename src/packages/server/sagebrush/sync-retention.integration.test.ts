@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
+import { getOAuthAccountStateLocal } from "@cocalc/server/auth/oauth/account-state";
 
 let mockSettings: Record<string, unknown> = {};
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -20,6 +21,14 @@ jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
 const mockAlert = jest.fn();
+// The routed account state (getOAuthAccountState asks the account's home bay):
+// by default this bay's own answer, which is what the routing gives for an
+// account homed here; the rehome tests answer as the new home bay would.
+const mockRouted = jest.fn();
+jest.mock("@cocalc/server/auth/oauth/account-state", () => ({
+  ...jest.requireActual("@cocalc/server/auth/oauth/account-state"),
+  getOAuthAccountState: (...args: any[]) => mockRouted(...args),
+}));
 // Everything logged by any module (a var: modules log while being imported,
 // before this line runs).
 // eslint-disable-next-line no-var
@@ -159,6 +168,10 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     mockSettings = { site_name: "CoCalc" };
     mockAlert.mockReset();
     mockAlert.mockResolvedValue(1);
+    mockRouted.mockReset();
+    mockRouted.mockImplementation((account_id: string) =>
+      getOAuthAccountStateLocal({ account_id }),
+    );
     mockLogged.length = 0;
     enabled.clear();
     sent.length = 0;
@@ -983,6 +996,113 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       clock += 60 * 60_000;
       await steps(fetch, { getLimits: unresolvable, alert: a.alert });
       expect(a.recorded).toHaveLength(1);
+    });
+  });
+
+  describe("a rehome, and outages (the guarantee's stated cases)", () => {
+    const moveAway = (account_id: string) =>
+      getPool().query(
+        "UPDATE accounts SET home_bay_id = 'bay-9' WHERE account_id = $1",
+        [account_id],
+      );
+    // What the new home bay answers for the account.
+    const liveElsewhere = async () => ({
+      state: "live",
+      email_address: "moved-account@example.com",
+      email_verified: true,
+      display_name: "",
+    });
+
+    it("a cycle pending on the old home bay is carried on after a rehome: both emails, once each", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id, purge_after } = await toFirstEmail(s, fetch);
+      await moveAway(account_id);
+      // (this bay's own view now says "moved"; the routed answer is the new home's)
+      expect((await getOAuthAccountStateLocal({ account_id })).state).toBe(
+        "moved",
+      );
+      mockRouted.mockImplementation(liveElsewhere);
+      expect(await steps(fetch)).toMatchObject({ sent: 1, cancelled: 0 });
+      expect(sent[0].to).toBe("moved-account@example.com");
+      expect((await stateOf(account_id)).email_stage).toBe("before");
+      clock = purge_after - BEFORE_DELETION_MS + 1;
+      expect(await steps(fetch)).toMatchObject({ sent: 1, cancelled: 0 });
+      await steps(fetch);
+      expect(sent).toHaveLength(2);
+      expect((await stateOf(account_id)).email_stage).toBe("done");
+    });
+
+    it("a rehome in progress is retried, never cancelled", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id } = await toFirstEmail(s, fetch);
+      await moveAway(account_id);
+      mockRouted.mockImplementation(async () => {
+        throw Error("account home bay is changing; try again");
+      });
+      expect(await steps(fetch)).toMatchObject({ sent: 0, failed: 1 });
+      let row = await stateOf(account_id);
+      expect(row.email_stage).toBe("ended");
+      expect(row.last_error).toBe("account_state_unavailable");
+      // (a bare "moved" answer is a retry too)
+      clock += 10 * 60_000;
+      mockRouted.mockImplementation(async () => ({
+        state: "moved",
+        home_bay_id: "bay-7",
+      }));
+      expect(await steps(fetch)).toMatchObject({ sent: 0, failed: 1 });
+      expect((await stateOf(account_id)).email_stage).toBe("ended");
+      clock += 10 * 60_000;
+      mockRouted.mockImplementation(liveElsewhere);
+      expect(await steps(fetch)).toMatchObject({ sent: 1 });
+      row = await stateOf(account_id);
+      expect(row.email_stage).toBe("before");
+    });
+
+    it("pins a stated zero-copy case: Sagebrush's read unavailable until the deletion date", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id, purge_after } = await toFirstEmail(s, fetch);
+      const down = async (url: any, init: any) =>
+        /sync-retention/.test(new URL(`${url}`).pathname)
+          ? new Response("down", { status: 503 })
+          : fetch(url, init);
+      while (clock < purge_after) {
+        await steps(down);
+        clock += 7 * 24 * 60 * 60_000;
+      }
+      // (the admins were alerted while it was overdue)
+      expect(
+        mockAlert.mock.calls.some((c) =>
+          /first retention email/.test(c[0].subject),
+        ),
+      ).toBe(true);
+      // Back after the deletion date: nothing pending, so the cycle ends.
+      expect(await steps(fetch)).toMatchObject({ sent: 0, cancelled: 1 });
+      expect(sent).toHaveLength(0);
+      expect(await deliveries(account_id)).toEqual([]);
+    });
+
+    it("pins a stated case: the 14 days count from when Sagebrush learned, not from a late first email", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id, purge_after } = await toFirstEmail(s, fetch);
+      const down = async (url: any, init: any) =>
+        /sync-retention/.test(new URL(`${url}`).pathname)
+          ? new Response("down", { status: 503 })
+          : fetch(url, init);
+      while (clock < purge_after - DAY) {
+        await steps(down);
+        clock += 7 * 24 * 60 * 60_000;
+        if (clock > purge_after - DAY) clock = purge_after - DAY;
+        if (clock === purge_after - DAY) break;
+      }
+      // Sagebrush answers again one day before the deletion: the first email
+      // goes, and the second at once, both naming the same, unchanged date.
+      expect(await steps(fetch)).toMatchObject({ sent: 1 });
+      expect(await steps(fetch)).toMatchObject({ sent: 1 });
+      expect(sent).toHaveLength(2);
+      expect((await stateOf(account_id)).email_stage).toBe("done");
+      expect(new Date((await stateOf(account_id)).purge_after).valueOf()).toBe(
+        purge_after,
+      );
     });
   });
 

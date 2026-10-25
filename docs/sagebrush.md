@@ -295,9 +295,7 @@ time, each again every 10 minutes:
 - the first check of an account only records the state.
 
 An account whose home bay is elsewhere is skipped, and so is a deleted or banned
-one; deleted accounts are purged by section 3. A rehome leaves the row behind.
-The new home bay tracks the account once it signs in to Sagebrush again, and every
-sign-in asks for approval.
+one; deleted accounts are purged by section 3. A rehome leaves the rows behind. A cycle already pending there is carried on by that bay, which asks the account's current home bay before each step, through the routed account state; a rehome in progress is retried. Only the current home bay's discovery scan starts new cycles, once the account signs in to Sagebrush there and a change is seen.
 
 ### The plan notice
 
@@ -393,25 +391,52 @@ provider accepted the message. So CoCalc treats a throw as "maybe sent":
   - "delivered" marks it sent, and the step advances;
   - "resend" sends it again.
     CoCalc acts on the decision within the hour.
+- The provider showing nothing isn't enough to resend: the original attempt
+  may still be running and be accepted later. The alert asks the admin to
+  establish that it can't (for example, that the bay's server process has
+  restarted since the attempt) before resending, or else to accept a possible
+  second copy.
 - If the pass that admitted the attempt later sees the transport return after
   all, the record becomes `sent`, and no decision is needed.
 
-**What a user gets.** For each of the two emails:
+**The guarantee, in copies accepted by the mail transport.** Everything below
+counts copies that the configured mail transport (`sendEmail`: SMTP or
+SendGrid) **accepted**. What happens after acceptance is the provider's:
+delivery to the inbox can still bounce, be filtered, or be lost, and isn't
+promised. For each of the two emails:
 
-| Case                                                                                           | Emails | Why                                                                                                                                                                                            |
-| ---------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Normal                                                                                         | 1      |                                                                                                                                                                                                |
-| Sync renewed, data deleted, account deleted or banned, or never synced                         | 0      | Intended: nothing is promised any more.                                                                                                                                                        |
-| An attempt is unresolved, and the admin decides correctly                                      | 1      |                                                                                                                                                                                                |
-| An attempt is unresolved, and the admin marks it delivered when it wasn't                      | 0      | An admin error.                                                                                                                                                                                |
-| An attempt is unresolved, and the admin resends one that had gone out                          | 2      | An admin error.                                                                                                                                                                                |
-| An attempt stays unresolved past the deletion date (no decision, or no admin account to alert) | 0      | The cycle ends with the data, after daily alerts since the attempt. The first email's deletion date is at least 14 days after the first attempt.                                               |
-| SMTP accepts, then throws, and `sendEmail` falls back to SendGrid                              | 2      | Inside `sendEmail` (src/packages/server/email/send-email.ts). It happens only when the transactional lane names its own backend while the default backend is SendGrid. This code can't see it. |
+| Case                                                                                                                                                                                         | Accepted copies | Why                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Normal                                                                                                                                                                                       | 1               |                                                                                                                                                                                                                                                                                |
+| Sync renewed, the account deleted or banned, or it never synced                                                                                                                              | 0               | Intended: nothing is promised any more.                                                                                                                                                                                                                                        |
+| A rehome while a cycle is pending                                                                                                                                                            | 1               | The bay holding the cycle carries it on, asking the account's current home bay (routed). A rehome in progress is retried, never a cancellation.                                                                                                                                |
+| An attempt is unresolved, and the admin decides correctly                                                                                                                                    | 1               |                                                                                                                                                                                                                                                                                |
+| An attempt is unresolved, and the admin marks it delivered when it wasn't                                                                                                                    | 0               | An admin error.                                                                                                                                                                                                                                                                |
+| An attempt is unresolved, and the admin resends one that the provider had accepted                                                                                                           | 2               | An admin error.                                                                                                                                                                                                                                                                |
+| An attempt is unresolved, the provider shows nothing, the admin resends, **and the original attempt was still running** and is accepted later                                                | 2               | A provider lookup can't stop an attempt still in flight. The alert says so: resend only after establishing that the original can't still run (for example, that the bay's server process has restarted since the attempt). Otherwise the admin accepts a possible second copy. |
+| An attempt stays unresolved until the deletion date (no decision, or no admin account to alert)                                                                                              | 0               | The cycle ends with the data. The admins were alerted at once and then daily.                                                                                                                                                                                                  |
+| **Before any attempt:** CoCalc can't resolve the membership, Sagebrush's retention read keeps failing, or the maintenance loop doesn't run (database down, backlog), until the deletion date | 0               | No attempt was ever admitted, so nothing is unresolved. When the step runs again, the deletion date has passed, and the cycle ends. The overdue alert (a day after the step became due) tells the admins, but it neither pauses the deletion nor sends the email.              |
+| SMTP accepts, then throws, and `sendEmail` falls back to SendGrid                                                                                                                            | 2               | Inside `sendEmail` (src/packages/server/email/send-email.ts). Only when the transactional lane names SMTP while the default backend is SendGrid. This code can't see it.                                                                                                       |
+| The provider itself delivers one message twice                                                                                                                                               | 2               | Outside CoCalc.                                                                                                                                                                                                                                                                |
 
-Without an admin error, the only ways a user gets 2 copies are the `sendEmail`
-fallback (a configuration choice) and the provider delivering one message
-twice. The only way they get 0 is that the email stays unresolved until the
-data is deleted.
+**The time origin.** The deletion date (`purge_after`) is Sagebrush's: it is
+counted from when Sagebrush **learned** of the change (the notice), at least 14
+days later, and CoCalc never extends it. The two emails' schedule follows from
+it: the first goes as soon as it can after the notice, and the second 14 days
+before the date, or at once if that has passed. So if the first email is
+delayed (the outage row above, cut short), the user gets fewer than 14 days'
+warning. For example, a first email one day before the date is followed at
+once by the second, and both name that date.
+
+So, without an admin error:
+
+- **0 accepted copies** happen only when an outage before any attempt, or an
+  unresolved attempt nobody decides, lasts until the deletion date.
+- **2 accepted copies** happen only through the `sendEmail` fallback (a
+  configuration choice), a resend while the original attempt still runs, or
+  the provider duplicating.
+- A stronger promise, such as no deletion before an email was accepted, would
+  be a separate retention policy on Sagebrush's side. It isn't in this PR.
 
 Failures are kept as codes and HTTP statuses only, such as `http_error 503`,
 `malformed_response 200`, `send_failed` or `entitlement_unknown`. That covers

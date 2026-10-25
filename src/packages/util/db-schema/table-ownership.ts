@@ -505,7 +505,7 @@ export const TABLE_OWNERSHIP = {
     authority: "account_id",
     portability: "unsupported",
     notes:
-      "Sagebrush sync notices and retention emails (docs/sagebrush.md): the sync state last seen for each account that approved a Sagebrush sign-in on this home bay, and the notice and emails due after a change. Rebuilt by the next check; a rehome leaves the row behind, and the new home bay tracks the account once it signs in to Sagebrush again.",
+      "Sagebrush sync notices and retention emails (docs/sagebrush.md): the sync state last seen for each account that approved a Sagebrush sign-in on this home bay, and the notice and emails due after a change. Rebuilt by the next check. A rehome leaves the row behind: a retention cycle already pending is carried on here, asking the account's current home bay (routed); the new home bay starts new cycles once the account signs in to Sagebrush there.",
   }),
 
   ...entries(["oauth_client_purge_requests"], {

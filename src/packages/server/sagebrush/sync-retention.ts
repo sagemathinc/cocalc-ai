@@ -41,6 +41,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
+  getOAuthAccountState,
   getOAuthAccountStateLocal,
   type OAuthAccountState,
 } from "@cocalc/server/auth/oauth/account-state";
@@ -828,7 +829,10 @@ export async function runDueRetentionSteps({
   fetch = globalThis.fetch,
   now = Date.now,
   alert = adminAlert,
-  accountState = getOAuthAccountStateLocal,
+  // (routed: a cycle this bay holds is carried on here after a rehome, asking the
+  // account's current home bay, CORR-1385-R3-REHOME-1; only the discovery scan,
+  // checkSyncStates, is local, so only the current home starts new cycles)
+  accountState = ({ account_id }) => getOAuthAccountState(account_id),
   getLimits = getSagebrushLimits,
   send = sendEmail,
 }: {
@@ -897,9 +901,13 @@ export async function runDueRetentionSteps({
     };
     let phase: SyncFailureCode = "account_state_unavailable";
     try {
+      // (a rehome in progress throws: a retry, never a cancellation)
       const account = await accountState({ account_id });
+      if (account.state === "moved")
+        throw new SyncFailure("account_state_unavailable");
       if (account.state !== "live") {
-        // Deleted, banned or moved: the purge outbox or the new home bay acts.
+        // Deleted or banned: nothing is promised any more (the purge outbox
+        // deletes the data).
         phase = "db_error";
         await endCycle();
         continue;
@@ -1132,8 +1140,8 @@ export async function escalateUnresolvedRetentionEmails({
       const id = await alert({
         subject: `Sagebrush retention email needs a decision (delivery ${row.delivery_id})`,
         body: [
-          `The ${which} Sagebrush sync retention email to account ${row.account_id} may or may not have been delivered: the mail transport was called (last at ${row.admitted_at == null ? "an unknown time" : new Date(row.admitted_at).toISOString()}, attempt ${row.attempts}), and no outcome was recorded. The Terms promise this email; the synced data is deleted on ${deletion}.`,
-          `CoCalc will not send it again by itself. Check the mail provider for an email in category "sagebrush-sync-retention" to this account at that time, then record the decision for delivery ${row.delivery_id}, with resolveRetentionEmail (server/sagebrush/sync-retention.ts) or in psql on the account's home bay:`,
+          `The ${which} Sagebrush sync retention email to account ${row.account_id} may or may not have been delivered: an attempt was admitted (last at ${row.admitted_at == null ? "an unknown time" : new Date(row.admitted_at).toISOString()}, attempt ${row.attempts}), and no outcome was recorded. The mail transport may or may not have been called, and may or may not have accepted it. The Terms promise this email; the synced data is deleted on ${deletion}.`,
+          `CoCalc will not send it again by itself. Check the mail provider for an email in category "sagebrush-sync-retention" to this account at that time. The provider showing nothing is not enough to resend: the original attempt may still be running and be accepted later. Before choosing "resend", establish that it can't, for example that this bay's server process has restarted since the attempt; otherwise a resend may give the user two copies. Then record the decision for delivery ${row.delivery_id}, with resolveRetentionEmail (server/sagebrush/sync-retention.ts) or in psql on this bay (the one that sent this alert, which holds the delivery record):`,
           [
             `If it went out: UPDATE sagebrush_sync_emails SET state = 'sent', resolution = 'delivered', resolved_at = NOW(), sent_at = NOW(), escalation_next_at = NULL WHERE delivery_id = '${row.delivery_id}' AND state = 'unresolved';`,
             `If it didn't: UPDATE sagebrush_sync_emails SET state = 'pending', resolution = 'resend', resolved_at = NOW(), escalation_next_at = NULL WHERE delivery_id = '${row.delivery_id}' AND state = 'unresolved';`,
