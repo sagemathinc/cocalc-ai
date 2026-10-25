@@ -21,6 +21,7 @@ import {
 } from "antd";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -45,6 +46,7 @@ import {
   type ReaderItem,
   type ReaderState,
 } from "./reader-model";
+import { ReaderFullScreenContext } from "./reader-full-screen";
 import type { ChatMessageTyped } from "./types";
 import { getUserName } from "./user-name";
 import { newest_content } from "./utils";
@@ -325,10 +327,14 @@ export function ChatReaderView({
     [items, state, isItemWorking],
   );
   const [selectedId, setSelectedId] = useState<string>();
+  // The open message over the whole window, as the reader shows it: paging
+  // with Newer and Older (or j and k) stays full screen.
+  const [fullScreenWanted, setFullScreen] = useState(false);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
   const selected: ReaderItem | undefined = visible[selectedIndex];
+  const fullScreen = fullScreenWanted && !!selected && !narrow;
 
   // A change is applied to the stored state, which may differ from what is
   // shown here (another device, or not loaded yet).
@@ -431,6 +437,16 @@ export function ChatReaderView({
           return !!selected;
         case "?":
           setShowKeys(true);
+          return true;
+        case "f":
+          if (!selected || narrow) return false;
+          setFullScreen(!fullScreen);
+          focusKeys();
+          return true;
+        case "Escape":
+          if (!fullScreen) return false;
+          setFullScreen(false);
+          focusKeys();
           return true;
       }
       return false;
@@ -748,6 +764,19 @@ export function ChatReaderView({
     </div>
   ) : null;
 
+  const fullScreenControl = useMemo(
+    () =>
+      narrow
+        ? null
+        : {
+            open: () => {
+              setFullScreen(true);
+              focusKeys();
+            },
+          },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [narrow],
+  );
   const pane = selected ? (
     <div
       key={selected.id}
@@ -795,6 +824,21 @@ export function ChatReaderView({
           <Button size="small" onClick={() => markUnread(selected)}>
             Mark unread
           </Button>
+          <Button
+            size="small"
+            icon={<Icon name={fullScreen ? "compress" : "expand-arrows"} />}
+            onClick={() => {
+              setFullScreen(!fullScreen);
+              focusKeys();
+            }}
+          >
+            {fullScreen ? "Exit full screen" : "Full screen"}
+          </Button>
+          {fullScreen ? (
+            <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
+              {selectedIndex + 1} of {visible.length}
+            </span>
+          ) : null}
         </Space>
       )}
       {itemInfo?.(selected).subject ? (
@@ -813,7 +857,9 @@ export function ChatReaderView({
       ) : null}
       {renderItem ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-          {renderItem(selected)}
+          <ReaderFullScreenContext.Provider value={fullScreenControl}>
+            {renderItem(selected)}
+          </ReaderFullScreenContext.Provider>
         </div>
       ) : null}
       {renderItem
@@ -1002,7 +1048,41 @@ export function ChatReaderView({
       )}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {narrow && selected ? null : list}
-        {pane}
+        {fullScreen ? (
+          <>
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: UI_COLORS.muted,
+              }}
+            >
+              Shown full screen (f or Esc to return)
+            </div>
+            {createPortal(
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Message, full screen"
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 1000,
+                  background: UI_COLORS.surface,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                {pane}
+              </div>,
+              document.body,
+            )}
+          </>
+        ) : (
+          pane
+        )}
       </div>
       <Modal
         title="Reader keyboard shortcuts"
@@ -1039,5 +1119,6 @@ const READER_KEYS: [string, string][] = [
   ["u", "Next unread message"],
   ["y", "Archive the open message (again: back to the inbox)"],
   ["m", "Mark the open message unread"],
+  ["f", "Full screen for the open message (again, or Esc: back)"],
   ["?", "Show these shortcuts"],
 ];

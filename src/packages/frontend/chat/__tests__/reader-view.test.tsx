@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+import { useReaderFullScreen } from "../reader-full-screen";
 import { ChatReaderView } from "../reader-view";
 import type { ReaderChange, ReaderState } from "../reader-model";
 
@@ -366,6 +367,52 @@ test("narrow: no place is kept (the status shows above)", () => {
   setup(thread, 4, { narrow: true });
   fireEvent.click(screen.getByRole("button", { name: "All messages" }));
   expect(screen.queryByRole("group", { name: "Running turn" })).toBeNull();
+});
+
+test("full screen: f shows the open message over the window, paging stays there", async () => {
+  setup(thread, 4);
+  const keys = user();
+  await keys.click(screen.getByText(/second question/));
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole("article")),
+  );
+  await keys.keyboard("f");
+  const dialog = screen.getByRole("dialog", { name: "Message, full screen" });
+  expect(within(dialog).getByRole("article")).toHaveTextContent(
+    "second question",
+  );
+  expect(dialog).toHaveTextContent("2 of 3");
+  // Older (j) moves within full screen.
+  await keys.click(within(dialog).getByRole("button", { name: "Older" }));
+  expect(
+    within(
+      screen.getByRole("dialog", { name: "Message, full screen" }),
+    ).getByRole("article"),
+  ).toHaveTextContent("first question");
+  await keys.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("article")).toHaveTextContent("first question");
+});
+
+test("full screen: a message's own Focus button opens the reader's", async () => {
+  function FocusButton() {
+    const fullScreen = useReaderFullScreen();
+    return (
+      <button type="button" onClick={() => fullScreen?.open()}>
+        Focus message
+      </button>
+    );
+  }
+  setup(thread, 4, { renderItem: () => <FocusButton /> });
+  const keys = user();
+  await keys.click(screen.getByText(/third question/));
+  await keys.click(screen.getByRole("button", { name: "Focus message" }));
+  const dialog = screen.getByRole("dialog", { name: "Message, full screen" });
+  expect(within(dialog).getByRole("button", { name: "Exit full screen" }));
+  await keys.click(
+    within(dialog).getByRole("button", { name: "Exit full screen" }),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 test("Keys, or ?, shows the keyboard shortcuts", async () => {
