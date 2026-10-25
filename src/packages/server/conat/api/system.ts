@@ -35,6 +35,10 @@ import {
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getHostIntrusionObservationSummary } from "@cocalc/server/hosts/intrusion-monitor";
+import {
+  getHostKernelHardeningSummary,
+  kernelHardeningHealth,
+} from "@cocalc/server/hosts/kernel-hardening-health";
 import { assertProjectRuntimeCapability } from "@cocalc/server/launchpad/project-runtime";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
@@ -2268,6 +2272,7 @@ export async function getLaunchHealth({
     intrusionObservationsResult,
     backupPurgeResult,
     billingExposureResult,
+    kernelHardeningResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2290,6 +2295,7 @@ export async function getLaunchHealth({
     getHostIntrusionObservationSummary(),
     getBackupPurgeHealth(),
     getBillingExposureHealth({ bay_id: currentBay.bay_id }),
+    getHostKernelHardeningSummary(),
   ]);
 
   const settings =
@@ -2507,6 +2513,11 @@ export async function getLaunchHealth({
         intrusionObservationsResult.status === "rejected"
           ? [`${intrusionObservationsResult.reason}`]
           : (intrusionObservations?.details ?? []),
+    }),
+    launchHealthCheck({
+      id: "project-host-kernel-hardening",
+      label: "Project host kernel hardening",
+      ...kernelHardeningHealth(kernelHardeningResult),
     }),
     launchHealthCheck({
       id: "kill-switches",

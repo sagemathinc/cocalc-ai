@@ -236,10 +236,10 @@ describe("Codex question attention", () => {
     };
     const unnamed = render(<CodexAttentionCard initialRecord={question} />);
     expect(
-      screen.getByText(
-        "The agent can keep working while you answer. Your response will be saved with this question and submitted to the agent.",
-      ),
+      screen.getByRole("region", { name: "The agent needs attention" }),
     ).toBeInTheDocument();
+    // No line about the agent working on: the running turn shows that.
+    expect(screen.queryByText(/can keep working while you answer/)).toBeNull();
     unnamed.unmount();
 
     mockNamedAgents.mockReturnValue({
@@ -264,11 +264,7 @@ describe("Codex question attention", () => {
     expect(
       screen.getByRole("region", { name: "@cocalc-acp needs attention" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "@cocalc-acp can keep working while you answer. Your response will be saved with this question and submitted to @cocalc-acp.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/can keep working while you answer/)).toBeNull();
   });
 
   it("keeps the submitted answer beside its question with keyboard focus and no false receipt", async () => {

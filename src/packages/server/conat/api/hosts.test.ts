@@ -400,7 +400,11 @@ jest.mock("./project-host-token-auth", () => ({
 
 jest.mock("./public-directory-shares", () => ({
   __esModule: true,
-  authorizeRead: (...args: any[]) =>
+  // issuing a token is not a read of the share: no view is recorded
+  authorizeRead: async () => {
+    throw Error("a token check must not record a share view");
+  },
+  authorizeReadWithoutView: (...args: any[]) =>
     publicDirectorySharesAuthorizeReadMock(...args),
 }));
 

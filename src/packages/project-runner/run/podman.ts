@@ -105,6 +105,7 @@ import {
 } from "@cocalc/util/project-secrets";
 import { tmpdir } from "node:os";
 import { resolveSharedScratchMount } from "./shared-scratch";
+import { projectPoolCgroupPath } from "./project-pool-cgroup";
 
 export { resolveSharedScratchMount } from "./shared-scratch";
 
@@ -128,7 +129,6 @@ const VERIFY_PROJECT_POOL_TIMEOUT_S = 10;
 const VERIFY_PROJECT_IO_TIMEOUT_S = 10;
 const ATTACH_PROJECT_CGROUP_TIMEOUT_S = 10;
 const RECONCILE_PROJECT_NETWORK_TIMEOUT_S = 30;
-const DEFAULT_PROJECT_POOL_CGROUP = "/sys/fs/cgroup/cocalc-project-pool";
 const PROJECT_STARTUP_CPU_WEIGHT = "10000";
 const PROJECT_STARTUP_IO_WEIGHT = "10000";
 const PROJECT_LEAF_POOL_HEADROOM_BYTES = 2 * 1024 * 1024 * 1024;
@@ -1206,13 +1206,6 @@ async function attachPreparedProjectRuntime({
       `failed to finalize project runtime cgroup for ${project_id}: ${result.stderr || result.stdout || `helper exited ${result.exit_code}`}`,
     );
   }
-}
-
-function projectPoolCgroupPath(): string {
-  return (
-    process.env.COCALC_PROJECT_POOL_CGROUP?.trim() ||
-    DEFAULT_PROJECT_POOL_CGROUP
-  );
 }
 
 async function effectiveProjectCgroupLimits(

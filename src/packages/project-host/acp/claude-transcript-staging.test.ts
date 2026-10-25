@@ -18,9 +18,13 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
-import { stageClaudeTranscripts } from "./claude-transcript-staging";
+import {
+  defaultTranscriptStagings,
+  maxTranscriptStagings,
+  stageClaudeTranscripts,
+} from "./claude-transcript-staging";
 import { copyRegularFileBeneath } from "../beneath-copy";
 import { isManagedClaudeTranscriptStaging } from "./claude-subscription-paths";
 
@@ -264,6 +268,100 @@ test("close keeps the staged copy when the copy back may succeed later", async (
     await readFile(join(transcripts, "-workspace", "late.jsonl"), "utf8"),
   ).toBe("late");
   await expect(lstat(staging.directory)).rejects.toThrow();
+});
+
+test("the default caps follow the host's CPUs and memory and the project's memory limit", () => {
+  const GiB = 1024 ** 3;
+  // A 16 CPU, 64 GiB host: memory bounds it, at 0.5 GiB per controller and
+  // half the memory left for the projects' own work.
+  expect(
+    defaultTranscriptStagings({ cpus: 16, memoryBytes: 64 * GiB }),
+  ).toEqual({ host: 64, project: 64 });
+  // A host with lots of memory per CPU is bounded by its CPUs.
+  expect(
+    defaultTranscriptStagings({ cpus: 2, memoryBytes: 256 * GiB }),
+  ).toEqual({ host: 64, project: 64 });
+  // The project's memory limit bounds its own conversations.
+  expect(
+    defaultTranscriptStagings({
+      cpus: 16,
+      memoryBytes: 64 * GiB,
+      projectMemoryBytes: 8 * GiB,
+    }),
+  ).toEqual({ host: 64, project: 8 });
+  // Every project may run one, but never more than the host.
+  expect(
+    defaultTranscriptStagings({
+      cpus: 16,
+      memoryBytes: 64 * GiB,
+      projectMemoryBytes: GiB / 2,
+    }),
+  ).toEqual({ host: 64, project: 1 });
+  expect(
+    defaultTranscriptStagings({
+      cpus: 1,
+      memoryBytes: GiB / 4,
+      projectMemoryBytes: 8 * GiB,
+    }),
+  ).toEqual({ host: 1, project: 1 });
+});
+
+test("the caps read the pool's and the project's cgroup memory limits, and the environment overrides them", async () => {
+  const saved = {
+    host: process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS,
+    project: process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS,
+  };
+  delete process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS;
+  delete process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS;
+  const pool = await mkdtemp(join(tmpdir(), "claude-staging-pool-"));
+  try {
+    const cgroup = join(pool, `project-${projectId}`);
+    await mkdir(cgroup);
+    await writeFile(join(cgroup, "memory.max"), `${3 * 1024 ** 3}\n`);
+    // The pool's own limit bounds the host's (here below any real host's RAM).
+    await writeFile(join(pool, "memory.max"), `${4 * 1024 ** 3}\n`);
+    expect(await maxTranscriptStagings(projectId, pool)).toEqual({
+      host: Math.min(4, 32 * availableParallelism()),
+      project: Math.min(3, 4, 32 * availableParallelism()),
+    });
+    await writeFile(join(pool, "memory.max"), "max\n");
+    const limits = await maxTranscriptStagings(projectId, pool);
+    expect(limits.project).toBe(Math.min(3, limits.host));
+    // By default the pool is the one the project runner uses.
+    const savedPool = process.env.COCALC_PROJECT_POOL_CGROUP;
+    process.env.COCALC_PROJECT_POOL_CGROUP = pool;
+    try {
+      expect(await maxTranscriptStagings(projectId)).toEqual(limits);
+    } finally {
+      if (savedPool == null) delete process.env.COCALC_PROJECT_POOL_CGROUP;
+      else process.env.COCALC_PROJECT_POOL_CGROUP = savedPool;
+    }
+    // No limit, or no cgroup: only the host bounds the project.
+    await writeFile(join(cgroup, "memory.max"), "max\n");
+    expect(await maxTranscriptStagings(projectId, pool)).toEqual({
+      host: limits.host,
+      project: limits.host,
+    });
+    expect(await maxTranscriptStagings(projectId, join(pool, "none"))).toEqual({
+      host: limits.host,
+      project: limits.host,
+    });
+    process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS = "500";
+    process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS = "8";
+    expect(await maxTranscriptStagings(projectId, pool)).toEqual({
+      host: 500,
+      project: 8,
+    });
+  } finally {
+    await rm(pool, { recursive: true, force: true });
+    for (const [name, value] of [
+      ["COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS", saved.host],
+      ["COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS", saved.project],
+    ] as const) {
+      if (value == null) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 });
 
 test("staging refuses more controllers than allowed for a project or the host", async () => {

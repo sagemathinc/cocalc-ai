@@ -340,7 +340,9 @@ describe("archive all", () => {
     ({
       message_id: id,
       sender_id: reply ? "codex" : "acct",
-      ...(reply ? { acp_thread_id: "t", parent_message_id: `p${id.slice(1)}` } : {}),
+      ...(reply
+        ? { acp_thread_id: "t", parent_message_id: `p${id.slice(1)}` }
+        : {}),
       date: new Date(ms),
     }) as any;
   const thread = [at("p1", 10), at("a1", 11, true), at("p2", 20), at("p3", 30)];
@@ -394,6 +396,50 @@ describe("archive all", () => {
     expect(archiveAll(readerItems(thread.slice(0, 2)), state).state).toEqual({
       aw: 30,
     });
+  });
+
+  it("leaves a running turn in the inbox, unread if it was, after it ends too", () => {
+    const items = readerItems([...thread, at("p9", 50), at("a9", 51, true)]);
+    const last = items[items.length - 1];
+    // Which turn is running is the thread's call (its Working badge).
+    const running = (item: (typeof items)[number]) => item.id === "p9";
+    const { state } = archiveAll(
+      items,
+      {},
+      {
+        running,
+        watermark: last.firstIndex - 1,
+      },
+    );
+    expect(state).toEqual({ aw: 51, ax: ["p9"], u: ["p9"] });
+    expect(items.map((item) => isItemArchived(item, state))).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(isItemRead(last, items.length, state)).toBe(false);
+    // A turn that was read stays read.
+    expect(
+      archiveAll(items, {}, { running, watermark: items.length + 10 }).state,
+    ).toEqual({ aw: 51, ax: ["p9"] });
+  });
+
+  it("brings back no running turn that was archived already", () => {
+    const items = readerItems([...thread, at("p9", 50), at("a9", 51, true)]);
+    const last = items[items.length - 1];
+    const running = (item: (typeof items)[number]) => item.id === "p9";
+    for (const before of [
+      setItemArchived(last, true, {}),
+      archiveAll(items, {}).state,
+    ]) {
+      const { state } = archiveAll(items, before, {
+        running,
+        watermark: items.length,
+      });
+      expect(state.ax).toBeUndefined();
+      expect(items.every((item) => isItemArchived(item, state))).toBe(true);
+    }
   });
 
   it("if the read watermark cannot move, archiving still holds", () => {

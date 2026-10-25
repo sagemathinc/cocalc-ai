@@ -11,6 +11,8 @@ import type {
   CopyPublicDirectoryShareToProjectOptions,
   CreatePublicDirectoryShareOptions,
   GetTemporaryViewerReadPolicyOptions,
+  GetPublicDirectoryShareViewAggregatesOptions,
+  GetPublicDirectoryShareViewsOptions,
   GetPublicSharePublisherProfileOptions,
   GrantTemporaryViewerAccessOptions,
   ListMyPublicDirectorySharesOptions,
@@ -189,19 +191,55 @@ export async function updatePublisherProfile(
 export async function authorizeRead(
   opts: AuthorizePublicDirectoryShareReadOptions,
 ) {
-  const bay_id = await projectPublicDirectoryShareBay(opts.project_id);
+  // a client can't opt out of the view being recorded
+  const { record_view: _ignored, ...rest } = opts;
+  return await authorizeReadOnBays(rest);
+}
+
+// Authorizes without recording a view: for checks that are not themselves a
+// read of the share, such as issuing a project-host token.
+export async function authorizeReadWithoutView(
+  opts: AuthorizePublicDirectoryShareReadOptions,
+) {
+  return await authorizeReadOnBays({ ...opts, record_view: false });
+}
+
+async function authorizeReadOnBays(
+  opts: AuthorizePublicDirectoryShareReadOptions,
+) {
+  return await callOnShareBay({
+    project_id: opts.project_id,
+    local: async () => await publicDirectoryShares.authorizeRead(opts),
+    remote: async (client) =>
+      await client.publicDirectoryShareAuthorizeRead(opts),
+  });
+}
+
+// Runs on the bay that stores a share: its project's bay, or, for a share
+// stored elsewhere (a legacy or stale placement), whichever registered bay
+// has it. Each bay answers "public directory share not found" for a share it
+// does not store. A share's row, and so its view history, stays on one bay.
+async function callOnShareBay<T>({
+  project_id,
+  local,
+  remote,
+}: {
+  project_id: string;
+  local: () => Promise<T>;
+  remote: (client: InterBayAccountLocalApi) => Promise<T>;
+}): Promise<T> {
+  const bay_id = await projectPublicDirectoryShareBay(project_id);
   const attempted = new Set<string>();
-  const authorizeOnBay = async (candidate_bay_id: string) => {
+  const onBay = async (candidate_bay_id: string) => {
     attempted.add(candidate_bay_id);
     return await callPublicDirectoryShareBay({
       bay_id: candidate_bay_id,
-      local: async () => await publicDirectoryShares.authorizeRead(opts),
-      remote: async (client) =>
-        await client.publicDirectoryShareAuthorizeRead(opts),
+      local,
+      remote,
     });
   };
   try {
-    return await authorizeOnBay(bay_id);
+    return await onBay(bay_id);
   } catch (err) {
     if (!isPublicDirectoryShareNotFound(err)) {
       throw err;
@@ -212,7 +250,7 @@ export async function authorizeRead(
         continue;
       }
       try {
-        return await authorizeOnBay(candidate_bay_id);
+        return await onBay(candidate_bay_id);
       } catch (fallbackErr) {
         if (!isPublicDirectoryShareNotFound(fallbackErr)) {
           throw fallbackErr;
@@ -222,6 +260,34 @@ export async function authorizeRead(
     }
     throw lastNotFound ?? err;
   }
+}
+
+// On the bay that stores the share, like authorizeRead, which records the
+// views there.
+export async function getViews(opts: GetPublicDirectoryShareViewsOptions) {
+  return await callOnShareBay({
+    project_id: opts.project_id,
+    local: async () => await publicDirectoryShares.getViews(opts),
+    remote: async (client) => await client.publicDirectoryShareGetViews(opts),
+  });
+}
+
+// One share's aggregates on the bay that stores it; all shares' on this bay.
+export async function getViewAggregates(
+  opts: GetPublicDirectoryShareViewAggregatesOptions,
+) {
+  if (opts.share_id == null) {
+    return await publicDirectoryShares.getViewAggregates(opts);
+  }
+  if (!opts.project_id) {
+    throw Error("project_id is required with share_id");
+  }
+  return await callOnShareBay({
+    project_id: opts.project_id,
+    local: async () => await publicDirectoryShares.getViewAggregates(opts),
+    remote: async (client) =>
+      await client.publicDirectoryShareGetViewAggregates(opts),
+  });
 }
 
 export async function listDirectory(

@@ -9,6 +9,8 @@ const mockPublicDirectoryShares = {
   copyToNewProject: jest.fn(),
   copyToProject: jest.fn(),
   getTemporaryViewerReadPolicy: jest.fn(),
+  getViewAggregates: jest.fn(),
+  getViews: jest.fn(),
   grantTemporaryViewerAccess: jest.fn(),
   listMine: jest.fn(),
   listProject: jest.fn(),
@@ -79,6 +81,9 @@ jest.mock("@cocalc/server/public-directory-shares", () => ({
     mockPublicDirectoryShares.copyToProject(...args),
   getTemporaryViewerReadPolicy: (...args: any[]) =>
     mockPublicDirectoryShares.getTemporaryViewerReadPolicy(...args),
+  getViewAggregates: (...args: any[]) =>
+    mockPublicDirectoryShares.getViewAggregates(...args),
+  getViews: (...args: any[]) => mockPublicDirectoryShares.getViews(...args),
   grantTemporaryViewerAccess: (...args: any[]) =>
     mockPublicDirectoryShares.grantTemporaryViewerAccess(...args),
   listMine: (...args: any[]) => mockPublicDirectoryShares.listMine(...args),
@@ -102,6 +107,8 @@ function remoteClient() {
     publicDirectoryShareCopyToNewProject: jest.fn(),
     publicDirectoryShareCopyToProject: jest.fn(),
     publicDirectoryShareGetTemporaryViewerReadPolicy: jest.fn(),
+    publicDirectoryShareGetViewAggregates: jest.fn(),
+    publicDirectoryShareGetViews: jest.fn(),
     publicDirectoryShareGrantTemporaryViewerAccess: jest.fn(),
     publicDirectoryShareListMine: jest.fn(),
     publicDirectoryShareListProject: jest.fn(),
@@ -496,5 +503,61 @@ describe("public directory share conat API routing", () => {
       project_id: "project-id",
       share_id: "share-id",
     });
+  });
+
+  it("records a view for client reads only, whatever the client asks", async () => {
+    mockResolveProjectBayAcrossCluster.mockResolvedValue({ bay_id: "bay-1" });
+    const remote = mockRemoteClients["bay-1"].publicDirectoryShareAuthorizeRead;
+    remote.mockResolvedValue({
+      project_id: "project-id",
+      share_id: "share-id",
+      read_policy: { rules: [] },
+    });
+    const opts = {
+      account_id: "account-id",
+      project_id: "project-id",
+      share_id: "share-id",
+    };
+    await publicDirectoryShares.authorizeRead({ ...opts, record_view: false });
+    expect(remote).toHaveBeenLastCalledWith(opts);
+    await publicDirectoryShares.authorizeReadWithoutView(opts);
+    expect(remote).toHaveBeenLastCalledWith({ ...opts, record_view: false });
+  });
+
+  it("reads a share's views on the bay that stores the share", async () => {
+    // the project's bay doesn't have it (a legacy placement): bay-1 does
+    mockResolveProjectBayAcrossCluster.mockResolvedValue({ bay_id: "bay-0" });
+    mockPublicDirectoryShares.getViews.mockRejectedValue(notFound());
+    mockPublicDirectoryShares.getViewAggregates.mockRejectedValue(notFound());
+    const remote = mockRemoteClients["bay-1"];
+    remote.publicDirectoryShareGetViews.mockResolvedValue({ by_day: [] });
+    remote.publicDirectoryShareGetViewAggregates.mockResolvedValue({
+      by_day: [],
+    });
+    const opts = {
+      account_id: "account-id",
+      project_id: "project-id",
+      share_id: "share-id",
+    };
+    await expect(publicDirectoryShares.getViews(opts)).resolves.toEqual({
+      by_day: [],
+    });
+    expect(remote.publicDirectoryShareGetViews).toHaveBeenCalledWith(opts);
+    await expect(
+      publicDirectoryShares.getViewAggregates(opts),
+    ).resolves.toEqual({ by_day: [] });
+    expect(remote.publicDirectoryShareGetViewAggregates).toHaveBeenCalledWith(
+      opts,
+    );
+    // all shares: this bay only
+    mockPublicDirectoryShares.getViewAggregates.mockResolvedValue({
+      by_day: ["here"],
+    });
+    await expect(
+      publicDirectoryShares.getViewAggregates({ account_id: "account-id" }),
+    ).resolves.toEqual({ by_day: ["here"] });
+    expect(remote.publicDirectoryShareGetViewAggregates).toHaveBeenCalledTimes(
+      1,
+    );
   });
 });

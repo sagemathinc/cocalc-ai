@@ -93,7 +93,7 @@ overrides:
   "form-data@>=4.0.0 <4.0.6": ">=4.0.6"
   "markdown-it@<14.3.3": "^14.3.3"
   "tar@>=7.0.0 <7.5.21": "^7.5.21"
-  "body-parser@>=2.0.0 <2.3.0": "^2.3.0"
+  "body-parser@>=2.0.0 <2.4.0": "^2.4.0"
   # Upstream image-size is archived; this audited fork fixes CVE-2025-71329
   # and CVE-2025-71330 while preserving Metro's 1.x API.
   "image-size@<=2.0.2": "npm:image-size-next@1.2.2"
@@ -143,6 +143,9 @@ minimumReleaseAgeExclude:
   # CoCalc-owned release (the patchflow 0.16 dependency), validated via upstream CI and npm provenance.
   - "@cocalc/diff-match-patch@1.1.1"
   - "@nebius/js-sdk"
+  # Maintainer-approved exact-version exception (William, 2026-10-25): the
+  # GHSA-27r3-jxmh-p828 fix, published 2026-10-22, before the 3-day age passed.
+  - "body-parser@2.4.0"
   # First patched version for GHSA-xcj9-5m2h-648r, GHSA-87f9-hvmw-gh4p,
   # and GHSA-ghcm-xqfw-q4vr in the active Mermaid 11.x line.
   - mermaid

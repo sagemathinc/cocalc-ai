@@ -645,9 +645,7 @@ function RuntimeCodexAttentionCard({
                       : record.is_blocking
                         ? (record.summary ??
                           "The current turn is paused until you respond.")
-                        : record.source_kind === "codex_async_question"
-                          ? `${agentName ?? "The agent"} can keep working while you answer. Your response will be saved with this question and submitted to ${agentName ?? "the agent"}.`
-                          : record.summary}
+                        : record.summary}
               </Text>
             )}
             {lite && pending ? (

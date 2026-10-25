@@ -21,6 +21,8 @@ import {
 } from "antd";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -45,6 +47,7 @@ import {
   type ReaderItem,
   type ReaderState,
 } from "./reader-model";
+import { ReaderFullScreenContext } from "./reader-full-screen";
 import type { ChatMessageTyped } from "./types";
 import { getUserName } from "./user-name";
 import { newest_content } from "./utils";
@@ -168,6 +171,20 @@ function usePageVisible(): boolean {
   return visible;
 }
 
+/**
+ * What scrolls the open message: the log's scroller when the item is shown
+ * as the log, else the pane itself.
+ */
+function messageScroller(pane: HTMLElement): HTMLElement | null {
+  const log = pane.querySelector<HTMLElement>("[data-virtuoso-scroller]");
+  if (log) return log;
+  const overflow = getComputedStyle(pane).overflowY;
+  return overflow === "auto" || overflow === "scroll" ? pane : null;
+}
+
+// The list's width beside the open message.
+const LIST_WIDTH = 340;
+
 export function ChatReaderView({
   actions,
   threadId,
@@ -185,6 +202,10 @@ export function ChatReaderView({
   itemBadges,
   acpState,
   itemInfo,
+  isItemWorking = () => false,
+  runningStatus,
+  searchJump,
+  searchDates,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -215,6 +236,21 @@ export function ChatReaderView({
   acpState?: { get?: (key: string) => unknown };
   /** Each item's subject and priority (what its agent said, or defaults). */
   itemInfo?: (item: ReaderItem) => ReaderItemInfo;
+  /** Whether an item holds the thread's running turn (its Working badge). */
+  isItemWorking?: (item: ReaderItem) => boolean;
+  /**
+   * The running turn's status and Interrupt (wide only). Its place in the
+   * toolbar is kept while nothing runs, so nothing moves when a turn starts:
+   * a click meant for Archive all never lands on Interrupt.
+   */
+  runningStatus?: ReactNode;
+  /**
+   * The thread search's current hit (its message's date, ms): its item opens,
+   * shown even if archived or filed. A new token is a new jump.
+   */
+  searchJump?: { date: string; token: number };
+  /** Every hit's message date (ms): their items are marked in the list. */
+  searchDates?: ReadonlySet<string>;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
@@ -291,14 +327,24 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items, watermark, state, filed, showArchived],
   );
-  // In the inbox: not archived, in every view.
-  const inboxCount = useMemo(
-    () => items.filter((item) => !isItemArchived(item, state)).length,
-    [items, state],
+  // What Archive all archives: the inbox (not archived, in every view) but a
+  // turn still running.
+  const archivableCount = useMemo(
+    () =>
+      items.filter(
+        (item) => !isItemArchived(item, state) && !isItemWorking(item),
+      ).length,
+    [items, state, isItemWorking],
   );
   const [selectedId, setSelectedId] = useState<string>();
+  // The open message over the whole window, as the reader shows it: paging
+  // with Newer and Older (or j and k) stays full screen.
+  const [fullScreenWanted, setFullScreen] = useState(false);
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
   const selected: ReaderItem | undefined = visible[selectedIndex];
+  const fullScreen = fullScreenWanted && !!selected && !narrow;
 
   // A change is applied to the stored state, which may differ from what is
   // shown here (another device, or not loaded yet).
@@ -325,6 +371,27 @@ export function ChatReaderView({
     setSelectedId(first.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, narrow, threadId, visible.length, readStateVersion]);
+
+  // A search hit opens its item, wherever it is; its messages may arrive
+  // after the jump (a hit loaded from the backend).
+  const jumpedRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!searchJump?.date || jumpedRef.current === searchJump.token) return;
+    const item = items.find((candidate) =>
+      candidate.messages.some(
+        (message) => `${dateValue(message)?.valueOf()}` === searchJump.date,
+      ),
+    );
+    if (!item) return;
+    jumpedRef.current = searchJump.token;
+    if (isItemArchived(item, state)) setShowArchived(true);
+    if (!inView(item)) setView("all");
+    setSelectedId(item.id);
+    listRef.current
+      ?.querySelector(`[data-reader-item="${item.id}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchJump?.token, searchJump?.date, items]);
 
   // Opening an item, or a new reply arriving while it is open, reads it.
   // Not while the chat is hidden: then once it is shown.
@@ -402,6 +469,16 @@ export function ChatReaderView({
         case "?":
           setShowKeys(true);
           return true;
+        case "f":
+          if (!selected || narrow) return false;
+          setFullScreen(!fullScreen);
+          focusKeys();
+          return true;
+        case "Escape":
+          if (!fullScreen) return false;
+          setFullScreen(false);
+          focusKeys();
+          return true;
       }
       return false;
     })();
@@ -422,10 +499,34 @@ export function ChatReaderView({
     listRef.current.focus({ preventScroll: true });
   }, [selected?.id]);
   // Narrow, the open item replaces the list: the whole reader takes the keys.
-  const focusKeys = () =>
-    (narrow ? rootRef : listRef).current?.focus({ preventScroll: true });
+  // Wide, the open message does, so Space pages it; j, k, y and the rest
+  // still reach the reader from there. Its log mounts after the selection
+  // changes, so this waits a few frames for it.
+  const paneRef = useRef<HTMLDivElement>(null);
+  const focusOpenMessage = (attempt: number) => {
+    const target = paneRef.current ? messageScroller(paneRef.current) : null;
+    if (target) {
+      // The browser's own focus ring (:focus-visible) stays.
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    } else if (attempt < 10 && selectedIdRef.current) {
+      requestAnimationFrame(() => focusOpenMessage(attempt + 1));
+    } else {
+      listRef.current?.focus({ preventScroll: true });
+    }
+  };
+  const focusKeys = () => {
+    if (narrow) {
+      rootRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    // After the new selection's pane is in place.
+    requestAnimationFrame(() => focusOpenMessage(0));
+  };
   useEffect(() => {
-    if (autoFocus) focusKeys();
+    // Nothing is open yet: the list takes the keys (j opens the first).
+    if (autoFocus)
+      (narrow ? rootRef : listRef).current?.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [seenCount, setSeenCount] = useState(visible.length);
@@ -460,7 +561,10 @@ export function ChatReaderView({
         minHeight: 0,
         ...(narrow
           ? { flex: 1 }
-          : { width: 340, borderRight: `1px solid ${UI_COLORS.border}` }),
+          : {
+              width: LIST_WIDTH,
+              borderRight: `1px solid ${UI_COLORS.border}`,
+            }),
       }}
     >
       <div
@@ -563,6 +667,19 @@ export function ChatReaderView({
                     }}
                   >
                     fyi
+                  </span>
+                ) : null}
+                {searchDates &&
+                searchDates.size > 0 &&
+                item.messages.some((message) =>
+                  searchDates.has(`${dateValue(message)?.valueOf()}`),
+                ) ? (
+                  <span
+                    aria-label="Matches the search"
+                    title="Matches the search"
+                    style={{ color: UI_COLORS.primary, flex: "none" }}
+                  >
+                    <Icon name="search" />
                   </span>
                 ) : null}
                 {itemBadges?.(item)}
@@ -691,9 +808,47 @@ export function ChatReaderView({
     </div>
   ) : null;
 
+  // Tab and Shift+Tab wrap around inside the full-screen dialog.
+  const containTab = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...event.currentTarget.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ];
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const inside = event.currentTarget.contains(active);
+    if (event.shiftKey && (active === first || !inside)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !inside)) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  const fullScreenControl = useMemo(
+    () =>
+      narrow
+        ? null
+        : {
+            open: () => {
+              setFullScreen(true);
+              focusKeys();
+            },
+          },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [narrow],
+  );
   const pane = selected ? (
     <div
       key={selected.id}
+      ref={paneRef}
       role="article"
       aria-label="Message"
       style={{
@@ -737,6 +892,21 @@ export function ChatReaderView({
           <Button size="small" onClick={() => markUnread(selected)}>
             Mark unread
           </Button>
+          <Button
+            size="small"
+            icon={<Icon name={fullScreen ? "compress" : "expand-arrows"} />}
+            onClick={() => {
+              setFullScreen(!fullScreen);
+              focusKeys();
+            }}
+          >
+            {fullScreen ? "Exit full screen" : "Full screen"}
+          </Button>
+          {fullScreen ? (
+            <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
+              {selectedIndex + 1} of {visible.length}
+            </span>
+          ) : null}
         </Space>
       )}
       {itemInfo?.(selected).subject ? (
@@ -755,7 +925,9 @@ export function ChatReaderView({
       ) : null}
       {renderItem ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-          {renderItem(selected)}
+          <ReaderFullScreenContext.Provider value={fullScreenControl}>
+            {renderItem(selected)}
+          </ReaderFullScreenContext.Provider>
         </div>
       ) : null}
       {renderItem
@@ -852,6 +1024,22 @@ export function ChatReaderView({
             flexWrap: "wrap",
           }}
         >
+          {narrow ? null : (
+            <div
+              role="group"
+              aria-label="Running turn"
+              style={{
+                // The rest starts above the list's edge.
+                minWidth: LIST_WIDTH - 24,
+                flex: "0 0 auto",
+                display: "flex",
+                alignItems: "center",
+                minHeight: 28,
+              }}
+            >
+              {runningStatus}
+            </div>
+          )}
           {/* Status, not a control: how much is left to read. */}
           <span
             style={
@@ -872,15 +1060,20 @@ export function ChatReaderView({
             Mark all read
           </Button>
           <Popconfirm
-            title={`Archive all ${inboxCount} message${inboxCount === 1 ? "" : "s"}?`}
-            description="Everything in this thread is archived and read: a clean slate. A new reply brings a message back."
+            title={`Archive all ${archivableCount} message${archivableCount === 1 ? "" : "s"}?`}
+            description="Everything in this thread is archived and read: a clean slate. A turn still running stays in the inbox. A new reply brings a message back."
             okText="Archive all"
             onConfirm={() => {
-              save((current) => archiveAll(items, current));
+              save((current, watermark) =>
+                archiveAll(items, current, {
+                  running: isItemWorking,
+                  watermark,
+                }),
+              );
               if (!showArchived) setSelectedId(undefined);
             }}
           >
-            <Button size="small" disabled={!inboxCount}>
+            <Button size="small" disabled={!archivableCount}>
               Archive all
             </Button>
           </Popconfirm>
@@ -923,7 +1116,43 @@ export function ChatReaderView({
       )}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {narrow && selected ? null : list}
-        {pane}
+        {fullScreen ? (
+          <>
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: UI_COLORS.muted,
+              }}
+            >
+              Shown full screen (f or Esc to return)
+            </div>
+            {createPortal(
+              <KeyboardBoundary
+                role="dialog"
+                aria-modal="true"
+                aria-label="Message, full screen"
+                // The keys stay inside while it is open: Tab cycles in it.
+                onKeyDown={containTab}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 1000,
+                  background: UI_COLORS.surface,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                {pane}
+              </KeyboardBoundary>,
+              document.body,
+            )}
+          </>
+        ) : (
+          pane
+        )}
       </div>
       <Modal
         title="Reader keyboard shortcuts"
@@ -960,5 +1189,6 @@ const READER_KEYS: [string, string][] = [
   ["u", "Next unread message"],
   ["y", "Archive the open message (again: back to the inbox)"],
   ["m", "Mark the open message unread"],
+  ["f", "Full screen for the open message (again, or Esc: back)"],
   ["?", "Show these shortcuts"],
 ];

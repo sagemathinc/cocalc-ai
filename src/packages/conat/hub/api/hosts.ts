@@ -808,6 +808,22 @@ export interface HostKernelSysctlTextMismatch {
   actual: string | null;
 }
 
+export interface HostKernelHardeningCheck {
+  key: string;
+  // ">= 2", "= 0", ...
+  expected: string;
+  actual: number | null;
+  ok: boolean;
+  // Written by the host (sysctl.d); otherwise only checked.
+  managed: boolean;
+}
+
+export interface HostKernelHardeningSnapshot {
+  ok: boolean;
+  config_path: string;
+  checks: HostKernelHardeningCheck[];
+}
+
 export interface HostKernelSysctlSnapshot {
   collected_at?: string;
   config_path?: string;
@@ -818,6 +834,9 @@ export interface HostKernelSysctlSnapshot {
   ok: boolean;
   mismatches: HostKernelSysctlMismatch[];
   text_mismatches?: HostKernelSysctlTextMismatch[];
+  // Kernel attack-surface settings; not part of `ok`, which covers the
+  // capacity limits above.
+  hardening?: HostKernelHardeningSnapshot;
   apply_attempted?: boolean;
   apply_succeeded?: boolean;
   error?: string;
