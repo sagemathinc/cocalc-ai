@@ -306,6 +306,19 @@ describeDb("network-bound external agents", () => {
       [message.message_id],
     );
     expect(await delivery()).toBeNull();
+    // An expired message cannot be read back, not even by acknowledging it.
+    await expect(
+      store.acknowledge(
+        account,
+        installation.installation_id,
+        message.message_id,
+      ),
+    ).rejects.toThrow("external_inbox_message_not_found");
+    expect(
+      await store.inbox(account, installation.installation_id, 50, {
+        includeAcknowledged: true,
+      }),
+    ).toEqual([]);
   });
 
   test("a message from a bay that predates the sender's account is delivered, but never inspectable", async () => {

@@ -507,6 +507,7 @@ export class ExternalAgentStore {
         `UPDATE agent_external_inbox
          SET state='acknowledged',acknowledged_at=COALESCE(acknowledged_at,now())
          WHERE account_id=$1 AND installation_id=$2 AND message_id=$3
+           AND expires_at>now()
          RETURNING *`,
         [account, installation, message_id],
       );
