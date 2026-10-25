@@ -3976,6 +3976,7 @@ describe("billing exposure in admin health across bays", () => {
 describe("public share views for a share stored off its project's bay", () => {
   // A legacy placement: the share's row is on the attached bay, while its
   // project (and so who is owner or collaborator) is on the seed.
+  let dana; // homed on the seed, owns the project (alice is at her project limit)
   let carol; // homed on the seed, not in the project
   let project_id;
   const share_id = randomUUID();
@@ -3995,11 +3996,13 @@ describe("public share views for a share stored off its project's bay", () => {
     );
 
   before(async () => {
+    dana = await createAccount(cluster, { home_bay_id: SEED, name: "dana" });
+    dana.client = await client(dana);
     carol = await createAccount(cluster, { home_bay_id: SEED, name: "carol" });
     carol.client = await client(carol);
-    project_id = await createProject(alice.client, "shared with views");
+    project_id = await createProject(dana.client, "shared with views");
     assert.equal(await owningBay(project_id), SEED);
-    await invite(alice, bob, project_id);
+    await invite(dana, bob, project_id);
     await runInBay(
       cluster,
       ATTACHED,
@@ -4012,12 +4015,12 @@ describe("public share views for a share stored off its project's bay", () => {
           VALUES ($1, $2, 'shared', $3, 'unlisted', TRUE, 'available', $4, $4, FALSE)\`,
          [${JSON.stringify(share_id)}, ${JSON.stringify(project_id)},
           ${JSON.stringify(`views-${share_id.slice(0, 8)}`)},
-          ${JSON.stringify(alice.account_id)}]);`,
+          ${JSON.stringify(dana.account_id)}]);`,
     );
   });
 
   it("records each read on the share's bay, with the role the project's bay has", async () => {
-    for (const [name, viewer] of Object.entries({ alice, bob, carol })) {
+    for (const [name, viewer] of Object.entries({ dana, bob, carol })) {
       await eventually(
         async () =>
           (
@@ -4039,7 +4042,7 @@ describe("public share views for a share stored off its project's bay", () => {
     assert.deepEqual(
       Object.fromEntries(rows.map((r) => [r.account_id, r.viewer_role])),
       {
-        [alice.account_id]: "owner",
+        [dana.account_id]: "owner",
         [bob.account_id]: "collaborator",
         [carol.account_id]: "other",
       },
@@ -4048,7 +4051,7 @@ describe("public share views for a share stored off its project's bay", () => {
   });
 
   it("reports the views to the project's owner and collaborator, from either bay, and to no one else", async () => {
-    for (const viewer of [alice, bob]) {
+    for (const viewer of [dana, bob]) {
       const views = await viewer.client.call("publicDirectoryShares.getViews", {
         project_id,
         share_id,
