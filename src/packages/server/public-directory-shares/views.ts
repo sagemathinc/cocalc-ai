@@ -75,9 +75,10 @@ export async function ensurePublicShareViewsSchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS public_share_views_day_idx
         ON public_share_views (day)
     `);
+    // deleting an account's views, and those of deleted accounts
     await pool.query(`
-      CREATE INDEX IF NOT EXISTS public_share_views_project_day_idx
-        ON public_share_views (project_id, day)
+      CREATE INDEX IF NOT EXISTS public_share_views_account_idx
+        ON public_share_views (account_id)
     `);
   })();
   try {

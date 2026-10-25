@@ -477,6 +477,16 @@ describe("public share views", () => {
     expect((await rows()).map((r) => r.day)).toEqual(["2025-09-26"]);
   });
 
+  it("finds a share's days and an account's views by index", async () => {
+    const { rows } = await pool().query(
+      "SELECT indexdef FROM pg_indexes WHERE tablename='public_share_views'",
+    );
+    const defs = rows.map((r) => r.indexdef).join("\n");
+    expect(defs).toMatch(/\(share_id, day, account_id\)/);
+    expect(defs).toMatch(/\(account_id\)/);
+    expect(defs).toMatch(/\(day\)/);
+  });
+
   it("deletes a deleted account's views", async () => {
     for (const account_id of [VIEWER_ID, OWNER_ID, COLLAB_ID]) {
       await recordShareViewNow({
