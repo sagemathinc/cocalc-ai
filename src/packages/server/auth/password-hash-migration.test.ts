@@ -11,6 +11,10 @@ import {
   hashPassword,
 } from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
+import {
+  getPasswordKdf,
+  resetPasswordKdfCache,
+} from "@cocalc/database/settings/password-kdf";
 import { resetServerSettingsCache } from "@cocalc/database/settings/server-settings";
 import createAccount from "@cocalc/server/accounts/create-account";
 import { after, before } from "@cocalc/server/test";
@@ -64,8 +68,20 @@ beforeAll(async () => {
 afterAll(after);
 
 describe("password hash migration", () => {
-  it("writes legacy hashes until password_kdf is scrypt", async () => {
+  it("under legacy, writes legacy hashes and neither upgrades nor wraps", async () => {
+    // First test: no scrypt hash exists yet in this database.
     await setKdf("legacy");
+    resetPasswordKdfCache();
+    expect(await getPasswordKdf()).toBe("legacy");
+    const password = `pw-${uuid()}`;
+    const old = await legacyHash(password);
+    const signer = await accountWithHash(old);
+    await verifyLocalSignInPassword({ email_address: signer.email, password });
+    expect(await storedHash(signer.account_id)).toBe(old);
+    const off = await runPasswordHashMigrationPass();
+    expect(off.accounts.wrapped).toBe(0);
+    expect(await storedHash(signer.account_id)).toBe(old);
+
     const { account_id } = await accountWithHash(null);
     const { default: setPassword } =
       await import("@cocalc/database/pool/account/set-password");
@@ -135,11 +151,8 @@ describe("password hash migration", () => {
     expect(await checkPassword("ABCD-EFGH", rows[0].code_hash)).toBe(true);
   });
 
-  it("runs a full pass only while password_kdf is scrypt", async () => {
+  it("leaves no legacy hashes after a full pass under scrypt", async () => {
     await accountWithHash(await legacyHash("pass"));
-    await setKdf("legacy");
-    const off = await runPasswordHashMigrationPass();
-    expect(off.accounts.wrapped).toBe(0);
     expect((await countLegacyPasswordHashes()).accounts).toBeGreaterThan(0);
     await setKdf("scrypt");
     await runPasswordHashMigrationPass();
@@ -173,14 +186,10 @@ describe("password hash migration", () => {
     ).toBe(false);
   });
 
-  it("does not upgrade while password_kdf is legacy, or over a newer hash", async () => {
-    await setKdf("legacy");
+  it("never upgrades over a newer hash", async () => {
     const password = `pw-${uuid()}`;
     const old = await legacyHash(password);
-    const { account_id, email } = await accountWithHash(old);
-    await verifyLocalSignInPassword({ email_address: email, password });
-    expect(await storedHash(account_id)).toBe(old);
-
+    const { account_id } = await accountWithHash(old);
     await setKdf("scrypt");
     // The password changed after this sign-in read the old hash: keep it.
     const newer = await hashPassword("changed", { kdf: "scrypt" });
@@ -266,5 +275,36 @@ describe("password hash migration", () => {
     expect(missing).toBeGreaterThan(real / 3);
     expect(noPassword).toBeGreaterThan(real / 3);
     expect(legacyRow).toBeGreaterThan(real / 3);
+  });
+
+  it("keeps scrypt in effect after password_kdf goes back to legacy", async () => {
+    await setKdf("scrypt");
+    const strong = await accountWithHash(
+      await hashPassword("right", { kdf: "scrypt" }),
+    );
+    await setKdf("legacy");
+    resetPasswordKdfCache(); // decided from the database, not process state
+    expect(await getPasswordKdf()).toBe("scrypt");
+    // Failures still cost one scrypt each: no existence or state oracle.
+    const time = async (email_address: string) => {
+      const start = Date.now();
+      await expect(
+        verifyLocalSignInPassword({ email_address, password: "wrong" }),
+      ).rejects.toThrow();
+      return Date.now() - start;
+    };
+    await time(`${uuid()}@example.com`);
+    const real = await time(strong.email);
+    const legacyRow = await accountWithHash(await legacyHash("right"));
+    const sso = await accountWithHash(null);
+    expect(await time(`${uuid()}@example.com`)).toBeGreaterThan(real / 3);
+    expect(await time(legacyRow.email)).toBeGreaterThan(real / 3);
+    expect(await time(sso.email)).toBeGreaterThan(real / 3);
+    // And new hashes stay strong.
+    expect(
+      (await hashPassword("x", { kdf: await getPasswordKdf() })).startsWith(
+        "scrypt$v1$",
+      ),
+    ).toBe(true);
   });
 });

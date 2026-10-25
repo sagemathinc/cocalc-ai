@@ -29,19 +29,22 @@ async function spendLikeARealCheck(
   password: string,
   kdf: PasswordKdf,
 ): Promise<void> {
-  let dummy = dummyHashes[kdf];
-  if (dummy == null) {
+  const cached = dummyHashes[kdf];
+  if (cached == null) {
     const created = hashPassword(`no account ${Math.random()} ${Date.now()}`, {
       kdf,
     });
-    dummyHashes[kdf] = dummy = created;
+    dummyHashes[kdf] = created;
     // A failed creation (e.g. busy) must not stay cached: the next check
     // would skip the KDF and reveal that the account does not exist.
     created.catch(() => {
       if (dummyHashes[kdf] === created) delete dummyHashes[kdf];
     });
+    // Creating the dummy is itself the one KDF this request pays.
+    await created;
+    return;
   }
-  await checkPassword(password || "x", await dummy);
+  await checkPassword(password || "x", await cached);
 }
 
 export async function verifyLocalSignInPassword({

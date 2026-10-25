@@ -27,6 +27,12 @@ jest.mock("@cocalc/backend/auth/password-hash", () => {
   const actual = jest.requireActual("@cocalc/backend/auth/password-hash");
   return {
     ...actual,
+    // Creating a hash costs one KDF too (the cold dummy).
+    hashPassword: async (password: string, opts: any) => {
+      const hash = await actual.hashPassword(password, opts);
+      checked.push(hash.split("$")[0]);
+      return hash;
+    },
     checkPassword: async (password: string, stored: string) => {
       // Only well-formed hashes cost a KDF (malformed ones are rejected unparsed).
       if (actual.isPasswordHash(stored)) checked.push(stored.split("$")[0]);
@@ -67,7 +73,8 @@ describe("verifyLocalSignInPassword failure cost", () => {
       const count = (checks: string[]) =>
         checks.filter((c) => c === expensive || c === "scrypt-wrap").length;
 
-      expect(count(await kdfChecksFor(undefined))).toBe(1); // missing
+      expect(count(await kdfChecksFor(undefined))).toBe(1); // missing, cold
+      expect(count(await kdfChecksFor(undefined))).toBe(1); // missing, warm
       expect(count(await kdfChecksFor(account(null)))).toBe(1); // no password
       expect(count(await kdfChecksFor(account(legacy)))).toBe(1); // unwrapped
       if (kdf === "scrypt") {
