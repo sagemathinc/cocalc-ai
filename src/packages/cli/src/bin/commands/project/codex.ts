@@ -6,6 +6,7 @@
  */
 import { Command } from "commander";
 
+import { readApiKeyFile } from "../../core/api-key-file";
 import type { ProjectCommandDeps } from "../project";
 
 export function registerProjectCodexCommands(
@@ -285,13 +286,25 @@ export function registerProjectCodexCommands(
   codexAuthApiKey
     .command("set")
     .description("set an OpenAI API key for project (default) or account scope")
-    .requiredOption("--api-key <key>", "OpenAI API key")
+    // Not --api-key: the root command owns that option (the CoCalc account
+    // key) and would consume it before this subcommand saw it.
+    .option(
+      "--openai-api-key <key>",
+      "OpenAI API key (visible in ps; prefer --key-file or --stdin)",
+    )
+    .option(
+      "--key-file <path>",
+      "read the OpenAI API key from a private file (mode 0600)",
+    )
+    .option("--stdin", "read the OpenAI API key from stdin")
     .option("--scope <scope>", "project|account", "project")
     .option("-w, --project <project>", "project id or name (for project scope)")
     .action(
       async (
         opts: {
-          apiKey: string;
+          openaiApiKey?: string;
+          keyFile?: string;
+          stdin?: boolean;
           scope?: string;
           project?: string;
         },
@@ -302,9 +315,25 @@ export function registerProjectCodexCommands(
           "project codex auth api-key set",
           async (ctx) => {
             const scope = `${opts.scope ?? "project"}`.trim().toLowerCase();
-            const apiKey = `${opts.apiKey ?? ""}`.trim();
+            const sources = [
+              opts.openaiApiKey != null,
+              opts.keyFile != null,
+              !!opts.stdin,
+            ].filter(Boolean).length;
+            if (sources !== 1) {
+              throw new Error(
+                "give the key with exactly one of --openai-api-key, --key-file or --stdin",
+              );
+            }
+            const apiKey = (
+              opts.keyFile != null
+                ? readApiKeyFile(opts.keyFile)
+                : opts.stdin
+                  ? await readAllStdin()
+                  : `${opts.openaiApiKey}`
+            ).trim();
             if (!apiKey) {
-              throw new Error("--api-key must be non-empty");
+              throw new Error("the OpenAI API key must be non-empty");
             }
             if (scope !== "project" && scope !== "account") {
               throw new Error("scope must be 'project' or 'account'");
