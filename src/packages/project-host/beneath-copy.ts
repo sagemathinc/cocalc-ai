@@ -40,6 +40,7 @@ import {
   fchmodSync,
   futimesSync,
   openSync,
+  writeSync,
 } from "node:fs";
 import {
   copyFile,
@@ -626,6 +627,124 @@ export async function kindBeneath(root: string, rel: string): Promise<Kind> {
     .kind;
 }
 
+// The names in directory `rel` under `root`. A symlink anywhere on the way,
+// even one swapped in while listing, makes this throw instead of listing
+// another directory.
+export async function listBeneath(
+  root: string,
+  rel: string,
+): Promise<string[]> {
+  return await readdirBeneath(
+    new SandboxRoot(root),
+    root,
+    beneathRelative(rel),
+  );
+}
+
+export interface FileIdentity {
+  size: number;
+  ctimeNs: number;
+}
+
+// Opening a source that is not a regular file (a symlink anywhere on its
+// path, a FIFO, a directory) or that has gone fails with one of these.
+const NOT_REGULAR = new Set([
+  "ELOOP",
+  "ENOENT",
+  "ENOTDIR",
+  "EISDIR",
+  "EINVAL",
+  "ENXIO",
+  "EOPNOTSUPP",
+  "ENOTSUP",
+  "EXDEV",
+]);
+
+// Copies the regular file at `src` to exactly `dest` (replacing a file there,
+// creating missing parent directories), from the descriptor openat2 opened.
+// Whatever is checked first, the open itself refuses a symlink, FIFO or
+// directory swapped in at any moment: such a source is reported, never copied
+// or followed. `skip` sees the opened source's identity and may decline the
+// copy; a source larger than `maxBytes` (also while it is copied) is refused
+// with EFBIG. The copy is written to a temporary name and renamed into place.
+export async function copyRegularFileBeneath({
+  src,
+  dest,
+  maxBytes,
+  skip,
+}: {
+  src: BeneathPath;
+  dest: BeneathPath;
+  maxBytes: number;
+  skip?: (source: FileIdentity) => boolean;
+}): Promise<
+  | { kind: "not-regular" }
+  | { kind: "unchanged"; source: FileIdentity }
+  | { kind: "copied"; source: FileIdentity; dest: FileIdentity }
+> {
+  const srcRel = beneathRelative(src.path);
+  const destRel = beneathRelative(dest.path);
+  if (srcRel === "" || destRel === "") {
+    throw codedError("EINVAL", "a file copy needs a file path on both sides");
+  }
+  let srcFd: number;
+  try {
+    srcFd = new SandboxRoot(src.root).openRead(srcRel);
+  } catch (err) {
+    if (NOT_REGULAR.has(errorCode(err) ?? "")) return { kind: "not-regular" };
+    throw err;
+  }
+  try {
+    const st = fstatSync(srcFd, { bigint: true });
+    if ((Number(st.mode) & constants.S_IFMT) !== constants.S_IFREG) {
+      return { kind: "not-regular" };
+    }
+    const source = { size: Number(st.size), ctimeNs: Number(st.ctimeNs) };
+    if (skip?.(source)) return { kind: "unchanged", source };
+    const tooLarge = () =>
+      codedError("EFBIG", `'${srcRel}' is larger than ${maxBytes} bytes`);
+    if (source.size > maxBytes) throw tooLarge();
+    const sandbox = new SandboxRoot(dest.root);
+    const parent = path.posix.dirname(destRel);
+    if (parent !== ".") sandbox.mkdir(parent, true, 0o700);
+    const tmp = tempSibling(destRel);
+    const destFd = sandbox.openWrite(tmp, true, true, false, 0o600);
+    let placed = false;
+    try {
+      try {
+        // Both ends are the descriptors opened beneath their roots.
+        await runNativeFsTask(() =>
+          copyFile(
+            `/proc/self/fd/${srcFd}`,
+            `/proc/self/fd/${destFd}`,
+            constants.COPYFILE_FICLONE,
+          ),
+        );
+        // The source may have grown while it was copied.
+        if (fstatSync(destFd).size > maxBytes) throw tooLarge();
+      } finally {
+        closeSync(destFd);
+      }
+      sandbox.rename(tmp, destRel);
+      placed = true;
+    } finally {
+      if (!placed) {
+        try {
+          sandbox.unlink(tmp);
+        } catch {}
+      }
+    }
+    const placedStat = sandbox.stat(destRel);
+    return {
+      kind: "copied",
+      source,
+      dest: { size: placedStat.size, ctimeNs: placedStat.ctimeNs },
+    };
+  } finally {
+    closeSync(srcFd);
+  }
+}
+
 // Creates directory `rel` (and missing parents) under `root`.
 export function mkdirBeneath(root: string, rel: string, mode = 0o755): void {
   new SandboxRoot(root).mkdir(beneathRelative(rel), true, mode);
@@ -653,5 +772,107 @@ export async function rmBeneath(root: string, rel: string): Promise<void> {
     await runNativeFsTask(() => sandbox.rm(beneathRelative(rel), true, true));
   } catch (err) {
     if (errorCode(err) !== "ENOENT") throw err;
+  }
+}
+
+// A directory `rel` beneath a trusted `root` (chosen by the host, never by a
+// project), in a tree the project can change at any moment. Every operation
+// resolves beneath the root and refuses all symlinks, so a component of `rel`
+// (or anything beneath it) swapped for a symlink makes the operation fail
+// instead of acting wherever the link points.
+export class BeneathDir {
+  readonly root: string;
+  readonly rel: string;
+
+  constructor(root: string, rel = "") {
+    this.root = root;
+    this.rel = beneathRelative(rel);
+  }
+
+  /** The host path, for display or to hand to something that trusts it. */
+  get hostPath(): string {
+    return this.rel ? path.join(this.root, this.rel) : this.root;
+  }
+
+  child(name: string): BeneathDir {
+    return new BeneathDir(this.root, this.at(name));
+  }
+
+  private at(name = ""): string {
+    const relName = beneathRelative(name);
+    return this.rel && relName ? `${this.rel}/${relName}` : this.rel || relName;
+  }
+
+  private sandbox(): SandboxRoot {
+    return new SandboxRoot(this.root);
+  }
+
+  /** Creates this directory (and missing parents), then sets its mode. */
+  mkdir(mode = 0o700): void {
+    if (this.rel === "") return;
+    const sandbox = this.sandbox();
+    sandbox.mkdir(this.rel, true, mode);
+    sandbox.chmod(this.rel, mode);
+  }
+
+  /** Writes `name` in this directory by a temporary file renamed into place. */
+  writeFile(name: string, data: string, mode = 0o600): void {
+    const sandbox = this.sandbox();
+    const target = this.at(name);
+    const tmp = this.at(`.${path.posix.basename(target)}-${randomUUID()}.tmp`);
+    const fd = sandbox.openWrite(tmp, true, true, false, mode);
+    let placed = false;
+    try {
+      try {
+        // writeSync may write less than asked: never publish a short file.
+        const bytes = Buffer.from(data);
+        let offset = 0;
+        while (offset < bytes.length) {
+          offset += writeSync(fd, bytes, offset, bytes.length - offset);
+        }
+        fchmodSync(fd, mode);
+      } finally {
+        closeSync(fd);
+      }
+      sandbox.rename(tmp, target);
+      placed = true;
+    } finally {
+      if (!placed) {
+        try {
+          sandbox.unlink(tmp);
+        } catch {}
+      }
+    }
+  }
+
+  /** Removes file `name` from this directory, if present. */
+  unlink(name: string): void {
+    try {
+      this.sandbox().unlink(this.at(name));
+    } catch (err) {
+      if (errorCode(err) !== "ENOENT") throw err;
+    }
+  }
+
+  /** The names in this directory. */
+  async list(): Promise<string[]> {
+    return await readdirBeneath(this.sandbox(), this.root, this.rel);
+  }
+
+  /** What `name` is and when it last changed; a symlink is never followed. */
+  async stat(name: string): Promise<{ kind: Kind; mtimeMs: number }> {
+    const { kind, mtimeNs } = await entryAt(
+      this.sandbox(),
+      this.root,
+      this.at(name),
+    );
+    return { kind, mtimeMs: mtimeNs / 1e6 };
+  }
+
+  /** Removes this directory and everything in it, if present. */
+  async rm(): Promise<void> {
+    if (this.rel === "")
+      throw codedError("EINVAL", "refusing to remove a root");
+    await rmBeneath(this.root, this.rel);
   }
 }

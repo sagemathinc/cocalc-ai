@@ -5,9 +5,15 @@
 
 import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import {
+  parseHarnessSessionSettings,
+  type HarnessSessionSettings,
+} from "@cocalc/util/ai/harness-controls";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import {
   buildThreadConfigRecord,
   CHAT_PRIMARY_KEYS,
   CHAT_STRING_COLS,
+  preferredThreadConfigRecord,
   sharedCodexThreadConfig,
   type CodexThreadConfig,
 } from "@cocalc/chat/core";
@@ -228,11 +234,9 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     const threadId = opts.thread_id.trim();
     if (!db?.isReady()) throw new Error("Chat is not ready.");
     const allRows = db.get();
+    // Migrated chats can hold a legacy and a canonical config row.
     const existing = Array.isArray(allRows)
-      ? allRows.find(
-          (row) =>
-            row?.event === "chat-thread-config" && row?.thread_id === threadId,
-        )
+      ? preferredThreadConfigRecord(allRows, threadId)
       : undefined;
     if (
       !existing ||
@@ -255,6 +259,40 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
         credentialId: null,
       },
       agent_model: opts.acp_config.model ?? existing.agent_model,
+      updated_at: new Date().toISOString(),
+      updated_by: this.options.account_id,
+    });
+    this.commitOrThrow(db);
+    await db.save();
+    this.rebuild();
+  }
+
+  async updateHarnessSettings(opts: {
+    thread_id: string;
+    settings: HarnessSessionSettings;
+  }): Promise<void> {
+    const db = this.db;
+    const threadId = opts.thread_id.trim();
+    if (!db?.isReady()) throw new Error("Chat is not ready.");
+    const settings = parseHarnessSessionSettings(opts.settings);
+    const allRows = db.get();
+    // Migrated chats can hold a legacy and a canonical config row.
+    const existing = Array.isArray(allRows)
+      ? preferredThreadConfigRecord(allRows, threadId)
+      : undefined;
+    if (existing?.agent_runtime == null) {
+      throw new Error("The selected thread is not a harness agent thread.");
+    }
+    const runtime = parseAcpHarnessRuntime(existing.agent_runtime);
+    db.set({
+      date: existing.date,
+      sender_id: existing.sender_id,
+      event: existing.event,
+      message_id: existing.message_id,
+      thread_id: existing.thread_id,
+      // The merge replaces nested values, so this keeps the profile and
+      // replaces the settings as a whole.
+      agent_runtime: { ...runtime, settings },
       updated_at: new Date().toISOString(),
       updated_by: this.options.account_id,
     });

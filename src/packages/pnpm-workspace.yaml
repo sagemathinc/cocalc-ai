@@ -18,7 +18,7 @@ overrides:
   "follow-redirects@<1.16.1": "^1.16.1"
   "es5-ext@<0.10.63": "^0.10.63"
   "undici@<5.28.3": "^5.28.4"
-  "undici@>=7.0.0 <7.29.1": "~7.29.1"
+  "undici@>=7.0.0 <7.30.1": "~7.30.1"
   "postcss@<8.5.23": "^8.5.23"
   "retry-request@<7.0.1": "^7.0.2"
   "katex@<0.18.2": "^0.19.0"
@@ -47,7 +47,7 @@ overrides:
   "lodash-es@<4.18.0": ">=4.18.0"
   "handlebars@<4.7.10": ">=4.7.10"
   "dompurify@<3.4.17": "^3.4.17"
-  "nodemailer@<10.0.9": "^10.0.9"
+  "nodemailer@<10.1.4": "^10.1.4"
   "protobufjs@>=7.0.0 <7.6.5": "^7.6.5"
   "@protobufjs/utf8@<1.1.1": "^1.1.1"
   "@xmldom/xmldom@<0.8.15": "^0.8.15"
@@ -77,7 +77,7 @@ overrides:
   "path-to-regexp@<0.1.13": ">=0.1.13"
   "picomatch@<2.3.2": ">=2.3.2"
   "picomatch@>=4.0.0 <4.0.4": ">=4.0.4"
-  "fast-uri@>=3.0.0 <3.1.8": "^3.1.8"
+  "fast-uri@>=3.0.0 <3.1.9": "^3.1.9"
   "query-string@<8.0.0": "^8.2.0"
   "decode-uri-component@<=0.4.2": "^0.5.0"
   "postcss-selector-parser@>=7.1.0 <7.1.3": "^7.1.3"
@@ -93,7 +93,7 @@ overrides:
   "form-data@>=4.0.0 <4.0.6": ">=4.0.6"
   "markdown-it@<14.3.3": "^14.3.3"
   "tar@>=7.0.0 <7.5.21": "^7.5.21"
-  "body-parser@>=2.0.0 <2.3.0": "^2.3.0"
+  "body-parser@>=2.0.0 <2.4.0": "^2.4.0"
   # Upstream image-size is archived; this audited fork fixes CVE-2025-71329
   # and CVE-2025-71330 while preserving Metro's 1.x API.
   "image-size@<=2.0.2": "npm:image-size-next@1.2.2"
@@ -143,6 +143,9 @@ minimumReleaseAgeExclude:
   # CoCalc-owned release (the patchflow 0.16 dependency), validated via upstream CI and npm provenance.
   - "@cocalc/diff-match-patch@1.1.1"
   - "@nebius/js-sdk"
+  # Maintainer-approved exact-version exception (William, 2026-10-25): the
+  # GHSA-27r3-jxmh-p828 fix, published 2026-10-22, before the 3-day age passed.
+  - "body-parser@2.4.0"
   # First patched version for GHSA-xcj9-5m2h-648r, GHSA-87f9-hvmw-gh4p,
   # and GHSA-ghcm-xqfw-q4vr in the active Mermaid 11.x line.
   - mermaid

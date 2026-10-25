@@ -135,6 +135,38 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Ask for consent with the full disclosure, then turn memory on (the same
+ * dialog wherever memory is offered). Resolves true once it is on. If turning
+ * it on fails, the dialog closes (resolving false) so the caller's error is
+ * not hidden behind it; `enable` reports the error itself.
+ */
+export function confirmEnableAgentMemory(
+  enable: () => Promise<unknown> = () =>
+    personalAgentApi().manageAgentMemory({ op: "set-enabled", enabled: true }),
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    Modal.confirm({
+      title: "Turn on agent memory (experimental)",
+      width: 640,
+      content: <AgentMemoryDisclosure />,
+      okText: "I understand, turn it on",
+      cancelText: "Cancel",
+      onOk: async () => {
+        try {
+          await enable();
+        } catch {
+          resolve(false);
+          return;
+        }
+        refreshAll();
+        resolve(true);
+      },
+      onCancel: () => resolve(false),
+    });
+  });
+}
+
 export function agentMemorySummary(status?: Status): string {
   if (!status) return "Memory";
   return status.enabled
@@ -181,17 +213,9 @@ export function AgentMemoryPanel() {
   };
 
   const enable = () =>
-    Modal.confirm({
-      title: "Turn on agent memory (experimental)",
-      width: 640,
-      content: <AgentMemoryDisclosure />,
-      okText: "I understand, turn it on",
-      cancelText: "Cancel",
-      onOk: () =>
-        act(() =>
-          api().manageAgentMemory({ op: "set-enabled", enabled: true }),
-        ),
-    });
+    void confirmEnableAgentMemory(() =>
+      act(() => api().manageAgentMemory({ op: "set-enabled", enabled: true })),
+    );
 
   return (
     <Space orientation="vertical" style={{ width: "100%", maxWidth: 1000 }}>

@@ -357,3 +357,89 @@ test("updates settings without writing unrelated goal metadata", async () => {
   expect(existing.acp_goal).toBe(goal);
   await client.close();
 });
+
+test("saves a harness agent's settings and shows its runtime and current catalog", async () => {
+  const profile = {
+    version: 2,
+    kind: "acp",
+    id: "claude-code",
+    revision: "0.93.0",
+    cwd: "/home/user",
+    executionPolicy: "full-access",
+    credentialMode: "project-managed",
+  };
+  const rows: any[] = [
+    {
+      event: "chat-thread-config",
+      date: "1970-01-01T00:00:00.000Z",
+      sender_id: "__thread_config__:thread-1",
+      thread_id: "thread-1",
+      agent_kind: "acp",
+      agent_model: "acp-harness",
+      agent_runtime: { version: 1, kind: "acp", profile },
+      agent_runtime_controls: {
+        profile,
+        controls: {
+          configOptions: [
+            {
+              id: "model",
+              name: "Model",
+              currentValue: "sonnet",
+              options: [
+                { value: "sonnet", name: "Sonnet" },
+                { value: "opus", name: "Opus" },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  ];
+  const set = jest.fn();
+  dbMock = Object.assign(new EventEmitter(), {
+    close: jest.fn(async () => undefined),
+    commit: jest.fn(() => true),
+    get: () => rows,
+    isReady: () => true,
+    save: jest.fn(async () => undefined),
+    set,
+  });
+  const client = createHeadlessChatClient({
+    account_id: "account-1",
+    path: "/home/user/existing.chat",
+    projectHostClient: new EventEmitter() as any,
+    project_id: "project-1",
+    selected_thread_id: "thread-1",
+  });
+  await client.open();
+
+  const thread = client
+    .getSnapshot()
+    .threads.find((t) => t.thread_id === "thread-1");
+  expect(thread?.agent_runtime?.profile.id).toBe("claude-code");
+  expect(thread?.agent_runtime_controls?.configOptions[0].options).toHaveLength(
+    2,
+  );
+
+  await client.updateHarnessSettings({
+    thread_id: "thread-1",
+    settings: { configOptions: [{ id: "model", value: "opus" }] },
+  });
+  expect(set).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: "chat-thread-config",
+      thread_id: "thread-1",
+      agent_runtime: expect.objectContaining({
+        profile: expect.objectContaining({ id: "claude-code" }),
+        settings: { configOptions: [{ id: "model", value: "opus" }] },
+      }),
+    }),
+  );
+  await expect(
+    client.updateHarnessSettings({
+      thread_id: "thread-1",
+      settings: { unexpected: true } as any,
+    }),
+  ).rejects.toThrow();
+  await client.close();
+});

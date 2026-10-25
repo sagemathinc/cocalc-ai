@@ -18,6 +18,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
 import { PublicRouteHeadMetadata } from "./metadata";
+import { PublicRouteErrorBoundary } from "./route-error-boundary";
 import type { PublicRoute } from "./routes";
 import { publicPath } from "./routes";
 
@@ -285,15 +286,17 @@ export default function PublicApp({
           Loading features…
         </p>
       )}
-      <Suspense fallback={null}>
-        {!waitingForFeatureConfig && (
-          <PublicRouteBody
-            config={currentConfig}
-            initialRoute={initialRoute}
-            redirectToPath={redirectToPath}
-          />
-        )}
-      </Suspense>
+      <PublicRouteErrorBoundary route={initialRoute}>
+        <Suspense fallback={null}>
+          {!waitingForFeatureConfig && (
+            <PublicRouteBody
+              config={currentConfig}
+              initialRoute={initialRoute}
+              redirectToPath={redirectToPath}
+            />
+          )}
+        </Suspense>
+      </PublicRouteErrorBoundary>
     </>
   );
 }

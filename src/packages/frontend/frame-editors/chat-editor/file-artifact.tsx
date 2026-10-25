@@ -43,10 +43,19 @@ const CalendarArtifact = lazyWithRetry(
   () => import("./calendar-artifact"),
   "calendar artifact",
 );
+const TodoArtifact = lazyWithRetry(
+  () => import("./todo-artifact"),
+  "todo artifact",
+);
 
 /** A calendar in the cocalc-calendar format, shown as an agenda. */
 export function isCalendarPath(path: string): boolean {
   return path.toLowerCase().endsWith(".cal.json");
+}
+
+/** An agent's todo list in the cocalc-todo format, shown as a checklist. */
+export function isTodoPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".todo.json");
 }
 
 const TEXT_EXTENSIONS = new Set([
@@ -210,6 +219,19 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
           path={path}
           historical={props.historical}
           onToolbarActions={props.onToolbarActions}
+          fontSize={props.fontSize}
+        />
+      </Suspense>
+    );
+  if (isTodoPath(path))
+    return (
+      <Suspense fallback={<div role="status">Loading todo list...</div>}>
+        <TodoArtifact
+          key={path}
+          path={path}
+          historical={props.historical}
+          onToolbarActions={props.onToolbarActions}
+          fontSize={props.fontSize}
         />
       </Suspense>
     );

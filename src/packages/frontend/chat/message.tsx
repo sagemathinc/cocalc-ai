@@ -65,6 +65,7 @@ import {
   getBestResponseText,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  readTurnMeta,
   type InlineCodeLink,
   type CodexThreadConfig,
 } from "@cocalc/chat";
@@ -178,6 +179,7 @@ import {
   TurnActivityTimeline,
   type TurnTimelineContext,
 } from "./turn-activity-timeline";
+import { useReaderFullScreen } from "./reader-full-screen";
 import type { TurnTimelineRow } from "./turn-timeline";
 import {
   EMPTY_TURN_ACTIVITY,
@@ -617,9 +619,16 @@ export default function Message({
   const [autoFocusEdit, setAutoFocusEdit] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const readerFullScreen = useReaderFullScreen();
   const messageRowRef = useRef<HTMLDivElement>(null);
   const zenTriggerRef = useRef<HTMLElement | null>(null);
   const openZenMessage = (event?: React.MouseEvent<HTMLElement>) => {
+    // In the reader: its own full screen for the item, with its subject,
+    // buttons and keys, rather than this message alone.
+    if (readerFullScreen) {
+      readerFullScreen.open();
+      return;
+    }
     zenTriggerRef.current = event?.currentTarget ?? null;
     setShowZenMessage(true);
   };
@@ -2587,6 +2596,10 @@ export default function Message({
   function renderZenMessageDrawer() {
     if (!showZenMessage) return null;
     const value = renderedMessageMarkdown;
+    // The subject the agent gave its turn, as the reader shows it.
+    const zenSubject = isAcpAssistantMessage(message)
+      ? readTurnMeta(message).subject
+      : undefined;
     const inlineCodeLinks = field<InlineCodeLink[]>(
       message,
       "inline_code_links",
@@ -2602,7 +2615,18 @@ export default function Message({
     };
     return (
       <Drawer
-        title={senderName}
+        title={
+          zenSubject ? (
+            <span>
+              {zenSubject}{" "}
+              <span style={{ color: UI_COLORS.muted, fontWeight: 400 }}>
+                · {senderName}
+              </span>
+            </span>
+          ) : (
+            senderName
+          )
+        }
         open={showZenMessage}
         onClose={closeZenMessage}
         placement="right"

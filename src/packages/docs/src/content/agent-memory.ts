@@ -13,8 +13,11 @@ Both agents share the same notes.
 ## Turn it on or off
 
 Agent memory is **off by default**. Turn it on in **Settings -> AI** (also
-reachable from the Memory button in the Codex and Claude Code settings). The
-dialog explains who can use your memory before you enable it. Turning memory
+reachable from the Memory button in the Codex and Claude Code settings). While
+it is off, agent chats offer it once above the message box (**Not now** asks
+again after two weeks, **Don't ask again** never does), and an agent mentions
+it once if you ask it to remember something for later. The dialog explains who
+can use your memory before you enable it. Turning memory
 off stops agents from reading or writing notes; saved notes are kept until you
 delete them. Memory belongs to your account: a turn uses it only when it runs
 as you. Collaborators' turns use their own memory.

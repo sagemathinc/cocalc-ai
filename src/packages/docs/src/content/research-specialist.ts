@@ -14,15 +14,16 @@ exercise uses disposable data; do it before you need to recover important work.
 | --- | --- | --- |
 | A notebook or text file contains an unwanted edit. | Open the file's **TimeTravel**, inspect an earlier version, then **Restore This Version**. | Changes this document and records the restoration as a new version. Other project files are not restored. |
 | A file was deleted, or the version you need is in a filesystem checkpoint. | **Files -> Recovery -> Open Snapshots** or **Open Backups**. Browse to the file and restore a temporary copy first. | Recover the selected file, then compare it with current work. |
-| Many files in HOME need to return to a known checkpoint. | **Settings -> Recovery -> Restore Snapshot**, then **Restore HOME only**. | Rewinds HOME while retaining the current root filesystem. This also rewinds HOME-based environments and documents in the restored paths. |
+| Many files in HOME are missing or damaged. | Copy the files you need from **Open Snapshots**, or restore them from a completed backup through **Open Backups**. | Restoring the whole HOME from a snapshot is temporarily unavailable on hosts that store edit history separately. A backup restore writes the saved files over HOME and keeps files that are not in the backup; it is not an exact rewind. |
 | A systemwide software change broke the project, but current research files must stay. | **Restore Snapshot**, then **Restore rootfs only**. | Restores the root filesystem image and preserves HOME. It does not repair a virtual environment installed inside HOME. |
-| Research files and the system environment must return together. | **Restore Snapshot**, then **Restore both HOME and rootfs**. | Rewinds both areas, including affected notebooks and chat documents. |
+| Research files and the system environment both need recovery. | Restore the HOME files from a completed backup, then **Restore Snapshot** with **Restore rootfs only**. | A combined HOME and rootfs snapshot restore is unavailable where whole-HOME restores are. Check the backup's contents first; restoring HOME files can leave newer files in place. |
 | You want a separate workspace before experimenting. | **Settings -> Recovery -> Clone**, then **Create Clone**. | Copies the current HOME, root filesystem customizations, TimeTravel history, and project secrets. Snapshots and collaborators are not copied. |
 
 A clone is a copy of the current state, not a selection of an older checkpoint.
-Snapshots are host-local checkpoints. Backups are host-independent archives
-that can include project files, rootfs state, and TimeTravel history; their
-file-search interface searches HOME. Availability, retention, and the newest
+Snapshots in \`~/.snapshots\` are host-local copies of files, separate from
+CoCalc's edit history. Backups are host-independent archives that can include
+project files, rootfs state, and TimeTravel history; their file-search
+interface searches HOME. Availability, retention, and the newest
 recoverable time depend on the project's runtime and configured schedules.
 
 ## Prepare a disposable example
@@ -147,16 +148,25 @@ command, its error, the desired checkpoint, and the software location. For a
 Python environment, \`python3 -c 'import sys; print(sys.executable)'\` helps
 distinguish a HOME virtual environment from system software.
 
-1. Save current work and coordinate with project collaborators. Whole-project
+The procedure below restores only the root filesystem. Restoring HOME from a
+snapshot, alone or with the root filesystem, is temporarily unavailable on
+hosts that store edit history separately; such a restore is refused before the
+project is stopped. To recover HOME files, copy them from a snapshot as above,
+or restore them from a completed backup, which writes the saved files over the
+current ones and keeps files that are not in the backup. Preserve useful
+current work first, then check the recovered files and any newer files.
+
+1. Save current work and coordinate with project collaborators. Rootfs
    snapshot restoration stops and restarts the project; running processes do
    not continue from their previous memory state.
 2. Open **Settings -> Recovery -> Restore Snapshot**.
 3. Under **Snapshot to restore**, choose the checkpoint you inspected.
-4. Under **Restore mode**, explicitly choose the HOME, rootfs, or combined
-   option from the table above. The dialog initially selects both.
+4. Under **Restore mode**, explicitly choose **Restore rootfs only**. The
+   dialog initially selects both.
 5. Record **Safety snapshot name** outside the project before proceeding.
    Keep its unique suggested value or provide another unique name. The
-   workflow creates this snapshot of the current state before restoring.
+   workflow creates this file checkpoint before restoring; it does not back
+   up the separately stored edit history.
 6. Choose **Restore Snapshot** and complete any sign-in verification the
    interface requests. Wait for the restore operation to finish and the
    project to be available again.
@@ -168,8 +178,8 @@ Project secrets are managed separately from filesystem snapshots and backups;
 do not expect this operation to rewind secret values. See
 [Project secrets](/docs/projects/project-secrets). A rootfs restore preserves HOME,
 including a broken HOME-based virtual environment. For that case, rebuild the
-environment from its recorded dependencies or choose a suitable HOME restore
-after preserving newer research work.
+environment from its recorded dependencies, recover the needed files, or
+use a suitable completed backup after preserving newer research work.
 
 ## Troubleshooting and cleanup
 
@@ -188,8 +198,8 @@ after preserving newer research work.
   authentication. Keep the checkpoint needed for recovery; other snapshots may
   still retain the same files. If quota prevents cleanup, preserve the error and ask support
   for the appropriate recovery path rather than running internal quota commands.
-- A full restore can rewind chatrooms and Codex conversations stored in the
-  restored filesystem. Keep the incident note and checkpoint identifiers
+- A HOME restore from a backup can rewind chatrooms and agent conversations
+  stored in HOME. Keep the incident note and checkpoint identifiers
   outside that filesystem while restoring it.
 - Copy useful recovered data out of \`/tmp\`; it is a temporary inspection
   location. Retain the named checkpoint until you have verified recovery, then

@@ -138,6 +138,9 @@ function sectionHtml(html: string, match: string): string {
   );
 }
 import {
+  PUBLIC_HOME_AGENT_BODY,
+  PUBLIC_HOME_AGENT_STEPS,
+  PUBLIC_HOME_AGENT_TITLE,
   PUBLIC_HOME_EYEBROW,
   PUBLIC_HOME_HEADLINE,
   PUBLIC_HOME_HIGHLIGHTS,
@@ -532,10 +535,20 @@ describe("core landing page initial HTML", () => {
       expect(home).toContain(
         "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals",
       );
+      // the Agents guide's starter tasks (hosted products, and the default)
       expect(home).toContain(
-        `href="${basePath === "/" ? "" : basePath}/features/compare"`,
+        `href="${prefix}/docs/ai/my-agents#turn-a-recurring-task-into-an-app"`,
+      );
+      expect(home).toContain(
+        `href="${prefix}/docs/ai/my-agents#investigate-a-change-in-your-data"`,
       );
       expect(home).not.toContain("features/compare#agent-sandboxes");
+      // CoCalc Plus has no Agents workspace: the agent comparison instead
+      const plus = renderPublicRoutePrerender({ section: "home" }, basePath, {
+        cocalc_product: "plus",
+      });
+      expect(plus).toContain(`href="${prefix}/features/compare"`);
+      expect(plus).not.toContain("docs/ai/my-agents");
 
       const products = renderPublicRoutePrerender(
         { section: "products", route: { view: "products" } },
@@ -1148,27 +1161,29 @@ describe("core landing page initial HTML", () => {
     );
   });
 
+  // Both renderings read the agent section from public-home-content.ts.
   it("keeps the Home agent section text identical in React and the crawler fallback", () => {
-    const expected = [
-      "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use.",
-      "Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.",
-    ].join(" ");
     const source = readFileSync(
       join(__dirname, "../../../frontend/public/home/app.tsx"),
       "utf8",
     );
-    const reactBody =
-      /function AgentDefinitionSection\(\)[\s\S]*?<SectionIntro\s+body="([^"]*)"/.exec(
-        source,
-      )?.[1];
-    const html = renderPublicRoutePrerender({ section: "home" }, "/");
-    const fallback =
-      /<h2>Agents work where your project lives\.<\/h2>\s*<p>([^<]*)<\/p>/.exec(
-        html,
-      )?.[1];
+    const reactSection =
+      /function AgentDefinitionSection\(\)[\s\S]*?\n}\n/.exec(source)?.[0] ??
+      "";
+    expect(reactSection).toContain("body={PUBLIC_HOME_AGENT_BODY}");
+    expect(reactSection).toContain("title={PUBLIC_HOME_AGENT_TITLE}");
+    expect(reactSection).toContain("PUBLIC_HOME_AGENT_STEPS.map(");
 
-    expect(reactBody).toBe(expected);
-    expect(fallback).toBe(expected);
+    const html = renderPublicRoutePrerender({ section: "home" }, "/");
+    const fallback = new RegExp(
+      `<h2>${PUBLIC_HOME_AGENT_TITLE.replace(".", "\\.")}</h2>\\s*<p>([^<]*)</p>`,
+    ).exec(html)?.[1];
+    expect(fallback).toBe(PUBLIC_HOME_AGENT_BODY);
+    for (const step of PUBLIC_HOME_AGENT_STEPS) {
+      expect(html).toContain(
+        `<li><strong>${step.title}</strong>: ${step.body}</li>`,
+      );
+    }
   });
 
   // The React Home page no longer has the tool catalogue, the audience cards
@@ -1201,7 +1216,7 @@ describe("core landing page initial HTML", () => {
         );
         expect(
           [...html.matchAll(/<h2>([^<]+)<\/h2>/g)].map(([, text]) => text),
-        ).toEqual(["Agents work where your project lives."]);
+        ).toEqual([PUBLIC_HOME_AGENT_TITLE]);
         for (const removed of [
           "One project, many workflows.",
           "Browse feature workflows",

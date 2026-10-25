@@ -22,8 +22,10 @@ import {
   scheduledPromptText,
   sensorKind,
   sensorUses,
+  sensorDelivery,
   sensorWakePrompt,
   sensorWatchScript,
+  SENSOR_WAKE_CLAIM_WINDOW_MINUTES,
   validateSensorSpec,
   type SensorConnector,
   type SensorRunOutcome,
@@ -605,6 +607,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     }
     let delivered;
     deliveryStarted = true;
+    const delivery = await wakeDelivery(row, run_id, spec);
     try {
       delivered = await host.api.deliverAgentSensorWake({
         account_id: row.approved_by,
@@ -612,6 +615,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         thread_id: agent.thread_id,
         title: spec.title,
         prompt,
+        delivery,
         authorization: {
           version: 1,
           sensor_id: row.sensor_id,
@@ -653,7 +657,11 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         return;
       }
     }
-    outcome = "wake";
+    outcome =
+      "effective_delivery" in delivered &&
+      delivered.effective_delivery === "live-guidance"
+        ? "wake-guidance"
+        : "wake";
     woke = 1;
     await settleCombined(run_id, true);
   } catch (err) {
@@ -692,14 +700,18 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
 const CURRENT_APPROVAL =
   "sensor_id=$1 AND script_hash=$2 AND started_at >= $3::timestamptz";
 
-/** An earlier wake of this sensor is queued and its turn has not started. */
+/**
+ * An earlier wake of this sensor is queued and its turn has not started, or
+ * it is joining a running turn right now (a claim that is not stale).
+ */
 async function hasQueuedWake(
   row: ClaimedSensor,
   run_id: string,
 ): Promise<boolean> {
   const { rows } = await agentStore().query(
     `SELECT 1 FROM agent_sensor_runs WHERE ${CURRENT_APPROVAL}
-       AND run_id<>$4 AND wake_state='issued'
+       AND run_id<>$4 AND (wake_state='issued'
+         OR (wake_state='claimed' AND wake_claimed_at > now() - interval '10 minutes'))
        AND started_at > now() - make_interval(hours => $5) LIMIT 1`,
     [
       row.sensor_id,
@@ -1029,4 +1041,53 @@ export function startSensorScheduler(pollMs: number = POLL_MS): () => void {
     setSensorSchedulerKick(undefined);
     clearTimeout(timer);
   };
+}
+
+/**
+ * Wakes join the running turn (see sensorDelivery), but at most one per
+ * sensor every GUIDANCE_INTERVAL, counted from when a wake actually joined a
+ * turn, or while one may still be joining one: a claim counts however old it
+ * is, since its steer attempt (a prompt request with no timeout) can still
+ * inject it until it is consumed or released. A sensor that did, or still
+ * may, sends this one as a turn of its own, after the running one, and wakes
+ * after that are held and combined into it as before. A chatty sensor never
+ * floods a turn; queued wakes do not count. (A claim whose attempt died makes
+ * this sensor's wakes queued turns until the sensor is approved again: never
+ * lost, and never a second injection.) Approving it again supersedes its
+ * claims, but one claimed under the old approval still counts for
+ * SENSOR_WAKE_CLAIM_WINDOW_MINUTES: its attempt starts no injection after
+ * the claim's lease (SENSOR_WAKE_CLAIM_LEASE_MS) ends.
+ */
+export const GUIDANCE_INTERVAL_MINUTES = 10;
+
+async function wakeDelivery(
+  row: ClaimedSensor,
+  run_id: string,
+  spec: Parameters<typeof sensorDelivery>[0],
+): Promise<"guidance" | "queued"> {
+  if (sensorDelivery(spec) !== "guidance") return "queued";
+  // A claim counts however old it is, until consumed or released: its
+  // attempt can inject it until then. One an approval since superseded
+  // counts until its lease, and so any attempt to inject it, has ended.
+  const { rows } = await agentStore().query(
+    `SELECT 1 FROM agent_sensor_runs
+     WHERE sensor_id=$1 AND run_id<>$4
+       AND (wake_guided_at > now() - make_interval(mins => $5)
+         OR (wake_state='claimed' AND ${CURRENT_APPROVAL.replace(
+           "sensor_id=$1 AND ",
+           "",
+         )})
+         OR (wake_state='superseded'
+           AND wake_claimed_at > now() - make_interval(mins => $6)))
+     LIMIT 1`,
+    [
+      row.sensor_id,
+      row.script_hash,
+      row.approved_at_text,
+      run_id,
+      GUIDANCE_INTERVAL_MINUTES,
+      SENSOR_WAKE_CLAIM_WINDOW_MINUTES,
+    ],
+  );
+  return rows.length ? "queued" : "guidance";
 }
