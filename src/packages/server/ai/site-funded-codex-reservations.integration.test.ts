@@ -478,6 +478,66 @@ describe("site-funded Codex reservations", () => {
     expect(Number(rows[0]?.committed_microusd)).toBe(1_520);
   });
 
+  it("records usage from a request still running when its reservation expired", async () => {
+    const opts = options({ maxTurnCostMicrousd: 50_000 });
+    const admission = await reserveSiteFundedCodexTurn(opts);
+    if (!admission.allowed) throw new Error("expected reservation");
+    const event = {
+      eventId: uuid(),
+      reservationId: admission.reservation.reservationId,
+      requestSequence: 1,
+      model: "gpt-5.6-luna",
+      inputTokens: 10_000,
+      cachedInputTokens: 6_000,
+      outputTokens: 500,
+    };
+    await recordSiteFundedCodexUsageEvent(event);
+    await getPool().query(
+      `UPDATE site_ai_turn_reservations SET expires_at = NOW() - INTERVAL '1 second'
+       WHERE reservation_id = $1`,
+      [admission.reservation.reservationId],
+    );
+    await expect(expireAbandonedSiteFundedCodexReservations()).resolves.toBe(1);
+
+    const late = { ...event, eventId: uuid(), requestSequence: 2 };
+    await expect(recordSiteFundedCodexUsageEvent(late)).resolves.toMatchObject({
+      costMicrousd: 1_520,
+      inserted: true,
+      fundedTurnId: opts.fundedTurnId,
+      accountId: opts.accountId,
+      projectId: opts.projectId,
+    });
+    await expect(
+      recordSiteFundedCodexUsageEvent({ ...late, eventId: uuid() }),
+    ).resolves.toMatchObject({ costMicrousd: 1_520, inserted: false });
+    await expect(
+      recordSiteFundedCodexUsageEvent({
+        ...event,
+        eventId: uuid(),
+        requestSequence: 4,
+      }),
+    ).rejects.toThrow("reservation is not active (expired)");
+
+    const pools = await getSiteFundedCodexPoolStatus();
+    for (const poolId of ["site-funded-codex-global", opts.poolId]) {
+      expect(pools.find((pool) => pool.poolId === poolId)).toMatchObject({
+        reservedMicrousd: 0,
+        committedMicrousd: 3_040,
+        activeReservations: 0,
+      });
+    }
+    const { rows } = await getPool().query(
+      `SELECT status, committed_microusd, last_request_sequence
+       FROM site_ai_turn_reservations WHERE reservation_id = $1`,
+      [admission.reservation.reservationId],
+    );
+    expect(rows[0]).toMatchObject({
+      status: "expired",
+      last_request_sequence: 2,
+    });
+    expect(Number(rows[0]?.committed_microusd)).toBe(3_040);
+  });
+
   it("reconciles a linked terminal AI session after the delivery grace period", async () => {
     const opts = options({ maxTurnCostMicrousd: 50_000 });
     const admission = await reserveSiteFundedCodexTurn(opts);
