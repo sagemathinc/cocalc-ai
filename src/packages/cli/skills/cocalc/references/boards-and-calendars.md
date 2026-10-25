@@ -127,3 +127,46 @@ http(s). Keep the calendar's `id` and each event's `id` unchanged: they name
 the events in calendar apps that imported the .ics. The card names anything it cannot read and still shows the rest. A
 calendar is for people to see; to be woken at a time, also set a watcher
 (`cocalc sensor watch at`).
+
+## Your todo list
+
+To show the user what you are working on (a multi-step task, a set of PRs
+waiting on reviews and merges), keep your todo list in `foo.todo.json` and
+publish it with `--source`. The card groups the items by section, crosses out
+finished ones, shows progress ("3 of 7 done") and opens an item's details on
+click. It is your list, for the user to read: you edit the file, then publish
+again with `--update` to keep the same card (the card also follows the file
+on Refresh). Set `updated` each time you change it.
+
+```json
+{
+  "format": "cocalc-todo",
+  "version": 1,
+  "id": "release-polish",
+  "title": "Release polish",
+  "description": "Markdown, shown under the title.",
+  "updated": "2026-10-25T06:40:00Z",
+  "categories": { "review": { "label": "In review", "color": "#1677ff" } },
+  "sections": [{ "id": "merge", "title": "Waiting to merge" }],
+  "items": [
+    {
+      "id": "pr-1377",
+      "title": "Reader search and full screen (#1377)",
+      "status": "waiting",
+      "section": "merge",
+      "category": "review",
+      "priority": "high",
+      "waiting_for": "the user's merge go",
+      "details": "Markdown, shown when the item is opened.",
+      "links": [{ "label": "PR", "url": "https://github.com/o/r/pull/1377" }]
+    }
+  ]
+}
+```
+
+`status` is `todo`, `doing`, `waiting`, `done` or `cancelled`; cancelled
+items don't count toward progress. Items keep the file's order within their
+section, sections keep theirs, and items without a section come last. Keep
+each item's `id` unchanged as it moves. `priority` is `high`, `normal` or
+`low`; `due` is free text. Links must be http(s) or mailto. The card names
+anything it cannot read and still shows the rest.
