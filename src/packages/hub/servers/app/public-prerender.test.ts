@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   DOLLAR_AMOUNT,
   INTERNAL_IMPLEMENTATION_TERMS,
@@ -138,14 +136,10 @@ function sectionHtml(html: string, match: string): string {
   );
 }
 import {
-  PUBLIC_HOME_AGENT_BODY,
-  PUBLIC_HOME_AGENT_STEPS,
-  PUBLIC_HOME_AGENT_TITLE,
-  PUBLIC_HOME_EYEBROW,
+  getPublicHomeContent,
   PUBLIC_HOME_HEADLINE,
-  PUBLIC_HOME_HIGHLIGHTS,
   PUBLIC_HOME_INTRO,
-  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_SECTION_TITLES,
 } from "@cocalc/util/public-home-content";
 import {
   getPublicFeaturesTasks,
@@ -335,8 +329,6 @@ describe("feature page headers in the initial HTML", () => {
 });
 
 describe("home first screen initial HTML", () => {
-  // cocalc.ai's /customize reports the Launchpad product, so the cocalc.ai
-  // cases do too: a rule that left out Launchpad would fail them.
   const cocalcAi = {
     cocalc_product: "launchpad",
     dns: "cocalc.ai",
@@ -344,10 +336,8 @@ describe("home first screen initial HTML", () => {
     site_name: "CoCalc",
   };
 
-  // The React page renders the same constants (frontend/public/home tests),
-  // so crawlers read the first screen word for word.
   it.each(["/", "/prefix"])(
-    "renders the first screen from the shared Home content on %s",
+    "renders the reviewed welcome and shared Home opening on %s",
     (basePath) => {
       const prefix = basePath === "/" ? "" : basePath;
       const html = renderPublicRoutePrerender(
@@ -362,83 +352,89 @@ describe("home first screen initial HTML", () => {
       const texts = [...header.matchAll(/<(p|h1|li)>([^<]+)<\/\1>/g)].map(
         ([, tag, text]) => `${tag}: ${text}`,
       );
-
-      // The first screen has no trust line, as on the React page.
       expect(texts).toEqual([
-        `p: ${PUBLIC_HOME_EYEBROW}`,
         `h1: ${PUBLIC_HOME_HEADLINE}`,
         `p: ${PUBLIC_HOME_INTRO}`,
-        ...PUBLIC_HOME_HIGHLIGHTS.map((highlight) => `li: ${highlight}`),
       ]);
-      expect(html).not.toMatch(/Developed by|since 2013/i);
+      expect(html.match(/<h1>/g)).toHaveLength(1);
+      expect(header).not.toMatch(/<li>|Developed by|since 2013|dispatch/i);
       expect(header).toContain(
-        `<a href="${prefix}/auth/sign-up">Start on CoCalc.ai</a> <a href="${prefix}/${PUBLIC_HOME_SECONDARY_CTA.href}">${PUBLIC_HOME_SECONDARY_CTA.label}</a>`,
+        `<a href="${prefix}/auth/sign-up">Start on CoCalc.ai</a> <a href="${prefix}/features/ai">See how agents work</a>`,
       );
+      expect(header).toContain(
+        `src="${prefix}/public/docs/agent-new-form-20261015.jpg"`,
+      );
+      expect(header).toContain('width="884" height="280"');
+      const imageStyle = /<img\b[^>]*style="([^"]*)"/.exec(header)?.[1];
+      expect(imageStyle).toContain("max-width:100%");
+      expect(imageStyle).toContain("height:auto");
+      expect(header).toContain(`alt="CoCalc's form for a new agent`);
     },
   );
 
-  // The first three sites and their chips match the React test in
-  // frontend/public/home/__tests__/app.test.tsx, so the two renderings agree.
-  const withClaude = [
-    "Codex and Claude Code in one project",
-    "Collaborators see edits live",
-    "Restore earlier versions",
-  ];
-  const withoutClaude = [
-    "Collaborators see edits live",
-    "Restore earlier versions",
-  ];
   it.each([
-    ["the default CoCalc brand on cocalc.ai", cocalcAi, withClaude],
+    ["cocalc.ai", cocalcAi, true, true],
     [
-      "CoCalc Plus, the local one-user runtime",
+      "CoCalc Plus",
       { cocalc_product: "plus", dns: "localhost", site_name: "CoCalc" },
-      ["Restore earlier versions"],
+      false,
+      false,
     ],
     [
-      "CoCalc Plus on the canonical host",
+      "CoCalc Plus on cocalc.ai",
       { cocalc_product: "plus", dns: "cocalc.ai", site_name: "CoCalc" },
-      ["Restore earlier versions"],
+      false,
+      false,
     ],
     [
-      "a self-hosted Launchpad host",
+      "a self-hosted Launchpad",
       {
         cocalc_product: "launchpad",
         dns: "launchpad.example.edu",
-        is_launchpad: true,
         site_name: "CoCalc Launchpad",
       },
-      withoutClaude,
+      false,
+      true,
     ],
     [
-      "a custom logo on cocalc.ai",
+      "a custom logo",
       { ...cocalcAi, logo_square: "https://example.edu/logo.png" },
-      withoutClaude,
+      false,
+      true,
     ],
     [
-      "a custom site name on cocalc.ai",
+      "a custom name",
       { ...cocalcAi, site_name: "University CoCalc" },
-      withoutClaude,
+      false,
+      true,
     ],
-    [
-      "a cocalc.ai subdomain",
-      { ...cocalcAi, dns: "dev.cocalc.ai" },
-      withoutClaude,
-    ],
-    ["no site configuration", undefined, withoutClaude],
+    ["a subdomain", { ...cocalcAi, dns: "dev.cocalc.ai" }, false, true],
+    ["unknown configuration", undefined, false, false],
   ])(
-    "shows only the highlights that hold on each site: %s",
-    (_site, config, expected) => {
+    "keeps provider claims and the welcome image qualified on %s",
+    (_site, config, namedProviders, agentWelcome) => {
       const html = renderPublicRoutePrerender({ section: "home" }, "/", config);
-      const header = html.slice(
-        html.indexOf("<header>"),
-        html.indexOf("</header>"),
+      expect(html.includes("Use Claude Code")).toBe(namedProviders);
+      expect(html.includes("agent-new-form-20261015.jpg")).toBe(agentWelcome);
+      expect(html).not.toMatch(
+        /Codex and Claude Code in one project|Collaborators see edits live|experimental preview/i,
       );
-      expect(
-        [...header.matchAll(/<li>([^<]+)<\/li>/g)].map(([, text]) => text),
-      ).toEqual(expected);
+      if (config?.cocalc_product === "plus") {
+        expect(html).toContain("project-notebook-20260916.jpg");
+        expect(html).not.toMatch(
+          /Agent Networks|my-agents#|publish-rootfs|\/auth\/sign-up/,
+        );
+        expect(html).toContain('<a href="/projects">Open your project</a>');
+      }
     },
   );
+
+  it("does not put authenticated actions in cacheable initial HTML", () => {
+    const config = { ...cocalcAi, is_authenticated: true };
+    const html = renderPublicRoutePrerender({ section: "home" }, "/", config);
+    expect(html).toContain('<a href="/auth/sign-up">Start on CoCalc.ai</a>');
+    expect(html).not.toContain('href="/agents"');
+  });
 });
 
 describe("features index first screen initial HTML", () => {
@@ -529,13 +525,16 @@ describe("core landing page initial HTML", () => {
     "renders useful home, product, and pricing content on %s",
     (basePath) => {
       const prefix = basePath === "/" ? "" : basePath;
-      const home = renderPublicRoutePrerender({ section: "home" }, basePath);
+      const home = renderPublicRoutePrerender({ section: "home" }, basePath, {
+        cocalc_product: "launchpad",
+        dns: "cocalc.ai",
+        site_name: "CoCalc",
+      });
       expect(home).toContain('data-cocalc-public-prerender="home"');
       expect(home).toContain("Build and use software with AI.");
-      expect(home).toContain(
-        "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals",
-      );
-      // the Agents guide's starter tasks (hosted products, and the default)
+      expect(home).toContain(PUBLIC_HOME_INTRO);
+      expect(home).toContain("Let agents coordinate");
+      // The hosted Agents guide's starter tasks require a known product.
       expect(home).toContain(
         `href="${prefix}/docs/ai/my-agents#turn-a-recurring-task-into-an-app"`,
       );
@@ -1161,36 +1160,6 @@ describe("core landing page initial HTML", () => {
     );
   });
 
-  // Both renderings read the agent section from public-home-content.ts.
-  it("keeps the Home agent section text identical in React and the crawler fallback", () => {
-    const source = readFileSync(
-      join(__dirname, "../../../frontend/public/home/app.tsx"),
-      "utf8",
-    );
-    const reactSection =
-      /function AgentDefinitionSection\(\)[\s\S]*?\n}\n/.exec(source)?.[0] ??
-      "";
-    expect(reactSection).toContain("body={PUBLIC_HOME_AGENT_BODY}");
-    expect(reactSection).toContain("title={PUBLIC_HOME_AGENT_TITLE}");
-    expect(reactSection).toContain("PUBLIC_HOME_AGENT_STEPS.map(");
-
-    const html = renderPublicRoutePrerender({ section: "home" }, "/");
-    const fallback = new RegExp(
-      `<h2>${PUBLIC_HOME_AGENT_TITLE.replace(".", "\\.")}</h2>\\s*<p>([^<]*)</p>`,
-    ).exec(html)?.[1];
-    expect(fallback).toBe(PUBLIC_HOME_AGENT_BODY);
-    for (const step of PUBLIC_HOME_AGENT_STEPS) {
-      expect(html).toContain(
-        `<li><strong>${step.title}</strong>: ${step.body}</li>`,
-      );
-    }
-  });
-
-  // The React Home page no longer has the tool catalogue, the audience cards
-  // or the product list (frontend/public/home tests), so neither does its
-  // crawler fallback, on any product. The React "Next step" section still
-  // links "Where to run CoCalc" and "Review support and sales", so this
-  // test does not pin those labels as absent.
   it.each([
     [
       "cocalc.ai",
@@ -1199,33 +1168,79 @@ describe("core landing page initial HTML", () => {
         dns: "cocalc.ai",
         is_launchpad: true,
         site_name: "CoCalc",
+        policy_pages: "sagemathinc",
       },
     ],
     ["a Launchpad site", { cocalc_product: "launchpad", is_launchpad: true }],
     ["a Rocket site", { cocalc_product: "rocket" }],
     ["CoCalc Plus", { cocalc_product: "plus" }],
-    ["no site configuration", undefined],
+    ["unknown configuration", undefined],
   ])(
-    "keeps only the agent section after the Home first screen on %s",
+    "makes every visible Home section and link discoverable on %s",
     (_site, config) => {
+      const home = getPublicHomeContent(config);
+      const titles = PUBLIC_HOME_SECTION_TITLES;
       for (const basePath of ["/", "/prefix"]) {
+        const prefix = basePath === "/" ? "" : basePath;
         const html = renderPublicRoutePrerender(
           { section: "home" },
           basePath,
           config,
         );
         expect(
-          [...html.matchAll(/<h2>([^<]+)<\/h2>/g)].map(([, text]) => text),
-        ).toEqual([PUBLIC_HOME_AGENT_TITLE]);
-        for (const removed of [
-          "One project, many workflows.",
-          "Browse feature workflows",
-          "Choose how CoCalc runs.",
-          "customer-operated",
-          "Pricing and licensing",
+          [...html.matchAll(/<h2>([^<]+)<\/h2>/g)].map(([, text]) =>
+            inlineText(text),
+          ),
+        ).toEqual([
+          ...(home.process.length ? [titles.process] : []),
+          home.platformTitle,
+          titles.outcomes,
+          titles.evaluation,
+          ...(home.deployment ? [titles.deployment] : []),
+          titles.final,
+        ]);
+        for (const item of [
+          ...home.process,
+          ...home.benefits,
+          ...home.outcomes,
         ]) {
-          expect(html).not.toContain(removed);
+          expect(html).toContain(`<h3>${escapeHtml(item.title)}</h3>`);
+          expect(html).toContain(`<p>${escapeHtml(item.body)}</p>`);
+          if (item.link)
+            expect(html).toContain(
+              `<a href="${prefix}/${item.link.href}">${escapeHtml(item.link.label)}</a>`,
+            );
         }
+        expect(html).toContain(
+          `<details><summary>${escapeHtml(home.agents.title)}</summary>`,
+        );
+        for (const paragraph of home.agents.paragraphs) {
+          expect(html).toContain(`<p>${escapeHtml(paragraph)}</p>`);
+        }
+        for (const group of home.directories) {
+          expect(html).toContain(`<h3>${escapeHtml(group.title)}</h3>`);
+        }
+        for (const link of [
+          ...home.directories.flatMap((group) => group.links),
+          ...home.agents.links,
+        ]) {
+          expect(html).toContain(
+            `<a href="${prefix}/${link.href}">${escapeHtml(link.label)}</a>`,
+          );
+        }
+        if (home.deployment) {
+          expect(html).toContain(`<p>${escapeHtml(home.deployment.body)}</p>`);
+          expect(html).toContain(
+            `<a href="${prefix}/${home.deployment.link.href}">${escapeHtml(home.deployment.link.label)}</a>`,
+          );
+        }
+        expect(html).toContain(`<a href="${prefix}/support">Talk to us</a>`);
+        expect(html.includes(`href="${prefix}/policies/trust"`)).toBe(
+          home.trustHref !== undefined,
+        );
+        expect(html).not.toMatch(
+          /One project, many workflows|Browse feature workflows|Pricing and licensing|experimental preview/i,
+        );
       }
     },
   );

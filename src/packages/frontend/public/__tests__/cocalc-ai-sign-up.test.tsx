@@ -6,6 +6,7 @@ import {
   COCALC_AI_SIGN_UP_LABEL,
   PUBLIC_SIGN_UP_LABEL,
 } from "@cocalc/util/public-site-policy";
+import { PUBLIC_HOME_SECTION_TITLES } from "@cocalc/util/public-home-content";
 import { PublicNextStep } from "../common";
 import { type PublicConfig, PublicConfigProvider } from "../config";
 import PublicFeaturesApp from "../features/app";
@@ -132,13 +133,22 @@ describe.each(SITES)("sign-up copy on $name", ({ config, onCocalcAi }) => {
     expect(namesCocalcAi(action!)).toBe(onCocalcAi);
   });
 
-  it("labels the Home hero and next step for the site", () => {
+  it("routes the Home hero and final action for the site's product", () => {
     render(<PublicHomeApp config={config} />);
-    const hero = screen.getByRole("region", { name: /hero$/ });
-    expectSignUpLinks(hero, label, "/auth/sign-up", 1);
-    const next = screen.getByRole("region", { name: "Next step" });
-    expectSignUpLinks(next, label, "/auth/sign-up", 1);
-    expect(namesCocalcAi(next)).toBe(onCocalcAi);
+    const plus = config.cocalc_product === "plus";
+    const actionLabel = plus ? "Open your project" : label;
+    const actionHref = plus ? "/projects" : "/auth/sign-up";
+    for (const section of [
+      screen.getByRole("region", { name: /hero$/ }),
+      screen.getByRole("region", { name: PUBLIC_HOME_SECTION_TITLES.final }),
+    ]) {
+      expectSignUpLinks(section, actionLabel, actionHref, 1);
+      if (plus) {
+        expect(
+          within(section).queryByRole("link", { name: PUBLIC_SIGN_UP_LABEL }),
+        ).toBeNull();
+      }
+    }
     if (!onCocalcAi) {
       expect(
         screen.queryByRole("link", { name: COCALC_AI_SIGN_UP_LABEL }),
@@ -172,15 +182,19 @@ describe("sign-up copy before the configuration arrives", () => {
     terminal.unmount();
 
     render(<PublicHomeApp />);
-    expectSignUpLinks(
-      screen.getByRole("region", { name: /hero$/ }),
-      PUBLIC_SIGN_UP_LABEL,
-      "/auth/sign-up",
-      1,
-    );
+    const hero = screen.getByRole("region", { name: /hero$/ });
     expect(
-      namesCocalcAi(screen.getByRole("region", { name: "Next step" })),
-    ).toBe(false);
+      within(hero).getByRole("link", { name: "Explore the tools" }),
+    ).toHaveAttribute("href", "/features");
+    for (const section of [
+      hero,
+      screen.getByRole("region", { name: PUBLIC_HOME_SECTION_TITLES.final }),
+    ]) {
+      expect(
+        within(section).queryByRole("link", { name: PUBLIC_SIGN_UP_LABEL }),
+      ).toBeNull();
+      expect(namesCocalcAi(section)).toBe(false);
+    }
   });
 
   it("keeps showing projects to signed-in visitors on every site", () => {

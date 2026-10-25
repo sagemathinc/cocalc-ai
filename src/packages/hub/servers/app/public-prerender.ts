@@ -49,16 +49,15 @@ import {
   PUBLIC_FEATURED_GUIDES,
 } from "@cocalc/util/public-guides";
 import {
-  getPublicHomeAgentLinks,
-  getPublicHomeHighlights,
+  getPublicHomeContent,
+  PUBLIC_HOME_OUTCOMES_INTRO,
+  PUBLIC_HOME_EVALUATION_INTRO,
+  PUBLIC_HOME_CONTACT,
+  PUBLIC_HOME_TRUST_LABEL,
   isPublicCocalcAiSite,
-  PUBLIC_HOME_AGENT_BODY,
-  PUBLIC_HOME_AGENT_STEPS,
-  PUBLIC_HOME_AGENT_TITLE,
-  PUBLIC_HOME_EYEBROW,
-  PUBLIC_HOME_HEADLINE,
-  PUBLIC_HOME_INTRO,
-  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_SECTION_TITLES,
+  type PublicHomeItem,
+  type PublicHomeLink,
 } from "@cocalc/util/public-home-content";
 import { getDocsEntry } from "@cocalc/docs";
 import {
@@ -120,10 +119,8 @@ import {
   type PublicRouteMetadataConfig,
 } from "@cocalc/util/public-site-metadata";
 import {
-  COCALC_AI_SIGN_UP_LABEL,
   getPublicFeatureSignUpLabel,
   isCocalcAiLaunchpad,
-  PUBLIC_SIGN_UP_LABEL,
 } from "@cocalc/util/public-site-policy";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
@@ -177,29 +174,63 @@ function renderHome(
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
-  const signUpLabel = isCocalcAiLaunchpad(config)
-    ? COCALC_AI_SIGN_UP_LABEL
-    : PUBLIC_SIGN_UP_LABEL;
+  // This initial HTML is anonymous; never put an account-specific action in
+  // the cacheable public response, even if a caller supplies auth state.
+  const home = getPublicHomeContent({ ...config, is_authenticated: false });
+  const titles = PUBLIC_HOME_SECTION_TITLES;
+  const link = ({ href, label }: PublicHomeLink) =>
+    publicOrExternalLink(basePath, href, label);
+  const item = ({ title, body, link: action }: PublicHomeItem) =>
+    `<article><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p>${
+      action ? `<p>${link(action)}</p>` : ""
+    }</article>`;
+  const primary = home.primary ? link(home.primary) : "";
+  const image = home.image
+    ? `<figure><img src="${htmlEscape(publicPath(basePath, home.image.src))}" alt="${htmlEscape(home.image.alt)}" width="${home.image.width}" height="${home.image.height}" style="display:block;max-width:100%;height:auto"></figure>`
+    : "";
   return `<main data-cocalc-public-prerender="home" style="${ARTICLE_STYLE}">
 <header>
-  <p>${htmlEscape(PUBLIC_HOME_EYEBROW)}</p>
-  <h1>${htmlEscape(PUBLIC_HOME_HEADLINE)}</h1>
-  <p>${htmlEscape(PUBLIC_HOME_INTRO)}</p>
-  <p>${publicLink(basePath, "auth/sign-up", signUpLabel)} ${publicLink(basePath, PUBLIC_HOME_SECONDARY_CTA.href, PUBLIC_HOME_SECONDARY_CTA.label)}</p>
-  <ul>${getPublicHomeHighlights(config)
-    .map((highlight) => `<li>${htmlEscape(highlight)}</li>`)
-    .join("")}</ul>
+  <h1>${htmlEscape(home.title)}</h1>
+  <p>${htmlEscape(home.intro)}</p>
+  <p>${[primary, link(home.secondary)].filter(Boolean).join(" ")}</p>
+  ${image}
 </header>
-<section>
-  <h2>${htmlEscape(PUBLIC_HOME_AGENT_TITLE)}</h2>
-  <p>${htmlEscape(PUBLIC_HOME_AGENT_BODY)}</p>
-  <ol>${PUBLIC_HOME_AGENT_STEPS.map(
-    (step) =>
-      `<li><strong>${htmlEscape(step.title)}</strong>: ${htmlEscape(step.body)}</li>`,
-  ).join("")}</ol>
-  <p>${getPublicHomeAgentLinks(config)
-    .map((link) => publicLink(basePath, link.href, link.label))
-    .join(" ")}</p>
+${
+  home.process.length
+    ? `<section id="home-process">
+  <h2>${htmlEscape(titles.process)}</h2>
+  ${home.process.map(item).join("\n")}
+</section>`
+    : ""
+}
+<section id="home-platform">
+  <h2>${htmlEscape(home.platformTitle)}</h2>
+  ${home.benefits.map(item).join("\n")}
+</section>
+<section id="home-paths">
+  <h2>${htmlEscape(titles.outcomes)}</h2>
+  <p>${htmlEscape(PUBLIC_HOME_OUTCOMES_INTRO)}</p>
+  ${home.outcomes.map(item).join("\n")}
+</section>
+<section id="home-evaluate">
+  <h2>${htmlEscape(titles.evaluation)}</h2>
+  <p>${htmlEscape(PUBLIC_HOME_EVALUATION_INTRO)}</p>
+  <nav aria-label="Capability guides and implementation documentation">${home.directories.map((group) => `<div><h3>${htmlEscape(group.title)}</h3><ul>${group.links.map((entry) => `<li>${link(entry)}</li>`).join("")}</ul></div>`).join("\n")}</nav>
+  <details><summary>${htmlEscape(home.agents.title)}</summary>${paragraphs(home.agents.paragraphs)}<p>${home.agents.links.map(link).join(" · ")}</p></details>
+</section>
+${
+  home.deployment
+    ? `<section id="home-run">
+  <h2>${htmlEscape(titles.deployment)}</h2>
+  <p>${htmlEscape(home.deployment.body)}</p>
+  <p>${link(home.deployment.link)}</p>
+</section>`
+    : ""
+}
+<section id="home-final" aria-label="Get started">
+  <h2>${htmlEscape(titles.final)}</h2>
+  ${home.trustHref ? `<p>${publicLink(basePath, home.trustHref, PUBLIC_HOME_TRUST_LABEL)}</p>` : ""}
+  <p>${[primary, publicLink(basePath, PUBLIC_HOME_CONTACT.href, PUBLIC_HOME_CONTACT.label)].filter(Boolean).join(" ")}</p>
 </section>
 </main>`;
 }

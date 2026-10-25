@@ -35,9 +35,9 @@ beforeAll(() => {
   });
 });
 
-// Until /customize returns the product, the browser's host decides, so the
-// label that names CoCalc.ai does not change on cocalc.ai when the
-// configuration arrives.
+// Terminal retains its host-based signup label. Home keeps signup available
+// on the canonical host without advertising AI capabilities before the
+// product configuration arrives.
 describe("sign-up labels on cocalc.ai before /customize returns", () => {
   it("keeps the Terminal label from the first render", () => {
     expect(window.location.host).toBe("cocalc.ai");
@@ -64,16 +64,30 @@ describe("sign-up labels on cocalc.ai before /customize returns", () => {
     ).toHaveLength(2);
   });
 
-  it("keeps the Home label from the first render", () => {
+  it("keeps Home signup available while waiting for the product configuration", () => {
     const view = render(<PublicHomeApp />);
     const hero = () => screen.getByRole("region", { name: /hero$/ });
-    expect(
-      within(hero()).getByRole("link", { name: COCALC_AI_SIGN_UP_LABEL }),
-    ).toHaveAttribute("href", "/auth/sign-up");
+    const expectUnresolvedHome = () => {
+      expect(
+        within(hero()).getByRole("link", { name: PUBLIC_SIGN_UP_LABEL }),
+      ).toHaveAttribute("href", "/auth/sign-up");
+      expect(
+        within(hero()).getByRole("heading", { level: 1 }),
+      ).toHaveTextContent("Build and use software.");
+      expect(within(hero()).queryByRole("img")).toBeNull();
+      expect(screen.queryByRole("link", { name: "Agent Networks" })).toBeNull();
+    };
+    expectUnresolvedHome();
+    view.rerender(<PublicHomeApp config={{ is_authenticated: false }} />);
+    expectUnresolvedHome();
     view.rerender(<PublicHomeApp config={COCALC_AI} />);
     expect(
       within(hero()).getByRole("link", { name: COCALC_AI_SIGN_UP_LABEL }),
     ).toHaveAttribute("href", "/auth/sign-up");
+    expect(within(hero()).getByRole("img")).toHaveAttribute(
+      "src",
+      "/public/docs/agent-new-form-20261015.jpg",
+    );
   });
 
   it("follows the product once it is known", () => {

@@ -1,13 +1,8 @@
 /** @jest-environment jsdom */
 
 import { render, screen, within } from "@testing-library/react";
-
 import PublicHomeApp from "../app";
 import {
-  expectGridTemplate,
-  getCardTitles,
-  getDirectCards,
-  getGrid,
   getInjectedCss,
   HERO_H1_MAX,
   installMatchMediaStub,
@@ -17,190 +12,88 @@ import {
   textLength,
 } from "../../__tests__/test-helpers";
 
+beforeAll(installMatchMediaStub);
+
 function renderHome() {
   return render(
     <PublicHomeApp
       config={{
         cocalc_product: "launchpad",
-        is_launchpad: true,
-        site_name: "CoCalc Launchpad",
+        dns: "cocalc.ai",
+        site_name: "CoCalc",
       }}
     />,
   );
 }
 
-function expectHomeCardsStayCompact(
-  grid: HTMLElement,
-  { maxCardText, maxTitleText }: { maxCardText: number; maxTitleText: number },
-) {
-  for (const card of getDirectCards(grid)) {
-    expect(textLength(card)).toBeLessThanOrEqual(maxCardText);
-    const heading = card.querySelector("h3");
-    expect(heading).not.toBeNull();
-    expect(textLength(heading as HTMLElement)).toBeLessThanOrEqual(
-      maxTitleText,
-    );
-  }
-}
-
-beforeAll(() => {
-  installMatchMediaStub();
-});
-
-describe("PublicHomeApp visual quality contract", () => {
-  it("keeps the card systems balanced across the landing page", () => {
+// These are semantic/content regression guards. jsdom does not establish
+// pixel quality, actual reflow, contrast or real 200% browser zoom.
+describe("PublicHomeApp review-reference guards", () => {
+  it("retains the welcome image and broad first impression rather than a specialized example", () => {
     const { container } = renderHome();
-
-    const codexGrid = getGrid(container, ".cocalc-public-home-codex-grid");
-    const differenceGrid = getGrid(
-      container,
-      ".cocalc-public-home-difference-grid",
+    const hero = screen.getByRole("region", { name: "CoCalc hero" });
+    const image = within(hero).getByRole("img");
+    expect(image).toHaveAttribute(
+      "src",
+      "/public/docs/agent-new-form-20261015.jpg",
     );
-    const finalActions = getGrid(
-      container,
-      ".cocalc-public-home-final-actions",
+    expect(image).toHaveAttribute("width", "884");
+    expect(image).toHaveAttribute("height", "280");
+    expect(image).toHaveAccessibleName(/form for a new agent/i);
+    expect(hero.querySelector("figcaption")).toBeNull();
+    expect(within(hero).queryByRole("list")).toBeNull();
+    expect(hero.textContent).not.toMatch(
+      /dispatch|cooling|notebook|synthetic|since 2013/i,
     );
-
-    expect(getDirectCards(codexGrid)).toHaveLength(3);
-    expectGridTemplate(codexGrid, "repeat(3, minmax(0, 1fr))");
-    expect(getCardTitles(codexGrid, "h3")).toEqual([
-      "Describe the outcome",
-      "Review the result",
-      "Refine or take over",
-    ]);
-
-    // The tool catalogue, the audience cards and the product list are not on
-    // Home any more.
-    for (const removedGrid of [
-      ".cocalc-public-home-feature-grid",
-      ".cocalc-public-home-audience-grid",
-      ".cocalc-public-home-product-grid",
-    ]) {
-      expect(container.querySelector(removedGrid)).toBeNull();
-    }
-
-    expect(getDirectCards(differenceGrid)).toHaveLength(4);
-    expectGridTemplate(differenceGrid, "repeat(2, minmax(0, 1fr))");
-    for (const card of getDirectCards(differenceGrid)) {
-      expect(card.tagName).toBe("BUTTON");
-      expect(card.className).toContain("cocalc-public-home-difference-card");
-    }
-    expect(getCardTitles(differenceGrid, "h3")).toEqual([
-      "Project-centered workflow",
-      "Inspection before handoff",
-      "Practical recovery",
-      "Operating model choice",
-    ]);
-    expect(differenceGrid.textContent ?? "").not.toMatch(
-      /Inspect before handoff\s*Inspection before handoff/i,
+    expect(container.textContent).not.toMatch(
+      /experimental preview|Concept diagram|not a product capture/i,
     );
-
-    expect(getDirectCards(finalActions)).toHaveLength(3);
-    expectGridTemplate(finalActions, "repeat(3, max-content)");
-    expect(container.querySelector(".cocalc-public-home-path-grid")).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /Codex and Claude Code in one project|Collaborators see edits live|Restore earlier versions/,
+    );
   });
 
-  it("keeps responsive grid fallbacks explicit for tablet and phone widths", () => {
+  it("keeps the story's section order and accessible heading associations", () => {
+    const { container } = renderHome();
+    const sections = Array.from(
+      container.querySelectorAll(".cocalc-home > section"),
+    );
+    expect(sections.map((section) => section.id)).toEqual([
+      "home-hero",
+      "home-process",
+      "home-platform",
+      "home-paths",
+      "home-evaluate",
+      "home-run",
+      "home-final",
+    ]);
+    for (const section of sections) {
+      expect(section).toHaveAccessibleName();
+      if (section.id !== "home-hero") {
+        const heading = section.querySelector("h2");
+        expect(heading).not.toBeNull();
+        expect(section.getAttribute("aria-labelledby")).toBe(heading!.id);
+        expect(textLength(heading!)).toBeLessThanOrEqual(SECTION_H2_MAX);
+      }
+    }
+    const headings = screen.getAllByRole("heading", { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(textLength(headings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
+    expect(container.textContent).not.toMatch(INTERNAL_IMPLEMENTATION_TERMS);
+    expect(container.textContent).not.toMatch(STALE_REPETITIVE_HOME_LINES);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("provides fluid image sizing and visible keyboard focus without locking the hero height", () => {
     const { container } = renderHome();
     const css = getInjectedCss(container);
-
-    expect(css).toContain("@media (max-width: 920px)");
-    expect(css).toContain("@media (max-width: 1120px)");
-    expect(css).toContain(".cocalc-public-home-final-layout");
-    expect(css).not.toContain(".cocalc-public-home-path-grid");
-    // No rules are left for the sections Home no longer renders.
-    for (const removedClass of [
-      ".cocalc-public-home-workflow-",
-      ".cocalc-public-home-feature-grid",
-      ".cocalc-public-home-audience-grid",
-      ".cocalc-public-home-product-grid",
-      ".cocalc-public-home-products",
-    ]) {
-      expect(css).not.toContain(removedClass);
-    }
-
-    expect(css).toContain("@media (max-width: 620px)");
-    expect(css).toContain(".cocalc-public-home-final-actions .ant-btn");
-
-    expect(css).toContain("@media (max-width: 560px)");
-    expect(css).toContain(".cocalc-public-home-codex-grid");
-    expect(css).toContain(".cocalc-public-home-difference-grid");
-    expect(css).toContain(".cocalc-public-home-modal-grid");
-    expect(css).toContain(".cocalc-public-home-final-actions");
-    expect(css).toContain("grid-template-columns: minmax(0, 1fr) !important;");
-  });
-
-  it("keeps repeated cards scannable instead of letting copy sprawl", () => {
-    const { container } = renderHome();
-
-    expectHomeCardsStayCompact(
-      getGrid(container, ".cocalc-public-home-codex-grid"),
-      { maxCardText: 250, maxTitleText: 28 },
-    );
-    expectHomeCardsStayCompact(
-      getGrid(container, ".cocalc-public-home-difference-grid"),
-      { maxCardText: 245, maxTitleText: 36 },
-    );
-    for (const link of within(
-      getGrid(container, ".cocalc-public-home-final-actions"),
-    ).getAllByRole("link")) {
-      expect(textLength(link)).toBeLessThanOrEqual(24);
-    }
-  });
-
-  it("keeps the main story direct for researchers and decision makers", () => {
-    const { container } = renderHome();
-
-    const h1 = container.querySelectorAll("h1");
-    expect(h1).toHaveLength(1);
-    expect(h1[0]).toHaveTextContent("Build and use software with AI.");
-    expect(textLength(h1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
-
-    // Section identity and order are canaried by the aria-label array in
-    // app.test.tsx; here we only hold the count and an anti-sprawl length
-    // bound, so headline wording can change without a test edit.
-    const sectionHeadings = Array.from(container.querySelectorAll("h2"));
-    expect(sectionHeadings).toHaveLength(3);
-    for (const heading of sectionHeadings) {
-      expect(textLength(heading)).toBeLessThanOrEqual(SECTION_H2_MAX);
-    }
-
-    expect(container.textContent ?? "").not.toMatch(
-      INTERNAL_IMPLEMENTATION_TERMS,
-    );
-    expect(container.textContent ?? "").not.toMatch(
-      STALE_REPETITIVE_HOME_LINES,
-    );
+    const imageRules = css.match(/\.cocalc-home-figure img\s*\{([^}]+)\}/)?.[1];
+    expect(imageRules).toMatch(/width:\s*100%/);
+    expect(imageRules).toMatch(/height:\s*auto/);
+    expect(css).toContain(".cocalc-home a:focus-visible");
+    expect(css).toContain(".cocalc-home summary:focus-visible");
     const hero = screen.getByRole("region", { name: "CoCalc hero" });
-    expect(hero.textContent ?? "").not.toMatch(
-      /notebooks, code, documents|hosted, local, single-VM/i,
-    );
-  });
-
-  it("keeps the landing page anchored by concrete visual assets", () => {
-    const { container } = renderHome();
-
-    const heroImage = within(
-      screen.getByRole("region", { name: "CoCalc hero" }),
-    ).getByRole("img", {
-      name: "An agent conversation in CoCalc beside the dispatch reliability review it published, a dashboard of charts the reader can open, download, or comment on",
-    });
-    expect(heroImage.getAttribute("src")).toBe(
-      "/public/docs/agents-workspace-dispatch-review-20260924.jpg",
-    );
-    expect(heroImage.getAttribute("style") ?? "").toContain(
-      "aspect-ratio: 1180 / 630;",
-    );
-    expect(heroImage.getAttribute("style") ?? "").toContain(
-      "object-fit: contain;",
-    );
-
-    // The terminal capture went with the tool catalogue, so the hero image is
-    // the only image in the page body.
-    expect(
-      within(
-        container.querySelector(".cocalc-public-home") as HTMLElement,
-      ).getAllByRole("img"),
-    ).toEqual([heroImage]);
+    expect(hero.style.height).toBe("");
+    expect(within(hero).getByRole("img").style.height).toBe("");
   });
 });

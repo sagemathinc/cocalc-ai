@@ -78,9 +78,14 @@ describe.each(SITES)(
   ({ config, onCocalcAi }) => {
     const label = onCocalcAi ? COCALC_AI_SIGN_UP_LABEL : PUBLIC_SIGN_UP_LABEL;
 
-    it("labels the Home sign-up link for the site", () => {
+    it("uses the site's Home entry action", () => {
       const html = renderPublicRoutePrerender({ section: "home" }, "/", config);
-      expect(html).toContain(`<a href="/auth/sign-up">${label}</a>`);
+      if (config.cocalc_product === "plus") {
+        expect(html).toContain('<a href="/projects">Open your project</a>');
+        expect(html).not.toContain('href="/auth/sign-up"');
+      } else {
+        expect(html).toContain(`<a href="/auth/sign-up">${label}</a>`);
+      }
       if (!onCocalcAi) expect(html).not.toContain(COCALC_AI_SIGN_UP_LABEL);
     });
 

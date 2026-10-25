@@ -7,10 +7,6 @@ import {
   PUBLIC_AI_MENTIONS_LINE,
 } from "./public-ai-page-content";
 import { getPublicFeaturePage } from "./public-feature-pages";
-import {
-  getPublicHomeHighlights,
-  PUBLIC_HOME_AGENTS_HIGHLIGHT,
-} from "./public-home-content";
 
 const COCALC_AI = {
   cocalc_product: "launchpad",
@@ -31,16 +27,13 @@ describe("AI feature page words", () => {
     [{}, false],
     [undefined, false],
   ])(
-    "names Claude Code in the headline where Home's highlights do: %j",
+    "names Claude Code in the headline only for the canonical brand: %j",
     (config, namesClaude) => {
       expect(getPublicAiHeadline(config)).toBe(
         namesClaude
           ? PUBLIC_AI_CLAUDE_HEADLINE
           : getPublicFeaturePage("ai")!.tagline,
       );
-      expect(
-        getPublicHomeHighlights(config).includes(PUBLIC_HOME_AGENTS_HIGHLIGHT),
-      ).toBe(namesClaude);
     },
   );
 

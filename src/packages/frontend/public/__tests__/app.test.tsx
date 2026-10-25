@@ -638,7 +638,11 @@ describe("PublicApp", () => {
     try {
       await renderPublicApp(
         <PublicApp
-          config={{ is_authenticated: true }}
+          config={{
+            cocalc_product: "launchpad",
+            is_authenticated: true,
+            site_name: "Launchpad",
+          }}
           initialRoute={{ section: "home" }}
         />,
       );
@@ -646,9 +650,13 @@ describe("PublicApp", () => {
         expect(bootstrap).toHaveBeenCalled();
         expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
       });
+      const hero = screen.getByRole("region", { name: /hero$/ });
       expect(
-        screen.getAllByRole("link", { name: /^Open / }).length,
-      ).toBeGreaterThan(0);
+        within(hero).getByRole("link", { name: "Open projects" }),
+      ).toHaveAttribute("href", "/projects");
+      expect(
+        within(hero).queryByRole("link", { name: "Open your agents" }),
+      ).toBeNull();
     } finally {
       bootstrap.mockRestore();
     }
@@ -749,14 +757,21 @@ describe("PublicApp", () => {
 
     await renderPublicApp(
       <PublicApp
-        config={{ is_authenticated: false, site_name: "Launchpad" }}
+        config={{
+          cocalc_product: "launchpad",
+          is_authenticated: false,
+          site_name: "Launchpad",
+        }}
         initialRoute={{ section: "home" }}
       />,
     );
 
     expect(
-      (await screen.findAllByRole("link", { name: "Open projects" })).length,
-    ).toBeGreaterThan(0);
+      await within(screen.getByRole("region", { name: /hero$/ })).findByRole(
+        "link",
+        { name: "Open your agents" },
+      ),
+    ).toHaveAttribute("href", "/agents");
   });
 
   it("falls back to same-origin auth bootstrap when stored home bay is stale", async () => {
@@ -789,14 +804,21 @@ describe("PublicApp", () => {
 
     await renderPublicApp(
       <PublicApp
-        config={{ is_authenticated: false, site_name: "Launchpad" }}
+        config={{
+          cocalc_product: "launchpad",
+          is_authenticated: false,
+          site_name: "Launchpad",
+        }}
         initialRoute={{ section: "home" }}
       />,
     );
 
     expect(
-      (await screen.findAllByRole("link", { name: "Open projects" })).length,
-    ).toBeGreaterThan(0);
+      await within(screen.getByRole("region", { name: /hero$/ })).findByRole(
+        "link",
+        { name: "Open your agents" },
+      ),
+    ).toHaveAttribute("href", "/agents");
   });
 
   it("renders the pricing page from live membership tier data", async () => {

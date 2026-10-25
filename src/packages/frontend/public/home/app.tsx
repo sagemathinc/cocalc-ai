@@ -1,842 +1,302 @@
 /*
- *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
- *  License: MS-RSL – see LICENSE.md for details
+ * This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ * License: MS-RSL – see LICENSE.md for details
  */
 
-import { type ReactNode, useEffect, useState } from "react";
-
-import { Button, Flex, Modal, Typography } from "antd";
-
-import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import { type ReactNode, useEffect } from "react";
+import { Button } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   getPublicMarketingConfig,
   getPublicMarketingSiteName,
-  getPublicSignUpLabel,
-  isCocalcAiLaunchpadSite,
   type PublicConfig,
-  usePublicConfig,
 } from "@cocalc/frontend/public/config";
 import { PublicPage } from "@cocalc/frontend/public/layout/shell";
 import {
-  alpha,
-  publicAccent,
   PUBLIC_COLORS,
-  PUBLIC_RADIUS,
-  PUBLIC_TYPE,
-  PUBLIC_WEIGHT,
+  PUBLIC_DISPLAY_FONT_FAMILY,
 } from "@cocalc/frontend/public/theme";
 import {
-  getPublicHomeDeploymentChoice,
-  getPublicHomeDeploymentComparison,
-  getPublicHomeDeploymentRange,
-  PUBLIC_PRODUCTS_PAGE_LINK,
-  PUBLIC_WHERE_TO_RUN_CONTACT,
-} from "@cocalc/util/public-products-content";
-import { publicHomeTitle } from "@cocalc/util/public-site-metadata";
-import { COLORS } from "@cocalc/util/theme";
-import {
-  getPublicHomeAgentLinks,
-  getPublicHomeHeroImage,
-  getPublicHomeHighlights,
-  PUBLIC_HOME_AGENT_BODY,
-  PUBLIC_HOME_AGENT_STEPS,
-  PUBLIC_HOME_AGENT_TITLE,
-  PUBLIC_HOME_EYEBROW,
-  PUBLIC_HOME_HEADLINE,
-  PUBLIC_HOME_INTRO,
-  PUBLIC_HOME_SECONDARY_CTA,
+  getPublicHomeContent,
+  PUBLIC_HOME_OUTCOMES_INTRO,
+  PUBLIC_HOME_EVALUATION_INTRO,
+  PUBLIC_HOME_CONTACT,
+  PUBLIC_HOME_TRUST_LABEL,
+  PUBLIC_HOME_SECTION_TITLES as TITLES,
+  type PublicHomeItem,
+  type PublicHomeLink,
 } from "@cocalc/util/public-home-content";
+import { publicHomeTitle } from "@cocalc/util/public-site-metadata";
 import { joinUrlPath } from "@cocalc/util/url-path";
-import { builtinPolicyPath } from "../common";
 
-const { Paragraph, Text, Title } = Typography;
-
-interface HomeConfig extends PublicConfig {
-  site_description?: string;
+// Home-specific layout. Keep these selectors local to the page; the native
+// shell supplies theme colors, navigation and document landmarks.
+const HOME_CSS = `
+.cocalc-home { color:${PUBLIC_COLORS.text}; font-size:16px; line-height:1.65; }
+.cocalc-home h1,.cocalc-home h2,.cocalc-home h3 { font-family:${PUBLIC_DISPLAY_FONT_FAMILY}; color:${PUBLIC_COLORS.heading}; text-wrap:balance; }
+.cocalc-home h1 { font-size:clamp(38px,4.6vw,62px); font-weight:650; letter-spacing:-.035em; line-height:1.08; max-width:19ch; margin:0; }
+.cocalc-home h2 { font-size:clamp(28px,3vw,38px); font-weight:600; letter-spacing:-.025em; line-height:1.2; max-width:27ch; margin:0; }
+.cocalc-home h3 { font-size:20px; line-height:1.3; font-weight:600; margin:0 0 12px; }
+.cocalc-home p { margin:0; }
+.cocalc-home a { overflow-wrap:anywhere; }
+.cocalc-home a:focus-visible,.cocalc-home summary:focus-visible { outline:3px solid ${PUBLIC_COLORS.link}; outline-offset:4px; border-radius:4px; }
+.cocalc-home section { scroll-margin-top:calc(var(--cocalc-public-anchor-offset,64px) + 16px); }
+.cocalc-home-hero { display:grid; gap:32px; padding-top:clamp(32px,6vw,72px); align-items:center; }
+.cocalc-home-lead { font-size:19px; line-height:1.65; margin-top:22px !important; max-width:58ch; }
+.cocalc-home-actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:28px; }
+.cocalc-home-actions .ant-btn { height:auto; min-height:40px; padding:9px 16px; white-space:normal; text-align:center; }
+.cocalc-home-figure { margin:0; min-width:0; }
+.cocalc-home-figure img { display:block; width:100%; height:auto; border:1px solid ${PUBLIC_COLORS.border}; border-radius:10px; }
+.cocalc-home-section { margin-top:clamp(56px,7vw,88px); }
+.cocalc-home-section-intro { margin-bottom:30px; }
+.cocalc-home-section-intro p { margin-top:16px; max-width:68ch; }
+.cocalc-home-process { max-width:940px; }
+.cocalc-home-process-row { display:grid; grid-template-columns:1fr 1.7fr; gap:32px; border-top:1px solid ${PUBLIC_COLORS.border}; padding:22px 0; }
+.cocalc-home-process-row h3 { margin:0; }
+.cocalc-home-benefits { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:32px; }
+.cocalc-home-benefit { border-top:1px solid ${PUBLIC_COLORS.border}; padding-top:22px; min-width:0; }
+.cocalc-home-item-link { display:inline-block; margin-top:16px; font-weight:600; }
+.cocalc-home-outcomes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+.cocalc-home-card { padding:26px; border:1px solid ${PUBLIC_COLORS.border}; border-radius:8px; background:${PUBLIC_COLORS.surface}; min-width:0; }
+.cocalc-home-directory { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:32px; }
+.cocalc-home-directory ul { list-style:none; padding:0; margin:0; }
+.cocalc-home-directory li { margin:10px 0; }
+.cocalc-home-details { margin-top:30px; border-top:1px solid ${PUBLIC_COLORS.border}; border-bottom:1px solid ${PUBLIC_COLORS.border}; padding:18px 0; }
+.cocalc-home-details summary { cursor:pointer; font-weight:600; color:${PUBLIC_COLORS.heading}; }
+.cocalc-home-details p { margin-top:16px; max-width:75ch; }
+.cocalc-home-details-links { display:flex; flex-wrap:wrap; gap:20px; margin-top:16px; }
+.cocalc-home-final { border-top:1px solid ${PUBLIC_COLORS.border}; padding:42px 0 12px; display:grid; grid-template-columns:1fr auto; align-items:center; gap:24px; }
+.cocalc-home-final .cocalc-home-actions { margin-top:0; }
+.cocalc-home-final p { margin-top:16px; }
+@media(min-width:960px) {
+  .cocalc-home-hero:has(.cocalc-home-figure) { grid-template-columns:repeat(2,minmax(0,1fr)); gap:clamp(32px,4vw,56px); }
+  .cocalc-home h1 { font-size:clamp(48px,4vw,54px); }
 }
-
-const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
-const PANEL_RADIUS = 8;
-const CARD_TITLE_STYLE = {
-  fontSize: PUBLIC_TYPE.lead,
-  lineHeight: 1.25,
-  margin: "0 0 8px",
-};
-const DIFFERENCE_CARD_TITLE_STYLE = {
-  ...CARD_TITLE_STYLE,
-  margin: "8px 0",
-};
-
-const HOME_PAGE_CSS = `
-  .cocalc-public-home {
-    color: ${PUBLIC_COLORS.text};
-  }
-
-  .cocalc-public-home a {
-    transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
-  }
-
-  .cocalc-public-home > section {
-    scroll-margin-top: 76px;
-  }
-
-  .cocalc-public-home-card-link:hover {
-    border-color: ${PUBLIC_COLORS.linkHover} !important;
-    box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.1)} !important;
-    transform: translateY(-1px);
-  }
-
-  .cocalc-public-home-hero-image {
-    max-width: 100%;
-  }
-
-  @media (max-width: 920px) {
-    .cocalc-public-home-hero,
-    .cocalc-public-home-difference {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-
-    .cocalc-public-home-hero-title {
-      font-size: 42px !important;
-      line-height: 1.08 !important;
-    }
-
-    .cocalc-public-home-hero-visual {
-      order: 2;
-    }
-  }
-
-  @media (max-width: 1120px) {
-    .cocalc-public-home-final-layout {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-  }
-
-  @media (max-width: 620px) {
-    .cocalc-public-home-final-actions {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-
-    .cocalc-public-home-final-actions .ant-btn {
-      width: 100%;
-    }
-  }
-
-  @media (max-width: 560px) {
-    .cocalc-public-home {
-      gap: 28px !important;
-    }
-
-    .cocalc-public-home-hero-title {
-      font-size: 34px !important;
-    }
-
-    .cocalc-public-home-actions .ant-btn,
-    .cocalc-public-home-final-actions .ant-btn {
-      width: 100%;
-    }
-
-    .cocalc-public-home-codex-grid,
-    .cocalc-public-home-difference-grid,
-    .cocalc-public-home-modal-grid,
-    .cocalc-public-home-final-actions {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-  }
+@media(max-width:900px) { .cocalc-home-final { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:620px) {
+  .cocalc-home h1 { font-size:clamp(34px,9vw,42px); }
+  .cocalc-home-lead { font-size:18px; }
+  .cocalc-home-process-row,.cocalc-home-outcomes,.cocalc-home-directory { grid-template-columns:minmax(0,1fr); }
+  .cocalc-home-process-row { gap:10px; }
+  .cocalc-home-card { padding:22px; }
+  .cocalc-home-actions { width:100%; }
+  .cocalc-home-actions .ant-btn { width:100%; }
+}
 `;
 
-const PROJECT_FACTS = [
-  {
-    body: "Teammates continue from the same project state instead of reconstructing work from scattered tools.",
-    title: "Context survives handoff",
-  },
-  {
-    body: "The project record stays available when someone returns to inspect or extend the work.",
-    title: "Review stays close",
-  },
-  {
-    body: "Snapshots, backups, and project history make useful states easier to recover.",
-    title: "Recovery remains practical",
-  },
-] as const;
+const appPath = (path: string) => joinUrlPath(appBasePath, path);
 
-// The look of each step of PUBLIC_HOME_AGENT_STEPS, in order.
-const AGENT_STEP_STYLES = [
-  { accent: COLORS.AI_ASSISTANT_FONT, icon: "robot" },
-  { accent: COLORS.RUN, icon: "search" },
-  { accent: COLORS.ANTD_LINK_BLUE_DARK, icon: "edit" },
-] satisfies Array<{ accent: string; icon: IconName }>;
-
-const DIFFERENCE_SIGNALS = [
-  { icon: "files", label: "Shared context" },
-  { icon: "users", label: "Collaboration" },
-  { icon: "history", label: "Review history" },
-  { icon: "disk-snapshot", label: "Recovery paths" },
-] satisfies Array<{ icon: IconName; label: string }>;
-
-interface Differentiator {
-  accent: string;
-  body: string;
-  ctaHref: string;
-  ctaLabel: string;
-  details: ReadonlyArray<{
-    body: string;
-    title: string;
-  }>;
-  eyebrow: string;
-  icon: IconName;
-  modalBody: string;
-  title: string;
-}
-
-const DIFFERENTIATORS = [
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Keep the main artifacts of computational work near the discussions, outputs, and decisions they produce.",
-    ctaHref: "docs/projects/project-list",
-    ctaLabel: "Read project docs",
-    details: PROJECT_FACTS,
-    eyebrow: "Project continuity",
-    icon: "project-outlined",
-    modalBody:
-      "CoCalc projects keep notebooks, files, outputs, documents, terminals, and agent-assisted work in one durable workspace, so the work remains understandable over time.",
-    title: "Project-centered workflow",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Review live collaboration and AI-assisted changes in the project before teammates build on them.",
-    ctaHref: "docs/collaboration/chat",
-    ctaLabel: "Read chat docs",
-    details: [
-      {
-        body: "Realtime editing, chat, and shared outputs help collaborators compare results and decide how to move forward.",
-        title: "Review together",
-      },
-      {
-        body: "Codex edits, patches, test output, screenshots, and review notes stay beside affected files.",
-        title: "Inspect exact changes",
-      },
-      {
-        body: "Reasoning, commands, outputs, and follow-up questions stay with the project.",
-        title: "Keep evidence together",
-      },
-    ],
-    eyebrow: "Review together",
-    icon: "search",
-    modalBody:
-      "CoCalc keeps collaboration, AI-assisted edits, notebooks, terminals, outputs, screenshots, and discussion in the project, so people can review the work before relying on it.",
-    title: "Inspection before handoff",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    body: "History, TimeTravel, snapshots, and backups help teams understand changes and return to useful states.",
-    ctaHref: "docs/files/timetravel",
-    ctaLabel: "Read TimeTravel docs",
-    details: [
-      {
-        body: "Project history shows how notebooks, files, documents, and outputs changed.",
-        title: "Trace what changed",
-      },
-      {
-        body: "Snapshots and backups let teams resume from a known project state.",
-        title: "Recover useful states",
-      },
-      {
-        body: "Files, notes, outputs, and discussion keep recovery tied to the project record.",
-        title: "Resume with context",
-      },
-    ],
-    eyebrow: "Keep moving",
-    icon: "history",
-    modalBody:
-      "CoCalc keeps history, TimeTravel, snapshots, backups, and project context together so teams can return to useful states and continue with less guesswork.",
-    title: "Practical recovery",
-  },
-] satisfies Differentiator[];
-
-// The last card describes Where to run CoCalc: its paths, its comparison and
-// its contact line. It names only the ways to run CoCalc that the public
-// pages show, so it is read at render time.
-function operatingModelDifferentiator(): Differentiator {
-  return {
-    accent: COLORS.GRAY_M,
-    body: "See where CoCalc runs and who operates it when infrastructure or support needs shape the decision.",
-    ctaHref: PUBLIC_PRODUCTS_PAGE_LINK.href,
-    ctaLabel: PUBLIC_PRODUCTS_PAGE_LINK.label,
-    details: [
-      {
-        body: getPublicHomeDeploymentChoice(),
-        title: "Match where it runs",
-      },
-      {
-        body: getPublicHomeDeploymentComparison(),
-        title: "Keep ownership clear",
-      },
-      {
-        body: PUBLIC_WHERE_TO_RUN_CONTACT.body,
-        title: "Route the next conversation",
-      },
-    ],
-    eyebrow: "Choose where it runs",
-    icon: "cloud",
-    modalBody: getPublicHomeDeploymentRange(),
-    title: "Operating model choice",
-  };
-}
-
-function accessibleAccentTextColor(accent: string): string {
-  if (accent === COLORS.RUN) return publicAccent(COLORS.ANTD_GREEN_D);
-  if (accent === COLORS.AI_ASSISTANT_FONT) return publicAccent(COLORS.BRWN);
-  if (accent === PUBLIC_COLORS.link) return PUBLIC_COLORS.linkHover;
-  return publicAccent(accent);
-}
-
-function appPath(path: string): string {
-  return joinUrlPath(appBasePath, path);
-}
-
-function Eyebrow({ children }: { children: ReactNode }) {
-  return (
-    <Text
-      strong
-      style={{
-        color: PUBLIC_COLORS.linkHover,
-        display: "block",
-        fontSize: 12,
-        letterSpacing: 0,
-        textTransform: "uppercase",
-      }}
-    >
-      {children}
-    </Text>
-  );
-}
-
-function IconTile({
-  accent,
-  icon,
-  size = 42,
+function Action({
+  link,
+  primary = false,
 }: {
-  accent: string;
-  icon: IconName;
-  size?: number;
+  link: PublicHomeLink;
+  primary?: boolean;
 }) {
-  accent = publicAccent(accent);
   return (
-    <span
-      aria-hidden="true"
-      style={{
-        alignItems: "center",
-        background: alpha(accent, 0.1),
-        border: `1px solid ${alpha(accent, 0.22)}`,
-        borderRadius: PANEL_RADIUS,
-        color: accent,
-        display: "inline-flex",
-        flex: `0 0 ${size}px`,
-        fontSize: Math.max(16, Math.round(size * 0.45)),
-        height: size,
-        justifyContent: "center",
-        width: size,
-      }}
-    >
-      <Icon name={icon} />
-    </span>
+    <Button href={appPath(link.href)} type={primary ? "primary" : "default"}>
+      {link.label}
+    </Button>
   );
 }
 
-function DecorativeButtonIcon({ name }: { name: IconName }) {
-  return (
-    <span aria-hidden="true" style={{ display: "inline-flex" }}>
-      <Icon name={name} />
-    </span>
-  );
-}
-
-function SectionIntro({
-  eyebrow,
+function Section({
+  id,
   title,
   body,
+  children,
 }: {
-  body?: ReactNode;
-  eyebrow: ReactNode;
-  title: ReactNode;
+  id: string;
+  title: string;
+  body?: string;
+  children: ReactNode;
 }) {
-  return (
-    <Flex align="end" justify="space-between" wrap gap={16}>
-      <div style={{ maxWidth: 760 }}>
-        <Eyebrow>{eyebrow}</Eyebrow>
-        <Title level={2} style={{ margin: "8px 0 10px" }}>
-          {title}
-        </Title>
-        {body == null ? null : (
-          <Paragraph style={{ fontSize: 18, margin: 0 }}>{body}</Paragraph>
-        )}
-      </div>
-    </Flex>
-  );
-}
-
-function Hero({
-  authenticated,
-  highlights,
-  siteName,
-}: {
-  authenticated: boolean;
-  highlights: readonly string[];
-  siteName: string;
-}) {
-  const config = usePublicConfig();
-  const signUpLabel = getPublicSignUpLabel(config);
-  const image = getPublicHomeHeroImage(config);
   return (
     <section
-      aria-label={`${siteName} hero`}
-      className="cocalc-public-home-hero"
-      style={{
-        alignItems: "center",
-        display: "grid",
-        gap: 42,
-        gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 1fr)",
-        padding: "32px 0 12px",
-      }}
+      id={id}
+      className="cocalc-home-section"
+      aria-labelledby={`${id}-title`}
     >
-      <Flex vertical gap={20}>
-        <Eyebrow>{PUBLIC_HOME_EYEBROW}</Eyebrow>
-        <div>
-          <Title
-            className="cocalc-public-home-hero-title"
-            level={1}
-            style={{
-              color: PUBLIC_COLORS.heading,
-              fontSize: 58,
-              letterSpacing: 0,
-              lineHeight: 1.02,
-              margin: 0,
-              maxWidth: 620,
-            }}
-          >
-            {PUBLIC_HOME_HEADLINE}
-          </Title>
-          <Paragraph
-            style={{
-              color: PUBLIC_COLORS.mutedText,
-              fontSize: 19,
-              lineHeight: 1.5,
-              margin: "20px 0 0",
-              maxWidth: 590,
-            }}
-          >
-            {PUBLIC_HOME_INTRO}
-          </Paragraph>
-        </div>
-        <Flex className="cocalc-public-home-actions" gap={12} wrap>
-          <Button
-            href={appPath(authenticated ? "projects" : "auth/sign-up")}
-            icon={
-              <DecorativeButtonIcon
-                name={authenticated ? "project-outlined" : "rocket"}
-              />
-            }
-            size="large"
-            type="primary"
-          >
-            {authenticated ? "Open projects" : signUpLabel}
-          </Button>
-          <Button href={appPath(PUBLIC_HOME_SECONDARY_CTA.href)} size="large">
-            {PUBLIC_HOME_SECONDARY_CTA.label}
-          </Button>
-        </Flex>
-        <ul
-          className="cocalc-public-home-highlights"
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            listStyle: "none",
-            margin: 0,
-            padding: 0,
-          }}
-        >
-          {highlights.map((highlight) => (
-            <li
-              key={highlight}
-              style={{
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PUBLIC_RADIUS.pill,
-                color: PUBLIC_COLORS.heading,
-                fontSize: PUBLIC_TYPE.caption,
-                fontWeight: PUBLIC_WEIGHT.medium,
-                lineHeight: 1.4,
-                padding: "5px 12px",
-              }}
-            >
-              {highlight}
-            </li>
-          ))}
-        </ul>
-      </Flex>
-      <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
-        <img
-          alt={image.alt}
-          className="cocalc-public-home-hero-image"
-          decoding="async"
-          height={image.height}
-          src={image.src}
-          width={image.width}
-          style={{
-            aspectRatio: `${image.width} / ${image.height}`,
-            height: "auto",
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.08)}`,
-            display: "block",
-            objectFit: "contain",
-            width: "100%",
-          }}
-        />
-      </figure>
+      <div className="cocalc-home-section-intro">
+        <h2 id={`${id}-title`}>{title}</h2>
+        {body && <p>{body}</p>}
+      </div>
+      {children}
     </section>
   );
 }
 
-function AgentDefinitionSection() {
-  const links = getPublicHomeAgentLinks(usePublicConfig());
-  return (
-    <section
-      aria-label="AI agents in CoCalc"
-      style={{ padding: "22px 0 24px" }}
-    >
-      <SectionIntro
-        body={PUBLIC_HOME_AGENT_BODY}
-        eyebrow="How it works"
-        title={PUBLIC_HOME_AGENT_TITLE}
-      />
-      <Flex gap={12} style={{ marginTop: 18 }} wrap>
-        {links.map((link) => (
-          <Button href={appPath(link.href)} key={link.href}>
-            {link.label}
-          </Button>
-        ))}
-      </Flex>
-      <div
-        className="cocalc-public-home-codex-grid"
-        style={{
-          display: "grid",
-          gap: 18,
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          marginTop: 22,
-        }}
-      >
-        {PUBLIC_HOME_AGENT_STEPS.map((step, index) => {
-          const card = { ...step, ...AGENT_STEP_STYLES[index] };
-          return (
-            <div
-              key={card.title}
-              style={{
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${alpha(card.accent, 0.18)}`,
-                borderRadius: PANEL_RADIUS,
-                boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
-                minHeight: 190,
-                padding: 18,
-              }}
-            >
-              <Flex vertical gap={14}>
-                <IconTile accent={card.accent} icon={card.icon} />
-                <div>
-                  <Title level={3} style={CARD_TITLE_STYLE}>
-                    {card.title}
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>{card.body}</Paragraph>
-                </div>
-              </Flex>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function DifferenceSection() {
-  const [activeTitle, setActiveTitle] = useState<string | null>(null);
-  const items = [...DIFFERENTIATORS, operatingModelDifferentiator()];
-  const activeItem = items.find((item) => item.title === activeTitle) ?? null;
-
-  return (
-    <>
-      <section
-        aria-label="Why CoCalc is different"
-        className="cocalc-public-home-difference"
-        style={{
-          background: `linear-gradient(135deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
-          border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: PANEL_RADIUS,
-          display: "grid",
-          gap: 34,
-          gridTemplateColumns: "minmax(0, 0.7fr) minmax(0, 1.3fr)",
-          margin: "16px 0",
-          padding: 36,
-        }}
-      >
-        <Flex vertical gap={18}>
-          <div>
-            <Eyebrow>Why CoCalc is different</Eyebrow>
-            <Title level={2} style={{ margin: "8px 0 10px" }}>
-              The project is the computer.
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Every CoCalc project is a persistent Linux environment for files,
-              computation, services, collaboration, history, and recovery. The
-              people and agents working there share the same state.
-            </Paragraph>
-          </div>
-          <div
-            style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              display: "grid",
-              gap: 10,
-              padding: 14,
-            }}
-          >
-            {DIFFERENCE_SIGNALS.map((signal) => (
-              <Flex align="center" gap={10} key={signal.label}>
-                <IconTile
-                  accent={PUBLIC_COLORS.link}
-                  icon={signal.icon}
-                  size={28}
-                />
-                <Text strong>{signal.label}</Text>
-              </Flex>
-            ))}
-          </div>
-        </Flex>
-        <div
-          className="cocalc-public-home-difference-grid"
-          style={{
-            display: "grid",
-            gap: 18,
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          }}
-        >
-          {items.map((item) => (
-            <button
-              aria-haspopup="dialog"
-              className="cocalc-public-home-card-link cocalc-public-home-difference-card"
-              key={item.title}
-              onClick={() => setActiveTitle(item.title)}
-              style={{
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PANEL_RADIUS,
-                color: "inherit",
-                cursor: "pointer",
-                minHeight: 240,
-                padding: 22,
-                textAlign: "left",
-              }}
-              type="button"
-            >
-              <Flex vertical gap={14}>
-                <IconTile accent={item.accent} icon={item.icon} />
-                <div>
-                  <Text
-                    strong
-                    style={{
-                      color: accessibleAccentTextColor(item.accent),
-                      display: "block",
-                      fontSize: 12,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {item.eyebrow}
-                  </Text>
-                  <Title level={3} style={DIFFERENCE_CARD_TITLE_STYLE}>
-                    {item.title}
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-                </div>
-                <Text strong style={{ color: PUBLIC_COLORS.link }}>
-                  View details
-                </Text>
-              </Flex>
-            </button>
-          ))}
-        </div>
-      </section>
-      <Modal
-        footer={null}
-        onCancel={() => setActiveTitle(null)}
-        open={activeItem != null}
-        title={activeItem?.title}
-        width={720}
-      >
-        {activeItem == null ? null : (
-          <Flex vertical gap={18}>
-            <Paragraph style={{ fontSize: 16, margin: 0 }}>
-              {activeItem.modalBody}
-            </Paragraph>
-            <div
-              className="cocalc-public-home-modal-grid"
-              style={{
-                display: "grid",
-                gap: 12,
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-              }}
-            >
-              {activeItem.details.map((detail) => (
-                <div
-                  key={detail.title}
-                  style={{
-                    background: PUBLIC_COLORS.surfaceMuted,
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: PANEL_RADIUS,
-                    padding: 14,
-                  }}
-                >
-                  <Text strong>{detail.title}</Text>
-                  <Paragraph style={{ margin: "8px 0 0" }}>
-                    {detail.body}
-                  </Paragraph>
-                </div>
-              ))}
-            </div>
-            <Button href={appPath(activeItem.ctaHref)} type="primary">
-              {activeItem.ctaLabel}
-            </Button>
-          </Flex>
-        )}
-      </Modal>
-    </>
-  );
-}
-
-function PathSection({
-  authenticated,
-  trustHref,
+function Item({
+  item,
+  className,
 }: {
-  authenticated: boolean;
-  trustHref?: string;
+  item: PublicHomeItem;
+  className: string;
 }) {
-  const config = usePublicConfig();
   return (
-    <section
-      aria-label="Next step"
-      style={{
-        background: `linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
-        margin: "16px 0 0",
-        padding: 36,
-      }}
-    >
-      <div
-        className="cocalc-public-home-final-layout"
-        style={{
-          alignItems: "center",
-          display: "grid",
-          gap: 24,
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-        }}
-      >
-        <div>
-          <Eyebrow>Next step</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Ready to choose how CoCalc fits?
-          </Title>
-          <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-            {isCocalcAiLaunchpadSite(config)
-              ? "Start with CoCalc.ai, see where to run CoCalc, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision."
-              : "See where to run CoCalc, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision."}
-          </Paragraph>
-          {trustHref ? (
-            <Paragraph
-              style={{
-                color: PUBLIC_COLORS.mutedText,
-                fontSize: 14,
-                margin: "10px 0 0",
-                maxWidth: 760,
-              }}
-            >
-              <a href={trustHref}>Review trust and compliance</a>
-            </Paragraph>
-          ) : null}
-        </div>
-        <div
-          className="cocalc-public-home-final-actions"
-          style={{
-            display: "grid",
-            gap: 10,
-            gridTemplateColumns: "repeat(3, max-content)",
-          }}
-        >
-          <Button
-            href={authenticated ? appPath("projects") : appPath("auth/sign-up")}
-            type="primary"
-          >
-            {authenticated ? "Open projects" : getPublicSignUpLabel(config)}
-          </Button>
-          <Button href={appPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}>
-            {PUBLIC_PRODUCTS_PAGE_LINK.label}
-          </Button>
-          <Button href={appPath("support")}>Review support and sales</Button>
-        </div>
-      </div>
-    </section>
+    <div className={className}>
+      <h3>{item.title}</h3>
+      <p>{item.body}</p>
+      {item.link && (
+        <a className="cocalc-home-item-link" href={appPath(item.link.href)}>
+          {item.link.label}
+        </a>
+      )}
+    </div>
   );
 }
 
-// Resolve a missing host only after branding has arrived. A canonical host
-// alone does not establish that a deployment uses the default CoCalc brand.
-function withSiteHost(config?: HomeConfig): HomeConfig | undefined {
-  if (
-    !config?.site_name?.trim() ||
-    config.dns?.trim() ||
-    typeof window === "undefined"
-  ) {
-    return config;
-  }
+// Keep canonical sign-up usable while settings load; the hostname does not
+// imply AI capabilities, product type or custom branding.
+function withSiteHost(config?: PublicConfig): PublicConfig | undefined {
+  if (config?.dns?.trim() || typeof window === "undefined") return config;
   return { ...config, dns: window.location.host };
 }
 
-export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
-  const marketingConfig = getPublicMarketingConfig(config) as
-    | HomeConfig
-    | undefined;
+export default function PublicHomeApp({ config }: { config?: PublicConfig }) {
+  const marketingConfig = getPublicMarketingConfig(withSiteHost(config));
+  const content = getPublicHomeContent({
+    ...marketingConfig,
+    // Home policy links follow the explicit site policy, as the initial HTML does.
+    policy_pages: config?.policy_pages,
+  });
   const siteName = getPublicMarketingSiteName(config);
-  const authenticated = !!config?.is_authenticated;
-  const trustHref = builtinPolicyPath(config, "trust");
-  const homeTitle = publicHomeTitle(config);
-
+  const title = publicHomeTitle(config);
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    document.title = homeTitle;
-  }, [homeTitle]);
+    document.title = title;
+  }, [title]);
 
   return (
     <PublicPage active="home" config={marketingConfig}>
-      <style>{HOME_PAGE_CSS}</style>
-      <div
-        className="cocalc-public-home"
-        style={{
-          display: "grid",
-          gap: 34,
-          marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
-          paddingInline: PUBLIC_PAGE_GUTTER,
-        }}
-      >
-        <Hero
-          authenticated={authenticated}
-          highlights={getPublicHomeHighlights(withSiteHost(config))}
-          siteName={siteName}
-        />
-        <AgentDefinitionSection />
-        <DifferenceSection />
-        <PathSection authenticated={authenticated} trustHref={trustHref} />
+      <style>{HOME_CSS}</style>
+      <div className="cocalc-home">
+        <section
+          id="home-hero"
+          className="cocalc-home-hero"
+          aria-label={`${siteName} hero`}
+        >
+          <div>
+            <h1>{content.title}</h1>
+            <p className="cocalc-home-lead">{content.intro}</p>
+            <div className="cocalc-home-actions">
+              {content.primary && <Action link={content.primary} primary />}
+              <Action link={content.secondary} />
+            </div>
+          </div>
+          {content.image && (
+            <figure className="cocalc-home-figure">
+              <img
+                src={appPath(content.image.src)}
+                alt={content.image.alt}
+                width={content.image.width}
+                height={content.image.height}
+                fetchPriority="high"
+              />
+            </figure>
+          )}
+        </section>
+        {content.process.length > 0 && (
+          <Section id="home-process" title={TITLES.process}>
+            <div className="cocalc-home-process">
+              {content.process.map((item) => (
+                <Item
+                  key={item.title}
+                  item={item}
+                  className="cocalc-home-process-row"
+                />
+              ))}
+            </div>
+          </Section>
+        )}
+        <Section id="home-platform" title={content.platformTitle}>
+          <div className="cocalc-home-benefits">
+            {content.benefits.map((item) => (
+              <Item
+                key={item.title}
+                item={item}
+                className="cocalc-home-benefit"
+              />
+            ))}
+          </div>
+        </Section>
+        <Section
+          id="home-paths"
+          title={TITLES.outcomes}
+          body={PUBLIC_HOME_OUTCOMES_INTRO}
+        >
+          <div className="cocalc-home-outcomes">
+            {content.outcomes.map((item) => (
+              <Item key={item.title} item={item} className="cocalc-home-card" />
+            ))}
+          </div>
+        </Section>
+        <Section
+          id="home-evaluate"
+          title={TITLES.evaluation}
+          body={PUBLIC_HOME_EVALUATION_INTRO}
+        >
+          <nav
+            aria-label="Capability guides and implementation documentation"
+            className="cocalc-home-directory"
+          >
+            {content.directories.map((group) => (
+              <div key={group.title}>
+                <h3>{group.title}</h3>
+                <ul>
+                  {group.links.map((link) => (
+                    <li key={link.href}>
+                      <a href={appPath(link.href)}>{link.label}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </nav>
+          <details className="cocalc-home-details">
+            <summary>{content.agents.title}</summary>
+            {content.agents.paragraphs.map((paragraph) => (
+              <p key={paragraph}>{paragraph}</p>
+            ))}
+            <div className="cocalc-home-details-links">
+              {content.agents.links.map((link) => (
+                <a key={link.href} href={appPath(link.href)}>
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          </details>
+        </Section>
+        {content.deployment && (
+          <Section
+            id="home-run"
+            title={TITLES.deployment}
+            body={content.deployment.body}
+          >
+            <a href={appPath(content.deployment.link.href)}>
+              {content.deployment.link.label}
+            </a>
+          </Section>
+        )}
+        <section
+          id="home-final"
+          className="cocalc-home-section cocalc-home-final"
+          aria-labelledby="home-final-title"
+        >
+          <div>
+            <h2 id="home-final-title">{TITLES.final}</h2>
+            {content.trustHref && (
+              <p>
+                <a href={appPath(content.trustHref)}>
+                  {PUBLIC_HOME_TRUST_LABEL}
+                </a>
+              </p>
+            )}
+          </div>
+          <div className="cocalc-home-actions">
+            {content.primary && <Action link={content.primary} primary />}
+            <Action link={PUBLIC_HOME_CONTACT} />
+          </div>
+        </section>
       </div>
     </PublicPage>
   );
