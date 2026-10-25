@@ -185,6 +185,7 @@ export function ChatReaderView({
   itemBadges,
   acpState,
   itemInfo,
+  isItemWorking = () => false,
 }: {
   actions: ChatActions;
   threadId: string;
@@ -215,6 +216,8 @@ export function ChatReaderView({
   acpState?: { get?: (key: string) => unknown };
   /** Each item's subject and priority (what its agent said, or defaults). */
   itemInfo?: (item: ReaderItem) => ReaderItemInfo;
+  /** Whether an item holds the thread's running turn (its Working badge). */
+  isItemWorking?: (item: ReaderItem) => boolean;
 }) {
   const userMap = useTypedRedux("users", "user_map");
   // On screen: the chat (its tab) and the page (the browser's tab).
@@ -291,10 +294,14 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items, watermark, state, filed, showArchived],
   );
-  // In the inbox: not archived, in every view.
-  const inboxCount = useMemo(
-    () => items.filter((item) => !isItemArchived(item, state)).length,
-    [items, state],
+  // What Archive all archives: the inbox (not archived, in every view) but a
+  // turn still running.
+  const archivableCount = useMemo(
+    () =>
+      items.filter(
+        (item) => !isItemArchived(item, state) && !isItemWorking(item),
+      ).length,
+    [items, state, isItemWorking],
   );
   const [selectedId, setSelectedId] = useState<string>();
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
@@ -872,15 +879,20 @@ export function ChatReaderView({
             Mark all read
           </Button>
           <Popconfirm
-            title={`Archive all ${inboxCount} message${inboxCount === 1 ? "" : "s"}?`}
-            description="Everything in this thread is archived and read: a clean slate. A new reply brings a message back."
+            title={`Archive all ${archivableCount} message${archivableCount === 1 ? "" : "s"}?`}
+            description="Everything in this thread is archived and read: a clean slate. A turn still running stays in the inbox. A new reply brings a message back."
             okText="Archive all"
             onConfirm={() => {
-              save((current) => archiveAll(items, current));
+              save((current, watermark) =>
+                archiveAll(items, current, {
+                  running: isItemWorking,
+                  watermark,
+                }),
+              );
               if (!showArchived) setSelectedId(undefined);
             }}
           >
-            <Button size="small" disabled={!inboxCount}>
+            <Button size="small" disabled={!archivableCount}>
               Archive all
             </Button>
           </Popconfirm>

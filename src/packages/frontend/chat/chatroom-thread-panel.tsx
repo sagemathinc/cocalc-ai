@@ -3131,6 +3131,9 @@ export function ChatRoomThreadPanel({
             readOnly={readOnly}
             isVisible={isVisible}
             acpState={acpState}
+            isItemWorking={(item: ReaderItem) =>
+              readerItemWorking(item, readerRunningMessage)
+            }
             itemInfo={(item: ReaderItem) => {
               const meta = itemTurnMeta(item);
               return {
