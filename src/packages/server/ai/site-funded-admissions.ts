@@ -106,6 +106,10 @@ export async function getSiteFundedFunnel({
     ensureSiteFundedCodexReservationTables(),
   ]);
   const periodStart = new Date(now.valueOf() - days * DAY_MS);
+  // Exclusive, one millisecond past now: the database stamps rows to the
+  // microsecond, so a row from now's own millisecond would otherwise fall
+  // after it.
+  const periodEnd = new Date(now.valueOf() + 1);
   const pool = getPool();
   const [totals, outcomes, turns] = await Promise.all([
     pool.query(
@@ -115,7 +119,7 @@ export async function getSiteFundedFunnel({
                 AS admitted_accounts
        FROM site_ai_admission_attempts
        WHERE attempted_at >= $1 AND attempted_at < $2`,
-      [periodStart, now],
+      [periodStart, periodEnd],
     ),
     pool.query(
       `SELECT outcome, count(*) AS attempts,
@@ -124,7 +128,7 @@ export async function getSiteFundedFunnel({
        WHERE attempted_at >= $1 AND attempted_at < $2
        GROUP BY outcome
        ORDER BY attempts DESC, outcome`,
-      [periodStart, now],
+      [periodStart, periodEnd],
     ),
     pool.query(
       `SELECT status, count(*) AS turns,
@@ -134,7 +138,7 @@ export async function getSiteFundedFunnel({
        WHERE started_at >= $1 AND started_at < $2
        GROUP BY status
        ORDER BY turns DESC, status`,
-      [periodStart, now],
+      [periodStart, periodEnd],
     ),
   ]);
   const total = totals.rows[0] ?? {};
