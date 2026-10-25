@@ -446,6 +446,8 @@ combine with another, for a worse count.
 - A stronger promise, such as no deletion before an email was accepted, would
   be a separate retention policy on Sagebrush's side. It isn't in this PR.
 
+**Device copies.** Only the copy on our servers is deleted: the copies on your own devices (your browser's storage, or an app's) are not deleted; they stay on each device and stop syncing. A device's sync pauses rather than ending for good: if sync is enabled again, its current files become the new synced copy.
+
 Failures are kept as codes and HTTP statuses only, such as `http_error 503`,
 `malformed_response 200`, `send_failed` or `entitlement_unknown`. That covers
 logs, `last_error` and admin alerts: a response body or an exception's text,
