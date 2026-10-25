@@ -1,8 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { tokenHash, verifyToken } from "@cocalc/backend/auth/password-hash";
 import { isValidUUID } from "@cocalc/util/misc";
 import { refreshLaunchpadOnPremAuthorizedKeys } from "../launchpad/onprem-sshd";
 
@@ -43,7 +41,7 @@ export async function createProjectHostToken(
   const token_id = randomUUID();
   const secret = randomBytes(32).toString("base64url");
   const token = `${token_id}.${secret}`;
-  const token_hash = passwordHash(secret);
+  const token_hash = tokenHash(secret);
   const ssh_key_seed = deriveBootstrapKeySeed(secret);
   const purpose = opts.purpose ?? "bootstrap";
   const created = new Date();
@@ -96,7 +94,7 @@ export async function verifyProjectHostToken(
   );
   const row = rows[0];
   if (!row) return null;
-  if (!verifyPassword(secret, row.token_hash)) return null;
+  if (!verifyToken(secret, row.token_hash)) return null;
 
   await pool().query(
     `UPDATE project_host_bootstrap_tokens

@@ -9,7 +9,7 @@ import { testCleanup } from "@cocalc/database/test-utils";
 import { callback_opts } from "@cocalc/util/async-utils";
 import { uuid } from "@cocalc/util/misc";
 
-import passwordHash from "@cocalc/backend/auth/password-hash";
+import { checkPassword } from "@cocalc/backend/auth/password-hash";
 import type { PostgreSQL } from "../types";
 
 describe("password methods", () => {
@@ -390,6 +390,8 @@ describe("password methods", () => {
       "SELECT password_hash FROM accounts WHERE account_id = $1",
       [account_id],
     );
-    expect(rows[0]?.password_hash).toBe(passwordHash("new-password"));
+    expect(await checkPassword("new-password", rows[0]?.password_hash)).toBe(
+      true,
+    );
   });
 });

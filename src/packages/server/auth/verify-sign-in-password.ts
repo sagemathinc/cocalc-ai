@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { verifyPassword } from "@cocalc/backend/auth/password-hash";
+import { checkPassword } from "@cocalc/backend/auth/password-hash";
+import { upgradePasswordHashAfterSignIn } from "@cocalc/server/auth/password-hash-upgrade";
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -36,7 +37,7 @@ export async function verifyLocalSignInPassword({
     throw Error(`no account with email address '${email}'`);
   }
   const { account_id, password_hash, banned, home_bay_id } = rows[0];
-  if (!verifyPassword(password, password_hash)) {
+  if (!(await checkPassword(password, password_hash))) {
     throw Error(`password for '${email}' is incorrect`);
   }
   if (banned) {
@@ -44,6 +45,7 @@ export async function verifyLocalSignInPassword({
       `'${email}' is banned -- if you think this is a mistake, please email help@cocalc.ai and explain.`,
     );
   }
+  await upgradePasswordHashAfterSignIn({ account_id, password, password_hash });
   return {
     account_id,
     home_bay_id: `${home_bay_id ?? ""}`.trim() || getConfiguredBayId(),

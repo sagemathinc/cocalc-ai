@@ -10,7 +10,7 @@ import { callback2 } from "@cocalc/util/async-utils";
 import { expire_time, seconds_ago, uuid } from "@cocalc/util/misc";
 import type { QueryRows } from "@cocalc/util/types/database";
 
-import passwordHash from "@cocalc/backend/auth/password-hash";
+import { newPasswordHash } from "@cocalc/database/settings/password-kdf";
 
 import type { PostgreSQL } from "../types";
 import { endAllSessionsWithDb } from "./remember-me";
@@ -116,7 +116,7 @@ export async function reset_password(
 
     await change_password(db, {
       account_id: opts.account_id as string,
-      password_hash: passwordHash(opts.password),
+      password_hash: await newPasswordHash(opts.password),
     });
 
     console.log(`Password changed for ${opts.email_address}`);

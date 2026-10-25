@@ -224,7 +224,7 @@ describe("/api/v2/auth/sign-in", () => {
     jest.resetModules();
     mockHasActiveSecondFactor.mockResolvedValue(true);
     jest.doMock("@cocalc/backend/auth/password-hash", () => ({
-      verifyPassword: jest.fn().mockReturnValue(true),
+      checkPassword: jest.fn().mockResolvedValue(true),
     }));
     jest.doMock("@cocalc/server/bay-public-origin", () => ({
       getBayPublicOriginForRequest: jest
@@ -273,7 +273,7 @@ describe("/api/v2/auth/sign-in", () => {
       new Error("too many recent second factor attempts"),
     );
     jest.doMock("@cocalc/backend/auth/password-hash", () => ({
-      verifyPassword: jest.fn().mockReturnValue(true),
+      checkPassword: jest.fn().mockResolvedValue(true),
     }));
     jest.doMock("@cocalc/database/pool", () => ({
       __esModule: true,
@@ -311,7 +311,7 @@ describe("/api/v2/auth/sign-in", () => {
     jest.resetModules();
     mockEmailRequiresCocalc2fa.mockResolvedValue(true);
     jest.doMock("@cocalc/backend/auth/password-hash", () => ({
-      verifyPassword: jest.fn().mockReturnValue(true),
+      checkPassword: jest.fn().mockResolvedValue(true),
     }));
     jest.doMock("@cocalc/database/pool", () => ({
       __esModule: true,

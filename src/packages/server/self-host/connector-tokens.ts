@@ -1,8 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { tokenHash, verifyToken } from "@cocalc/backend/auth/password-hash";
 import { isValidUUID } from "@cocalc/util/misc";
 import { refreshLaunchpadOnPremAuthorizedKeys } from "../launchpad/onprem-sshd";
 
@@ -47,7 +45,7 @@ export async function createPairingToken(opts: {
   const token_id = randomUUID();
   const secret = randomBytes(32).toString("base64url");
   const token = `${token_id}.${secret}`;
-  const token_hash = passwordHash(secret);
+  const token_hash = tokenHash(secret);
   const pairing_key_seed = derivePairingKeySeed(secret);
   const purpose = opts.purpose ?? "pairing";
   const created = new Date();
@@ -193,7 +191,7 @@ export async function verifyPairingToken(
   );
   const row = rows[0];
   if (!row) return null;
-  if (!verifyPassword(secret, row.token_hash)) return null;
+  if (!verifyToken(secret, row.token_hash)) return null;
   await pool().query(
     `UPDATE self_host_connector_tokens
      SET last_used=NOW()
@@ -298,7 +296,7 @@ export async function createConnector(opts: {
   const connector_id = randomUUID();
   const secret = randomBytes(32).toString("base64url");
   const token = `${connector_id}.${secret}`;
-  const token_hash = passwordHash(secret);
+  const token_hash = tokenHash(secret);
   const ssh_key_seed = deriveConnectorKeySeed(secret);
   const created = new Date();
   await pool().query(
@@ -350,7 +348,7 @@ export async function activateConnector(opts: {
 }): Promise<{ connector_id: string; token: string }> {
   const secret = randomBytes(32).toString("base64url");
   const token = `${opts.connector_id}.${secret}`;
-  const token_hash = passwordHash(secret);
+  const token_hash = tokenHash(secret);
   const ssh_key_seed = deriveConnectorKeySeed(secret);
   const { rows } = await pool().query(
     `UPDATE self_host_connectors
@@ -398,7 +396,7 @@ export async function verifyConnectorToken(token: string): Promise<{
   const row = rows[0];
   if (!row) return null;
   if (!row.token_hash) return null;
-  if (!verifyPassword(secret, row.token_hash)) return null;
+  if (!verifyToken(secret, row.token_hash)) return null;
   await pool().query(
     `UPDATE self_host_connectors
      SET last_seen=NOW()

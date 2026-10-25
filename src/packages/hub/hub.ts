@@ -36,6 +36,7 @@ import { start as startHubRegister } from "@cocalc/server/metrics/hub_register";
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
+import { initPasswordHashMigration } from "@cocalc/server/auth/password-hash-migration";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
 import {
@@ -401,6 +402,7 @@ async function startServer(): Promise<void> {
     initPurchasesMaintenanceLoop();
     initEphemeralMaintenance();
     initDeletedAccountRetention();
+    initPasswordHashMigration();
     initSalesloftMaintenance();
     initDeleteExpiredLoop();
     setInterval(trimLogFileSize, 1000 * 60 * 3);
