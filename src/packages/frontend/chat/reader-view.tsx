@@ -6,8 +6,9 @@
 // The reader view: one thread as an inbox. A list of items (each incoming
 // message with the agent replies that follow it), unread ones in bold, and a
 // reading pane. Opening an item marks it read; y archives it, m marks it
-// unread again; j and k move, u goes to the next unread one. The list never
-// scrolls by itself: new items wait behind an "N new" button.
+// unread again, s stars it; j and k move, u goes to the next unread one. The
+// list never scrolls by itself: new items wait behind an "N new" button. Its
+// width is dragged (or set with the arrow keys) at its edge.
 
 import {
   Badge,
@@ -19,8 +20,19 @@ import {
   Segmented,
   Space,
 } from "antd";
-import type { KeyboardEvent, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  KeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+} from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -37,12 +49,14 @@ import {
   findItem,
   isItemArchived,
   isItemRead,
+  isItemStarred,
   markAllRead,
   markItemRead,
   markItemUnread,
   readerItems,
   readerMessageId,
   setItemArchived,
+  withItemStarred,
   type ReaderChange,
   type ReaderItem,
   type ReaderState,
@@ -56,16 +70,19 @@ const READER_MODE_KEY = "cocalc-chat-reader-mode";
 const READER_VIEW_KEY = "cocalc-chat-reader-view";
 
 /**
- * for-you: what is for the person (high and normal); all; filed: low, FYI.
- * One choice for every chat, kept in this browser.
+ * for-you: what is for the person (high and normal); all; filed: low, FYI;
+ * starred: what the person starred, archived or not. One choice for every
+ * chat, kept in this browser.
  */
-export type ReaderListView = "for-you" | "all" | "filed";
+export type ReaderListView = "for-you" | "all" | "filed" | "starred";
 
 function useReaderListView(): [ReaderListView, (view: ReaderListView) => void] {
   const [view, setView] = useState<ReaderListView>(() => {
     try {
       const stored = localStorage.getItem(READER_VIEW_KEY);
-      return stored === "all" || stored === "filed" ? stored : "for-you";
+      return stored === "all" || stored === "filed" || stored === "starred"
+        ? stored
+        : "for-you";
     } catch {
       return "for-you";
     }
@@ -182,8 +199,32 @@ function messageScroller(pane: HTMLElement): HTMLElement | null {
   return overflow === "auto" || overflow === "scroll" ? pane : null;
 }
 
-// The list's width beside the open message.
+// The list's width beside the open message: dragged at its edge, kept in this
+// browser for every chat.
 const LIST_WIDTH = 340;
+const LIST_MIN_WIDTH = 220;
+// Room left for the open message, at least.
+const PANE_MIN_WIDTH = 320;
+const LIST_WIDTH_KEY = "cocalc-chat-reader-list-width";
+
+function storedListWidth(): number {
+  try {
+    const value = Number(localStorage.getItem(LIST_WIDTH_KEY));
+    return Number.isFinite(value) && value >= LIST_MIN_WIDTH
+      ? value
+      : LIST_WIDTH;
+  } catch {
+    return LIST_WIDTH;
+  }
+}
+
+function keepListWidth(width: number) {
+  try {
+    localStorage.setItem(LIST_WIDTH_KEY, `${Math.round(width)}`);
+  } catch {
+    // This session only.
+  }
+}
 
 export function ChatReaderView({
   actions,
@@ -270,11 +311,17 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [actions, threadId, readStateVersion],
   );
+  const stars: readonly string[] = useMemo(
+    () => actions.getReaderStars(threadId) ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actions, threadId, readStateVersion],
+  );
   const [showArchived, setShowArchived] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
-  // Without priorities (no itemInfo) there is one view: all.
+  // Without priorities (no itemInfo) there are two views: all and starred.
   const [chosenView, setView] = useReaderListView();
-  const view: ReaderListView = itemInfo ? chosenView : "all";
+  const view: ReaderListView =
+    itemInfo || chosenView === "starred" ? chosenView : "all";
   // Keyed by its contents: itemInfo is a new function every render.
   const filedKey = itemInfo
     ? items
@@ -288,18 +335,26 @@ export function ChatReaderView({
   );
   const inView = (item: ReaderItem, which: ReaderListView = view) =>
     which === "all" ||
-    (which === "filed" ? filed.has(item.id) : !filed.has(item.id));
+    (which === "starred"
+      ? isItemStarred(item, stars)
+      : which === "filed"
+        ? filed.has(item.id)
+        : !filed.has(item.id));
   // Newest first, as in an inbox: j goes down the list, to older items.
   const visible = useMemo(
     () =>
       items
         .filter(
           (item) =>
-            (showArchived || !isItemArchived(item, state)) && inView(item),
+            // Starred: archived ones too, as a starred message is kept.
+            (showArchived ||
+              view === "starred" ||
+              !isItemArchived(item, state)) &&
+            inView(item),
         )
         .reverse(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, state, showArchived, view, filed],
+    [items, state, stars, showArchived, view, filed],
   );
   // Counted over every item that is for the person (filed ones are FYI and
   // never counted), as Mark all read reads every item; archived ones are
@@ -335,6 +390,10 @@ export function ChatReaderView({
         (item) => !isItemArchived(item, state) && !isItemWorking(item),
       ).length,
     [items, state, isItemWorking],
+  );
+  const starredCount = useMemo(
+    () => items.filter((item) => isItemStarred(item, stars)).length,
+    [items, stars],
   );
   const [selectedId, setSelectedId] = useState<string>();
   // The open message over the whole window, as the reader shows it: paging
@@ -418,7 +477,13 @@ export function ChatReaderView({
     save((current) => ({
       state: setItemArchived(item, archived, current),
     }));
-    if (archived && !showArchived && item.id === selectedId) {
+    // The Starred list shows archived ones too: there the item stays open.
+    if (
+      archived &&
+      !showArchived &&
+      view !== "starred" &&
+      item.id === selectedId
+    ) {
       const next =
         findItem(visible, selectedIndex, 1) ??
         findItem(visible, selectedIndex, -1);
@@ -429,6 +494,12 @@ export function ChatReaderView({
   };
   const markUnread = (item: ReaderItem) =>
     save((current) => ({ state: markItemUnread(item, current) }));
+  const star = (item: ReaderItem) => {
+    const on = !isItemStarred(item, stars);
+    actions.updateReaderStars(threadId, (current) =>
+      withItemStarred(current, item, on),
+    );
+  };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -466,6 +537,9 @@ export function ChatReaderView({
         case "m":
           if (selected) markUnread(selected);
           return !!selected;
+        case "s":
+          if (selected) star(selected);
+          return !!selected;
         case "?":
           setShowKeys(true);
           return true;
@@ -486,6 +560,68 @@ export function ChatReaderView({
       event.preventDefault();
       event.stopPropagation();
     }
+  };
+
+  // The list's width: dragged at its edge, or set there with the arrow keys;
+  // at most what leaves the open message room, measured as the reader resizes.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [listWidth, setListWidth] = useState(storedListWidth);
+  const [rowWidth, setRowWidth] = useState<number>();
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const measure = () => setRowWidth(row.clientWidth || undefined);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, []);
+  const listMaxWidth = Math.max(
+    LIST_MIN_WIDTH,
+    (rowWidth ?? (typeof window === "undefined" ? 2000 : window.innerWidth)) -
+      PANE_MIN_WIDTH,
+  );
+  const clampListWidth = (value: number) =>
+    Math.min(listMaxWidth, Math.max(LIST_MIN_WIDTH, value));
+  const shownListWidth = clampListWidth(listWidth);
+  // Ends a drag under way: when the pointer is released or cancelled, or the
+  // reader goes away mid-drag.
+  const stopListResizeRef = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => stopListResizeRef.current?.(), []);
+  const startListResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    stopListResizeRef.current?.();
+    const startX = event.clientX;
+    const startWidth = shownListWidth;
+    let next = startWidth;
+    const move = (e: PointerEvent) => {
+      next = clampListWidth(startWidth + (e.clientX - startX));
+      setListWidth(next);
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      stopListResizeRef.current = undefined;
+      keepListWidth(next);
+    };
+    stopListResizeRef.current = stop;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+  // The same with the keys: right widens it, left narrows it.
+  const resizeListWithKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 80 : 24;
+    const change =
+      event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0;
+    if (!change) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const next = clampListWidth(shownListWidth + change);
+    setListWidth(next);
+    keepListWidth(next);
   };
 
   // New items (at the top) wait behind a button instead of moving the list.
@@ -562,7 +698,8 @@ export function ChatReaderView({
         ...(narrow
           ? { flex: 1 }
           : {
-              width: LIST_WIDTH,
+              width: shownListWidth,
+              flex: "none",
               borderRight: `1px solid ${UI_COLORS.border}`,
             }),
       }}
@@ -582,12 +719,14 @@ export function ChatReaderView({
             description={
               !items.length
                 ? "No messages yet"
-                : items.some((item) => inView(item))
-                  ? // This view has items: all archived.
-                    "Everything here is archived"
-                  : view === "for-you"
-                    ? "Nothing for you here: the rest is filed"
-                    : "Nothing filed"
+                : view === "starred"
+                  ? "No starred messages (s stars the open one)"
+                  : items.some((item) => inView(item))
+                    ? // This view has items: all archived.
+                      "Everything here is archived"
+                    : view === "for-you"
+                      ? "Nothing for you here: the rest is filed"
+                      : "Nothing filed"
             }
           />
         ) : null}
@@ -645,6 +784,15 @@ export function ChatReaderView({
                 >
                   {readerSender(first, userMap)}
                 </span>
+                {isItemStarred(item, stars) ? (
+                  <span
+                    aria-label="Starred"
+                    title="Starred"
+                    style={{ color: UI_COLORS.warning, flex: "none" }}
+                  >
+                    <Icon name="star-filled" />
+                  </span>
+                ) : null}
                 {info?.priority === "high" ? (
                   <span
                     aria-label="For you"
@@ -791,6 +939,17 @@ export function ChatReaderView({
       </span>
       <Button
         type="text"
+        aria-label={isItemStarred(selected, stars) ? "Unstar" : "Star"}
+        aria-pressed={isItemStarred(selected, stars)}
+        icon={
+          <Icon
+            name={isItemStarred(selected, stars) ? "star-filled" : "star"}
+          />
+        }
+        onClick={() => star(selected)}
+      />
+      <Button
+        type="text"
         aria-label={
           isItemArchived(selected, state) ? "Move to inbox" : "Archive"
         }
@@ -885,6 +1044,18 @@ export function ChatReaderView({
             onClick={() => open(findItem(visible, selectedIndex, 1))}
           >
             Older
+          </Button>
+          <Button
+            size="small"
+            aria-pressed={isItemStarred(selected, stars)}
+            icon={
+              <Icon
+                name={isItemStarred(selected, stars) ? "star-filled" : "star"}
+              />
+            }
+            onClick={() => star(selected)}
+          >
+            {isItemStarred(selected, stars) ? "Unstar" : "Star"}
           </Button>
           <Button size="small" onClick={() => archive(selected)}>
             {isItemArchived(selected, state) ? "Move to inbox" : "Archive"}
@@ -1030,7 +1201,7 @@ export function ChatReaderView({
               aria-label="Running turn"
               style={{
                 // The rest starts above the list's edge.
-                minWidth: LIST_WIDTH - 24,
+                minWidth: shownListWidth - 24,
                 flex: "0 0 auto",
                 display: "flex",
                 alignItems: "center",
@@ -1070,32 +1241,44 @@ export function ChatReaderView({
                   watermark,
                 }),
               );
-              if (!showArchived) setSelectedId(undefined);
+              if (!showArchived && view !== "starred") {
+                setSelectedId(undefined);
+              }
             }}
           >
             <Button size="small" disabled={!archivableCount}>
               Archive all
             </Button>
           </Popconfirm>
-          {itemInfo ? (
-            <Segmented
-              size="small"
-              aria-label="Which messages"
-              value={view}
-              onChange={(value) => setView(value as ReaderListView)}
-              options={[
-                {
-                  value: "for-you",
-                  label: unread ? `For you (${unread})` : "For you",
-                },
-                { value: "all", label: "All" },
-                {
-                  value: "filed",
-                  label: filedUnread ? `Filed (${filedUnread})` : "Filed",
-                },
-              ]}
-            />
-          ) : null}
+          <Segmented
+            size="small"
+            aria-label="Which messages"
+            value={view}
+            onChange={(value) => setView(value as ReaderListView)}
+            options={[
+              ...(itemInfo
+                ? [
+                    {
+                      value: "for-you",
+                      label: unread ? `For you (${unread})` : "For you",
+                    },
+                  ]
+                : []),
+              { value: "all", label: "All" },
+              ...(itemInfo
+                ? [
+                    {
+                      value: "filed",
+                      label: filedUnread ? `Filed (${filedUnread})` : "Filed",
+                    },
+                  ]
+                : []),
+              {
+                value: "starred",
+                label: starredCount ? `Starred (${starredCount})` : "Starred",
+              },
+            ]}
+          />
           <Checkbox
             checked={showArchived}
             onChange={(e) => setShowArchived(e.target.checked)}
@@ -1114,8 +1297,33 @@ export function ChatReaderView({
           )}
         </div>
       )}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+      <div ref={rowRef} style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {narrow && selected ? null : list}
+        {narrow ? null : (
+          // On the list's edge, taking no room of its own.
+          <div style={{ position: "relative", width: 0, flex: "none" }}>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the message list (left and right arrow keys)"
+              aria-valuenow={Math.round(shownListWidth)}
+              aria-valuemin={LIST_MIN_WIDTH}
+              aria-valuemax={Math.round(listMaxWidth)}
+              tabIndex={0}
+              onPointerDown={startListResize}
+              onKeyDown={resizeListWithKeys}
+              style={{
+                position: "absolute",
+                left: -3,
+                top: 0,
+                bottom: 0,
+                width: 6,
+                cursor: "col-resize",
+                zIndex: 1,
+              }}
+            />
+          </div>
+        )}
         {fullScreen ? (
           <>
             <div
@@ -1189,6 +1397,7 @@ const READER_KEYS: [string, string][] = [
   ["u", "Next unread message"],
   ["y", "Archive the open message (again: back to the inbox)"],
   ["m", "Mark the open message unread"],
+  ["s", "Star the open message (again: unstar)"],
   ["f", "Full screen for the open message (again, or Esc: back)"],
   ["?", "Show these shortcuts"],
 ];
