@@ -1139,7 +1139,7 @@ describe("open_file wait_for_ready", () => {
       wait_for_ready: true,
       change_history: false,
     });
-    expect(actions.initFileRedux).toHaveBeenCalledWith(path, undefined, {
+    expect(actions.initFileRedux).toHaveBeenCalledWith(path, "txt", {
       syncIdentityPathIsCanonical: true,
     });
     expect(ensureProjectIsOpen).not.toHaveBeenCalled();
@@ -1176,7 +1176,9 @@ describe("open_file wait_for_ready", () => {
         get_store: () => store,
         open_files,
         fs: () => ({
-          canonicalSyncIdentityPath: jest.fn().mockResolvedValue(syncPath),
+          canonicalSyncIdentityPath: jest.fn(async (path: string) =>
+            path === displayPath ? syncPath : "/data/other.json",
+          ),
         }),
         ensureProjectIsOpen: jest.fn().mockResolvedValue(undefined),
         open_in_new_browser_window: jest.fn(),
@@ -1204,6 +1206,24 @@ describe("open_file wait_for_ready", () => {
       expect(actions.initFileRedux).toHaveBeenCalledWith(
         syncPath,
         "todo.json",
+        { syncIdentityPathIsCanonical: true },
+      );
+
+      // An editor asked for by name wins, in the init as in the stored ext.
+      const other = "/home/user/links/other.todo.json";
+      await open_file(actions, {
+        path: other,
+        ext: "md",
+        embedded: true,
+        foreground: false,
+        foreground_project: false,
+        wait_for_ready: true,
+        change_history: false,
+      });
+      expect(openFilesState.get(other)?.ext).toBe("md");
+      expect(actions.initFileRedux).toHaveBeenLastCalledWith(
+        "/data/other.json",
+        "md",
         { syncIdentityPathIsCanonical: true },
       );
     } finally {
