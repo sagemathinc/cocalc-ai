@@ -22,9 +22,11 @@ even one swapped in mid-copy. The staged tree is bounded in size: the host's
 disk is not the project's quota.
 */
 
-import { mkdtemp, readdir, rm, utimes } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, readdir, readFile, rm, utimes } from "node:fs/promises";
+import { availableParallelism, tmpdir, totalmem } from "node:os";
+import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { projectPoolCgroupPath } from "@cocalc/project-runner/run/project-pool-cgroup";
 import {
   copyRegularFileBeneath,
   kindBeneath,
@@ -58,16 +60,84 @@ function positiveSetting(name: string, fallback: number): number {
     : fallback;
 }
 
+// Measured on a prod host (October 2026): a Claude controller's processes hold
+// about 0.5 GiB resident, and it mostly waits on the model, so memory, not CPU,
+// bounds how many can run.
+const CONTROLLER_MEMORY_BYTES = 512 * 1024 ** 2;
+const CONTROLLERS_PER_CPU = 32;
+// Controllers share their cgroups with the projects' own work: they may take at
+// most this share of a memory limit, leaving the rest for it.
+const CONTROLLER_MEMORY_SHARE = 0.5;
+
+// The default limits for a host with this many CPUs and this much memory for
+// projects (controllers run in the project pool's cgroup, so it is the pool's
+// memory limit when it has one, below the host's RAM), and a project with this
+// memory limit (their memory counts against it too; undefined when it has
+// none).
+export function defaultTranscriptStagings({
+  cpus,
+  memoryBytes,
+  projectMemoryBytes,
+}: {
+  cpus: number;
+  memoryBytes: number;
+  projectMemoryBytes?: number;
+}): { host: number; project: number } {
+  // Every project may run at least one.
+  const controllers = (bytes: number) =>
+    Math.max(
+      1,
+      Math.floor((bytes * CONTROLLER_MEMORY_SHARE) / CONTROLLER_MEMORY_BYTES),
+    );
+  const host = Math.min(
+    CONTROLLERS_PER_CPU * Math.max(1, cpus),
+    controllers(memoryBytes),
+  );
+  const project =
+    projectMemoryBytes == null
+      ? host
+      : Math.min(host, controllers(projectMemoryBytes));
+  return { host, project };
+}
+
+// A cgroup's memory.max, or undefined when it has no limit (or cannot be read).
+async function cgroupMemoryLimit(cgroup: string): Promise<number | undefined> {
+  try {
+    const raw = await readFile(join(cgroup, "memory.max"), "utf8");
+    const value = Number(raw.trim());
+    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // At most this many staging directories may exist on the host, and this many
 // for one project, counting copies kept after a failed copy back (which the
 // reaper removes once they are old): with the byte bound, this bounds the
-// host disk they use.
-export function maxTranscriptStagings(): { host: number; project: number } {
+// host disk they use. Every live Claude conversation holds one until the ACP
+// worker disposes it after it has been idle
+// (COCALC_ACP_HARNESS_IDLE_DISPOSE_MS), so the defaults follow what the host
+// and the project can actually run.
+export async function maxTranscriptStagings(
+  projectId: string,
+  projectPool = projectPoolCgroupPath(),
+): Promise<{ host: number; project: number }> {
+  const poolMemoryBytes = await cgroupMemoryLimit(projectPool);
+  const defaults = defaultTranscriptStagings({
+    cpus: availableParallelism(),
+    memoryBytes: Math.min(totalmem(), poolMemoryBytes ?? Infinity),
+    projectMemoryBytes: await cgroupMemoryLimit(
+      join(projectPool, `project-${projectId}`),
+    ),
+  });
   return {
-    host: positiveSetting("COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS", 32),
+    host: positiveSetting(
+      "COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS",
+      defaults.host,
+    ),
     project: positiveSetting(
       "COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS",
-      4,
+      defaults.project,
     ),
   };
 }
@@ -88,9 +158,13 @@ async function enforceStagingLimits(
     host++;
     if (owner === projectId) project++;
   }
-  if (host > limits.host || project > limits.project)
+  if (project > limits.project)
     throw Error(
-      "Too many Claude controllers are running on this project host; try again later",
+      `Too many Claude controllers are running in this project (at most ${limits.project}); try again later`,
+    );
+  if (host > limits.host)
+    throw Error(
+      `Too many Claude controllers are running on this project host (at most ${limits.host}); try again later`,
     );
 }
 
@@ -202,7 +276,7 @@ export async function stageClaudeTranscripts({
   projectHome,
   parts,
   maxBytes = maxTranscriptBytes(),
-  limits = maxTranscriptStagings(),
+  limits,
 }: {
   projectId: string;
   projectHome: string;
@@ -215,7 +289,10 @@ export async function stageClaudeTranscripts({
   // So that a file the controller did not change is not copied back.
   const staged = new Map<string, string>();
   try {
-    await enforceStagingLimits(projectId, limits);
+    await enforceStagingLimits(
+      projectId,
+      limits ?? (await maxTranscriptStagings(projectId)),
+    );
     await copyTree({
       fromRoot: projectHome,
       fromBase: base,
