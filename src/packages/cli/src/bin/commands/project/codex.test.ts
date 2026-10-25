@@ -40,7 +40,16 @@ function makeProgram(calls: any[]): Command {
 }
 
 function setArgs(...args: string[]): string[] {
-  return ["node", "test", "project", "codex", "auth", "api-key", "set", ...args];
+  return [
+    "node",
+    "test",
+    "project",
+    "codex",
+    "auth",
+    "api-key",
+    "set",
+    ...args,
+  ];
 }
 
 test("api-key set takes the key from --openai-api-key", async () => {
