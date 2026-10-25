@@ -568,6 +568,8 @@ async function runScheduledStorageOperation({
   reason?: string;
   /** Refused by storage admission, up front or at the mutation boundary. */
   admissionDeferred?: boolean;
+  /** Some Btrfs mutation ran before a refusal at a later boundary. */
+  mutated?: boolean;
 }> {
   const releaseReservation = allowStarvationOverride
     ? starvationQueue.reserve(
@@ -635,11 +637,13 @@ async function runScheduledStorageOperation({
       admission_mode: "observe",
     });
   }
+  const mutations = { count: 0 };
   try {
     try {
       let validationReason: string | undefined;
       await withBtrfsMutationContext(
         {
+          mutations,
           operation_id: ticket.operation_id,
           project_id,
           priority: "scheduled",
@@ -699,6 +703,7 @@ async function runScheduledStorageOperation({
         starvationOverride: false,
         reason: err.reason,
         admissionDeferred: true,
+        mutated: mutations.count > 0,
       };
     }
   } finally {
@@ -1595,8 +1600,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             dueAt,
             retryAt(outcome, row.snapshot_failures ?? 0),
           );
-          // (refused up front, or at the mutation boundary after it started)
-          refused = !result.ran && result.admissionDeferred === true;
+          // Refused up front, or at the first mutation boundary after it
+          // started; not if a snapshot was made before a prune was refused.
+          refused =
+            !result.ran &&
+            result.admissionDeferred === true &&
+            result.mutated !== true;
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           if (intervalWaiting && nextSnapshotDueAt != null) {
             onFutureDue?.(project_id, nextSnapshotDueAt);
@@ -1825,7 +1834,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 : "deferred"
             : "deferred";
           const nextRetry = retryAt(outcome, row.backup_failures ?? 0);
-          refused = !result.ran && result.admissionDeferred === true;
+          refused =
+            !result.ran &&
+            result.admissionDeferred === true &&
+            result.mutated !== true;
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           await report({
             host_id: hostId,
