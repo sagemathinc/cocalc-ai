@@ -5,8 +5,10 @@
 
 import { generate } from "password-hash";
 import {
+  PasswordHashBusyError,
   checkPassword,
   hashPassword,
+  passwordHashQueueStats,
   isPasswordHash,
   passwordNeedsRehash,
   tokenHash,
@@ -117,6 +119,69 @@ describe("password hashes", () => {
     expect(passwordNeedsRehash(legacy(password), { kdf: "scrypt" })).toBe(true);
     expect(passwordNeedsRehash(wrapped, { kdf: "scrypt" })).toBe(true);
     expect(passwordNeedsRehash(scrypt, { kdf: "scrypt" })).toBe(false);
+  });
+
+  it("admits a bounded burst and refuses the rest as busy", async () => {
+    let maxActive = 0;
+    let maxWaiting = 0;
+    const sample = setInterval(() => {
+      const { active, waiting } = passwordHashQueueStats();
+      maxActive = Math.max(maxActive, active);
+      maxWaiting = Math.max(maxWaiting, waiting);
+    }, 1);
+    const results = await Promise.allSettled(
+      Array.from({ length: 100 }, (_, i) =>
+        hashPassword(`burst${i}`, { kdf: "scrypt" }),
+      ),
+    );
+    clearInterval(sample);
+    const { active, waiting } = passwordHashQueueStats();
+    maxActive = Math.max(maxActive, active);
+    maxWaiting = Math.max(maxWaiting, waiting);
+    const refused = results.filter((r) => r.status === "rejected");
+    expect(refused.length).toBeGreaterThan(0);
+    for (const r of refused) {
+      expect((r as PromiseRejectedResult).reason).toBeInstanceOf(
+        PasswordHashBusyError,
+      );
+    }
+    expect(results.length - refused.length).toBeLessThanOrEqual(2 + 32);
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect(maxWaiting).toBeLessThanOrEqual(32);
+    expect(passwordHashQueueStats()).toEqual({ active: 0, waiting: 0 });
+  });
+
+  it("treats stored parameters outside the accepted envelope as no match", async () => {
+    const salt = Buffer.alloc(32, 1).toString("base64url");
+    const key = Buffer.alloc(32, 2).toString("base64url");
+    for (const [N, r, p] of [
+      [2 ** 20, 32, 16], // gigabytes and 16x the work
+      [2 ** 17, 8, 1], // 128 MiB
+      [2 ** 15, 8, 8], // 8x the work
+    ]) {
+      const stored = `scrypt$v1$${N}$${r}$${p}$${salt}$${key}`;
+      expect(isPasswordHash(stored)).toBe(false); // refused unparsed
+      const start = Date.now();
+      expect(await checkPassword("x", stored)).toBe(false);
+      expect(Date.now() - start).toBeLessThan(1000);
+    }
+    // Undersized salt or key.
+    const short = Buffer.alloc(8).toString("base64url");
+    expect(
+      await checkPassword("x", `scrypt$v1$32768$8$1$${short}$${key}`),
+    ).toBe(false);
+  });
+
+  it("rehashes anything but exactly the current policy", async () => {
+    const salt = Buffer.alloc(32, 1).toString("base64url");
+    const key = Buffer.alloc(32, 2).toString("base64url");
+    for (const params of ["16384$8$1", "32768$4$1", "32768$8$2"]) {
+      expect(
+        passwordNeedsRehash(`scrypt$v1$${params}$${salt}$${key}`, {
+          kdf: "scrypt",
+        }),
+      ).toBe(true);
+    }
   });
 
   it("bounds concurrent scrypt work but completes every hash", async () => {

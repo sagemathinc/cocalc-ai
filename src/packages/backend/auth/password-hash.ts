@@ -48,25 +48,47 @@ const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SCRYPT_SALT_BYTES = 32;
 const SCRYPT_KEY_BYTES = 32;
-// Bounds on parameters read from a stored hash.
-const MAX_SCRYPT_N = 2 ** 20;
-const MAX_SCRYPT_R = 32;
-const MAX_SCRYPT_P = 16;
-const MAX_LEGACY_ITERATIONS = 100_000;
+// The envelope of parameters accepted from a stored hash: a bad row must not
+// be able to make one check use much more memory or work than the policy.
+const MAX_SCRYPT_MEMORY = 64 * 1024 * 1024; // 128 * N * r bytes
+const MAX_SCRYPT_WORK = 4 * SCRYPT_N * SCRYPT_R * SCRYPT_P; // N * r * p
+const MIN_SCRYPT_BYTES = 16;
+const MAX_SCRYPT_BYTES = 64;
+// The old code refused more than 10000 iterations too (server/auth/hash.ts).
+const MAX_LEGACY_ITERATIONS = 10_000;
 
-// scrypt needs 128 * N * r bytes (32 MiB for the defaults).
 function scryptMaxmem(N: number, r: number): number {
-  return 128 * N * r + 16 * 1024 * 1024;
+  return 128 * N * r + 1024 * 1024;
 }
 
-// Bound concurrent scrypt computations, so a flood of sign-ins cannot exhaust
-// memory or the libuv thread pool (sign-in throttling limits the rate).
-const MAX_CONCURRENT_KDF = 4;
+// Admission for scrypt. At most MAX_ACTIVE_KDF run at once, below the libuv
+// default pool of 4 threads, so file system and DNS work never starves. At
+// most MAX_WAITING_KDF wait; beyond that a request fails at once with a
+// generic busy error (sign-in throttling counts only completed checks, so it
+// cannot bound a burst of concurrent requests by itself). This also bounds
+// how many submitted secrets are held in memory while waiting.
+const MAX_ACTIVE_KDF = 2;
+const MAX_WAITING_KDF = 32;
 let activeKdf = 0;
 const waitingKdf: (() => void)[] = [];
 
+/** Thrown when too many password checks are in progress. */
+export class PasswordHashBusyError extends Error {
+  code = "password_hash_busy";
+  constructor() {
+    super("The server is busy checking passwords. Please try again shortly.");
+  }
+}
+
+export function passwordHashQueueStats(): { active: number; waiting: number } {
+  return { active: activeKdf, waiting: waitingKdf.length };
+}
+
 async function withKdfSlot<T>(f: () => Promise<T>): Promise<T> {
-  if (activeKdf >= MAX_CONCURRENT_KDF) {
+  if (activeKdf >= MAX_ACTIVE_KDF) {
+    if (waitingKdf.length >= MAX_WAITING_KDF) {
+      throw new PasswordHashBusyError();
+    }
     await new Promise<void>((resolve) => waitingKdf.push(resolve));
   } else {
     activeKdf += 1;
@@ -227,20 +249,23 @@ function parseScryptFields(fields: string[]): ScryptParams | undefined {
   if (
     !Number.isInteger(N) ||
     N < 2 ||
-    N > MAX_SCRYPT_N ||
     (N & (N - 1)) !== 0 ||
     !Number.isInteger(r) ||
     r < 1 ||
-    r > MAX_SCRYPT_R ||
     !Number.isInteger(p) ||
     p < 1 ||
-    p > MAX_SCRYPT_P
+    128 * N * r > MAX_SCRYPT_MEMORY ||
+    N * r * p > MAX_SCRYPT_WORK
   ) {
     return;
   }
   const salt = Buffer.from(saltText, "base64url");
   const key = Buffer.from(keyText, "base64url");
-  if (salt.length === 0 || key.length === 0) return;
+  for (const bytes of [salt, key]) {
+    if (bytes.length < MIN_SCRYPT_BYTES || bytes.length > MAX_SCRYPT_BYTES) {
+      return;
+    }
+  }
   return { N, r, p, salt, key };
 }
 
@@ -259,16 +284,24 @@ async function newScrypt(secret: string): Promise<ScryptParams> {
   return { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, salt, key };
 }
 
+// A stored hash that scrypt rejects is a non-match, not a server error; only
+// the busy error propagates (the check did not happen).
 async function scryptMatches(
   secret: string,
   params: ScryptParams,
 ): Promise<boolean> {
-  const key = await scryptKey(secret, params.salt, {
-    N: params.N,
-    r: params.r,
-    p: params.p,
-    keylen: params.key.length,
-  });
+  let key: Buffer;
+  try {
+    key = await scryptKey(secret, params.salt, {
+      N: params.N,
+      r: params.r,
+      p: params.p,
+      keylen: params.key.length,
+    });
+  } catch (err) {
+    if (err instanceof PasswordHashBusyError) throw err;
+    return false;
+  }
   return equal(key, params.key);
 }
 
@@ -363,11 +396,14 @@ export function passwordNeedsRehash(
   const params = parseScryptFields(
     stored.slice(SCRYPT_PREFIX.length).split("$"),
   );
+  // Anything but exactly the current policy is replaced.
   return (
     params == null ||
-    params.N < SCRYPT_N ||
-    params.r < SCRYPT_R ||
-    params.key.length < SCRYPT_KEY_BYTES
+    params.N !== SCRYPT_N ||
+    params.r !== SCRYPT_R ||
+    params.p !== SCRYPT_P ||
+    params.salt.length !== SCRYPT_SALT_BYTES ||
+    params.key.length !== SCRYPT_KEY_BYTES
   );
 }
 
