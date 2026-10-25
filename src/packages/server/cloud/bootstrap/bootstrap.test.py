@@ -1646,6 +1646,120 @@ class BootstrapKernelKeyLimitsTest(unittest.TestCase):
             )
 
 
+class BootstrapKernelSysctlHardeningTest(unittest.TestCase):
+    def _proc_sys(self, root: Path, values: dict[str, str]) -> Path:
+        for key, value in values.items():
+            path = root / key.replace(".", "/")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{value}\n", encoding="utf-8")
+        return root
+
+    def test_writes_and_applies_the_managed_hardening_sysctls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            calls: list[tuple[list[str], str]] = []
+            logged: list[str] = []
+            proc_sys = self._proc_sys(
+                Path(tmpdir) / "proc-sys",
+                {
+                    "kernel.io_uring_disabled": "2",
+                    "vm.unprivileged_userfaultfd": "0",
+                    "kernel.apparmor_restrict_unprivileged_userns": "1",
+                    "kernel.unprivileged_bpf_disabled": "2",
+                    "kernel.perf_event_paranoid": "4",
+                },
+            )
+            with mock.patch.object(
+                bootstrap,
+                "run_best_effort",
+                lambda _cfg, args, desc: calls.append((args, desc)),
+            ), mock.patch.object(
+                bootstrap, "log_line", lambda _cfg, line: logged.append(line)
+            ):
+                bootstrap.configure_kernel_sysctl_hardening(
+                    cfg,
+                    sysctl_dir=Path(tmpdir) / "sysctl.d",
+                    proc_sys=proc_sys,
+                )
+            conf = (
+                Path(tmpdir) / "sysctl.d" / "92-cocalc-project-host-hardening.conf"
+            )
+            self.assertEqual(
+                conf.read_text(encoding="utf-8"),
+                "# Managed by CoCalc project-host: kernel attack surface reduction.\n"
+                "kernel.io_uring_disabled = 2\n"
+                "vm.unprivileged_userfaultfd = 0\n",
+            )
+            self.assertEqual(
+                calls,
+                [(["sysctl", "-e", "-p", str(conf)], "sysctl kernel hardening")],
+            )
+            self.assertFalse([line for line in logged if "WARNING" in line])
+
+    def test_reports_drift_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc_sys = self._proc_sys(
+                Path(tmpdir),
+                {
+                    "kernel.io_uring_disabled": "0",
+                    "vm.unprivileged_userfaultfd": "1",
+                    "kernel.apparmor_restrict_unprivileged_userns": "0",
+                    "kernel.unprivileged_bpf_disabled": "0",
+                    "kernel.perf_event_paranoid": "2",
+                },
+            )
+            self.assertEqual(
+                bootstrap.kernel_hardening_problems(proc_sys),
+                [
+                    "kernel.io_uring_disabled=0 (want 2)",
+                    "vm.unprivileged_userfaultfd=1 (want 0)",
+                    "kernel.apparmor_restrict_unprivileged_userns=0 (want >= 1)",
+                    "kernel.unprivileged_bpf_disabled=0 (want >= 1)",
+                    "kernel.perf_event_paranoid=2 (want >= 3)",
+                ],
+            )
+            # A kernel without a key is reported, never raised.
+            self.assertEqual(
+                bootstrap.kernel_hardening_problems(Path(tmpdir) / "missing"),
+                [
+                    "kernel.io_uring_disabled=missing (want 2)",
+                    "vm.unprivileged_userfaultfd=missing (want 0)",
+                    "kernel.apparmor_restrict_unprivileged_userns=missing (want >= 1)",
+                    "kernel.unprivileged_bpf_disabled=missing (want >= 1)",
+                    "kernel.perf_event_paranoid=missing (want >= 3)",
+                ],
+            )
+
+    def test_stricter_defaults_are_not_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc_sys = self._proc_sys(
+                Path(tmpdir),
+                {
+                    "kernel.io_uring_disabled": "2",
+                    "vm.unprivileged_userfaultfd": "0",
+                    "kernel.apparmor_restrict_unprivileged_userns": "1",
+                    "kernel.unprivileged_bpf_disabled": "2",
+                    "kernel.perf_event_paranoid": "4",
+                },
+            )
+            self.assertEqual(bootstrap.kernel_hardening_problems(proc_sys), [])
+
+    def test_rootctl_apply_sysctls_writes_the_same_hardening_file(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        apply = body.split("apply_project_host_sysctls() {", 1)[1].split("\n}\n", 1)[0]
+        heredoc = apply.split(
+            'cat > "${HARDENING_SYSCTL_CONFIG_PATH}" <<\'SYSCTL\'\n', 1
+        )[1].split("SYSCTL\n", 1)[0]
+        self.assertEqual(heredoc, bootstrap.kernel_hardening_sysctl_conf())
+        self.assertIn('sysctl -e -p "${HARDENING_SYSCTL_CONFIG_PATH}"', apply)
+        self.assertIn(
+            'HARDENING_SYSCTL_CONFIG_PATH="/etc/sysctl.d/'
+            + bootstrap.KERNEL_HARDENING_SYSCTL_CONF_NAME
+            + '"',
+            body,
+        )
+
+
 class BootstrapInotifyLimitsTest(unittest.TestCase):
     def test_configures_inotify_quotas_for_project_workloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7679,7 +7793,8 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
-            "configure_kernel_module_hardening configure_kernel_key_limits "
+            "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
+            "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
             "install_privileged_wrappers reconcile_storage_and_containment "
@@ -7750,7 +7865,8 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
-            "configure_kernel_module_hardening configure_kernel_key_limits "
+            "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
+            "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
             "install_privileged_wrappers ensure_cocalc_mount setup_shared_scratch "
@@ -8038,6 +8154,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("configure_daily_root_cleanup", lambda _cfg: None)
             patch("compute_image_size", lambda _cfg: 10)
             patch("configure_kernel_module_hardening", lambda _cfg: None)
+            patch("configure_kernel_sysctl_hardening", lambda _cfg: None)
             patch("configure_kernel_key_limits", lambda _cfg: None)
             patch("configure_inotify_limits", lambda _cfg: None)
             patch("configure_journald_limits", lambda _cfg: None)
