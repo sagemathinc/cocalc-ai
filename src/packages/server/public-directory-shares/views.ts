@@ -22,6 +22,8 @@ Reports:
   distinct viewers, split by role. Never who the other viewers were.
 - getViewAggregates: for admins, aggregates only (per day, per country),
   with counts made up of fewer than MIN_AGGREGATE_COUNT accounts suppressed.
+  Suppression protects each report handed on, not against an admin
+  subtracting overlapping reports: admins can read the table anyway.
 */
 
 import getLogger from "@cocalc/backend/logger";

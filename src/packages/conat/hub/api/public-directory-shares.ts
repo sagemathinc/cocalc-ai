@@ -305,7 +305,10 @@ export interface PublicDirectoryShareViewAggregate {
 
 // For admins: aggregates only. Anything made up of fewer than min_count
 // distinct accounts is left out: the totals are null, and such a day or
-// country is not listed at all, so not even its existence shows.
+// country is not listed at all, so not even its existence shows. This makes
+// one report safe to hand on (e.g. to an institution). It does not stop an
+// admin, who can read the table anyway, from subtracting overlapping reports
+// (a different role filter or range) to recover a suppressed count.
 export interface GetPublicDirectoryShareViewAggregatesResponse {
   since: string;
   min_count: number;
