@@ -285,11 +285,14 @@ export interface GetPublicDirectoryShareViewsResponse {
   share_id: string;
   since: string; // first day included, YYYY-MM-DD (UTC)
   by_day: (PublicDirectoryShareViewCounts & { day: string })[];
-  // each viewer once, with the role of their latest view in the range, so
-  // the split adds up to the total
+  // each viewer once, with the role (and below, the region) of their latest
+  // view in the range, so the splits add up to the total
   distinct_viewers: PublicDirectoryShareViewCounts;
-  // (No regions: owners choose the range, so comparing two ranges could
-  // tell one viewer's region. Admin aggregates have them.)
+  // Where they are, only as coarsely as the six regions of R2_REGIONS
+  // (@cocalc/util/consts/r2-regions; null when not known), and only regions
+  // with at least 5 viewers. Comparing two ranges can still sometimes tell
+  // one viewer's region (accepted for a region this coarse).
+  by_region: { region: string | null; viewers: number }[];
 }
 
 export interface GetPublicDirectoryShareViewAggregatesOptions {

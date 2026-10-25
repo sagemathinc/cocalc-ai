@@ -24,9 +24,10 @@ without waiting for it: a failed or slow write never blocks or fails a read.
 
 Reports:
 - getViews: for the share's owners and collaborators, counts per day and of
-  distinct viewers, split by role. Never who the other viewers were, nor
-  where: they choose the range, so comparing two ranges could tell one
-  viewer's region.
+  distinct viewers, split by role, and regions with at least
+  MIN_AGGREGATE_COUNT viewers. Never who the other viewers were. They choose
+  the range, so comparing two ranges can still sometimes tell one viewer's
+  region; William accepted that for a region this coarse (2026-10-25).
 - getViewAggregates: for admins, aggregates over one dimension (days or
   regions), leaving out buckets of fewer than MIN_AGGREGATE_COUNT accounts,
   and the totals too when any bucket is left out, so one report holds
@@ -266,10 +267,10 @@ export async function getViews({
     `,
     [share_id, since, today],
   );
-  // Each distinct viewer once, with the role of their latest view in the
-  // range, so the split adds up to the total.
+  // Each distinct viewer once, with the role and region of their latest
+  // view in the range, so the splits add up to the total.
   const latest = `
-    SELECT DISTINCT ON (account_id) account_id, viewer_role
+    SELECT DISTINCT ON (account_id) account_id, viewer_role, region
     FROM public_share_views
     WHERE share_id=$1 AND day >= $2::date AND day <= $3::date
     ORDER BY account_id, day DESC
@@ -277,6 +278,11 @@ export async function getViews({
   const { rows: distinct } = await pool.query(
     `SELECT COUNT(*) AS viewers, ${roleCounts("COUNT(*)")}
        FROM (${latest}) latest`,
+    [share_id, since, today],
+  );
+  const { rows: byRegion } = await pool.query(
+    `SELECT region, COUNT(*) AS viewers FROM (${latest}) latest
+      GROUP BY region ORDER BY region NULLS LAST`,
     [share_id, since, today],
   );
   const counts = (row: any) => ({
@@ -291,6 +297,13 @@ export async function getViews({
     since,
     by_day: byDay.map((row) => ({ day: row.day, ...counts(row) })),
     distinct_viewers: counts(distinct[0]),
+    // only regions with at least MIN_AGGREGATE_COUNT viewers
+    by_region: byRegion
+      .filter((row) => count(row.viewers) >= MIN_AGGREGATE_COUNT)
+      .map((row) => ({
+        region: row.region ?? null,
+        viewers: count(row.viewers),
+      })),
   };
 }
 

@@ -372,6 +372,8 @@ describe("public share views", () => {
         },
       ],
       distinct_viewers: { viewers: 4, owner: 1, collaborator: 1, other: 2 },
+      // (fewer than 5 in any region: none listed)
+      by_region: [],
     });
     expect(JSON.stringify(views)).not.toContain(VIEWER_ID);
     await expect(
@@ -409,7 +411,7 @@ describe("public share views", () => {
     expect(rows).toEqual([{ region: "apac" }]);
   });
 
-  it("counts each viewer once, with their latest role", async () => {
+  it("counts each viewer once, with their latest role and region", async () => {
     await locate(VIEWER_ID, "DE");
     await recordShareViewNow({
       share_id: SHARE_ID,
@@ -438,12 +440,36 @@ describe("public share views", () => {
       collaborator: 1,
       other: 0,
     });
-    expect(views).not.toHaveProperty("by_region");
+    // one viewer: their region is not listed
+    expect(views.by_region).toEqual([]);
     const { rows } = await pool().query(
       "SELECT region FROM public_share_views WHERE account_id=$1 ORDER BY day",
       [VIEWER_ID],
     );
     expect(rows.map((r) => r.region)).toEqual(["weur", "apac"]);
+  });
+
+  it("shows owners a region only once it has at least k viewers", async () => {
+    const now = new Date("2026-10-25T12:00:00Z");
+    for (let n = 0; n < MIN_AGGREGATE_COUNT + 1; n++) {
+      await locate(account(n), n < MIN_AGGREGATE_COUNT ? "DE" : "AU");
+      await recordShareViewNow({
+        share_id: SHARE_ID,
+        project_id: PROJECT_ID,
+        account_id: account(n),
+        now,
+      });
+    }
+    const views = await getViews({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+      share_id: SHARE_ID,
+      now,
+    });
+    expect(views.by_region).toEqual([
+      { region: "weur", viewers: MIN_AGGREGATE_COUNT },
+    ]);
+    expect(JSON.stringify(views)).not.toContain("oc");
   });
 
   it("gives admins only aggregates, leaving out anything under k accounts", async () => {
