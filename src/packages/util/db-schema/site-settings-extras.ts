@@ -346,10 +346,6 @@ export type SiteSettingsExtrasKeys =
   | "zendesk_username"
   | "zendesk_uri"
   | "support_account_id"
-  | "github_heading"
-  | "github_project_id"
-  | "github_username"
-  | "github_token"
   | "agent_connectors_heading"
   | "github_connector_client_id"
   | "github_connector_client_secret"
@@ -362,7 +358,6 @@ export type SiteSettingsExtrasKeys =
   | "sagebrush_purge_url"
   | "sagebrush_purge_secret"
   | "sagebrush_purge_obligation"
-  | "github_block"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
   | "pay_as_you_go_section"
@@ -1680,52 +1675,6 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Support"],
     group: "Support / Integrations",
     subgroup: "Support Messaging",
-  },
-  github_heading: {
-    name: "GitHub API Configuration",
-    desc: "CoCalc can mirror content from  GitHub at `https://yoursite.com/github/[url to github]`. This is just like what https://nbviewer.org does.",
-    default: "",
-    type: "header",
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
-  },
-  github_project_id: {
-    name: "GitHub Project ID",
-    desc: "If this is set to a `project_id` (a UUID v4 of a project on your server), then the share server will proxy GitHub URL's.  For example, when a user visits https://yoursite.com/github/sagemathinc/cocalc they see a rendered version.  They can star the repo from cocalc, edit it in cocalc, etc.  This extends your CoCalc server to provide similar functionality to what nbviewer.org provides.  Optionally set a GitHub username and personal access token below to massively increase GitHub's API rate limits.",
-    default: "",
-    valid: isValidUUID,
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
-  },
-  github_username: {
-    name: "GitHub Username",
-    desc: "This is a username for a GitHub Account.",
-    default: "",
-    show: () => true,
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
-  },
-  github_token: {
-    name: "GitHub Token",
-    desc: "This is a Personal Access token for the above GitHub account.  You can get one at https://github.com/settings/tokens -- you do not have to enable any scopes -- it used only to increase rate limits from 60/hour to 5000/hour.",
-    default: "",
-    password: true,
-    show: () => true,
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
-  },
-  github_block: {
-    name: "GitHub Abuse Block",
-    desc: "In case of **abuse**, you can block proxying of any GitHub URL that contains any string in this comma separated list.",
-    default: "",
-    show: () => true,
-    tags: ["GitHub"],
-    group: "Support / Integrations",
-    subgroup: "GitHub",
   },
   email_section: {
     name: "Email Configuration",

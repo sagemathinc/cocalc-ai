@@ -175,7 +175,6 @@ export interface Customize {
   mistralEnabled?: boolean;
   anthropicEnabled?: boolean;
   ollamaEnabled?: boolean;
-  githubProjectId?: string;
   support?: string;
   supportVideoCall?: string;
   project_hosts_nebius_enabled?: boolean;

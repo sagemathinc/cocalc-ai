@@ -120,7 +120,6 @@ export default async function getCustomize(
       ollamaEnabled: settings.ollama_enabled,
 
       // GitHub proxy project
-      githubProjectId: settings.github_project_id,
 
       // public info about SSO strategies
       strategies,
