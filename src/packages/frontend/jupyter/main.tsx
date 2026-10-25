@@ -188,7 +188,11 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     name,
     "edit_cell_metadata",
   ]);
-  const trust: undefined | boolean = useRedux([name, "trust"]);
+  // There is no notebook trust: every output renders through its isolated
+  // path (sanitized HTML, opaque frames, widgets in their own frames), so a
+  // live notebook renders like a trusted one.  JavaScript outputs of cells not
+  // run in this session wait for a click (active-output-group.tsx).
+  const trust = true;
   const check_select_kernel_init: undefined | boolean = useRedux([
     name,
     "check_select_kernel_init",
@@ -198,8 +202,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     "pendingCells",
   ]);
   const runCellOverlays:
-    | undefined
-    | immutable.Map<string, immutable.Map<string, any>> = useRedux([
+    undefined | immutable.Map<string, immutable.Map<string, any>> = useRedux([
     name,
     "runCellOverlays",
   ]);

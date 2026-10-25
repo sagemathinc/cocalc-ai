@@ -18,7 +18,6 @@ interface WidgetProps {
   value: Map<string, any>;
   actions?: JupyterActions;
   directory?: string;
-  trust?: boolean;
   id?: string;
 }
 

@@ -25,6 +25,12 @@ errors are caught and shown.
 The frame has no access to this page, its origin or the session.  Scripts can
 still use the network (e.g., to load a library from a CDN).
 
+There is no notebook trust and no click to run: like scripts in framed HTML
+output and widgets, the frame runs as soon as it is shown, since isolation,
+not a click, is what keeps the page safe.  (A browser that keeps a same-site
+sandboxed frame in the page's process, unlike Chromium, can still let a busy
+script slow the tab; serving frames from the content domain addresses that.)
+
 Other outputs of the cell (text, images, errors, ...) render normally.
 */
 
@@ -34,6 +40,7 @@ import jquerySource from "jquery/dist/jquery.min.js?raw";
 import AutosizedIframe from "./autosized-iframe";
 import {
   APPLY_THEME_FUNCTION,
+  FRAME_BASE_CSS,
   resolveShellTheme,
   sameTheme,
   useThemeChanges,
@@ -187,7 +194,7 @@ function scriptBody(code: string): string {
   return code.replace(/<\/(script)/gi, "<\\/$1").replace(/<!--/g, "<\\!--");
 }
 
-export const SHELL_DOCUMENT = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;font-family:var(--shell-fontFamily,sans-serif);font-size:var(--shell-fontSize,14px);color:var(--shell-text,CanvasText);background:var(--shell-surface,transparent)}pre.output_stdout,pre.output_stderr{margin:0;padding:2px 4px;white-space:pre-wrap;font-family:monospace}pre.output_stderr{background:var(--shell-dangerBg,#fff0f0)}</style><script>${scriptBody(
+export const SHELL_DOCUMENT = `<!doctype html><html><head><meta charset="utf-8"><style>${FRAME_BASE_CSS}html,body{margin:0;font-family:var(--shell-fontFamily,sans-serif);font-size:var(--shell-fontSize,14px);color:var(--shell-text,CanvasText);background:var(--shell-surface,transparent)}pre.output_stdout,pre.output_stderr{margin:0;padding:2px 4px;white-space:pre-wrap;font-family:monospace}pre.output_stderr{background:var(--shell-dangerBg,#fff0f0)}</style><script>${scriptBody(
   `${jquerySource}`,
 )}</script></head><body><div id="cocalc-outputs"></div><script>${scriptBody(
   BOOTSTRAP,

@@ -82,6 +82,7 @@ export const DOCS_ENTRY_IDS = [
   "troubleshooting.jupyter-kernel-terminated",
   "jupyter.custom-kernels",
   "jupyter.octave-kernel",
+  "jupyter.notebook-security",
   "python.use-python",
   "latex.build-papers",
   "editors.r-markdown",
