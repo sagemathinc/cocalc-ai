@@ -1595,7 +1595,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             dueAt,
             retryAt(outcome, row.snapshot_failures ?? 0),
           );
-          refused = !started && result.admissionDeferred === true;
+          // (refused up front, or at the mutation boundary after it started)
+          refused = !result.ran && result.admissionDeferred === true;
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           if (intervalWaiting && nextSnapshotDueAt != null) {
             onFutureDue?.(project_id, nextSnapshotDueAt);
