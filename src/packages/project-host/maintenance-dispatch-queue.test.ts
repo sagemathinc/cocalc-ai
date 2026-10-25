@@ -353,3 +353,61 @@ it("gives a refused operation's account turn back", async () => {
   await Promise.all([first, second]);
   expect(order).toEqual(["old-1", "busy", "old-1", "new"]);
 });
+
+it.each([
+  ["in dispatch order", ["a1", "a2"]],
+  ["in reverse order", ["a2", "a1"]],
+])(
+  "gives back every turn of concurrent refusals finishing %s",
+  async (_label, finishOrder) => {
+    const queue = new MaintenanceDispatchQueue();
+    const busy = gate();
+    const refusals = new Map(["a1", "a2"].map((id) => [id, gate()] as const));
+    const order: string[] = [];
+    const dated = (id: string, account: string, at: string) => ({
+      ...row(id, "paying", account),
+      backup_due_since: at,
+    });
+    const first = queue.submit({
+      rows: [
+        dated("a1", "a", "2026-09-01T00:00:00Z"),
+        dated("busy", "b", "2026-09-02T00:00:00Z"),
+        dated("a2", "a", "2026-09-03T00:00:00Z"),
+      ],
+      observedAt: 1,
+      parallelism: 3,
+      due,
+      run: async (r) => {
+        order.push(r.project_id);
+        if (r.project_id === "busy") return await busy.promise;
+        await refusals.get(r.project_id)!.promise;
+        return "deferred" as const;
+      },
+    });
+    await flush();
+    expect(order.sort()).toEqual(["a1", "a2", "busy"]);
+    for (const id of finishOrder) {
+      refusals.get(id)!.release();
+      await flush();
+      await flush();
+    }
+    // While "busy" still runs (so the queue keeps its turns), the refused
+    // oldest project returns with an account that was never served.
+    order.length = 0;
+    const second = queue.submit({
+      rows: [
+        dated("new", "c", "2026-09-04T00:00:00Z"),
+        dated("a1", "a", "2026-09-01T00:00:00Z"),
+      ],
+      observedAt: 2,
+      parallelism: 1,
+      due,
+      run: async (r) => {
+        order.push(r.project_id);
+      },
+    });
+    busy.release();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["a1", "new"]);
+  },
+);
