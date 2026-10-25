@@ -47,6 +47,8 @@ const OUTCOME_LABELS: Record<string, string> = {
   global_pool: "Refused: site budget used up",
   account_hold: "Refused: account on hold",
   unavailable: "Refused: funding service unavailable",
+  provider_keys_exhausted:
+    "Refused: every site Claude key is at its monthly limit",
   error: "Failed: admission error",
 };
 

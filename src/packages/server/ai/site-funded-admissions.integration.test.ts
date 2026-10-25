@@ -82,6 +82,22 @@ describe("site-funded admission funnel", () => {
     ]);
   });
 
+  it("records a Claude turn refused because every site key is at its limit", async () => {
+    const accountId = uuid();
+    await recordSiteFundedAdmissionLocal({
+      fundedTurnId: uuid(),
+      accountId,
+      provider: "anthropic",
+      outcome: "provider_keys_exhausted",
+      membershipTier: "free",
+      surface: "chat",
+    });
+    const funnel = await getSiteFundedFunnel();
+    expect(funnel.outcomes).toEqual([
+      { outcome: "provider_keys_exhausted", attempts: 1, accounts: 1 },
+    ]);
+  });
+
   it("refuses malformed records", async () => {
     await expect(attempt("not-a-uuid", "allowed")).rejects.toThrow(
       "invalid site-funded admission record",

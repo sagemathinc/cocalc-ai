@@ -217,25 +217,31 @@ export type SiteFundedAdmissionOutcome =
   | "ai_disabled"
   | "error";
 
-export const SITE_FUNDED_ADMISSION_OUTCOMES: readonly SiteFundedAdmissionOutcome[] =
-  [
-    "allowed",
-    "disabled",
-    "missing_price",
-    "account_limit_5h",
-    "account_limit_7d",
-    "account_concurrency",
-    "global_concurrency",
-    "global_pool",
-    "account_hold",
-    "ineligible",
-    "unavailable",
-    "unverified_email",
-    "no_allowance",
-    "banned",
-    "ai_disabled",
-    "error",
-  ];
+// Every outcome once, checked by the compiler: a new denial code that is
+// missing here would make the funnel refuse (and so lose) its attempts.
+const ADMISSION_OUTCOMES: Record<SiteFundedAdmissionOutcome, true> = {
+  allowed: true,
+  disabled: true,
+  missing_price: true,
+  account_limit_5h: true,
+  account_limit_7d: true,
+  account_concurrency: true,
+  global_concurrency: true,
+  global_pool: true,
+  account_hold: true,
+  ineligible: true,
+  unavailable: true,
+  provider_keys_exhausted: true,
+  unverified_email: true,
+  no_allowance: true,
+  banned: true,
+  ai_disabled: true,
+  error: true,
+};
+
+export const SITE_FUNDED_ADMISSION_OUTCOMES = Object.keys(
+  ADMISSION_OUTCOMES,
+) as readonly SiteFundedAdmissionOutcome[];
 
 export type SiteFundedAdmissionRecord = {
   fundedTurnId: string;
