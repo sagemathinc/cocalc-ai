@@ -2247,6 +2247,10 @@ describe("reading a whole thread in the log", () => {
     expect(change({ r: { x: "x" }, u: ["y"], a: { p2: "p2" } }, 5)).toEqual({
       state: { a: { p2: "p2" } },
     });
+    // Archive all too, with what was moved back out of it.
+    expect(change({ u: ["y"], aw: 7, ax: ["p1"] }, 5)).toEqual({
+      state: { aw: 7, ax: ["p1"] },
+    });
     // Nothing to clear: nothing is written.
     actions.isProjectReadStateReady = jest.fn(() => true);
     actions.updateReaderState.mockClear();

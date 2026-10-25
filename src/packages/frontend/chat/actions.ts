@@ -2534,9 +2534,12 @@ export class ChatActions extends Actions<ChatState> {
       !Object.keys(state.r ?? {}).length
     )
       return;
-    this.updateReaderState(threadKey, (current) => ({
-      state: current.a ? { a: current.a } : {},
-    }));
+    // Only the read and unread exceptions go: archives (one by one, or all
+    // at once) stay.
+    this.updateReaderState(threadKey, (current) => {
+      const { r: _read, u: _unread, ...kept } = current;
+      return { state: kept };
+    });
   };
 
   /** The reader view's state for a thread: {} until there is any. */
