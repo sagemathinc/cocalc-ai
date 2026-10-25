@@ -560,7 +560,9 @@ test("a resumed session gets newer CoCalc instructions with its next turn, once"
     t.after(() => client.dispose());
     // The version is the hash of the instructions the session is given.
     const { createHash } = require("node:crypto");
-    const { harnessSessionGuidance } = require("../../dist/acp/harness-context");
+    const {
+      harnessSessionGuidance,
+    } = require("../../dist/acp/harness-context");
     current = createHash("sha256")
       .update(
         [
@@ -1041,6 +1043,51 @@ test("agent adapter persists streaming and stop before summary and reuses its se
   await agent.evaluate({ ...request, session_id: "fixture-session" });
   assert.equal(events.at(-1).finalResponse, "Hello world 2");
   assert.equal(launches(), 1);
+});
+
+test("a completed turn is persisted (turnCompleted) before its summary", async (t) => {
+  const seen = [];
+  let events;
+  const created = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    undefined,
+    false,
+    undefined,
+    {
+      turnCompleted: async () => {
+        seen.push(events.filter((event) => event.type === "summary").length);
+      },
+    },
+  );
+  events = created.events;
+  await created.agent.evaluate(created.request);
+  assert.deepEqual(seen, [0]);
+  assert.equal(events.at(-1).type, "summary");
+});
+
+test("a turn whose completion cannot be persisted fails instead of reporting success", async (t) => {
+  const { agent, request, events } = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    undefined,
+    false,
+    undefined,
+    {
+      turnCompleted: async () => {
+        throw Error("transcripts were not saved");
+      },
+    },
+  );
+  await assert.rejects(agent.evaluate(request), /transcripts were not saved/);
+  assert.equal(
+    events.some((event) => event.type === "summary"),
+    false,
+  );
 });
 
 test("explicit context reset retires the warm harness before opening a fresh session", async (t) => {

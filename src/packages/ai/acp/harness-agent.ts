@@ -416,6 +416,8 @@ export class HarnessAgent implements AcpAgent {
           "outcome_unknown",
           "ACP prompt completed after interruption was requested; cancellation was not confirmed",
         );
+      // Persist the completed turn (e.g. staged transcripts) before success.
+      await client.turnCompleted();
       await request.stream({
         type: "summary",
         finalResponse,
