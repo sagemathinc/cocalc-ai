@@ -194,6 +194,26 @@ describe("the panel", () => {
     );
   });
 
+  it("is never wider than the chat it covers, even reopened with a wider stored width", () => {
+    localStorage.setItem("cocalc:attention-panel-width", "900");
+    const parent = document.createElement("div");
+    Object.defineProperty(parent, "clientWidth", { value: 500 });
+    document.body.appendChild(parent);
+    const props = {
+      records: [record("first")],
+      projected: new Set<string>(),
+      onClose: jest.fn(),
+    };
+    const { rerender } = render(<AttentionPanel {...props} open={false} />, {
+      container: parent,
+    });
+    rerender(<AttentionPanel {...props} open />);
+    const handle = screen.getByRole("separator");
+    expect(handle.getAttribute("aria-valuemax")).toBe("500");
+    expect(handle.getAttribute("aria-valuenow")).toBe("500");
+    localStorage.removeItem("cocalc:attention-panel-width");
+  });
+
   it("opens at a request it is sent to", () => {
     const scroll = jest.fn();
     Element.prototype.scrollIntoView = scroll;

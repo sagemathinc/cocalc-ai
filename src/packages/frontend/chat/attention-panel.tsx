@@ -15,7 +15,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -168,11 +168,22 @@ export function AttentionPanel({
     (record) =>
       isWaitingAttention(record) || isFailedDelivery(record, projected),
   ).length;
-  // At most as wide as the chat it covers.
+  // At most as wide as the chat it covers: its parent, which is laid out
+  // even while the panel is hidden, measured as it changes.
+  const [chatWidth, setChatWidth] = useState<number>();
+  useLayoutEffect(() => {
+    const parent = panelRef.current?.parentElement;
+    if (!parent) return;
+    const measure = () => setChatWidth(parent.clientWidth || undefined);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, []);
   const maxWidth = Math.max(
     MIN_WIDTH,
-    panelRef.current?.offsetParent?.clientWidth ??
-      (typeof window === "undefined" ? 2000 : window.innerWidth),
+    chatWidth ?? (typeof window === "undefined" ? 2000 : window.innerWidth),
   );
   const clamp = (value: number) =>
     Math.min(maxWidth, Math.max(MIN_WIDTH, value));
