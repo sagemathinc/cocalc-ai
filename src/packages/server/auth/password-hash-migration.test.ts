@@ -287,4 +287,23 @@ describe("password hash migration", () => {
     resetServerSettingsCache();
     expect(await getPasswordKdf()).toBe("scrypt");
   });
+
+  it("keeps scrypt when activation races a stale legacy write", async () => {
+    const set = (value: string) =>
+      callback2(db().set_server_setting, { name: "password_kdf", value });
+    const current = async () =>
+      (
+        await getPool().query(
+          "SELECT value FROM server_settings WHERE name='password_kdf'",
+        )
+      ).rows[0]?.value;
+    for (let i = 0; i < 10; i++) {
+      // Start from legacy (only possible before activation, as here).
+      await getPool().query(
+        "UPDATE server_settings SET value='legacy' WHERE name='password_kdf'",
+      );
+      await Promise.allSettled([set("scrypt"), set("legacy"), set("legacy")]);
+      expect(await current()).toBe("scrypt");
+    }
+  });
 });

@@ -12,11 +12,21 @@
  * this; the seed propagates "scrypt" to every bay, so the switch
  * holds cluster-wide.
  */
+export const PASSWORD_KDF_ONE_WAY_ERROR =
+  "password_kdf is one-way: once it is 'scrypt' it cannot be changed back";
+
 export function passwordKdfChangeError(
   current: unknown,
   next: unknown,
 ): string | undefined {
   if (`${current ?? ""}` === "scrypt" && `${next ?? ""}` !== "scrypt") {
-    return "password_kdf is one-way: once it is 'scrypt' it cannot be changed back";
+    return PASSWORD_KDF_ONE_WAY_ERROR;
   }
+}
+
+/** The refusal above, as an Error or as the message a callback API passes. */
+export function isPasswordKdfOneWayError(err: unknown): boolean {
+  const message =
+    typeof err === "string" ? err : (err as { message?: unknown })?.message;
+  return `${message ?? ""}`.startsWith(PASSWORD_KDF_ONE_WAY_ERROR);
 }
