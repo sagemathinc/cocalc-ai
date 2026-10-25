@@ -135,3 +135,87 @@ Table({
     },
   },
 });
+
+Table({
+  name: "sagebrush_sync_states",
+  rules: {
+    primary_key: "account_id",
+    pg_indexes: ["checked_at", "notice_next_at", "email_next_at"],
+  },
+  fields: {
+    account_id: {
+      type: "uuid",
+      desc: "Account that signed in to Sagebrush, on its home bay.",
+    },
+    sync_enabled: {
+      type: "boolean",
+      desc: "Whether the account's membership included Sagebrush sync when last checked.",
+    },
+    checked_at: {
+      type: "timestamp",
+      desc: "When the membership was last checked.",
+    },
+    changed_at: {
+      type: "timestamp",
+      desc: "When a change of sync_enabled was last seen (null: only the first check).",
+    },
+    notice_request_id: {
+      type: "uuid",
+      desc: "Idempotency id of the plan notice for the last change.",
+    },
+    notice_issued: {
+      type: "number",
+      pg_type: "bigint",
+      desc: "The notice's issued time (ms), which Sagebrush orders notices by.",
+    },
+    notice_limits: {
+      type: "map",
+      desc: "The limits the notice sends (the limits API's answer at the change).",
+    },
+    notice_attempts: {
+      type: "integer",
+      desc: "Delivery attempts of the notice so far.",
+    },
+    notice_next_at: {
+      type: "timestamp",
+      desc: "When the next notice attempt is due; null when none is pending.",
+    },
+    notice_accepted_at: {
+      type: "timestamp",
+      desc: "When Sagebrush accepted the notice.",
+    },
+    purge_after: {
+      type: "timestamp",
+      desc: "When Sagebrush will delete the synced data, as it last answered.",
+    },
+    email_stage: {
+      type: "string",
+      pg_type: "varchar(16)",
+      desc: "Retention emails after a sync membership ended: 'ended' (the first is due), 'before' (the second is due), 'done' or 'cancelled'; null when none are due.",
+    },
+    email_next_at: {
+      type: "timestamp",
+      desc: "When the next retention step (a read, then maybe an email) is due.",
+    },
+    email_attempts: {
+      type: "integer",
+      desc: "Failed attempts of the current retention step.",
+    },
+    ended_email_sent_at: {
+      type: "timestamp",
+      desc: "When the email saying sync ended was sent.",
+    },
+    before_email_sent_at: {
+      type: "timestamp",
+      desc: "When the email about two weeks before deletion was sent.",
+    },
+    last_error: {
+      type: "string",
+      desc: "Why the last notice or retention step failed.",
+    },
+    alerted_at: {
+      type: "timestamp",
+      desc: "When admins were alerted that a notice or retention step is overdue.",
+    },
+  },
+});

@@ -70,6 +70,7 @@ import { startApiKeyActionMaintenance } from "@cocalc/server/api/key-action-main
 import { startApiRelayQuotaMaintenance } from "@cocalc/server/membership/api-relay-maintenance";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import { startOAuthClientPurgeMaintenance } from "@cocalc/server/auth/oauth/purge";
+import { startSagebrushSyncRetentionMaintenance } from "@cocalc/server/sagebrush/sync-retention";
 import { startActiveUserMapHistoryMaintenance } from "@cocalc/server/active-user-map-history";
 import { startGrowthAnalyticsMaintenance } from "@cocalc/server/growth-analytics/maintenance";
 import { startFrontendAssetHealthMaintenance } from "@cocalc/server/monitoring/frontend-assets";
@@ -186,6 +187,7 @@ export function startConatApiBackgroundWorkers(): void {
   startNotificationEmailOutboxMaintenance();
   if (isPrimaryBayWorker()) {
     startOAuthClientPurgeMaintenance();
+    startSagebrushSyncRetentionMaintenance();
     initDeletedAccountRetention();
   }
   startMembershipSideEffectsMaintenance();

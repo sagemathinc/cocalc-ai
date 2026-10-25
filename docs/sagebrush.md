@@ -5,7 +5,7 @@ lets people share collections of notebooks, boards and data. Its accounts are
 CoCalc accounts. This document is the contract between CoCalc and the Sagebrush
 Cloudflare Worker, and it describes how CoCalc implements its side.
 
-There are three interfaces:
+There are four interfaces:
 
 1. **Sign in with CoCalc.** OAuth 2 authorization code with PKCE. CoCalc is the
    authorization server and the Sagebrush Worker is the only registered client.
@@ -13,19 +13,23 @@ There are three interfaces:
    from the account's membership tier.
 3. **Deletion.** When a user deletes their CoCalc account, CoCalc can ask the
    Worker to delete all of that user's Sagebrush data.
+4. **Sync notices and retention emails.** When a membership starts or stops
+   including Sagebrush sync, CoCalc tells the Worker, and it emails the user
+   when sync ends and again before the synced data is deleted.
 
 `COCALC_ORIGIN` below is a Worker setting: `https://cocalc.ai` in production and
 the dev server's origin for development.
 
 ## Secrets
 
-There are two secrets. William sets them on both sides, and they are never
-committed.
+There are two secrets, and a third for sync. William sets them on both sides,
+and they are never committed.
 
 | Secret        | CoCalc site setting       | Used for                              |
 | ------------- | ------------------------- | ------------------------------------- |
 | client secret | `sagebrush_client_secret` | the token exchange and the limits API |
 | purge key     | `sagebrush_purge_secret`  | signing the deletion requests         |
+| limits key    | `sagebrush_limits_secret` | signing the sync notices (section 4)  |
 
 A blank client secret turns off sign-in: the authorize page refuses the client
 and the token and limits endpoints answer `401 invalid_client`. It does not
@@ -267,6 +271,84 @@ account's home bay sends the queued requests:
 - It alerts the site admins when a request has not been accepted after a day,
   and immediately on a 401, which probably means the purge keys disagree.
 
+## 4. Sync notices and retention emails
+
+When an account's membership stops including sync, Sagebrush keeps its synced
+data read-only and deletes it `retention_days` later, and never less than 14 days
+after it learns of the change. Sagebrush sends no email. The Terms promise that
+CoCalc emails the user when the membership ends and again before deletion; this
+section is that promise.
+
+The calls go to the origin of the purge URL (`https://sagebrush.space`) and are
+signed like the purge requests, with the limits key, which is the Worker's
+`LIMITS_KEY`. A blank limits key turns this whole section off: no checks, no
+notices, no emails.
+
+### Noticing a change
+
+There are no membership events to hook: a membership ends when it expires. So the
+home bay checks the accounts that approved a Sagebrush sign-in there, a batch at a
+time, each again every 10 minutes:
+
+- it reads the limits (section 2);
+- it records `sync.enabled` in `sagebrush_sync_states`;
+- the first check of an account only records the state.
+
+An account whose home bay is elsewhere is skipped, and so is a deleted or banned
+one; deleted accounts are purged by section 3. A rehome leaves the row behind.
+The new home bay tracks the account once it signs in to Sagebrush again, and every
+sign-in asks for approval.
+
+### The plan notice
+
+When `sync.enabled` changes, CoCalc sends:
+
+```
+POST https://sagebrush.space/api/admin/limits      (signed with the limits key)
+Content-Type: application/json
+
+{"request_id": "<uuid>", "account_id": "<uuid>", "issued": <unix ms>, "limits": <the limits API's answer>}
+```
+
+- The Worker answers `200 {"applied": <boolean>}`. It applies a notice only if
+  `issued` is newer than what it holds, and ignores it for an account that never
+  synced. Either answer counts as delivered.
+- Anything else is retried, with the same `request_id` and `issued`, with backoff
+  from 1 minute to 6 hours.
+- Admins are alerted immediately on a 401, which probably means the keys
+  disagree, and after a day otherwise.
+- A newer change replaces a notice that is still pending.
+
+### The emails
+
+After the notice that ends sync is accepted:
+
+```
+GET https://sagebrush.space/api/admin/sync-retention/<account_id>   (signed, empty body)
+
+200 {"account_id": "<uuid>", "state": "readonly", "readonly_since": <unix ms>, "purge_after": <unix ms>, "now": <unix ms>}
+404  the account holds no synced data (it never synced, or its data was deleted)
+```
+
+1. **The first email**, "Sagebrush sync has ended: your synced data is
+   read-only", goes when the answer shows the data read-only with `purge_after`
+   ahead. It names the deletion date.
+2. **The second email**, "Your Sagebrush synced data will be deleted on
+   <date>", goes 14 days before `purge_after`. If that time has already passed, it
+   goes at once.
+3. **Before each email, CoCalc reads again** and sends nothing if any of these is
+   true:
+   - the answer is a 404;
+   - the state is no longer `readonly`;
+   - `readonly_since` is null (renewed);
+   - the date has passed;
+   - the account was deleted or banned.
+
+   A renewal that CoCalc sees itself sends a notice and cancels the emails.
+
+Failed reads and sends are retried with the same backoff and alerts. The emails
+go to the account's email address, through the site's transactional email.
+
 ## Implementation in CoCalc
 
 - `src/packages/server/auth/oauth/clients.ts`: the client registry. Adding a
@@ -293,6 +375,9 @@ account's home bay sends the queued requests:
   resolved on the account's home bay in the same call.
 - `src/packages/server/auth/oauth/purge.ts`: the purge queue, its signing and
   its worker.
+- `src/packages/server/sagebrush/sync-retention.ts`: section 4's checks, notices
+  and emails, run on the primary bay worker, and their table,
+  `sagebrush_sync_states`.
 - The deletion dialog lists the approved clients through
   `/api/v2/accounts/oauth-client-approvals`, to say their shared files are
   deleted too.
