@@ -746,7 +746,7 @@ function entryAllowed({
   });
 }
 
-export async function copySourceForPublicDirectoryShare({
+async function copySourceForPublicDirectoryShare({
   account_id,
   share,
   relativePath,
@@ -759,12 +759,6 @@ export async function copySourceForPublicDirectoryShare({
   path: string | string[];
   base_path?: string;
 }> {
-  // a copy reads the share as surely as a preview does
-  recordShareView({
-    share_id: share.id,
-    project_id: share.project_id,
-    account_id,
-  });
   const projectPath = joinProjectSharePath(share.path, relativePath);
   if (projectPath !== ".") {
     return {
@@ -1813,7 +1807,6 @@ export async function authorizeRead({
       share_id: summary.id,
       project_id: summary.project_id,
       account_id,
-      project_users: row.project_users,
     });
   }
   return {
@@ -2760,6 +2753,13 @@ export async function copyToProject({
       },
     },
     status: "queued",
+  });
+  // A copy reads the share as surely as a preview does. (Copying the whole
+  // share lists it first, through authorizeRead, which records that too.)
+  recordShareView({
+    share_id: share.id,
+    project_id: share.project_id,
+    account_id,
   });
   try {
     await publishLroSummary({

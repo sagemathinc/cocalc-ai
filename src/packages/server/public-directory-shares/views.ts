@@ -99,10 +99,8 @@ function addDays(day: string, days: number): string {
 }
 
 export function viewerRole(
-  project_users: Record<string, { group?: string } | null> | null | undefined,
-  account_id: string,
+  group?: string | null,
 ): PublicDirectoryShareViewerRole {
-  const group = project_users?.[account_id]?.group;
   return group === "owner" || group === "collaborator" ? group : "other";
 }
 
@@ -113,18 +111,21 @@ export function normalizeCountry(country?: string | null): string | null {
   return /^[A-Z]{2}$/.test(value) && value !== "XX" ? value : null;
 }
 
-async function lookUpViewerRole(
+// The account's group in the project, as the project's owning bay has it: a
+// share can be stored off its project's bay (a legacy placement), where the
+// local projects row is not authoritative. (Imported here because
+// project-remote-access imports the public share API.)
+async function projectGroup(
   project_id: string,
   account_id: string,
-): Promise<PublicDirectoryShareViewerRole> {
-  const { rows } = await getPool().query<{ group: string | null }>(
-    "SELECT users -> $2::text ->> 'group' AS \"group\" FROM projects WHERE project_id=$1",
-    [project_id, account_id],
-  );
-  return viewerRole(
-    { [account_id]: { group: rows[0]?.group ?? undefined } },
+): Promise<string | undefined> {
+  const { resolveProjectReferenceForMemberAllowRemote } =
+    await import("@cocalc/server/conat/project-remote-access");
+  const reference = await resolveProjectReferenceForMemberAllowRemote({
     account_id,
-  );
+    project_id,
+  });
+  return reference?.users?.[account_id]?.group;
 }
 
 let recordedDay = "";
@@ -134,8 +135,6 @@ export interface RecordShareViewOptions {
   share_id: string;
   project_id: string;
   account_id: string;
-  // the project's users, when the caller has them; otherwise looked up
-  project_users?: Record<string, { group?: string } | null> | null;
   country?: string | null;
   now?: Date;
 }
@@ -146,7 +145,6 @@ export async function recordShareViewNow({
   share_id,
   project_id,
   account_id,
-  project_users,
   country,
   now = new Date(),
 }: RecordShareViewOptions): Promise<void> {
@@ -161,10 +159,7 @@ export async function recordShareViewNow({
   recorded.add(key);
   try {
     await ensurePublicShareViewsSchema();
-    const role =
-      project_users !== undefined
-        ? viewerRole(project_users, account_id)
-        : await lookUpViewerRole(project_id, account_id);
+    const role = viewerRole(await projectGroup(project_id, account_id));
     await getPool().query(
       `
         INSERT INTO public_share_views
@@ -228,18 +223,15 @@ export async function getViews({
   const since = addDays(today, 1 - normalizeDays(days));
   await ensurePublicShareViewsSchema();
   const pool = getPool();
-  const { rows: shares } = await pool.query<{ allowed: boolean }>(
-    `
-      SELECT (COALESCE(projects.users -> $3::text ->> 'group', '')
-                IN ('owner', 'collaborator')) AS allowed
-      FROM public_project_paths pps
-      LEFT JOIN projects ON projects.project_id=pps.project_id
-      WHERE pps.id=$1 AND pps.project_id=$2
-      LIMIT 1
-    `,
-    [share_id, project_id, account_id],
+  const { rows: shares } = await pool.query(
+    "SELECT 1 FROM public_project_paths WHERE id=$1 AND project_id=$2",
+    [share_id, project_id],
   );
-  if (!shares[0] || (!shares[0].allowed && !(await isAdmin(account_id)))) {
+  if (shares.length === 0) throw Error("public directory share not found");
+  const role = viewerRole(
+    await projectGroup(project_id, account_id).catch(() => undefined),
+  );
+  if (role === "other" && !(await isAdmin(account_id))) {
     throw Error("public directory share not found");
   }
   const roleCounts = (expr: string) =>
@@ -395,6 +387,24 @@ export async function pruneShareViews({
     `DELETE FROM public_share_views
       WHERE day < ($1::date - ($2::int * INTERVAL '1 month'))::date`,
     [utcDay(now), retentionMonths],
+  );
+  // and any left by an account deleted on this bay
+  const { rowCount: deleted } = await getPool().query(
+    `DELETE FROM public_share_views v USING accounts a
+      WHERE a.account_id=v.account_id AND a.deleted IS TRUE`,
+  );
+  return (rowCount ?? 0) + (deleted ?? 0);
+}
+
+// When an account is deleted, on its home bay. Views of shares stored on
+// other bays are deleted with them after RETENTION_MONTHS.
+export async function deleteShareViewsForAccount(
+  account_id: string,
+): Promise<number> {
+  await ensurePublicShareViewsSchema();
+  const { rowCount } = await getPool().query(
+    "DELETE FROM public_share_views WHERE account_id=$1",
+    [account_id],
   );
   return rowCount ?? 0;
 }

@@ -6,12 +6,13 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import {
   authorizeRead,
-  copySourceForPublicDirectoryShare,
+  copyToProject,
   ensurePublicDirectorySharesSchema,
 } from "./index";
 import {
   MIN_AGGREGATE_COUNT,
   __test__,
+  deleteShareViewsForAccount,
   getViewAggregates,
   getViews,
   normalizeCountry,
@@ -22,6 +23,34 @@ import {
 } from "./views";
 
 let mockIsAdmin: jest.Mock;
+let mockCreateLro: jest.Mock;
+// The project's users as its owning bay has them. This bay's projects row has
+// none: the share is stored off its project's bay, as for a legacy placement.
+let mockProjectUsers: Record<string, { group: string }>;
+
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  resolveProjectReferenceForMemberAllowRemote: async ({ account_id }) =>
+    mockProjectUsers[account_id] ? { users: mockProjectUsers } : null,
+}));
+
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  createLro: (...args: any[]) => mockCreateLro(...args),
+}));
+
+jest.mock("@cocalc/server/lro/stream", () => ({
+  publishLroEvent: jest.fn(async () => undefined),
+  publishLroSummary: jest.fn(async () => undefined),
+}));
+
+jest.mock("@cocalc/server/projects/copy-worker", () => ({
+  triggerCopyLroWorker: jest.fn(),
+}));
+
+jest.mock("@cocalc/server/membership/project-limits", () => ({
+  assertCanIncreaseAccountStorage: jest.fn(async () => undefined),
+  getProjectOwnerAccountId: jest.fn(async () => null),
+  getPublicDirectoryShareLimitForAccount: jest.fn(async () => 100),
+}));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -58,13 +87,10 @@ function account(n: number): string {
 
 describe("viewer classification and suppression", () => {
   it("classifies viewers by their group in the project", () => {
-    expect(viewerRole(USERS, OWNER_ID)).toBe("owner");
-    expect(viewerRole(USERS, COLLAB_ID)).toBe("collaborator");
-    expect(viewerRole(USERS, VIEWER_ID)).toBe("other");
-    expect(viewerRole({ [VIEWER_ID]: { group: "viewer" } }, VIEWER_ID)).toBe(
-      "other",
-    );
-    expect(viewerRole(null, OWNER_ID)).toBe("other");
+    expect(viewerRole("owner")).toBe("owner");
+    expect(viewerRole("collaborator")).toBe("collaborator");
+    expect(viewerRole("viewer")).toBe("other");
+    expect(viewerRole(undefined)).toBe("other");
   });
 
   it("keeps only real two-letter country codes", () => {
@@ -95,10 +121,10 @@ describe("public share views", () => {
     await pool().query(
       `
         INSERT INTO projects (project_id, title, users, last_edited)
-        VALUES ($1, 'Shared project', $2::jsonb, NOW())
+        VALUES ($1, 'Shared project', '{}'::jsonb, NOW())
         ON CONFLICT (project_id) DO NOTHING
       `,
-      [PROJECT_ID, JSON.stringify(USERS)],
+      [PROJECT_ID],
     );
     await pool().query(
       `
@@ -111,10 +137,25 @@ describe("public share views", () => {
       `,
       [SHARE_ID, PROJECT_ID, OWNER_ID],
     );
+    await pool().query(
+      `
+        INSERT INTO public_project_path_slugs (
+          slug_lower, slug, owning_bay_id, public_project_path_id, project_id,
+          disabled, updated_at
+        )
+        VALUES ('views-test', 'views-test', 'bay-0', $1, $2, FALSE, NOW())
+      `,
+      [SHARE_ID, PROJECT_ID],
+    );
   }, 15000);
 
   beforeEach(async () => {
     mockIsAdmin = jest.fn(async () => false);
+    mockProjectUsers = USERS;
+    mockCreateLro = jest.fn(async (opts) => ({
+      ...opts,
+      op_id: "op-1",
+    }));
     __test__.resetRecordedCache();
     // (creates the table on the first run)
     await pruneShareViews({ retentionMonths: 0, now: new Date("2100-01-01") });
@@ -206,8 +247,8 @@ describe("public share views", () => {
     ]);
   });
 
-  it("looks up the viewer's role when the caller doesn't have the project's users", async () => {
-    for (const account_id of [OWNER_ID, VIEWER_ID]) {
+  it("takes the viewer's role from the project's bay, not this bay's projects row", async () => {
+    for (const account_id of [OWNER_ID, COLLAB_ID, VIEWER_ID]) {
       await recordShareViewNow({
         share_id: SHARE_ID,
         project_id: PROJECT_ID,
@@ -217,22 +258,37 @@ describe("public share views", () => {
     expect((await rows()).map((r) => [r.account_id, r.viewer_role])).toEqual(
       expect.arrayContaining([
         [OWNER_ID, "owner"],
+        [COLLAB_ID, "collaborator"],
         [VIEWER_ID, "other"],
       ]),
     );
   });
 
-  it("records a copy of the share, which reads it too", async () => {
-    await copySourceForPublicDirectoryShare({
-      account_id: VIEWER_ID,
-      share: { id: SHARE_ID, project_id: PROJECT_ID, path: "share" } as any,
-      relativePath: "a.txt",
+  const copy = (account_id: string) =>
+    copyToProject({
+      account_id,
+      slug: "views-test",
+      path: "a.txt",
+      destination_project_id: PROJECT_ID,
     });
+
+  it("records a copy once it is queued", async () => {
+    await copy(VIEWER_ID);
+    expect(mockCreateLro).toHaveBeenCalled();
     await waitForRows(1);
     expect((await rows())[0]).toMatchObject({
       account_id: VIEWER_ID,
       viewer_role: "other",
     });
+  });
+
+  it("does not record a copy that could not be queued", async () => {
+    mockCreateLro = jest.fn(async () => {
+      throw Error("could not queue");
+    });
+    await expect(copy(VIEWER_ID)).rejects.toThrow("could not queue");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await rows()).toEqual([]);
   });
 
   it("does not record a check that is not a read", async () => {
@@ -274,7 +330,6 @@ describe("public share views", () => {
         share_id: SHARE_ID,
         project_id: PROJECT_ID,
         account_id,
-        project_users: USERS,
         now: new Date(day),
       });
     }
@@ -420,5 +475,24 @@ describe("public share views", () => {
       await pruneShareViews({ now: new Date("2026-10-25T12:00:00Z") }),
     ).toBe(3);
     expect((await rows()).map((r) => r.day)).toEqual(["2025-09-26"]);
+  });
+
+  it("deletes a deleted account's views", async () => {
+    for (const account_id of [VIEWER_ID, OWNER_ID, COLLAB_ID]) {
+      await recordShareViewNow({
+        share_id: SHARE_ID,
+        project_id: PROJECT_ID,
+        account_id,
+      });
+    }
+    expect(await deleteShareViewsForAccount(VIEWER_ID)).toBe(1);
+    // and the retention loop deletes any of an account deleted on this bay
+    await pool().query(
+      `INSERT INTO accounts (account_id, deleted) VALUES ($1, TRUE)
+       ON CONFLICT (account_id) DO UPDATE SET deleted=TRUE`,
+      [COLLAB_ID],
+    );
+    expect(await pruneShareViews()).toBe(1);
+    expect((await rows()).map((r) => r.account_id)).toEqual([OWNER_ID]);
   });
 });
