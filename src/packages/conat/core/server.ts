@@ -62,7 +62,7 @@ import {
   MAX_SUBSCRIPTIONS_PER_CLIENT,
   MAX_SUBSCRIPTIONS_PER_HUB,
 } from "./constants";
-import { Patterns } from "./patterns";
+import { matchesPattern, Patterns } from "./patterns";
 import { is_array } from "@cocalc/util/misc";
 import { UsageMonitor } from "@cocalc/conat/monitor/usage";
 import { until } from "@cocalc/util/async-utils";
@@ -1634,6 +1634,23 @@ export class ConatServer extends EventEmitter {
       throw new ConatError("cluster-link publish is missing delivery targets", {
         code: 403,
       });
+    }
+    // Slot 6 is server-owned delivery metadata: only another server of this
+    // cluster (a cluster link, a fully trusted hub principal, or anyone in a
+    // no-auth deployment) may name targets, and only rooms subscribed to a
+    // pattern this subject matches. A client choosing it would bypass
+    // interest matching and deliver into other sockets' subscriptions.
+    if (data[6] != null) {
+      if (!this.isClusterControlUser(from) && !isHubUser(from)) {
+        throw new ConatError("delivery targets are server-owned", {
+          code: 403,
+        });
+      }
+      if (!validClusterDeliveryTargets(subject, data[6])) {
+        throw new ConatError("invalid cluster delivery targets", {
+          code: 403,
+        });
+      }
     }
     await this.authorizePublication({
       user: from,
@@ -3414,6 +3431,50 @@ export class ConatServer extends EventEmitter {
 
 function socketSubjectRoom({ socket, subject }) {
   return JSON.stringify({ id: socket.id, subject });
+}
+
+const MAX_CLUSTER_DELIVERY_TARGETS = 10_000;
+
+/**
+ * Cluster delivery targets as a peer server sends them: a bounded list of
+ * {pattern, target} where target is exactly the subscription room for that
+ * pattern ({id, subject: pattern}) and the published subject matches it.
+ */
+export function validClusterDeliveryTargets(
+  subject: string,
+  targets: unknown,
+): boolean {
+  if (
+    !Array.isArray(targets) ||
+    targets.length > MAX_CLUSTER_DELIVERY_TARGETS
+  ) {
+    return false;
+  }
+  for (const t of targets) {
+    if (t == null || typeof t !== "object") return false;
+    const { pattern, target } = t as { pattern?: unknown; target?: unknown };
+    if (typeof pattern !== "string" || typeof target !== "string") {
+      return false;
+    }
+    let room: any;
+    try {
+      room = JSON.parse(target);
+    } catch {
+      return false;
+    }
+    if (
+      room == null ||
+      typeof room !== "object" ||
+      Object.keys(room).length !== 2 ||
+      typeof room.id !== "string" ||
+      room.subject !== pattern ||
+      !isValidSubject(pattern) ||
+      !matchesPattern(pattern, subject)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function randomChoice<T>(v: Set<T>): T {
