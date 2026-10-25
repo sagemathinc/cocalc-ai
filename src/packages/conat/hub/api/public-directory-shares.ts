@@ -285,7 +285,12 @@ export interface GetPublicDirectoryShareViewsResponse {
   share_id: string;
   since: string; // first day included, YYYY-MM-DD (UTC)
   by_day: (PublicDirectoryShareViewCounts & { day: string })[];
+  // each viewer once, with the role (and below, the region) of their latest
+  // view in the range, so the splits add up to the total
   distinct_viewers: PublicDirectoryShareViewCounts;
+  // where they are, only as coarsely as the six regions of R2_REGIONS
+  // (@cocalc/util/consts/r2-regions); null when not known
+  by_region: { region: string | null; viewers: number }[];
 }
 
 export interface GetPublicDirectoryShareViewAggregatesOptions {
@@ -297,7 +302,7 @@ export interface GetPublicDirectoryShareViewAggregatesOptions {
   viewer_role?: PublicDirectoryShareViewerRole;
   days?: number;
   // one dimension per report (default "day")
-  group_by?: "day" | "country";
+  group_by?: "day" | "region";
 }
 
 export interface PublicDirectoryShareViewAggregate {
@@ -305,7 +310,7 @@ export interface PublicDirectoryShareViewAggregate {
   distinct_viewers: number;
 }
 
-// For admins: aggregates over one dimension, days or countries. A bucket
+// For admins: aggregates over one dimension, days or regions. A bucket
 // made up of fewer than min_count distinct accounts is not listed at all,
 // so not even its existence shows. The totals are given only when no bucket
 // was left out, so nothing in one report can be subtracted to recover a
@@ -316,10 +321,11 @@ export interface GetPublicDirectoryShareViewAggregatesResponse {
   since: string;
   until: string;
   min_count: number;
-  group_by: "day" | "country";
+  group_by: "day" | "region";
   totals: PublicDirectoryShareViewAggregate | null;
-  // key: the day (YYYY-MM-DD), or the country (ISO 3166-1 alpha-2, null
-  // when it isn't known)
+  // key: the day (YYYY-MM-DD), or the region (one of R2_REGIONS in
+  // @cocalc/util/consts/r2-regions, null when it isn't known); a viewer seen
+  // in two regions counts in both
   buckets: (PublicDirectoryShareViewAggregate & { key: string | null })[];
 }
 

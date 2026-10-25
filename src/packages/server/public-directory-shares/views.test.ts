@@ -15,10 +15,10 @@ import {
   deleteShareViewsForAccount,
   getViewAggregates,
   getViews,
-  normalizeCountry,
   pruneShareViews,
   recordShareViewNow,
   suppress,
+  viewerRegion,
   viewerRole,
 } from "./views";
 
@@ -93,14 +93,6 @@ describe("viewer classification and suppression", () => {
     expect(viewerRole(undefined)).toBe("other");
   });
 
-  it("keeps only real two-letter country codes", () => {
-    expect(normalizeCountry("de")).toBe("DE");
-    expect(normalizeCountry("XX")).toBeNull();
-    expect(normalizeCountry("T1")).toBeNull();
-    expect(normalizeCountry("")).toBeNull();
-    expect(normalizeCountry(undefined)).toBeNull();
-  });
-
   it("suppresses counts made up of fewer than k accounts", () => {
     expect(MIN_AGGREGATE_COUNT).toBe(5);
     expect(suppress({ viewer_days: "9", distinct_viewers: "4" })).toBeNull();
@@ -157,6 +149,7 @@ describe("public share views", () => {
       op_id: "op-1",
     }));
     __test__.resetRecordedCache();
+    await pool().query("DELETE FROM account_presence_locations");
     // (creates the table on the first run)
     await pruneShareViews({ retentionMonths: 0, now: new Date("2100-01-01") });
   });
@@ -177,6 +170,24 @@ describe("public share views", () => {
          FROM public_share_views ORDER BY day, account_id`,
     );
     return rows;
+  }
+
+  // the viewer's latest browser location, as the active user map keeps it
+  async function locate(
+    account_id: string,
+    country_code: string,
+    region_code: string | null = null,
+    expireHours = 1,
+  ) {
+    await pool().query(
+      `INSERT INTO account_presence_locations
+         (account_id, bay_id, observed_at, expire, country_code, region_code)
+       VALUES ($1, 'bay-0', NOW(), NOW() + ($4 * INTERVAL '1 hour'), $2, $3)
+       ON CONFLICT (account_id) DO UPDATE SET
+         country_code=EXCLUDED.country_code, region_code=EXCLUDED.region_code,
+         expire=EXCLUDED.expire`,
+      [account_id, country_code, region_code, expireHours],
+    );
   }
 
   async function waitForRows(n: number) {
@@ -361,6 +372,8 @@ describe("public share views", () => {
         },
       ],
       distinct_viewers: { viewers: 4, owner: 1, collaborator: 1, other: 2 },
+      // (no locations known)
+      by_region: [{ region: null, viewers: 4 }],
     });
     expect(JSON.stringify(views)).not.toContain(VIEWER_ID);
     await expect(
@@ -373,23 +386,80 @@ describe("public share views", () => {
     ).rejects.toThrow("public directory share not found");
   });
 
+  it("keeps only the viewer's region, never the country", async () => {
+    await locate(VIEWER_ID, "de");
+    expect(await viewerRegion(VIEWER_ID)).toBe("weur");
+    await locate(VIEWER_ID, "US", "CA");
+    expect(await viewerRegion(VIEWER_ID)).toBe("wnam");
+    for (const unknown of ["XX", "T1"]) {
+      await locate(VIEWER_ID, unknown);
+      expect(await viewerRegion(VIEWER_ID)).toBeNull();
+    }
+    await locate(VIEWER_ID, "JP", null, -1); // expired
+    expect(await viewerRegion(VIEWER_ID)).toBeNull();
+    expect(await viewerRegion(OWNER_ID)).toBeNull(); // none
+    await locate(OWNER_ID, "JP");
+    await recordShareViewNow({
+      share_id: SHARE_ID,
+      project_id: PROJECT_ID,
+      account_id: OWNER_ID,
+    });
+    const { rows } = await pool().query(
+      "SELECT region FROM public_share_views WHERE account_id=$1",
+      [OWNER_ID],
+    );
+    expect(rows).toEqual([{ region: "apac" }]);
+  });
+
+  it("counts each viewer once, with their latest role and region", async () => {
+    await locate(VIEWER_ID, "DE");
+    await recordShareViewNow({
+      share_id: SHARE_ID,
+      project_id: PROJECT_ID,
+      account_id: VIEWER_ID,
+      now: new Date("2026-10-24T08:00:00Z"),
+    });
+    // then invited, and travelling
+    mockProjectUsers = { ...USERS, [VIEWER_ID]: { group: "collaborator" } };
+    await locate(VIEWER_ID, "JP");
+    await recordShareViewNow({
+      share_id: SHARE_ID,
+      project_id: PROJECT_ID,
+      account_id: VIEWER_ID,
+      now: new Date("2026-10-25T08:00:00Z"),
+    });
+    const views = await getViews({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+      share_id: SHARE_ID,
+      now: new Date("2026-10-25T12:00:00Z"),
+    });
+    expect(views.distinct_viewers).toEqual({
+      viewers: 1,
+      owner: 0,
+      collaborator: 1,
+      other: 0,
+    });
+    expect(views.by_region).toEqual([{ region: "apac", viewers: 1 }]);
+  });
+
   it("gives admins only aggregates, leaving out anything under k accounts", async () => {
     const now = new Date("2026-10-25T12:00:00Z");
     for (let n = 0; n < MIN_AGGREGATE_COUNT; n++) {
+      if (n < MIN_AGGREGATE_COUNT - 1) await locate(account(n), "DE");
       await recordShareViewNow({
         share_id: SHARE_ID,
         project_id: PROJECT_ID,
         account_id: account(n),
-        country: n < MIN_AGGREGATE_COUNT - 1 ? "DE" : null,
         now,
       });
     }
     // a single viewer on another day
+    await locate(account(99), "JP");
     await recordShareViewNow({
       share_id: SHARE_ID,
       project_id: PROJECT_ID,
       account_id: account(99),
-      country: "FR",
       now: new Date("2026-10-23T12:00:00Z"),
     });
     await expect(
@@ -432,15 +502,24 @@ describe("public share views", () => {
       ],
     });
     expect(JSON.stringify(report)).not.toContain("2026-10-23");
-    // 4 in DE, 1 unknown, 1 in FR: each too small, so no country shows
-    const byCountry = await getViewAggregates({
+    // 4 in weur, 1 in apac, 1 unknown: each too small, so no region shows
+    const byRegion = await getViewAggregates({
       account_id: VIEWER_ID,
-      group_by: "country",
+      group_by: "region",
       now,
     });
-    expect(byCountry.buckets).toEqual([]);
-    expect(byCountry.totals).toBeNull();
-    expect(JSON.stringify(byCountry)).not.toMatch(/DE|FR/);
+    expect(byRegion.buckets).toEqual([]);
+    expect(byRegion.totals).toBeNull();
+    expect(JSON.stringify(byRegion)).not.toMatch(/weur|apac/);
+    // totals and buckets in one statement, so from one snapshot
+    const spy = jest.spyOn(pool(), "query");
+    spies.push(spy);
+    await getViewAggregates({ account_id: VIEWER_ID, now });
+    expect(
+      spy.mock.calls.filter(([sql]) =>
+        `${sql}`.includes("FROM public_share_views"),
+      ).length,
+    ).toBe(1);
     // with nothing left out, the totals are there
     const lastDay = await getViewAggregates({
       account_id: VIEWER_ID,

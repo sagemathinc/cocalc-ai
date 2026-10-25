@@ -7,11 +7,16 @@
 Who viewed a public directory share.
 
 Operators and a share's owners need to know who viewed a share, and an
-institution asked for aggregate reports (views by country, say). So when an
+institution asked for aggregate reports. So when an
 account reads a share (authorizeRead, which the project host calls before
 serving the share's files), this records that the account read something in
 that share on that UTC day: one row per (share, account, day), never which
 path and not how often. Rows are deleted after RETENTION_MONTHS.
+
+Where the viewer is, only as coarsely as one of the six regions of
+R2_REGIONS: from the viewer's latest browser location on this bay
+(account_presence_locations, kept while the active user map is enabled),
+else unknown. Never the country or city.
 
 The row is written on the bay that owns the share, at most once per
 (share, account, day) per hub process thanks to an in-memory cache, and
@@ -19,9 +24,10 @@ without waiting for it: a failed or slow write never blocks or fails a read.
 
 Reports:
 - getViews: for the share's owners and collaborators, counts per day and of
-  distinct viewers, split by role. Never who the other viewers were.
+  distinct viewers, split by role and by region. Never who the other viewers
+  were.
 - getViewAggregates: for admins, aggregates over one dimension (days or
-  countries), leaving out buckets of fewer than MIN_AGGREGATE_COUNT accounts,
+  regions), leaving out buckets of fewer than MIN_AGGREGATE_COUNT accounts,
   and the totals too when any bucket is left out, so one report holds
   nothing to subtract. Comparing several reports can still recover a
   suppressed count, which is why a set of reports needs review before it is
@@ -32,6 +38,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
+import { mapCountryRegionToR2Region } from "@cocalc/util/consts/r2-regions";
 import type {
   GetPublicDirectoryShareViewAggregatesOptions,
   GetPublicDirectoryShareViewAggregatesResponse,
@@ -69,7 +76,7 @@ export async function ensurePublicShareViewsSchema(): Promise<void> {
         day DATE NOT NULL,
         project_id UUID NOT NULL,
         viewer_role VARCHAR(16) NOT NULL,
-        country CHAR(2),
+        region VARCHAR(8),
         first_at TIMESTAMP NOT NULL DEFAULT NOW(),
         -- (day before account_id, so a share's report reads only its days)
         PRIMARY KEY (share_id, day, account_id)
@@ -109,11 +116,24 @@ export function viewerRole(
   return group === "owner" || group === "collaborator" ? group : "other";
 }
 
-// ISO 3166-1 alpha-2 only; Cloudflare's XX (unknown) and T1 (Tor) are not
-// countries.
-export function normalizeCountry(country?: string | null): string | null {
-  const value = `${country ?? ""}`.trim().toUpperCase();
-  return /^[A-Z]{2}$/.test(value) && value !== "XX" ? value : null;
+// The viewer's region, from the latest browser location this bay has for
+// the account; null when there is none (e.g. the active user map is off, or
+// the account's browser connects to another bay).
+export async function viewerRegion(account_id: string): Promise<string | null> {
+  const { rows } = await getPool().query<{
+    country_code: string | null;
+    region_code: string | null;
+  }>(
+    `SELECT country_code, region_code FROM account_presence_locations
+      WHERE account_id=$1 AND expire > NOW()`,
+    [account_id],
+  );
+  const country = `${rows[0]?.country_code ?? ""}`.trim().toUpperCase();
+  // Cloudflare: XX unknown, T1 Tor
+  if (!/^[A-Z]{2}$/.test(country) || country === "XX" || country === "T1") {
+    return null;
+  }
+  return mapCountryRegionToR2Region(country, rows[0]?.region_code);
 }
 
 // The account's group in the project, as the project's owning bay has it: a
@@ -140,7 +160,6 @@ export interface RecordShareViewOptions {
   share_id: string;
   project_id: string;
   account_id: string;
-  country?: string | null;
   now?: Date;
 }
 
@@ -150,7 +169,6 @@ export async function recordShareViewNow({
   share_id,
   project_id,
   account_id,
-  country,
   now = new Date(),
 }: RecordShareViewOptions): Promise<void> {
   const day = utcDay(now);
@@ -165,22 +183,15 @@ export async function recordShareViewNow({
   try {
     await ensurePublicShareViewsSchema();
     const role = viewerRole(await projectGroup(project_id, account_id));
+    const region = await viewerRegion(account_id);
     await getPool().query(
       `
         INSERT INTO public_share_views
-          (share_id, account_id, day, project_id, viewer_role, country, first_at)
+          (share_id, account_id, day, project_id, viewer_role, region, first_at)
         VALUES ($1, $2, $3::date, $4, $5, $6, $7)
         ON CONFLICT (share_id, day, account_id) DO NOTHING
       `,
-      [
-        share_id,
-        account_id,
-        day,
-        project_id,
-        role,
-        normalizeCountry(country),
-        now,
-      ],
+      [share_id, account_id, day, project_id, role, region, now],
     );
   } catch (err) {
     // so a later read tries again
@@ -254,13 +265,22 @@ export async function getViews({
     `,
     [share_id, since, today],
   );
+  // Each distinct viewer once, with the role and region of their latest
+  // view in the range, so the splits add up to the total.
+  const latest = `
+    SELECT DISTINCT ON (account_id) account_id, viewer_role, region
+    FROM public_share_views
+    WHERE share_id=$1 AND day >= $2::date AND day <= $3::date
+    ORDER BY account_id, day DESC
+  `;
   const { rows: distinct } = await pool.query(
-    `
-      SELECT COUNT(DISTINCT account_id) AS viewers,
-             ${roleCounts("COUNT(DISTINCT account_id)")}
-      FROM public_share_views
-      WHERE share_id=$1 AND day >= $2::date AND day <= $3::date
-    `,
+    `SELECT COUNT(*) AS viewers, ${roleCounts("COUNT(*)")}
+       FROM (${latest}) latest`,
+    [share_id, since, today],
+  );
+  const { rows: byRegion } = await pool.query(
+    `SELECT region, COUNT(*) AS viewers FROM (${latest}) latest
+      GROUP BY region ORDER BY region NULLS LAST`,
     [share_id, since, today],
   );
   const counts = (row: any) => ({
@@ -275,6 +295,10 @@ export async function getViews({
     since,
     by_day: byDay.map((row) => ({ day: row.day, ...counts(row) })),
     distinct_viewers: counts(distinct[0]),
+    by_region: byRegion.map((row) => ({
+      region: row.region ?? null,
+      viewers: count(row.viewers),
+    })),
   };
 }
 
@@ -321,7 +345,7 @@ export async function getViewAggregates({
   if (viewer_role != null && !VIEWER_ROLES.includes(viewer_role)) {
     throw Error("invalid viewer_role");
   }
-  if (group_by !== "day" && group_by !== "country") {
+  if (group_by !== "day" && group_by !== "region") {
     throw Error("invalid group_by");
   }
   const today = utcDay(now);
@@ -341,34 +365,37 @@ export async function getViewAggregates({
   const where = clauses.join(" AND ");
   const aggregate = `COUNT(*) AS viewer_days,
     COUNT(DISTINCT account_id) AS distinct_viewers`;
-  const key = group_by === "day" ? "to_char(day, 'YYYY-MM-DD')" : "country";
-  const pool = getPool();
-  const [totals, grouped] = await Promise.all([
-    pool.query(`SELECT ${aggregate} FROM public_share_views WHERE ${where}`, [
-      ...params,
-    ]),
-    pool.query(
-      `
-        SELECT ${key} AS key, ${aggregate}
+  const key = group_by === "day" ? "to_char(day, 'YYYY-MM-DD')" : "region";
+  // One statement, so the totals and the buckets come from one snapshot: a
+  // view written between two queries could make the totals give a left-out
+  // bucket away.
+  const { rows } = await getPool().query(
+    `
+      SELECT key, GROUPING(key) = 1 AS is_total, ${aggregate}
+      FROM (
+        SELECT ${key} AS key, account_id
         FROM public_share_views WHERE ${where}
-        GROUP BY 1 ORDER BY 1 NULLS LAST
-      `,
-      [...params],
-    ),
-  ]);
+      ) v
+      GROUP BY GROUPING SETS ((key), ())
+      ORDER BY is_total, key NULLS LAST
+    `,
+    params,
+  );
+  const grouped = rows.filter((row) => !row.is_total);
+  const total = rows.find((row) => row.is_total) ?? {};
   // A left-out bucket leaves out the totals as well: totals minus the
   // listed buckets would give the left-out ones away.
-  const buckets = grouped.rows.flatMap((row) => {
+  const buckets = grouped.flatMap((row) => {
     const aggregate = suppress(row);
     return aggregate == null ? [] : [{ key: row.key ?? null, ...aggregate }];
   });
-  const complete = buckets.length === grouped.rows.length;
+  const complete = buckets.length === grouped.length;
   return {
     since,
     until: today,
     min_count: MIN_AGGREGATE_COUNT,
     group_by,
-    totals: complete ? suppress(totals.rows[0] ?? {}) : null,
+    totals: complete ? suppress(total) : null,
     buckets,
   };
 }
