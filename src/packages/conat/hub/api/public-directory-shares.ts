@@ -285,8 +285,9 @@ export interface GetPublicDirectoryShareViewsResponse {
   share_id: string;
   since: string; // first day included, YYYY-MM-DD (UTC)
   by_day: (PublicDirectoryShareViewCounts & { day: string })[];
-  // each viewer once, with the role (and below, the region) of their latest
-  // view in the range, so the splits add up to the total
+  // each viewer once, with the role (and below, the region) recorded on
+  // their latest day in the range, as of their first read that day (a view
+  // is recorded once a day), so the splits add up to the total
   distinct_viewers: PublicDirectoryShareViewCounts;
   // Where they are, only as coarsely as the six regions of R2_REGIONS
   // (@cocalc/util/consts/r2-regions; null when not known), and only regions

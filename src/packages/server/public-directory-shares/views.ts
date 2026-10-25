@@ -267,8 +267,9 @@ export async function getViews({
     `,
     [share_id, since, today],
   );
-  // Each distinct viewer once, with the role and region of their latest
-  // view in the range, so the splits add up to the total.
+  // Each distinct viewer once, with the role and region recorded on their
+  // latest day in the range (as of their first read that day: later reads
+  // that day are not written), so the splits add up to the total.
   const latest = `
     SELECT DISTINCT ON (account_id) account_id, viewer_role, region
     FROM public_share_views
