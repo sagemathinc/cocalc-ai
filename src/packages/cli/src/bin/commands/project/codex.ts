@@ -310,28 +310,31 @@ export function registerProjectCodexCommands(
         },
         command: Command,
       ) => {
+        // withContext reruns the callback after a fresh-auth elevation, and
+        // stdin can only be read once, so read the key at most once.
+        let keyRead: Promise<string> | undefined;
+        const readKey = async (): Promise<string> => {
+          const sources = [
+            opts.openaiApiKey != null,
+            opts.keyFile != null,
+            !!opts.stdin,
+          ].filter(Boolean).length;
+          if (sources !== 1) {
+            throw new Error(
+              "give the key with exactly one of --openai-api-key, --key-file or --stdin",
+            );
+          }
+          if (opts.keyFile != null) return readApiKeyFile(opts.keyFile);
+          if (opts.stdin) return await readAllStdin();
+          return `${opts.openaiApiKey}`;
+        };
         await withContext(
           command,
           "project codex auth api-key set",
           async (ctx) => {
             const scope = `${opts.scope ?? "project"}`.trim().toLowerCase();
-            const sources = [
-              opts.openaiApiKey != null,
-              opts.keyFile != null,
-              !!opts.stdin,
-            ].filter(Boolean).length;
-            if (sources !== 1) {
-              throw new Error(
-                "give the key with exactly one of --openai-api-key, --key-file or --stdin",
-              );
-            }
-            const apiKey = (
-              opts.keyFile != null
-                ? readApiKeyFile(opts.keyFile)
-                : opts.stdin
-                  ? await readAllStdin()
-                  : `${opts.openaiApiKey}`
-            ).trim();
+            keyRead ??= readKey();
+            const apiKey = (await keyRead).trim();
             if (!apiKey) {
               throw new Error("the OpenAI API key must be non-empty");
             }
