@@ -28,6 +28,7 @@ function health(): ProjectRecoveryHealth {
     host_maintenance_blocks: [],
     by_host_class: [],
     oldest_debt: [],
+    parked_hosts: [],
   };
 }
 
