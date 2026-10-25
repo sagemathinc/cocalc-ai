@@ -553,6 +553,8 @@ ${skill}
       projectId,
       projectHome: projectPaths.home,
       parts: transcript.parts,
+      // only this conversation's session, not every session in the tree
+      sessionId: conversation.sessionId,
     });
     sessionDirectory = transcripts.directory;
     const leases = createRenewableCliLease(() =>
