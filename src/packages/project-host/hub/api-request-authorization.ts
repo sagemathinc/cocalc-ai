@@ -73,6 +73,48 @@ export const EXAM_PROJECT_HOST_HUB_METHODS = new Set([
   "system.getServiceAdmissionConfig",
 ]);
 
+const MAX_REQUEST_PATH_LENGTH = 4096;
+
+/**
+ * A project may report only the file downloads its own proxy served. The
+ * host forwards this to the bay with its own (host) scope, and the bay trusts
+ * host-scoped reports for egress accounting and relay-abuse enforcement, so
+ * a project must not be able to add another category, abuse evidence, or
+ * other metadata. Rewrites args in place: these are the arguments the method
+ * is then called with.
+ */
+function restrictProjectEgressReport(args: any[], subject: string): void {
+  const opts = args?.[0];
+  if (opts == null || typeof opts !== "object") {
+    forbidden("invalid egress report", subject);
+  }
+  if (opts.category !== "file-download") {
+    forbidden("projects may only report file-download egress", subject);
+  }
+  if (opts.bandwidth_relay_evidence != null) {
+    forbidden("projects may not report bandwidth relay evidence", subject);
+  }
+  const metadata = opts.metadata;
+  const safe: { request_path?: string; partial?: boolean } = {};
+  if (metadata != null && typeof metadata === "object") {
+    if (
+      typeof metadata.request_path === "string" &&
+      metadata.request_path.length <= MAX_REQUEST_PATH_LENGTH
+    ) {
+      safe.request_path = metadata.request_path;
+    }
+    if (typeof metadata.partial === "boolean") {
+      safe.partial = metadata.partial;
+    }
+  }
+  args[0] = {
+    project_id: opts.project_id,
+    category: "file-download",
+    bytes: opts.bytes,
+    metadata: safe,
+  };
+}
+
 function forbidden(message: string, subject: string): never {
   throw new ConatError(message, { code: 403, subject });
 }
@@ -163,6 +205,9 @@ export function authorizeProjectHostHubApiRequest({
         "project-host hub API request project does not match subject",
         subject,
       );
+    }
+    if (name === "system.recordManagedProjectEgress") {
+      restrictProjectEgressReport(args, subject);
     }
     return;
   }
