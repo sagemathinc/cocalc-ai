@@ -2235,6 +2235,10 @@ async function startAccountLocalService(): Promise<void> {
       await publicDirectoryShares.disableForBannedActor(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShares.authorizeRead(opts),
+    publicDirectoryShareGetViews: async (opts) =>
+      await publicDirectoryShares.getViews(opts),
+    publicDirectoryShareGetViewAggregates: async (opts) =>
+      await publicDirectoryShares.getViewAggregates(opts),
     publicDirectoryShareListDirectory: async (opts) =>
       await publicDirectoryShares.listDirectory(opts),
     publicDirectoryShareCopyToProject: async (opts) =>

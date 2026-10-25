@@ -497,4 +497,23 @@ describe("public directory share conat API routing", () => {
       share_id: "share-id",
     });
   });
+
+  it("records a view for client reads only, whatever the client asks", async () => {
+    mockResolveProjectBayAcrossCluster.mockResolvedValue({ bay_id: "bay-1" });
+    const remote = mockRemoteClients["bay-1"].publicDirectoryShareAuthorizeRead;
+    remote.mockResolvedValue({
+      project_id: "project-id",
+      share_id: "share-id",
+      read_policy: { rules: [] },
+    });
+    const opts = {
+      account_id: "account-id",
+      project_id: "project-id",
+      share_id: "share-id",
+    };
+    await publicDirectoryShares.authorizeRead({ ...opts, record_view: false });
+    expect(remote).toHaveBeenLastCalledWith(opts);
+    await publicDirectoryShares.authorizeReadWithoutView(opts);
+    expect(remote).toHaveBeenLastCalledWith({ ...opts, record_view: false });
+  });
 });

@@ -48,6 +48,7 @@ import {
   type ProjectLabelPatch,
 } from "@cocalc/server/projects/labels";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
+import { recordShareView } from "./views";
 import {
   DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT,
   MAX_PUBLIC_DIRECTORY_SHARE_DESCRIPTION_LENGTH,
@@ -1746,6 +1747,7 @@ export async function authorizeRead({
   account_id,
   project_id,
   share_id,
+  record_view = true,
 }: AuthorizePublicDirectoryShareReadOptions): Promise<AuthorizePublicDirectoryShareReadResponse> {
   await ensurePublicDirectorySharesSchema();
   if (!account_id) {
@@ -1799,6 +1801,14 @@ export async function authorizeRead({
     throw Error(
       summary.availability_message || "This public share is not available yet.",
     );
+  }
+  if (record_view) {
+    recordShareView({
+      share_id: summary.id,
+      project_id: summary.project_id,
+      account_id,
+      project_users: row.project_users,
+    });
   }
   return {
     project_id: summary.project_id,
@@ -3161,3 +3171,5 @@ export async function listDirectory({
     truncated: listing.truncated,
   };
 }
+
+export { getViewAggregates, getViews } from "./views";

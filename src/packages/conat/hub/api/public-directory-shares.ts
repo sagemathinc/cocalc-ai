@@ -248,12 +248,73 @@ export interface AuthorizePublicDirectoryShareReadOptions {
   host_id?: string;
   project_id: string;
   share_id: string;
+  // Internal, between bays: false for a check that is not itself a read of
+  // the share, so it isn't recorded as a view. The hub API ignores it.
+  record_view?: boolean;
 }
 
 export interface AuthorizePublicDirectoryShareReadResponse {
   project_id: string;
   share_id: string;
   read_policy: ProjectViewerReadPolicy;
+}
+
+// Who read a share, recorded at most once per (share, account, UTC day):
+// the share's project's owner, a collaborator, or anybody else.
+export type PublicDirectoryShareViewerRole = "owner" | "collaborator" | "other";
+
+export interface PublicDirectoryShareViewCounts {
+  viewers: number;
+  owner: number;
+  collaborator: number;
+  other: number;
+}
+
+export interface GetPublicDirectoryShareViewsOptions {
+  account_id?: string;
+  project_id: string;
+  share_id: string;
+  // the last this many days, today included (default 30)
+  days?: number;
+}
+
+// For a share's owners and collaborators: counts only, never who the other
+// viewers were.
+export interface GetPublicDirectoryShareViewsResponse {
+  project_id: string;
+  share_id: string;
+  since: string; // first day included, YYYY-MM-DD (UTC)
+  by_day: (PublicDirectoryShareViewCounts & { day: string })[];
+  distinct_viewers: PublicDirectoryShareViewCounts;
+}
+
+export interface GetPublicDirectoryShareViewAggregatesOptions {
+  account_id?: string;
+  // only this project's shares, or only this share (with its project_id)
+  project_id?: string;
+  share_id?: string;
+  viewer_role?: PublicDirectoryShareViewerRole;
+  days?: number;
+}
+
+// A count is null (suppressed) when fewer than min_count distinct accounts
+// make it up.
+export interface PublicDirectoryShareViewAggregate {
+  viewer_days: number | null;
+  distinct_viewers: number | null;
+  suppressed: boolean;
+}
+
+// For admins: aggregates only, with small counts suppressed.
+export interface GetPublicDirectoryShareViewAggregatesResponse {
+  since: string;
+  min_count: number;
+  totals: PublicDirectoryShareViewAggregate;
+  by_day: (PublicDirectoryShareViewAggregate & { day: string })[];
+  // country: ISO 3166-1 alpha-2, or null when it isn't known
+  by_country: (PublicDirectoryShareViewAggregate & {
+    country: string | null;
+  })[];
 }
 
 export interface GrantTemporaryViewerAccessOptions {
@@ -422,6 +483,12 @@ export interface PublicDirectoryShares {
   getTemporaryViewerReadPolicy: (
     opts: GetTemporaryViewerReadPolicyOptions,
   ) => Promise<GetTemporaryViewerReadPolicyResponse>;
+  getViews: (
+    opts: GetPublicDirectoryShareViewsOptions,
+  ) => Promise<GetPublicDirectoryShareViewsResponse>;
+  getViewAggregates: (
+    opts: GetPublicDirectoryShareViewAggregatesOptions,
+  ) => Promise<GetPublicDirectoryShareViewAggregatesResponse>;
 }
 
 export const publicDirectoryShares = {
@@ -441,4 +508,6 @@ export const publicDirectoryShares = {
   authorizeRead: authFirstRequireAccountOrHostWithAccountTarget,
   grantTemporaryViewerAccess: authFirstRequireAccount,
   getTemporaryViewerReadPolicy: authFirstRequireAccountOrHostWithAccountTarget,
+  getViews: authFirstRequireAccount,
+  getViewAggregates: authFirstRequireAccount,
 } as const;

@@ -11,6 +11,8 @@ import type {
   CopyPublicDirectoryShareToProjectOptions,
   CreatePublicDirectoryShareOptions,
   GetTemporaryViewerReadPolicyOptions,
+  GetPublicDirectoryShareViewAggregatesOptions,
+  GetPublicDirectoryShareViewsOptions,
   GetPublicSharePublisherProfileOptions,
   GrantTemporaryViewerAccessOptions,
   ListMyPublicDirectorySharesOptions,
@@ -189,6 +191,22 @@ export async function updatePublisherProfile(
 export async function authorizeRead(
   opts: AuthorizePublicDirectoryShareReadOptions,
 ) {
+  // a client can't opt out of the view being recorded
+  const { record_view: _ignored, ...rest } = opts;
+  return await authorizeReadOnBays(rest);
+}
+
+// Authorizes without recording a view: for checks that are not themselves a
+// read of the share, such as issuing a project-host token.
+export async function authorizeReadWithoutView(
+  opts: AuthorizePublicDirectoryShareReadOptions,
+) {
+  return await authorizeReadOnBays({ ...opts, record_view: false });
+}
+
+async function authorizeReadOnBays(
+  opts: AuthorizePublicDirectoryShareReadOptions,
+) {
   const bay_id = await projectPublicDirectoryShareBay(opts.project_id);
   const attempted = new Set<string>();
   const authorizeOnBay = async (candidate_bay_id: string) => {
@@ -222,6 +240,30 @@ export async function authorizeRead(
     }
     throw lastNotFound ?? err;
   }
+}
+
+export async function getViews(opts: GetPublicDirectoryShareViewsOptions) {
+  const bay_id = await projectPublicDirectoryShareBay(opts.project_id);
+  return await callPublicDirectoryShareBay({
+    bay_id,
+    local: async () => await publicDirectoryShares.getViews(opts),
+    remote: async (client) => await client.publicDirectoryShareGetViews(opts),
+  });
+}
+
+// On the bay of opts.project_id when given, otherwise on this bay.
+export async function getViewAggregates(
+  opts: GetPublicDirectoryShareViewAggregatesOptions,
+) {
+  const bay_id = opts.project_id
+    ? await projectPublicDirectoryShareBay(opts.project_id)
+    : getConfiguredBayId();
+  return await callPublicDirectoryShareBay({
+    bay_id,
+    local: async () => await publicDirectoryShares.getViewAggregates(opts),
+    remote: async (client) =>
+      await client.publicDirectoryShareGetViewAggregates(opts),
+  });
 }
 
 export async function listDirectory(
