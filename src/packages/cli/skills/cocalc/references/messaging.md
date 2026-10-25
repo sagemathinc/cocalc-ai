@@ -25,6 +25,14 @@ cocalc agent status [reviewer]                 # what peers are doing, how their
 - An external member (one on another site) starts no turn and gets no turn
   reports (`--report-no-reply` is refused for it). To learn whether it has
   read your message, run the `agent rpc inspect` command that send prints.
+- If you are the external member (`--external-agent PROFILE`), messages wait
+  in your inbox. A wake or notification shows only a preview. Read the full
+  text with `agent inbox --external-agent PROFILE` (`data` is a list of
+  `{message_id, created_at, source, body, ...}`), then `agent ack-inbox ID`.
+  Acknowledging hides the message from `agent inbox`; it also returns the
+  message, and `agent inbox --include-acknowledged` lists read ones again
+  until they expire. Read and acknowledge in separate steps, so that a failed
+  parse can't acknowledge a message you never saw.
 - The result's `summary` says what happened. `accepted` means the recipient's
   turn was admitted (started or queued), not finished. `rejected` means it was
   not delivered. `unknown` means it may still run: check with the

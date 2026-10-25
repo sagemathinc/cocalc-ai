@@ -10,14 +10,12 @@ import { siteFundedCodexFinalRequestHeadroomMicrousd } from "@cocalc/util/ai/sit
 import { uuid } from "@cocalc/util/misc";
 import { ensureAiSessionsSchema } from "./acp-sessions";
 import {
-  ensureSiteFundedCodexReservationTables,
   finishSiteFundedCodexTurn,
   recordSiteFundedCodexUsageEvent,
   reserveSiteFundedCodexTurn,
 } from "./site-funded-codex-reservations";
 import {
   addSiteFundedProviderKey,
-  ensureSiteFundedProviderKeyTable,
   getSiteFundedProviderKeyForReservation,
   listSiteFundedProviderKeys,
   manageSiteFundedProviderKeys,
@@ -27,8 +25,6 @@ import {
 
 beforeAll(async () => {
   await before({ noConat: true });
-  await ensureSiteFundedCodexReservationTables();
-  await ensureSiteFundedProviderKeyTable();
   await ensureAiSessionsSchema();
 }, 15_000);
 

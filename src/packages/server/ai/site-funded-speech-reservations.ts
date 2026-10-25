@@ -8,7 +8,6 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
-  ensureSiteFundedCodexReservationTables,
   siteAiFundingPeriodBounds,
   SITE_AI_GLOBAL_POOL_ID,
 } from "./site-funded-codex-reservations";
@@ -20,10 +19,6 @@ export interface SiteFundedSpeechGlobalReservation {
   requestId: string;
   reservedMicrousd: number;
   created: boolean;
-}
-
-export async function ensureSiteFundedSpeechReservationTable(): Promise<void> {
-  await ensureSiteFundedCodexReservationTables();
 }
 
 function codedError(message: string, code: number): Error {
@@ -52,7 +47,6 @@ export async function reserveSiteFundedSpeechGlobalLocal({
   if (!Number.isSafeInteger(reservedMicrousd) || reservedMicrousd <= 0) {
     throw new Error("reservedMicrousd must be a positive safe integer");
   }
-  await ensureSiteFundedSpeechReservationTable();
   const globalPoolLimitMicrousd =
     await getSiteFundedAIGlobalPoolLimitMicrousd();
   const { start, end } = siteAiFundingPeriodBounds();
@@ -186,7 +180,6 @@ export async function finishSiteFundedSpeechGlobalLocal({
   if (!Number.isSafeInteger(costMicrousd) || costMicrousd < 0) {
     throw new Error("costMicrousd must be a nonnegative safe integer");
   }
-  await ensureSiteFundedSpeechReservationTable();
   const pool = getPool();
   const client = await pool.connect();
   try {

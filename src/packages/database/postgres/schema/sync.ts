@@ -730,7 +730,10 @@ async function getPrimaryKeyDiff(
   | undefined
 > {
   const actualPrimaryKeys = (await getPrimaryKeys(db, schema.name)).sort();
-  const goalPrimaryKeys = primaryKeys(schema.name).sort();
+  // A copy: primaryKeys() returns the schema's own (cached) array, and
+  // sorting it in place reordered the primary key of any table created later
+  // in this process.
+  const goalPrimaryKeys = [...primaryKeys(schema.name)].sort();
   if (isEqual(actualPrimaryKeys, goalPrimaryKeys)) {
     return undefined;
   }

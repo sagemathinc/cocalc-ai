@@ -142,7 +142,11 @@ export async function sendExternalAgentMessage(
     } else if (request.action === "ack-inbox") {
       if (
         result?.acknowledged !== true ||
-        result?.message_id !== request.message_id
+        result?.message_id !== request.message_id ||
+        // An older server returns no message; a newer one, the one acknowledged.
+        (result.message !== undefined &&
+          (result.message?.message_id !== request.message_id ||
+            typeof result.message?.body !== "string"))
       )
         throw new Error("invalid external inbox acknowledgment");
     } else if (request.action === "propose-network") {

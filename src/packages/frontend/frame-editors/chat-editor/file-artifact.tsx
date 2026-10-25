@@ -29,6 +29,7 @@ import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-ho
 import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
 import { LocalCommentButton } from "@cocalc/frontend/chat/contextual-reply";
 import { isBoardPath, useBoardFrameUrl } from "./board-artifact-frame";
+import { useFileChanges } from "./use-file-changes";
 
 const BINARY_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "pdf"]);
 const NotebookArtifact = lazyWithRetry(
@@ -324,6 +325,8 @@ function SavedFileArtifact({
     setSelection(undefined);
   }, [path]);
   const supported = fileArtifactPreviewSupported(path);
+  // Follow the file: a change on disk shows without Refresh.
+  useFileChanges(path, () => setRefresh((n) => n + 1), supported || binary);
   const feedbackTooLarge =
     loaded?.path === path &&
     new TextEncoder().encode(loaded.content).length > ARTIFACT_TEXT_LIMIT;

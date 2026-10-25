@@ -14,36 +14,9 @@ import {
   type SiteFundedFunnel,
 } from "@cocalc/util/ai/site-funded-codex";
 import { isValidUUID } from "@cocalc/util/misc";
-import { ensureSiteFundedCodexReservationTables } from "./site-funded-codex-reservations";
 
 export const SITE_FUNDED_ADMISSION_RETENTION_DAYS = 90;
 const DAY_MS = 24 * 60 * 60_000;
-
-let tableReady: Promise<void> | undefined;
-
-export async function ensureSiteFundedAdmissionTable(): Promise<void> {
-  tableReady ??= (async () => {
-    const pool = getPool();
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS site_ai_admission_attempts (
-        funded_turn_id UUID PRIMARY KEY,
-        account_id UUID NOT NULL,
-        provider TEXT NOT NULL,
-        outcome TEXT NOT NULL,
-        membership_tier TEXT,
-        surface TEXT,
-        attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )`);
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS site_ai_admission_attempts_attempted_idx
-        ON site_ai_admission_attempts(attempted_at)`);
-  })().catch((err) => {
-    tableReady = undefined;
-    throw err;
-  });
-  await tableReady;
-}
 
 function shortText(value: unknown): string | null {
   const text = `${value ?? ""}`.trim();
@@ -61,7 +34,6 @@ export async function recordSiteFundedAdmissionLocal(
   ) {
     throw new Error("invalid site-funded admission record");
   }
-  await ensureSiteFundedAdmissionTable();
   await getPool().query(
     `INSERT INTO site_ai_admission_attempts
        (funded_turn_id, account_id, provider, outcome, membership_tier, surface)
@@ -83,7 +55,6 @@ export async function recordSiteFundedAdmissionLocal(
 }
 
 export async function pruneSiteFundedAdmissions(): Promise<number> {
-  await ensureSiteFundedAdmissionTable();
   const { rowCount } = await getPool().query(
     `DELETE FROM site_ai_admission_attempts
      WHERE attempted_at < NOW() - make_interval(days => $1)`,
@@ -101,10 +72,6 @@ export async function getSiteFundedFunnel({
   days = 7,
   now = new Date(),
 }: { days?: number; now?: Date } = {}): Promise<SiteFundedFunnel> {
-  await Promise.all([
-    ensureSiteFundedAdmissionTable(),
-    ensureSiteFundedCodexReservationTables(),
-  ]);
   const periodStart = new Date(now.valueOf() - days * DAY_MS);
   // Exclusive, one millisecond past now: the database stamps rows to the
   // microsecond, so a row from now's own millisecond would otherwise fall

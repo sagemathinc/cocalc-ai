@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { useFileChanges } from "./use-file-changes";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   parseTodo,
@@ -61,6 +62,8 @@ export default function TodoArtifact({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  // Follow the file: an agent's edit shows without Refresh.
+  useFileChanges(path, () => setRefresh((n) => n + 1));
   useEffect(() => {
     let cancelled = false;
     setError("");

@@ -456,18 +456,46 @@ export class ExternalAgentStore {
     };
   }
 
-  async inbox(account: string, installation: string, limit = 50) {
+  /**
+   * Pending messages, oldest first. With includeAcknowledged, acknowledged
+   * ones too (each with its state), until they expire: acknowledging must not
+   * be the only chance to read a message.
+   */
+  async inbox(
+    account: string,
+    installation: string,
+    limit = 50,
+    { includeAcknowledged = false }: { includeAcknowledged?: boolean } = {},
+  ) {
     const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
     return this.locked(account, async (db, controls) => {
       await this.active(db, account, installation, controls);
       return (
         await db.query(
           `SELECT * FROM agent_external_inbox
-           WHERE account_id=$1 AND installation_id=$2 AND state='pending' AND expires_at>now()
+           WHERE account_id=$1 AND installation_id=$2 AND expires_at>now()
+             AND ($4 OR state='pending')
            ORDER BY created_at,message_id LIMIT $3`,
-          [account, installation, bounded],
+          [account, installation, bounded, includeAcknowledged],
         )
-      ).rows.map((row) => this.publicInbox(row));
+      ).rows.map((row) =>
+        includeAcknowledged
+          ? {
+              ...this.publicInbox(row),
+              state:
+                row.state === "acknowledged"
+                  ? ("acknowledged" as const)
+                  : ("pending" as const),
+              ...(row.acknowledged_at
+                ? {
+                    acknowledged_at: new Date(
+                      row.acknowledged_at,
+                    ).toISOString(),
+                  }
+                : {}),
+            }
+          : this.publicInbox(row),
+      );
     });
   }
 
@@ -479,12 +507,19 @@ export class ExternalAgentStore {
         `UPDATE agent_external_inbox
          SET state='acknowledged',acknowledged_at=COALESCE(acknowledged_at,now())
          WHERE account_id=$1 AND installation_id=$2 AND message_id=$3
-         RETURNING message_id`,
+           AND expires_at>now()
+         RETURNING *`,
         [account, installation, message_id],
       );
       if (!result.rows.length)
         throw new Error("external_inbox_message_not_found");
-      return { acknowledged: true as const, message_id };
+      // The message itself too: a caller that acknowledges without having
+      // read it (a failed parse, a cut-off output) still gets it once.
+      return {
+        acknowledged: true as const,
+        message_id,
+        message: this.publicInbox(result.rows[0]),
+      };
     });
   }
 

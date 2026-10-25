@@ -15,6 +15,7 @@ import { Alert, Button, Space, Tag } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { useFileChanges } from "./use-file-changes";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   calendarAgenda,
@@ -75,6 +76,8 @@ export default function CalendarArtifact({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  // Follow the file: an agent's edit shows without Refresh.
+  useFileChanges(path, () => setRefresh((n) => n + 1));
   useEffect(() => {
     let cancelled = false;
     setError("");

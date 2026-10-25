@@ -105,6 +105,7 @@ import "./rootfs-rustic-repos";
 import "./self-host-commands";
 import "./self-host-connector-tokens";
 import "./self-host-connectors";
+import "./site-ai-funding";
 import "./software-licenses";
 import "./stats";
 import "./subscription-renewal-attempts";
