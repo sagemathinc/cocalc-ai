@@ -117,7 +117,9 @@ export function claudePaymentLabel(mode: string | undefined): string {
     ? "Claude subscription"
     : mode === "account-api-key"
       ? "Account API key"
-      : "Project API key";
+      : mode === "site-funded"
+        ? "CoCalc Membership"
+        : "Project API key";
 }
 
 // The short label of the payment source selected for a thread.

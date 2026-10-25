@@ -5,6 +5,8 @@ import {
   ClaudePaymentStatus,
   clearClaudeCredentialsForTests,
   useClaudePaymentLabel,
+  claudePaymentLabel,
+  claudePaymentName,
 } from "../claude-payment-status";
 import { writeHarnessCredentialSelection } from "../harness-credential-selection";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -245,4 +247,11 @@ test("switching the selection never shows the previous credential's name", async
   expect(screen.queryByText("label: Alpha")).toBeNull();
   // Not even for one render after the switch.
   expect(rendered.slice(switchedAt)).not.toContain("Alpha");
+});
+
+test("the footer names included Claude as CoCalc Membership", () => {
+  expect(claudePaymentLabel("site-funded")).toBe("CoCalc Membership");
+  expect(claudePaymentName("site-funded", undefined)).toBe("CoCalc Membership");
+  // Nothing else changes.
+  expect(claudePaymentLabel(undefined)).toBe("Project API key");
 });
