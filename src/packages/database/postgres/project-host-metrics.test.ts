@@ -134,13 +134,15 @@ describe("project host metrics history", () => {
       [parked, "stopped"],
       [preempted, "running"],
     ]) {
-      await insertProjectHost(host_id);
       await getPool().query(
-        `UPDATE project_hosts
-            SET bay_id='bay-0', status='off',
-                metadata=jsonb_build_object('desired_state', $2::text)
-          WHERE id=$1`,
-        [host_id, desired],
+        `INSERT INTO project_hosts
+           (id, name, bay_id, status, metadata, created, updated)
+         VALUES ($1, $2, 'bay-0', 'off', $3::jsonb, NOW(), NOW())`,
+        [
+          host_id,
+          `host-${host_id.slice(0, 8)}`,
+          JSON.stringify({ desired_state: desired }),
+        ],
       );
       await getPool().query(
         "INSERT INTO projects (project_id, title, host_id, provisioned, deleted) VALUES ($1, 'pressure test', $2, true, false)",
