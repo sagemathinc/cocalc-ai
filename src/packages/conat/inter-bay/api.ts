@@ -2125,6 +2125,9 @@ export interface AccountRehomeResponse {
 }
 
 export interface BayRegistryRegisterRequest {
+  // The registering bay; typed services require it to match the
+  // authenticated calling bay, and the registry requires it to equal bay_id.
+  source_bay_id?: string;
   bay_id: string;
   label?: string;
   region?: string | null;

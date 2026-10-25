@@ -315,3 +315,25 @@ describe("bay-registry", () => {
     });
   });
 });
+
+describe("bay registry registration binding", () => {
+  it("accepts a bay registering itself", async () => {
+    const { assertRegistersOwnBay } = await import("./bay-registry");
+    const opts = { bay_id: "bay-2", source_bay_id: "bay-2", label: "x" };
+    expect(assertRegistersOwnBay(opts)).toBe(opts);
+  });
+
+  it("refuses a registration for another bay or without the caller's bay", async () => {
+    const { assertRegistersOwnBay } = await import("./bay-registry");
+    for (const opts of [
+      { bay_id: "bay-0", source_bay_id: "bay-2" },
+      { bay_id: "bay-2" },
+      { bay_id: "bay-2", source_bay_id: "" },
+      { bay_id: "", source_bay_id: "" },
+    ]) {
+      expect(() => assertRegistersOwnBay(opts)).toThrow(
+        "a bay may only register its own presence",
+      );
+    }
+  });
+});

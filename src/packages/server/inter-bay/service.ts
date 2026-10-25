@@ -175,6 +175,7 @@ import {
 } from "@cocalc/server/cluster-config";
 import {
   listBayRegistryLocal,
+  assertRegistersOwnBay,
   registerBayPresenceLocal,
   startBayRegistrationHeartbeat,
 } from "@cocalc/server/bay-registry";
@@ -717,7 +718,8 @@ async function startBayRegistryService(): Promise<void> {
   }
   const client = getInterBayFabricServiceClient();
   const impl: InterBayBayRegistryApi = {
-    register: async (opts) => await registerBayPresenceLocal(opts),
+    register: async (opts) =>
+      await registerBayPresenceLocal(assertRegistersOwnBay(opts)),
     list: async (opts) => await listBayRegistryLocal(opts),
   };
   services.push(
