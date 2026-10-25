@@ -19,6 +19,7 @@ import {
   sensorWakePrompt,
   validateAgentSensorRequest,
   validateSensorSpec,
+  sensorDelivery,
 } from "./sensors";
 
 const limits = { minIntervalMinutes: 15, maxWakesPerDay: 24 };
@@ -917,5 +918,62 @@ print(json.dumps({"ok": True, "command": "agent rpc destinations", "data": data}
         },
       ),
     ).toThrow(/@worker is no longer in any of your Agent Networks/);
+  });
+});
+
+describe("how a wake reaches the agent", () => {
+  const script = {
+    title: "Issues",
+    purpose: "new issues",
+    language: "sh",
+    script: "true",
+    schedule: { kind: "interval", minutes: 30 },
+  };
+  it("joins the running turn by default, except a scheduled prompt", () => {
+    expect(sensorDelivery(validateSensorSpec(script, limits))).toBe("guidance");
+    const prompt = validateSensorSpec(
+      {
+        kind: "prompt",
+        title: "Brief",
+        prompt: "hi",
+        schedule: script.schedule,
+      },
+      limits,
+    );
+    expect(sensorDelivery(prompt)).toBe("queued");
+    expect(
+      sensorDelivery(
+        validateSensorWatch(
+          { type: "at", at: "2099-01-01T00:00:00Z", note: "x" },
+          { now: Date.parse("2098-12-31T00:00:00Z") },
+        ),
+      ),
+    ).toBe("guidance");
+  });
+  it("a spec or watcher may choose, and only guidance or queued", () => {
+    const queued = validateSensorSpec(
+      { ...script, delivery: "queued" },
+      limits,
+    );
+    expect(queued.delivery).toBe("queued");
+    expect(sensorDelivery(queued)).toBe("queued");
+    expect(() =>
+      validateSensorSpec({ ...script, delivery: "now" }, limits),
+    ).toThrow('delivery must be "guidance" or "queued"');
+    const watch = validateSensorWatch(
+      { type: "ci", repo: "o/r", pr: 1 },
+      { delivery: "queued" },
+    );
+    expect(sensorDelivery(watch)).toBe("queued");
+    // Specs from before this field keep their hash: nothing is added.
+    expect("delivery" in validateSensorSpec(script, limits)).toBe(false);
+    expect(() =>
+      validateAgentSensorRequest({
+        action: "sensor",
+        op: "watch",
+        watch: { type: "ci", repo: "o/r", pr: 1 },
+        delivery: "queued",
+      }),
+    ).not.toThrow();
   });
 });

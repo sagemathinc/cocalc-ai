@@ -157,6 +157,9 @@ export type AcpSteerRequest = {
 export type AcpSteerResponse = {
   ok: boolean;
   state: "steered" | "queued" | "running" | "missing";
+  /** steered, but handed to the worker running the turn: it may still run
+   * as a turn of its own. */
+  pending?: boolean;
   threadId?: string | null;
 };
 

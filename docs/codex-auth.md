@@ -246,6 +246,60 @@ Exact funded host RPCs:
 Legacy aggregate allowance/report RPCs remain only for compatibility with old
 site-key runtimes and are deliberately bypassed by exact funded turns.
 
+### Site-funded Claude
+
+Claude Code agents can be site-funded too, on Claude Haiku 5.5. They draw on
+the same membership allowance and weekly pools as Codex (one included-AI
+budget), with their own switch, model and per-turn guards
+(`site_funded_claude_*`).
+
+They are paid for by an ordered list of the site's Anthropic API keys, each
+with its own monthly spend limit and reset point (day 1-28 and hour, UTC). A
+turn is funded by the first enabled key with room left this month. A key's
+month-to-date spend is the committed cost of the turns it funded, plus what
+running ones may still spend; admission locks the key while it checks, so
+concurrent turns cannot both pass its limit. When every key is used up,
+admission refuses with `provider_keys_exhausted`.
+
+Keys are stored encrypted on the seed bay (`site_ai_provider_keys`). The host
+running a Claude turn gets that turn's key with
+`hosts.getSiteFundedClaudeKey`: only that host, only while the turn is active,
+and only the key it was admitted on.
+
+On the project host, a site-funded Claude agent (harness credential mode
+`site-funded`, chosen as "CoCalc Membership") runs Claude Code against the
+same in-container bridge as an account API key. The bridge reaches the
+host-side funded relay (`project-host/acp/site-funded-claude-relay.ts`),
+which:
+
+- funds requests only while a turn is admitted: each turn reserves (provider
+  `anthropic`), fetches its key, and is settled through the same durable
+  outbox as Codex when it ends (`site-funded-claude-turns.ts`);
+- forwards only `POST /v1/messages` and `/v1/messages/count_tokens`, forces
+  the funded model, caps `max_tokens` (and any thinking budget), drops
+  `inference_geo` and `service_tier`, and refuses `mcp_servers`, `container`,
+  media by URL or file, and hosted tools other than web search (metered, at
+  most three a request, only from a prompt under 16,000 tokens since its
+  results join the prompt as it runs);
+- refuses a prompt over 100,000 tokens (longer prompts cost 5x), less a
+  2,000-token margin for the count's error, with Anthropic's `prompt is too
+  long` error so Claude Code compacts: a text prompt whose bytes (plus
+  overhead) fit is sent as is, and any other prompt, including one with inline
+  images or documents, is counted first with the free `count_tokens` API. The
+  exception is a request that searches the web: Anthropic adds the results to
+  its prompt as it runs and documents no bound on their size, so such a
+  request can pass the cap (and the room a turn reserves). It is still
+  metered exactly, and one that does not finish is charged as if its prompt
+  filled the cap;
+- adds the site key itself, which never reaches the container;
+- meters every response exactly, from JSON or from the stream
+  (`message_start` plus `message_delta`), numbering usage in completion order;
+- stops a turn at its request, duration and cost limits.
+
+Claude Code is also told (environment) to use the funded model for everything,
+to compact at 80% of a 100,000-token window, and to send no nonessential
+traffic, but nothing depends on that: the relay enforces it.
+
 ### Accounting and reconciliation
 
 Funded costs use integer micro-US-dollars and a versioned Luna price catalog.

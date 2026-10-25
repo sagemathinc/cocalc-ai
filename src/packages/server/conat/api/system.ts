@@ -35,6 +35,10 @@ import {
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getHostIntrusionObservationSummary } from "@cocalc/server/hosts/intrusion-monitor";
+import {
+  getHostKernelHardeningSummary,
+  kernelHardeningHealth,
+} from "@cocalc/server/hosts/kernel-hardening-health";
 import { assertProjectRuntimeCapability } from "@cocalc/server/launchpad/project-runtime";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
@@ -115,13 +119,21 @@ import {
   synthesizeChatSpeech as synthesizeChatSpeechLocal,
   transcribeChatAudio as transcribeChatAudioLocal,
 } from "@cocalc/server/ai/chat-speech";
-import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
+import {
+  getSiteFundedClaudeConfiguration,
+  getSiteFundedCodexConfiguration,
+} from "@cocalc/server/ai/site-funded-codex-policy";
 import {
   getSiteFundedCodexAccountReservationStatus,
   getSiteFundedCodexPoolStatus,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
 import { getSiteFundedFunnel } from "@cocalc/server/ai/site-funded-admissions";
+import { manageSiteFundedProviderKeys } from "@cocalc/server/ai/site-funded-provider-keys";
+import type {
+  SiteFundedProviderKeyAction,
+  SiteFundedProviderKeyInfo,
+} from "@cocalc/util/ai/site-funded-claude";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import {
   enqueueRootfsPrepullForHost,
@@ -2262,6 +2274,7 @@ export async function getLaunchHealth({
     intrusionObservationsResult,
     backupPurgeResult,
     billingExposureResult,
+    kernelHardeningResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2284,6 +2297,7 @@ export async function getLaunchHealth({
     getHostIntrusionObservationSummary(),
     getBackupPurgeHealth(),
     getBillingExposureHealth({ bay_id: currentBay.bay_id }),
+    getHostKernelHardeningSummary(),
   ]);
 
   const settings =
@@ -2501,6 +2515,11 @@ export async function getLaunchHealth({
         intrusionObservationsResult.status === "rejected"
           ? [`${intrusionObservationsResult.reason}`]
           : (intrusionObservations?.details ?? []),
+    }),
+    launchHealthCheck({
+      id: "project-host-kernel-hardening",
+      label: "Project host kernel hardening",
+      ...kernelHardeningHealth(kernelHardeningResult),
     }),
     launchHealthCheck({
       id: "kill-switches",
@@ -7614,6 +7633,91 @@ export async function getSiteFundedCodexAdminStatus({
     funnel: await getSiteFundedFunnel(),
     reconciliation: await reconcileSiteFundedCodexCosts(pools),
   };
+}
+
+/**
+ * Whether this account can run Claude agents on included Claude: the site
+ * offers it and the account's membership includes AI usage. Admission still
+ * decides each turn (allowance left, site keys with room).
+ */
+export async function getSiteFundedClaudeAvailability({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<{ available: boolean; reason?: string }> {
+  if (!account_id) throw Error("must be signed in");
+  if (await isAiLaunchDisabled()) {
+    return { available: false, reason: "AI is temporarily disabled." };
+  }
+  try {
+    if (!(await getSiteFundedClaudeConfiguration()).enabled) {
+      return { available: false };
+    }
+  } catch {
+    return { available: false, reason: "Included Claude is not configured." };
+  }
+  const status = await getAIUsageStatusForAccountHome(account_id);
+  const limit = (window: "5h" | "7d") =>
+    status?.windows.find((entry) => entry.window === window)?.limit ?? 0;
+  if (!(limit("5h") > 0 && limit("7d") > 0)) {
+    return {
+      available: false,
+      reason: "Your CoCalc membership does not include AI usage.",
+    };
+  }
+  return { available: true };
+}
+
+async function siteFundedClaudeKeysOnSeed(
+  action?: SiteFundedProviderKeyAction,
+): Promise<SiteFundedProviderKeyInfo[]> {
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (seedBayId !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 30_000 })
+      .manageSiteFundedProviderKeys({ provider: "anthropic", action });
+  }
+  return await manageSiteFundedProviderKeys("anthropic", action);
+}
+
+/** The site's Anthropic keys for site-funded Claude, without secrets. */
+export async function getSiteFundedClaudeKeys({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<SiteFundedProviderKeyInfo[]> {
+  await assertAdmin(account_id);
+  return await siteFundedClaudeKeysOnSeed();
+}
+
+/** Adds, edits, removes or reorders them: they spend the site's money. */
+export async function manageSiteFundedClaudeKeys({
+  account_id,
+  browser_id,
+  session_hash,
+  action,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  action: SiteFundedProviderKeyAction;
+}): Promise<SiteFundedProviderKeyInfo[]> {
+  await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
+  if (!action || typeof action !== "object") {
+    throw new Error("a site key action is required");
+  }
+  logger.info("site-funded Claude key change", {
+    account_id,
+    op: action.op,
+    keyId: "keyId" in action ? action.keyId : undefined,
+  });
+  return await siteFundedClaudeKeysOnSeed(action);
 }
 
 export async function getCodexUsageStatus({

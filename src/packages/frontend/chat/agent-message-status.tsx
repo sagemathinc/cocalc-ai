@@ -393,6 +393,8 @@ interface AgentMessageStatusProps {
     disabled: boolean;
     onToggle: () => void;
   };
+  /** One row with no margin, for a toolbar slot. */
+  inline?: boolean;
 }
 
 interface AgentActivityChipProps {
@@ -635,6 +637,7 @@ export function AgentMessageStatus({
   activeDescendantThreadIds,
   backgroundTerminalProcesses = 0,
   activityToggle,
+  inline = false,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [activitySize, setActivitySize0] = useState<number>(
@@ -862,8 +865,8 @@ export function AgentMessageStatus({
           display: "inline-flex",
           alignItems: "center",
           gap: 8,
-          marginBottom: 8,
-          flexWrap: "wrap",
+          marginBottom: inline ? 0 : 8,
+          flexWrap: inline ? "nowrap" : "wrap",
         }}
       >
         <AgentActivityChip

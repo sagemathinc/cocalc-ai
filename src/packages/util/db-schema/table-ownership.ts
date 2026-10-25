@@ -1243,6 +1243,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "One row per site-funded admission attempt and its outcome (kept 90 days), recorded on the seed bay for the admin AI pool funnel.",
   }),
 
+  ...adHocEntries(["site_ai_provider_keys"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "server site-funded provider key bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "The site's ordered provider API keys for site-funded Claude, encrypted at rest with secret-storage encryption, each with its monthly spend limit and reset point. Read and changed only on the seed bay.",
+  }),
+
   ...adHocEntries(
     [
       "project_active_operations",
@@ -1293,6 +1303,19 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     migrate_to_schema: true,
     notes:
       "Project public-directory share grant state keyed through public_project_paths. Reads/writes must follow the owning project path; rehome is unsafe until explicitly audited.",
+  }),
+
+  ...adHocEntries(["public_share_views"], {
+    ownership: "project-owning",
+    authority: "mixed",
+    portability: "unsupported",
+    source: "server public directory share views bootstrap",
+    migrate_to_schema: true,
+    secondary_reference_fields: {
+      account_id: "The viewer, a reference, not placement authority.",
+    },
+    notes:
+      "Who read a public share, one row per (share, account, UTC day), kept 13 months. Stored on the bay that stores the share's public_project_paths row (normally the project's owning bay); account_id is a reference, and the rows are deleted with the account.",
   }),
 
   ...adHocEntries(

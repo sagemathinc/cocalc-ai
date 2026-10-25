@@ -269,6 +269,10 @@ import {
   getSiteFundedFunnel,
   recordSiteFundedAdmissionLocal,
 } from "@cocalc/server/ai/site-funded-admissions";
+import {
+  getSiteFundedProviderKeyForReservation,
+  manageSiteFundedProviderKeys,
+} from "@cocalc/server/ai/site-funded-provider-keys";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { getAccountIdFromRememberMe as getLocalAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
@@ -459,7 +463,6 @@ import {
   recordAcpAdmissionDenialLocal,
   recordServiceAdmissionDenialLocal,
   recordServiceAdmissionNearLimitLocal,
-  listHostProjects,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   markProjectChanged as markProjectChangedLocal,
@@ -914,6 +917,19 @@ async function startBayOpsService(): Promise<void> {
     recordSiteFundedAdmission: async (opts) => {
       assertSiteFundedCodexSeedAuthority();
       await recordSiteFundedAdmissionLocal(opts);
+    },
+    manageSiteFundedProviderKeys: async ({ provider, action }) => {
+      assertSiteFundedCodexSeedAuthority();
+      return await manageSiteFundedProviderKeys(provider, action);
+    },
+    getSiteFundedProviderKey: async ({ reservationId, hostId }) => {
+      assertSiteFundedCodexSeedAuthority();
+      return {
+        apiKey: await getSiteFundedProviderKeyForReservation({
+          reservationId,
+          hostId,
+        }),
+      };
     },
     downloadCommercialQuoteInternal: async ({ token }) => {
       if (bay_id !== getConfiguredClusterSeedBayId()) {
@@ -2245,6 +2261,10 @@ async function startAccountLocalService(): Promise<void> {
       await publicDirectoryShares.disableForBannedActor(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShares.authorizeRead(opts),
+    publicDirectoryShareGetViews: async (opts) =>
+      await publicDirectoryShares.getViews(opts),
+    publicDirectoryShareGetViewAggregates: async (opts) =>
+      await publicDirectoryShares.getViewAggregates(opts),
     publicDirectoryShareListDirectory: async (opts) =>
       await publicDirectoryShares.listDirectory(opts),
     publicDirectoryShareCopyToProject: async (opts) =>
@@ -2836,26 +2856,6 @@ async function startHostConnectionService(): Promise<void> {
       await syncProjectBackupIndexesLocal({ host_id, project_id, backup_ids }),
     deleteProjectBackupIndex: async ({ host_id, project_id, backup_id }) =>
       await deleteProjectBackupIndexLocal({ host_id, project_id, backup_id }),
-    listHostProjects: async ({
-      account_id,
-      id,
-      limit,
-      cursor,
-      risk_only,
-      free_only,
-      state_filter,
-      project_state,
-    }) =>
-      await listHostProjects({
-        account_id,
-        id,
-        limit,
-        cursor,
-        risk_only,
-        free_only,
-        state_filter,
-        project_state,
-      }),
     ensureHostOwnerSshTrust: async ({ account_id, host_id, host }) =>
       await ensureHostOwnerSshTrustOnBay({
         account_id,

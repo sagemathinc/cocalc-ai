@@ -78,6 +78,18 @@ export interface LroApi {
     scope_id: string;
     include_completed?: boolean;
   }) => Promise<LroSummary[]>;
-  cancel: (opts: { account_id?: string; op_id: string }) => Promise<void>;
-  dismiss: (opts: { account_id?: string; op_id: string }) => Promise<void>;
+  cancel: (opts: {
+    account_id?: string;
+    op_id: string;
+    /** The operation's scope, if known: as for `get`. */
+    scope_type?: LroScopeType;
+    scope_id?: string;
+  }) => Promise<void>;
+  dismiss: (opts: {
+    account_id?: string;
+    op_id: string;
+    /** The operation's scope, if known: as for `get`. */
+    scope_type?: LroScopeType;
+    scope_id?: string;
+  }) => Promise<void>;
 }

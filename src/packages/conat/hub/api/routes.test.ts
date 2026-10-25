@@ -101,6 +101,9 @@ describe("hub API routes", () => {
     "hosts.restartHost",
     "hosts.drainHost",
     "hosts.backupHostProjects",
+    "hosts.stopHostProjects",
+    "hosts.restartHostProjects",
+    "hosts.listHostProjects",
     "hosts.deleteHost",
     "hosts.forceDeprovisionHost",
     "hosts.refreshHostCloudState",
@@ -130,7 +133,7 @@ describe("hub API routes", () => {
     ).toBeUndefined();
   });
 
-  it.each(["lro.get", "lro.list"])(
+  it.each(["lro.get", "lro.list", "lro.cancel", "lro.dismiss"])(
     "routes %s by host only for a host's operations",
     (name) => {
       const route = getHubApiRoute(name)!;

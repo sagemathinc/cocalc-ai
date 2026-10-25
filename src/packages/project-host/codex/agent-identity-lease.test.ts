@@ -3,6 +3,7 @@ import { mkdtemp, readFile, stat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentIdentityLease } from "./agent-identity-lease";
+import { BeneathDir } from "../beneath-copy";
 
 describe("separate runtime identity lease", () => {
   let dir: string;
@@ -36,7 +37,7 @@ describe("separate runtime identity lease", () => {
       projectId,
       accountId,
       env,
-      hostDir: dir,
+      hostDir: new BeneathDir(dir),
     });
   test("no credential is issued for an unregistered thread", async () => {
     issueIdentity.mockResolvedValue(undefined);

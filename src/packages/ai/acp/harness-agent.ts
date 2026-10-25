@@ -3,7 +3,11 @@ import {
   HarnessError,
   disposeFailedHarness,
 } from "./harness-client";
-import type { HarnessBinding, HarnessLauncher } from "./harness-client";
+import type {
+  HarnessBinding,
+  HarnessFundedTurnEnd,
+  HarnessLauncher,
+} from "./harness-client";
 import type {
   AcpAgent,
   AcpEvaluateRequest,
@@ -127,6 +131,9 @@ export class HarnessAgent implements AcpAgent {
     // The client whose CoCalc connector credential this turn issued.
     let connectorClient: AcpHarnessClient | undefined;
     let connectorContext: string | undefined;
+    // The client funding this turn (site-funded Claude), and how it ended.
+    let fundedClient: AcpHarnessClient | undefined;
+    let fundedEnd: HarnessFundedTurnEnd = { status: "failed" };
     try {
       await this.validateAuthority?.(this.binding);
       // The service preserves the authoritative empty reset marker. Missing
@@ -282,6 +289,17 @@ export class HarnessAgent implements AcpAgent {
         connectorContext =
           (await client.beginConnectorTurn(request.chat)) || undefined;
       }
+      try {
+        await client.beginFundedTurn(request.chat);
+        fundedClient = client;
+      } catch (error) {
+        // Not admitted (no allowance left, say): this turn fails with the
+        // reason; the harness itself is fine.
+        throw Object.assign(
+          new HarnessError("rejected", `${(error as Error)?.message ?? error}`),
+          { fundedTurnRefused: true },
+        );
+      }
       const result = await client.prompt(
         harnessPrompt(
           {
@@ -416,16 +434,30 @@ export class HarnessAgent implements AcpAgent {
           "outcome_unknown",
           "ACP prompt completed after interruption was requested; cancellation was not confirmed",
         );
+      // Persist the completed turn (e.g. staged transcripts) before success.
+      await client.turnCompleted();
       await request.stream({
         type: "summary",
         finalResponse,
         threadId: client.sessionId,
       });
+      fundedEnd = { status: "committed" };
     } catch (error) {
+      fundedEnd = this.interrupted
+        ? { status: "interrupted" }
+        : {
+            status: "failed",
+            outcome: `${(error as Error)?.message ?? error}`,
+          };
+      if ((error as { fundedTurnRefused?: boolean })?.fundedTurnRefused)
+        throw error;
       if (this.limitRejection) withTurnFailure(error, this.limitRejection);
       // Never silently start a fresh native session after an ambiguous failure.
       return await disposeFailedHarness(error, () => this.dispose());
     } finally {
+      await fundedClient?.endFundedTurn(fundedEnd).catch((error) => {
+        logger.warn("funded turn not settled", { error: `${error}` });
+      });
       await connectorClient?.endConnectorTurn().catch((error) => {
         logger.warn("managed CoCalc connector revocation unconfirmed", {
           error: `${error}`,

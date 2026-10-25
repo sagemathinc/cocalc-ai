@@ -201,6 +201,59 @@ describe("lro host authorization", () => {
     ).resolves.toBeUndefined();
   });
 
+  it.each(["get", "cancel", "dismiss"] as const)(
+    "refuses a %s naming a host off the host's bay",
+    async (name) => {
+      resolveHostBayMock.mockResolvedValue({ bay_id: "bay-1" });
+      const api = await import("./lro");
+      await expect(
+        api[name]({
+          account_id: "creator",
+          op_id: "op-1",
+          scope_type: "host",
+          scope_id: "host-1",
+        }),
+      ).rejects.toMatchObject({ code: 409 });
+      expect(getLroMock).not.toHaveBeenCalled();
+      // Without a named host it runs where received, as before.
+      await api[name]({ account_id: "creator", op_id: "op-1" }).catch(
+        () => undefined,
+      );
+      expect(getLroMock).toHaveBeenCalled();
+    },
+  );
+
+  it("cancels or dismisses only an operation of the scope it names", async () => {
+    const { cancel, dismiss } = await import("./lro");
+    getLroMock = jest.fn(async () => ({
+      op_id: "op-1",
+      kind: "host-upgrade-software",
+      scope_type: "host",
+      scope_id: "host-1",
+      status: "succeeded",
+      created_by: "creator",
+    }));
+    const other = {
+      account_id: "creator",
+      op_id: "op-1",
+      scope_type: "host" as const,
+      scope_id: "host-2",
+    };
+    await cancel(other);
+    await dismiss(other);
+    expect(updateLroMock).not.toHaveBeenCalled();
+    expect(dismissLroMock).not.toHaveBeenCalled();
+    const named = { ...other, scope_id: "HOST-1" };
+    await cancel(named);
+    await dismiss(named);
+    expect(updateLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({ op_id: "op-1", status: "canceled" }),
+    );
+    expect(dismissLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({ op_id: "op-1" }),
+    );
+  });
+
   it("cleans orphaned project-start operations before listing project lros", async () => {
     const { list } = await import("./lro");
 

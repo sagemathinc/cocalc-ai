@@ -259,8 +259,12 @@ import {
   reserveSiteFundedCodexTurn as reserveSiteFundedCodexTurnLocal,
   type ReserveSiteFundedCodexTurnOptions,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
-import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
+import {
+  getSiteFundedClaudeConfiguration,
+  getSiteFundedCodexConfiguration,
+} from "@cocalc/server/ai/site-funded-codex-policy";
 import { recordSiteFundedAdmissionLocal } from "@cocalc/server/ai/site-funded-admissions";
+import { getSiteFundedProviderKeyForReservation } from "@cocalc/server/ai/site-funded-provider-keys";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import type {
   SiteFundedAdmissionOutcome,
@@ -270,6 +274,7 @@ import type {
   SiteFundedCodexReservation,
   SiteFundedCodexUsageEvent,
   SiteFundedCodexUsageRecordResult,
+  SiteFundedProvider,
 } from "@cocalc/util/ai/site-funded-codex";
 import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 import type { DedicatedHostPricingSnapshot } from "@cocalc/util/db-schema/purchases";
@@ -288,6 +293,7 @@ import {
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { assertHostOwnedHere } from "@cocalc/server/inter-bay/host-owned-here";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { validateHostActionAuth } from "@cocalc/server/auth/host-action-auth";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -1106,10 +1112,6 @@ async function loadHostForAvailability(
   return { row, full_view: false };
 }
 
-function isHostNotFoundError(err: unknown): boolean {
-  return err instanceof Error && err.message === "host not found";
-}
-
 async function resolveRemoteHostBayIfAuthoritative(
   host_id: string,
 ): Promise<string | undefined> {
@@ -1119,54 +1121,6 @@ async function resolveRemoteHostBayIfAuthoritative(
     return;
   }
   return bay_id;
-}
-
-// A method routed to the host's owning bay refuses to run anywhere else: a
-// stale route, which the caller retries after re-resolving the owner.
-async function assertHostOwnedHere(host_id: string): Promise<void> {
-  const owner = await resolveRemoteHostBayIfAuthoritative(host_id);
-  if (owner) {
-    throw Object.assign(
-      new Error(
-        `stale route: host ${host_id} is owned by ${owner}, not ${getConfiguredBayId()}; retry`,
-      ),
-      { code: 409 },
-    );
-  }
-}
-
-async function resolveHostProjectListingTarget({
-  id,
-  account_id,
-}: {
-  id: string;
-  account_id?: string;
-}): Promise<
-  | { kind: "local"; host: Awaited<ReturnType<typeof loadHostForListing>> }
-  | { kind: "remote"; bay_id: string }
-> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return { kind: "remote", bay_id: remoteBay };
-  }
-  try {
-    const host = await loadHostForListing(id, account_id);
-    const bay_id = `${host?.bay_id ?? ""}`.trim();
-    if (bay_id && bay_id !== getConfiguredBayId()) {
-      return { kind: "remote", bay_id };
-    }
-    return { kind: "local", host };
-  } catch (err) {
-    if (!isHostNotFoundError(err)) {
-      throw err;
-    }
-  }
-
-  const ownership = await resolveHostBay(id);
-  if (!ownership || ownership.bay_id === getConfiguredBayId()) {
-    throw new Error("host not found");
-  }
-  return { kind: "remote", bay_id: ownership.bay_id };
 }
 
 type HostProjectsCursor = {
@@ -3827,6 +3781,8 @@ type ReserveSiteFundedCodexTurnArgs = {
   funded_turn_id: string;
   idempotency_key: string;
   path?: string;
+  /** "anthropic": a site-funded Claude turn. Default Codex. */
+  provider?: SiteFundedProvider;
 };
 
 /** What admission learned, for the admission funnel. */
@@ -3875,7 +3831,7 @@ export async function reserveSiteFundedCodexTurn(
       recordSiteFundedAdmission({
         fundedTurnId: args.funded_turn_id,
         accountId: args.account_id,
-        provider: "openai",
+        provider: args.provider ?? "openai",
         outcome: !admission
           ? "error"
           : admission.allowed
@@ -3896,10 +3852,19 @@ async function admitSiteFundedCodexTurn(
     funded_turn_id,
     idempotency_key,
     path,
+    provider = "openai",
   }: ReserveSiteFundedCodexTurnArgs,
   note: SiteFundedAdmissionNote,
 ): Promise<SiteFundedCodexAdmission> {
   if (!host_id) throw new Error("host_id must be specified");
+  if (provider !== "openai" && provider !== "anthropic") {
+    throw new Error("provider must be openai or anthropic");
+  }
+  const product = provider === "anthropic" ? "Claude" : "Codex";
+  const alternative =
+    provider === "anthropic"
+      ? "Connect a Claude subscription or personal Anthropic API key"
+      : "Connect a ChatGPT plan or personal OpenAI API key";
   if (!project_id) throw new Error("project_id must be specified");
   if (!account_id) throw new Error("account_id must be specified");
   if (!isValidUUID(funded_turn_id)) {
@@ -3922,23 +3887,25 @@ async function admitSiteFundedCodexTurn(
   }
   let configuration;
   try {
-    configuration = await getSiteFundedCodexConfiguration();
+    configuration =
+      provider === "anthropic"
+        ? await getSiteFundedClaudeConfiguration()
+        : await getSiteFundedCodexConfiguration();
   } catch (err) {
-    logger.error("invalid site-funded Codex pricing or policy", {
+    logger.error(`invalid site-funded ${product} pricing or policy`, {
       err: `${err}`,
     });
     return {
       allowed: false,
       code: "missing_price",
-      reason: "Site-funded Codex pricing is not configured safely.",
+      reason: `Site-funded ${product} pricing is not configured safely.`,
     };
   }
   if (!configuration.enabled) {
     return {
       allowed: false,
       code: "disabled",
-      reason:
-        "Site-funded Codex is disabled. Connect a ChatGPT plan or personal OpenAI API key to continue.",
+      reason: `Site-funded ${product} is disabled. ${alternative} to continue.`,
     };
   }
   // The host's bay need not store the executing human's account or directory row.
@@ -3952,8 +3919,7 @@ async function admitSiteFundedCodexTurn(
     return {
       allowed: false,
       code: "ineligible",
-      reason:
-        "A verified, active CoCalc account is required for included Codex usage.",
+      reason: `A verified, active CoCalc account is required for included ${product} usage.`,
     };
   }
   const homeBayId =
@@ -4003,8 +3969,7 @@ async function admitSiteFundedCodexTurn(
     return {
       allowed: false,
       code: "ineligible",
-      reason:
-        "Your CoCalc membership does not include site-funded Codex usage. Connect a ChatGPT plan or personal OpenAI API key to continue.",
+      reason: `Your CoCalc membership does not include site-funded ${product} usage. ${alternative} to continue.`,
     };
   }
   const reservationOptions: ReserveSiteFundedCodexTurnOptions = {
@@ -4026,6 +3991,7 @@ async function admitSiteFundedCodexTurn(
       ...configuration.policy,
       maxConcurrentTurnsPerAccount: accountConcurrency,
     },
+    provider,
     accountRemaining5hMicrousd: account5h.remaining,
     accountRemaining7dMicrousd: account7d.remaining,
     accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
@@ -4036,6 +4002,33 @@ async function admitSiteFundedCodexTurn(
   return remoteSeed
     ? await remoteSeed.reserveSiteFundedCodexTurn(reservationOptions)
     : await reserveSiteFundedCodexTurnLocal(reservationOptions);
+}
+
+/** The site key funding an active Claude turn, for the host running it. */
+export async function getSiteFundedClaudeKey({
+  host_id,
+  reservation_id,
+}: {
+  host_id?: string;
+  reservation_id: string;
+}): Promise<{ api_key: string }> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (await isAiLaunchDisabled()) {
+    throw new Error("AI is temporarily disabled by the site administrator.");
+  }
+  const remoteSeed = remoteSiteFundedCodexSeed();
+  const api_key = remoteSeed
+    ? (
+        await remoteSeed.getSiteFundedProviderKey({
+          reservationId: reservation_id,
+          hostId: host_id,
+        })
+      ).apiKey
+    : await getSiteFundedProviderKeyForReservation({
+        reservationId: reservation_id,
+        hostId: host_id,
+      });
+  return { api_key };
 }
 
 export async function heartbeatSiteFundedCodexTurn({
@@ -5094,22 +5087,9 @@ export async function listHostProjects({
   state_filter?: HostProjectStateFilter;
   project_state?: string;
 }): Promise<HostProjectsResponse> {
-  const target = await resolveHostProjectListingTarget({ id, account_id });
-  if (target.kind === "remote") {
-    return await getInterBayBridge()
-      .hostConnection(target.bay_id)
-      .listHostProjects({
-        account_id,
-        id,
-        limit,
-        cursor,
-        risk_only,
-        free_only,
-        state_filter,
-        project_state,
-      });
-  }
-  const { host } = target;
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
+  const host = await loadHostForListing(id, account_id);
   const cappedLimit = normalizeHostProjectsLimit(limit);
   const snapshot = await listHostProjectsLocalSnapshot({
     id,
@@ -5337,43 +5317,13 @@ async function selectHostProjectActionRows({
   project_state?: string;
   rows: Array<{ project_id: string; state: string }>;
 }> {
-  const target = await resolveHostProjectListingTarget({ id, account_id });
+  const host = await loadHostForListing(id, account_id);
   const { normalizedStateFilter, normalizedProjectState } =
     buildHostProjectsBaseQuery({
       host_id: id,
       state_filter,
       project_state,
     });
-  if (target.kind === "remote") {
-    const rows: HostProjectRow[] = [];
-    let cursor: string | undefined;
-    do {
-      const response = await getInterBayBridge()
-        .hostConnection(target.bay_id)
-        .listHostProjects({
-          account_id,
-          id,
-          limit: HOST_PROJECTS_MAX_LIMIT,
-          cursor,
-          risk_only,
-          free_only,
-          state_filter,
-          project_state,
-        });
-      rows.push(...response.rows);
-      cursor = response.next_cursor;
-    } while (cursor);
-    return {
-      host: { id },
-      state_filter: normalizedStateFilter,
-      project_state: normalizedProjectState || undefined,
-      rows: rows.map((row) => ({
-        project_id: row.project_id,
-        state: row.state ?? "",
-      })),
-    };
-  }
-
   const snapshot = await listHostProjectsLocalSnapshot({
     id,
     risk_only,
@@ -5384,7 +5334,7 @@ async function selectHostProjectActionRows({
   const rows = snapshot.rows.sort(compareHostProjectRows);
 
   return {
-    host: target.host,
+    host,
     state_filter: normalizedStateFilter,
     project_state: normalizedProjectState || undefined,
     rows: rows.map((row) => ({
@@ -5630,6 +5580,8 @@ export async function stopHostProjects({
   free_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
@@ -5667,6 +5619,8 @@ export async function restartHostProjects({
   risk_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,

@@ -17,9 +17,14 @@ import {
   type SiteFundedCodexReservationStatus,
   type SiteFundedCodexUsageEvent,
   type SiteFundedCodexUsageRecordResult,
+  type SiteFundedProvider,
 } from "@cocalc/util/ai/site-funded-codex";
 import { uuid } from "@cocalc/util/misc";
 import { ensureAiSessionsSchema } from "./acp-sessions";
+import {
+  ensureSiteFundedProviderKeyTable,
+  selectSiteFundedProviderKey,
+} from "./site-funded-provider-keys";
 
 const logger = getLogger("server:ai:site-funded-codex-reservations");
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -45,6 +50,8 @@ export type ReserveSiteFundedCodexTurnOptions = {
   owningBayId?: string;
   membershipTier: string;
   policy: SiteFundedCodexPolicy;
+  /** Default OpenAI (Codex). Anthropic turns are funded by a site key. */
+  provider?: SiteFundedProvider;
   accountRemaining5hMicrousd?: number | null;
   accountRemaining7dMicrousd?: number | null;
   accountCredited5hMicrousdByFundedTurn?: Record<string, number>;
@@ -138,6 +145,8 @@ function reservationFromRow(row: any): SiteFundedCodexReservation {
     expiresAt: iso(row.expires_at),
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
     status: row.status,
+    provider: row.provider ?? "openai",
+    providerKeyId: row.provider_key_id ?? undefined,
   };
 }
 
@@ -224,6 +233,13 @@ async function createSiteFundedCodexReservationTables(): Promise<void> {
        ADD COLUMN IF NOT EXISTS last_event_price_version TEXT`,
     `ALTER TABLE site_ai_turn_reservations
        ADD COLUMN IF NOT EXISTS last_event_long_context BOOLEAN`,
+    `ALTER TABLE site_ai_turn_reservations
+       ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'openai'`,
+    `ALTER TABLE site_ai_turn_reservations
+       ADD COLUMN IF NOT EXISTS provider_key_id UUID`,
+    `CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_provider_key_idx
+       ON site_ai_turn_reservations(provider_key_id, started_at)
+       WHERE provider_key_id IS NOT NULL`,
     `UPDATE site_ai_turn_reservations
        SET pool_reserved_microusd = reserved_microusd
        WHERE status = 'active' AND pool_reserved_microusd = 0`,
@@ -490,12 +506,31 @@ function denied(
   return { allowed: false, code, reason };
 }
 
+/** How refusals name the product, and what a person can do instead. */
+function fundedWording(provider: SiteFundedProvider) {
+  return provider === "anthropic"
+    ? {
+        product: "Claude",
+        model: "Claude",
+        alternative:
+          "connect a Claude subscription or personal Anthropic API key",
+      }
+    : {
+        product: "Codex",
+        model: "Luna",
+        alternative: "connect a ChatGPT plan or personal OpenAI API key",
+      };
+}
+
 export async function reserveSiteFundedCodexTurn(
   opts: ReserveSiteFundedCodexTurnOptions,
 ): Promise<SiteFundedCodexAdmission> {
+  const provider = opts.provider ?? "openai";
+  const words = fundedWording(provider);
   await Promise.all([
     ensureSiteFundedCodexReservationTables(),
     ensureAiSessionsSchema(),
+    provider === "anthropic" ? ensureSiteFundedProviderKeyTable() : undefined,
   ]);
   const client = await getPool().connect();
   try {
@@ -523,7 +558,7 @@ export async function reserveSiteFundedCodexTurn(
       await client.query("ROLLBACK");
       return denied(
         "account_hold",
-        `Site-funded Codex is unavailable for this account: ${hold.rows[0].reason}`,
+        `Site-funded ${words.product} is unavailable for this account: ${hold.rows[0].reason}`,
       );
     }
 
@@ -619,14 +654,14 @@ export async function reserveSiteFundedCodexTurn(
       await client.query("ROLLBACK");
       return denied(
         "account_concurrency",
-        "This account has reached its concurrent site-funded Codex turn limit.",
+        `This account has reached its concurrent site-funded ${words.product} turn limit.`,
       );
     }
     if (int(active.rows[0]?.global_active) >= opts.globalConcurrency) {
       await client.query("ROLLBACK");
       return denied(
         "global_concurrency",
-        "Site-funded Codex is temporarily at its global concurrency limit.",
+        `Site-funded ${words.product} is temporarily at its global concurrency limit.`,
       );
     }
     // Canonical remaining usage already includes credited events from active
@@ -660,8 +695,8 @@ export async function reserveSiteFundedCodexTurn(
       return denied(
         weeklyExhausted ? "account_limit_7d" : "account_limit_5h",
         weeklyExhausted
-          ? "You have used your weekly included Codex allowance. Wait for usage to reset, upgrade your CoCalc membership, or connect a ChatGPT plan or personal OpenAI API key."
-          : "You have used your 5-hour included Codex allowance. Wait for usage to reset, upgrade your CoCalc membership, or connect a ChatGPT plan or personal OpenAI API key.",
+          ? `You have used your weekly included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or ${words.alternative}.`
+          : `You have used your 5-hour included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or ${words.alternative}.`,
       );
     }
     const effectivePolicy: SiteFundedCodexPolicy = {
@@ -679,7 +714,7 @@ export async function reserveSiteFundedCodexTurn(
       await client.query("ROLLBACK");
       return denied(
         "global_pool",
-        "CoCalc's included Codex capacity is temporarily exhausted. Try again after the weekly pool resets, upgrade your CoCalc membership for more included Luna usage, or connect a ChatGPT plan or personal OpenAI API key.",
+        `CoCalc's included ${words.product} capacity is temporarily exhausted. Try again after the weekly pool resets, upgrade your CoCalc membership for more included ${words.model} usage, or ${words.alternative}.`,
       );
     }
     if (
@@ -692,8 +727,24 @@ export async function reserveSiteFundedCodexTurn(
       return denied(
         "global_pool",
         opts.poolId === "site-funded-codex-free"
-          ? "Free included Codex capacity is temporarily exhausted. Try again after the weekly pool resets, upgrade your CoCalc membership for more included Luna usage, or connect a ChatGPT plan or personal OpenAI API key."
-          : "Included Codex capacity for paid memberships is temporarily exhausted. Try again after the weekly pool resets or connect a ChatGPT plan or personal OpenAI API key.",
+          ? `Free included ${words.product} capacity is temporarily exhausted. Try again after the weekly pool resets, upgrade your CoCalc membership for more included ${words.model} usage, or ${words.alternative}.`
+          : `Included ${words.product} capacity for paid memberships is temporarily exhausted. Try again after the weekly pool resets or ${words.alternative}.`,
+      );
+    }
+    // A Claude turn is funded by the first site key with room this month.
+    const providerKeyId =
+      provider === "anthropic"
+        ? await selectSiteFundedProviderKey({
+            client,
+            provider,
+            requestedMicrousd: poolRequested,
+          })
+        : undefined;
+    if (provider === "anthropic" && !providerKeyId) {
+      await client.query("ROLLBACK");
+      return denied(
+        "provider_keys_exhausted",
+        `CoCalc's included ${words.product} capacity is used up for this month. Try again later or ${words.alternative}.`,
       );
     }
 
@@ -706,10 +757,11 @@ export async function reserveSiteFundedCodexTurn(
           period_start, account_id, project_id, host_id, home_bay_id,
           owning_bay_id, membership_tier, policy_version, model, reasoning,
           service_tier, policy, surface, reserved_microusd,
-          pool_reserved_microusd, status, expires_at
+          pool_reserved_microusd, status, expires_at, provider,
+          provider_key_id
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-          $14, $15, $16::jsonb, $17, $18, $19, 'active', $20
+          $14, $15, $16::jsonb, $17, $18, $19, 'active', $20, $21, $22
         )
         RETURNING *
       `,
@@ -734,6 +786,8 @@ export async function reserveSiteFundedCodexTurn(
         requested,
         poolRequested,
         expiresAt,
+        provider,
+        providerKeyId ?? null,
       ],
     );
     await client.query(
@@ -801,10 +855,6 @@ export async function recordSiteFundedCodexUsageEvent(
   ) {
     throw new Error("site-funded Codex request sequence must be positive");
   }
-  const cost = computeSiteFundedCodexRequestCost({
-    model: event.model,
-    usage: event,
-  });
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -815,6 +865,16 @@ export async function recordSiteFundedCodexUsageEvent(
     );
     const row = found.rows[0];
     if (!row) throw new Error("site-funded Codex reservation not found");
+    // Priced as the model the turn was admitted for, never as the host says.
+    if (event.model !== row.model) {
+      throw new Error(
+        "site-funded usage event model does not match its reservation",
+      );
+    }
+    const cost = computeSiteFundedCodexRequestCost({
+      model: row.model,
+      usage: event,
+    });
     const lastRequestSequence = int(row.last_request_sequence);
     const result = (inserted: boolean): SiteFundedCodexUsageRecordResult => ({
       costMicrousd:

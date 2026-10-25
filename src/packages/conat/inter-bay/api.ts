@@ -120,6 +120,10 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 import type {
   AuthorizePublicDirectoryShareReadOptions,
   AuthorizePublicDirectoryShareReadResponse,
+  GetPublicDirectoryShareViewAggregatesOptions,
+  GetPublicDirectoryShareViewAggregatesResponse,
+  GetPublicDirectoryShareViewsOptions,
+  GetPublicDirectoryShareViewsResponse,
   CopyPublicDirectoryShareToNewProjectOptions,
   CopyPublicDirectoryShareToNewProjectResult,
   CopyPublicDirectoryShareToProjectOptions,
@@ -261,6 +265,10 @@ import type {
 } from "@cocalc/util/db-schema/software-licenses";
 import type { MoneyValue } from "@cocalc/util/money";
 import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
+import type {
+  SiteFundedProviderKeyAction,
+  SiteFundedProviderKeyInfo,
+} from "@cocalc/util/ai/site-funded-claude";
 import type {
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolId,
@@ -2392,6 +2400,16 @@ export interface BayOpsFinishSiteFundedCodexTurnRequest extends BayOpsSiteFunded
   outcome?: string;
 }
 
+export interface BayOpsSiteFundedProviderKeysRequest {
+  provider: "anthropic";
+  action?: SiteFundedProviderKeyAction;
+}
+
+export interface BayOpsSiteFundedProviderKeyRequest {
+  reservationId: string;
+  hostId: string;
+}
+
 export interface BayOpsSiteFundedCodexStatusRequest {
   reconcile?: boolean;
   accountId?: string;
@@ -2618,7 +2636,6 @@ export type HostConnectionMethod =
   | "get-project-backup-indexes"
   | "sync-project-backup-indexes"
   | "delete-project-backup-index"
-  | "list-host-projects"
   | "ensure-host-owner-ssh-trust"
   | "rehome-host"
   | "prepare-host-rehome"
@@ -2878,6 +2895,8 @@ export type AccountLocalMethod =
   | "public-directory-share-upsert"
   | "public-directory-share-disable-for-banned-actor"
   | "public-directory-share-authorize-read"
+  | "public-directory-share-get-views"
+  | "public-directory-share-get-view-aggregates"
   | "public-directory-share-list-directory"
   | "public-directory-share-copy-to-project"
   | "public-directory-share-copy-to-new-project"
@@ -2926,6 +2945,8 @@ export type BayOpsMethod =
   | "finish-site-funded-codex-turn"
   | "get-site-funded-codex-status"
   | "record-site-funded-admission"
+  | "get-site-funded-provider-key"
+  | "manage-site-funded-provider-keys"
   | "reserve-site-funded-speech"
   | "finish-site-funded-speech"
   | "commercial-orders"
@@ -3383,19 +3404,6 @@ export interface InterBayHostConnectionApi {
   deleteProjectBackupIndex: (
     opts: Parameters<Hosts["deleteProjectBackupIndex"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["deleteProjectBackupIndex"]>>>;
-  listHostProjects: (
-    opts: Pick<
-      Parameters<Hosts["listHostProjects"]>[0],
-      | "account_id"
-      | "id"
-      | "limit"
-      | "cursor"
-      | "risk_only"
-      | "free_only"
-      | "state_filter"
-      | "project_state"
-    >,
-  ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
   ensureHostOwnerSshTrust: (
     opts: HostOwnerSshTrustRequest,
   ) => Promise<HostOwnerSshTrustResponse>;
@@ -3479,10 +3487,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "deleteProjectBackupIndex",
     method: "delete-project-backup-index",
-  },
-  {
-    name: "listHostProjects",
-    method: "list-host-projects",
   },
   {
     name: "ensureHostOwnerSshTrust",
@@ -4547,6 +4551,12 @@ export interface InterBayAccountLocalApi
   publicDirectoryShareAuthorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
+  publicDirectoryShareGetViews: (
+    opts: GetPublicDirectoryShareViewsOptions,
+  ) => Promise<GetPublicDirectoryShareViewsResponse>;
+  publicDirectoryShareGetViewAggregates: (
+    opts: GetPublicDirectoryShareViewAggregatesOptions,
+  ) => Promise<GetPublicDirectoryShareViewAggregatesResponse>;
   publicDirectoryShareListDirectory: (
     opts: ListPublicDirectoryShareDirectoryOptions,
   ) => Promise<ListPublicDirectoryShareDirectoryResponse>;
@@ -4669,6 +4679,12 @@ export interface InterBayBayOpsApi {
   recordSiteFundedAdmission: (
     opts: BayOpsRecordSiteFundedAdmissionRequest,
   ) => Promise<void>;
+  getSiteFundedProviderKey: (
+    opts: BayOpsSiteFundedProviderKeyRequest,
+  ) => Promise<{ apiKey: string }>;
+  manageSiteFundedProviderKeys: (
+    opts: BayOpsSiteFundedProviderKeysRequest,
+  ) => Promise<SiteFundedProviderKeyInfo[]>;
   reserveSiteFundedSpeech: (
     opts: BayOpsReserveSiteFundedSpeechRequest,
   ) => Promise<{
@@ -8021,6 +8037,24 @@ export function createInterBayAccountLocalClient({
       method: "public-directory-share-authorize-read",
     }),
   });
+  const publicDirectoryShareGetViewsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViews">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-get-views",
+    }),
+  });
+  const publicDirectoryShareGetViewAggregatesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViewAggregates">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-get-view-aggregates",
+    }),
+  });
   const publicDirectoryShareListDirectoryClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "publicDirectoryShareListDirectory">
   >({
@@ -8581,6 +8615,14 @@ export function createInterBayAccountLocalClient({
       ),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShareAuthorizeReadClient.publicDirectoryShareAuthorizeRead(
+        opts,
+      ),
+    publicDirectoryShareGetViews: async (opts) =>
+      await publicDirectoryShareGetViewsClient.publicDirectoryShareGetViews(
+        opts,
+      ),
+    publicDirectoryShareGetViewAggregates: async (opts) =>
+      await publicDirectoryShareGetViewAggregatesClient.publicDirectoryShareGetViewAggregates(
         opts,
       ),
     publicDirectoryShareListDirectory: async (opts) =>
@@ -10785,6 +10827,34 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViews">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-get-views",
+      }),
+      impl: {
+        publicDirectoryShareGetViews: async (opts) =>
+          await impl.publicDirectoryShareGetViews(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViewAggregates">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-get-view-aggregates",
+      }),
+      impl: {
+        publicDirectoryShareGetViewAggregates: async (opts) =>
+          await impl.publicDirectoryShareGetViewAggregates(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountLocalApi, "publicDirectoryShareListDirectory">
     >({
       ...options,
@@ -11020,6 +11090,24 @@ export function createInterBayBayOpsClient({
     subject: bayOpsSubject({
       dest_bay,
       method: "record-site-funded-admission",
+    }),
+  });
+  const siteFundedProviderKeyClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getSiteFundedProviderKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-site-funded-provider-key",
+    }),
+  });
+  const manageSiteFundedProviderKeysClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "manageSiteFundedProviderKeys">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "manage-site-funded-provider-keys",
     }),
   });
   const reserveSiteFundedSpeechClient = createServiceClient<
@@ -11320,6 +11408,12 @@ export function createInterBayBayOpsClient({
       await siteFundedCodexStatusClient.getSiteFundedCodexStatus(opts),
     recordSiteFundedAdmission: async (opts) =>
       await recordSiteFundedAdmissionClient.recordSiteFundedAdmission(opts),
+    getSiteFundedProviderKey: async (opts) =>
+      await siteFundedProviderKeyClient.getSiteFundedProviderKey(opts),
+    manageSiteFundedProviderKeys: async (opts) =>
+      await manageSiteFundedProviderKeysClient.manageSiteFundedProviderKeys(
+        opts,
+      ),
     reserveSiteFundedSpeech: async (opts) =>
       await reserveSiteFundedSpeechClient.reserveSiteFundedSpeech(opts),
     finishSiteFundedSpeech: async (opts) =>
@@ -11574,6 +11668,32 @@ export function createInterBayBayOpsHandlers({
       impl: {
         recordSiteFundedAdmission: async (opts) =>
           await impl.recordSiteFundedAdmission(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getSiteFundedProviderKey">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-site-funded-provider-key",
+      }),
+      impl: {
+        getSiteFundedProviderKey: async (opts) =>
+          await impl.getSiteFundedProviderKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "manageSiteFundedProviderKeys">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "manage-site-funded-provider-keys",
+      }),
+      impl: {
+        manageSiteFundedProviderKeys: async (opts) =>
+          await impl.manageSiteFundedProviderKeys(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">>({

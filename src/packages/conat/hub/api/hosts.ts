@@ -808,6 +808,22 @@ export interface HostKernelSysctlTextMismatch {
   actual: string | null;
 }
 
+export interface HostKernelHardeningCheck {
+  key: string;
+  // ">= 2", "= 0", ...
+  expected: string;
+  actual: number | null;
+  ok: boolean;
+  // Written by the host (sysctl.d); otherwise only checked.
+  managed: boolean;
+}
+
+export interface HostKernelHardeningSnapshot {
+  ok: boolean;
+  config_path: string;
+  checks: HostKernelHardeningCheck[];
+}
+
 export interface HostKernelSysctlSnapshot {
   collected_at?: string;
   config_path?: string;
@@ -818,6 +834,9 @@ export interface HostKernelSysctlSnapshot {
   ok: boolean;
   mismatches: HostKernelSysctlMismatch[];
   text_mismatches?: HostKernelSysctlTextMismatch[];
+  // Kernel attack-surface settings; not part of `ok`, which covers the
+  // capacity limits above.
+  hardening?: HostKernelHardeningSnapshot;
   apply_attempted?: boolean;
   apply_succeeded?: boolean;
   error?: string;
@@ -1917,6 +1936,7 @@ export const hosts = {
   checkCodexSiteUsageAllowance: authFirstRequireHostWithAccountTarget,
   recordCodexSiteUsage: authFirstRequireHostWithAccountTarget,
   reserveSiteFundedCodexTurn: authFirstRequireHostWithAccountTarget,
+  getSiteFundedClaudeKey: authFirstRequireHost,
   heartbeatSiteFundedCodexTurn: authFirstRequireHost,
   recordSiteFundedCodexUsageEvent: authFirstRequireHost,
   finishSiteFundedCodexTurn: authFirstRequireHost,
@@ -2462,7 +2482,14 @@ export interface Hosts {
     funded_turn_id: string;
     idempotency_key: string;
     path?: string;
+    /** "anthropic": a site-funded Claude turn. Default Codex. */
+    provider?: "openai" | "anthropic";
   }) => Promise<SiteFundedCodexAdmission>;
+  /** The site key funding an active Claude turn this host runs. */
+  getSiteFundedClaudeKey: (opts: {
+    host_id?: string;
+    reservation_id: string;
+  }) => Promise<{ api_key: string }>;
   heartbeatSiteFundedCodexTurn: (opts: {
     host_id?: string;
     reservation_id: string;

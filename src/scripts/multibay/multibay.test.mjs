@@ -1891,6 +1891,46 @@ describe("host reads across bays", () => {
     );
   });
 
+  it("lists and stops a host's projects on the host's bay", async () => {
+    // The host's projects are listed where the host lives; the bulk stop
+    // (fresh auth from alice's home bay) queues its operation there too.
+    const forwarded = async (name) =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND account_id=$3 AND finished IS NOT NULL",
+           [${JSON.stringify(name)}, ${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         return rows[0].n;`,
+      );
+    const listBefore = await forwarded("hosts.listHostProjects");
+    const listed = await alice.client.call("hosts.listHostProjects", {
+      id: host_id,
+    });
+    assert.deepEqual(listed.rows, []);
+    assert.equal(listed.summary?.total, 0);
+    assert.equal(await forwarded("hosts.listHostProjects"), listBefore + 1);
+
+    const stopBefore = await forwarded("hosts.stopHostProjects");
+    const op = await alice.client.call("hosts.stopHostProjects", {
+      id: host_id,
+      state_filter: "running",
+    });
+    assert.ok(op?.op_id, "a stop operation was queued");
+    assert.equal(await forwarded("hosts.stopHostProjects"), stopBefore + 1);
+    const kind = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT kind FROM long_running_operations WHERE op_id=$1",
+         [${JSON.stringify(op.op_id)}]);
+       return rows[0]?.kind ?? null;`,
+    );
+    assert.equal(kind, "host-stop-projects");
+  });
+
   it("queues a host start on the host's bay", async () => {
     // Last in this group: the start itself then fails (this host has no
     // cloud provider), so only where it is queued is checked.
@@ -2000,6 +2040,39 @@ describe("host reads across bays", () => {
       ["succeeded", "failed", "canceled", "expired"].includes(done.status),
       JSON.stringify(done),
     );
+  });
+
+  it("cancels and dismisses a host's operation on the host's bay", async () => {
+    // The hosts page names the host when it cancels: lro.cancel and
+    // lro.dismiss are then routed to the host's bay, which keeps the
+    // operation. A kind no worker claims stays queued until canceled.
+    const op_id = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { createLro } = server("lro/lro-db.js");
+       const op = await createLro({
+         kind: "multibay-test-idle",
+         scope_type: "host",
+         scope_id: ${JSON.stringify(host_id)},
+         created_by: ${JSON.stringify(alice.account_id)},
+       });
+       return op.op_id;`,
+    );
+    const scope = { scope_type: "host", scope_id: host_id };
+    await alice.client.call("lro.cancel", { op_id, ...scope });
+    const canceled = await alice.client.call("lro.get", { op_id, ...scope });
+    assert.equal(canceled?.status, "canceled");
+    await alice.client.call("lro.dismiss", { op_id, ...scope });
+    const dismissed = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT dismissed_at IS NOT NULL AS dismissed FROM long_running_operations WHERE op_id=$1",
+         [${JSON.stringify(op_id)}]);
+       return rows[0]?.dismissed ?? null;`,
+    );
+    assert.equal(dismissed, true, "dismissed on the host's bay");
   });
 });
 
@@ -3896,6 +3969,107 @@ describe("billing exposure in admin health across bays", () => {
     assert.equal(attached.open_metered.count, 0);
     assert.ok(
       attached.stuck_hosts.some(({ host_id }) => host_id === attachedHost),
+    );
+  });
+});
+
+describe("public share views for a share stored off its project's bay", () => {
+  // A legacy placement: the share's row is on the attached bay, while its
+  // project (and so who is owner or collaborator) is on the seed.
+  let dana; // homed on the seed, owns the project (alice is at her project limit)
+  let carol; // homed on the seed, not in the project
+  let project_id;
+  const share_id = randomUUID();
+
+  const viewsOn = async (bay) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows: exists } = await getPool().query(
+         "SELECT to_regclass('public_share_views') IS NOT NULL AS ok");
+       if (!exists[0].ok) return [];
+       const { rows } = await getPool().query(
+         "SELECT account_id, viewer_role FROM public_share_views WHERE share_id=$1 ORDER BY viewer_role",
+         [${JSON.stringify(share_id)}]);
+       return rows;`,
+    );
+
+  before(async () => {
+    dana = await createAccount(cluster, { home_bay_id: SEED, name: "dana" });
+    dana.client = await client(dana);
+    carol = await createAccount(cluster, { home_bay_id: SEED, name: "carol" });
+    carol.client = await client(carol);
+    project_id = await createProject(dana.client, "shared with views");
+    assert.equal(await owningBay(project_id), SEED);
+    await invite(dana, bob, project_id);
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `await server("public-directory-shares/index.js").ensurePublicDirectorySharesSchema();
+       const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`INSERT INTO public_project_paths (
+            id, project_id, path, slug, visibility, requires_auth,
+            availability_status, created_by, updated_by, disabled)
+          VALUES ($1, $2, 'shared', $3, 'unlisted', TRUE, 'available', $4, $4, FALSE)\`,
+         [${JSON.stringify(share_id)}, ${JSON.stringify(project_id)},
+          ${JSON.stringify(`views-${share_id.slice(0, 8)}`)},
+          ${JSON.stringify(dana.account_id)}]);`,
+    );
+  });
+
+  it("records each read on the share's bay, with the role the project's bay has", async () => {
+    for (const [name, viewer] of Object.entries({ dana, bob, carol })) {
+      await eventually(
+        async () =>
+          (
+            await viewer.client.call("publicDirectoryShares.authorizeRead", {
+              project_id,
+              share_id,
+            })
+          )?.share_id === share_id,
+        { what: `${name} reading the share` },
+      );
+    }
+    const rows = await eventually(
+      async () => {
+        const rows = await viewsOn(ATTACHED);
+        return rows.length === 3 ? rows : undefined;
+      },
+      { what: "three views on the attached bay" },
+    );
+    assert.deepEqual(
+      Object.fromEntries(rows.map((r) => [r.account_id, r.viewer_role])),
+      {
+        [dana.account_id]: "owner",
+        [bob.account_id]: "collaborator",
+        [carol.account_id]: "other",
+      },
+    );
+    assert.deepEqual(await viewsOn(SEED), []);
+  });
+
+  it("reports the views to the project's owner and collaborator, from either bay, and to no one else", async () => {
+    for (const viewer of [dana, bob]) {
+      const views = await viewer.client.call("publicDirectoryShares.getViews", {
+        project_id,
+        share_id,
+      });
+      assert.deepEqual(views.distinct_viewers, {
+        viewers: 3,
+        owner: 1,
+        collaborator: 1,
+        other: 1,
+      });
+      assert.ok(!JSON.stringify(views).includes(carol.account_id));
+    }
+    await assert.rejects(
+      carol.client.call("publicDirectoryShares.getViews", {
+        project_id,
+        share_id,
+      }),
+      /public directory share not found/,
     );
   });
 });

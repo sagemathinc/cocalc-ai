@@ -1,6 +1,6 @@
 ---
 name: cocalc
-description: Use when working in a CoCalc project or with CoCalc-native documents and workflows, including CoCalc usage questions (bundled docs); agent memory (notes that persist across sessions and projects); chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR and commit cards, live boards, calendars); messaging other agents; sensors and watchers (being woken when CI finishes, a file changes or at a time); the person's notifications; disk space and the project quota; software installs (RootFS recipes); complete project-side document builds (LaTeX, R Markdown, Quarto); live tasks, chats, boards, slides and notebooks; a shared web browser and terminal the agent drives and the human can take over; document history (TimeTravel); and CoCalc export/import workflows.
+description: Use when working in a CoCalc project or with CoCalc-native documents and workflows, including CoCalc usage questions (bundled docs); agent memory (notes that persist across sessions and projects); chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR and commit cards, live boards, calendars, todo lists); messaging other agents; sensors and watchers (being woken when CI finishes, a file changes or at a time); the person's notifications; disk space and the project quota; software installs (RootFS recipes); complete project-side document builds (LaTeX, R Markdown, Quarto); live tasks, chats, boards, slides and notebooks; a shared web browser and terminal the agent drives and the human can take over; document history (TimeTravel); and CoCalc export/import workflows.
 ---
 
 # CoCalc
@@ -80,7 +80,8 @@ Unicode symbols (α ≡ 1 mod p) or plain-text ASCII.
 ## Chat Workbench Artifacts
 
 Artifacts are cards next to the chat: Markdown, file previews, proposed action
-lists, GitHub PR and commit cards, live boards and calendars.
+lists, GitHub PR and commit cards, live boards, calendars and your todo
+list.
 
 - **An explicit request to create, make or publish an artifact is a hard
   requirement.** Writing the file, mentioning it, or linking it does not
@@ -102,7 +103,7 @@ lists, GitHub PR and commit cards, live boards and calendars.
   own normal approval.
 
 Payloads, themes, PR/commit cards and the scripting API: references/artifacts.md.
-Live Sagebrush boards and calendars: references/boards-and-calendars.md.
+Live Sagebrush boards, calendars and todo lists: references/boards-and-calendars.md.
 
 ## Agent Memory
 
@@ -171,8 +172,9 @@ cocalc agent turn --priority low
 
 ## Waiting For Something: Sensors
 
-Don't poll or sleep. Set a watcher and end your turn; it starts your next turn
-when it fires (or gives up):
+Don't poll or sleep. Set a watcher and end your turn; it wakes you when it
+fires (or gives up): a new turn, or a message in your running turn if you are
+still working:
 
 ```bash
 cocalc sensor watch exit -- <command>           # e.g. a script that waits for CI
@@ -222,7 +224,7 @@ Details: references/browser-and-terminal.md.
 | `exec` API, tasks, TimeTravel, export from exec, agent activity logs | references/backend-exec.md         |
 | Notebook cells, runs, live output                                    | references/notebooks.md            |
 | Artifact payloads, themes, PR/commit cards, updates, scripting       | references/artifacts.md            |
-| Live Sagebrush boards, calendars                                     | references/boards-and-calendars.md |
+| Live Sagebrush boards, calendars, todo lists                         | references/boards-and-calendars.md |
 | Memory namespaces, revisions, limits                                 | references/memory.md               |
 | Messaging details, attachments, broadcast                            | references/messaging.md            |
 | Watchers and script sensors                                          | references/sensors.md              |
