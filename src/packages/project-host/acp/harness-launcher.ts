@@ -43,6 +43,14 @@ import { getProject } from "../sqlite/projects";
 import getLogger from "@cocalc/backend/logger";
 import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 import { createAnthropicAccountCredentialRelay } from "./anthropic-credential-relay";
+import {
+  createSiteFundedClaudeRelay,
+  type SiteFundedClaudeRelay,
+} from "./site-funded-claude-relay";
+import {
+  createSiteFundedClaudeTurns,
+  type SiteFundedClaudeTurns,
+} from "./site-funded-claude-turns";
 import type { CredentialHttpRelay } from "./credential-http-relay";
 import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
 import { claudeCodeToolsDir } from "./claude-code-tools";
@@ -61,7 +69,7 @@ const CREDENTIAL_RELAY_MOUNT = "/run/cocalc/credential-relay";
 
 export function resolveHarnessCommand(
   profile: ReturnType<typeof parseAcpHarnessProfile>,
-  credentialMode?: "project-secret" | "account-api-key",
+  credentialMode?: "project-secret" | "account-api-key" | "site-funded",
 ): { executable: string; args: string[] } {
   if (profile.version === 1) {
     return { executable: profile.executable, args: [...profile.args] };
@@ -114,7 +122,9 @@ export async function launchHarnessInProject(
   }
   const harnessCommand = resolveHarnessCommand(
     profile,
-    credential.mode === "account-api-key" ? credential.mode : undefined,
+    credential.mode === "account-api-key" || credential.mode === "site-funded"
+      ? credential.mode
+      : undefined,
   );
   if (
     !isValidUUID(projectId) ||
@@ -180,6 +190,9 @@ export async function launchHarnessInProject(
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
   let credentialRelay: CredentialHttpRelay | undefined;
   let credentialRelayDirectory: string | undefined;
+  // Site-funded Claude: the funding relay and its turns.
+  let fundedRelay: SiteFundedClaudeRelay | undefined;
+  let fundedTurns: SiteFundedClaudeTurns | undefined;
   let restrictedEgress: ClaudeRestrictedEgress | undefined;
   const cleanup = () =>
     (stopped ??= (async () => {
@@ -207,6 +220,13 @@ export async function launchHarnessInProject(
         restrictedEgress?.close();
         await cliLease?.close();
         await credentialRelay?.close();
+        await fundedTurns?.close().catch((error) =>
+          logger.warn("site-funded Claude turn not settled at close", {
+            projectId,
+            error: `${error}`,
+          }),
+        );
+        await fundedRelay?.close();
         if (credentialRelayDirectory)
           await rm(credentialRelayDirectory, { recursive: true, force: true });
       }
@@ -282,6 +302,31 @@ export async function launchHarnessInProject(
       await writeFile(
         join(credentialRelayDirectory, "token"),
         credentialRelay.token,
+        { encoding: "utf8", mode: 0o600 },
+      );
+    }
+    if (credential.mode === "site-funded") {
+      if (
+        profile.version !== 2 ||
+        profile.id !== "claude-code" ||
+        credential.provider !== "anthropic"
+      ) {
+        throw Error("Unsupported site-funded credential binding");
+      }
+      credentialRelayDirectory = await mkdtemp(
+        join(tmpdir(), "cocalc-acp-credential-"),
+      );
+      fundedRelay = await createSiteFundedClaudeRelay({
+        socketPath: join(credentialRelayDirectory, "relay.sock"),
+      });
+      fundedTurns = createSiteFundedClaudeTurns({
+        relay: fundedRelay,
+        projectId,
+        accountId,
+      });
+      await writeFile(
+        join(credentialRelayDirectory, "token"),
+        fundedRelay.token,
         { encoding: "utf8", mode: 0o600 },
       );
     }
@@ -372,7 +417,14 @@ export async function launchHarnessInProject(
       logger.warn("ACP container cleanup failed", { projectId, name });
     });
     const lease = cliLease;
+    const turns = fundedTurns;
     return {
+      ...(turns
+        ? {
+            beginFundedTurn: (chat) => turns.begin(chat),
+            endFundedTurn: (end) => turns.end(end),
+          }
+        : {}),
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,

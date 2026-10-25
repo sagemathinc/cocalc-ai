@@ -92,9 +92,18 @@ export function siteFundedUsageFromAnthropic(
 }
 
 /** Site-funded Claude: like Codex's policy, with Claude Haiku 5.5. */
+/** Web searches one funded request may make (the relay caps max_uses). */
+export const SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST = 3;
+
 export const DEFAULT_SITE_FUNDED_CLAUDE_POLICY: SiteFundedCodexPolicy = {
   ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
   model: "claude-haiku-5-5",
+  // Prompts over 100,000 tokens cost 5x, so the relay refuses them: the
+  // ledger holds room for one request of this size beyond a turn's limit.
+  maxPromptTokens: 100_000,
+  maxProviderToolFeesMicrousdPerRequest:
+    SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST *
+    ANTHROPIC_WEB_SEARCH_MICROUSD,
   // Claude Code compacts at about 80% of a 100,000-token window, below the
   // price that applies to longer prompts.
   contextWindowTokens: 100_000,

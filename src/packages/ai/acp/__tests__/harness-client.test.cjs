@@ -3617,3 +3617,59 @@ test("a token-authenticated controller still refuses API-key billing", async (t)
     /different billing method/,
   );
 });
+
+test("a site-funded Claude turn is admitted before its prompt and settled after it", async (t) => {
+  const calls = [];
+  const { agent, request, events, stops } = adapter(
+    t,
+    ["--claude-adapter", "--delayed-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+    undefined,
+    {
+      beginFundedTurn: async (chat) => calls.push(["begin", chat.path]),
+      endFundedTurn: async (end) => calls.push(["end", end.status]),
+    },
+  );
+  await agent.evaluate(request);
+  assert.deepEqual(calls, [
+    ["begin", "a.chat"],
+    ["end", "committed"],
+  ]);
+  assert.equal(events.at(-1).type, "summary");
+  assert.equal(stops(), 0);
+});
+
+test("a site-funded Claude turn that is not admitted fails with the reason, and keeps the harness", async (t) => {
+  let admit = false;
+  const ended = [];
+  const { agent, request, launches, stops } = adapter(
+    t,
+    ["--claude-adapter", "--delayed-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+    undefined,
+    {
+      beginFundedTurn: async () => {
+        if (!admit)
+          throw Error("You have used your weekly included AI allowance.");
+      },
+      endFundedTurn: async (end) => ended.push(end.status),
+    },
+  );
+  await assert.rejects(
+    () => agent.evaluate(request),
+    /weekly included AI allowance/,
+  );
+  // Never admitted, so nothing to settle, and the harness is fine.
+  assert.deepEqual(ended, []);
+  assert.equal(stops(), 0);
+  admit = true;
+  await agent.evaluate({ ...request, session_id: "fixture-session" });
+  assert.deepEqual(ended, ["committed"]);
+  assert.equal(launches(), 1);
+});

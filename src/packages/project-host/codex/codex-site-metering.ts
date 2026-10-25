@@ -333,11 +333,114 @@ export async function flushSiteFundedCodexOutbox(): Promise<void> {
   }
 }
 
-async function persistUsageEvent(
+// Shared by every site-funded provider (Codex and Claude): reservations,
+// usage and settlement all go through the same durable outbox.
+
+/** Records one funded provider request's usage: durable, then retried. */
+export async function persistSiteFundedUsageEvent(
   event: SiteFundedCodexUsageEvent,
 ): Promise<void> {
+  // Queued synchronously, in the order of the calls.
   enqueueOutbox("usage", event);
   await flushSiteFundedCodexOutbox();
+}
+
+const persistUsageEvent = persistSiteFundedUsageEvent;
+
+/** Settles a funded turn: durable, then retried. */
+export async function finishSiteFundedTurn(finish: {
+  reservation_id: string;
+  status: "committed" | "interrupted" | "failed" | "released";
+  outcome?: string;
+}): Promise<void> {
+  enqueueOutbox("finish", finish);
+  await flushSiteFundedCodexOutbox();
+}
+
+/** Reserves a funded turn on the hub; a refusal throws with its code. */
+export async function reserveSiteFundedTurn({
+  provider = "openai",
+  accountId,
+  projectId,
+  fundedTurnId,
+  idempotencyKey,
+  path,
+}: {
+  provider?: "openai" | "anthropic";
+  accountId: string;
+  projectId: string;
+  fundedTurnId: string;
+  idempotencyKey: string;
+  path?: string;
+}): Promise<Extract<SiteFundedCodexAdmission, { allowed: true }>> {
+  const caller = getHubCaller();
+  if (!caller) {
+    throw Object.assign(
+      new Error("Site-funded AI admission is temporarily unavailable."),
+      { code: "unavailable" },
+    );
+  }
+  // A transient settlement failure from the preceding turn must be retried
+  // before admission, otherwise the account concurrency guard sees its old
+  // reservation as active.
+  await flushSiteFundedCodexOutbox();
+  const admission = (await callHub({
+    ...caller,
+    name: "hosts.reserveSiteFundedCodexTurn",
+    args: [
+      {
+        account_id: accountId,
+        project_id: projectId,
+        funded_turn_id: fundedTurnId,
+        idempotency_key: idempotencyKey,
+        path,
+        // Old hubs know only Codex: send the field only when it matters.
+        ...(provider === "openai" ? {} : { provider }),
+      },
+    ],
+    timeout: 20_000,
+  })) as SiteFundedCodexAdmission;
+  if (!admission.allowed) {
+    throw Object.assign(new Error(admission.reason), {
+      code: admission.code,
+    });
+  }
+  return admission;
+}
+
+/** Whether the hub still holds a funded turn active. */
+export async function heartbeatSiteFundedTurn(
+  reservationId: string,
+): Promise<boolean> {
+  const caller = getHubCaller();
+  if (!caller) return true;
+  const result = await callHub({
+    ...caller,
+    name: "hosts.heartbeatSiteFundedCodexTurn",
+    args: [{ reservation_id: reservationId }],
+    timeout: 15_000,
+  });
+  return !!result?.active;
+}
+
+/** The site key funding an active Claude turn on this host. */
+export async function getSiteFundedClaudeKey(
+  reservationId: string,
+): Promise<string> {
+  const caller = getHubCaller();
+  if (!caller) {
+    throw new Error("Site-funded Claude is temporarily unavailable.");
+  }
+  const { api_key } = await callHub({
+    ...caller,
+    name: "hosts.getSiteFundedClaudeKey",
+    args: [{ reservation_id: reservationId }],
+    timeout: 15_000,
+  });
+  if (typeof api_key !== "string" || !api_key) {
+    throw new Error("Site-funded Claude key is unavailable.");
+  }
+  return api_key;
 }
 
 export async function beginSiteFundedCodexTurn({

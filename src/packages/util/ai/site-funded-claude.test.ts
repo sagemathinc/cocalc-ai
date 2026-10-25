@@ -9,9 +9,14 @@ import {
   hasSiteFundedCodexPrice,
 } from "./site-funded-codex";
 import {
+  DEFAULT_SITE_FUNDED_CLAUDE_POLICY,
   siteFundedKeyPeriodBounds,
   siteFundedUsageFromAnthropic,
 } from "./site-funded-claude";
+import {
+  DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  siteFundedCodexFinalRequestHeadroomMicrousd,
+} from "./site-funded-codex";
 import { EXTRAS } from "../db-schema/site-settings-extras";
 
 const cost = (usage: Parameters<typeof siteFundedUsageFromAnthropic>[0]) =>
@@ -224,5 +229,25 @@ describe("a site key's monthly period", () => {
         siteFundedKeyPeriodBounds({ resetDay: day, resetHour: hour }),
       ).toThrow(/day 1-28/);
     }
+  });
+});
+
+describe("room for the dearest single Claude request", () => {
+  it("covers a prompt at the 100,000-token cap as 1-hour writes, full output and capped searches", () => {
+    // 100,000 x $0.20 + 32,000 x $0.50 + 3 searches x $0.01, never 5x
+    expect(
+      siteFundedCodexFinalRequestHeadroomMicrousd(
+        DEFAULT_SITE_FUNDED_CLAUDE_POLICY,
+      ),
+    ).toBe(20_000 + 16_000 + 30_000);
+  });
+
+  it("leaves Codex's room unchanged", () => {
+    // (128,000 + 8,192) x $0.125 + 32,000 x $0.50 for GPT-6 Luna
+    expect(
+      siteFundedCodexFinalRequestHeadroomMicrousd(
+        DEFAULT_SITE_FUNDED_CODEX_POLICY,
+      ),
+    ).toBe(17_024 + 16_000);
   });
 });

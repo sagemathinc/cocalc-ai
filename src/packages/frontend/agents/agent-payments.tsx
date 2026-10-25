@@ -187,6 +187,7 @@ export function selectionLabel(
       : "Default";
   }
   if (selection.mode === "project-secret") return "Project secret";
+  if (selection.mode === "membership") return "CoCalc Membership";
   return credentialLabel(payments.credentials, selection.credential_id);
 }
 
