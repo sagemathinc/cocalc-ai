@@ -203,6 +203,9 @@ function PaymentStatus({
   onConfigure: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Counts openings: the hidden popover keeps its content mounted, so a
+  // plain "open" flag would not reach it again after the first time.
+  const [openings, setOpenings] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const credential = useClaudeCredential(credentialId);
   const [loading, setLoading] = useState(false);
@@ -234,7 +237,10 @@ function PaymentStatus({
   return (
     <Popover
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        if (next && !open) setOpenings((count) => count + 1);
+        setOpen(next);
+      }}
       trigger={["hover", "focus"]}
       content={
         <KeyboardBoundary
@@ -296,7 +302,7 @@ function PaymentStatus({
               </>
             ) : mode === "site-funded" ? (
               // Opening the details reloads the allowance.
-              <MembershipAIAllowance variant="full" reload={open ? 1 : 0} />
+              <MembershipAIAllowance variant="full" reload={openings} />
             ) : (
               <p>Anthropic bills API usage to the key owner.</p>
             )}
