@@ -111,7 +111,9 @@ test("a broken item is named, the rest still shown", async () => {
   render(<TodoArtifact path="/home/user/a.todo.json" historical={false} />);
   await screen.findByText("Agents polish");
   expect(
-    screen.getByText("Some of this list could not be read; the rest is shown."),
+    screen.getByText(
+      "Some of this todo list could not be read; the rest is shown.",
+    ),
   ).toBeTruthy();
   expect(screen.getByText("items[4].status")).toBeTruthy();
 });
@@ -139,4 +141,19 @@ test("too large to preview", async () => {
   stat.mockResolvedValue({ size: 2 * 1024 * 1024 });
   render(<TodoArtifact path="/home/user/a.todo.json" historical={false} />);
   await screen.findByText(/exceeds the 1 MiB preview limit/);
+});
+
+test("follows the chat's font size", async () => {
+  render(
+    <TodoArtifact
+      path="/home/user/a.todo.json"
+      historical={false}
+      fontSize={20}
+    />,
+  );
+  const title = await screen.findByText("Agents polish");
+  expect(title.style.fontSize).toBe("1.3em");
+  expect((title.closest(".smc-vfill") as HTMLElement).style.fontSize).toBe(
+    "20px",
+  );
 });

@@ -1,4 +1,6 @@
 import {
+  compoundExtension,
+  generateAsync,
   register_file_editor,
   save,
   unregister_file_editor,
@@ -86,5 +88,42 @@ describe("file-editors save", () => {
     expect(saveHandler).toHaveBeenCalledWith(path, redux, project_id, {
       strict: true,
     });
+  });
+});
+
+describe("two-part extensions", () => {
+  const Json = () => null;
+  const Todo = () => null;
+  const Markdown = () => null;
+
+  beforeEach(() => {
+    register_file_editor({ ext: "json", component: Json });
+    register_file_editor({ ext: "todo.json", component: Todo });
+    register_file_editor({ ext: "md", component: Markdown });
+  });
+
+  afterEach(() => {
+    unregister_file_editor(["json", "todo.json", "md"]);
+  });
+
+  it("names the last two parts of a longer extension", () => {
+    expect(compoundExtension("/home/user/polish.todo.json")).toBe("todo.json");
+    expect(compoundExtension("A.Cal.JSON")).toBe("cal.json");
+    expect(compoundExtension("todo.json")).toBeUndefined();
+    expect(compoundExtension(".todo.json")).toBeUndefined();
+    expect(compoundExtension("a..json")).toBeUndefined();
+  });
+
+  it("a registered two-part extension wins over the last part", async () => {
+    const redux = {};
+    expect(await generateAsync("a/polish.todo.json", redux, "p")).toBe(Todo);
+    // open-file passes the last part explicitly.
+    expect(await generateAsync("a/b.todo.json", redux, "p", "json")).toBe(Todo);
+    expect(await generateAsync("a/todo.json", redux, "p")).toBe(Json);
+    expect(await generateAsync("a/data.other.json", redux, "p")).toBe(Json);
+  });
+
+  it("an editor asked for by name still wins", async () => {
+    expect(await generateAsync("a/c.todo.json", {}, "p", "md")).toBe(Markdown);
   });
 });
