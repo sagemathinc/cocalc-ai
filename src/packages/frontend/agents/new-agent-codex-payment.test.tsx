@@ -167,22 +167,42 @@ describe("new-agent provider choice without a project", () => {
     ).toBe(false);
   });
 
-  it("defaults to Claude only for a connected Claude user who cannot pay for Codex", () => {
+  it("defaults to Claude whenever Claude can run the agent", () => {
     const base = {
-      firstRun: false,
-      codexUnconfigured: true,
       runtimeChosen: false,
-      claudeConnected: true,
+      claudeConnected: false,
+      claudeIncluded: false,
+      codexOwnPlan: false,
     };
-    expect(shouldDefaultToClaude(base)).toBe(true);
-    // The first-run flow prepares a Codex agent in the background.
-    expect(shouldDefaultToClaude({ ...base, firstRun: true })).toBe(false);
-    expect(shouldDefaultToClaude({ ...base, codexUnconfigured: false })).toBe(
-      false,
+    // Nothing to run Claude on: Codex.
+    expect(shouldDefaultToClaude(base)).toBe(false);
+    expect(shouldDefaultToClaude({ ...base, claudeConnected: true })).toBe(
+      true,
     );
-    expect(shouldDefaultToClaude({ ...base, runtimeChosen: true })).toBe(false);
-    expect(shouldDefaultToClaude({ ...base, claudeConnected: false })).toBe(
-      false,
-    );
+    expect(
+      shouldDefaultToClaude({
+        ...base,
+        claudeConnected: true,
+        codexOwnPlan: true,
+      }),
+    ).toBe(true);
+    expect(shouldDefaultToClaude({ ...base, claudeIncluded: true })).toBe(true);
+    // Someone paying for ChatGPT keeps Codex on it over included Claude.
+    expect(
+      shouldDefaultToClaude({
+        ...base,
+        claudeIncluded: true,
+        codexOwnPlan: true,
+      }),
+    ).toBe(false);
+    // Never over a source agent's runtime or the user's choice.
+    expect(
+      shouldDefaultToClaude({
+        ...base,
+        runtimeChosen: true,
+        claudeConnected: true,
+        claudeIncluded: true,
+      }),
+    ).toBe(false);
   });
 });

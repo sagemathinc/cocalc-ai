@@ -16,6 +16,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import { MembershipAIAllowance } from "./membership-ai-allowance";
 import {
   newAgentClaudeCredentialOptions,
   SITE_FUNDED_CLAUDE_VALUE,
@@ -213,13 +214,13 @@ export function ClaudeCredentialList({
                 </div>
                 {subscription && row ? (
                   <SubscriptionUsage row={row} />
+                ) : option.value === SITE_FUNDED_CLAUDE_VALUE ? (
+                  <MembershipAIAllowance />
                 ) : (
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {option.value === "project-secret"
                       ? "Billed to the owner of the project's ANTHROPIC_API_KEY"
-                      : option.value === SITE_FUNDED_CLAUDE_VALUE
-                        ? "Included in your CoCalc membership's AI allowance"
-                        : "Anthropic bills API usage to the key owner"}
+                      : "Anthropic bills API usage to the key owner"}
                   </Typography.Text>
                 )}
               </div>
