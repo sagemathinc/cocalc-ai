@@ -180,7 +180,9 @@ function send(
       },
     );
     req.on("error", reject);
-    req.end(JSON.stringify(body));
+    // No body on a GET: Node sends it without a length, so the server would
+    // read it as a second, malformed request and drop the connection.
+    req.end(method === "GET" ? undefined : JSON.stringify(body));
   });
 }
 
@@ -227,6 +229,16 @@ describe("site-funded Claude relay", () => {
     expect(forwarded.body.service_tier).toBeUndefined();
     // The site key never comes back.
     expect(JSON.stringify(ok)).not.toContain("sk-ant-site-key");
+  });
+
+  it("sends the site key only to the configured upstream, whatever the request names", async () => {
+    activate();
+    const ok = await send(message, {
+      path: "http://attacker.invalid/v1/messages?beta=true",
+    });
+    expect(ok.status).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe("/v1/messages?beta=true");
   });
 
   it("refuses hosted tools beyond metered web search", async () => {
