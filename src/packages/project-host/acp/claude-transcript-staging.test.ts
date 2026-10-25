@@ -20,7 +20,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stageClaudeTranscripts } from "./claude-transcript-staging";
+import {
+  maxTranscriptStagings,
+  stageClaudeTranscripts,
+} from "./claude-transcript-staging";
 import { copyRegularFileBeneath } from "../beneath-copy";
 import { isManagedClaudeTranscriptStaging } from "./claude-subscription-paths";
 
@@ -264,6 +267,28 @@ test("close keeps the staged copy when the copy back may succeed later", async (
     await readFile(join(transcripts, "-workspace", "late.jsonl"), "utf8"),
   ).toBe("late");
   await expect(lstat(staging.directory)).rejects.toThrow();
+});
+
+test("the default caps allow many conversations per project and host", () => {
+  const saved = {
+    host: process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS,
+    project: process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS,
+  };
+  delete process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS;
+  delete process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS;
+  try {
+    expect(maxTranscriptStagings()).toEqual({ host: 128, project: 32 });
+    process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS = "8";
+    expect(maxTranscriptStagings()).toEqual({ host: 128, project: 8 });
+  } finally {
+    for (const [name, value] of [
+      ["COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS", saved.host],
+      ["COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS", saved.project],
+    ] as const) {
+      if (value == null) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 });
 
 test("staging refuses more controllers than allowed for a project or the host", async () => {

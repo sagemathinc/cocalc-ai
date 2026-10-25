@@ -61,13 +61,14 @@ function positiveSetting(name: string, fallback: number): number {
 // At most this many staging directories may exist on the host, and this many
 // for one project, counting copies kept after a failed copy back (which the
 // reaper removes once they are old): with the byte bound, this bounds the
-// host disk they use.
+// host disk they use. Every live Claude conversation holds one, so a project
+// running many agents needs many.
 export function maxTranscriptStagings(): { host: number; project: number } {
   return {
-    host: positiveSetting("COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS", 32),
+    host: positiveSetting("COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS", 128),
     project: positiveSetting(
       "COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS",
-      4,
+      32,
     ),
   };
 }
