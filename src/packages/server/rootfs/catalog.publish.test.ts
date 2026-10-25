@@ -423,7 +423,7 @@ describe("publishProjectRootfsCatalogEntry", () => {
       ([sql, params]) =>
         `${sql}`.includes("INSERT INTO rootfs_images") &&
         Array.isArray(params) &&
-        params.length === 30,
+        params.length === 31,
     );
     expect(insert).toBeDefined();
     expect(insert?.[1]?.[23]).toBe("published-rootfs");
@@ -461,7 +461,7 @@ describe("saveRootfsImage", () => {
       ([sql, params]) =>
         `${sql}`.includes("INSERT INTO rootfs_images") &&
         Array.isArray(params) &&
-        params.length === 30,
+        params.length === 31,
     );
     expect(insert).toBeDefined();
     expect(insert?.[1]?.[23]).toBe("saved-rootfs");
@@ -491,7 +491,7 @@ describe("saveRootfsImage", () => {
       ([sql, params]) =>
         `${sql}`.includes("INSERT INTO rootfs_images") &&
         Array.isArray(params) &&
-        params.length === 30,
+        params.length === 31,
     );
     expect(inserts[0]?.[1]?.[8]).toBeNull();
     expect(inserts[0]?.[1]?.[28]).toBe(true);

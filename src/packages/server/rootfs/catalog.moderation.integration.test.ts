@@ -61,7 +61,7 @@ describeDb("RootFS catalog moderation flags", () => {
     (
       await getPool().query(
         `SELECT official, prepull, hidden, hidden_by, blocked, blocked_reason,
-                blocked_by, label
+                blocked_by, label, runtime_image
          FROM rootfs_images WHERE image_id=$1`,
         [image_id],
       )
@@ -82,7 +82,7 @@ describeDb("RootFS catalog moderation flags", () => {
       throw err;
     });
 
-  it("an owner re-save keeps the flags an admin set", async () => {
+  it("an owner re-save keeps the admin's hide and block, and revokes curation", async () => {
     await save(owner, {});
     const { rows } = await getPool().query(
       "SELECT image_id FROM rootfs_images WHERE owner_id=$1",
@@ -97,13 +97,15 @@ describeDb("RootFS catalog moderation flags", () => {
       blocked: true,
       blocked_reason: "malware",
     });
+    // The moderator recorded is the admin who acted, not the image owner.
     expect(await stored(image_id)).toMatchObject({
       official: true,
       prepull: true,
       hidden: true,
-      hidden_by: owner,
+      hidden_by: admin,
       blocked: true,
       blocked_reason: "malware",
+      blocked_by: admin,
     });
 
     eventMock.mockClear();
@@ -117,11 +119,15 @@ describeDb("RootFS catalog moderation flags", () => {
     });
     expect(await stored(image_id)).toMatchObject({
       label: "Renamed by owner",
-      official: true,
-      prepull: true,
+      // An owner edit revokes admin curation...
+      official: false,
+      prepull: false,
+      // ...but keeps admin moderation, with its attribution.
       hidden: true,
+      hidden_by: admin,
       blocked: true,
       blocked_reason: "malware",
+      blocked_by: admin,
     });
     // No moderation event is recorded for the owner's save.
     expect(eventMock.mock.calls.map(([event]) => event.event_type)).not.toEqual(
@@ -145,6 +151,32 @@ describeDb("RootFS catalog moderation flags", () => {
     expect(await stored(image_id)).toMatchObject({
       label: "again",
       hidden: true,
+    });
+  });
+
+  it("an owner pointing an approved entry at another image loses official and prepull", async () => {
+    const image = "docker.io/example/approved:1";
+    await save(owner, { image });
+    const { rows } = await getPool().query(
+      "SELECT image_id FROM rootfs_images WHERE owner_id=$1 AND runtime_image=$2",
+      [owner, image],
+    );
+    const image_id = rows[0].image_id;
+    await save(admin, { image_id, image, official: true, prepull: true });
+    expect(await stored(image_id)).toMatchObject({
+      official: true,
+      prepull: true,
+    });
+    await save(owner, {
+      image_id,
+      image: "docker.io/example/swapped:1",
+      official: true,
+      prepull: true,
+    });
+    expect(await stored(image_id)).toMatchObject({
+      runtime_image: "docker.io/example/swapped:1",
+      official: false,
+      prepull: false,
     });
   });
 
