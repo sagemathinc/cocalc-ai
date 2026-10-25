@@ -173,6 +173,18 @@ export function compoundExtension(path: string): string | undefined {
   return parts.slice(-2).join(".");
 }
 
+/**
+ * The extension that picks the editor for a path: a registered two-part
+ * extension (cal.json), else the last part. Callers that open a file under
+ * another identity (a canonical sync path) pass this for the path the user
+ * sees, since that identity need not keep the name.
+ */
+export function editorExtension(path: string): string {
+  const compound = compoundExtension(path);
+  if (compound != null && file_editors[compound] != null) return compound;
+  return filename_extension(path).toLowerCase();
+}
+
 // Get editor for given path.
 function get_ed(
   project_id: string | undefined,
@@ -188,10 +200,7 @@ function get_ed(
   ext = ext ?? altExt[key(project_id, path)] ?? plain;
   // A registered two-part extension (foo.cal.json) wins over the last part,
   // unless the caller asked for some other editor.
-  if (ext === plain) {
-    const compound = compoundExtension(path);
-    if (compound != null && file_editors[compound] != null) ext = compound;
-  }
+  if (ext === plain) ext = editorExtension(path);
 
   // either use the one given by ext, or if there isn't one, use the '' fallback.
   let spec = file_editors[ext];

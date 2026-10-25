@@ -1,5 +1,6 @@
 import {
   compoundExtension,
+  editorExtension,
   generateAsync,
   register_file_editor,
   save,
@@ -121,6 +122,17 @@ describe("two-part extensions", () => {
     expect(await generateAsync("a/b.todo.json", redux, "p", "json")).toBe(Todo);
     expect(await generateAsync("a/todo.json", redux, "p")).toBe(Json);
     expect(await generateAsync("a/data.other.json", redux, "p")).toBe(Json);
+  });
+
+  it("a file opened under another identity keeps the name's editor", async () => {
+    // open-file picks the editor from the path the user sees and opens the
+    // canonical sync path, which need not keep the name.
+    const ext = editorExtension("/links/work.todo.json");
+    expect(ext).toBe("todo.json");
+    expect(await generateAsync("/data/work.json", {}, "p", ext)).toBe(Todo);
+    expect(await generateAsync("/data/backend-id", {}, "p", ext)).toBe(Todo);
+    expect(editorExtension("/links/todo.json")).toBe("json");
+    expect(editorExtension("/links/a.other.json")).toBe("json");
   });
 
   it("an editor asked for by name still wins", async () => {

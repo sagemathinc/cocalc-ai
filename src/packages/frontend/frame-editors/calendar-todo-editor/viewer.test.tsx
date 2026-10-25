@@ -4,6 +4,8 @@
  */
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { CalendarActions, TodoActions } from "./actions";
 import { CalendarViewer, TodoViewer } from "./viewer";
 
 const show_focused_frame_of_type = jest.fn();
@@ -11,7 +13,9 @@ jest.mock("@cocalc/frontend/frame-editors/frame-tree/frame-context", () => ({
   useFrameContext: () => ({
     path: "/home/user/a.todo.json",
     actions: { show_focused_frame_of_type },
-    desc: new Map([["font_size", 14]]),
+    // Not in desc for a fresh frame: the context resolves the default.
+    desc: new Map(),
+    font_size: 17,
   }),
 }));
 jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
@@ -76,6 +80,34 @@ test("a calendar shows as an agenda with the .ics download", () => {
       })}
     />,
   );
-  expect(screen.getByRole("button", { name: "Download .ics" })).toBeTruthy();
   expect(screen.getByText("Deadlines")).toBeTruthy();
+});
+
+test("Download .ics works from the keyboard", async () => {
+  const createObjectURL = jest.fn(() => "blob:ics");
+  Object.assign(URL, { createObjectURL, revokeObjectURL: jest.fn() });
+  const click = jest
+    .spyOn(HTMLAnchorElement.prototype, "click")
+    .mockImplementation(() => {});
+  render(
+    <CalendarViewer
+      value={JSON.stringify({
+        format: "cocalc-calendar",
+        version: 1,
+        title: "Deadlines",
+        timezone: "UTC",
+        events: [
+          { id: "x", title: "File it", start: "2999-01-04", all_day: true },
+        ],
+      })}
+    />,
+  );
+  const download = screen.getByRole("button", { name: "Download .ics" });
+  const user = userEvent.setup();
+  await user.tab();
+  expect(document.activeElement).toBe(download);
+  await user.keyboard("{Enter}");
+  expect(createObjectURL).toHaveBeenCalledTimes(1);
+  expect(click).toHaveBeenCalledTimes(1);
+  click.mockRestore();
 });

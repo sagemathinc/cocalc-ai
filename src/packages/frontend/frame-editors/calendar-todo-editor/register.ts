@@ -16,7 +16,9 @@ register_file_editor({
   icon: "calendar",
   codemirror: true,
   editor: async () => ({ Editor: (await import("./editor")).CalendarEditor }),
-  actions: async () => await import("./actions"),
+  actions: async () => ({
+    Actions: (await import("./actions")).CalendarActions,
+  }),
 });
 
 register_file_editor({
@@ -24,5 +26,5 @@ register_file_editor({
   icon: "check-square",
   codemirror: true,
   editor: async () => ({ Editor: (await import("./editor")).TodoEditor }),
-  actions: async () => await import("./actions"),
+  actions: async () => ({ Actions: (await import("./actions")).TodoActions }),
 });

@@ -19,8 +19,8 @@ import { FontScale, ParseProblems } from "../chat-editor/list-view-parts";
 import { TodoList } from "../chat-editor/todo-artifact";
 
 function Frame({ children }: { children: ReactNode }) {
-  const { desc } = useFrameContext();
-  const fontSize = desc?.get("font_size");
+  // The frame's resolved size: its own zoom, else the account's default.
+  const { font_size: fontSize } = useFrameContext();
   return (
     <FontScale fontSize={fontSize}>
       <div

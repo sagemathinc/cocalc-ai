@@ -6,7 +6,7 @@
 import { set } from "@cocalc/util/misc";
 import { CodemirrorEditor } from "../code-editor/codemirror-editor";
 import { createEditor } from "../frame-tree/editor";
-import { EditorDescription } from "../frame-tree/types";
+import type { EditorDescription } from "../frame-tree/types";
 import { time_travel } from "../time-travel-editor/editor";
 import { CalendarViewer, TodoViewer } from "./viewer";
 
