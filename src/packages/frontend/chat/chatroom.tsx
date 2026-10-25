@@ -697,6 +697,9 @@ function ChatPanelContent({
   const focusRootRef = useRef<HTMLDivElement>(null);
   useChatFocusIsolation(focusRootRef, focused && messages != null);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  // Where the questions panel goes: over the whole chat, its composer too.
+  const [attentionPanelHost, setAttentionPanelHost] =
+    useState<HTMLDivElement | null>(null);
   const mobileChatsTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileToolsTriggerRef = useRef<HTMLButtonElement>(null);
   const [mobileToolsPortal, setMobileToolsPortal] =
@@ -2676,8 +2679,18 @@ function ChatPanelContent({
     ) : null;
 
   const renderChatContent = () => (
-    <div className="smc-vfill" style={GRID_STYLE}>
+    <div className="smc-vfill" style={{ ...GRID_STYLE, position: "relative" }}>
+      <div
+        ref={setAttentionPanelHost}
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 40,
+          pointerEvents: "none",
+        }}
+      />
       <ChatRoomThreadPanel
+        attentionPanelHost={attentionPanelHost}
         actions={actions}
         project_id={project_id}
         path={path}

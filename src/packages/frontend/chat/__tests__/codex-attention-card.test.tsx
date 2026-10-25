@@ -228,6 +228,39 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
+  it("says a lone question once, and nothing about the agent going on", () => {
+    render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          source_kind: "codex_async_question",
+          is_blocking: false,
+          title: "Question 1",
+          summary: "Claude may continue while it waits for your reply.",
+          questions: [{ ...questionRecord.questions[0], header: "Question 1" }],
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Question" }),
+    ).toBeInTheDocument();
+    // Shown nowhere: only the fieldset's legend (for screen readers) says it.
+    expect(
+      screen
+        .queryAllByText("Question 1")
+        .every(
+          (element) =>
+            element.tagName === "LEGEND" &&
+            element.style.position === "absolute",
+        ),
+    ).toBe(true);
+    expect(screen.queryByText(/may continue while it waits/)).toBeNull();
+    // Still named for screen readers.
+    expect(
+      screen.getByRole("group", { name: "Question 1" }),
+    ).toBeInTheDocument();
+  });
+
   it("names the agent, not Codex, while an async question waits", () => {
     const question = {
       ...questionRecord,

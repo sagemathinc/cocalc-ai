@@ -82,12 +82,17 @@ export function attentionPanelRecords(
   drafts: Record<string, CodexAttentionDraft>,
   projected: ReadonlySet<string>,
 ): AcpAttentionRecord[] {
-  return records.filter(
-    (record) =>
-      isWaitingAttention(record) ||
-      isFailedDelivery(record, projected) ||
-      (!projected.has(record.attention_id) &&
-        drafts[record.attention_id]?.submitted != null),
+  return (
+    [...records]
+      // In the order they were asked.
+      .sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0))
+      .filter(
+        (record) =>
+          isWaitingAttention(record) ||
+          isFailedDelivery(record, projected) ||
+          (!projected.has(record.attention_id) &&
+            drafts[record.attention_id]?.submitted != null),
+      )
   );
 }
 
@@ -112,7 +117,6 @@ export function AttentionPanelButton({
   );
   return (
     <Button
-      type="primary"
       shape="round"
       icon={<Icon name="question-circle" />}
       onClick={onOpen}
@@ -123,6 +127,12 @@ export function AttentionPanelButton({
         bottom: 12,
         zIndex: 12,
         boxShadow: `0 2px 10px ${UI_COLORS.shadow}`,
+        // As the other question marks: the reader's "Question" and the
+        // agent list's "?".
+        color: UI_COLORS.warning,
+        background: UI_COLORS.warningBg,
+        borderColor: UI_COLORS.warning,
+        fontWeight: 600,
       }}
     >
       {count <= 0
@@ -264,6 +274,7 @@ export function AttentionPanel({
         width: shownWidth,
         maxWidth: "100%",
         zIndex: 13,
+        pointerEvents: "auto",
         display: open ? "flex" : "none",
         flexDirection: "column",
         background: UI_COLORS.surface,

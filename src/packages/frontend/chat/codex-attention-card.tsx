@@ -5,6 +5,7 @@
 
 import { SafetyCertificateOutlined } from "@ant-design/icons";
 import { Alert, Button, Radio, Space, Tag, Typography } from "antd";
+import type { CSSProperties } from "react";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import type {
   AcpAttentionQuestion,
@@ -141,6 +142,19 @@ export type CodexAttentionDraftUpdater = (
 
 /** The approval dialog was opened by Send, not by an answer's picker. */
 const SEND_FOCUS = "\u0000send";
+
+// Read by screen readers, not shown.
+const VISUALLY_HIDDEN: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
 
 export function CodexAttentionCard({
   initialRecord,
@@ -577,6 +591,17 @@ function RuntimeCodexAttentionCard({
       // Session storage may be unavailable in a restricted browser context.
     }
   };
+  // One question: the card's title says it once, and a numbered default
+  // ("Question 1") says nothing a lone question needs.
+  const generic = /^Question \d+$/;
+  const cardTitle =
+    record.questions.length === 1 &&
+    generic.test(`${record.title ?? ""}`.trim())
+      ? "Question"
+      : record.title;
+  const repeatsTitle = (header: string) =>
+    record.questions.length === 1 &&
+    (header === record.title || generic.test(header.trim()));
   return (
     <section
       aria-label={`${agentName ?? "The agent"} needs attention`}
@@ -598,7 +623,7 @@ function RuntimeCodexAttentionCard({
         <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>
           <Space wrap>
             <Title level={5} style={{ margin: 0 }}>
-              {record.title}
+              {cardTitle}
             </Title>
             <Tag color={pending ? "gold" : "default"}>
               {pendingFreshAuth
@@ -645,7 +670,8 @@ function RuntimeCodexAttentionCard({
                       : record.is_blocking
                         ? (record.summary ??
                           "The current turn is paused until you respond.")
-                        : record.summary}
+                        : // Not blocking: plain to see, so not said.
+                          null}
               </Text>
             )}
             {lite && pending ? (
@@ -665,7 +691,9 @@ function RuntimeCodexAttentionCard({
                     key={question.id}
                     aria-label={`Response for ${question.header}`}
                   >
-                    <Text strong>{question.header}</Text>
+                    {repeatsTitle(question.header) ? null : (
+                      <Text strong>{question.header}</Text>
+                    )}
                     <Paragraph
                       style={{ margin: "4px 0 8px", whiteSpace: "pre-wrap" }}
                     >
@@ -694,7 +722,13 @@ function RuntimeCodexAttentionCard({
                       padding: 0,
                     }}
                   >
-                    <legend style={{ fontWeight: 600, padding: 0 }}>
+                    <legend
+                      style={
+                        repeatsTitle(question.header)
+                          ? VISUALLY_HIDDEN
+                          : { fontWeight: 600, padding: 0 }
+                      }
+                    >
                       {question.header}
                     </legend>
                     <Paragraph
