@@ -185,14 +185,17 @@ export const privacyPolicy: PublicPolicy = {
             or copy files from a public share that another user published, we
             record that your account accessed that share, the project it belongs
             to, whether you are an owner, a collaborator or another visitor of
-            that project, and the date and time of your first access that day.
-            We do not record which files you opened or how often. We keep at
-            most one record per account, share and day. We use these records to
-            investigate security problems and abuse, and to show the owners and
-            collaborators of the shared project how often the share is viewed;
-            they see counts only, never which accounts viewed it. We rely on our
-            legitimate interests in securing the Services and in providing these
-            statistics, and we delete these records after 13 months.
+            that project, your approximate region (one of six world regions,
+            such as Western Europe, derived from your recent connection; never
+            your country or city), and the date and time of your first access
+            that day. We do not record which files you opened or how often. We
+            keep at most one record per account, share and day. We use these
+            records to investigate security problems and abuse, and to show the
+            owners and collaborators of the shared project how often the share
+            is viewed and from which regions; they see counts only, never which
+            accounts viewed it. We rely on our legitimate interests in securing
+            the Services and in providing these statistics, and we delete these
+            records after 13 months.
           </p>
           <p>
             {" "}
