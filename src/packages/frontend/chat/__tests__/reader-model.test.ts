@@ -10,7 +10,7 @@ import {
   readerItems,
   READER_STATE_LIMITS,
   setItemArchived,
-  setItemStarred,
+  withItemStarred,
 } from "../reader-model";
 
 // A person's message, or an agent's reply (it has ACP metadata).
@@ -230,32 +230,30 @@ describe("read state", () => {
     expect(setItemArchived(three, false, state)).toEqual({});
   });
 
-  it("stars stay through new replies, mark all read and archive all", () => {
-    const state = setItemStarred(three, true, {});
-    expect(state).toEqual({ s: ["p3"] });
-    expect(isItemStarred(three, state)).toBe(true);
-    expect(isItemStarred(one, state)).toBe(false);
+  it("stars stay through new replies, and starring again moves it last", () => {
+    const starred = withItemStarred([], three, true);
+    expect(starred).toEqual(["p3"]);
+    expect(isItemStarred(three, starred)).toBe(true);
+    expect(isItemStarred(one, starred)).toBe(false);
     // Unlike archived: a new reply keeps the star.
     const later = readerItems([...messages, agent("a3")]);
-    expect(isItemStarred(later[2], state)).toBe(true);
-    expect(markAllRead(items, state).state).toEqual({ s: ["p3"] });
-    expect(archiveAll(items, state).state.s).toEqual(["p3"]);
-    // Archiving one keeps it starred too.
-    expect(isItemStarred(three, setItemArchived(three, true, state))).toBe(
-      true,
-    );
-    expect(setItemStarred(three, false, state)).toEqual({});
+    expect(isItemStarred(later[2], starred)).toBe(true);
+    expect(
+      withItemStarred(withItemStarred(starred, one, true), three, true),
+    ).toEqual(["p1", "p3"]);
+    expect(withItemStarred(starred, three, false)).toEqual([]);
+    // Nothing else in the reader state holds them.
+    expect(markAllRead(items, {}).state).toEqual({});
   });
 
   it("keeps the starred list bounded, newest last", () => {
-    let state = {};
+    let starred: string[] = [];
     const many = readerItems(
       Array.from({ length: READER_STATE_LIMITS.starred + 3 }, (_, i) =>
         person(`p${i}`),
       ),
     );
-    for (const item of many) state = setItemStarred(item, true, state);
-    const starred = (state as any).s as string[];
+    for (const item of many) starred = withItemStarred(starred, item, true);
     expect(starred).toHaveLength(READER_STATE_LIMITS.starred);
     expect(starred.at(-1)).toBe(`p${READER_STATE_LIMITS.starred + 2}`);
   });

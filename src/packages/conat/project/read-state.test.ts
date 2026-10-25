@@ -235,4 +235,26 @@ describe("chat reader state", () => {
     expect(mergeProjectReadStateEntries(older, newer)).toEqual(newer);
     expect(mergeProjectReadStateEntries(newer, older)).toEqual(newer);
   });
+
+  it("keeps a thread's stars under another key, which a reader write leaves alone", () => {
+    const { chatReaderStarsKey, chatReaderStateKey } = require("./read-state");
+    expect(chatReaderStarsKey("a.chat", "t1")).toBe(
+      "chat-reader-stars:t1:a.chat",
+    );
+    expect(chatReaderStarsKey("a.chat", "t1")).not.toBe(
+      chatReaderStateKey("a.chat", "t1"),
+    );
+    const older = {
+      kind: "chat-reader-stars" as const,
+      t: new Date(1),
+      s: ["m1"],
+    };
+    const newer = {
+      kind: "chat-reader-stars" as const,
+      t: new Date(2),
+      s: ["m1", "m2"],
+    };
+    expect(mergeProjectReadStateEntries(older, newer)).toEqual(newer);
+    expect(mergeProjectReadStateEntries(newer, older)).toEqual(newer);
+  });
 });

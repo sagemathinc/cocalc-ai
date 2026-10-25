@@ -64,12 +64,25 @@ export interface ChatReaderStateEntry {
   aw?: number;
   /** Moved back to the inbox although `aw` covers them. */
   ax?: string[];
-  /** Starred items (oldest first). A star stays whatever arrives later. */
-  s?: string[];
+}
+
+/**
+ * A thread's starred reader items (oldest first); a star stays whatever
+ * arrives later. Its own entry, not part of ChatReaderStateEntry: clients
+ * that predate stars rewrite that whole entry, and would drop them.
+ */
+export interface ChatReaderStarsEntry {
+  kind: "chat-reader-stars";
+  t: Date;
+  s: string[];
 }
 
 export function chatReaderStateKey(path: string, thread_id: string): string {
   return `chat-reader:${thread_id}:${path}`;
+}
+
+export function chatReaderStarsKey(path: string, thread_id: string): string {
+  return `chat-reader-stars:${thread_id}:${path}`;
 }
 
 export type ProjectReadStateEntry =
@@ -77,7 +90,8 @@ export type ProjectReadStateEntry =
   | NotebookReadStateEntry
   | TextReadStateEntry
   | TasksReadStateEntry
-  | ChatReaderStateEntry;
+  | ChatReaderStateEntry
+  | ChatReaderStarsEntry;
 
 export type ProjectReadStateKind = ProjectReadStateEntry["kind"];
 

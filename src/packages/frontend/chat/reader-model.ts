@@ -15,7 +15,7 @@
 // last message is at or before the thread's watermark (what the person has
 // read in order), or when it was opened since its last message arrived; and
 // not when it was marked unread again. Archived works the same way: a new
-// reply brings an item back. A star stays, whatever arrives later.
+// reply brings an item back. Stars are kept apart (see isItemStarred).
 
 import type { ChatReaderStateEntry } from "@cocalc/conat/project/read-state";
 import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
@@ -282,7 +282,6 @@ function compact(state: ReaderState): ReaderState {
     ...(state.a && Object.keys(state.a).length ? { a: state.a } : {}),
     ...(state.aw != null ? { aw: state.aw } : {}),
     ...(state.ax?.length ? { ax: state.ax } : {}),
-    ...(state.s?.length ? { s: state.s } : {}),
   };
 }
 
@@ -346,21 +345,26 @@ export function markItemUnread(
   });
 }
 
-export function isItemStarred(item: ReaderItem, state: ReaderState): boolean {
-  return !!state.s?.includes(item.id);
+/**
+ * Stars: a thread's starred item ids, oldest first, stored apart from the
+ * reader state (older clients rewrite that and would drop them). A star
+ * stays whatever arrives later, unlike archived.
+ */
+export function isItemStarred(
+  item: ReaderItem,
+  starred: readonly string[],
+): boolean {
+  return starred.includes(item.id);
 }
 
-export function setItemStarred(
+export function withItemStarred(
+  starred: readonly string[],
   item: ReaderItem,
-  starred: boolean,
-  state: ReaderState,
-): ReaderState {
-  const s = (state.s ?? []).filter((id) => id !== item.id);
-  if (starred) s.push(item.id);
-  return compact({
-    ...state,
-    s: s.slice(Math.max(0, s.length - READER_STATE_LIMITS.starred)),
-  });
+  on: boolean,
+): string[] {
+  const next = starred.filter((id) => id !== item.id);
+  if (on) next.push(item.id);
+  return next.slice(Math.max(0, next.length - READER_STATE_LIMITS.starred));
 }
 
 export function setItemArchived(
@@ -429,15 +433,14 @@ export function archiveAll(
   };
 }
 
-/** Everything read: the watermark covers every message; archives and stars
- * stay. */
+/** Everything read: the watermark covers every message; archives stay. */
 export function markAllRead(
   items: ReaderItem[],
   state: ReaderState,
 ): { state: ReaderState; watermarkCount: number; unmoved: ReaderState } {
   const last = items[items.length - 1];
   return {
-    state: compact({ a: state.a, aw: state.aw, ax: state.ax, s: state.s }),
+    state: compact({ a: state.a, aw: state.aw, ax: state.ax }),
     watermarkCount: last ? last.lastIndex + 1 : 0,
     unmoved: state,
   };

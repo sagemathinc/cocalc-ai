@@ -56,7 +56,7 @@ import {
   readerItems,
   readerMessageId,
   setItemArchived,
-  setItemStarred,
+  withItemStarred,
   type ReaderChange,
   type ReaderItem,
   type ReaderState,
@@ -311,6 +311,11 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [actions, threadId, readStateVersion],
   );
+  const stars: readonly string[] = useMemo(
+    () => actions.getReaderStars(threadId) ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actions, threadId, readStateVersion],
+  );
   const [showArchived, setShowArchived] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   // Without priorities (no itemInfo) there are two views: all and starred.
@@ -331,7 +336,7 @@ export function ChatReaderView({
   const inView = (item: ReaderItem, which: ReaderListView = view) =>
     which === "all" ||
     (which === "starred"
-      ? isItemStarred(item, state)
+      ? isItemStarred(item, stars)
       : which === "filed"
         ? filed.has(item.id)
         : !filed.has(item.id));
@@ -349,7 +354,7 @@ export function ChatReaderView({
         )
         .reverse(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, state, showArchived, view, filed],
+    [items, state, stars, showArchived, view, filed],
   );
   // Counted over every item that is for the person (filed ones are FYI and
   // never counted), as Mark all read reads every item; archived ones are
@@ -387,8 +392,8 @@ export function ChatReaderView({
     [items, state, isItemWorking],
   );
   const starredCount = useMemo(
-    () => items.filter((item) => isItemStarred(item, state)).length,
-    [items, state],
+    () => items.filter((item) => isItemStarred(item, stars)).length,
+    [items, stars],
   );
   const [selectedId, setSelectedId] = useState<string>();
   // The open message over the whole window, as the reader shows it: paging
@@ -472,7 +477,13 @@ export function ChatReaderView({
     save((current) => ({
       state: setItemArchived(item, archived, current),
     }));
-    if (archived && !showArchived && item.id === selectedId) {
+    // The Starred list shows archived ones too: there the item stays open.
+    if (
+      archived &&
+      !showArchived &&
+      view !== "starred" &&
+      item.id === selectedId
+    ) {
       const next =
         findItem(visible, selectedIndex, 1) ??
         findItem(visible, selectedIndex, -1);
@@ -484,8 +495,10 @@ export function ChatReaderView({
   const markUnread = (item: ReaderItem) =>
     save((current) => ({ state: markItemUnread(item, current) }));
   const star = (item: ReaderItem) => {
-    const starred = !isItemStarred(item, state);
-    save((current) => ({ state: setItemStarred(item, starred, current) }));
+    const on = !isItemStarred(item, stars);
+    actions.updateReaderStars(threadId, (current) =>
+      withItemStarred(current, item, on),
+    );
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -572,8 +585,13 @@ export function ChatReaderView({
   const clampListWidth = (value: number) =>
     Math.min(listMaxWidth, Math.max(LIST_MIN_WIDTH, value));
   const shownListWidth = clampListWidth(listWidth);
+  // Ends a drag under way: when the pointer is released or cancelled, or the
+  // reader goes away mid-drag.
+  const stopListResizeRef = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => stopListResizeRef.current?.(), []);
   const startListResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    stopListResizeRef.current?.();
     const startX = event.clientX;
     const startWidth = shownListWidth;
     let next = startWidth;
@@ -581,13 +599,17 @@ export function ChatReaderView({
       next = clampListWidth(startWidth + (e.clientX - startX));
       setListWidth(next);
     };
-    const up = () => {
+    const stop = () => {
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      stopListResizeRef.current = undefined;
       keepListWidth(next);
     };
+    stopListResizeRef.current = stop;
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
   };
   // The same with the keys: right widens it, left narrows it.
   const resizeListWithKeys = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -762,7 +784,7 @@ export function ChatReaderView({
                 >
                   {readerSender(first, userMap)}
                 </span>
-                {isItemStarred(item, state) ? (
+                {isItemStarred(item, stars) ? (
                   <span
                     aria-label="Starred"
                     title="Starred"
@@ -917,11 +939,11 @@ export function ChatReaderView({
       </span>
       <Button
         type="text"
-        aria-label={isItemStarred(selected, state) ? "Unstar" : "Star"}
-        aria-pressed={isItemStarred(selected, state)}
+        aria-label={isItemStarred(selected, stars) ? "Unstar" : "Star"}
+        aria-pressed={isItemStarred(selected, stars)}
         icon={
           <Icon
-            name={isItemStarred(selected, state) ? "star-filled" : "star"}
+            name={isItemStarred(selected, stars) ? "star-filled" : "star"}
           />
         }
         onClick={() => star(selected)}
@@ -1025,15 +1047,15 @@ export function ChatReaderView({
           </Button>
           <Button
             size="small"
-            aria-pressed={isItemStarred(selected, state)}
+            aria-pressed={isItemStarred(selected, stars)}
             icon={
               <Icon
-                name={isItemStarred(selected, state) ? "star-filled" : "star"}
+                name={isItemStarred(selected, stars) ? "star-filled" : "star"}
               />
             }
             onClick={() => star(selected)}
           >
-            {isItemStarred(selected, state) ? "Unstar" : "Star"}
+            {isItemStarred(selected, stars) ? "Unstar" : "Star"}
           </Button>
           <Button size="small" onClick={() => archive(selected)}>
             {isItemArchived(selected, state) ? "Move to inbox" : "Archive"}
@@ -1219,7 +1241,9 @@ export function ChatReaderView({
                   watermark,
                 }),
               );
-              if (!showArchived) setSelectedId(undefined);
+              if (!showArchived && view !== "starred") {
+                setSelectedId(undefined);
+              }
             }}
           >
             <Button size="small" disabled={!archivableCount}>
