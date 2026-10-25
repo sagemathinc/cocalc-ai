@@ -10,7 +10,18 @@ import { isTodoPath } from "./file-artifact";
 const readFile = jest.fn();
 const stat = jest.fn();
 const open_file = jest.fn().mockResolvedValue(undefined);
-const actions = { fs: () => ({ stat, readFile }), open_file };
+// The file's watch: the test calls changeFile() to change the file on disk.
+let changeFile: (() => void) | undefined;
+const watch = jest.fn(async () => ({
+  close() {},
+  async *[Symbol.asyncIterator]() {
+    while (true) {
+      await new Promise<void>((resolve) => (changeFile = resolve));
+      yield { event: "change", filename: "a.todo.json" };
+    }
+  },
+}));
+const actions = { fs: () => ({ stat, readFile, watch }), open_file };
 jest.mock("@cocalc/frontend/project/context", () => ({
   useProjectContext: () => ({ actions }),
 }));
@@ -135,6 +146,17 @@ test("refresh follows the file; a file that disappears is not shown", async () =
   });
   await screen.findByText("Error: ENOENT");
   expect(screen.queryByText("Agents polish")).toBeNull();
+});
+
+test("follows the file: an agent's edit shows without Refresh", async () => {
+  render(<TodoArtifact path="/home/user/a.todo.json" historical={false} />);
+  await screen.findByText("Agents polish");
+  readFile.mockResolvedValue(
+    JSON.stringify({ ...todo, title: "Agents polish, updated" }),
+  );
+  await act(async () => changeFile?.());
+  await screen.findByText("Agents polish, updated");
+  expect(watch).toHaveBeenCalledWith("/home/user/a.todo.json");
 });
 
 test("too large to preview", async () => {
