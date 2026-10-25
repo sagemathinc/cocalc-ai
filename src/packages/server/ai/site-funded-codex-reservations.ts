@@ -801,10 +801,6 @@ export async function recordSiteFundedCodexUsageEvent(
   ) {
     throw new Error("site-funded Codex request sequence must be positive");
   }
-  const cost = computeSiteFundedCodexRequestCost({
-    model: event.model,
-    usage: event,
-  });
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -815,6 +811,16 @@ export async function recordSiteFundedCodexUsageEvent(
     );
     const row = found.rows[0];
     if (!row) throw new Error("site-funded Codex reservation not found");
+    // Priced as the model the turn was admitted for, never as the host says.
+    if (event.model !== row.model) {
+      throw new Error(
+        "site-funded usage event model does not match its reservation",
+      );
+    }
+    const cost = computeSiteFundedCodexRequestCost({
+      model: row.model,
+      usage: event,
+    });
     const lastRequestSequence = int(row.last_request_sequence);
     const result = (inserted: boolean): SiteFundedCodexUsageRecordResult => ({
       costMicrousd:

@@ -1150,7 +1150,8 @@ export const EXTRAS: SettingsExtras = {
     name: "Funded Codex Model",
     desc: "Exact model permitted for site-funded turns. Models without a verified funded price fail closed.",
     default: "gpt-6-luna",
-    valid: hasSiteFundedCodexPrice,
+    // Codex runs OpenAI models only.
+    valid: (model: string) => hasSiteFundedCodexPrice(model, "openai"),
     to_val: to_trimmed_str,
     tags: ["AI", "OpenAI", "Commercialization"],
     group: "AI & Agents",

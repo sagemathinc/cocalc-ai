@@ -49,7 +49,7 @@ export function siteFundedCodexConfigurationFromSettings(
     settings.site_funded_codex_model ?? DEFAULT_SITE_FUNDED_CODEX_POLICY.model
   }`.trim();
   // This is deliberately an eager fail-closed validation.
-  getSiteFundedCodexPrice(model);
+  getSiteFundedCodexPrice(model, "openai");
   const policy: SiteFundedCodexPolicy = {
     ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
     model,
