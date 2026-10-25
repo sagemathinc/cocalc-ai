@@ -29,6 +29,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ChatReaderView } from "./reader-view";
+import { AttentionPanel, AttentionPanelButton } from "./attention-panel";
 import {
   isOpenAttention,
   readerItemAttention,
@@ -369,6 +370,8 @@ export function reconcileNewThreadSetupWithCodexCatalog({
     },
   });
 }
+
+const NO_ATTENTION: readonly AcpAttentionRecord[] = [];
 
 export function resolveActiveThreadSearchMatchDate({
   threadSearchOpen,
@@ -864,6 +867,43 @@ export function ChatRoomThreadPanel({
         : [],
     [actions, selectedThreadLookup, messages],
   );
+  // What the thread's agents wait for from the person is answered in a
+  // panel beside the chat, never in the log.
+  const [attentionPanelOpen, setAttentionPanelOpen] = useState(false);
+  const [attentionFocus, setAttentionFocus] = useState<{
+    id?: string;
+    token: number;
+  }>({ token: 0 });
+  const openAttention = useMemo(
+    () => attentionRecords.filter(isOpenAttention),
+    [attentionRecords],
+  );
+  const projectedAttention = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of selectedThreadMessages) {
+      const projection = field<any>(message, "acp_attention_response");
+      const id = projection?.get?.("attention_id") ?? projection?.attention_id;
+      if (id) ids.add(`${id}`);
+    }
+    return ids;
+  }, [selectedThreadMessages]);
+  useEffect(() => {
+    setAttentionPanelOpen(false);
+  }, [selectedThreadKey]);
+  // A jump to a request (from its turn's activity or a notification) opens
+  // the panel at it.
+  useEffect(() => {
+    if (
+      !activityJumpAttentionId ||
+      !attentionRecords.some(
+        ({ attention_id }) => attention_id === activityJumpAttentionId,
+      )
+    )
+      return;
+    setAttentionPanelOpen(true);
+    setAttentionFocus({ id: activityJumpAttentionId, token: Date.now() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityJumpAttentionId, activityJumpToken]);
   const selectedRunningCodexMessage = useMemo(
     () =>
       resolveSelectedThreadRunningCodexMessage(
@@ -3063,6 +3103,7 @@ export function ChatRoomThreadPanel({
           flex: "1 1 0",
           minHeight: 0,
           paddingTop: contentTopInset,
+          position: "relative",
         }}
       >
         {showArchivedBanner ? (
@@ -3206,7 +3247,8 @@ export function ChatRoomThreadPanel({
                 fontSize={fontSize}
                 selectedThread={selectedThreadForLog ?? selectedThreadId}
                 onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
-                attentionRecords={readerAttention.get(item.id) ?? []}
+                // Answered in the panel beside the chat.
+                attentionRecords={NO_ATTENTION}
                 readOnly={readOnly}
                 // The search's current hit, scrolled to and highlighted.
                 selectedDate={activeSearchMatchDate}
@@ -3254,10 +3296,35 @@ export function ChatRoomThreadPanel({
                 ? `${selectedRunningCodexDate}`
                 : undefined
             }
-            attentionRecords={attentionRecords}
+            // Answered in the panel beside the chat.
+            attentionRecords={NO_ATTENTION}
             readOnly={readOnly}
           />
         )}
+        {!readOnly && selectedThreadId ? (
+          <>
+            {attentionPanelOpen ? null : (
+              <AttentionPanelButton
+                open={openAttention}
+                onOpen={() => {
+                  setAttentionPanelOpen(true);
+                  setAttentionFocus((current) => ({
+                    token: current.token + 1,
+                  }));
+                }}
+              />
+            )}
+            <AttentionPanel
+              key={selectedThreadKey ?? ""}
+              records={attentionRecords}
+              projected={projectedAttention}
+              open={attentionPanelOpen}
+              onClose={() => setAttentionPanelOpen(false)}
+              focusAttentionId={attentionFocus.id}
+              focusToken={attentionFocus.token}
+            />
+          </>
+        ) : null}
       </div>
     </div>
   );
