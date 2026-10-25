@@ -240,18 +240,27 @@ async function startServer(): Promise<void> {
     logger.info("Update database schema");
     await getDatabase().update_schema();
     passwordKdfFresh = await hasNoPasswordHashes().catch(() => undefined);
-
-    // in those cases where we initialize the database upon startup
-    // (essentially only relevant for kucalc's hub-websocket)
-    if (program.mode === "kucalc") {
-      // and for on-prem setups, also initialize the admin account, set a registration token, etc.
-      await initialOnPremSetup(getDatabase());
-    }
   }
 
   // set server settings based on environment variables
   setWorkerStartupPhase("server-settings");
   await load_server_settings_from_env(getDatabase());
+  // After the environment (an explicit value wins) and before any account is
+  // created below, so the first password is hashed in the chosen format.
+  try {
+    passwordKdfFresh ??= await hasNoPasswordHashes();
+    await initPasswordKdfDefault({ fresh: passwordKdfFresh });
+  } catch (err) {
+    // Unset means "legacy", the safe default: never block startup on this.
+    logger.error("could not initialize password_kdf", err);
+  }
+
+  // in those cases where we initialize the database upon startup
+  // (essentially only relevant for kucalc's hub-websocket)
+  if (program.updateDatabaseSchema && program.mode === "kucalc") {
+    // and for on-prem setups, also initialize the admin account, set a registration token, etc.
+    await initialOnPremSetup(getDatabase());
+  }
   if (program.billingWorker) {
     // Reuse database/settings/routing initialization, not HTTP, subscriptions,
     // general maintenance, or browser-session handling.
@@ -261,13 +270,6 @@ async function startServer(): Promise<void> {
     await startStandaloneBillingExecutor();
     setWorkerStartupPhase("ready");
     return;
-  }
-  try {
-    passwordKdfFresh ??= await hasNoPasswordHashes();
-    await initPasswordKdfDefault({ fresh: passwordKdfFresh });
-  } catch (err) {
-    // Unset means "legacy", the safe default: never block startup on this.
-    logger.error("could not initialize password_kdf", err);
   }
   setWorkerStartupPhase("on-prem-tls");
   await maybeInitOnPremTls();

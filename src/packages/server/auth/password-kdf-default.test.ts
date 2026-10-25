@@ -5,6 +5,9 @@
 
 /** @jest-environment node */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { hashPassword } from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
 import { getPasswordKdf } from "@cocalc/database/settings/password-kdf";
@@ -81,16 +84,69 @@ describe("password_kdf default", () => {
     expect(await stored()).toBe("scrypt");
   });
 
-  it("decides only on the seed bay", async () => {
+  it.each(["seed", "attached"])(
+    "never decides automatically in a multibay cluster (%s)",
+    async (role) => {
+      await unset();
+      const saved = process.env.COCALC_CLUSTER_ROLE;
+      process.env.COCALC_CLUSTER_ROLE = role;
+      try {
+        expect(await initPasswordKdfDefault({ fresh: true })).toBeUndefined();
+        expect(await stored()).toBeUndefined();
+      } finally {
+        if (saved == null) delete process.env.COCALC_CLUSTER_ROLE;
+        else process.env.COCALC_CLUSTER_ROLE = saved;
+      }
+    },
+  );
+
+  it("hashes accounts created after it in the chosen format", async () => {
     await unset();
-    const saved = process.env.COCALC_CLUSTER_SEED_BAY_ID;
-    process.env.COCALC_CLUSTER_SEED_BAY_ID = "some-other-seed";
-    try {
-      expect(await initPasswordKdfDefault({ fresh: true })).toBeUndefined();
-      expect(await stored()).toBeUndefined();
-    } finally {
-      if (saved == null) delete process.env.COCALC_CLUSTER_SEED_BAY_ID;
-      else process.env.COCALC_CLUSTER_SEED_BAY_ID = saved;
-    }
+    await initPasswordKdfDefault({ fresh: true });
+    const account_id = uuid();
+    await createAccount({
+      email: `${uuid()}@example.com`,
+      password: "first admin password",
+      firstName: "A",
+      lastName: "B",
+      account_id,
+    });
+    const { rows } = await getPool().query(
+      "SELECT password_hash FROM accounts WHERE account_id=$1",
+      [account_id],
+    );
+    expect(rows[0].password_hash.startsWith("scrypt$v1$")).toBe(true);
+  });
+
+  it.each([
+    ["rocket/bin/bay-migrate-schema.js"],
+    ["../scripts/bay-systemd/bin/bay-migrate-schema.js"],
+  ])("runs in %s after env and schema, before on-prem setup", (file) => {
+    const src = readFileSync(join(__dirname, "..", "..", file), "utf8");
+    const env = src.indexOf("await load_server_settings_from_env(");
+    const schema = src.indexOf("await db.update_schema();");
+    const init = src.indexOf("await initPasswordKdfDefaultAfterSchema();");
+    const onprem = src.indexOf("await initialOnPremSetup(");
+    for (const i of [env, schema, init, onprem]) expect(i).toBeGreaterThan(0);
+    expect(env).toBeLessThan(init);
+    expect(schema).toBeLessThan(init);
+    expect(init).toBeLessThan(onprem);
+  });
+
+  it("runs in hub startup after env loading and before on-prem account setup", () => {
+    // The bootstrap admin (initialOnPremSetup) must be hashed in the chosen
+    // format, and an explicit environment value must be applied first.
+    const hub = readFileSync(
+      join(__dirname, "..", "..", "hub", "hub.ts"),
+      "utf8",
+    );
+    const measure = hub.indexOf("hasNoPasswordHashes().catch");
+    const env = hub.indexOf("await load_server_settings_from_env(");
+    const init = hub.indexOf("await initPasswordKdfDefault(");
+    const onprem = hub.indexOf("await initialOnPremSetup(");
+    for (const i of [measure, env, init, onprem]) expect(i).toBeGreaterThan(0);
+    expect(measure).toBeLessThan(env);
+    expect(env).toBeLessThan(init);
+    expect(init).toBeLessThan(onprem);
   });
 });
