@@ -821,6 +821,9 @@ export function ChatRoomThreadPanel({
   } | null>(null);
   const selectedThreadLookup = selectedThreadId;
   const showReader = readerMode && !!selectedThreadId;
+  // Wide, the reader's toolbar keeps a place for the running turn's status;
+  // narrow, it is shown above, as for the log.
+  const readerStatusSlot = showReader && !(mobile || variant === "compact");
   const readerMessages = useMemo(
     () =>
       showReader && selectedThreadId
@@ -2136,8 +2139,60 @@ export function ChatRoomThreadPanel({
     showTopControls &&
     topRightControlsPortal === undefined;
   const runningStatusTop = reserveToolbarSpace ? 52 : 8;
+  // The running turn's status and Interrupt: above the log, or in the
+  // reader's toolbar, where its place is kept so nothing moves.
+  const runningStatus =
+    selectedRunningCodexMessage != null && selectedRunningCodexDate != null
+      ? (inline: boolean) => (
+          <AgentMessageStatus
+            show={true}
+            inline={inline}
+            generating={true}
+            durationLabel=""
+            startedAtMs={selectedRunningAcpStartedAtMs}
+            fontSize={fontSize}
+            project_id={project_id}
+            path={path}
+            activityBasePath={threadWorkingDirectory}
+            date={selectedRunningCodexDate}
+            logRefs={{
+              store: selectedRunningLogStore,
+              key: selectedRunningLogKey,
+              subject: selectedRunningLogSubject,
+              liveStream: selectedRunningLiveLogStream,
+            }}
+            activityContext={{
+              actions,
+              message: selectedRunningCodexMessage,
+              messages,
+              threadRootMs: selectedRunningThreadRootMs,
+              threadId: selectedRunningThreadId,
+              project_id,
+              path,
+            }}
+            activityLiveStatus={selectedRunningCodexActivity.liveStatus}
+            lastActivityAtMs={selectedRunningCodexActivity.lastActivityAtMs}
+            activeDescendantThreadIds={
+              selectedRunningCodexActivity.activeDescendantThreadIds
+            }
+            openDrawerToken={
+              activityJumpDate === `${selectedRunningCodexDate}`
+                ? activityJumpToken
+                : undefined
+            }
+            focusAttentionId={
+              activityJumpDate === `${selectedRunningCodexDate}`
+                ? activityJumpAttentionId
+                : undefined
+            }
+            interruptRequested={interruptRequested}
+            onInterrupt={handleInterruptSelectedRunningTurn}
+          />
+        )
+      : undefined;
   const contentTopInset =
-    (reserveToolbarSpace ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
+    (reserveToolbarSpace ? 44 : 0) +
+    (selectedRunningCodexMessage && !readerStatusSlot ? 56 : 0);
   const compactTopRightButtonStyle = compactTopRightControls
     ? { minWidth: 24, height: 22, padding: "0 4px" }
     : undefined;
@@ -2334,9 +2389,7 @@ export function ChatRoomThreadPanel({
           </Space>
         </div>
       )}
-      {!readOnly &&
-      selectedRunningCodexMessage != null &&
-      selectedRunningCodexDate != null ? (
+      {!readOnly && runningStatus && !readerStatusSlot ? (
         <div
           style={{
             position: "absolute",
@@ -2347,51 +2400,7 @@ export function ChatRoomThreadPanel({
             pointerEvents: "none",
           }}
         >
-          <div style={{ pointerEvents: "auto" }}>
-            <AgentMessageStatus
-              show={true}
-              generating={true}
-              durationLabel=""
-              startedAtMs={selectedRunningAcpStartedAtMs}
-              fontSize={fontSize}
-              project_id={project_id}
-              path={path}
-              activityBasePath={threadWorkingDirectory}
-              date={selectedRunningCodexDate}
-              logRefs={{
-                store: selectedRunningLogStore,
-                key: selectedRunningLogKey,
-                subject: selectedRunningLogSubject,
-                liveStream: selectedRunningLiveLogStream,
-              }}
-              activityContext={{
-                actions,
-                message: selectedRunningCodexMessage,
-                messages,
-                threadRootMs: selectedRunningThreadRootMs,
-                threadId: selectedRunningThreadId,
-                project_id,
-                path,
-              }}
-              activityLiveStatus={selectedRunningCodexActivity.liveStatus}
-              lastActivityAtMs={selectedRunningCodexActivity.lastActivityAtMs}
-              activeDescendantThreadIds={
-                selectedRunningCodexActivity.activeDescendantThreadIds
-              }
-              openDrawerToken={
-                activityJumpDate === `${selectedRunningCodexDate}`
-                  ? activityJumpToken
-                  : undefined
-              }
-              focusAttentionId={
-                activityJumpDate === `${selectedRunningCodexDate}`
-                  ? activityJumpAttentionId
-                  : undefined
-              }
-              interruptRequested={interruptRequested}
-              onInterrupt={handleInterruptSelectedRunningTurn}
-            />
-          </div>
+          <div style={{ pointerEvents: "auto" }}>{runningStatus(false)}</div>
         </div>
       ) : null}
       {threadImagePreview ? (
@@ -3131,6 +3140,11 @@ export function ChatRoomThreadPanel({
             readOnly={readOnly}
             isVisible={isVisible}
             acpState={acpState}
+            runningStatus={
+              !readOnly && readerStatusSlot && runningStatus
+                ? runningStatus(true)
+                : undefined
+            }
             isItemWorking={(item: ReaderItem) =>
               readerItemWorking(item, readerRunningMessage)
             }
