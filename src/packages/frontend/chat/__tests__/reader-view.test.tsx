@@ -15,6 +15,7 @@ import type { ReaderChange, ReaderState } from "../reader-model";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => undefined,
+  redux: { getActions: () => undefined },
 }));
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
@@ -392,6 +393,20 @@ test("full screen: f shows the open message over the window, paging stays there"
   await keys.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("article")).toHaveTextContent("first question");
+});
+
+test("full screen: Tab stays inside it", async () => {
+  setup(thread, 4);
+  const keys = user();
+  await keys.click(screen.getByText(/second question/));
+  await keys.keyboard("f");
+  const dialog = screen.getByRole("dialog", { name: "Message, full screen" });
+  const buttons = within(dialog).getAllByRole("button");
+  buttons[buttons.length - 1].focus();
+  await keys.tab();
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  await keys.tab({ shift: true });
+  expect(dialog.contains(document.activeElement)).toBe(true);
 });
 
 test("full screen: a message's own Focus button opens the reader's", async () => {

@@ -29,7 +29,11 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ChatReaderView } from "./reader-view";
-import { AttentionPanel, AttentionPanelButton } from "./attention-panel";
+import {
+  AttentionPanel,
+  AttentionPanelButton,
+  isFailedDelivery,
+} from "./attention-panel";
 import {
   isOpenAttention,
   readerItemAttention,
@@ -887,23 +891,43 @@ export function ChatRoomThreadPanel({
     }
     return ids;
   }, [selectedThreadMessages]);
+  const failedAttention = useMemo(
+    () =>
+      attentionRecords.filter((record) =>
+        isFailedDelivery(record, projectedAttention),
+      ),
+    [attentionRecords, projectedAttention],
+  );
+  // Where the keys go back to when the panel is hidden.
+  const attentionButtonRef = useRef<HTMLSpanElement>(null);
+  const closeAttentionPanel = useCallback(() => {
+    setAttentionPanelOpen(false);
+    requestAnimationFrame(() =>
+      attentionButtonRef.current
+        ?.querySelector<HTMLElement>("button")
+        ?.focus({ preventScroll: true }),
+    );
+  }, []);
   useEffect(() => {
     setAttentionPanelOpen(false);
   }, [selectedThreadKey]);
   // A jump to a request (from its turn's activity or a notification) opens
-  // the panel at it.
+  // the panel at it, once, as soon as the request is loaded.
+  const appliedAttentionJumpRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (!activityJumpAttentionId) return;
+    const jump = `${activityJumpAttentionId}:${activityJumpToken ?? 0}`;
+    if (appliedAttentionJumpRef.current === jump) return;
     if (
-      !activityJumpAttentionId ||
       !attentionRecords.some(
         ({ attention_id }) => attention_id === activityJumpAttentionId,
       )
     )
       return;
+    appliedAttentionJumpRef.current = jump;
     setAttentionPanelOpen(true);
     setAttentionFocus({ id: activityJumpAttentionId, token: Date.now() });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activityJumpAttentionId, activityJumpToken]);
+  }, [activityJumpAttentionId, activityJumpToken, attentionRecords]);
   const selectedRunningCodexMessage = useMemo(
     () =>
       resolveSelectedThreadRunningCodexMessage(
@@ -1495,6 +1519,8 @@ export function ChatRoomThreadPanel({
     if (!activeSearchMatchDate) return;
     setReaderSearchJump({ date: activeSearchMatchDate, token: Date.now() });
   }, [activeSearchMatchDate, threadSearchJumpToken]);
+  // One jump for the reader and its open item's log alike.
+  const readerJump = threadSearchOpen ? readerSearchJump : undefined;
   const readerSearchDates = useMemo(
     () =>
       threadSearchOpen && threadSearchMatches.length
@@ -3205,7 +3231,7 @@ export function ChatRoomThreadPanel({
                 ? runningStatus(true)
                 : undefined
             }
-            searchJump={threadSearchOpen ? readerSearchJump : undefined}
+            searchJump={readerJump}
             searchDates={readerSearchDates}
             isItemWorking={(item: ReaderItem) =>
               readerItemWorking(item, readerRunningMessage)
@@ -3250,10 +3276,11 @@ export function ChatRoomThreadPanel({
                 // Answered in the panel beside the chat.
                 attentionRecords={NO_ATTENTION}
                 readOnly={readOnly}
-                // The search's current hit, scrolled to and highlighted.
-                selectedDate={activeSearchMatchDate}
-                searchJumpDate={activeSearchMatchDate}
-                searchJumpToken={threadSearchJumpToken}
+                // The search's current hit (also one opened from the
+                // backend's results), scrolled to and highlighted.
+                selectedDate={readerJump?.date}
+                searchJumpDate={readerJump?.date}
+                searchJumpToken={readerJump?.token}
                 searchQuery={threadSearchHighlightQuery}
                 // The panel shows the running turn's status already, as for
                 // the log.
@@ -3303,23 +3330,28 @@ export function ChatRoomThreadPanel({
         )}
         {!readOnly && selectedThreadId ? (
           <>
-            {attentionPanelOpen ? null : (
-              <AttentionPanelButton
-                open={openAttention}
-                onOpen={() => {
-                  setAttentionPanelOpen(true);
-                  setAttentionFocus((current) => ({
-                    token: current.token + 1,
-                  }));
-                }}
-              />
-            )}
+            <span ref={attentionButtonRef}>
+              {attentionPanelOpen ? null : (
+                <AttentionPanelButton
+                  open={openAttention}
+                  failed={failedAttention}
+                  onOpen={() => {
+                    setAttentionPanelOpen(true);
+                    setAttentionFocus((current) => ({
+                      token: current.token + 1,
+                    }));
+                  }}
+                />
+              )}
+            </span>
             <AttentionPanel
               key={selectedThreadKey ?? ""}
               records={attentionRecords}
               projected={projectedAttention}
               open={attentionPanelOpen}
-              onClose={() => setAttentionPanelOpen(false)}
+              onClose={closeAttentionPanel}
+              // Below the chat's toolbar, which sits over the content's top.
+              top={contentTopInset}
               focusAttentionId={attentionFocus.id}
               focusToken={attentionFocus.token}
             />

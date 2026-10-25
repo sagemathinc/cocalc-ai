@@ -10,11 +10,14 @@
 // can look things up and come back. It never opens by itself: the button
 // says how many wait.
 
-import { Button, Tooltip } from "antd";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { Button } from "antd";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import { useEffect, useRef, useState } from "react";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   CodexAttentionCard,
@@ -36,6 +39,20 @@ function storedWidth(): number {
   }
 }
 
+/** A question whose saved answer did not reach the agent: retried here. */
+export function isFailedDelivery(
+  record: AcpAttentionRecord,
+  projected: ReadonlySet<string>,
+): boolean {
+  return (
+    record.state === "stale" &&
+    ["codex_sync_question", "codex_async_question"].includes(
+      record.source_kind,
+    ) &&
+    !projected.has(record.attention_id)
+  );
+}
+
 /**
  * The requests the panel lists: open ones, ones answered here (until the
  * answer reaches the log), and questions whose answer failed to reach the
@@ -49,26 +66,26 @@ export function attentionPanelRecords(
   return records.filter(
     (record) =>
       isOpenAttention(record) ||
+      isFailedDelivery(record, projected) ||
       (!projected.has(record.attention_id) &&
-        (drafts[record.attention_id]?.submitted != null ||
-          (record.state === "stale" &&
-            ["codex_sync_question", "codex_async_question"].includes(
-              record.source_kind,
-            )))),
+        drafts[record.attention_id]?.submitted != null),
   );
 }
 
 /** The one way to the panel: plain to see while anything waits. */
 export function AttentionPanelButton({
   open: openRecords,
+  failed = [],
   onOpen,
 }: {
   /** The open requests. */
   open: readonly AcpAttentionRecord[];
+  /** Answers that did not reach the agent, to send again. */
+  failed?: readonly AcpAttentionRecord[];
   onOpen: () => void;
 }) {
   const count = openRecords.length;
-  if (count <= 0) return null;
+  if (count <= 0 && failed.length <= 0) return null;
   const questions = openRecords.every(
     (record) =>
       record.questions?.length > 0 || record.source_kind.endsWith("_question"),
@@ -79,7 +96,11 @@ export function AttentionPanelButton({
       shape="round"
       icon={<Icon name="question-circle" />}
       onClick={onOpen}
-      aria-label={`${count} ${count === 1 ? "request waits" : "requests wait"} for you: open them`}
+      aria-label={
+        count > 0
+          ? `${count} ${count === 1 ? "request waits" : "requests wait"} for you: open them`
+          : "An answer did not reach the agent: open it to send again"
+      }
       style={{
         position: "absolute",
         right: 16,
@@ -88,9 +109,11 @@ export function AttentionPanelButton({
         boxShadow: `0 2px 10px ${UI_COLORS.shadow}`,
       }}
     >
-      {questions
-        ? `${count} ${count === 1 ? "question" : "questions"} waiting`
-        : `${count} waiting for you`}
+      {count <= 0
+        ? "Answer not delivered"
+        : questions
+          ? `${count} ${count === 1 ? "question" : "questions"} waiting`
+          : `${count} waiting for you`}
     </Button>
   );
 }
@@ -102,6 +125,7 @@ export function AttentionPanel({
   onClose,
   focusAttentionId,
   focusToken,
+  top = 0,
 }: {
   /** The thread's requests. */
   records: readonly AcpAttentionRecord[];
@@ -112,7 +136,10 @@ export function AttentionPanel({
   /** Scrolled to when the panel opens for it. */
   focusAttentionId?: string;
   focusToken?: number;
+  /** Where it starts: below the chat's own toolbar. */
+  top?: number;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
   // Kept while the panel is hidden (it stays mounted).
   const [drafts, setDrafts] = useState<Record<string, CodexAttentionDraft>>({});
   const [width, setWidth] = useState(storedWidth);
@@ -120,14 +147,19 @@ export function AttentionPanel({
   const shown = attentionPanelRecords(records, drafts, projected);
 
   useEffect(() => {
-    if (!open || !focusAttentionId) return;
+    if (!open) return;
+    // Opened: the keys go into it, to the request it was opened for.
+    if (!focusAttentionId) {
+      panelRef.current?.focus({ preventScroll: true });
+      return;
+    }
     const card = [
       ...(bodyRef.current?.querySelectorAll<HTMLElement>(
         "[data-codex-attention-id]",
       ) ?? []),
     ].find(({ dataset }) => dataset.codexAttentionId === focusAttentionId);
     card?.scrollIntoView?.({ block: "nearest" });
-    card?.focus({ preventScroll: true });
+    (card ?? panelRef.current)?.focus({ preventScroll: true });
   }, [open, focusAttentionId, focusToken]);
 
   const update = (id: string, change: CodexAttentionDraftUpdater) =>
@@ -158,15 +190,32 @@ export function AttentionPanel({
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
+  // The same with the keys: left widens it, right narrows it.
+  const resizeWithKeys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 80 : 24;
+    const change =
+      event.key === "ArrowLeft" ? step : event.key === "ArrowRight" ? -step : 0;
+    if (!change) return;
+    event.preventDefault();
+    const next = Math.max(MIN_WIDTH, width + change);
+    setWidth(next);
+    try {
+      localStorage.setItem(WIDTH_KEY, `${Math.round(next)}`);
+    } catch {
+      // This session only.
+    }
+  };
 
   return (
     <div
+      ref={panelRef}
+      tabIndex={-1}
       role="complementary"
       aria-label="Waiting for you"
       hidden={!open}
       style={{
         position: "absolute",
-        top: 0,
+        top,
         right: 0,
         bottom: 0,
         width,
@@ -182,8 +231,12 @@ export function AttentionPanel({
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize"
+        aria-label="Resize the panel (left and right arrow keys)"
+        aria-valuenow={Math.round(width)}
+        aria-valuemin={MIN_WIDTH}
+        tabIndex={0}
         onPointerDown={startResize}
+        onKeyDown={resizeWithKeys}
         style={{
           position: "absolute",
           left: -3,

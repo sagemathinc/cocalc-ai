@@ -86,6 +86,15 @@ describe("the button", () => {
     expect(screen.getByText("1 waiting for you")).toBeInTheDocument();
     rerender(<AttentionPanelButton open={[]} onOpen={onOpen} />);
     expect(screen.queryByRole("button")).toBeNull();
+    // An answer that did not reach the agent keeps a way back to it.
+    rerender(
+      <AttentionPanelButton
+        open={[]}
+        failed={[record("stale", { state: "stale" })]}
+        onOpen={onOpen}
+      />,
+    );
+    expect(screen.getByText("Answer not delivered")).toBeInTheDocument();
   });
 });
 
@@ -124,6 +133,26 @@ describe("the panel", () => {
       />,
     );
     expect(screen.getByLabelText("answer second")).toBeInTheDocument();
+  });
+
+  it("takes the keys when opened, and resizes with the arrow keys", () => {
+    const props = {
+      records: [record("first")],
+      projected: new Set<string>(),
+      onClose: jest.fn(),
+    };
+    const { rerender } = render(<AttentionPanel {...props} open={false} />);
+    rerender(<AttentionPanel {...props} open />);
+    const panel = screen.getByRole("complementary", {
+      name: "Waiting for you",
+    });
+    expect(document.activeElement).toBe(panel);
+    const handle = screen.getByRole("separator");
+    const before = Number(handle.getAttribute("aria-valuenow"));
+    fireEvent.keyDown(handle, { key: "ArrowLeft" });
+    expect(Number(handle.getAttribute("aria-valuenow"))).toBe(before + 24);
+    fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+    expect(Number(handle.getAttribute("aria-valuenow"))).toBe(before - 56);
   });
 
   it("opens at a request it is sent to", () => {

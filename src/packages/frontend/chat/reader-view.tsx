@@ -22,6 +22,7 @@ import {
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -807,6 +808,30 @@ export function ChatReaderView({
     </div>
   ) : null;
 
+  // Tab and Shift+Tab wrap around inside the full-screen dialog.
+  const containTab = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...event.currentTarget.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ];
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const inside = event.currentTarget.contains(active);
+    if (event.shiftKey && (active === first || !inside)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !inside)) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
   const fullScreenControl = useMemo(
     () =>
       narrow
@@ -1105,10 +1130,12 @@ export function ChatReaderView({
               Shown full screen (f or Esc to return)
             </div>
             {createPortal(
-              <div
+              <KeyboardBoundary
                 role="dialog"
                 aria-modal="true"
                 aria-label="Message, full screen"
+                // The keys stay inside while it is open: Tab cycles in it.
+                onKeyDown={containTab}
                 style={{
                   position: "fixed",
                   inset: 0,
@@ -1119,7 +1146,7 @@ export function ChatReaderView({
                 }}
               >
                 {pane}
-              </div>,
+              </KeyboardBoundary>,
               document.body,
             )}
           </>
