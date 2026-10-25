@@ -80,17 +80,41 @@ test("a burst of changes reloads once", async () => {
   expect(onChange).toHaveBeenCalledTimes(1);
 });
 
+test("a change before the watch is ready is not missed", async () => {
+  // The card's first read and the watch start separately: a save between
+  // them has no event, so the card reloads once the watch is in place.
+  let resolveWatch: (w: ReturnType<typeof fakeWatch>) => void = () => {};
+  watchFn.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveWatch = (w) => {
+          watches.push(w);
+          resolve(w);
+        };
+      }),
+  );
+  const onChange = jest.fn();
+  render(<Probe onChange={onChange} />);
+  await flush();
+  // ... the file is saved here, before the watch is ready ...
+  await act(async () => resolveWatch(fakeWatch()));
+  await act(async () => jest.advanceTimersByTime(FILE_CHANGE_DEBOUNCE_MS));
+  expect(onChange).toHaveBeenCalledTimes(1);
+});
+
 test("a lapsed watch is renewed and catches up", async () => {
   const onChange = jest.fn();
   render(<Probe onChange={onChange} />);
   await flush();
+  await act(async () => jest.advanceTimersByTime(FILE_CHANGE_DEBOUNCE_MS));
+  expect(onChange).toHaveBeenCalledTimes(1); // the first catch-up
   watches[0].end(); // e.g. the file was replaced
   await flush();
   await act(async () => jest.advanceTimersByTime(FILE_WATCH_RETRY_MS));
   await flush();
   expect(watchFn).toHaveBeenCalledTimes(2);
   await act(async () => jest.advanceTimersByTime(FILE_CHANGE_DEBOUNCE_MS));
-  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenCalledTimes(2);
 });
 
 test("leaving the card closes the watch", async () => {

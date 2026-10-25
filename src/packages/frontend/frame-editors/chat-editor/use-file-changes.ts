@@ -33,9 +33,11 @@ export function useFileChanges(
     let watcher: { close?: () => void } | undefined;
     let debounce: ReturnType<typeof setTimeout> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
-    // The watch lapsed: a change may have been missed (the file replaced by
-    // a rename, say), so reload once when watching again.
-    let lapsed = false;
+    // Reload once each time the watch is in place: a change may have come
+    // before it was (between the card's first read and the watch becoming
+    // ready, or while a lapsed watch was down, e.g. the file replaced by a
+    // rename).
+    let catchUp = true;
     const changed = () => {
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
@@ -53,8 +55,8 @@ export function useFileChanges(
           return;
         }
         watcher = iterator;
-        if (lapsed) {
-          lapsed = false;
+        if (catchUp) {
+          catchUp = false;
           changed();
         }
         for await (const _event of iterator) {
@@ -69,7 +71,7 @@ export function useFileChanges(
         watcher = undefined;
       }
       if (!closed) {
-        lapsed = true;
+        catchUp = true;
         retry = setTimeout(watch, FILE_WATCH_RETRY_MS);
       }
     };
