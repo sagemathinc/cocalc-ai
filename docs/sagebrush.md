@@ -362,21 +362,56 @@ email.
   new one.
 - A pass **claims** a due step for 5 minutes. Every update of the step names its
   cycle, its stage and the claim, so a pass that was superseded (renewed, a new
-  cycle, or reclaimed after its lease) changes nothing.
+  cycle, or reclaimed after its lease) changes nothing. That includes a renewal
+  the pass itself saw: it is recorded, with its notice, only in the same
+  statement that checks the claim.
 - Each email of each cycle has one **delivery record** in
-  `sagebrush_sync_emails`, whose id is derived from the cycle and the stage.
-  - Before the email is handed to the mail transport, the attempt is admitted.
-    In one statement, with the step's row locked and still this cycle, stage and
-    claim, the record goes to `sending`.
-  - When the transport returns, the record becomes `sent` and the step
-    advances, in one statement. When it throws, the record becomes `failed`
-    and the step is retried.
-- The mail transport (SMTP or SendGrid) takes no idempotency key and confirms
-  nothing later, so exactly-once delivery isn't possible. Each email is sent
-  **at most once** instead. A record left in `sending` (the process died, or
-  recording the outcome failed) becomes `unknown` at the next claim. The email
-  may have been delivered, so it isn't sent again: the step advances, and the
-  admins are told.
+  `sagebrush_sync_emails`, whose id is derived from the cycle and the stage:
+  - `pending -> sending`: the attempt is admitted in one statement, with the
+    step's row locked and still this cycle, stage and claim. Only then is the
+    mail transport called.
+  - `sending -> sent`: the transport returned. The step advances in the same
+    statement.
+  - `sending -> unresolved`: the transport threw, or a later pass finds the
+    record still in `sending` (the process died before or after calling the
+    transport, or recording the outcome failed).
+
+**An unresolved email.** The mail transport (`sendEmail`: SMTP or SendGrid)
+takes no idempotency key, and an exception from it doesn't say whether the
+provider accepted the message. So CoCalc treats a throw as "maybe sent":
+
+- The email is neither sent again nor skipped. The step doesn't advance, so the
+  second email waits too.
+- The admins get an alert for that delivery at once (its id is in the subject,
+  so alerts for different accounts are never merged). It names the account, the
+  stage, the attempt's time and the deletion date. An alert that can't be
+  recorded is retried with backoff, and while the email is unresolved the alert
+  repeats every day.
+- The admin checks the mail provider for the email (category
+  `sagebrush-sync-retention`) and records a decision. The alert gives both
+  psql statements, or `resolveRetentionEmail` can be called:
+  - "delivered" marks it sent, and the step advances;
+  - "resend" sends it again.
+    CoCalc acts on the decision within the hour.
+- If the pass that admitted the attempt later sees the transport return after
+  all, the record becomes `sent`, and no decision is needed.
+
+**What a user gets.** For each of the two emails:
+
+| Case                                                                                           | Emails | Why                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Normal                                                                                         | 1      |                                                                                                                                                                                                |
+| Sync renewed, data deleted, account deleted or banned, or never synced                         | 0      | Intended: nothing is promised any more.                                                                                                                                                        |
+| An attempt is unresolved, and the admin decides correctly                                      | 1      |                                                                                                                                                                                                |
+| An attempt is unresolved, and the admin marks it delivered when it wasn't                      | 0      | An admin error.                                                                                                                                                                                |
+| An attempt is unresolved, and the admin resends one that had gone out                          | 2      | An admin error.                                                                                                                                                                                |
+| An attempt stays unresolved past the deletion date (no decision, or no admin account to alert) | 0      | The cycle ends with the data, after daily alerts since the attempt. The first email's deletion date is at least 14 days after the first attempt.                                               |
+| SMTP accepts, then throws, and `sendEmail` falls back to SendGrid                              | 2      | Inside `sendEmail` (src/packages/server/email/send-email.ts). It happens only when the transactional lane names its own backend while the default backend is SendGrid. This code can't see it. |
+
+Without an admin error, the only ways a user gets 2 copies are the `sendEmail`
+fallback (a configuration choice) and the provider delivering one message
+twice. The only way they get 0 is that the email stays unresolved until the
+data is deleted.
 
 Failures are kept as codes and HTTP statuses only, such as `http_error 503`,
 `malformed_response 200`, `send_failed` or `entitlement_unknown`. That covers

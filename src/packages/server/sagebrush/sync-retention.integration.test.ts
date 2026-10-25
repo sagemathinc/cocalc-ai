@@ -53,7 +53,9 @@ import {
   BEFORE_DELETION_MS,
   checkSyncStates,
   deliverDueSyncNotices,
+  escalateUnresolvedRetentionEmails,
   RECHECK_MS,
+  resolveRetentionEmail,
   runDueRetentionSteps,
 } from "./sync-retention";
 
@@ -156,6 +158,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
   beforeEach(async () => {
     mockSettings = { site_name: "CoCalc" };
     mockAlert.mockReset();
+    mockAlert.mockResolvedValue(1);
     mockLogged.length = 0;
     enabled.clear();
     sent.length = 0;
@@ -214,6 +217,24 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     await deliverDueSyncNotices({ config, fetch, now });
     expect((await stateOf(account_id)).email_stage).toBe("ended");
     return { account_id, purge_after };
+  }
+
+  // Several accounts up to their first email's step, together.
+  async function toFirstEmails(s: any, fetch: any, n: number) {
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const account_id = await insertAccount();
+      enabled.set(account_id, true);
+      ids.push(account_id);
+    }
+    await pass(fetch);
+    for (const account_id of ids) lapse(s, account_id);
+    await checkSyncStates({ getLimits, now });
+    await deliverDueSyncNotices({ config, fetch, now });
+    for (const account_id of ids) {
+      expect((await stateOf(account_id)).email_stage).toBe("ended");
+    }
+    return ids;
   }
 
   async function deliveries(account_id: string) {
@@ -486,6 +507,97 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     } as any;
   }
 
+  // A getLimits that answers `answer` for one call, held until released.
+  function heldLimits(answer: boolean) {
+    let release!: () => void;
+    let reached!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    const waiting = new Promise<void>((r) => (reached = r));
+    const held = async () => {
+      reached();
+      await released;
+      return limits(answer);
+    };
+    return { held, release, waiting };
+  }
+
+  // Admin alerts as messages/send.ts records them: with dedupBySubject, an
+  // alert with the subject of one recorded in the last 4 hours is dropped
+  // (and the earlier one's id returned). `failNext` makes the next calls throw,
+  // as adminAlert does with errorOnFail when the database is unreachable.
+  function alertsRecorder() {
+    const recorded: { subject: string; body: string; at: number }[] = [];
+    let failNext = 0;
+    const alert = async (opts: any) => {
+      if (failNext > 0) {
+        failNext -= 1;
+        throw Error("database unreachable");
+      }
+      const earlier = recorded.findIndex(
+        (m) =>
+          m.subject === opts.subject &&
+          (opts.dedupBySubject || m.body === opts.body) &&
+          clock - m.at < 4 * 60 * 60_000,
+      );
+      if (earlier >= 0) return earlier + 1;
+      recorded.push({ subject: opts.subject, body: opts.body, at: clock });
+      return recorded.length;
+    };
+    return {
+      alert: alert as any,
+      recorded,
+      failNext: (n: number) => (failNext = n),
+    };
+  }
+
+  const unresolvedOf = async (account_id: string) =>
+    (await deliveries(account_id)).find((d) => d.state === "unresolved");
+
+  describe("renewals seen by a superseded pass", () => {
+    it("an old pass's held renewal answer doesn't touch a newer cycle", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id } = await toFirstEmail(s, fetch);
+      // The first email's step asks CoCalc, and the answer (renewed) is held.
+      const h = heldLimits(true);
+      const old = steps(fetch, { getLimits: h.held });
+      await h.waiting;
+      // Meanwhile: renewed, then ended again, a new cycle and its first email.
+      enabled.set(account_id, true);
+      clock += RECHECK_MS + 1;
+      await pass(fetch);
+      lapse(s, account_id);
+      await pass(fetch);
+      expect(sent).toHaveLength(1);
+      const current = await stateOf(account_id);
+      expect(current.sync_enabled).toBe(false);
+      expect(current.email_stage).toBe("before");
+      const notices = s.notices.length;
+      // The stale "renewed" answer arrives: nothing changes, no notice.
+      h.release();
+      expect(await old).toMatchObject({ cancelled: 0, stale: 1 });
+      expect(await stateOf(account_id)).toEqual(current);
+      await deliverDueSyncNotices({ config, fetch, now });
+      expect(s.notices).toHaveLength(notices);
+    });
+
+    it("a held renewal answer after the step was reclaimed changes nothing", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id } = await toFirstEmail(s, fetch);
+      const h = heldLimits(true);
+      const old = steps(fetch, { getLimits: h.held });
+      await h.waiting;
+      clock += 5 * 60_000 + 1; // past the lease
+      expect(await steps(fetch)).toMatchObject({ sent: 1 });
+      const current = await stateOf(account_id);
+      const notices = s.notices.length;
+      h.release();
+      expect(await old).toMatchObject({ cancelled: 0, stale: 1 });
+      expect(await stateOf(account_id)).toEqual(current);
+      await deliverDueSyncNotices({ config, fetch, now });
+      expect(s.notices).toHaveLength(notices);
+    });
+  });
+
   describe("cycles, claims and delivery records", () => {
     it("an old cycle's held step neither emails nor touches the new cycle", async () => {
       const { s, fetch } = fakeSagebrush();
@@ -498,8 +610,6 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       const h = holding(fetch);
       const old = steps(h.held);
       await h.waiting;
-      // Meanwhile sync is renewed, then ends again: a new cycle, and its
-      // first email.
       enabled.set(account_id, true);
       clock += RECHECK_MS + 1;
       await pass(fetch);
@@ -509,24 +619,31 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       const current = await stateOf(account_id);
       expect(current.email_cycle).not.toBe(first);
       expect(current.email_stage).toBe("before");
-      // The old step resumes, and changes nothing.
       h.release();
       expect(await old).toMatchObject({ sent: 0, stale: 1 });
       expect(sent).toHaveLength(2);
       expect(await stateOf(account_id)).toEqual(current);
     });
 
-    it("a pass whose cycle ends while it is held sends nothing, even with a retry pending", async () => {
+    it("a pass whose cycle ends while it is held sends nothing, even with a resend pending", async () => {
       const { s, fetch } = fakeSagebrush();
       const { account_id } = await toFirstEmail(s, fetch);
-      // A refused first attempt leaves a delivery record that may be retried.
+      // An unresolved first attempt, which an admin chose to resend.
       await steps(fetch, {
         send: async () => {
-          throw Error("refused");
+          throw Error("connection reset");
         },
       });
-      expect(await deliveries(account_id)).toMatchObject([{ state: "failed" }]);
-      clock += 10 * 60_000;
+      const unresolved = await unresolvedOf(account_id);
+      expect(
+        await resolveRetentionEmail({
+          delivery_id: unresolved.delivery_id,
+          decision: "resend",
+        }),
+      ).toBe(true);
+      expect(await deliveries(account_id)).toMatchObject([
+        { state: "pending", resolution: "resend" },
+      ]);
       const h = holding(fetch);
       const old = steps(h.held);
       await h.waiting;
@@ -539,7 +656,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       expect(await old).toMatchObject({ sent: 0, stale: 1 });
       expect(sent).toHaveLength(0);
       expect(await deliveries(account_id)).toMatchObject([
-        { state: "failed", attempts: 1 },
+        { state: "pending", attempts: 1 },
       ]);
     });
 
@@ -549,7 +666,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       const h = holding(fetch);
       const old = steps(h.held);
       await h.waiting;
-      clock += 5 * 60_000 + 1; // past the lease
+      clock += 5 * 60_000 + 1;
       expect(await steps(fetch)).toMatchObject({ sent: 1 });
       h.release();
       expect(await old).toMatchObject({ sent: 0, stale: 1 });
@@ -559,8 +676,89 @@ describeDb("Sagebrush sync notices and retention emails", () => {
         { stage: "ended", state: "sent", attempts: 1 },
       ]);
     });
+  });
 
-    it("a send still in flight past its lease is not repeated: its outcome is unknown", async () => {
+  describe("an email whose delivery is uncertain", () => {
+    it("accepted, then the transport throws: not resent, not advanced, escalated; 'delivered' advances it", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id, purge_after } = await toFirstEmail(s, fetch);
+      const acceptedThenThrew = async (message: any) => {
+        sent.push(message); // the provider accepted it
+        throw Error("socket closed before the reply");
+      };
+      expect(await steps(fetch, { send: acceptedThenThrew })).toMatchObject({
+        sent: 0,
+        unresolved: 1,
+      });
+      // Later passes neither resend nor advance it.
+      for (let i = 0; i < 3; i++) {
+        clock += 2 * 60 * 60_000;
+        expect(await steps(fetch)).toMatchObject({ sent: 0, unresolved: 1 });
+      }
+      expect(sent).toHaveLength(1);
+      let row = await stateOf(account_id);
+      expect(row.email_stage).toBe("ended");
+      expect(row.last_error).toBe("send_outcome_unknown");
+      // The admins are told, about this delivery.
+      const a = alertsRecorder();
+      expect(
+        await escalateUnresolvedRetentionEmails({ now, alert: a.alert }),
+      ).toEqual({ alerted: 1, failed: 0 });
+      const { delivery_id } = await unresolvedOf(account_id);
+      expect(a.recorded[0].subject).toContain(delivery_id);
+      expect(a.recorded[0].body).toContain(account_id);
+      // The provider shows it went out: the admin records that.
+      await resolveRetentionEmail({ delivery_id, decision: "delivered" });
+      expect(await steps(fetch)).toMatchObject({ sent: 0 });
+      row = await stateOf(account_id);
+      expect(row.email_stage).toBe("before");
+      expect(await deliveries(account_id)).toMatchObject([
+        { state: "sent", resolution: "delivered" },
+      ]);
+      // The second email still comes, once.
+      clock = purge_after - BEFORE_DELETION_MS + 1;
+      await steps(fetch);
+      await steps(fetch);
+      expect(sent).toHaveLength(2);
+      expect(sent[1].subject).toMatch(/will be deleted on/);
+    });
+
+    it("a crash between admission and send: nothing sent, not advanced, escalated; 'resend' sends it once", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id } = await toFirstEmail(s, fetch);
+      // The pass is admitted, then never reaches the transport (it hangs
+      // like a process that died there).
+      let reachedSend!: () => void;
+      const sending = new Promise<void>((r) => (reachedSend = r));
+      void steps(fetch, {
+        send: () => {
+          reachedSend();
+          return new Promise(() => {});
+        },
+      });
+      await sending;
+      expect(await deliveries(account_id)).toMatchObject([
+        { state: "sending" },
+      ]);
+      clock += 5 * 60_000 + 1;
+      expect(await steps(fetch)).toMatchObject({ sent: 0, unresolved: 1 });
+      expect(sent).toHaveLength(0);
+      expect((await stateOf(account_id)).email_stage).toBe("ended");
+      const a = alertsRecorder();
+      await escalateUnresolvedRetentionEmails({ now, alert: a.alert });
+      expect(a.recorded).toHaveLength(1);
+      const { delivery_id } = await unresolvedOf(account_id);
+      await resolveRetentionEmail({ delivery_id, decision: "resend" });
+      expect(await steps(fetch)).toMatchObject({ sent: 1 });
+      await steps(fetch);
+      expect(sent).toHaveLength(1);
+      expect((await stateOf(account_id)).email_stage).toBe("before");
+      expect(await deliveries(account_id)).toMatchObject([
+        { state: "sent", attempts: 2, resolution: "resend" },
+      ]);
+    });
+
+    it("a send still in flight past its lease isn't repeated, and its late success counts", async () => {
       const { s, fetch } = fakeSagebrush();
       const { account_id } = await toFirstEmail(s, fetch);
       let releaseSend!: () => void;
@@ -575,80 +773,140 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       const old = steps(fetch, { send: slowSend });
       await sending;
       clock += 5 * 60_000 + 1;
-      expect(await steps(fetch)).toMatchObject({ sent: 0, unknown: 1 });
-      expect(mockAlert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subject: expect.stringMatching(/outcome unknown/),
-        }),
-      );
+      expect(await steps(fetch)).toMatchObject({ sent: 0, unresolved: 1 });
       releaseSend();
       await old;
       expect(sent).toHaveLength(1);
-      const row = await stateOf(account_id);
-      expect(row.email_stage).toBe("before");
-      expect(await deliveries(account_id)).toMatchObject([
-        { stage: "ended", state: "unknown" },
-      ]);
+      expect(await deliveries(account_id)).toMatchObject([{ state: "sent" }]);
+      // Nothing left to escalate; the next look advances the step.
+      const a = alertsRecorder();
+      await escalateUnresolvedRetentionEmails({ now, alert: a.alert });
+      expect(a.recorded).toHaveLength(0);
+      clock += 60 * 60_000 + 1;
+      await steps(fetch);
+      expect((await stateOf(account_id)).email_stage).toBe("before");
+      expect(sent).toHaveLength(1);
     });
 
-    it("an email whose outcome couldn't be recorded is not sent again", async () => {
+    it("the alert's psql decision works as written", async () => {
       const { s, fetch } = fakeSagebrush();
-      const { account_id, purge_after } = await toFirstEmail(s, fetch);
-      // The transport accepts the email; recording that fails.
+      const { account_id } = await toFirstEmail(s, fetch);
+      await steps(fetch, {
+        send: async () => {
+          throw Error("connection reset");
+        },
+      });
+      const a = alertsRecorder();
+      await escalateUnresolvedRetentionEmails({ now, alert: a.alert });
+      const resend = a.recorded[0].body.match(/If it didn't: (UPDATE [^\n]*;)/);
+      expect(resend).not.toBeNull();
+      await getPool().query(resend![1]);
+      clock += 60 * 60_000 + 1; // "within the hour"
+      expect(await steps(fetch)).toMatchObject({ sent: 1 });
+      expect((await stateOf(account_id)).email_stage).toBe("before");
+      const delivered = a.recorded[0].body.match(
+        /If it went out: (UPDATE [^\n]*;)/,
+      );
+      expect(delivered).not.toBeNull();
+    });
+
+    it("an email whose success couldn't be recorded is escalated, not resent", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id } = await toFirstEmail(s, fetch);
       expect(
         await steps(fetch, { db: failingOnce(/SET state = 'sent'/) }),
       ).toMatchObject({ sent: 1, failed: 1 });
-      let row = await stateOf(account_id);
-      expect(row.email_stage).toBe("ended");
-      expect(row.last_error).toBe("db_error");
+      expect((await stateOf(account_id)).last_error).toBe("db_error");
       clock += 10 * 60_000;
-      expect(await steps(fetch)).toMatchObject({ sent: 0, unknown: 1 });
+      expect(await steps(fetch)).toMatchObject({ sent: 0, unresolved: 1 });
       expect(sent).toHaveLength(1);
-      row = await stateOf(account_id);
-      expect(row.email_stage).toBe("before");
-      expect(await deliveries(account_id)).toMatchObject([
-        { stage: "ended", state: "unknown", attempts: 1 },
-      ]);
-      // The second email still comes, once.
-      clock = purge_after - BEFORE_DELETION_MS + 1;
-      await pass(fetch);
-      await pass(fetch);
-      expect(sent).toHaveLength(2);
-      expect(sent[1].subject).toMatch(/will be deleted on/);
+      const a = alertsRecorder();
+      await escalateUnresolvedRetentionEmails({ now, alert: a.alert });
+      expect(a.recorded).toHaveLength(1);
+      expect((await stateOf(account_id)).email_stage).toBe("ended");
     });
 
-    it("retries an email the transport refused, and sends it once", async () => {
+    it("escalations of two accounts in one dedup window are both delivered", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const [one, two] = await toFirstEmails(s, fetch, 2);
+      const reset = async () => {
+        throw Error("connection reset");
+      };
+      expect(await steps(fetch, { send: reset })).toMatchObject({
+        unresolved: 2,
+      });
+      const a = alertsRecorder();
+      expect(
+        await escalateUnresolvedRetentionEmails({ now, alert: a.alert }),
+      ).toEqual({ alerted: 2, failed: 0 });
+      expect(a.recorded).toHaveLength(2);
+      expect(a.recorded.map((m) => m.body).join()).toContain(one);
+      expect(a.recorded.map((m) => m.body).join()).toContain(two);
+      // A daily reminder each, until resolved.
+      clock += 60 * 60_000;
+      expect(
+        await escalateUnresolvedRetentionEmails({ now, alert: a.alert }),
+      ).toEqual({ alerted: 0, failed: 0 });
+      clock += DAY;
+      expect(
+        await escalateUnresolvedRetentionEmails({ now, alert: a.alert }),
+      ).toEqual({ alerted: 2, failed: 0 });
+    });
+
+    it("an escalation whose alert fails is retried until it is recorded", async () => {
       const { s, fetch } = fakeSagebrush();
       const { account_id } = await toFirstEmail(s, fetch);
-      let calls = 0;
-      const flaky = async (message: any) => {
-        calls += 1;
-        if (calls === 1) throw Error("421 try again later");
-        sent.push(message);
-      };
-      expect(await steps(fetch, { send: flaky })).toMatchObject({
-        sent: 0,
-        failed: 1,
+      await steps(fetch, {
+        send: async () => {
+          throw Error("connection reset");
+        },
       });
-      expect((await stateOf(account_id)).last_error).toBe("send_failed");
-      expect(await deliveries(account_id)).toMatchObject([
-        { state: "failed", attempts: 1 },
-      ]);
+      const a = alertsRecorder();
+      a.failNext(2);
+      expect(
+        await escalateUnresolvedRetentionEmails({ now, alert: a.alert }),
+      ).toEqual({ alerted: 0, failed: 1 });
+      // (an alert "recorded" for nobody, with no admins, doesn't count either)
       clock += 10 * 60_000;
-      expect(await steps(fetch, { send: flaky })).toMatchObject({ sent: 1 });
+      expect(
+        await escalateUnresolvedRetentionEmails({ now, alert: a.alert }),
+      ).toEqual({ alerted: 0, failed: 1 });
       clock += 10 * 60_000;
-      await steps(fetch, { send: flaky });
-      expect(sent).toHaveLength(1);
-      expect(calls).toBe(2);
-      expect(await deliveries(account_id)).toMatchObject([
-        { state: "sent", attempts: 2 },
-      ]);
+      expect(
+        await escalateUnresolvedRetentionEmails({
+          now,
+          alert: (async () => undefined) as any,
+        }),
+      ).toEqual({ alerted: 0, failed: 1 });
+      clock += 10 * 60_000;
+      expect(
+        await escalateUnresolvedRetentionEmails({ now, alert: a.alert }),
+      ).toEqual({ alerted: 1, failed: 0 });
+      expect(a.recorded).toHaveLength(1);
+      expect((await unresolvedOf(account_id)).escalated_at).not.toBeNull();
+    });
+
+    it("isn't escalated once its cycle is over", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id } = await toFirstEmail(s, fetch);
+      await steps(fetch, {
+        send: async () => {
+          throw Error("connection reset");
+        },
+      });
+      enabled.set(account_id, true);
+      clock += RECHECK_MS + 1;
+      await checkSyncStates({ getLimits, now });
+      const a = alertsRecorder();
+      expect(
+        await escalateUnresolvedRetentionEmails({ now, alert: a.alert }),
+      ).toEqual({ alerted: 0, failed: 0 });
     });
   });
 
   describe("overdue alerts, per notice and per step", () => {
-    const refuse = async () => {
-      throw Error("refused");
+    const unresolvable = async () => {
+      throw Error("lookup failed");
     };
 
     it("an overdue notice's alert doesn't silence the first email's", async () => {
@@ -665,10 +923,10 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       clock += 7 * 60 * 60_000;
       await deliverDueSyncNotices({ config, fetch, now });
       expect((await stateOf(account_id)).email_stage).toBe("ended");
-      await steps(fetch, { send: refuse });
+      await steps(fetch, { getLimits: unresolvable });
       expect(mockAlert).toHaveBeenCalledTimes(1); // not overdue yet
       clock += DAY + 1;
-      await steps(fetch, { send: refuse });
+      await steps(fetch, { getLimits: unresolvable });
       expect(mockAlert).toHaveBeenCalledTimes(2);
       expect(mockAlert.mock.calls[1][0].subject).toMatch(
         /first retention email/,
@@ -678,21 +936,53 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     it("the first email's alert doesn't silence the second's", async () => {
       const { s, fetch } = fakeSagebrush();
       const { purge_after } = await toFirstEmail(s, fetch);
-      await steps(fetch, { send: refuse });
+      await steps(fetch, { getLimits: unresolvable });
       clock += DAY + 1;
-      await steps(fetch, { send: refuse });
+      await steps(fetch, { getLimits: unresolvable });
       expect(mockAlert).toHaveBeenCalledTimes(1);
       clock += 7 * 60 * 60_000;
       expect(await steps(fetch)).toMatchObject({ sent: 1 });
       clock = purge_after - BEFORE_DELETION_MS + 1;
-      await steps(fetch, { send: refuse });
+      await steps(fetch, { getLimits: unresolvable });
       expect(mockAlert).toHaveBeenCalledTimes(1);
       clock += DAY + 1;
-      await steps(fetch, { send: refuse });
+      await steps(fetch, { getLimits: unresolvable });
       expect(mockAlert).toHaveBeenCalledTimes(2);
       expect(mockAlert.mock.calls[1][0].subject).toMatch(
         /second retention email/,
       );
+    });
+
+    it("two accounts overdue in one dedup window both get an alert", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const [one, two] = await toFirstEmails(s, fetch, 2);
+      const a = alertsRecorder();
+      await steps(fetch, { getLimits: unresolvable, alert: a.alert });
+      clock += DAY + 1;
+      await steps(fetch, { getLimits: unresolvable, alert: a.alert });
+      expect(a.recorded).toHaveLength(2);
+      expect(a.recorded[0].subject).not.toBe(a.recorded[1].subject);
+      expect(a.recorded.map((m) => m.subject).join()).toContain(one);
+      expect(a.recorded.map((m) => m.subject).join()).toContain(two);
+    });
+
+    it("an overdue alert that fails is given on a later failure", async () => {
+      const { s, fetch } = fakeSagebrush();
+      const { account_id } = await toFirstEmail(s, fetch);
+      const a = alertsRecorder();
+      await steps(fetch, { getLimits: unresolvable, alert: a.alert });
+      clock += DAY + 1;
+      a.failNext(1);
+      await steps(fetch, { getLimits: unresolvable, alert: a.alert });
+      expect(a.recorded).toHaveLength(0);
+      expect((await stateOf(account_id)).email_alerted_at).toBeNull();
+      clock += 60 * 60_000;
+      await steps(fetch, { getLimits: unresolvable, alert: a.alert });
+      expect(a.recorded).toHaveLength(1);
+      expect((await stateOf(account_id)).email_alerted_at).not.toBeNull();
+      clock += 60 * 60_000;
+      await steps(fetch, { getLimits: unresolvable, alert: a.alert });
+      expect(a.recorded).toHaveLength(1);
     });
   });
 
@@ -757,12 +1047,15 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       },
     });
     expect(sent).toHaveLength(0);
+    await escalateUnresolvedRetentionEmails({ now });
+    expect(mockAlert.mock.calls.map((c) => c[0].subject).join()).toMatch(
+      /needs a decision/,
+    );
     // (the failures were recorded and alerted, as codes)
     const codes = mockLogged.map((entry) => entry[2]?.code).filter(Boolean);
     for (const code of [
       "http_error",
       "malformed_response",
-      "send_failed",
       "entitlement_unknown",
     ]) {
       expect(codes).toContain(code);

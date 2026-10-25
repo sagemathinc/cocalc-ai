@@ -25,9 +25,10 @@ Before each email CoCalc resolves the membership again itself (a renewal may
 not have reached Sagebrush yet), then reads Sagebrush's answer. The emails of
 one ending of sync form a cycle, named by the notice that ended it; every
 update of a step names its cycle, stage and claiming pass, so work for an older
-cycle, or by a superseded pass, changes nothing. Each email is sent at most
-once (see "Delivery" below). Failures are recorded and alerted as codes and
-HTTP statuses only.
+cycle, or by a superseded pass, changes nothing. An email whose delivery is
+uncertain is neither resent nor skipped: it waits for an admin's decision, and
+the admins are reminded until then (see "Delivery" below). Failures are
+recorded and alerted as codes and HTTP statuses only.
 
 Both calls are signed like the purge requests, with the site setting
 sagebrush_limits_secret (Sagebrush's LIMITS_KEY), and go to the origin of the
@@ -114,8 +115,10 @@ export type SyncFailureCode =
   | "account_state_unavailable"
   // the account's membership couldn't be resolved
   | "entitlement_unknown"
-  // the mail transport refused the email
-  | "send_failed"
+  // the mail transport threw: the email may or may not have been accepted
+  | "send_outcome_unknown"
+  // an admin alert could not be recorded
+  | "alert_undelivered"
   | "db_error"
   | "internal_error";
 
@@ -417,10 +420,35 @@ export async function checkSyncStates({
   return changes;
 }
 
+// What a change of sync_enabled sets: a new notice (replacing any still
+// pending), and the end of the current retention cycle. The arguments are the
+// parameter numbers of the new state, the time (ms), the request id and the
+// limits.
+function changeAssignments(e: number, t: number, r: number, l: number) {
+  return `sync_enabled = $${e},
+          changed_at = to_timestamp($${t}::BIGINT / 1000.0),
+          notice_request_id = $${r}::UUID,
+          notice_issued = $${t}::BIGINT,
+          notice_limits = $${l}::JSONB,
+          notice_attempts = 0,
+          notice_next_at = to_timestamp($${t}::BIGINT / 1000.0),
+          notice_accepted_at = NULL,
+          notice_alerted_at = NULL,
+          last_error = NULL,
+          email_stage = CASE
+            WHEN email_stage IN ('ended', 'before') THEN 'cancelled'
+            ELSE email_stage END,
+          email_next_at = NULL,
+          email_attempts = 0,
+          email_claim = NULL,
+          email_due_at = NULL,
+          email_alerted_at = NULL`;
+}
+
 // Record an account's sync state as CoCalc resolved it at time t. A change from
-// what was last seen queues a new notice (replacing any still pending) and ends
-// the current retention cycle; the emails of a sync that ended start once its
-// notice is accepted. The first answer for an account only records it.
+// what was last seen queues a new notice and ends the current retention cycle;
+// the emails of a sync that ended start once its notice is accepted. The first
+// answer for an account only records it.
 async function recordSyncState({
   db,
   account_id,
@@ -444,24 +472,7 @@ async function recordSyncState({
   const request_id = randomUUID();
   const { rows } = await db.query(
     `UPDATE sagebrush_sync_states
-        SET sync_enabled = $2,
-            changed_at = to_timestamp($3::BIGINT / 1000.0),
-            notice_request_id = $4::UUID,
-            notice_issued = $3::BIGINT,
-            notice_limits = $5::JSONB,
-            notice_attempts = 0,
-            notice_next_at = to_timestamp($3::BIGINT / 1000.0),
-            notice_accepted_at = NULL,
-            notice_alerted_at = NULL,
-            last_error = NULL,
-            email_stage = CASE
-              WHEN email_stage IN ('ended', 'before') THEN 'cancelled'
-              ELSE email_stage END,
-            email_next_at = NULL,
-            email_attempts = 0,
-            email_claim = NULL,
-            email_due_at = NULL,
-            email_alerted_at = NULL
+        SET ${changeAssignments(2, 3, 4, 5)}
       WHERE account_id = $1::UUID AND sync_enabled IS DISTINCT FROM $2
       RETURNING account_id`,
     [account_id, enabled, t, request_id, JSON.stringify(limits)],
@@ -475,6 +486,9 @@ async function recordSyncState({
 
 // Alert the admins about a failure: at once on a 401 (the keys probably
 // disagree), and once per notice or retention step when it is a day overdue.
+// The subject names the account, so one account's alert is never deduplicated
+// against another's; an overdue alert counts as given only once the alert is
+// recorded, so a failed one is tried again on the next failure.
 async function alertIfDue({
   alert,
   account_id,
@@ -497,8 +511,8 @@ async function alertIfDue({
   const overdue = since != null && now - new Date(since).valueOf() >= DAY_MS;
   if (failure.status !== 401 && !(overdue && alerted_at == null)) return;
   try {
-    await alert({
-      subject: `Sagebrush sync ${what} not done`,
+    const id = await alert({
+      subject: `Sagebrush sync ${what} not done for account ${account_id}`,
       body: [
         `CoCalc has not been able to complete the Sagebrush sync ${what} for account ${account_id}. Last failure: ${failure.message}.`,
         failure.status === 401
@@ -506,11 +520,13 @@ async function alertIfDue({
           : "CoCalc keeps retrying with backoff. The user's retention emails wait until this succeeds.",
       ].join("\n\n"),
       dedupBySubject: true,
+      errorOnFail: true,
     });
+    if (id == null) throw new SyncFailure("alert_undelivered");
     if (overdue) await markAlerted();
   } catch (err) {
     logger.warn("alerting the admins failed", {
-      code: asFailure(err, "internal_error").code,
+      code: asFailure(err, "alert_undelivered").code,
     });
   }
 }
@@ -666,28 +682,42 @@ const stepKey = (row: StepRow) => [
   row.email_claim,
 ];
 
-/* Delivery. The mail transport (SMTP or SendGrid, via sendEmail) has no
-idempotency key and confirms nothing after it returns, so exactly-once delivery
-isn't possible. Each email of each cycle gets one delivery record instead
-(sagebrush_sync_emails, id deliveryId(cycle, stage)), and the email is sent at
-most once:
-- Before calling the transport, the pass admits the attempt: in one statement,
-  with the step's row locked and checked to still be this cycle, stage and
-  claim, the record goes from pending (or failed) to sending.
-- When the transport returns, the record becomes sent and the step advances,
-  in one statement.
-- When the transport throws, the record becomes failed, and the step is
-  retried with backoff.
-- A record left in sending (the process died, or recording the outcome
-  failed, after the transport was called) becomes unknown when the step is
-  next claimed: the email may have been delivered, so it is not sent again.
-  The step advances, and the admins are told. */
-type Admission = "admitted" | "stale" | "sent" | "unknown";
+// How soon a step whose email is unresolved is looked at again (to see an
+// admin's decision, or a late outcome).
+const UNRESOLVED_RECHECK_MS = 60 * 60_000;
+
+/* Delivery. The mail transport (sendEmail: SMTP or SendGrid) takes no
+idempotency key, and an exception from it doesn't say whether the email was
+accepted: a connection can drop after the provider accepted the message. So no
+outcome but a normal return is taken as known. Each email of each cycle has one
+delivery record (sagebrush_sync_emails, id deliveryId(cycle, stage)):
+
+- pending -> sending: the pass admits the attempt, in one statement, with the
+  step's row locked and checked to still be this cycle, stage and claim. Only
+  then is the transport called.
+- sending -> sent: the transport returned. The step advances in the same
+  statement.
+- sending -> unresolved: the transport threw, or a later pass finds the record
+  still in sending (the process died before or after calling the transport, or
+  recording the outcome failed). The email may or may not have been delivered:
+  it is not sent again automatically, and the step does not advance. The
+  record stays unresolved until an admin decides, and until then the admins
+  are told about it, per delivery, and again every day (escalateUnresolved-
+  RetentionEmails; an alert that can't be recorded is retried). The admin
+  checks the mail provider and calls resolveRetentionEmail: "delivered"
+  (-> sent; the step advances) or "resend" (-> pending; it is sent again).
+- A late outcome of the attempt still counts: if the pass that admitted it
+  sees the transport return after all, the record becomes sent.
+
+So a user gets each email once, unless an attempt is unresolved: then it is
+what the admin decides. */
+type Admission = "admitted" | "stale" | "sent" | "unresolved";
 
 async function admitDelivery(
   db: Queryable,
   row: StepRow,
   delivery_id: string,
+  now: number,
 ): Promise<Admission> {
   const params = [...stepKey(row), delivery_id];
   await db.query(
@@ -704,7 +734,7 @@ async function admitDelivery(
         SET state = 'sending', claim_id = $4::UUID, attempts = e.attempts + 1,
             admitted_at = NOW()
        FROM current_step
-      WHERE e.delivery_id = $5::UUID AND e.state IN ('pending', 'failed')
+      WHERE e.delivery_id = $5::UUID AND e.state = 'pending'
      RETURNING e.delivery_id`,
     params,
   );
@@ -718,15 +748,28 @@ async function admitDelivery(
   );
   if (!found?.current) return "stale";
   if (found.delivery === "sent") return "sent";
-  if (found.delivery === "sending" || found.delivery === "unknown") {
-    await db.query(
-      `UPDATE sagebrush_sync_emails SET state = 'unknown'
-        WHERE delivery_id = $1::UUID AND state = 'sending'`,
-      [delivery_id],
-    );
-    return "unknown";
+  if (found.delivery === "sending" || found.delivery === "unresolved") {
+    await markUnresolved(db, delivery_id, now);
+    return "unresolved";
   }
   return "stale";
+}
+
+// An attempt whose outcome isn't known: due for escalation now.
+async function markUnresolved(
+  db: Queryable,
+  delivery_id: string,
+  now: number,
+  claim_id?: string,
+) {
+  await db.query(
+    `UPDATE sagebrush_sync_emails
+        SET state = 'unresolved',
+            escalation_next_at = COALESCE(escalation_next_at, to_timestamp($2::BIGINT / 1000.0))
+      WHERE delivery_id = $1::UUID AND state = 'sending'
+        ${claim_id == null ? "" : "AND claim_id = $3::UUID"}`,
+    claim_id == null ? [delivery_id, now] : [delivery_id, now, claim_id],
+  );
 }
 
 // Advance the step past its email: to 'before' at `next`, or to 'done'. With
@@ -760,8 +803,10 @@ async function advanceStep({
     `${
       delivered
         ? `WITH delivered AS (
-             UPDATE sagebrush_sync_emails SET state = 'sent', sent_at = NOW()
-              WHERE delivery_id = $5::UUID AND claim_id = $4::UUID AND state = 'sending'
+             UPDATE sagebrush_sync_emails SET state = 'sent', sent_at = NOW(),
+                    escalation_next_at = NULL
+              WHERE delivery_id = $5::UUID AND claim_id = $4::UUID
+                AND state IN ('sending', 'unresolved')
              RETURNING sent_at) `
         : ""
     }UPDATE sagebrush_sync_states
@@ -800,7 +845,7 @@ export async function runDueRetentionSteps({
   cancelled: number;
   failed: number;
   stale: number;
-  unknown: number;
+  unresolved: number;
 }> {
   const { rows } = await db.query<StepRow>(
     `UPDATE sagebrush_sync_states
@@ -818,7 +863,7 @@ export async function runDueRetentionSteps({
                 email_attempts, email_due_at, email_alerted_at`,
     [now() + LEASE_MS, now(), STEP_BATCH],
   );
-  const counts = { sent: 0, cancelled: 0, failed: 0, stale: 0, unknown: 0 };
+  const counts = { sent: 0, cancelled: 0, failed: 0, stale: 0, unresolved: 0 };
   if (rows.length === 0) return counts;
   const settings = (await getServerSettings()) as Record<string, unknown>;
   const site_name = `${settings.site_name ?? ""}`.trim() || "CoCalc";
@@ -839,6 +884,17 @@ export async function runDueRetentionSteps({
       );
       counts[rows.length > 0 ? "cancelled" : "stale"] += 1;
     };
+    // The email is unresolved: look again later; it isn't a failure to retry.
+    const waitForDecision = async () => {
+      counts.unresolved += 1;
+      await db.query(
+        `UPDATE sagebrush_sync_states
+            SET email_next_at = to_timestamp($5::BIGINT / 1000.0), email_claim = NULL,
+                last_error = 'send_outcome_unknown'
+          WHERE ${STEP}`,
+        [...stepKey(row), now() + UNRESOLVED_RECHECK_MS],
+      );
+    };
     let phase: SyncFailureCode = "account_state_unavailable";
     try {
       const account = await accountState({ account_id });
@@ -855,15 +911,25 @@ export async function runDueRetentionSteps({
       if (limits == null) throw new SyncFailure("entitlement_unknown");
       if (limits.sync.enabled === true) {
         phase = "db_error";
-        // Renewed: record it, which queues the notice and ends the cycle.
-        await recordSyncState({ db, account_id, limits, t: now() });
-        await db.query(
+        // Renewed: in one statement, and only while this pass still holds
+        // this step, record it (queuing the notice) and end the cycle. A
+        // superseded pass's answer may be stale, and changes nothing.
+        const t = now();
+        const request_id = randomUUID();
+        const { rows: renewed } = await db.query(
           `UPDATE sagebrush_sync_states
-              SET email_stage = 'cancelled', email_next_at = NULL, email_claim = NULL
-            WHERE ${STEP}`,
-          stepKey(row),
+              SET ${changeAssignments(5, 6, 7, 8)},
+                  checked_at = to_timestamp($6::BIGINT / 1000.0)
+            WHERE ${STEP}
+            RETURNING account_id`,
+          [...stepKey(row), true, t, request_id, JSON.stringify(limits)],
         );
-        counts.cancelled += 1;
+        if (renewed.length > 0) {
+          logger.info("sync membership changed", { request_id, enabled: true });
+          counts.cancelled += 1;
+        } else {
+          counts.stale += 1;
+        }
         continue;
       }
       phase = "request_failed";
@@ -893,15 +959,25 @@ export async function runDueRetentionSteps({
         if (rescheduled.length === 0) counts.stale += 1;
         continue;
       }
+      // The deletion date, for the escalation of an unresolved email.
+      await db.query(
+        `UPDATE sagebrush_sync_states SET purge_after = to_timestamp($5::BIGINT / 1000.0)
+          WHERE ${STEP}`,
+        [...stepKey(row), purge_after],
+      );
       const next = Math.max(now(), purge_after - BEFORE_DELETION_MS);
       const delivery_id = deliveryId(row.email_cycle, row.email_stage);
-      const admission = await admitDelivery(db, row, delivery_id);
+      const admission = await admitDelivery(db, row, delivery_id, now());
       if (admission === "stale") {
         counts.stale += 1;
         continue;
       }
-      if (admission !== "admitted") {
-        // Handed to the transport before: never again.
+      if (admission === "unresolved") {
+        await waitForDecision();
+        continue;
+      }
+      if (admission === "sent") {
+        // Delivered before (or an admin said so).
         await advanceStep({
           db,
           row,
@@ -910,18 +986,6 @@ export async function runDueRetentionSteps({
           next,
           delivered: false,
         });
-        if (admission === "unknown") {
-          counts.unknown += 1;
-          logger.warn("a sync retention email's outcome is unknown", {
-            delivery_id,
-            stage: row.email_stage,
-          });
-          await alert({
-            subject: "Sagebrush retention email outcome unknown",
-            body: `An attempt to send the ${which} Sagebrush sync retention email to account ${account_id} ended without a recorded outcome (delivery ${delivery_id}). It may or may not have been delivered; CoCalc does not send it again.`,
-            dedupBySubject: true,
-          }).catch(() => {});
-        }
         continue;
       }
       const email = retentionEmail({
@@ -930,7 +994,7 @@ export async function runDueRetentionSteps({
         site_name,
         sagebrush,
       });
-      phase = "send_failed";
+      phase = "send_outcome_unknown";
       try {
         await send(
           {
@@ -943,16 +1007,16 @@ export async function runDueRetentionSteps({
           account_id,
         );
       } catch {
-        // Refused: it may be tried again. (If even this fails, the record
-        // stays in sending, and the email is never sent again.)
-        await db
-          .query(
-            `UPDATE sagebrush_sync_emails SET state = 'failed'
-              WHERE delivery_id = $1::UUID AND claim_id = $2::UUID AND state = 'sending'`,
-            [delivery_id, row.email_claim],
-          )
-          .catch(() => {});
-        throw new SyncFailure("send_failed");
+        // Maybe accepted, maybe not: unresolved, for an admin to decide. (If
+        // recording that fails too, the record stays in sending, and the next
+        // pass makes it unresolved.)
+        logger.warn("a sync retention email's outcome is unknown", {
+          delivery_id,
+          stage: row.email_stage,
+        });
+        await markUnresolved(db, delivery_id, now(), row.email_claim);
+        await waitForDecision();
+        continue;
       }
       counts.sent += 1;
       phase = "db_error";
@@ -1015,6 +1079,137 @@ export async function runDueRetentionSteps({
   return counts;
 }
 
+/** Tell the admins about each unresolved retention email whose cycle is still
+ * current: at once, then every day until an admin decides. Each delivery gets
+ * its own alert (its id is in the subject). An alert that can't be recorded is
+ * retried with backoff. */
+export async function escalateUnresolvedRetentionEmails({
+  db = getPool(),
+  now = Date.now,
+  alert = adminAlert,
+}: {
+  db?: Queryable;
+  now?: () => number;
+  alert?: typeof adminAlert;
+} = {}): Promise<{ alerted: number; failed: number }> {
+  const { rows } = await db.query<{
+    delivery_id: string;
+    account_id: string;
+    stage: Stage;
+    attempts: number;
+    admitted_at: Date | null;
+    escalation_attempts: number | null;
+    purge_after: Date | null;
+  }>(
+    `UPDATE sagebrush_sync_emails e
+        SET escalation_next_at = to_timestamp($1::BIGINT / 1000.0)
+       FROM sagebrush_sync_states s
+      WHERE e.delivery_id IN (
+        SELECT e2.delivery_id
+          FROM sagebrush_sync_emails e2
+          JOIN sagebrush_sync_states s2
+            ON s2.account_id = e2.account_id AND s2.email_cycle = e2.cycle_id
+           AND s2.email_stage = e2.stage
+         WHERE e2.state = 'unresolved'
+           AND e2.escalation_next_at <= to_timestamp($2::BIGINT / 1000.0)
+         ORDER BY e2.escalation_next_at
+         LIMIT $3
+         FOR UPDATE OF e2 SKIP LOCKED)
+        AND s.account_id = e.account_id
+      RETURNING e.delivery_id, e.account_id, e.stage, e.attempts, e.admitted_at,
+                e.escalation_attempts, s.purge_after`,
+    [now() + LEASE_MS, now(), STEP_BATCH],
+  );
+  let alerted = 0;
+  let failed = 0;
+  for (const row of rows) {
+    const which = row.stage === "ended" ? "first" : "second";
+    const deletion =
+      row.purge_after == null
+        ? "unknown"
+        : `${formatDate(new Date(row.purge_after).valueOf())} (UTC)`;
+    try {
+      const id = await alert({
+        subject: `Sagebrush retention email needs a decision (delivery ${row.delivery_id})`,
+        body: [
+          `The ${which} Sagebrush sync retention email to account ${row.account_id} may or may not have been delivered: the mail transport was called (last at ${row.admitted_at == null ? "an unknown time" : new Date(row.admitted_at).toISOString()}, attempt ${row.attempts}), and no outcome was recorded. The Terms promise this email; the synced data is deleted on ${deletion}.`,
+          `CoCalc will not send it again by itself. Check the mail provider for an email in category "sagebrush-sync-retention" to this account at that time, then record the decision for delivery ${row.delivery_id}, with resolveRetentionEmail (server/sagebrush/sync-retention.ts) or in psql on the account's home bay:`,
+          [
+            `If it went out: UPDATE sagebrush_sync_emails SET state = 'sent', resolution = 'delivered', resolved_at = NOW(), sent_at = NOW(), escalation_next_at = NULL WHERE delivery_id = '${row.delivery_id}' AND state = 'unresolved';`,
+            `If it didn't: UPDATE sagebrush_sync_emails SET state = 'pending', resolution = 'resend', resolved_at = NOW(), escalation_next_at = NULL WHERE delivery_id = '${row.delivery_id}' AND state = 'unresolved';`,
+          ].join("\n"),
+          `CoCalc acts on the decision within the hour. You are reminded every day until then.`,
+        ].join("\n\n"),
+        errorOnFail: true,
+      });
+      if (id == null) throw new SyncFailure("alert_undelivered");
+      alerted += 1;
+      await db.query(
+        `UPDATE sagebrush_sync_emails
+            SET escalated_at = NOW(), escalation_attempts = 0,
+                escalation_next_at = to_timestamp($2::BIGINT / 1000.0)
+          WHERE delivery_id = $1::UUID AND state = 'unresolved'`,
+        [row.delivery_id, now() + DAY_MS],
+      );
+    } catch (err) {
+      failed += 1;
+      const attempts = (row.escalation_attempts ?? 0) + 1;
+      logger.warn("escalating an unresolved retention email failed", {
+        delivery_id: row.delivery_id,
+        attempts,
+        code: asFailure(err, "alert_undelivered").code,
+      });
+      await db
+        .query(
+          `UPDATE sagebrush_sync_emails
+              SET escalation_attempts = $2,
+                  escalation_next_at = to_timestamp($3::BIGINT / 1000.0)
+            WHERE delivery_id = $1::UUID AND state = 'unresolved'`,
+          [row.delivery_id, attempts, now() + purgeBackoffMs(attempts)],
+        )
+        .catch(() => {});
+    }
+  }
+  return { alerted, failed };
+}
+
+/** An admin's decision about an unresolved retention email: "delivered" (it
+ * went out: the step advances) or "resend" (it didn't: it is sent again).
+ * Returns whether the delivery was unresolved. */
+export async function resolveRetentionEmail({
+  db = getPool(),
+  delivery_id,
+  decision,
+}: {
+  db?: Queryable;
+  delivery_id: string;
+  decision: "delivered" | "resend";
+}): Promise<boolean> {
+  const { rows } = await db.query<{ account_id: string }>(
+    `UPDATE sagebrush_sync_emails
+        SET state = $2::VARCHAR, resolution = $3::VARCHAR, resolved_at = NOW(),
+            sent_at = CASE WHEN $3::VARCHAR = 'delivered' THEN NOW() ELSE sent_at END,
+            escalation_next_at = NULL
+      WHERE delivery_id = $1::UUID AND state = 'unresolved'
+      RETURNING account_id`,
+    [delivery_id, decision === "delivered" ? "sent" : "pending", decision],
+  );
+  if (rows.length === 0) return false;
+  // (the step looks at it on the next pass)
+  await db.query(
+    `UPDATE sagebrush_sync_states s SET email_next_at = NOW()
+       FROM sagebrush_sync_emails e
+      WHERE e.delivery_id = $1::UUID AND s.account_id = e.account_id
+        AND s.email_cycle = e.cycle_id AND s.email_stage = e.stage`,
+    [delivery_id],
+  );
+  logger.info("an unresolved retention email was resolved", {
+    delivery_id,
+    decision,
+  });
+  return true;
+}
+
 let stop: (() => void) | undefined;
 
 /** On the primary bay worker: check memberships, deliver notices and run the
@@ -1032,6 +1227,7 @@ export function startSagebrushSyncRetentionMaintenance({
         await checkSyncStates();
         await deliverDueSyncNotices({ config });
         await runDueRetentionSteps({ config });
+        await escalateUnresolvedRetentionEmails();
       }
     } catch (err) {
       logger.warn("sagebrush sync retention pass failed", {

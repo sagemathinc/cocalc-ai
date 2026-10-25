@@ -240,7 +240,7 @@ Table({
   name: "sagebrush_sync_emails",
   rules: {
     primary_key: "delivery_id",
-    pg_indexes: ["account_id"],
+    pg_indexes: ["account_id", "escalation_next_at"],
   },
   fields: {
     delivery_id: {
@@ -263,7 +263,7 @@ Table({
     state: {
       type: "string",
       pg_type: "varchar(16)",
-      desc: "'pending', 'sending' (handed to the mail transport, outcome not yet recorded), 'sent', 'failed' (the transport refused it; it may be tried again) or 'unknown' (an attempt ended without a recorded outcome; it is never tried again).",
+      desc: "'pending' (to be sent), 'sending' (handed to the mail transport, outcome not yet recorded), 'sent', or 'unresolved' (the transport threw, or an attempt ended without a recorded outcome: the email may or may not have been delivered, and waits for an admin's decision).",
     },
     claim_id: {
       type: "uuid",
@@ -283,7 +283,28 @@ Table({
     },
     sent_at: {
       type: "timestamp",
-      desc: "When the mail transport accepted the email.",
+      desc: "When the mail transport accepted the email (or an admin recorded it as delivered).",
+    },
+    escalation_next_at: {
+      type: "timestamp",
+      desc: "When the admins are next told about this unresolved email (at once, then daily; sooner again after a failed alert).",
+    },
+    escalation_attempts: {
+      type: "integer",
+      desc: "Failed alert attempts since the last recorded one.",
+    },
+    escalated_at: {
+      type: "timestamp",
+      desc: "When an alert about this unresolved email was last recorded.",
+    },
+    resolution: {
+      type: "string",
+      pg_type: "varchar(16)",
+      desc: "An admin's decision about an unresolved email: 'delivered' or 'resend'.",
+    },
+    resolved_at: {
+      type: "timestamp",
+      desc: "When that decision was recorded.",
     },
   },
 });

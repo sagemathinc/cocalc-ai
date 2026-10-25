@@ -497,7 +497,7 @@ export const TABLE_OWNERSHIP = {
     authority: "account_id",
     portability: "unsupported",
     notes:
-      "Sagebrush retention emails (docs/sagebrush.md): one delivery record per email of each retention cycle, so an email the mail transport may have accepted is never sent again. Kept with sagebrush_sync_states; a rehome leaves them behind.",
+      "Sagebrush retention emails (docs/sagebrush.md): one delivery record per email of each retention cycle: sent once, or held unresolved for an admin's decision when the outcome is uncertain. Kept with sagebrush_sync_states; a rehome leaves them behind.",
   }),
 
   ...entries(["sagebrush_sync_states"], {
