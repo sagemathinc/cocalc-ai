@@ -27,26 +27,20 @@ default.
 - opaque-legacy: scripts, forms and presentation in an opaque origin.  This is
   what untrusted Jupyter output has always used; tighten it to
   opaque-scripts once measured.
-- trusted-same-origin: no sandbox, so the content runs with this page's
-  origin.  Only for content the user explicitly trusts.
 
-No profile ever combines allow-scripts with allow-same-origin, which would let
-the content remove its own sandbox.
+Every profile is sandboxed, and none combines allow-scripts with
+allow-same-origin, which would let the content remove its own sandbox.  (There
+is no unsandboxed profile: notebook trust no longer exists.)
 */
-export type IframeProfile =
-  | "passive"
-  | "opaque-scripts"
-  | "opaque-legacy"
-  | "trusted-same-origin";
+export type IframeProfile = "passive" | "opaque-scripts" | "opaque-legacy";
 
-const SANDBOX: Record<IframeProfile, string | undefined> = {
+const SANDBOX: Record<IframeProfile, string> = {
   passive: "",
   "opaque-scripts": "allow-scripts",
   "opaque-legacy": "allow-forms allow-scripts allow-presentation",
-  "trusted-same-origin": undefined,
 };
 
-export function iframeSandbox(profile: IframeProfile): string | undefined {
+export function iframeSandbox(profile: IframeProfile): string {
   return SANDBOX[profile];
 }
 
@@ -169,9 +163,7 @@ export default function AutosizedIframe({
       src={src}
       srcDoc={sizedSrcDoc}
       sandbox={sandbox}
-      referrerPolicy={
-        profile === "trusted-same-origin" ? undefined : "no-referrer"
-      }
+      referrerPolicy="no-referrer"
       title={title}
       onError={onError}
       style={{

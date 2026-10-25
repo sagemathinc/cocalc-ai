@@ -15,7 +15,15 @@ import type { RefObject } from "react";
 export const FRAME_THEME_MESSAGE = "cocalc-frame-theme";
 
 // Colors are --cocalc-ui-* values; the font is the frame's inherited one.
-const COLORS = ["text", "surface", "dangerBg", "border", "inset", "hover"];
+const COLORS = [
+  "text",
+  "surface",
+  "dangerBg",
+  "border",
+  "inset",
+  "hover",
+  "link",
+];
 
 export interface ShellTheme {
   text: string;
@@ -24,6 +32,7 @@ export interface ShellTheme {
   border: string;
   inset: string;
   hover: string;
+  link: string;
   fontFamily: string;
   fontSize: string;
   colorScheme: string;
@@ -42,6 +51,7 @@ export function resolveShellTheme(el: Element): ShellTheme {
     border: v("border"),
     inset: v("inset"),
     hover: v("hover"),
+    link: v("link"),
     fontFamily: style.fontFamily,
     fontSize: style.fontSize,
     colorScheme: style.colorScheme?.includes("dark") ? "dark" : "light",
@@ -111,10 +121,13 @@ export function useFrameTheme(frameRef: RefObject<HTMLIFrameElement | null>): {
   return { post };
 }
 
-// Put first in a framed document: the app's font, text color and color scheme,
-// and the notebook's table style (styles/jupyter/jupyter.css), as defaults --
-// :where() has no specificity, so the content's own styles always win.
-const FRAME_BASE_CSS = `:where(html){font-family:var(--shell-fontFamily,sans-serif);font-size:var(--shell-fontSize,14px);color:var(--shell-text,CanvasText);background:transparent}:where(body){margin:0}:where(img){max-width:100%}:where(table){border:none;border-collapse:collapse;border-spacing:0;table-layout:fixed;margin-top:1em}:where(thead){border-bottom:1px solid var(--shell-border,#ddd);vertical-align:bottom}:where(tr,th,td){text-align:right;vertical-align:middle;padding:.5em;line-height:normal;white-space:normal;max-width:none;border:none}:where(th){font-weight:bold}:where(tr:nth-child(odd)){background:var(--shell-inset,transparent)}:where(tr:hover){background:var(--shell-hover,transparent)}`;
+// Put first in a framed document: what the same output gets inline from the
+// app's styles -- font, line height, text and link colors, heading sizes, code
+// at the text size (not the browser's smaller monospace default), color
+// scheme -- and the notebook's table style (styles/jupyter/jupyter.css), as
+// defaults: :where() has no specificity, so the content's own styles always
+// win.
+export const FRAME_BASE_CSS = `:where(html){font-family:var(--shell-fontFamily,sans-serif);font-size:var(--shell-fontSize,14px);line-height:1.42857143;color:var(--shell-text,CanvasText);background:transparent}:where(body){margin:0}:where(a){color:var(--shell-link,LinkText)}:where(h1){font-size:2.5em}:where(h2){font-size:2em}:where(h3){font-size:1.7em}:where(h4){font-size:1.5em}:where(code,kbd,samp,pre){font-size:inherit}:where(pre){padding:5px}:where(blockquote){padding-left:10px}:where(img){max-width:100%}:where(table){border:none;border-collapse:collapse;border-spacing:0;table-layout:fixed;margin-top:1em}:where(thead){border-bottom:1px solid var(--shell-border,#ddd);vertical-align:bottom}:where(tr,th,td){text-align:right;vertical-align:middle;padding:.5em;line-height:normal;white-space:normal;max-width:none;border:none}:where(th){font-weight:bold}:where(tr:nth-child(odd)){background:var(--shell-inset,transparent)}:where(tr:hover){background:var(--shell-hover,transparent)}`;
 
 export const FRAME_THEME_HEAD = `<style>${FRAME_BASE_CSS}</style><script>(function () {
   ${APPLY_THEME_FUNCTION}

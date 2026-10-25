@@ -2363,22 +2363,6 @@ export class JupyterActions extends JupyterActions0 {
     this.file_action("close_file");
   }
 
-  public async trust_notebook(): Promise<void> {
-    const intl = await getIntl();
-    const choice = await this.confirm_dialog({
-      icon: "warning",
-      title: intl.formatMessage(jupyter.editor.browser_actions_trust_title),
-      body: intl.formatMessage(jupyter.editor.browser_actions_trust_body),
-      choices: [
-        { title: "Trust", style: "danger", default: true },
-        { title: "Cancel" },
-      ],
-    });
-    if (choice === "Trust") {
-      this.set_trust_notebook(true);
-    }
-  }
-
   public nbconvert_has_started(): boolean {
     const state = this.store.getIn(["nbconvert", "state"]);
     return state === "start" || state === "run";
@@ -3193,9 +3177,9 @@ export class JupyterActions extends JupyterActions0 {
     return { cocalcJupyter, title };
   };
 
-  // Whether an export of this notebook must not run its scripts: its HTML
-  // outputs are included as is, so unless the reader trusts it, yes.
-  isPassiveExport = (): boolean => !this.store?.get("trust");
+  // Exports never run their scripts: their HTML outputs are included as is,
+  // and there is no notebook trust to vouch for them.
+  isPassiveExport = (): boolean => true;
 
   toHTML = async ({
     passive = this.isPassiveExport(),
@@ -3862,9 +3846,6 @@ export class JupyterActions extends JupyterActions0 {
         limit,
         socketState: client.socket.state,
       });
-      if (!this.store.get("trust")) {
-        this.set_trust_notebook(true);
-      }
       if (this.isClosed()) return;
       const handlers = new globalThis.Map<string, OutputHandler>();
       const finalizedCells = new Set<string>();
