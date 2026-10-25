@@ -6,6 +6,7 @@
 import {
   checkPassword,
   hashPassword,
+  isStrongPasswordHash,
   type PasswordKdf,
 } from "@cocalc/backend/auth/password-hash";
 import { getPasswordKdf } from "@cocalc/database/settings/password-kdf";
@@ -69,6 +70,11 @@ export async function verifyLocalSignInPassword({
     await spendLikeARealCheck(password);
   }
   if (!(await checkPassword(password, password_hash))) {
+    // While scrypt is on, a legacy hash not yet wrapped fails fast; pay a
+    // dummy check so every failure costs one KDF (see spendLikeARealCheck).
+    if (password_hash && !isStrongPasswordHash(password_hash)) {
+      await spendLikeARealCheck(password);
+    }
     throw Error(`password for '${email}' is incorrect`);
   }
   if (banned) {

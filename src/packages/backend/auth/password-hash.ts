@@ -355,6 +355,14 @@ function parseWrap(
   return { outer, legacy: { algorithm, salt, iterations } };
 }
 
+/** Whether a stored hash is in a strong (scrypt) format. */
+export function isStrongPasswordHash(stored: unknown): boolean {
+  return (
+    typeof stored == "string" &&
+    (stored.startsWith(SCRYPT_PREFIX) || stored.startsWith(WRAP_PREFIX))
+  );
+}
+
 /** Check a human-chosen secret against a stored hash in any format. */
 export async function checkPassword(
   password: string,

@@ -259,8 +259,12 @@ describe("password hash migration", () => {
     const real = await time(email);
     const missing = await time(`${uuid()}@example.com`);
     const noPassword = await time(sso.email);
-    // Both pay one scrypt; without the dummy check they return in ~1 ms.
+    // A legacy hash the migration has not wrapped yet.
+    const unwrapped = await accountWithHash(await legacyHash("right"));
+    const legacyRow = await time(unwrapped.email);
+    // All pay one scrypt; without the dummy check they return in ~1-4 ms.
     expect(missing).toBeGreaterThan(real / 3);
     expect(noPassword).toBeGreaterThan(real / 3);
+    expect(legacyRow).toBeGreaterThan(real / 3);
   });
 });
