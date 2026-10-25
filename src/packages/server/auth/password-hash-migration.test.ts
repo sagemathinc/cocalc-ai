@@ -5,9 +5,8 @@
 
 /** @jest-environment node */
 
-import { generate } from "password-hash";
-
 import {
+  PasswordHashBusyError,
   checkPassword,
   hashPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -25,12 +24,9 @@ import {
 import { upgradePasswordHashAfterSignIn } from "./password-hash-upgrade";
 import { verifyLocalSignInPassword } from "./verify-sign-in-password";
 
-function legacy(password: string): string {
-  return generate(password, {
-    algorithm: "sha512",
-    saltLength: 32,
-    iterations: 1000,
-  });
+// The legacy format (what the code before scrypt wrote).
+async function legacyHash(password: string): Promise<string> {
+  return await hashPassword(password, { kdf: "legacy" });
 }
 
 async function setKdf(value: "legacy" | "scrypt") {
@@ -84,7 +80,7 @@ describe("password hash migration", () => {
 
   it("wraps legacy account hashes in place, idempotently", async () => {
     const password = `pw-${uuid()}`;
-    const { account_id } = await accountWithHash(legacy(password));
+    const { account_id } = await accountWithHash(await legacyHash(password));
     const strong = await accountWithHash(
       await hashPassword("other", { kdf: "scrypt" }),
     );
@@ -106,8 +102,8 @@ describe("password hash migration", () => {
   });
 
   it("resumes after any account and never touches a changed hash", async () => {
-    const a = await accountWithHash(legacy("a"));
-    const b = await accountWithHash(legacy("b"));
+    const a = await accountWithHash(await legacyHash("a"));
+    const b = await accountWithHash(await legacyHash("b"));
     const [first, second] = [a, b].sort((x, y) =>
       x.account_id < y.account_id ? -1 : 1,
     );
@@ -128,7 +124,7 @@ describe("password hash migration", () => {
       `INSERT INTO account_second_factor_recovery_codes
          (id, account_id, factor_id, code_hash, used_at, created, metadata)
        VALUES ($1, $2, $3, $4, NULL, NOW(), '{}')`,
-      [id, account_id, uuid(), legacy("ABCD-EFGH")],
+      [id, account_id, uuid(), await legacyHash("ABCD-EFGH")],
     );
     await wrapRecoveryCodeHashes({ limit: 1000 });
     const { rows } = await getPool().query(
@@ -140,7 +136,7 @@ describe("password hash migration", () => {
   });
 
   it("runs a full pass only while password_kdf is scrypt", async () => {
-    await accountWithHash(legacy("pass"));
+    await accountWithHash(await legacyHash("pass"));
     await setKdf("legacy");
     const off = await runPasswordHashMigrationPass();
     expect(off.accounts.wrapped).toBe(0);
@@ -156,7 +152,9 @@ describe("password hash migration", () => {
   it("upgrades a legacy or wrapped hash to scrypt on sign-in", async () => {
     await setKdf("scrypt");
     const password = `pw-${uuid()}`;
-    const { account_id, email } = await accountWithHash(legacy(password));
+    const { account_id, email } = await accountWithHash(
+      await legacyHash(password),
+    );
     await wrapAccountPasswordHashes({ limit: 1000 });
     expect((await storedHash(account_id)).startsWith("scrypt-wrap$")).toBe(
       true,
@@ -178,7 +176,7 @@ describe("password hash migration", () => {
   it("does not upgrade while password_kdf is legacy, or over a newer hash", async () => {
     await setKdf("legacy");
     const password = `pw-${uuid()}`;
-    const old = legacy(password);
+    const old = await legacyHash(password);
     const { account_id, email } = await accountWithHash(old);
     await verifyLocalSignInPassword({ email_address: email, password });
     expect(await storedHash(account_id)).toBe(old);
@@ -203,7 +201,7 @@ describe("password hash migration", () => {
   it("still rejects a wrong password in every format", async () => {
     await setKdf("scrypt");
     for (const stored of [
-      legacy("right"),
+      await legacyHash("right"),
       await hashPassword("right", { kdf: "scrypt" }),
     ]) {
       const { email } = await accountWithHash(stored);
@@ -211,5 +209,58 @@ describe("password hash migration", () => {
         verifyLocalSignInPassword({ email_address: email, password: "wrong" }),
       ).rejects.toThrow("incorrect");
     }
+  });
+
+  it("recovers when the first dummy hash could not be created (busy)", async () => {
+    await setKdf("scrypt");
+    // Fill admission (2 active, 32 waiting), then race the first
+    // missing-account check, whose dummy hash creation is refused.
+    const burst = Array.from({ length: 40 }, (_, i) =>
+      hashPassword(`burst${i}`, { kdf: "scrypt" }),
+    );
+    await expect(
+      verifyLocalSignInPassword({
+        email_address: `${uuid()}@example.com`,
+        password: "wrong",
+      }),
+    ).rejects.toBeInstanceOf(PasswordHashBusyError);
+    await Promise.allSettled(burst);
+    // Rebuilt, not cached as a rejection: the next check pays a KDF.
+    const { email } = await accountWithHash(
+      await hashPassword("right", { kdf: "scrypt" }),
+    );
+    const time = async (email_address: string) => {
+      const start = Date.now();
+      await expect(
+        verifyLocalSignInPassword({ email_address, password: "wrong" }),
+      ).rejects.toThrow();
+      return Date.now() - start;
+    };
+    await time(`${uuid()}@example.com`);
+    const real = await time(email);
+    const missing = await time(`${uuid()}@example.com`);
+    expect(missing).toBeGreaterThan(real / 3);
+  });
+
+  it("takes as long for a missing account as for a wrong password", async () => {
+    await setKdf("scrypt");
+    const { email } = await accountWithHash(
+      await hashPassword("right", { kdf: "scrypt" }),
+    );
+    const time = async (email_address: string) => {
+      const start = Date.now();
+      await expect(
+        verifyLocalSignInPassword({ email_address, password: "wrong" }),
+      ).rejects.toThrow();
+      return Date.now() - start;
+    };
+    await time(`${uuid()}@example.com`); // computes the dummy hash once
+    const sso = await accountWithHash(null);
+    const real = await time(email);
+    const missing = await time(`${uuid()}@example.com`);
+    const noPassword = await time(sso.email);
+    // Both pay one scrypt; without the dummy check they return in ~1 ms.
+    expect(missing).toBeGreaterThan(real / 3);
+    expect(noPassword).toBeGreaterThan(real / 3);
   });
 });

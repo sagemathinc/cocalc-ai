@@ -3,7 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { checkPassword } from "@cocalc/backend/auth/password-hash";
+import {
+  checkPassword,
+  hashPassword,
+  type PasswordKdf,
+} from "@cocalc/backend/auth/password-hash";
+import { getPasswordKdf } from "@cocalc/database/settings/password-kdf";
 import { upgradePasswordHashAfterSignIn } from "@cocalc/server/auth/password-hash-upgrade";
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -12,6 +17,28 @@ import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 export interface SignInPasswordVerification {
   account_id: string;
   home_bay_id: string;
+}
+
+// A hash of a random secret in each format, computed once per process. Checking
+// a password against it when there is no account (or no password) costs what a
+// real check costs, so response time does not reveal whether an account exists.
+const dummyHashes: Partial<Record<PasswordKdf, Promise<string>>> = {};
+
+async function spendLikeARealCheck(password: string): Promise<void> {
+  const kdf = await getPasswordKdf();
+  let dummy = dummyHashes[kdf];
+  if (dummy == null) {
+    const created = hashPassword(`no account ${Math.random()} ${Date.now()}`, {
+      kdf,
+    });
+    dummyHashes[kdf] = dummy = created;
+    // A failed creation (e.g. busy) must not stay cached: the next check
+    // would skip the KDF and reveal that the account does not exist.
+    created.catch(() => {
+      if (dummyHashes[kdf] === created) delete dummyHashes[kdf];
+    });
+  }
+  await checkPassword(password || "x", await dummy);
 }
 
 export async function verifyLocalSignInPassword({
@@ -34,9 +61,13 @@ export async function verifyLocalSignInPassword({
     [email],
   );
   if (rows.length == 0) {
+    await spendLikeARealCheck(password);
     throw Error(`no account with email address '${email}'`);
   }
   const { account_id, password_hash, banned, home_bay_id } = rows[0];
+  if (!password_hash) {
+    await spendLikeARealCheck(password);
+  }
   if (!(await checkPassword(password, password_hash))) {
     throw Error(`password for '${email}' is incorrect`);
   }
