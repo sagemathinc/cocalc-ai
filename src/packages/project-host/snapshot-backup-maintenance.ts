@@ -1502,6 +1502,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         const head = recoveryWaitingHead();
         const allowRecoveryPace = head == null || head === project_id;
         let started = false;
+        let refused = false;
         const startedAt = Date.now();
         let stageDurations: Record<string, number> = {};
         try {
@@ -1594,6 +1595,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             dueAt,
             retryAt(outcome, row.snapshot_failures ?? 0),
           );
+          refused = !started && result.admissionDeferred === true;
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           if (intervalWaiting && nextSnapshotDueAt != null) {
             onFutureDue?.(project_id, nextSnapshotDueAt);
@@ -1678,6 +1680,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         } finally {
           inFlightSnapshots.delete(project_id);
         }
+        return refused ? "deferred" : undefined;
       },
     });
   };
@@ -1782,6 +1785,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         let bytesScanned: number | undefined;
         let bytesUploaded: number | undefined;
         let latestBackupId: string | undefined;
+        let refused = false;
         try {
           let created = false;
           let backupDeferredReason: string | undefined;
@@ -1820,6 +1824,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 : "deferred"
             : "deferred";
           const nextRetry = retryAt(outcome, row.backup_failures ?? 0);
+          refused = !result.ran && result.admissionDeferred === true;
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           await report({
             host_id: hostId,
@@ -1882,6 +1887,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         } finally {
           inFlightBackups.delete(project_id);
         }
+        return refused ? "deferred" : undefined;
       },
     });
   };

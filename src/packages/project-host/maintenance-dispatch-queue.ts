@@ -10,13 +10,25 @@ interface Work {
   row: Row;
   observedAt: number;
   due: (row: Row) => string | null | undefined;
-  run: (row: Row, opts: { afterRunning: boolean }) => Promise<void>;
+  // Resolves to "deferred" when storage admission refused the operation
+  // before it did any work: that does not use up the account's turn.
+  run: (
+    row: Row,
+    opts: { afterRunning: boolean },
+  ) => Promise<void | "deferred">;
   waiters: { resolve: () => void; reject: (err: unknown) => void }[];
   // Reports a failure that no waiter observes (detached submissions).
   onError?: (err: unknown, row: Row) => void;
   // Submitted while an operation for the same project was running, so the row
   // predates that operation's result and must be re-read before use.
   afterRunning?: boolean;
+  // The account turn this work took when dispatched, to give back if refused.
+  served?: {
+    account: string;
+    turn: number;
+    previousTurn: number | undefined;
+    previousPaidSinceFree: number;
+  };
 }
 
 // One queue per host/lane. Arrivals join between operations, never by starting
@@ -133,11 +145,37 @@ export class MaintenanceDispatchQueue {
     const next =
       free && (!paying || this.paidSinceFree >= 9) ? free : (paying ?? free);
     if (next) {
+      const account = this.account(next);
+      next.served = {
+        account,
+        turn: this.turn,
+        previousTurn: this.servedAccounts.get(account),
+        previousPaidSinceFree: this.paidSinceFree,
+      };
       this.paidSinceFree = next === paying ? this.paidSinceFree + 1 : 0;
-      this.servedAccounts.set(this.account(next), this.turn++);
+      this.servedAccounts.set(account, this.turn++);
       this.pending.delete(next.row.project_id);
     }
     return next;
+  }
+
+  // Storage admission refused the operation before it did any work, e.g. in
+  // an I/O-gate recovery window. Give the account its turn back, so when the
+  // project returns it is not queued behind every account served meanwhile.
+  private unserve(work: Work): void {
+    const served = work.served;
+    if (!served || this.servedAccounts.get(served.account) !== served.turn) {
+      return;
+    }
+    if (served.previousTurn == null) {
+      this.servedAccounts.delete(served.account);
+    } else {
+      this.servedAccounts.set(served.account, served.previousTurn);
+    }
+    // Nothing else was dispatched since: the paid/free interleave is as before.
+    if (this.turn === served.turn + 1) {
+      this.paidSinceFree = served.previousPaidSinceFree;
+    }
   }
 
   private pump(): void {
@@ -150,13 +188,17 @@ export class MaintenanceDispatchQueue {
           work.run(work.row, { afterRunning: work.afterRunning === true }),
         )
         .then(
-          () => this.finish(work),
+          (result) => {
+            if (result === "deferred") this.unserve(work);
+            this.finish(work);
+          },
           (err) => this.finish(work, { err }),
         );
     }
   }
 
   private finish(work: Work, failure?: { err: unknown }): void {
+    work.served = undefined;
     this.active.delete(work.row.project_id);
     if (!this.active.size && !this.pending.size) {
       this.servedAccounts.clear();

@@ -307,3 +307,49 @@ it("reports failures of detached work to onError", async () => {
     expect.objectContaining({ project_id: "a" }),
   );
 });
+
+it("gives a refused operation's account turn back", async () => {
+  const queue = new MaintenanceDispatchQueue();
+  const held = gate();
+  const order: string[] = [];
+  const dated = (id: string, account: string, at: string) => ({
+    ...row(id, "paying", account),
+    backup_due_since: at,
+  });
+  const run = async (r: HostProjectMaintenanceSchedule) => {
+    order.push(r.project_id);
+    // Storage admission refuses the oldest debt, e.g. in a recovery window.
+    if (r.project_id === "old-1") return "deferred" as const;
+    if (r.project_id === "busy") await held.promise;
+  };
+  const first = queue.submit({
+    rows: [
+      dated("old-1", "a", "2026-09-01T00:00:00Z"),
+      dated("busy", "b", "2026-09-02T00:00:00Z"),
+    ],
+    observedAt: 1,
+    parallelism: 1,
+    due,
+    run,
+  });
+  await flush();
+  await flush();
+  expect(order).toEqual(["old-1", "busy"]);
+  // The refused project comes back while the queue is still busy, together
+  // with an account that has never been served.
+  const second = queue.submit({
+    rows: [
+      dated("new", "c", "2026-09-03T00:00:00Z"),
+      dated("old-1", "a", "2026-09-01T00:00:00Z"),
+    ],
+    observedAt: 2,
+    parallelism: 1,
+    due,
+    run: async (r) => {
+      order.push(r.project_id);
+    },
+  });
+  held.release();
+  await Promise.all([first, second]);
+  expect(order).toEqual(["old-1", "busy", "old-1", "new"]);
+});
