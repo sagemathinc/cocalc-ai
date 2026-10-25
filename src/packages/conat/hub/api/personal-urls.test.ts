@@ -30,21 +30,32 @@ test.each([
   },
 );
 
-test("release binds only the authenticated session, discarding forged session hashes", async () => {
+test("release binds only the authenticated session and refuses forged session hashes", async () => {
   const name = "personalUrls.releaseRedirect";
+  const request = () => ({
+    session_hash: "forged",
+    owner_account_id: "target",
+    username: "zephyr",
+    reason: "cleanup",
+  });
+  for (const auth_session_hash of ["bound", null]) {
+    await expect(
+      transformArgs({
+        name,
+        account_id: "actual",
+        auth_session_hash,
+        args: [request()],
+      }),
+    ).rejects.toThrow("caller's own authenticated session");
+  }
+  // Internal calls (no request context) keep the bound transform's behavior.
   for (const auth_session_hash of ["bound", undefined]) {
+    const { session_hash: _forged, ...rest } = request();
     const [opts] = await transformArgs({
       name,
       account_id: "actual",
       auth_session_hash,
-      args: [
-        {
-          session_hash: "forged",
-          owner_account_id: "target",
-          username: "zephyr",
-          reason: "cleanup",
-        },
-      ],
+      args: [auth_session_hash ? rest : request()],
     });
     expect(opts.session_hash).toBe(auth_session_hash);
     expect(opts.owner_account_id).toBe("target");

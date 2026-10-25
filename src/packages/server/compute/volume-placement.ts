@@ -17,7 +17,7 @@ import { fundingId } from "@cocalc/util/compute-funding";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
+import { resolveFreshAuthSessionHash } from "@cocalc/server/conat/socketio/fresh-auth-session";
 import {
   routeComputeOwnerRead,
   listComputeOwnerResources,
@@ -66,13 +66,11 @@ export async function routeVmToHomeVolume(
       ...opts,
       account_id,
       home_volume: volume.id,
-      session_hash:
-        opts.session_hash ||
-        getBrowserAuthSessionHash({
-          account_id,
-          browser_id: opts.browser_id ?? "",
-        }) ||
-        undefined,
+      session_hash: resolveFreshAuthSessionHash({
+        account_id,
+        browser_id: opts.browser_id,
+        session_hash: opts.session_hash,
+      }),
     },
   });
   if (

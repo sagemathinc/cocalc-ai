@@ -306,7 +306,7 @@ import {
   type DedicatedHostFundingLane,
 } from "@cocalc/server/project-host/spend";
 import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-host/spend-enforcement";
-import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
+import { resolveFreshAuthSessionHash } from "@cocalc/server/conat/socketio/fresh-auth-session";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
   ensureHostOwnerSshTrust as ensureHostOwnerSshTrustInternal,
@@ -1320,14 +1320,11 @@ async function maybeRequireFreshAuthForInteractiveHostAction({
   if (!required) {
     return {};
   }
-  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
-  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
-  const resolvedSessionHash =
-    cleanedSessionHash ||
-    getBrowserAuthSessionHash({
-      account_id: owner,
-      browser_id: cleanedBrowserId,
-    });
+  const resolvedSessionHash = resolveFreshAuthSessionHash({
+    account_id: owner,
+    browser_id,
+    session_hash,
+  });
   if (!resolvedSessionHash) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",

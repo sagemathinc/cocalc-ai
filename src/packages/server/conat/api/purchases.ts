@@ -972,7 +972,9 @@ async function validatePurchaseFreshAuth({
   const owner = requireAccount(account_id);
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
-  if (!cleanedSessionHash && !cleanedBrowserId) {
+  // null: a Hub API caller without a session of its own, which may not
+  // borrow a browser's session by naming it (see resolveFreshAuthSessionHash).
+  if (session_hash === null || (!cleanedSessionHash && !cleanedBrowserId)) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",
     });
