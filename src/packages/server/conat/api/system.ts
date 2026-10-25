@@ -35,7 +35,10 @@ import {
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getHostIntrusionObservationSummary } from "@cocalc/server/hosts/intrusion-monitor";
-import { getHostKernelHardeningSummary } from "@cocalc/server/hosts/kernel-hardening-health";
+import {
+  getHostKernelHardeningSummary,
+  kernelHardeningHealth,
+} from "@cocalc/server/hosts/kernel-hardening-health";
 import { assertProjectRuntimeCapability } from "@cocalc/server/launchpad/project-runtime";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
