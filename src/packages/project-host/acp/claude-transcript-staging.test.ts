@@ -18,7 +18,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   defaultTranscriptStagings,
@@ -305,7 +305,7 @@ test("the default caps follow the host's CPUs and memory and the project's memor
   ).toEqual({ host: 1, project: 1 });
 });
 
-test("the caps read the project's cgroup memory limit, and the environment overrides them", async () => {
+test("the caps read the pool's and the project's cgroup memory limits, and the environment overrides them", async () => {
   const saved = {
     host: process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_STAGINGS,
     project: process.env.COCALC_CLAUDE_TRANSCRIPT_MAX_PROJECT_STAGINGS,
@@ -317,8 +317,24 @@ test("the caps read the project's cgroup memory limit, and the environment overr
     const cgroup = join(pool, `project-${projectId}`);
     await mkdir(cgroup);
     await writeFile(join(cgroup, "memory.max"), `${3 * 1024 ** 3}\n`);
+    // The pool's own limit bounds the host's (here below any real host's RAM).
+    await writeFile(join(pool, "memory.max"), `${4 * 1024 ** 3}\n`);
+    expect(await maxTranscriptStagings(projectId, pool)).toEqual({
+      host: Math.min(8, 32 * availableParallelism()),
+      project: Math.min(6, 8, 32 * availableParallelism()),
+    });
+    await writeFile(join(pool, "memory.max"), "max\n");
     const limits = await maxTranscriptStagings(projectId, pool);
     expect(limits.project).toBe(Math.min(6, limits.host));
+    // By default the pool is the one the project runner uses.
+    const savedPool = process.env.COCALC_PROJECT_POOL_CGROUP;
+    process.env.COCALC_PROJECT_POOL_CGROUP = pool;
+    try {
+      expect(await maxTranscriptStagings(projectId)).toEqual(limits);
+    } finally {
+      if (savedPool == null) delete process.env.COCALC_PROJECT_POOL_CGROUP;
+      else process.env.COCALC_PROJECT_POOL_CGROUP = savedPool;
+    }
     // No limit, or no cgroup: only the host bounds the project.
     await writeFile(join(cgroup, "memory.max"), "max\n");
     expect(await maxTranscriptStagings(projectId, pool)).toEqual({

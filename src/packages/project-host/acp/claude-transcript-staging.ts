@@ -26,6 +26,7 @@ import { mkdtemp, readdir, readFile, rm, utimes } from "node:fs/promises";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { projectPoolCgroupPath } from "@cocalc/project-runner/run/project-pool-cgroup";
 import {
   copyRegularFileBeneath,
   kindBeneath,
@@ -67,11 +68,12 @@ const CONTROLLERS_PER_CPU = 32;
 // Even a small project can hold a second conversation while an idle one waits
 // to be disposed.
 const MIN_PROJECT_STAGINGS = 2;
-const PROJECT_POOL = "/sys/fs/cgroup/cocalc-project-pool";
 
-// The default limits for a host with this many CPUs and this much memory, and
-// a project with this memory limit (controllers run in the project's cgroup,
-// so their memory counts against it; undefined when it has no limit).
+// The default limits for a host with this many CPUs and this much memory for
+// projects (controllers run in the project pool's cgroup, so it is the pool's
+// memory limit when it has one, below the host's RAM), and a project with this
+// memory limit (their memory counts against it too; undefined when it has
+// none).
 export function defaultTranscriptStagings({
   cpus,
   memoryBytes,
@@ -101,15 +103,10 @@ export function defaultTranscriptStagings({
   return { host, project };
 }
 
-async function projectMemoryLimit(
-  projectId: string,
-  projectPool: string,
-): Promise<number | undefined> {
+// A cgroup's memory.max, or undefined when it has no limit (or cannot be read).
+async function cgroupMemoryLimit(cgroup: string): Promise<number | undefined> {
   try {
-    const raw = await readFile(
-      join(projectPool, `project-${projectId}`, "memory.max"),
-      "utf8",
-    );
+    const raw = await readFile(join(cgroup, "memory.max"), "utf8");
     const value = Number(raw.trim());
     return Number.isSafeInteger(value) && value > 0 ? value : undefined;
   } catch {
@@ -126,12 +123,15 @@ async function projectMemoryLimit(
 // and the project can actually run.
 export async function maxTranscriptStagings(
   projectId: string,
-  projectPool = PROJECT_POOL,
+  projectPool = projectPoolCgroupPath(),
 ): Promise<{ host: number; project: number }> {
+  const poolMemoryBytes = await cgroupMemoryLimit(projectPool);
   const defaults = defaultTranscriptStagings({
     cpus: availableParallelism(),
-    memoryBytes: totalmem(),
-    projectMemoryBytes: await projectMemoryLimit(projectId, projectPool),
+    memoryBytes: Math.min(totalmem(), poolMemoryBytes ?? Infinity),
+    projectMemoryBytes: await cgroupMemoryLimit(
+      join(projectPool, `project-${projectId}`),
+    ),
   });
   return {
     host: positiveSetting(
