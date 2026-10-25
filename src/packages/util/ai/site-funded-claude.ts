@@ -6,7 +6,11 @@
 // Site-funded Claude: Anthropic Messages API usage, in the shared funded
 // accounting (see site-funded-codex.ts for the cost of a request).
 
-import type { SiteFundedCodexRequestUsage } from "./site-funded-codex";
+import {
+  DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  type SiteFundedCodexPolicy,
+  type SiteFundedCodexRequestUsage,
+} from "./site-funded-codex";
 
 /** Web search is $10 per 1,000 searches, on top of its tokens. */
 export const ANTHROPIC_WEB_SEARCH_MICROUSD = 10_000;
@@ -85,4 +89,45 @@ export function siteFundedUsageFromAnthropic(
     outputTokens: count(usage.output_tokens, "output_tokens"),
     providerToolFeesMicrousd: searches * ANTHROPIC_WEB_SEARCH_MICROUSD,
   };
+}
+
+/** Site-funded Claude: like Codex's policy, with Claude Haiku 5.5. */
+export const DEFAULT_SITE_FUNDED_CLAUDE_POLICY: SiteFundedCodexPolicy = {
+  ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  model: "claude-haiku-5-5",
+  // Claude Code compacts at about 80% of a 100,000-token window, below the
+  // price that applies to longer prompts.
+  contextWindowTokens: 100_000,
+  autoCompactTokenLimit: 80_000,
+};
+
+/**
+ * The monthly period a site key's spend limit applies to: from its reset
+ * point (day of month 1-28 and hour, UTC) at or before `now`, to the same
+ * point a month later.
+ */
+export function siteFundedKeyPeriodBounds({
+  resetDay,
+  resetHour,
+  now = new Date(),
+}: {
+  resetDay: number;
+  resetHour: number;
+  now?: Date;
+}): { start: Date; end: Date } {
+  if (
+    !Number.isInteger(resetDay) ||
+    resetDay < 1 ||
+    resetDay > 28 ||
+    !Number.isInteger(resetHour) ||
+    resetHour < 0 ||
+    resetHour > 23
+  ) {
+    throw new Error("a key resets on day 1-28 at hour 0-23 (UTC)");
+  }
+  const at = (year: number, month: number) =>
+    new Date(Date.UTC(year, month, resetDay, resetHour));
+  let start = at(now.getUTCFullYear(), now.getUTCMonth());
+  if (start > now) start = at(now.getUTCFullYear(), now.getUTCMonth() - 1);
+  return { start, end: at(start.getUTCFullYear(), start.getUTCMonth() + 1) };
 }

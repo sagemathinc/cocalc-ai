@@ -1936,6 +1936,7 @@ export const hosts = {
   checkCodexSiteUsageAllowance: authFirstRequireHostWithAccountTarget,
   recordCodexSiteUsage: authFirstRequireHostWithAccountTarget,
   reserveSiteFundedCodexTurn: authFirstRequireHostWithAccountTarget,
+  getSiteFundedClaudeKey: authFirstRequireHost,
   heartbeatSiteFundedCodexTurn: authFirstRequireHost,
   recordSiteFundedCodexUsageEvent: authFirstRequireHost,
   finishSiteFundedCodexTurn: authFirstRequireHost,
@@ -2481,7 +2482,14 @@ export interface Hosts {
     funded_turn_id: string;
     idempotency_key: string;
     path?: string;
+    /** "anthropic": a site-funded Claude turn. Default Codex. */
+    provider?: "openai" | "anthropic";
   }) => Promise<SiteFundedCodexAdmission>;
+  /** The site key funding an active Claude turn this host runs. */
+  getSiteFundedClaudeKey: (opts: {
+    host_id?: string;
+    reservation_id: string;
+  }) => Promise<{ api_key: string }>;
   heartbeatSiteFundedCodexTurn: (opts: {
     host_id?: string;
     reservation_id: string;

@@ -845,6 +845,61 @@ describe("site-funded Codex account directory routing", () => {
     expect(membership).not.toHaveBeenCalled();
   });
 
+  it("admits a Claude turn with Claude's configuration and wording", async () => {
+    const claude = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-policy"),
+        "getSiteFundedClaudeConfiguration",
+      )
+      .mockResolvedValue({ enabled: false } as any);
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(
+      reserveSiteFundedCodexTurn({ ...request, provider: "anthropic" }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      code: "disabled",
+      reason: expect.stringContaining("Site-funded Claude is disabled"),
+    });
+    expect(claude).toHaveBeenCalled();
+    await expect(
+      reserveSiteFundedCodexTurn({ ...request, provider: "other" as any }),
+    ).rejects.toThrow("provider must be");
+  });
+
+  it("gives the host the key of its Claude turn, unless AI is disabled", async () => {
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockReturnValue(
+        (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+      );
+    const lookupKey = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-provider-keys"),
+        "getSiteFundedProviderKeyForReservation",
+      )
+      .mockResolvedValue("sk-ant-test");
+    const { getSiteFundedClaudeKey } = await import("./hosts");
+    await expect(
+      getSiteFundedClaudeKey({ host_id: HOST_ID, reservation_id: "r-1" }),
+    ).resolves.toEqual({ api_key: "sk-ant-test" });
+    expect(lookupKey).toHaveBeenCalledWith({
+      reservationId: "r-1",
+      hostId: HOST_ID,
+    });
+    jest
+      .spyOn(
+        await import("@cocalc/server/launch/kill-switches"),
+        "isAiLaunchDisabled",
+      )
+      .mockResolvedValue(true);
+    await expect(
+      getSiteFundedClaudeKey({ host_id: HOST_ID, reservation_id: "r-1" }),
+    ).rejects.toThrow("temporarily disabled");
+  });
+
   it("does not fall back to local metadata when the directory is unavailable", async () => {
     lookup.mockRejectedValue(new Error("directory unavailable"));
     const { reserveSiteFundedCodexTurn } = await import("./hosts");

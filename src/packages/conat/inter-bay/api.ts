@@ -2395,6 +2395,11 @@ export interface BayOpsFinishSiteFundedCodexTurnRequest extends BayOpsSiteFunded
   outcome?: string;
 }
 
+export interface BayOpsSiteFundedProviderKeyRequest {
+  reservationId: string;
+  hostId: string;
+}
+
 export interface BayOpsSiteFundedCodexStatusRequest {
   reconcile?: boolean;
   accountId?: string;
@@ -2925,6 +2930,7 @@ export type BayOpsMethod =
   | "record-site-funded-codex-usage"
   | "finish-site-funded-codex-turn"
   | "get-site-funded-codex-status"
+  | "get-site-funded-provider-key"
   | "reserve-site-funded-speech"
   | "finish-site-funded-speech"
   | "commercial-orders"
@@ -4654,6 +4660,9 @@ export interface InterBayBayOpsApi {
   getSiteFundedCodexStatus: (
     opts: BayOpsSiteFundedCodexStatusRequest,
   ) => Promise<SiteFundedCodexStatus>;
+  getSiteFundedProviderKey: (
+    opts: BayOpsSiteFundedProviderKeyRequest,
+  ) => Promise<{ apiKey: string }>;
   reserveSiteFundedSpeech: (
     opts: BayOpsReserveSiteFundedSpeechRequest,
   ) => Promise<{
@@ -11052,6 +11061,15 @@ export function createInterBayBayOpsClient({
       method: "get-site-funded-codex-status",
     }),
   });
+  const siteFundedProviderKeyClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getSiteFundedProviderKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-site-funded-provider-key",
+    }),
+  });
   const reserveSiteFundedSpeechClient = createServiceClient<
     Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">
   >({
@@ -11348,6 +11366,8 @@ export function createInterBayBayOpsClient({
       await finishSiteFundedCodexTurnClient.finishSiteFundedCodexTurn(opts),
     getSiteFundedCodexStatus: async (opts) =>
       await siteFundedCodexStatusClient.getSiteFundedCodexStatus(opts),
+    getSiteFundedProviderKey: async (opts) =>
+      await siteFundedProviderKeyClient.getSiteFundedProviderKey(opts),
     reserveSiteFundedSpeech: async (opts) =>
       await reserveSiteFundedSpeechClient.reserveSiteFundedSpeech(opts),
     finishSiteFundedSpeech: async (opts) =>
@@ -11590,6 +11610,18 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getSiteFundedCodexStatus: async (opts) =>
           await impl.getSiteFundedCodexStatus(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getSiteFundedProviderKey">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-site-funded-provider-key",
+      }),
+      impl: {
+        getSiteFundedProviderKey: async (opts) =>
+          await impl.getSiteFundedProviderKey(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">>({
