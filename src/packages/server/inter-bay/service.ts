@@ -266,6 +266,10 @@ import {
   reserveSiteFundedCodexTurn,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
 import {
+  getSiteFundedFunnel,
+  recordSiteFundedAdmissionLocal,
+} from "@cocalc/server/ai/site-funded-admissions";
+import {
   getSiteFundedProviderKeyForReservation,
   manageSiteFundedProviderKeys,
 } from "@cocalc/server/ai/site-funded-provider-keys";
@@ -896,11 +900,12 @@ async function startBayOpsService(): Promise<void> {
         outcome,
       });
     },
-    getSiteFundedCodexStatus: async ({ reconcile, accountId }) => {
+    getSiteFundedCodexStatus: async ({ reconcile, accountId, funnel }) => {
       assertSiteFundedCodexSeedAuthority();
       const pools = await getSiteFundedCodexPoolStatus();
       return {
         pools,
+        funnel: funnel ? await getSiteFundedFunnel() : undefined,
         accountReservations: accountId
           ? await getSiteFundedCodexAccountReservationStatus({ accountId })
           : undefined,
@@ -908,6 +913,10 @@ async function startBayOpsService(): Promise<void> {
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
       };
+    },
+    recordSiteFundedAdmission: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      await recordSiteFundedAdmissionLocal(opts);
     },
     manageSiteFundedProviderKeys: async ({ provider, action }) => {
       assertSiteFundedCodexSeedAuthority();

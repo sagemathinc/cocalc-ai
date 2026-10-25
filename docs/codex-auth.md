@@ -308,7 +308,12 @@ output/reasoning, long-context pricing, provider request identity, and tool
 fees. Prompt and response content is not stored in the funded ledger.
 
 The admin Site Settings page shows free/member pool committed and reserved
-exposure. For provider reconciliation, use a dedicated OpenAI project and set:
+exposure, and a 7-day admission funnel. Every funded admission attempt is
+recorded on the seed bay (`site_ai_admission_attempts`, one row per funded
+turn, kept 90 days) with its outcome: admitted, a denial code, or a finer
+early-refusal reason (`unverified_email`, `no_allowance`, `banned`,
+`ai_disabled`). The funnel shows attempts and accounts by outcome, and how
+admitted turns ended with their cost per turn. For provider reconciliation, use a dedicated OpenAI project and set:
 
 - `site_funded_codex_openai_project_id`;
 - `site_funded_codex_openai_admin_key` (an organization admin key, not the

@@ -263,9 +263,12 @@ import {
   getSiteFundedClaudeConfiguration,
   getSiteFundedCodexConfiguration,
 } from "@cocalc/server/ai/site-funded-codex-policy";
+import { recordSiteFundedAdmissionLocal } from "@cocalc/server/ai/site-funded-admissions";
 import { getSiteFundedProviderKeyForReservation } from "@cocalc/server/ai/site-funded-provider-keys";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import type {
+  SiteFundedAdmissionOutcome,
+  SiteFundedAdmissionRecord,
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolStatus,
   SiteFundedCodexReservation,
@@ -3771,15 +3774,7 @@ function remoteSiteFundedCodexSeed() {
   return getInterBayBridge().bayOps(seedBayId, { timeout_ms: 20_000 });
 }
 
-export async function reserveSiteFundedCodexTurn({
-  host_id,
-  project_id,
-  account_id,
-  funded_turn_id,
-  idempotency_key,
-  path,
-  provider = "openai",
-}: {
+type ReserveSiteFundedCodexTurnArgs = {
   host_id?: string;
   project_id: string;
   account_id: string;
@@ -3788,7 +3783,79 @@ export async function reserveSiteFundedCodexTurn({
   path?: string;
   /** "anthropic": a site-funded Claude turn. Default Codex. */
   provider?: SiteFundedProvider;
-}): Promise<SiteFundedCodexAdmission> {
+};
+
+/** What admission learned, for the admission funnel. */
+type SiteFundedAdmissionNote = {
+  /** The host was authorized for this project and account. */
+  authorized?: boolean;
+  /** A finer reason than the denial code, for early refusals. */
+  outcome?: SiteFundedAdmissionOutcome;
+  membershipTier?: string;
+};
+
+function siteFundedSurface(path?: string): string {
+  return path?.endsWith(".ipynb")
+    ? "jupyter"
+    : path?.endsWith(".chat")
+      ? "chat"
+      : path
+        ? "editor"
+        : "unknown";
+}
+
+// Best effort: the funnel never delays or fails an admission. Everything,
+// finding the seed included, runs inside the promise, so not even a
+// synchronous failure can escape.
+function recordSiteFundedAdmission(record: SiteFundedAdmissionRecord): void {
+  void (async () => {
+    const remoteSeed = remoteSiteFundedCodexSeed();
+    await (remoteSeed
+      ? remoteSeed.recordSiteFundedAdmission(record)
+      : recordSiteFundedAdmissionLocal(record));
+  })().catch((err) =>
+    logger.debug("site-funded admission not recorded", { err: `${err}` }),
+  );
+}
+
+export async function reserveSiteFundedCodexTurn(
+  args: ReserveSiteFundedCodexTurnArgs,
+): Promise<SiteFundedCodexAdmission> {
+  const note: SiteFundedAdmissionNote = {};
+  let admission: SiteFundedCodexAdmission | undefined;
+  try {
+    admission = await admitSiteFundedCodexTurn(args, note);
+    return admission;
+  } finally {
+    if (note.authorized) {
+      recordSiteFundedAdmission({
+        fundedTurnId: args.funded_turn_id,
+        accountId: args.account_id,
+        provider: args.provider ?? "openai",
+        outcome: !admission
+          ? "error"
+          : admission.allowed
+            ? "allowed"
+            : (note.outcome ?? admission.code),
+        membershipTier: note.membershipTier,
+        surface: siteFundedSurface(args.path),
+      });
+    }
+  }
+}
+
+async function admitSiteFundedCodexTurn(
+  {
+    host_id,
+    project_id,
+    account_id,
+    funded_turn_id,
+    idempotency_key,
+    path,
+    provider = "openai",
+  }: ReserveSiteFundedCodexTurnArgs,
+  note: SiteFundedAdmissionNote,
+): Promise<SiteFundedCodexAdmission> {
   if (!host_id) throw new Error("host_id must be specified");
   if (provider !== "openai" && provider !== "anthropic") {
     throw new Error("provider must be openai or anthropic");
@@ -3808,7 +3875,9 @@ export async function reserveSiteFundedCodexTurn({
     project_id,
     owner_account_id: account_id,
   });
+  note.authorized = true;
   if (await isAiLaunchDisabled()) {
+    note.outcome = "ai_disabled";
     return {
       allowed: false,
       code: "disabled",
@@ -3842,6 +3911,11 @@ export async function reserveSiteFundedCodexTurn({
   // The host's bay need not store the executing human's account or directory row.
   const account = await getClusterAccountById(account_id);
   if (!account || account.banned || !account.email_address_verified) {
+    note.outcome = !account
+      ? "ineligible"
+      : account.banned
+        ? "banned"
+        : "unverified_email";
     return {
       allowed: false,
       code: "ineligible",
@@ -3885,11 +3959,13 @@ export async function reserveSiteFundedCodexTurn({
           ] as const;
         })();
   const paid = membership.source !== "free";
+  note.membershipTier = membership.class;
   const accountConcurrency =
     getEffectiveMembershipUsageLimits(membership).acp_max_running_per_account ??
     configuration.policy?.maxConcurrentTurnsPerAccount ??
     DEFAULT_SITE_FUNDED_CODEX_POLICY.maxConcurrentTurnsPerAccount;
   if (account5h.limit <= 0 || account7d.limit <= 0) {
+    note.outcome = "no_allowance";
     return {
       allowed: false,
       code: "ineligible",
@@ -3920,13 +3996,7 @@ export async function reserveSiteFundedCodexTurn({
     accountRemaining7dMicrousd: account7d.remaining,
     accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
     accountCredited7dMicrousdByFundedTurn: account7d.creditsByFundedTurn,
-    surface: path?.endsWith(".ipynb")
-      ? "jupyter"
-      : path?.endsWith(".chat")
-        ? "chat"
-        : path
-          ? "editor"
-          : "unknown",
+    surface: siteFundedSurface(path),
   };
   const remoteSeed = remoteSiteFundedCodexSeed();
   return remoteSeed

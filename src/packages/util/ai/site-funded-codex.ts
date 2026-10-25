@@ -203,8 +203,74 @@ export type SiteFundedCodexAccountStatus = {
   reset7dAt?: string;
 };
 
+/**
+ * How one site-funded admission attempt ended: "allowed", a denial code, or a
+ * finer reason for an early refusal ("unverified_email", "no_allowance",
+ * "banned", "ai_disabled"), or "error" if admission itself failed.
+ */
+export type SiteFundedAdmissionOutcome =
+  | "allowed"
+  | SiteFundedCodexDenialCode
+  | "unverified_email"
+  | "no_allowance"
+  | "banned"
+  | "ai_disabled"
+  | "error";
+
+// Every outcome once, checked by the compiler: a new denial code that is
+// missing here would make the funnel refuse (and so lose) its attempts.
+const ADMISSION_OUTCOMES: Record<SiteFundedAdmissionOutcome, true> = {
+  allowed: true,
+  disabled: true,
+  missing_price: true,
+  account_limit_5h: true,
+  account_limit_7d: true,
+  account_concurrency: true,
+  global_concurrency: true,
+  global_pool: true,
+  account_hold: true,
+  ineligible: true,
+  unavailable: true,
+  provider_keys_exhausted: true,
+  unverified_email: true,
+  no_allowance: true,
+  banned: true,
+  ai_disabled: true,
+  error: true,
+};
+
+export const SITE_FUNDED_ADMISSION_OUTCOMES = Object.keys(
+  ADMISSION_OUTCOMES,
+) as readonly SiteFundedAdmissionOutcome[];
+
+export type SiteFundedAdmissionRecord = {
+  fundedTurnId: string;
+  accountId: string;
+  provider: "openai" | "anthropic";
+  outcome: SiteFundedAdmissionOutcome;
+  membershipTier?: string;
+  surface?: string;
+};
+
+/** Who tried included AI, what admission said, and how admitted turns ended. */
+export type SiteFundedFunnel = {
+  periodStart: string;
+  periodEnd: string;
+  attempts: number;
+  accounts: number;
+  admittedAccounts: number;
+  outcomes: { outcome: string; attempts: number; accounts: number }[];
+  turns: {
+    status: string;
+    turns: number;
+    accounts: number;
+    committedMicrousd: number;
+  }[];
+};
+
 export type SiteFundedCodexStatus = {
   pools: SiteFundedCodexPoolStatus[];
+  funnel?: SiteFundedFunnel;
   account?: SiteFundedCodexAccountStatus;
   accountReservations?: {
     accountId: string;

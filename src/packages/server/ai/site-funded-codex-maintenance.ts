@@ -10,6 +10,7 @@ import {
   expireAbandonedSiteFundedCodexReservations,
   reconcileTerminalSiteFundedCodexReservations,
 } from "./site-funded-codex-reservations";
+import { pruneSiteFundedAdmissions } from "./site-funded-admissions";
 
 const logger = getLogger("server:ai:site-funded-codex-maintenance");
 const INTERVAL_MS = 60_000;
@@ -36,6 +37,12 @@ export function startSiteFundedCodexMaintenance(): void {
       }
     } catch (err) {
       logger.warn("site-funded Codex maintenance failed", { err: `${err}` });
+    }
+    // Separately, so retention holds even while the above keeps failing.
+    try {
+      await pruneSiteFundedAdmissions();
+    } catch (err) {
+      logger.warn("site-funded admission pruning failed", { err: `${err}` });
     }
   };
   void run();

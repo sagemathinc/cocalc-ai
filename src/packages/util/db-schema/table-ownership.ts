@@ -1233,6 +1233,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(["site_ai_admission_attempts"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "server site-funded AI admission funnel bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "One row per site-funded admission attempt and its outcome (kept 90 days), recorded on the seed bay for the admin AI pool funnel.",
+  }),
+
   ...adHocEntries(["site_ai_provider_keys"], {
     ownership: "seed-global",
     authority: "seed",

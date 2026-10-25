@@ -832,17 +832,74 @@ describe("site-funded Codex account directory routing", () => {
   });
 
   it.each([
-    null,
-    { banned: true, email_address_verified: true },
-    { email_address_verified: false },
-  ])("denies an ineligible directory account: %j", async (account) => {
-    lookup.mockResolvedValue(account);
+    [null, "ineligible"],
+    [{ banned: true, email_address_verified: true }, "banned"],
+    [{ email_address_verified: false }, "unverified_email"],
+  ])(
+    "denies an ineligible directory account, and records why: %j",
+    async (account, outcome) => {
+      lookup.mockResolvedValue(account);
+      jest
+        .spyOn(
+          await import("@cocalc/server/cluster-config"),
+          "getConfiguredClusterSeedBayId",
+        )
+        .mockReturnValue(
+          (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+        );
+      const record = jest
+        .spyOn(
+          await import("@cocalc/server/ai/site-funded-admissions"),
+          "recordSiteFundedAdmissionLocal",
+        )
+        .mockResolvedValue();
+      const { reserveSiteFundedCodexTurn } = await import("./hosts");
+      await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({
+        allowed: false,
+        code: "ineligible",
+      });
+      expect(membership).not.toHaveBeenCalled();
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fundedTurnId: request.funded_turn_id,
+          accountId: ACCOUNT_ID,
+          provider: "openai",
+          outcome,
+        }),
+      );
+    },
+  );
+
+  it("returns the admission even if finding the seed to record it throws", async () => {
+    lookup.mockResolvedValue({ email_address_verified: false });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockImplementation(() => {
+        throw new Error("cluster config unavailable");
+      });
     const { reserveSiteFundedCodexTurn } = await import("./hosts");
     await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({
       allowed: false,
       code: "ineligible",
     });
-    expect(membership).not.toHaveBeenCalled();
+  });
+
+  it("records nothing for a host that is not authorized", async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+    const record = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-admissions"),
+        "recordSiteFundedAdmissionLocal",
+      )
+      .mockResolvedValue();
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).rejects.toThrow(
+      "host is not authorized",
+    );
+    expect(record).not.toHaveBeenCalled();
   });
 
   it("admits a Claude turn with Claude's configuration and wording", async () => {

@@ -272,6 +272,7 @@ import type {
 import type {
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolId,
+  SiteFundedAdmissionRecord,
   SiteFundedCodexStatus,
   SiteFundedCodexPolicy,
   SiteFundedCodexReservation,
@@ -2412,7 +2413,11 @@ export interface BayOpsSiteFundedProviderKeyRequest {
 export interface BayOpsSiteFundedCodexStatusRequest {
   reconcile?: boolean;
   accountId?: string;
+  /** Include the admission funnel (admins). */
+  funnel?: boolean;
 }
+
+export type BayOpsRecordSiteFundedAdmissionRequest = SiteFundedAdmissionRecord;
 
 export interface BayOpsReserveSiteFundedSpeechRequest {
   requestId: string;
@@ -2939,6 +2944,7 @@ export type BayOpsMethod =
   | "record-site-funded-codex-usage"
   | "finish-site-funded-codex-turn"
   | "get-site-funded-codex-status"
+  | "record-site-funded-admission"
   | "get-site-funded-provider-key"
   | "manage-site-funded-provider-keys"
   | "reserve-site-funded-speech"
@@ -4670,6 +4676,9 @@ export interface InterBayBayOpsApi {
   getSiteFundedCodexStatus: (
     opts: BayOpsSiteFundedCodexStatusRequest,
   ) => Promise<SiteFundedCodexStatus>;
+  recordSiteFundedAdmission: (
+    opts: BayOpsRecordSiteFundedAdmissionRequest,
+  ) => Promise<void>;
   getSiteFundedProviderKey: (
     opts: BayOpsSiteFundedProviderKeyRequest,
   ) => Promise<{ apiKey: string }>;
@@ -11074,6 +11083,15 @@ export function createInterBayBayOpsClient({
       method: "get-site-funded-codex-status",
     }),
   });
+  const recordSiteFundedAdmissionClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "recordSiteFundedAdmission">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "record-site-funded-admission",
+    }),
+  });
   const siteFundedProviderKeyClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getSiteFundedProviderKey">
   >({
@@ -11388,6 +11406,8 @@ export function createInterBayBayOpsClient({
       await finishSiteFundedCodexTurnClient.finishSiteFundedCodexTurn(opts),
     getSiteFundedCodexStatus: async (opts) =>
       await siteFundedCodexStatusClient.getSiteFundedCodexStatus(opts),
+    recordSiteFundedAdmission: async (opts) =>
+      await recordSiteFundedAdmissionClient.recordSiteFundedAdmission(opts),
     getSiteFundedProviderKey: async (opts) =>
       await siteFundedProviderKeyClient.getSiteFundedProviderKey(opts),
     manageSiteFundedProviderKeys: async (opts) =>
@@ -11636,6 +11656,18 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getSiteFundedCodexStatus: async (opts) =>
           await impl.getSiteFundedCodexStatus(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "recordSiteFundedAdmission">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "record-site-funded-admission",
+      }),
+      impl: {
+        recordSiteFundedAdmission: async (opts) =>
+          await impl.recordSiteFundedAdmission(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getSiteFundedProviderKey">>({
