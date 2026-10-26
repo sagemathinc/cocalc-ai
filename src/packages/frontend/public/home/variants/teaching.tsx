@@ -120,9 +120,9 @@ const ASSIGNMENTS = [
   },
   {
     name: "Lab 5 · PageRank",
-    step: "Collected",
+    step: "Collecting",
     done: 22,
-    graded: "44 collected",
+    graded: "22 of 48 collected",
   },
   {
     name: "HW 5 · Least squares",

@@ -37,7 +37,7 @@ const CSS = `
 .hd-tabs { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
 .hd-tab { font:500 15px/1.2 ${PUBLIC_DISPLAY_FONT_FAMILY}; padding:10px 16px; min-height:44px; border-radius:999px; border:1px solid ${C.border}; background:${C.surface}; color:${C.text}; cursor:pointer; }
 .hd-tab:hover { border-color:${C.brand}; }
-.hd-tab[aria-selected="true"] { background:${C.brand}; border-color:${C.brand}; color:#fff; }
+.hd-tab[aria-selected="true"] { background:${C.heading}; border-color:${C.heading}; color:${C.surface}; }
 .hd-panel { display:grid; grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr); border:1px solid ${C.border}; border-radius:16px; overflow:hidden; background:${C.surface}; box-shadow:0 30px 60px -34px color-mix(in srgb, ${C.shadowInk} 45%, transparent); text-align:left; }
 .hd-ask { padding:clamp(20px,3vw,32px); background:${C.surfaceMuted}; border-right:1px solid ${C.border}; display:grid; gap:12px; align-content:start; }
 .hd-label { font:600 12px/1.2 ${PUBLIC_DISPLAY_FONT_FAMILY}; letter-spacing:.12em; text-transform:uppercase; color:${C.mutedText}; }
@@ -52,6 +52,7 @@ const CSS = `
 .hd-code .bad { color:#c0392b; }
 .hd-code .dim { color:${C.mutedText}; }
 .hd-math { font-size:22px; color:${C.heading}; padding:4px 0; }
+.hd-plot { width:100%; max-width:420px; height:auto; display:block; color:${C.text}; }
 .hd-done { color:${C.mutedText}; font-size:15px; }
 .hd-note { text-align:center; color:${C.mutedText}; font-size:15px; }
 
@@ -75,12 +76,62 @@ const CSS = `
 
 // MathML, rendered by the browser itself (no script). Static strings: React's
 // types do not include the MathML elements.
-const ODE_MATHML =
-  "<math><mrow><msup><mi>y</mi><mo>″</mo></msup><mo>+</mo><mi>y</mi><mo>=</mo><mi>sin</mi><mo>⁡</mo><mn>2</mn><mi>t</mi></mrow></math>";
-const INITIAL_MATHML =
-  "<math><mrow><mi>y</mi><mo>(</mo><mn>0</mn><mo>)</mo><mo>=</mo><mn>0</mn><mo>,</mo><mspace width='0.3em'></mspace><msup><mi>y</mi><mo>′</mo></msup><mo>(</mo><mn>0</mn><mo>)</mo><mo>=</mo><mn>1</mn></mrow></math>";
-const SOLUTION_MATHML =
-  '<math display="block"><mrow><mi>y</mi><mo>(</mo><mi>t</mi><mo>)</mo><mo>=</mo><mfrac><mn>5</mn><mn>3</mn></mfrac><mi>sin</mi><mo>⁡</mo><mi>t</mi><mo>−</mo><mfrac><mn>1</mn><mn>3</mn></mfrac><mi>sin</mi><mo>⁡</mo><mn>2</mn><mi>t</mi></mrow></math>';
+const PRIME2 = '<mi>y</mi><mo lspace="0" rspace="0">″</mo>';
+const PRIME1 = '<mi>y</mi><mo lspace="0" rspace="0">′</mo>';
+const SIN = '<mi>sin</mi><mo>⁡</mo><mspace width="0.17em"></mspace>';
+const at0 = (f: string) =>
+  `${f}<mo stretchy="false">(</mo><mn>0</mn><mo stretchy="false">)</mo>`;
+const ODE_MATHML = `<math><mrow>${PRIME2}<mo>+</mo><mi>y</mi><mo>=</mo>${SIN}<mn>2</mn><mi>t</mi></mrow></math>`;
+const INITIAL_MATHML = `<math><mrow>${at0("<mi>y</mi>")}<mo>=</mo><mn>0</mn><mo separator="true">,</mo><mspace width="0.4em"></mspace>${at0(PRIME1)}<mo>=</mo><mn>1</mn></mrow></math>`;
+const SOLUTION_MATHML = `<math display="block"><mrow><mi>y</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo><mo>=</mo><mfrac><mn>5</mn><mn>3</mn></mfrac>${SIN}<mi>t</mi><mo>−</mo><mfrac><mn>1</mn><mn>3</mn></mfrac>${SIN}<mn>2</mn><mi>t</mi></mrow></math>`;
+
+// The solution on 0 <= t <= 4 pi, scaled into the plot box below (computed,
+// not drawn by hand).
+const ODE_PLOT = Array.from({ length: 121 }, (_, i) => {
+  const t = (4 * Math.PI * i) / 120;
+  const y = (5 / 3) * Math.sin(t) - (1 / 3) * Math.sin(2 * t);
+  return `${(24 + (i / 120) * 270).toFixed(1)},${(55 - 24 * y).toFixed(1)}`;
+}).join(" ");
+
+function OdePlot() {
+  return (
+    <svg
+      className="hd-plot"
+      viewBox="0 0 300 110"
+      role="img"
+      aria-label="Plot of the solution over two periods: a wave between about -1.8 and 1.8"
+    >
+      <line
+        x1="24"
+        y1="55"
+        x2="294"
+        y2="55"
+        stroke="currentColor"
+        opacity=".25"
+      />
+      <line
+        x1="24"
+        y1="6"
+        x2="24"
+        y2="104"
+        stroke="currentColor"
+        opacity=".25"
+      />
+      <polyline
+        points={ODE_PLOT}
+        fill="none"
+        stroke="#4474c0"
+        strokeWidth="2"
+      />
+      <text x="282" y="68" fontSize="9" fill="currentColor" opacity=".6">
+        4π
+      </text>
+      <text x="14" y="58" fontSize="9" fill="currentColor" opacity=".6">
+        0
+      </text>
+    </svg>
+  );
+}
 
 function MathML({ markup }: { markup: string }) {
   return <span dangerouslySetInnerHTML={{ __html: markup }} />;
@@ -102,15 +153,16 @@ const TASKS = [
       <>
         <div className="hd-code">
           <span className="k">t</span> = var('t'); y = function('y')(t){"\n"}
-          <span className="k">desolve</span>(diff(y,t,2) + y == sin(2*t), y,
-          ics=[0,0,1])
+          <span className="k">desolve</span>(diff(y,t,2) + y == sin(2*t),
+          {"\n        "}y, ics=[0,0,1])
         </div>
         <div className="hd-math">
           <MathML markup={SOLUTION_MATHML} />
         </div>
+        <OdePlot />
         <p className="hd-done">
-          Solved in SageMath and checked by substituting back. The plot is in
-          the notebook, next to the cells.
+          Solved in SageMath, checked by substituting back, and plotted in the
+          notebook.
         </p>
       </>
     ),
