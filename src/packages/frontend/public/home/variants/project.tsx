@@ -88,6 +88,8 @@ const CSS = `
   .hp-tiles, .hp-timeline { grid-template-columns:minmax(0,1fr); }
   .hp-grid { grid-template-columns:minmax(0,1fr); }
   .hp-files { display:none; }
+  .hp-bar small { display:none; }
+  .hp-bar { white-space:nowrap; }
   .hp-actions .ant-btn { width:100%; }
   .hp-hero { border-radius:16px; }
 }

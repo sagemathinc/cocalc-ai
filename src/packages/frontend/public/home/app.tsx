@@ -56,8 +56,10 @@ import {
   sendPublicHomeExperimentEvent,
 } from "../home-experiment";
 import { withPublicHomeVariant } from "@cocalc/util/public-home-experiment";
+import DemoHome from "./variants/demo";
 import MathHome from "./variants/math";
 import ProjectHome from "./variants/project";
+import TeachingHome from "./variants/teaching";
 
 // The other versions of Home in the experiment, by id
 // (util/public-home-experiment.ts); "default" is this file's page.
@@ -68,7 +70,12 @@ const HOME_VARIANTS: Record<
     signUpLabel: string;
     signUpPath: string;
   }) => ReactNode
-> = { math: MathHome, project: ProjectHome };
+> = {
+  math: MathHome,
+  project: ProjectHome,
+  teaching: TeachingHome,
+  demo: DemoHome,
+};
 
 const { Paragraph, Text, Title } = Typography;
 
