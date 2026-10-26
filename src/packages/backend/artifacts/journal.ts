@@ -6,6 +6,10 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
+  deferWalCheckpoints,
+  forgetWalCheckpoints,
+} from "../sqlite-checkpoint";
+import {
   validateArtifactCatalogSnapshot,
   type ArtifactCatalogItem,
   type ArtifactCatalogSnapshot,
@@ -28,8 +32,10 @@ export interface CatalogRegistration extends ArtifactCatalogSource {
  */
 export class ArtifactCatalogJournal {
   private readonly db: DatabaseSync;
+  private readonly filename: string;
 
   constructor(filename: string) {
+    this.filename = filename;
     this.db = new DatabaseSync(filename);
     this.db.exec(`
       PRAGMA journal_mode=WAL;
@@ -71,9 +77,12 @@ export class ArtifactCatalogJournal {
         failures INTEGER NOT NULL DEFAULT 0
       );
     `);
+    // Commits stay synchronous=FULL; only checkpoints move off the event loop.
+    deferWalCheckpoints(this.db, filename);
   }
 
   close() {
+    forgetWalCheckpoints(this.filename, this.db);
     this.db.close();
   }
 

@@ -1,6 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import {
+  deferWalCheckpoints,
+  forgetWalCheckpoints,
+} from "@cocalc/backend/sqlite-checkpoint";
 
 type Statement = {
   run: (...args: any[]) => any;
@@ -15,6 +19,7 @@ export type SqliteDatabase = {
 };
 
 let db: SqliteDatabase | undefined;
+let dbFilename: string | undefined;
 
 export interface DatabaseOptions {
   filename?: string;
@@ -46,6 +51,10 @@ export function initDatabase(options: DatabaseOptions = {}): SqliteDatabase {
   db.exec("PRAGMA journal_mode=WAL");
   db.exec("PRAGMA synchronous=NORMAL");
   db.exec("PRAGMA busy_timeout=5000");
+  // Checkpoints fsync; keep them off the event loop.
+  if (deferWalCheckpoints(db, filename)) {
+    dbFilename = filename;
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS data (
       table_name TEXT NOT NULL,
@@ -69,6 +78,10 @@ export function getDatabase(): SqliteDatabase {
 
 export function closeDatabase(): void {
   if (db != null) {
+    if (dbFilename != null) {
+      forgetWalCheckpoints(dbFilename, db);
+      dbFilename = undefined;
+    }
     db.close();
     db = undefined;
   }
