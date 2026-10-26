@@ -3394,7 +3394,7 @@ export function snapshotPruneBusy(): {
 // caller runs it as scheduled storage work (snapshot-backup-maintenance.ts).
 export async function pruneDeferredSnapshots(
   project_id: string,
-  { counts, limit }: { counts: Partial<SnapshotCounts>; limit?: number },
+  { counts }: { counts: Partial<SnapshotCounts> },
 ): Promise<void> {
   // Returns only when retention was applied; throws when it couldn't run now
   // (the retry stays pending). Only the bay's assignment check, not a missing
@@ -3414,7 +3414,6 @@ export async function pruneDeferredSnapshots(
       const deleted = await pruneRollingSnapshots({
         snapshots: vol.snapshots,
         counts,
-        limit,
       });
       logger.info("pruned deferred snapshots", { project_id, deleted });
       return "pruned";

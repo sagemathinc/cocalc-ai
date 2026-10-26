@@ -363,36 +363,3 @@ describe("pruneRollingSnapshots", () => {
     expect(snapshots.delete).toHaveBeenCalledTimes(2);
   });
 });
-
-describe("pruneRollingSnapshots and the snapshot limit", () => {
-  const now = Date.parse("2026-04-22T12:00:00.000Z");
-  const day = 24 * 60 * 60 * 1000;
-  beforeEach(() => {
-    jest.resetModules();
-    delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
-    jest.spyOn(Date, "now").mockReturnValue(now);
-  });
-  afterEach(() => jest.restoreAllMocks());
-
-  it("also deletes the oldest automatic snapshots beyond the limit, never the newest", async () => {
-    const { pruneRollingSnapshots } = await import("./snapshots");
-    const names = [3, 2, 1].map((d) => new Date(now - d * day).toISOString());
-    const all = [...names, "named"];
-    const snapshots = {
-      readdir: jest.fn(async () => [...all]),
-      delete: jest.fn(async (name: string) => {
-        all.splice(all.indexOf(name), 1);
-      }),
-    };
-    // retention keeps all three; the limit of 3 counts the named one too
-    await expect(
-      pruneRollingSnapshots({
-        snapshots: snapshots as any,
-        counts: { frequent: 0, daily: 5, weekly: 0, monthly: 0 },
-        limit: 3,
-      }),
-    ).resolves.toBe(1);
-    expect(snapshots.delete).toHaveBeenCalledWith(names[0]);
-    expect(all).toEqual([names[1], names[2], "named"]);
-  });
-});

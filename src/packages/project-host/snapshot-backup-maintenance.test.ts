@@ -3141,8 +3141,12 @@ describe("deferred snapshot prunes", () => {
     expect(await retry()).toEqual({ pruned: ["proj-1"], waiting: 0 });
     expect(pruneDeferredSnapshotsMock).toHaveBeenCalledWith("proj-1", {
       counts: expect.objectContaining({ daily: 5 }),
-      limit: 8,
     });
+    // never a limit: the check doesn't cover it, so a raised limit can't be
+    // undercut by a stale one; the next scheduled snapshot applies it
+    expect(pruneDeferredSnapshotsMock.mock.calls[0][1]).not.toHaveProperty(
+      "limit",
+    );
     // the same assignment check and background context as a snapshot
     expect(confirmProjectMaintenanceAssignmentMock).toHaveBeenCalledWith(
       expect.objectContaining({ project_id: "proj-1", kind: "snapshot" }),

@@ -228,17 +228,15 @@ function expiredSnapshotNames({
 }
 
 /** Delete only the expired rolling snapshots (no new snapshot), for a prune
- * that was deferred by beforePrune, then the oldest automatic ones beyond
- * `limit` (the newest always stays). Returns how many were deleted; throws
- * the last delete error after trying all of them. */
+ * that was deferred by beforePrune. The snapshot limit is not enforced here:
+ * the next update does that under the current limit. Returns how many were
+ * deleted; throws the last delete error after trying all of them. */
 export async function pruneRollingSnapshots({
   snapshots,
   counts,
-  limit,
 }: {
   snapshots: Pick<SubvolumeSnapshots, "readdir" | "delete">;
   counts?: Partial<SnapshotCounts>;
-  limit?: number;
 }): Promise<number> {
   if (btrfsRollingSnapshotsDisabled()) return 0;
   const toDelete = expiredSnapshotNames({
@@ -258,15 +256,6 @@ export async function pruneRollingSnapshots({
     }
   };
   for (const name of toDelete) await remove(name);
-  if (limit != null && Number.isFinite(limit) && limit > 0) {
-    const names = await snapshots.readdir();
-    const automatic = names.filter(isISODate).sort();
-    let excess = names.length - Math.floor(limit);
-    for (const name of automatic.slice(0, -1)) {
-      if (excess <= 0) break;
-      if (await remove(name)) excess--;
-    }
-  }
   if (deleteError) throw deleteError;
   return deleted;
 }
