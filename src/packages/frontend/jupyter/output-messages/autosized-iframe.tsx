@@ -14,6 +14,9 @@ const MIN_HEIGHT = 20;
 const MAX_HEIGHT = 25000;
 const MIN_RESIZE_INTERVAL_MS = 50;
 const HEIGHT_SLACK = 8;
+// The height for content sized by the frame itself (height:100%, 100vh), which
+// has no height of its own; about a default Plotly figure.
+const FOLLOW_HEIGHT = 500;
 
 /*
 What a frame's content may do.  Every caller must choose; there is no
@@ -293,8 +296,32 @@ function injectResizeBridge(srcDoc: string, resizeId: string): string {
       } catch (err) {}
     }
   }
+  // Content sized by the frame (height:100%, 100vh) grows exactly as much as
+  // the frame does, so each report would grow the frame again, forever.  A
+  // height that grew by exactly the frame's growth since the previous
+  // measurement (every resize of the frame is measured) is that loop: such
+  // content has no height of its own, so it gets ${FOLLOW_HEIGHT}px (once),
+  // and from then on heights that still follow the frame are not reported.
+  // Any other change is reported again.
+  var lastHeight = null;
+  var lastViewport = null;
+  var followOffset = null; // height - viewport while the content follows the frame
   function send() {
-    parent.postMessage({ type: ${JSON.stringify(RESIZE_MESSAGE_TYPE)}, id: id, height: height() }, "*");
+    var h = height();
+    var viewport = window.innerHeight || 0;
+    var grewWithFrame = lastHeight !== null && h > lastHeight && viewport > lastViewport && Math.abs(h - lastHeight - (viewport - lastViewport)) <= 1;
+    lastHeight = h;
+    lastViewport = viewport;
+    if (grewWithFrame) {
+      if (followOffset === null && h < ${FOLLOW_HEIGHT}) {
+        parent.postMessage({ type: ${JSON.stringify(RESIZE_MESSAGE_TYPE)}, id: id, height: ${FOLLOW_HEIGHT} }, "*");
+      }
+      followOffset = h - viewport;
+      return;
+    }
+    if (followOffset !== null && Math.abs(h - viewport - followOffset) <= 1) return;
+    followOffset = null;
+    parent.postMessage({ type: ${JSON.stringify(RESIZE_MESSAGE_TYPE)}, id: id, height: h }, "*");
   }
   // This runs first, before the content (and its body) is parsed.
   var observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(send) : null;

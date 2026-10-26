@@ -304,6 +304,45 @@ try {
     framed: [],
   });
 
+  // 8b. Content sized by the frame itself (height:100%, 100vh, with or
+  // without other content) settles instead of growing the frame forever,
+  // while content that really grows is still followed.
+  const frameHeights = async () =>
+    await page.evaluate(() =>
+      [...document.querySelectorAll("#cell iframe")].map((f) =>
+        Math.round(f.getBoundingClientRect().height),
+      ),
+    );
+  await page.evaluate((o) => window.__setOutput(o), {});
+  await page.evaluate((o) => window.__setOutput(o), {
+    0: html(
+      '<style>html,body{height:100%}</style><div style="height:100%">fills</div><script>1</script>',
+    ),
+    1: html(
+      '<h3>above</h3><div style="height:100vh">vh</div><script>1</script>',
+    ),
+    2: html(
+      '<div id="grow" style="height:100px">grows</div><script>var n = 0; var t = setInterval(function () { document.getElementById("grow").style.height = (100 + 200 * ++n) + "px"; if (n === 3) clearInterval(t); }, 300);</script>',
+    ),
+  });
+  await page.waitForFunction(
+    () => document.querySelectorAll("#cell iframe").length === 3,
+  );
+  await page.waitForTimeout(2500);
+  const settled = await frameHeights();
+  await page.waitForTimeout(1500);
+  const later = await frameHeights();
+  assert.deepEqual(later, settled, `frames settled (${settled} -> ${later})`);
+  // (Such content has no height of its own: it gets 500px.)
+  assert.ok(
+    later.slice(0, 2).every((h) => h >= 500 && h <= 520),
+    `frame-sized content gets a fixed height (${later})`,
+  );
+  assert.ok(
+    Math.abs(later[2] - 700) <= 16,
+    `growing content is followed (${later[2]})`,
+  );
+
   // 9. Static export: an isolated output's frame is sized by the exported
   // document itself.
   const exported = await page.evaluate(() =>
