@@ -3210,6 +3210,37 @@ describe("deferred snapshot prunes", () => {
     expect(pruneDeferredSnapshotsMock).not.toHaveBeenCalled();
   });
 
+  it("keeps the retry when a later scan was skipped and applied no retention", async () => {
+    await deferOnce();
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: null,
+      created_snapshot_at: null,
+      changed: null,
+      disabled: false,
+      skipped_reason: "project_volume_lifecycle_changed",
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    const gate = await import("./snapshot-prune-gate");
+    expect(gate.getSnapshotPruneGateStats().pending_projects).toBe(1);
+    expect(await retry()).toEqual({ pruned: ["proj-1"], waiting: 0 });
+    expect(pruneDeferredSnapshotsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the retry when the prune couldn't run (lifecycle took the volume)", async () => {
+    await deferOnce();
+    pruneDeferredSnapshotsMock.mockRejectedValueOnce(
+      new Error(
+        "deferred snapshot prune not applied: project_volume_lifecycle_changed",
+      ),
+    );
+    expect(await retry()).toEqual({ pruned: [], waiting: 1 });
+    // and runs on a later pass
+    expect(await retry()).toEqual({ pruned: ["proj-1"], waiting: 0 });
+    expect(pruneDeferredSnapshotsMock).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the retry pending while storage admission refuses it", async () => {
     await deferOnce();
     admitStorageOperationMock.mockImplementation(() => ({

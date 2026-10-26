@@ -1554,9 +1554,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                   counts: scheduleToCounts(schedule),
                   validate: () => validateAssignment(row, "snapshot"),
                 });
-              } else {
+              } else if (updated != null && !updated.skipped_reason) {
                 // This scan applied the current retention: an older retry
-                // must not run later with stale counts.
+                // must not run later with stale counts. A skipped scan
+                // (lifecycle, archiving, ...) applied nothing: keep it.
                 clearPendingPrune(project_id);
               }
             },
