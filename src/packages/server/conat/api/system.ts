@@ -2307,9 +2307,9 @@ export async function getLaunchHealth({
     getBillingExposureHealth({ bay_id: currentBay.bay_id }),
     getHostKernelHardeningSummary(),
     (async () =>
-      projectBackupReposAreSeedManaged()
-        ? null
-        : await getProjectBackupRepoHealth())(),
+      await getProjectBackupRepoHealth({
+        seed_managed: projectBackupReposAreSeedManaged(),
+      }))(),
   ]);
 
   const settings =
@@ -2662,21 +2662,15 @@ export async function getLaunchHealth({
       level:
         backupRepoResult.status === "rejected"
           ? "critical"
-          : backupRepoResult.value == null
-            ? "healthy"
-            : projectBackupRepoHealthLevel(backupRepoResult.value),
+          : projectBackupRepoHealthLevel(backupRepoResult.value),
       summary:
         backupRepoResult.status === "rejected"
           ? "Unable to read the shared backup repository probe results."
-          : backupRepoResult.value == null
-            ? "The seed bay owns and probes the shared backup repositories."
-            : projectBackupRepoHealthSummary(backupRepoResult.value),
+          : projectBackupRepoHealthSummary(backupRepoResult.value),
       details:
         backupRepoResult.status === "rejected"
           ? [`${backupRepoResult.reason}`]
-          : backupRepoResult.value == null
-            ? []
-            : projectBackupRepoHealthDetails(backupRepoResult.value),
+          : projectBackupRepoHealthDetails(backupRepoResult.value),
     }),
     launchHealthCheck({
       id: "project-recovery",

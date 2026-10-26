@@ -362,7 +362,6 @@ export async function runProjectBackupRepoProbes(
 ): Promise<{ probed: number; failed: number }> {
   await ensureProjectBackupRepoSchema();
   await ensureProjectBackupRepoProbeSchema();
-  await removeLeftoverProbeProfiles(deps);
   const now = deps.now ?? (() => new Date());
   const queue = await dueRepoIds(now(), deps.limit ?? PROBE_MAX_PER_RUN);
   const staggerMs = deps.staggerMs ?? PROBE_STAGGER_MS;
@@ -425,6 +424,9 @@ export interface ProjectBackupRepoHealthProblem {
 }
 
 export interface ProjectBackupRepoHealth {
+  // An attached bay: the seed bay owns and probes the repositories, and this
+  // health covers only this bay's own leftover probe profiles.
+  seed_managed: boolean;
   repos: number;
   ok: number;
   never_probed: number;
@@ -441,9 +443,26 @@ function iso(value: Date | string | null | undefined): string | null {
 
 export async function getProjectBackupRepoHealth({
   now = new Date(),
-}: { now?: Date } = {}): Promise<ProjectBackupRepoHealth> {
-  await ensureProjectBackupRepoSchema();
+  seed_managed = false,
+}: {
+  now?: Date;
+  seed_managed?: boolean;
+} = {}): Promise<ProjectBackupRepoHealth> {
   await ensureProjectBackupRepoProbeSchema();
+  const leftover_profiles = (await listProjectBackupRepoProbeLeftovers()).map(
+    (row) => ({ path: row.path, first_seen: iso(row.first_seen) }),
+  );
+  if (seed_managed) {
+    return {
+      seed_managed,
+      repos: 0,
+      ok: 0,
+      never_probed: 0,
+      problems: [],
+      leftover_profiles,
+    };
+  }
+  await ensureProjectBackupRepoSchema();
   const { rows } = await getPool().query<{
     id: string;
     region: string | null;
@@ -466,13 +485,12 @@ export async function getProjectBackupRepoHealth({
     [PROBED_REPO_STATUSES],
   );
   const health: ProjectBackupRepoHealth = {
+    seed_managed,
     repos: rows.length,
     ok: 0,
     never_probed: 0,
     problems: [],
-    leftover_profiles: (await listProjectBackupRepoProbeLeftovers()).map(
-      (row) => ({ path: row.path, first_seen: iso(row.first_seen) }),
-    ),
+    leftover_profiles,
   };
   const staleBefore = now.getTime() - PROBE_STALE_MS;
   for (const row of rows) {
@@ -543,6 +561,9 @@ export function projectBackupRepoHealthSummary(
   if (repoProblems || leftoverProblem) {
     return [repoProblems, leftoverProblem].filter(Boolean).join(" ");
   }
+  if (health.seed_managed) {
+    return "The seed bay owns and probes the shared backup repositories; no probe profile is left on this bay.";
+  }
   if (health.repos === 0) {
     return "No shared project backup repository to probe on this bay.";
   }
@@ -593,13 +614,18 @@ async function alertIfUnhealthy(health: ProjectBackupRepoHealth) {
 export async function runProjectBackupRepoHealthCheck(
   deps: ProbeDeps = {},
 ): Promise<void> {
-  // In a multi-bay cluster the seed bay owns the repositories and probes them.
-  if (projectBackupReposAreSeedManaged()) return;
+  // In a multi-bay cluster the seed bay owns the repositories and probes
+  // them. Every bay still cleans up (and reports) its own leftover profiles,
+  // e.g. from before the seed moved.
+  const seed_managed = projectBackupReposAreSeedManaged();
   let runError: unknown;
   try {
-    const result = await runProjectBackupRepoProbes(deps);
-    if (result.probed > 0) {
-      logger.info("project backup repository probes completed", result);
+    await removeLeftoverProbeProfiles(deps);
+    if (!seed_managed) {
+      const result = await runProjectBackupRepoProbes(deps);
+      if (result.probed > 0) {
+        logger.info("project backup repository probes completed", result);
+      }
     }
   } catch (err) {
     runError = err;
@@ -609,6 +635,7 @@ export async function runProjectBackupRepoHealthCheck(
   await alertIfUnhealthy(
     await getProjectBackupRepoHealth({
       now: (deps.now ?? (() => new Date()))(),
+      seed_managed,
     }),
   );
   if (runError) throw runError;

@@ -27,6 +27,7 @@ jest.mock("@cocalc/server/messages/admin-alert", () => ({
   default: (...args: any[]) => adminAlert(...args),
 }));
 
+import * as backupIndex from "./index";
 import {
   ensureProjectBackupRepoSchema,
   getProjectBackupShardAdminStatus,
@@ -340,6 +341,52 @@ describe("project backup repository health probe", () => {
         projectBackupRepoHealthLevel(await getProjectBackupRepoHealth()),
       ).toBe("healthy");
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("on an attached bay, probes no repository but still cleans up and reports its own leftovers", async () => {
+    const seedManaged = jest
+      .spyOn(backupIndex, "projectBackupReposAreSeedManaged")
+      .mockReturnValue(true);
+    const root = await mkdtemp(join(tmpdir(), "probe-root-"));
+    try {
+      await addRepo("active");
+      const stale = join(root, "cocalc-backup-repo-probe-stale");
+      await mkdir(stale);
+      const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      await utimes(stale, hourAgo, hourAgo);
+      await runProjectBackupRepoHealthCheck({
+        tempRoot: root,
+        rusticPath,
+        staggerMs: 0,
+        loadToml: async () => toml("bad"),
+        removeTempDir: async () => {
+          throw new Error("EBUSY");
+        },
+      });
+      // The seed's repositories are not probed here ...
+      expect(await calls()).toEqual([]);
+      expect(
+        (await getPool().query("SELECT 1 FROM project_backup_repo_probes"))
+          .rowCount,
+      ).toBe(0);
+      // ... but this bay's own leftover is recorded, alerted and shown.
+      const health = await getProjectBackupRepoHealth({ seed_managed: true });
+      expect(health).toMatchObject({ seed_managed: true, repos: 0 });
+      expect(health.leftover_profiles.map((l) => l.path)).toEqual([stale]);
+      expect(projectBackupRepoHealthLevel(health)).toBe("critical");
+      expect(adminAlert).toHaveBeenCalledTimes(1);
+      expect(adminAlert.mock.calls[0][0].body).toContain(stale);
+
+      await runProjectBackupRepoHealthCheck({ tempRoot: root, rusticPath });
+      const clean = await getProjectBackupRepoHealth({ seed_managed: true });
+      expect(projectBackupRepoHealthLevel(clean)).toBe("healthy");
+      expect(projectBackupRepoHealthSummary(clean)).toContain(
+        "The seed bay owns and probes the shared backup repositories",
+      );
+    } finally {
+      seedManaged.mockRestore();
       await rm(root, { recursive: true, force: true });
     }
   });
