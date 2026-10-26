@@ -51,14 +51,16 @@ function normalizedPublicBaseUrl(value: unknown): string | undefined {
  * COCALC_BLOB_STORAGE_BACKEND set, only the environment counts; otherwise
  * the environment overrides the site settings.
  */
-async function resolveBlobStorageInputs(): Promise<{
+async function resolveBlobStorageInputs({
+  ignoreEnvBackend = false,
+}: { ignoreEnvBackend?: boolean } = {}): Promise<{
   fromEnv: boolean;
   backend: BlobStorageBackend;
   auth?: R2ObjectStoreAuth;
   publicBaseUrl: () => string | undefined;
 }> {
   const region = env("COCALC_BLOB_R2_REGION") || undefined;
-  const envBackend = env("COCALC_BLOB_STORAGE_BACKEND");
+  const envBackend = ignoreEnvBackend ? "" : env("COCALC_BLOB_STORAGE_BACKEND");
   if (envBackend) {
     const accountId = env("COCALC_BLOB_R2_ACCOUNT_ID");
     const endpoint =
@@ -139,7 +141,11 @@ export async function resolveBlobStorageConfig(): Promise<BlobStorageConfig> {
 export async function resolveBlobR2Auth(): Promise<
   R2ObjectStoreAuth | undefined
 > {
-  return (await resolveBlobStorageInputs()).auth;
+  const inputs = await resolveBlobStorageInputs();
+  if (inputs.auth || !inputs.fromEnv) return inputs.auth;
+  // The environment overrides the backend, but the credentials may still be
+  // the site settings' (e.g. COCALC_BLOB_STORAGE_BACKEND=postgres alone).
+  return (await resolveBlobStorageInputs({ ignoreEnvBackend: true })).auth;
 }
 
 export async function getBlobPublicUrl(

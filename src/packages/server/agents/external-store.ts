@@ -42,6 +42,27 @@ import {
 const EXTERNAL_INBOX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 /** How long a reservation waits for its send. */
 const EXTERNAL_INBOX_RESERVATION_MS = 10 * 60 * 1000;
+/** How long a claimed reservation stays live while its send uploads. */
+const EXTERNAL_INBOX_UPLOAD_LEASE_MS = 10 * 60 * 1000;
+
+/**
+ * UUIDs as the database returns them (lowercase): the sender may spell them
+ * otherwise, and rows are compared with them.
+ */
+function canonicalIds<T extends object>(opts: T): T {
+  const out: any = { ...opts };
+  for (const field of [
+    "account_id",
+    "installation_id",
+    "attempt_id",
+    "agent_network_id",
+    "network_generation",
+    "reservation_id",
+    "source_account_id",
+  ])
+    if (typeof out[field] === "string") out[field] = out[field].toLowerCase();
+  return out;
+}
 /** What one account's external inboxes may hold and have reserved, together. */
 export const EXTERNAL_INBOX_ACCOUNT_BYTES = AGENT_ATTACHMENT_PROJECT_BYTES;
 /** Live reservations one account may have. */
@@ -440,6 +461,7 @@ export class ExternalAgentStore {
     attachments?: AgentSnapshot[];
     reservation_id?: string;
   }): Promise<ExternalAgentInboxMessage> {
+    opts = canonicalIds(opts);
     requireUuid(opts.attempt_id, "attempt_id");
     // Optional while bays upgrade: an older sender's bay does not send it,
     // and its message is still delivered (but never inspectable).
@@ -497,10 +519,64 @@ export class ExternalAgentStore {
           new Date(reservation.expires_at).getTime() <= Date.now()
         )
           throw new Error("external_inbox_attachment_unreserved");
-        return { storage: reservation.storage as "r2" | "postgres" };
+        // Claimed for this send while it uploads: still counted against the
+        // bounds (its lease keeps it live), never released by a cancel, and
+        // no second send of the attempt uploads meanwhile.
+        if (reservation.claim_id != null)
+          throw new Error("external_inbox_attachment_in_progress");
+        const claim_id = randomUUID();
+        await db.query(
+          `UPDATE agent_external_inbox_reservations
+           SET claim_id=$2,
+               expires_at=GREATEST(expires_at,now()+($3 * interval '1 millisecond'))
+           WHERE reservation_id=$1`,
+          [
+            reservation.reservation_id,
+            claim_id,
+            EXTERNAL_INBOX_UPLOAD_LEASE_MS,
+          ],
+        );
+        return {
+          storage: reservation.storage as "r2" | "postgres",
+          claim_id,
+        };
       },
     );
     if (admitted.existing) return admitted.existing;
+    try {
+      return await this.store(opts, admitted, source_account_id, manifest);
+    } catch (error) {
+      // The send failed: its claim goes, so that a retry may use the
+      // reservation while it lasts.
+      if (admitted.claim_id)
+        await this.locked(opts.account_id, (db) =>
+          db.query(
+            "UPDATE agent_external_inbox_reservations SET claim_id=NULL WHERE reservation_id=$1 AND claim_id=$2",
+            [opts.reservation_id, admitted.claim_id],
+          ),
+        ).catch(() => {});
+      throw error;
+    }
+  }
+
+  /** Uploads (with R2) and stores a send admitted by enqueue. */
+  private async store(
+    opts: {
+      account_id: string;
+      installation_id: string;
+      attempt_id: string;
+      agent_network_id: string;
+      network_generation: string;
+      source: AgentRpcSource;
+      body: string;
+      attachments?: AgentSnapshot[];
+      reservation_id?: string;
+    },
+    admitted: { storage?: "r2" | "postgres"; claim_id?: string },
+    source_account_id: string | null,
+    manifest: AgentSnapshotMetadata[],
+  ): Promise<ExternalAgentInboxMessage> {
+    const attachments = opts.attachments ?? [];
     // Then the reserved bytes go to the object store, outside the account's
     // lock (they may be large), and the rows say only where. Nothing uploaded
     // is removed here: every object goes with its day
@@ -542,12 +618,15 @@ export class ExternalAgentStore {
       );
       if (existing) return existing;
       if (attachments.length) {
-        // Its expiry aside: it was live when the upload began.
+        // Only with this send's claim, while its lease lasts: past it the
+        // room stopped being counted, and the files would exceed the bounds.
         const consumed = (
           await db.query(
             `DELETE FROM agent_external_inbox_reservations
-             WHERE reservation_id=$1 AND account_id=$2 RETURNING *`,
-            [opts.reservation_id, opts.account_id],
+             WHERE reservation_id=$1 AND account_id=$2 AND claim_id=$3
+               AND expires_at>now()
+             RETURNING *`,
+            [opts.reservation_id, opts.account_id, admitted.claim_id],
           )
         ).rows[0];
         if (
@@ -631,6 +710,7 @@ export class ExternalAgentStore {
   async reserve(
     opts: ExternalAgentReservationOptions,
   ): Promise<ExternalAgentReservation> {
+    opts = canonicalIds(opts);
     for (const field of [
       "installation_id",
       "attempt_id",
@@ -749,6 +829,7 @@ export class ExternalAgentStore {
     source: AgentRpcSource;
     source_account_id: string;
   }): Promise<boolean> {
+    opts = canonicalIds(opts);
     requireUuid(opts.reservation_id, "reservation_id");
     requireUuid(opts.attempt_id, "attempt_id");
     requireUuid(opts.source_account_id, "source_account_id");
@@ -757,6 +838,7 @@ export class ExternalAgentStore {
         `DELETE FROM agent_external_inbox_reservations
          WHERE reservation_id=$1 AND account_id=$2 AND installation_id=$3
            AND attempt_id=$4 AND source_key=$5 AND source_account_id=$6
+           AND claim_id IS NULL
          RETURNING reservation_id`,
         [
           opts.reservation_id,

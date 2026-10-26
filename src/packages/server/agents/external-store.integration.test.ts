@@ -711,6 +711,111 @@ describeDb("network-bound external agents", () => {
     }
   });
 
+  test("a send holds its reservation while it uploads: counted, and not sent or released twice", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const files = [file("a.txt", "a")];
+      const { base, input, reservation } = await sent(files);
+      const during: any[] = [];
+      objects.put.mockImplementationOnce(async (key: string, data: Buffer) => {
+        const row = (
+          await db.query("SELECT * FROM agent_external_inbox_reservations")
+        ).rows[0];
+        during.push(row);
+        // The same send again uploads nothing; the sender cannot release it.
+        await expect(store.enqueue(input)).rejects.toThrow(
+          "external_inbox_attachment_in_progress",
+        );
+        expect(
+          await store.release({
+            ...base,
+            reservation_id: reservation!.reservation_id,
+          }),
+        ).toBe(false);
+        objects.objects.set(key, Buffer.from(data));
+      });
+      await store.enqueue(input);
+      expect(objects.put).toHaveBeenCalledTimes(1);
+      // Claimed, with a lease that keeps it counted well past the upload.
+      expect(during[0].claim_id).toBeTruthy();
+      expect(new Date(during[0].expires_at).getTime()).toBeGreaterThan(
+        Date.now() + 5 * 60_000,
+      );
+      expect(
+        (await db.query("SELECT * FROM agent_external_inbox_reservations"))
+          .rows,
+      ).toEqual([]);
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("a lease that lapses during the upload stores nothing", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const { installation, input } = await sent([file("a.txt", "a")]);
+      objects.put.mockImplementationOnce(async () => {
+        // No longer counted: storing the files now would exceed the bounds.
+        await db.query(
+          "UPDATE agent_external_inbox_reservations SET expires_at=now()-interval '1 second'",
+        );
+      });
+      await expect(store.enqueue(input)).rejects.toThrow(
+        "external_inbox_attachment_unreserved",
+      );
+      expect(await store.inbox(account, installation.installation_id)).toEqual(
+        [],
+      );
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("a failed upload gives up its claim, so the send can be retried", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const { input } = await sent([file("a.txt", "a")]);
+      objects.put.mockRejectedValueOnce(new Error("R2 unavailable"));
+      await expect(store.enqueue(input)).rejects.toThrow("R2 unavailable");
+      expect(
+        (
+          await db.query(
+            "SELECT claim_id FROM agent_external_inbox_reservations",
+          )
+        ).rows,
+      ).toEqual([{ claim_id: null }]);
+      await expect(store.enqueue(input)).resolves.toMatchObject({
+        attachments: [expect.objectContaining({ name: "a.txt" })],
+      });
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("UUIDs spelled in uppercase are the same reservation and send", async () => {
+    const files = [file("a.txt", "a")];
+    const { base, input, reservation } = await sent(files);
+    const upper = (value: string) => value.toUpperCase();
+    expect(
+      await store.reserve({
+        ...base,
+        installation_id: upper(base.installation_id),
+        attempt_id: upper(base.attempt_id),
+        manifest: manifestOf(files),
+      }),
+    ).toEqual(reservation);
+    await expect(
+      store.enqueue({
+        ...input,
+        attempt_id: upper(input.attempt_id),
+        reservation_id: upper(input.reservation_id!),
+      }),
+    ).resolves.toMatchObject({ body: "Report attached." });
+  });
+
   test("a row holds its content in exactly one place", async () => {
     const { input } = await sent([file("a.txt", "x")]);
     const message = await store.enqueue(input);

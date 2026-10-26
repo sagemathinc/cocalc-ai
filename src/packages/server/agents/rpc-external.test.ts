@@ -244,6 +244,53 @@ test("files go to the external inbox with the message", async () => {
   );
 });
 
+test("a target spelled in uppercase can be prepared for and sent to", async () => {
+  const files = [file("a.txt", "a")];
+  const manifest = files.map(({ name, size, sha256 }) => ({
+    name,
+    size,
+    sha256,
+  }));
+  const upperTarget = {
+    ...target,
+    account_id: target.account_id.toUpperCase(),
+    agent_id: target.agent_id.toUpperCase(),
+    installation_id: target.installation_id.toUpperCase(),
+  };
+  const request = {
+    ...attempt(),
+    agent_network_id: network.toUpperCase(),
+    target: upperTarget,
+    body: "Files.",
+    snapshot_manifest: manifest,
+  };
+  const prepared: any = await acceptAgentRpc(subject, {
+    ...request,
+    action: "prepare-attachments",
+  });
+  expect(prepared).toMatchObject({ outcome: "prepared" });
+  expect(reserve).toHaveBeenCalledWith(
+    expect.objectContaining({
+      account_id: targetAccount,
+      installation_id: installation,
+    }),
+  );
+  expect(
+    await acceptAgentRpc(subject, {
+      ...request,
+      attachment_reservation: prepared.reservation_id,
+      action: "send",
+      snapshot_payload: files,
+    }),
+  ).toMatchObject({ outcome: "accepted" });
+  expect(enqueue).toHaveBeenCalledWith(
+    expect.objectContaining({
+      account_id: targetAccount,
+      installation_id: installation,
+    }),
+  );
+});
+
 test("preparing files for an external member needs network access and room", async () => {
   const manifest = [file("a.txt", "a")].map(({ name, size, sha256 }) => ({
     name,

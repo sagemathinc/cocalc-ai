@@ -284,6 +284,10 @@ Table({
     },
     bytes: required("integer", "Their total size."),
     storage: required("string", "Where the bytes will go: r2 or postgres."),
+    claim_id: {
+      type: "uuid",
+      desc: "Set by the send uploading its files: while claimed, the reservation stays counted (its expiry is the upload lease) and cannot be released.",
+    },
     created_at: created,
     expires_at: {
       ...time("When the reservation lapses unless a send consumed it."),

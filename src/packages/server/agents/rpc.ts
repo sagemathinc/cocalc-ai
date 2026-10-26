@@ -1013,12 +1013,20 @@ async function externalTargetProof(
 ) {
   if (!isExternalAgentSource(request.target))
     throw new Error("external inbox target required");
+  // Members and inbox rows hold UUIDs in canonical (lowercase) form; the
+  // caller may spell them otherwise. The outcome still echoes the request.
+  const target = {
+    ...request.target,
+    account_id: request.target.account_id.toLowerCase(),
+    agent_id: request.target.agent_id.toLowerCase(),
+    installation_id: request.target.installation_id.toLowerCase(),
+  };
   const checked = await networkProof(
     account_id,
     source,
     run_id,
-    request.target,
-    request.agent_network_id,
+    target,
+    request.agent_network_id.toLowerCase(),
   );
   if ("denied" in checked)
     return {
@@ -1030,9 +1038,9 @@ async function externalTargetProof(
       }),
     };
   if (
-    checked.account_id !== request.target.account_id ||
+    checked.account_id !== target.account_id ||
     checked.target.kind !== "external" ||
-    checked.target.source.installation_id !== request.target.installation_id
+    checked.target.source.installation_id !== target.installation_id
   )
     return {
       ok: false as const,
@@ -1045,7 +1053,7 @@ async function externalTargetProof(
   return {
     ok: true as const,
     checked,
-    installation_id: request.target.installation_id,
+    installation_id: target.installation_id,
   };
 }
 
