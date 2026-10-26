@@ -403,6 +403,8 @@ describe("inspectRollingSnapshots", () => {
       "my-named-snapshot",
       old,
     ]);
+    // never creates a missing snapshots directory
+    expect(snapshots.readdir).toHaveBeenCalledWith({ create: false });
     expect(snapshots.create).not.toHaveBeenCalled();
     expect(snapshots.delete).not.toHaveBeenCalled();
   });

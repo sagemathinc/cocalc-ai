@@ -3601,6 +3601,48 @@ describe("deferred snapshot prunes", () => {
       },
     );
 
+    it("runs a snapshot that became due while the project was being re-observed", async () => {
+      let finishRead!: (value: unknown) => void;
+      inspectScheduledSnapshotsMock.mockImplementation(
+        () => new Promise((resolve) => (finishRead = resolve)),
+      );
+      runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+        latest_snapshot_at: "2026-04-10T23:30:00.000Z",
+        created_snapshot_at: "2026-04-10T23:30:00.000Z",
+        changed: true,
+        disabled: false,
+      });
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      const fullSweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      while (!inspectScheduledSnapshotsMock.mock.calls.length) await settle();
+      // the project changes during the read: a targeted sweep finds it due
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([
+        idleRow({ last_edited: "2026-04-10T23:00:00.000Z" }),
+      ]);
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+        projectIds: ["proj-idle"],
+      });
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      // the read finishes on the content it saw before the change
+      finishRead({
+        latest_snapshot_at: lastSnapshot,
+        changed: false,
+        snapshot_count: 5,
+        expired: 0,
+      });
+      await fullSweep;
+      await settle();
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+      expect(snapshotReports().at(-1)).toMatchObject({
+        project_id: "proj-idle",
+        outcome: "succeeded",
+      });
+    });
+
     it("reports nothing when the assignment changed", async () => {
       confirmProjectMaintenanceAssignmentMock.mockResolvedValue({
         valid: false,

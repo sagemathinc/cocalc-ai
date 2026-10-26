@@ -255,7 +255,7 @@ export async function inspectRollingSnapshots({
   counts?: Partial<SnapshotCounts>;
 }): Promise<RollingSnapshotInventory | undefined> {
   if (btrfsRollingSnapshotsDisabled()) return undefined;
-  const names = await snapshots.readdir();
+  const names = await snapshots.readdir({ create: false });
   const automatic = names.filter(isISODate).sort();
   return {
     names,

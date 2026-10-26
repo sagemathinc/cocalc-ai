@@ -107,6 +107,10 @@ const BEES_CGROUP = "cocalc-bees";
 
 const inFlightSnapshots = new Set<string>();
 const inFlightBackups = new Set<string>();
+// Projects being re-observed (also in inFlightSnapshots). A snapshot lane run
+// that finds one leaves its resubmission here, run when the re-observation
+// ends: its read may predate the change that made the snapshot due.
+const reobserving = new Map<string, (() => void) | undefined>();
 const dispatchQueues = new Map<
   string,
   {
@@ -1602,9 +1606,16 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       !project_id ||
       notDue ||
       ((parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() &&
-        !recoverySlotOpenFor(project_id)) ||
-      inFlightSnapshots.has(project_id)
+        !recoverySlotOpenFor(project_id))
     ) {
+      return;
+    }
+    if (inFlightSnapshots.has(project_id)) {
+      if (reobserving.has(project_id)) {
+        reobserving.set(project_id, () => {
+          void submitSnapshots([row], { detached: true });
+        });
+      }
       return;
     }
     inFlightSnapshots.add(project_id);
@@ -2091,6 +2102,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           return;
         }
         inFlightSnapshots.add(project_id);
+        reobserving.set(project_id, undefined);
         const startedAt = Date.now();
         // Whether the full update must run instead; handed to the snapshot
         // lane once this project is no longer in flight here.
@@ -2176,7 +2188,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         } finally {
           inFlightSnapshots.delete(project_id);
         }
+        const waiting = reobserving.get(project_id);
+        reobserving.delete(project_id);
         if (fallback) void submitSnapshots([row], { detached: true });
+        waiting?.();
       },
     });
   };
