@@ -727,6 +727,99 @@ test("hiding a frame that has focus moves focus to a visible control first", asy
   expect(document.activeElement).not.toBe(frame);
 });
 
+test("a Refresh that finishes while focus is in the old frame moves focus to the new one", async () => {
+  const view = render(
+    <div>
+      <button>before</button>
+      <Board />
+      <button>after</button>
+    </div>,
+  );
+  const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+  await screen.findByText("Current saved board");
+  const shown = placeholder(view.container);
+  const size = jest
+    .spyOn(shown, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 50, 400, 300));
+  act(() => layoutBoardFrames());
+  // Refresh is slow; meanwhile the keyboard user goes back into the board.
+  const reread = deferred();
+  readFile.mockReturnValueOnce(reread.promise);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  act(() => shown.focus());
+  expect(document.activeElement).toBe(frame);
+  await act(async () => reread.resolve(TEXT));
+  const replaced = await waitFor(() => {
+    const f = screen.getByTitle(TITLE) as HTMLIFrameElement;
+    expect(f).not.toBe(frame);
+    return f;
+  });
+  expect(frame.isConnected).toBe(false);
+  // In the new board, where the old one was: not dropped to the page.
+  expect(document.activeElement).toBe(replaced);
+  expect(replaced.style.visibility).toBe("visible");
+  // The same with the card hidden meanwhile (a tab switch): the next
+  // visible control, never an invisible board.
+  const again = deferred();
+  readFile.mockReturnValueOnce(again.promise);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  act(() => shown.focus());
+  expect(document.activeElement).toBe(replaced);
+  size.mockReturnValue(rect(0, 0, 0, 0));
+  // (focus kept in the old frame, as if the hide had not run yet)
+  await act(async () => again.resolve(TEXT));
+  const third = await waitFor(() => {
+    const f = screen.getByTitle(TITLE) as HTMLIFrameElement;
+    expect(f).not.toBe(replaced);
+    return f;
+  });
+  expect(third.style.visibility).toBe("hidden");
+  expect(document.activeElement).not.toBe(third);
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "after" }),
+  );
+});
+
+test("a replacement frame never takes focus back from a place the user chose", () => {
+  const before = document.createElement("button");
+  const element = document.createElement("div");
+  const after = document.createElement("button");
+  const other = document.createElement("button");
+  document.body.append(before, element, after, other);
+  jest
+    .spyOn(element, "getBoundingClientRect")
+    .mockReturnValue(rect(10, 50, 400, 300));
+  const make = () =>
+    createBoardFrame({
+      key: "refocus",
+      path: PATH,
+      frameUrl: FRAME,
+      sandbox: "allow-scripts",
+      text: TEXT,
+      name: "overnight.board.json",
+      title: TITLE,
+    });
+  try {
+    const old = make();
+    const detach = attachBoardFrame(old, element, () => {});
+    act(() => old.iframe.focus());
+    expect(document.activeElement).toBe(old.iframe);
+    // Refresh replaces it; the card detaches the old frame (focus moves out
+    // of the new one, hidden meanwhile) and attaches the new one.
+    const replaced = make();
+    expect(document.activeElement).toBe(replaced.iframe);
+    detach();
+    expect(document.activeElement).toBe(after);
+    // ...but before it attaches, the user goes elsewhere: it stays there.
+    other.focus();
+    attachBoardFrame(replaced, element, () => {});
+    expect(replaced.iframe.style.visibility).toBe("visible");
+    expect(document.activeElement).toBe(other);
+  } finally {
+    for (const el of [before, element, after, other]) el.remove();
+  }
+});
+
 test("hidden everywhere, focus leaves the frame next to where it was last shown", async () => {
   const first = render(
     <div>

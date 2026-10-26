@@ -49,6 +49,10 @@ export const BOARD_FRAME_HIDDEN_TTL_MS = 15 * 60_000;
 // layout effect may not have run): it is pending, not hidden, for this long,
 // and isn't dropped to make room meanwhile.
 export const BOARD_FRAME_PENDING_MS = 10_000;
+// A frame that replaced the one focus was in takes focus when its card
+// attaches it (the card detaches the old frame first, which moves focus
+// out), if that is this soon.
+const BOARD_FRAME_REFOCUS_MS = 1_000;
 
 // Below the app's popups, menus and dialogs, above ordinary page content.
 const LAYER_Z_INDEX = "1";
@@ -86,6 +90,11 @@ interface Entry extends BoardFrame {
   // The placeholder the frame covers: the newest one the user can see, or
   // the newest if none can be seen (activeOf).
   active?: Placeholder;
+  // Until when its card's attaching it gives it focus (BOARD_FRAME_REFOCUS_MS),
+  // and where hiding it meanwhile sent focus: only from there (or from
+  // nowhere) does attaching take it back, never from a place the user chose.
+  refocusUntil?: number;
+  focusMovedTo?: Element | null;
 }
 
 function activeOf(entry: Entry): Placeholder | undefined {
@@ -183,21 +192,35 @@ function notify(entry: Entry): void {
 // an invisible board; with none, focus leaves the frame.
 function hide(entry: Entry, from?: HTMLElement): void {
   if (document.activeElement === entry.iframe) {
-    const target =
-      from?.isConnected === true
-        ? (adjacentControl(from, true) ?? adjacentControl(from, false))
-        : undefined;
-    if (target != null) {
-      target.focus();
-    } else {
-      entry.iframe.blur();
-    }
+    if (!focusNear(from)) entry.iframe.blur();
+    if (entry.refocusUntil != null) entry.focusMovedTo = document.activeElement;
   }
   Object.assign(entry.iframe.style, {
     visibility: "hidden",
     pointerEvents: "none",
   });
   setSentinels(entry, false);
+}
+
+// Focus the nearest visible control around the place a frame was shown,
+// after it, else before it; false if there is none.
+function focusNear(from?: HTMLElement): boolean {
+  const target =
+    from?.isConnected === true
+      ? (adjacentControl(from, true) ?? adjacentControl(from, false))
+      : undefined;
+  target?.focus();
+  return target != null;
+}
+
+// Focus for a frame that replaced the one focus was in: the frame if it is
+// shown, else (its place is hidden) as when hiding a frame with focus.
+function takeFocus(entry: Entry, from?: HTMLElement): void {
+  if (entry.iframe.style.visibility === "visible") {
+    entry.iframe.focus();
+  } else {
+    focusNear(from);
+  }
 }
 
 // The sentinels take focus only while focus is in the frame (to catch Tab
@@ -579,7 +602,12 @@ export function createBoardFrame({
   // The read this frame is made from (beginBoardLoad), if any.
   generation?: number;
 }): BoardFrame {
-  const placeholders = entries.get(key)?.placeholders ?? [];
+  const previous = entries.get(key);
+  const placeholders = previous?.placeholders ?? [];
+  // Refresh can finish while the keyboard user is back in the old board:
+  // focus then follows to the new frame, not to the page's body.
+  const hadFocus =
+    previous != null && document.activeElement === previous.iframe;
   destroyBoardFrame(key);
   listen();
   const iframe = document.createElement("iframe");
@@ -639,6 +667,10 @@ export function createBoardFrame({
   hide(entry);
   notify(entry);
   layoutBoardFrames();
+  if (hadFocus) {
+    entry.refocusUntil = Date.now() + BOARD_FRAME_REFOCUS_MS;
+    takeFocus(entry, activeOf(entry)?.element);
+  }
   schedule();
   // Created hidden (no placeholder yet): it expires like any hidden frame.
   if (entry.hiddenSince != null) evictHidden();
@@ -665,6 +697,20 @@ export function attachBoardFrame(
   attached.pendingSince = undefined;
   notify(attached);
   layoutBoardFrames();
+  if (attached.refocusUntil != null) {
+    const focused = document.activeElement;
+    if (
+      Date.now() <= attached.refocusUntil &&
+      (focused == null ||
+        focused === document.body ||
+        focused === attached.iframe ||
+        focused === attached.focusMovedTo)
+    ) {
+      takeFocus(attached, element);
+    }
+    attached.refocusUntil = undefined;
+    attached.focusMovedTo = undefined;
+  }
   schedule();
   return () => {
     // The frame now showing the view, if Refresh replaced it meanwhile.
