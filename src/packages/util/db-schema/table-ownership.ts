@@ -323,6 +323,14 @@ export const TABLE_OWNERSHIP = {
     },
   ),
 
+  ...entries(["public_home_experiment_counts"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    notes:
+      "Aggregate daily counts for the public Home page experiment, kept on the bay that served the page or the sign-up. No visitor or account is identified; reports sum across bays.",
+  }),
+
   ...entries(["growth_annotations"], {
     ownership: "stable-bay",
     authority: "local",

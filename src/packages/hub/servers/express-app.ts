@@ -38,6 +38,7 @@ import initCliDistribution from "./app/cli-distribution";
 import initSelfHostConnector from "./app/self-host-connector";
 import initStripeWebhook from "./app/stripe-webhook";
 import initCrmOutreach from "./app/crm-outreach";
+import initPublicHomeExperiment from "./app/public-home-experiment";
 import initCommercialQuotes from "./app/commercial-quotes";
 import initContentView from "./app/content-view";
 import initAppOpen from "./app/app-open";
@@ -342,6 +343,7 @@ export default async function init(opts: Options): Promise<{
   initSelfHostConnector(router);
   initStripeWebhook(router);
   initCrmOutreach(router);
+  initPublicHomeExperiment(router);
   initCommercialQuotes(router);
   initContentView(router);
   initAppOpen(router);

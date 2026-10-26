@@ -58,6 +58,10 @@ import {
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { prefetchSignedInShell } from "./prefetch-signed-in";
+import {
+  publicHomeVariantFromSearch,
+  sendPublicHomeExperimentEvent,
+} from "../home-experiment";
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -2226,6 +2230,12 @@ export function PublicSignUpForm({
     () => new URL(window.location.href).searchParams.get("bootstrap") === "1",
     [],
   );
+  // Reached from a version of Home in the Home page experiment: count the
+  // visit, and the sign-up if it completes (aggregate counts only).
+  const homeVariant = useMemo(() => publicHomeVariantFromSearch(), []);
+  useEffect(() => {
+    if (homeVariant) sendPublicHomeExperimentEvent(homeVariant, "cta");
+  }, [homeVariant]);
 
   useEffect(() => {
     if (requiresToken !== undefined) {
@@ -2366,6 +2376,7 @@ export function PublicSignUpForm({
         throw new Error("Sign up failed. Please try again.");
       }
       setStoredControlPlaneOrigin(result?.home_bay_url);
+      if (homeVariant) sendPublicHomeExperimentEvent(homeVariant, "signup");
       if (requiresContinuousVerification) {
         setPendingVerificationEmail(email.trim().toLowerCase());
         onVerificationPendingChange?.(true);

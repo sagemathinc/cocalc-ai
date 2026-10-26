@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Flex, Modal, Typography } from "antd";
 
@@ -49,11 +49,17 @@ import {
 } from "@cocalc/util/public-home-content";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { builtinPolicyPath } from "../common";
+import {
+  choosePublicHomeVariant,
+  sendPublicHomeExperimentEvent,
+} from "../home-experiment";
+import { withPublicHomeVariant } from "@cocalc/util/public-home-experiment";
 
 const { Paragraph, Text, Title } = Typography;
 
 interface HomeConfig extends PublicConfig {
   site_description?: string;
+  public_home_experiment?: string;
 }
 
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
@@ -380,10 +386,12 @@ function SectionIntro({
 function Hero({
   authenticated,
   highlights,
+  signUpPath,
   siteName,
 }: {
   authenticated: boolean;
   highlights: readonly string[];
+  signUpPath: string;
   siteName: string;
 }) {
   const config = usePublicConfig();
@@ -432,7 +440,7 @@ function Hero({
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
           <Button
-            href={appPath(authenticated ? "projects" : "auth/sign-up")}
+            href={appPath(authenticated ? "projects" : signUpPath)}
             icon={
               <DecorativeButtonIcon
                 name={authenticated ? "project-outlined" : "rocket"}
@@ -717,9 +725,11 @@ function DifferenceSection() {
 
 function PathSection({
   authenticated,
+  signUpPath,
   trustHref,
 }: {
   authenticated: boolean;
+  signUpPath: string;
   trustHref?: string;
 }) {
   const config = usePublicConfig();
@@ -775,7 +785,7 @@ function PathSection({
           }}
         >
           <Button
-            href={authenticated ? appPath("projects") : appPath("auth/sign-up")}
+            href={authenticated ? appPath("projects") : appPath(signUpPath)}
             type="primary"
           >
             {authenticated ? "Open projects" : getPublicSignUpLabel(config)}
@@ -817,6 +827,29 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
     document.title = homeTitle;
   }, [homeTitle]);
 
+  // The Home page experiment (util/public-home-experiment.ts): one version per
+  // page view, chosen once the settings are known. Only the default exists
+  // so far; a counted view tags the sign-up links with its version.
+  const [random] = useState(Math.random);
+  const choice = useMemo(
+    () =>
+      choosePublicHomeVariant({
+        setting: config?.public_home_experiment,
+        isAuthenticated: authenticated,
+        random: () => random,
+      }),
+    [config?.public_home_experiment, authenticated, random],
+  );
+  const countedView = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!choice.counted || countedView.current === choice.variant) return;
+    countedView.current = choice.variant;
+    sendPublicHomeExperimentEvent(choice.variant, "view");
+  }, [choice]);
+  const signUpPath = choice.counted
+    ? withPublicHomeVariant("auth/sign-up", choice.variant)
+    : "auth/sign-up";
+
   return (
     <PublicPage active="home" config={marketingConfig}>
       <style>{HOME_PAGE_CSS}</style>
@@ -831,12 +864,17 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       >
         <Hero
           authenticated={authenticated}
+          signUpPath={signUpPath}
           highlights={getPublicHomeHighlights(withSiteHost(config))}
           siteName={siteName}
         />
         <AgentDefinitionSection />
         <DifferenceSection />
-        <PathSection authenticated={authenticated} trustHref={trustHref} />
+        <PathSection
+          authenticated={authenticated}
+          signUpPath={signUpPath}
+          trustHref={trustHref}
+        />
       </div>
     </PublicPage>
   );
