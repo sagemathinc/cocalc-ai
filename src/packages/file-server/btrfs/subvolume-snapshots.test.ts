@@ -337,9 +337,10 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
       );
       expect(beforePrune).toHaveBeenCalledWith([oldest]);
       expect(snapshots.delete).not.toHaveBeenCalled();
-      // one over the limit, reported as deferred
+      // one over the limit, reported as a limit deferral (not rolling)
       expect(names).toHaveLength(3);
-      expect(result.pruneDeferred).toBeGreaterThan(0);
+      expect(result.limitPruneDeferred).toBe(1);
+      expect(result.pruneDeferred).toBeUndefined();
     });
 
     it("frees the slot when the gate allows it", async () => {
@@ -351,7 +352,7 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
       );
       expect(snapshots.delete).toHaveBeenCalledWith(oldest);
       expect(names).toHaveLength(2);
-      expect(result.pruneDeferred).toBeUndefined();
+      expect(result.limitPruneDeferred).toBeUndefined();
     });
 
     it("while still busy, the next update neither deletes nor creates; once allowed it makes room and creates", async () => {
@@ -372,7 +373,7 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
           createDeferred: true,
           createdName: null,
         });
-        expect(waiting.pruneDeferred).toBeGreaterThan(0);
+        expect(waiting.limitPruneDeferred).toBe(1);
         expect(names).toEqual(afterFirst);
         expect(snapshots.create).toHaveBeenCalledTimes(1);
         expect(snapshots.delete).not.toHaveBeenCalled();
@@ -400,7 +401,10 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
         { limit: 1, beforePrune },
       );
       expect(beforePrune).toHaveBeenCalledWith(names.slice(0, 2));
-      expect(result).toMatchObject({ createDeferred: true, pruneDeferred: 2 });
+      expect(result).toMatchObject({
+        createDeferred: true,
+        limitPruneDeferred: 2,
+      });
       expect(snapshots.delete).not.toHaveBeenCalled();
       expect(snapshots.create).not.toHaveBeenCalled();
     });

@@ -3256,7 +3256,7 @@ describe("deferred snapshot prunes", () => {
       changed: null,
       disabled: false,
       skipped_reason: "snapshot_prune_deferred",
-      prune_deferred: true,
+      limit_prune_deferred: true,
       stage_durations_ms: { prune_deferred_ms: 0 },
     });
     const { runProjectSnapshotBackupMaintenanceSweepOnce } =
@@ -3277,6 +3277,39 @@ describe("deferred snapshot prunes", () => {
     const retry = Date.parse(report.retry_at);
     expect(retry - before).toBeGreaterThan(30_000);
     expect(retry - before).toBeLessThan(5 * 60_000);
+  });
+
+  it("publishes a created snapshot but retries the update in a minute when the limit prune waited", async () => {
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: "2026-04-10T22:30:00.000Z",
+      created_snapshot_at: "2026-04-10T22:30:00.000Z",
+      changed: true,
+      disabled: false,
+      prune_deferred: false,
+      limit_prune_deferred: true,
+      stage_durations_ms: { prune_deferred_ms: 0 },
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    const before = Date.now();
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    const report = reportProjectMaintenanceMock.mock.calls
+      .map(([value]) => value)
+      .filter((value) => value.kind === "snapshot")
+      .at(-1);
+    // not "succeeded": the limit still has to be applied within the bound
+    expect(report).toMatchObject({
+      outcome: "deferred",
+      reason: "snapshot_prune_deferred",
+      latest_snapshot_at: "2026-04-10T22:30:00.000Z",
+    });
+    expect(Date.parse(report.due_at)).toBeLessThanOrEqual(Date.now());
+    const retry = Date.parse(report.retry_at);
+    expect(retry - before).toBeGreaterThan(30_000);
+    expect(retry - before).toBeLessThan(5 * 60_000);
+    // and no rolling-only background retry, which would delete nothing
+    const gate = await import("./snapshot-prune-gate");
+    expect(gate.getSnapshotPruneGateStats().pending_projects).toBe(0);
   });
 
   it("keeps the retry pending while storage admission refuses it", async () => {

@@ -1525,6 +1525,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           let changed: boolean | null = null;
           let disabled = false;
           let skippedReason: string | undefined;
+          // The snapshot limit couldn't be applied (the gate declined): the
+          // whole update is retried in about a minute, within the gate's
+          // bound, whether or not a snapshot was just created.
+          let limitPruneDeferred = false;
           const result = await runScheduledStorageOperation({
             hostId,
             project_id,
@@ -1547,12 +1551,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               disabled = updated?.disabled ?? false;
               skippedReason = updated?.skipped_reason;
               stageDurations = updated?.stage_durations_ms ?? {};
-              if (updated?.skipped_reason === "snapshot_prune_deferred") {
-                // The whole update waited to make room under the limit; a
-                // deferred attempt is retried in about a minute, and the
-                // gate's bound keeps counting from the first deferral. The
-                // background retry can't help (it never applies the limit)
-                // and would restart that bound, so don't use it here.
+              limitPruneDeferred = updated?.limit_prune_deferred === true;
+              if (limitPruneDeferred) {
+                // Only a full update applies the limit (the background
+                // retry is rolling-only and would restart the gate's bound),
+                // and the retried update reruns rolling retention too.
               } else if (updated?.prune_deferred) {
                 // Retried within the bound even if this project isn't due
                 // again for a day (snapshot-prune-gate.ts).
@@ -1597,15 +1600,18 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             nextSnapshotDueAt > Date.now();
           const outcome = !result.ran
             ? "deferred"
-            : disabled
+            : limitPruneDeferred
               ? "deferred"
-              : confirmedRecoveryPoint
-                ? "succeeded"
-                : changed === false || intervalWaiting
-                  ? "skipped"
-                  : "deferred";
+              : disabled
+                ? "deferred"
+                : confirmedRecoveryPoint
+                  ? "succeeded"
+                  : changed === false || intervalWaiting
+                    ? "skipped"
+                    : "deferred";
           const reason =
             result.reason ??
+            (limitPruneDeferred ? "snapshot_prune_deferred" : undefined) ??
             skippedReason ??
             (disabled
               ? "snapshot_maintenance_disabled"
@@ -1659,15 +1665,18 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               reason === "no_content_change"
                 ? row.snapshot_schedule_revision
                 : null,
-            due_at: result.ran
-              ? reason === "no_content_change"
-                ? null
-                : nextSnapshotDueAt == null
+            // a limit deferral stays due, so the retry runs the update
+            due_at: limitPruneDeferred
+              ? new Date().toISOString()
+              : result.ran
+                ? reason === "no_content_change"
                   ? null
-                  : new Date(nextSnapshotDueAt).toISOString()
-              : dueAt == null
-                ? null
-                : new Date(dueAt).toISOString(),
+                  : nextSnapshotDueAt == null
+                    ? null
+                    : new Date(nextSnapshotDueAt).toISOString()
+                : dueAt == null
+                  ? null
+                  : new Date(dueAt).toISOString(),
             attempt_due_at:
               dueAt == null ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,

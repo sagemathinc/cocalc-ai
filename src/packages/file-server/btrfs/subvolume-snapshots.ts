@@ -554,8 +554,8 @@ export class SubvolumeSnapshots {
         changed: null,
         createdName: null,
         disabled: false,
-        pruneDeferred: madeRoomDeferred,
         createDeferred: true,
+        limitPruneDeferred: madeRoomDeferred,
       };
     }
     const result = await updateRollingSnapshots({
@@ -568,8 +568,8 @@ export class SubvolumeSnapshots {
     const capDeferred = result.pruneDeferred
       ? await countBeyondLimit()
       : await pruneToLimit(true);
-    return capDeferred > 0 || result.pruneDeferred
-      ? { ...result, pruneDeferred: (result.pruneDeferred ?? 0) + capDeferred }
+    return capDeferred > 0
+      ? { ...result, limitPruneDeferred: capDeferred }
       : result;
   };
 

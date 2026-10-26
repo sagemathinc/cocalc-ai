@@ -36,6 +36,10 @@ export interface RollingSnapshotUpdateResult {
   /** No snapshot was created: making room under the limit needed a prune
    * that beforePrune declined, so the whole update waits. */
   createDeferred?: boolean;
+  /** Snapshots kept over the project's limit because beforePrune declined
+   * the limit prune (before or after creating). Only a full update applies
+   * the limit, so the caller must retry the update, not a rolling prune. */
+  limitPruneDeferred?: number;
 }
 
 export type RollingSnapshotStage =

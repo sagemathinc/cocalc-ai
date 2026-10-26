@@ -3306,6 +3306,7 @@ export async function runScheduledSnapshotMaintenance({
   disabled: boolean;
   skipped_reason?: string;
   prune_deferred?: boolean;
+  limit_prune_deferred?: boolean;
   stage_durations_ms?: Record<string, number>;
 }> {
   const generation = currentProjectVolumeLifecycleGeneration(project_id);
@@ -3341,7 +3342,7 @@ export async function runScheduledSnapshotMaintenance({
           return pruneDecision.allow;
         },
       });
-      if (update.pruneDeferred) {
+      if (update.pruneDeferred || update.limitPruneDeferred) {
         // Reported with the attempt, so deferrals show in
         // project_maintenance_attempts.stage_durations_ms.
         stageDurations.prune_deferred_ms = pruneDecision?.deferredForMs ?? 0;
@@ -3351,7 +3352,7 @@ export async function runScheduledSnapshotMaintenance({
         // snapshot was attempted; the scheduler retries the update.
         return {
           skipped_reason: "snapshot_prune_deferred",
-          prune_deferred: true,
+          limit_prune_deferred: true,
           stage_durations_ms: stageDurations,
         };
       }
@@ -3368,8 +3369,10 @@ export async function runScheduledSnapshotMaintenance({
         created_snapshot_at: update.createdName,
         changed: update.changed,
         disabled: update.disabled,
-        // The caller retries the prune (snapshot-backup-maintenance.ts).
+        // The caller retries (snapshot-backup-maintenance.ts): a rolling
+        // prune in the background, a limit prune as a full update.
         prune_deferred: (update.pruneDeferred ?? 0) > 0,
+        limit_prune_deferred: (update.limitPruneDeferred ?? 0) > 0,
         stage_durations_ms: stageDurations,
       };
     },
@@ -3382,9 +3385,9 @@ export async function runScheduledSnapshotMaintenance({
       disabled: false,
       skipped_reason:
         result?.skipped_reason ?? "project_volume_lifecycle_changed",
-      ...(result && "prune_deferred" in result
+      ...(result && "limit_prune_deferred" in result
         ? {
-            prune_deferred: result.prune_deferred,
+            limit_prune_deferred: result.limit_prune_deferred,
             stage_durations_ms: result.stage_durations_ms,
           }
         : {}),
