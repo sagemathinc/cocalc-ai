@@ -112,6 +112,7 @@ export function registerProjectLifecycleCommands(
     extractCookie,
     fetchWithTimeout,
     PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
+    isValidUUID,
   } = deps;
 
   const backup = project.command("backup").description("project backups");
@@ -412,6 +413,39 @@ export function registerProjectLifecycleCommands(
             stopped_first: stoppedFirst,
           };
         });
+      },
+    );
+
+  project
+    .command("reopen-stuck-archive")
+    .description(
+      "admin: reopen a project stuck in state archiving under an automatic archive that cannot finish (requires fresh auth)",
+    )
+    .addHelpText(
+      "after",
+      "\nRefused unless the archive job is not running, no backup of the project is\nrunning, and the project's host confirms its volume is not frozen (or releases\nthe freeze of this job's final backup). The reason is recorded on the job.",
+    )
+    .requiredOption("-w, --project <project_id>", "project id")
+    .requiredOption("--reason <text>", "why the project is reopened (audited)")
+    .action(
+      async (opts: { project: string; reason: string }, command: Command) => {
+        await withContext(
+          command,
+          "project reopen-stuck-archive",
+          async (ctx) => {
+            const project_id = `${opts.project ?? ""}`.trim();
+            if (!isValidUUID(project_id)) {
+              throw new Error("--project must be a project_id UUID");
+            }
+            const reason = `${opts.reason ?? ""}`.trim();
+            if (!reason) throw new Error("--reason is required");
+            const result = await ctx.hub.projects.reopenStuckProjectArchive({
+              project_id,
+              reason,
+            });
+            return { project_id, status: "reopened", ...result };
+          },
+        );
       },
     );
 

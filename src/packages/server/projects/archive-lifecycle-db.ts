@@ -355,6 +355,7 @@ export async function claimProjectArchiveLifecycleJob(
             error = NULL,
             updated_at = NOW()
       WHERE id = $1
+        AND COALESCE(failure_category, '') NOT IN ('oversized-files', 'admin-reopen')
         AND (
           status = 'queued'
           OR (status = 'failed' AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()))
@@ -384,6 +385,7 @@ export async function claimRetainedProjectArchiveLifecycleJob(
       WHERE job.id = $1
         AND job.reason <> 'manual'
         AND job.report_only IS FALSE
+        AND COALESCE(job.failure_category, '') NOT IN ('oversized-files', 'admin-reopen')
         AND (
           job.status IN ('queued', 'stale', 'canceled', 'completed')
           OR (
@@ -417,6 +419,8 @@ export async function listQueuedProjectArchiveLifecycleJobs(
        FROM ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
       WHERE reason <> 'manual'
         AND report_only IS FALSE
+        -- terminal or reserved for an admin reopen (archive-lifecycle-maintenance)
+        AND COALESCE(failure_category, '') NOT IN ('oversized-files', 'admin-reopen')
         AND (
           (
             status IN ('queued', 'failed')
@@ -450,6 +454,8 @@ export async function listRecoverableProjectArchiveLifecycleJobs(
         AND project.state ->> 'state' = 'archiving'
       WHERE job.reason <> 'manual'
         AND job.report_only IS FALSE
+        -- terminal or reserved for an admin reopen (archive-lifecycle-maintenance)
+        AND COALESCE(job.failure_category, '') NOT IN ('oversized-files', 'admin-reopen')
         AND (
           job.status IN ('queued', 'stale', 'canceled', 'completed')
           OR

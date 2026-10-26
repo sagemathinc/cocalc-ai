@@ -1305,6 +1305,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.reopenStuckProjectArchive": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin action that changes another account's project state and its host volume freeze",
+  },
   "projects.restart": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

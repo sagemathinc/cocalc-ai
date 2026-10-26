@@ -471,8 +471,10 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
+  getProjectArchiveBlockedSummary,
   getProjectArchiveHostCoverage,
   getProjectArchiveLifecycleOperationalStatus,
+  projectArchiveBlockedHealth,
   projectArchiveHostCoverageHealth,
 } from "@cocalc/server/projects/archive-lifecycle-maintenance";
 import { getConatAdmissionConfig } from "../admission-settings";
@@ -2294,6 +2296,7 @@ export async function getLaunchHealth({
     kernelHardeningResult,
     backupRepoResult,
     archiveHostCoverageResult,
+    archiveBlockedResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2322,10 +2325,15 @@ export async function getLaunchHealth({
         seed_managed: projectBackupReposAreSeedManaged(),
       }))(),
     getProjectArchiveHostCoverage(),
+    getProjectArchiveBlockedSummary(),
   ]);
   const archiveHostCoverage =
     archiveHostCoverageResult.status === "fulfilled"
       ? projectArchiveHostCoverageHealth(archiveHostCoverageResult.value)
+      : undefined;
+  const archiveBlocked =
+    archiveBlockedResult.status === "fulfilled"
+      ? projectArchiveBlockedHealth(archiveBlockedResult.value)
       : undefined;
 
   const settings =
@@ -2699,6 +2707,18 @@ export async function getLaunchHealth({
         archiveHostCoverageResult.status === "rejected"
           ? [`${archiveHostCoverageResult.reason}`]
           : (archiveHostCoverage?.details ?? []),
+    }),
+    launchHealthCheck({
+      id: "project-archive-blocked",
+      label: "Automatic archives stopped by oversized files",
+      level: archiveBlocked?.level ?? "warning",
+      summary:
+        archiveBlocked?.summary ??
+        "Unable to read automatic archives stopped by oversized files.",
+      details:
+        archiveBlockedResult.status === "rejected"
+          ? [`${archiveBlockedResult.reason}`]
+          : (archiveBlocked?.details ?? []),
     }),
     launchHealthCheck({
       id: "project-recovery",

@@ -4,6 +4,8 @@ import {
   BACKUP_DEFAULT_MAX_FILE_BYTES,
   BACKUP_MIN_MAX_FILE_BYTES,
   hasOversizedFiles,
+  isOversizedFilesMessage,
+  oversizedFilesMessage,
 } from "./backups";
 
 describe("backupMaxFileBytes", () => {
@@ -29,5 +31,39 @@ describe("hasOversizedFiles", () => {
     expect(hasOversizedFiles({ ...report, count: 0 })).toBe(false);
     expect(hasOversizedFiles(null)).toBe(false);
     expect(hasOversizedFiles({ count: 2 })).toBe(false);
+  });
+});
+
+describe("isOversizedFilesMessage", () => {
+  const report = {
+    count: 2,
+    max_file_bytes: 10 * 1000 ** 3,
+    files: [{ path: "data/big.bin", size: 11 * 1000 ** 3 }],
+  };
+
+  it("recognizes the refusal, also when wrapped in other errors", () => {
+    const message = oversizedFilesMessage("archive this project", report);
+    expect(isOversizedFilesMessage(message)).toBe(true);
+    expect(
+      isOversizedFilesMessage(
+        `ProjectArchiveStorageError: FinalAutomaticArchiveBackupError: final automatic archive backup failed: Error: ${message}`,
+      ),
+    ).toBe(true);
+    expect(
+      isOversizedFilesMessage(
+        oversizedFilesMessage("move this project", { ...report, count: 1 }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not match other failures", () => {
+    for (const text of [
+      "final automatic archive backup failed: timeout",
+      "EFBIG: 'x' is larger than 10 bytes",
+      undefined,
+      null,
+    ]) {
+      expect(isOversizedFilesMessage(text)).toBe(false);
+    }
   });
 });
