@@ -1448,6 +1448,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin refund of a purchase, including card refunds through Stripe",
   },
+  "purchases.adminVatExposureReport": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin read of customers' Stripe billing country and VAT ID status across all active memberships",
+  },
   "purchases.adminListCreditAttribution": {
     decision: "fresh-auth-required",
     reason: "admin read of balance adjustments with internal reasons",

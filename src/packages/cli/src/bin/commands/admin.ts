@@ -68,6 +68,10 @@ import type {
   LaunchSmokeStepResult,
 } from "@cocalc/conat/hub/api/system";
 import { registerReceivablesCommand } from "./admin/receivables";
+import {
+  collectVatExposureReport,
+  formatVatExposureReport,
+} from "./admin/vat-exposure";
 import { registerCrmCommand } from "./admin/crm";
 import { registerAdminUsernameCommand } from "./personal-urls";
 
@@ -1340,6 +1344,46 @@ Merge comments are private unless their corresponding --*-comment-public flag is
           missing_only: !!opts.missing,
           limit,
         });
+      });
+    });
+
+  adminPurchase
+    .command("vat-exposure")
+    .description(
+      "list active personal memberships that the EU/UK VAT ID check would refuse at their next renewal (read only; admin fresh-auth, audited)",
+    )
+    .requiredOption("--reason <text>", "why the report is run (audited)")
+    .option(
+      "--max-seconds <n>",
+      "stop after this long and report what was checked",
+      "900",
+    )
+    .action(async (opts: any, command: Command) => {
+      await withContext(command, "admin purchase vat-exposure", async (ctx) => {
+        const reason = `${opts.reason ?? ""}`.trim();
+        if (!reason) throw new Error("--reason must be non-empty");
+        const maxSeconds = Number(opts.maxSeconds);
+        if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) {
+          throw new Error("--max-seconds must be a positive number");
+        }
+        const report = await collectVatExposureReport({
+          maxMs: maxSeconds * 1000,
+          page: (after_subscription_id) =>
+            ctx.hub.purchases.adminVatExposureReport({
+              account_id: ctx.accountId,
+              reason,
+              after_subscription_id,
+            }),
+        });
+        if (report.incomplete) process.exitCode = 1;
+        if (
+          ctx.globals?.json ||
+          ctx.globals?.output === "json" ||
+          ctx.globals?.output === "yaml"
+        ) {
+          return report;
+        }
+        return formatVatExposureReport(report);
       });
     });
 

@@ -220,7 +220,13 @@ import type {
   AdminCreditAttribution,
   AdminCreditAttributionAttachResult,
   AdminRefundResult,
+  VatExposureReportPage,
 } from "@cocalc/conat/hub/api/purchases";
+import { vatExposureReportPage } from "@cocalc/server/purchases/vat-exposure-report";
+import centralLog from "@cocalc/database/postgres/central-log";
+import getLogger from "@cocalc/backend/logger";
+
+const logger = getLogger("server:conat:api:purchases");
 import { searchClusterAccounts } from "@cocalc/server/inter-bay/accounts";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
@@ -2588,6 +2594,71 @@ export async function adminAttachCreditAttribution({
     reason: `${reason ?? ""}`,
     commit: commit === true,
   });
+}
+
+// One page of the VAT exposure report (server/purchases/vat-exposure-report.ts):
+// read only, but it reads customers' billing details across all active
+// memberships, so it needs fresh admin authentication and every page is
+// recorded in the central log with its reason.
+export async function adminVatExposureReport({
+  account_id,
+  browser_id,
+  session_hash,
+  reason,
+  after_subscription_id,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  reason?: string;
+  after_subscription_id?: number;
+} = {}): Promise<VatExposureReportPage> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  const cleanedReason = `${reason ?? ""}`.trim();
+  if (!cleanedReason) {
+    throw Error("a reason is required");
+  }
+  // The same check as the audited admin DB query.
+  await requireDangerousSessionAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    require_second_factor: "if_enabled",
+    allow_actor_impersonation: false,
+  });
+  const started = Date.now();
+  let page: VatExposureReportPage | undefined;
+  let error: unknown;
+  try {
+    page = await vatExposureReportPage({ after_subscription_id });
+    return page;
+  } catch (err) {
+    error = err;
+    throw err;
+  } finally {
+    try {
+      await centralLog({
+        event: "admin_vat_exposure_report",
+        value: {
+          account_id: actorId,
+          reason: cleanedReason.slice(0, 500),
+          after_subscription_id: after_subscription_id ?? 0,
+          checked: page?.checked,
+          affected: page?.affected.length,
+          stripe_errors: page?.stripe_errors.length,
+          duration_ms: Date.now() - started,
+          error: error == null ? null : `${error}`.slice(0, 500),
+        },
+      });
+    } catch (err) {
+      logger.warn("failed to write the VAT exposure report audit event", {
+        err,
+      });
+    }
+  }
 }
 
 export async function adminCreateRefund({

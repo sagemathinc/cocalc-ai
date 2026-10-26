@@ -18,6 +18,9 @@ const HTTP_READ_OPERATIONS = new Set<string>();
 const PURCHASE_READ_METHODS = new Set([
   "adminGetMembershipPackageQuote",
   "adminListCreditAttribution",
+  // Strictly side-effect free: reads the stored Stripe customer id (never
+  // creates or recovers one) and only reads from Stripe.
+  "adminVatExposureReport",
   "getAIUsage",
   "getAccountUsageOverview",
   "getAdminActiveUsersOverview",

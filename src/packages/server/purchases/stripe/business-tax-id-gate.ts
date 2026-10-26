@@ -269,10 +269,75 @@ export async function chargeableCardCountries(
   return Array.from(countries);
 }
 
+// Reading a payment method's card country failed, so the card-country rule
+// could not be decided.
+export class CardCountryCheckError extends Error {
+  constructor(public cause: unknown) {
+    super(`could not check card countries: ${cause}`);
+  }
+}
+
+export interface BusinessTaxIdDecision {
+  // The customer's status from the billing address and tax IDs.
+  status: BusinessTaxIdStatus;
+  // Set when the purchase is refused: the status to report, and the reason
+  // recorded for it ("missing", "invalid", ... or "card-country").
+  refusal?: { status: BusinessTaxIdStatus; reason: string };
+}
+
+// What the check decides for a purchase, with no side effects: it only reads
+// the Stripe customer (and, for an automatic payment from a customer with no
+// billing address, their cards). assertBusinessTaxIdForPurchase acts on it,
+// and the admin VAT exposure report uses it to predict renewals.
+// Throws CardCountryCheckError if the card countries cannot be read.
+export async function decideBusinessTaxIdForPurchase({
+  stripe,
+  customer,
+  path,
+}: {
+  stripe;
+  customer: string;
+  path: string;
+}): Promise<BusinessTaxIdDecision> {
+  if (isBusinessTaxIdExemptPurpose(path)) {
+    return { status: { required: false, country: "" } };
+  }
+  const status = businessTaxIdStatus(
+    await retrieveCustomerWithTaxIds(stripe, customer),
+  );
+  if (status.required && !status.ok) {
+    return { status, refusal: { status, reason: status.reason } };
+  }
+  // For an automatic payment from a customer with no billing address, an EU or
+  // UK card counts as an EU or UK customer (William, Oct 21, 2026).
+  if (!status.required && !status.country && isOffSessionPurpose(path)) {
+    let countries: string[];
+    try {
+      countries = await chargeableCardCountries(stripe, customer);
+    } catch (err) {
+      throw new CardCountryCheckError(err);
+    }
+    const card = countries.find((c) => requiresBusinessTaxId(c));
+    if (card) {
+      return {
+        status,
+        refusal: {
+          status: {
+            required: true,
+            ok: false,
+            country: card,
+            reason: "missing",
+          },
+          reason: "card-country",
+        },
+      };
+    }
+  }
+  return { status };
+}
+
 // Throws BusinessTaxIdRequiredError, after recording it, when the customer is
 // in the EU or the UK without a valid VAT ID. Returns the status otherwise.
-// For an automatic payment from a customer with no billing address, an EU or
-// UK card counts as an EU or UK customer (William, Oct 21, 2026).
 export async function assertBusinessTaxIdForPurchase({
   stripe,
   customer,
@@ -287,57 +352,31 @@ export async function assertBusinessTaxIdForPurchase({
   path: string;
   amount?: number | string | null;
 }): Promise<BusinessTaxIdStatus> {
-  if (isBusinessTaxIdExemptPurpose(path)) {
-    return { required: false, country: "" };
+  let decision: BusinessTaxIdDecision;
+  try {
+    decision = await decideBusinessTaxIdForPurchase({ stripe, customer, path });
+  } catch (err) {
+    if (!(err instanceof CardCountryCheckError)) throw err;
+    // Fail closed: without knowing where the card is from, do not charge.
+    logger.warn("could not check card countries for the VAT check", {
+      account_id,
+      err: err.cause,
+    });
+    throw Error(
+      "CoCalc could not check this payment method, so the automatic payment was not made. It will be retried later.",
+    );
   }
-  const offSession = isOffSessionPurpose(path);
-  const status = businessTaxIdStatus(
-    await retrieveCustomerWithTaxIds(stripe, customer),
-  );
-  if (status.required && !status.ok) {
+  const { status, refusal } = decision;
+  if (refusal != null) {
     await recordBusinessTaxIdRefusal({
       account_id,
-      country: status.country,
+      country: refusal.status.country,
       path,
-      reason: status.reason,
+      reason: refusal.reason,
       amount,
     });
     if (sendsGenericNotice(path)) await sendOffSessionRefusalNotice(account_id);
-    throw new BusinessTaxIdRequiredError(status);
-  }
-  if (!status.required && !status.country && offSession) {
-    let countries: string[];
-    try {
-      countries = await chargeableCardCountries(stripe, customer);
-    } catch (err) {
-      // Fail closed: without knowing where the card is from, do not charge.
-      logger.warn("could not check card countries for the VAT check", {
-        account_id,
-        err,
-      });
-      throw Error(
-        "CoCalc could not check this payment method, so the automatic payment was not made. It will be retried later.",
-      );
-    }
-    const card = countries.find((c) => requiresBusinessTaxId(c));
-    if (card) {
-      const refused: BusinessTaxIdStatus = {
-        required: true,
-        ok: false,
-        country: card,
-        reason: "missing",
-      };
-      await recordBusinessTaxIdRefusal({
-        account_id,
-        country: card,
-        path,
-        reason: "card-country",
-        amount,
-      });
-      if (sendsGenericNotice(path))
-        await sendOffSessionRefusalNotice(account_id);
-      throw new BusinessTaxIdRequiredError(refused);
-    }
+    throw new BusinessTaxIdRequiredError(refusal.status);
   }
   if (status.required && status.ok && status.verification !== "verified") {
     logger.warn("accepting a VAT ID that Stripe has not verified yet", {

@@ -1,0 +1,232 @@
+/*
+ *  This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ *  License: MS-RSL - see LICENSE.md for details
+ */
+
+import dayjs from "dayjs";
+
+import { after, before, getPool } from "@cocalc/server/test";
+import { uuid } from "@cocalc/util/misc";
+import {
+  createTestAccount,
+  createTestMembershipSubscription,
+} from "./test-data";
+import { vatExposureReportPage } from "./vat-exposure-report";
+
+beforeAll(async () => {
+  await before({ noConat: true });
+}, 15000);
+
+afterAll(after);
+
+// A Stripe client that only reads: any other call fails the test.
+function fakeStripe(customers: Record<string, any>) {
+  const customer = (id: string) => {
+    const c = customers[id];
+    if (c instanceof Error) throw c;
+    return c ?? { deleted: true };
+  };
+  return {
+    customers: {
+      retrieve: async (id: string) => customer(id),
+      listPaymentMethods: async (id: string) => ({
+        data: (customer(id).cards ?? []).map((country: string) => ({
+          card: { country },
+        })),
+        has_more: false,
+      }),
+      listSources: async () => ({ data: [], has_more: false }),
+      retrieveSource: async () => ({}),
+    },
+  };
+}
+
+async function membership(stripe_customer_id: string | null) {
+  const account_id = uuid();
+  await createTestAccount(account_id);
+  if (stripe_customer_id) {
+    await getPool().query(
+      "UPDATE accounts SET stripe_customer_id=$2 WHERE account_id=$1",
+      [account_id, stripe_customer_id],
+    );
+  }
+  const { subscription_id } = await createTestMembershipSubscription(
+    account_id,
+    { start: dayjs().toDate(), end: dayjs().add(1, "month").toDate() },
+  );
+  return { account_id, subscription_id };
+}
+
+async function count(table: string): Promise<number> {
+  const { rows } = await getPool().query(
+    `SELECT count(*)::int AS n FROM ${table}`,
+  );
+  return rows[0].n;
+}
+
+describe("VAT exposure report", () => {
+  it("predicts exactly which renewals the business tax ID check refuses, read only", async () => {
+    await getPool().query("DELETE FROM subscriptions");
+    const missing = await membership("cus_de_missing");
+    const unverified = await membership("cus_fr_unverified");
+    await membership("cus_de_valid");
+    await membership("cus_us");
+    const card = await membership("cus_no_address_eu_card");
+    await membership("cus_no_address_us_card");
+    const broken = await membership("cus_error");
+    await membership(null);
+    const stripe = fakeStripe({
+      cus_de_missing: { address: { country: "DE" }, tax_ids: { data: [] } },
+      cus_fr_unverified: {
+        address: { country: "FR" },
+        tax_ids: {
+          data: [
+            {
+              type: "eu_vat",
+              value: "FR00000000000",
+              verification: { status: "unverified" },
+            },
+          ],
+        },
+      },
+      cus_de_valid: {
+        address: { country: "DE" },
+        tax_ids: {
+          data: [
+            {
+              type: "eu_vat",
+              value: "DE000000000",
+              verification: { status: "verified" },
+            },
+          ],
+        },
+      },
+      cus_us: { address: { country: "US" }, tax_ids: { data: [] } },
+      cus_no_address_eu_card: { tax_ids: { data: [] }, cards: ["IT"] },
+      cus_no_address_us_card: { tax_ids: { data: [] }, cards: ["US"] },
+      cus_error: Object.assign(new Error("rate limited"), {
+        code: "rate_limit",
+      }),
+    });
+    const refusalsBefore = await count("business_tax_id_refusals");
+    const noticesBefore = await count("business_tax_id_notices");
+
+    const page = await vatExposureReportPage({
+      stripe,
+      customer_interval_ms: 0,
+    });
+
+    expect(page.checked).toBe(8);
+    expect(page.no_stripe_customer).toBe(1);
+    expect(page.next_after_subscription_id).toBeNull();
+    const affected = Object.fromEntries(
+      page.affected.map((row) => [row.subscription_id, row]),
+    );
+    expect(Object.keys(affected).sort()).toEqual(
+      [missing, unverified, card].map((m) => `${m.subscription_id}`).sort(),
+    );
+    expect(affected[missing.subscription_id]).toMatchObject({
+      account_id: missing.account_id,
+      reason: "missing",
+      country: "DE",
+    });
+    expect(affected[unverified.subscription_id]).toMatchObject({
+      reason: "unverified",
+      country: "FR",
+    });
+    expect(affected[card.subscription_id]).toMatchObject({
+      reason: "card-country",
+      country: "IT",
+    });
+    expect(typeof affected[missing.subscription_id].current_period_end).toBe(
+      "string",
+    );
+    // a Stripe error is reported and does not stop the report
+    expect(page.stripe_errors).toEqual([
+      {
+        account_id: broken.account_id,
+        subscription_id: broken.subscription_id,
+        error: expect.stringContaining("rate limited"),
+      },
+    ]);
+    // nothing recorded, nobody notified
+    expect(await count("business_tax_id_refusals")).toBe(refusalsBefore);
+    expect(await count("business_tax_id_notices")).toBe(noticesBefore);
+  });
+
+  it("skips canceled subscriptions and continues from a cursor", async () => {
+    await getPool().query("DELETE FROM subscriptions");
+    const first = await membership("cus_a");
+    const second = await membership("cus_b");
+    const canceled = await membership("cus_c");
+    await getPool().query(
+      "UPDATE subscriptions SET status='canceled' WHERE id=$1",
+      [canceled.subscription_id],
+    );
+    const stripe = fakeStripe({
+      cus_a: { address: { country: "DE" }, tax_ids: { data: [] } },
+      cus_b: { address: { country: "AT" }, tax_ids: { data: [] } },
+      cus_c: { address: { country: "DE" }, tax_ids: { data: [] } },
+    });
+
+    const page = await vatExposureReportPage({
+      stripe,
+      after_subscription_id: first.subscription_id,
+      customer_interval_ms: 0,
+    });
+
+    expect(page.checked).toBe(1);
+    expect(page.affected.map((row) => row.subscription_id)).toEqual([
+      second.subscription_id,
+    ]);
+    expect(page.next_after_subscription_id).toBeNull();
+  });
+
+  it("reports a customer whose check hangs as an error and continues", async () => {
+    await getPool().query("DELETE FROM subscriptions");
+    const hung = await membership("cus_hung");
+    const next = await membership("cus_next");
+    const stripe = fakeStripe({
+      cus_next: { address: { country: "DE" }, tax_ids: { data: [] } },
+    });
+    const retrieve = stripe.customers.retrieve;
+    stripe.customers.retrieve = async (id: string) =>
+      id === "cus_hung" ? new Promise(() => {}) : retrieve(id);
+
+    const page = await vatExposureReportPage({
+      stripe,
+      customer_interval_ms: 0,
+      customer_timeout_ms: 50,
+    });
+
+    expect(page.stripe_errors).toEqual([
+      {
+        account_id: hung.account_id,
+        subscription_id: hung.subscription_id,
+        error: expect.stringContaining("timed out"),
+      },
+    ]);
+    expect(page.affected.map((row) => row.subscription_id)).toEqual([
+      next.subscription_id,
+    ]);
+  });
+
+  it("stops at its time budget and returns a cursor", async () => {
+    await getPool().query("DELETE FROM subscriptions");
+    const first = await membership("cus_a");
+    await membership("cus_b");
+    const stripe = fakeStripe({
+      cus_a: { address: { country: "US" } },
+      cus_b: { address: { country: "US" } },
+    });
+
+    const page = await vatExposureReportPage({
+      stripe,
+      page_ms: 0,
+      customer_interval_ms: 0,
+    });
+
+    expect(page.checked).toBe(1);
+    expect(page.next_after_subscription_id).toBe(first.subscription_id);
+  });
+});

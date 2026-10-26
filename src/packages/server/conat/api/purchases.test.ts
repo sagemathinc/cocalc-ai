@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+const vatExposureReportPageMock = jest.fn();
+const centralLogMock = jest.fn();
 const getManagedEgressHistoryForAccountMock = jest.fn();
 const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
@@ -134,6 +136,15 @@ jest.mock("@cocalc/server/purchases/admin-membership-package", () => ({
 jest.mock("./dangerous-session-auth", () => ({
   requireDangerousSessionAuth: (...args: any[]) =>
     requireDangerousSessionAuthMock(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/vat-exposure-report", () => ({
+  vatExposureReportPage: (...args: any[]) => vatExposureReportPageMock(...args),
+}));
+
+jest.mock("@cocalc/database/postgres/central-log", () => ({
+  __esModule: true,
+  default: (...args: any[]) => centralLogMock(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/admin-refund", () => ({
@@ -4310,6 +4321,88 @@ describe("purchases.adminCreateRefund", () => {
       reason: "requested_by_customer",
       notes: "duplicate charge",
       commit: false,
+    });
+  });
+});
+
+describe("purchases.adminVatExposureReport", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires an admin and a reason before anything is read", async () => {
+    const { adminVatExposureReport } = await import("./purchases");
+    isAdminMock.mockResolvedValue(false);
+    await expect(
+      adminVatExposureReport({ account_id: "viewer-1", reason: "contact" }),
+    ).rejects.toThrow("must be an admin");
+    isAdminMock.mockResolvedValue(true);
+    await expect(
+      adminVatExposureReport({ account_id: "admin-1", reason: " " }),
+    ).rejects.toThrow("a reason is required");
+    expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
+    expect(vatExposureReportPageMock).not.toHaveBeenCalled();
+  });
+
+  it("requires fresh admin auth like the admin DB query", async () => {
+    isAdminMock.mockResolvedValue(true);
+    requireDangerousSessionAuthMock.mockRejectedValue(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+    const { adminVatExposureReport } = await import("./purchases");
+    await expect(
+      adminVatExposureReport({
+        account_id: "admin-1",
+        browser_id: "browser-1",
+        reason: "contact affected customers",
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: "if_enabled",
+      allow_actor_impersonation: false,
+    });
+    expect(vatExposureReportPageMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the page and records who ran it, why, and the totals", async () => {
+    isAdminMock.mockResolvedValue(true);
+    requireDangerousSessionAuthMock.mockResolvedValue({});
+    const page = {
+      checked: 3,
+      no_stripe_customer: 0,
+      affected: [{ subscription_id: 7 }],
+      stripe_errors: [],
+      next_after_subscription_id: null,
+    };
+    vatExposureReportPageMock.mockResolvedValue(page);
+    const { adminVatExposureReport } = await import("./purchases");
+    await expect(
+      adminVatExposureReport({
+        account_id: "admin-1",
+        session_hash: "fresh-session-1",
+        reason: "contact affected customers",
+        after_subscription_id: 5,
+      }),
+    ).resolves.toBe(page);
+    expect(vatExposureReportPageMock).toHaveBeenCalledWith({
+      after_subscription_id: 5,
+    });
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "admin_vat_exposure_report",
+      value: expect.objectContaining({
+        account_id: "admin-1",
+        reason: "contact affected customers",
+        after_subscription_id: 5,
+        checked: 3,
+        affected: 1,
+        stripe_errors: 0,
+        error: null,
+      }),
     });
   });
 });

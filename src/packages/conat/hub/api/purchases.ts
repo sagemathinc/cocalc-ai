@@ -53,6 +53,35 @@ export interface AdminRefundResult {
   refund_purchase_id?: number;
 }
 
+// An active personal membership that the EU/UK business tax ID check would
+// refuse at its next renewal (server/purchases/vat-exposure-report.ts).
+export interface VatExposureRow {
+  account_id: string;
+  subscription_id: number;
+  // The next renewal.
+  current_period_end: string;
+  // "missing" or "unverified" (no accepted VAT ID for an EU/UK billing
+  // address), or
+  // "card-country" (no billing address, and an EU/UK card).
+  reason: string;
+  country: string;
+}
+
+// One page of the VAT exposure report: pass next_after_subscription_id back
+// to continue; null means every active membership was checked.
+export interface VatExposureReportPage {
+  checked: number;
+  // Checked, but with no Stripe customer (a renewal would not be refused).
+  no_stripe_customer: number;
+  affected: VatExposureRow[];
+  stripe_errors: {
+    account_id: string;
+    subscription_id: number;
+    error: string;
+  }[];
+  next_after_subscription_id: number | null;
+}
+
 export interface AdminCreditAttributionAttachResult {
   committed: boolean;
   before: AdminCreditAttribution;
@@ -1906,6 +1935,13 @@ export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
     reason?: string;
     commit?: boolean;
   }) => Promise<AdminCreditAttributionAttachResult>;
+  adminVatExposureReport: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    reason?: string;
+    after_subscription_id?: number;
+  }) => Promise<VatExposureReportPage>;
   adminCreateRefund: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -2178,6 +2214,7 @@ export const purchases = {
   adminListCreditAttribution: authFirstRequireAccountWithBoundSession,
   adminAttachCreditAttribution: authFirstRequireAccountWithBoundSession,
   adminCreateRefund: authFirstRequireAccountWithBoundSession,
+  adminVatExposureReport: authFirstRequireAccountWithBoundSession,
   adminCreateMembershipPackagePurchase: authFirstRequireAccountWithBoundSession,
   listSiteLicenseOverviews: authFirstRequireAccount,
   getSiteLicenseOverview: authFirstRequireAccount,
