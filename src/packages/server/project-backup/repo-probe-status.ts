@@ -15,17 +15,20 @@ import getPool from "@cocalc/database/pool";
 
 export type ProjectBackupRepoProbeResult = "ok" | "failed";
 
-// Why a probe failed. The first three are deterministic: retrying will not
-// help until someone fixes the repository or its secret.
+// Why a probe failed. All but "timeout" and "error" are deterministic:
+// retrying will not help until someone acts. "cleanup_failed" means the
+// temporary profile, which holds the repository credentials, was left on
+// disk.
 export type ProjectBackupRepoProbeErrorKind =
   | "wrong_password"
   | "missing_config"
   | "no_config"
+  | "cleanup_failed"
   | "timeout"
   | "error";
 
 export const DETERMINISTIC_PROBE_ERROR_KINDS: ReadonlySet<ProjectBackupRepoProbeErrorKind> =
-  new Set(["wrong_password", "missing_config", "no_config"]);
+  new Set(["wrong_password", "missing_config", "no_config", "cleanup_failed"]);
 
 export interface ProjectBackupRepoProbeRow {
   repo_id: string;

@@ -5,7 +5,15 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,6 +35,7 @@ import {
   classifyRusticError,
   getProjectBackupRepoHealth,
   probeProjectBackupRepo,
+  removeLeftoverProbeProfiles,
   projectBackupRepoHealthLevel,
   projectBackupRepoHealthSummary,
   runProjectBackupRepoHealthCheck,
@@ -201,7 +210,10 @@ describe("project backup repository health probe", () => {
           throw new Error("EBUSY");
         },
       });
-      expect(outcome).toMatchObject({ result: "failed", error_kind: "error" });
+      expect(outcome).toMatchObject({
+        result: "failed",
+        error_kind: "cleanup_failed",
+      });
       expect(outcome.error).toContain(leftover);
       expect(outcome.error).toContain("holds the repository credentials");
       await rm(leftover, { recursive: true, force: true });
@@ -243,6 +255,50 @@ describe("project backup repository health probe", () => {
     },
     30000,
   );
+
+  it("removes leftover probe profiles, and alerts on those it cannot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "probe-root-"));
+    try {
+      const now = new Date();
+      const old = join(root, "cocalc-backup-repo-probe-old");
+      const young = join(root, "cocalc-backup-repo-probe-young");
+      const other = join(root, "something-else");
+      for (const path of [old, young, other]) {
+        await mkdir(path);
+        await writeFile(join(path, "repo.toml"), toml("good"));
+      }
+      const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+      await utimes(old, hourAgo, hourAgo);
+      await utimes(other, hourAgo, hourAgo);
+      expect(await removeLeftoverProbeProfiles({ tempRoot: root })).toEqual({
+        removed: [old],
+        failed: [],
+      });
+      expect(existsSync(old)).toBe(false);
+      expect(existsSync(young)).toBe(true);
+      expect(existsSync(other)).toBe(true);
+      expect(adminAlert).not.toHaveBeenCalled();
+
+      await utimes(young, hourAgo, hourAgo);
+      expect(
+        await removeLeftoverProbeProfiles({
+          tempRoot: root,
+          removeTempDir: async () => {
+            throw new Error("EBUSY");
+          },
+        }),
+      ).toEqual({ removed: [], failed: [young] });
+      expect(adminAlert).toHaveBeenCalledTimes(1);
+      expect(adminAlert.mock.calls[0][0]).toMatchObject({
+        subject: "Project backup repository probe left credentials on disk",
+        dedupBySubject: true,
+      });
+      expect(adminAlert.mock.calls[0][0].body).toContain(young);
+      expect(adminAlert.mock.calls[0][0].body).not.toContain("s3-secret");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("summarizes and classifies rustic errors", () => {
     const stderr =
@@ -366,6 +422,14 @@ describe("project backup repository health probe", () => {
     expect(projectBackupRepoHealthSummary(health)).toContain(
       "1 shared project backup repository fails the health probe",
     );
+
+    // So is a probe profile left on disk, even once.
+    await getPool().query(
+      "UPDATE project_backup_repo_probes SET consecutive_failures=1, last_error_kind='cleanup_failed' WHERE repo_id=$1",
+      [flaky],
+    );
+    health = await getProjectBackupRepoHealth({ now });
+    expect(projectBackupRepoHealthLevel(health)).toBe("critical");
 
     // A wrong password is critical at once.
     await getPool().query("DELETE FROM project_backup_repos WHERE id=$1", [

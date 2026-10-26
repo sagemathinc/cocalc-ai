@@ -25,7 +25,7 @@ repository fails or the probes stop running:
 - healthy: otherwise.
 */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -205,7 +205,7 @@ export async function probeProjectBackupRepo(
       });
       outcome = {
         result: "failed",
-        error_kind: "error",
+        error_kind: "cleanup_failed",
         error: `unable to remove the temporary probe profile ${tempDir}, which holds the repository credentials; delete it: ${`${err}`.slice(0, 200)}`,
         duration_ms: elapsed(),
       };
@@ -257,6 +257,70 @@ async function runRusticProbe({
   };
 }
 
+const PROFILE_PREFIX = "cocalc-backup-repo-probe-";
+// No probe takes this long, so an older profile directory is a leftover.
+const LEFTOVER_PROFILE_AGE_MS = 10 * 60 * 1000;
+const LEFTOVER_ALERT_SUBJECT =
+  "Project backup repository probe left credentials on disk";
+
+// Remove probe profiles that an earlier probe (maybe in a process that has
+// since restarted) failed to remove. Admins get an alert naming any that
+// still cannot be removed.
+export async function removeLeftoverProbeProfiles(
+  deps: ProbeDeps = {},
+): Promise<{ removed: string[]; failed: string[] }> {
+  const root = deps.tempRoot ?? tmpdir();
+  const now = (deps.now ?? (() => new Date()))().getTime();
+  const removed: string[] = [];
+  const failed: string[] = [];
+  let names: string[];
+  try {
+    names = await readdir(root);
+  } catch {
+    return { removed, failed };
+  }
+  for (const name of names) {
+    if (!name.startsWith(PROFILE_PREFIX)) continue;
+    const path = join(root, name);
+    try {
+      const { mtimeMs } = await stat(path);
+      if (now - mtimeMs < LEFTOVER_PROFILE_AGE_MS) continue;
+      await (
+        deps.removeTempDir ??
+        ((dir) => rm(dir, { recursive: true, force: true }))
+      )(path);
+      removed.push(path);
+    } catch (err) {
+      logger.error(
+        "unable to remove a leftover backup repository probe profile",
+        {
+          path,
+          err: `${err}`,
+        },
+      );
+      failed.push(path);
+    }
+  }
+  if (removed.length) {
+    logger.warn("removed leftover backup repository probe profiles", {
+      removed,
+    });
+  }
+  if (failed.length) {
+    await adminAlert({
+      subject: LEFTOVER_ALERT_SUBJECT,
+      body: [
+        "These temporary backup repository probe profiles hold repository passwords and storage keys, and could not be removed. Delete them on the bay:",
+        "",
+        ...failed.map((path) => `- ${path}`),
+      ].join("\n"),
+      dedupBySubject: true,
+      dedupMinutes: 24 * 60,
+    });
+  }
+  return { removed, failed };
+}
+
 // Repositories whose probe is due: never probed, last probed a day ago, or
 // failing and last probed an hour ago. Oldest first.
 async function dueRepoIds(now: Date, limit: number): Promise<string[]> {
@@ -287,6 +351,7 @@ export async function runProjectBackupRepoProbes(
 ): Promise<{ probed: number; failed: number }> {
   await ensureProjectBackupRepoSchema();
   await ensureProjectBackupRepoProbeSchema();
+  await removeLeftoverProbeProfiles(deps);
   const now = deps.now ?? (() => new Date());
   const queue = await dueRepoIds(now(), deps.limit ?? PROBE_MAX_PER_RUN);
   const staggerMs = deps.staggerMs ?? PROBE_STAGGER_MS;
