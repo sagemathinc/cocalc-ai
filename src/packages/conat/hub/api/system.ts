@@ -1605,6 +1605,19 @@ export interface ProjectBackupShardAdminRepoInfo {
   available_project_slots: number;
   created: string | null;
   updated: string | null;
+  probe?: ProjectBackupShardAdminRepoProbe | null;
+}
+
+// The last health probe of a shared repository: does its config open with
+// the stored secret? null until the first probe.
+export interface ProjectBackupShardAdminRepoProbe {
+  last_probe_at: string | null;
+  result: string | null;
+  error_kind: string | null;
+  error: string | null;
+  last_ok_at: string | null;
+  failing_since: string | null;
+  consecutive_failures: number;
 }
 
 export interface ProjectBackupShardAdminRegionInfo {

@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Space, Spin, Table, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Space,
+  Spin,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
@@ -30,6 +39,33 @@ function statusTag(status: string | null) {
     default:
       return <Tag>{normalized}</Tag>;
   }
+}
+
+// The last probe: does the repository's config open with its stored secret?
+function probeCell(row: ProjectBackupShardAdminRepoInfo) {
+  const probe = row.probe;
+  if (!probe?.last_probe_at) {
+    return <Tag>not probed</Tag>;
+  }
+  if (probe.result === "ok") {
+    return (
+      <Space size={4}>
+        <Tag color="green">ok</Tag>
+        <TimeAgo date={probe.last_probe_at} />
+      </Space>
+    );
+  }
+  return (
+    <Tooltip title={probe.error ?? ""}>
+      <Space size={4}>
+        <Tag color="red">{probe.error_kind ?? "failed"}</Tag>
+        <span>
+          {probe.consecutive_failures}x since{" "}
+          {probe.failing_since ? <TimeAgo date={probe.failing_since} /> : "-"}
+        </span>
+      </Space>
+    </Tooltip>
+  );
 }
 
 function count(value: number): string {
@@ -162,6 +198,10 @@ export function ProjectBackupShardsAdmin() {
         <Table.Column<ProjectBackupShardAdminRepoInfo>
           title="Status"
           render={(_, row) => statusTag(row.status)}
+        />
+        <Table.Column<ProjectBackupShardAdminRepoInfo>
+          title="Probe"
+          render={(_, row) => probeCell(row)}
         />
         <Table.Column<ProjectBackupShardAdminRepoInfo>
           title="Assigned"

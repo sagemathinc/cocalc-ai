@@ -227,7 +227,14 @@ import {
 import {
   getProjectBackupInfrastructureStatus,
   getProjectBackupShardAdminStatus,
+  projectBackupReposAreSeedManaged,
 } from "@cocalc/server/project-backup";
+import {
+  getProjectBackupRepoHealth,
+  projectBackupRepoHealthDetails,
+  projectBackupRepoHealthLevel,
+  projectBackupRepoHealthSummary,
+} from "@cocalc/server/project-backup/repo-health";
 import {
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryHealth,
@@ -2275,6 +2282,7 @@ export async function getLaunchHealth({
     backupPurgeResult,
     billingExposureResult,
     kernelHardeningResult,
+    backupRepoResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2298,6 +2306,10 @@ export async function getLaunchHealth({
     getBackupPurgeHealth(),
     getBillingExposureHealth({ bay_id: currentBay.bay_id }),
     getHostKernelHardeningSummary(),
+    (async () =>
+      projectBackupReposAreSeedManaged()
+        ? null
+        : await getProjectBackupRepoHealth())(),
   ]);
 
   const settings =
@@ -2643,6 +2655,28 @@ export async function getLaunchHealth({
         billingExposureResult.status === "rejected"
           ? [`${billingExposureResult.reason}`]
           : billingExposureHealthDetails(billingExposureResult.value),
+    }),
+    launchHealthCheck({
+      id: "backup-repos",
+      label: "Shared project backup repositories",
+      level:
+        backupRepoResult.status === "rejected"
+          ? "critical"
+          : backupRepoResult.value == null
+            ? "healthy"
+            : projectBackupRepoHealthLevel(backupRepoResult.value),
+      summary:
+        backupRepoResult.status === "rejected"
+          ? "Unable to read the shared backup repository probe results."
+          : backupRepoResult.value == null
+            ? "The seed bay owns and probes the shared backup repositories."
+            : projectBackupRepoHealthSummary(backupRepoResult.value),
+      details:
+        backupRepoResult.status === "rejected"
+          ? [`${backupRepoResult.reason}`]
+          : backupRepoResult.value == null
+            ? []
+            : projectBackupRepoHealthDetails(backupRepoResult.value),
     }),
     launchHealthCheck({
       id: "project-recovery",

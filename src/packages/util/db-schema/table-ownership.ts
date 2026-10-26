@@ -1215,6 +1215,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Bay-owned recovery-warning scan cursor and full-scan completion evidence. The cursor project is a traversal reference, not ownership authority.",
   }),
 
+  ...adHocEntries(["project_backup_repo_probes"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "server/project-backup/repo-probe-status.ts",
+    migrate_to_schema: true,
+    notes:
+      "Last health-probe result per shared project-backup repository (project_backup_repos, seed-global). Written by the repository-authoritative bay's probe; operational evidence, no secrets.",
+  }),
+
   ...adHocEntries(["project_app_private_hostnames"], {
     ownership: "project-owning",
     authority: "project_id",
