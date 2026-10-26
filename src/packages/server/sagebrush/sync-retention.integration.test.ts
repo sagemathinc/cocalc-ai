@@ -458,6 +458,46 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     expect((await stateOf(other)).notice_request_id).toBeNull();
   });
 
+  it("ends sync on a first check when Sagebrush still has it active without the entitlement (rollout)", async () => {
+    const { s, fetch } = fakeSagebrush();
+    // An approval from before these checks: the membership already lapsed,
+    // and Sagebrush still has sync active.
+    const account_id = await insertAccount();
+    enabled.set(account_id, false);
+    s.retention.set(account_id, {
+      state: "active",
+      readonly_since: null,
+      purge_after: null,
+    });
+    expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(1);
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
+    expect(s.notices).toHaveLength(1);
+    expect(s.notices[0].limits.sync.enabled).toBe(false);
+    let row = await stateOf(account_id);
+    expect(row.sync_enabled).toBe(false);
+    expect(row.notice_accepted_at).not.toBeNull();
+    // The retention cycle starts: Sagebrush applied it, and the first email goes.
+    expect(row.email_stage).toBe("ended");
+    s.retention.set(account_id, {
+      state: "readonly",
+      readonly_since: clock,
+      purge_after: clock + 90 * DAY,
+    });
+    expect(await steps(fetch)).toMatchObject({ sent: 1 });
+    expect(sent[0].subject).toMatch(/sync has ended/);
+    row = await stateOf(account_id);
+    expect(row.email_stage).toBe("before");
+
+    // Without the entitlement and with no synced data, a first check only
+    // records the state.
+    const other = await insertAccount();
+    enabled.set(other, false);
+    expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(0);
+    expect((await stateOf(other)).sync_enabled).toBe(false);
+    expect((await stateOf(other)).notice_request_id).toBeNull();
+    expect(s.notices).toHaveLength(1);
+  });
+
   it("keeps a first check a first check when queuing its reconcile notice fails", async () => {
     const { s, fetch } = fakeSagebrush();
     const account_id = await insertAccount();

@@ -375,10 +375,9 @@ export function retentionEmail({
 
 /** Check the accounts that approved a Sagebrush sign-in on this bay, those
  * not checked for RECHECK_MS, in batches until none is due, and record their
- * sync state. A change
- * from what was last seen queues a plan notice; the first check of an account
- * only records it, unless sync is enabled while Sagebrush still holds the data
- * read-only (see recordSyncState). An account whose check fails waits
+ * sync state. A change from what was last seen queues a plan notice; the
+ * first check of an account only records it, unless Sagebrush's state
+ * disagrees with it (see recordSyncState). An account whose check fails waits
  * RECHECK_MS too. Returns the number of changes. */
 export async function checkSyncStates({
   db = getPool(),
@@ -399,12 +398,14 @@ export async function checkSyncStates({
   now?: () => number;
   batch?: number;
 } = {}): Promise<number> {
-  const readOnlyOnSagebrush =
+  // Whether Sagebrush holds synced data in a state other than `enabled`'s:
+  // read-only while sync is enabled, or active while it is not.
+  const disagreesOnSagebrush =
     config == null
       ? undefined
-      : async (account_id: string) => {
+      : async (account_id: string, enabled: boolean) => {
           const r = await readSyncRetention({ config, account_id, fetch, now });
-          return r.synced && r.state === "readonly";
+          return r.synced && (r.state === "readonly") === enabled;
         };
   let changes = 0;
   // Every account checked gets a new checked_at, failed or not, so each batch
@@ -417,7 +418,7 @@ export async function checkSyncStates({
       accountState,
       now,
       batch,
-      readOnlyOnSagebrush,
+      disagreesOnSagebrush,
     });
     changes += due.changes;
     if (due.ids.length < batch || due.ids.every((id) => seen.has(id))) break;
@@ -432,14 +433,17 @@ async function checkSyncStatesBatch({
   accountState,
   now,
   batch,
-  readOnlyOnSagebrush,
+  disagreesOnSagebrush,
 }: {
   db: Queryable;
   getLimits: (account_id: string) => Promise<SagebrushLimits | undefined>;
   accountState: (opts: { account_id: string }) => Promise<OAuthAccountState>;
   now: () => number;
   batch: number;
-  readOnlyOnSagebrush?: (account_id: string) => Promise<boolean>;
+  disagreesOnSagebrush?: (
+    account_id: string,
+    enabled: boolean,
+  ) => Promise<boolean>;
 }): Promise<{ ids: string[]; changes: number }> {
   const { rows } = await db.query<{ account_id: string }>(
     `SELECT a.account_id
@@ -479,7 +483,7 @@ async function checkSyncStatesBatch({
           account_id,
           limits,
           t,
-          readOnlyOnSagebrush,
+          disagreesOnSagebrush,
           onPhase: (p) => (phase = p),
         })
       ) {
@@ -537,30 +541,35 @@ function changeAssignments(e: number, t: number, r: number, l: number) {
 // Record an account's sync state as CoCalc resolved it at time t. A change from
 // what was last seen queues a new notice and ends the current retention cycle;
 // the emails of a sync that ended start once its notice is accepted. The first
-// answer for an account only records it, with one exception: sync is enabled
-// but Sagebrush still holds the data read-only. That happens after a rehome
-// (the old home bay sent the notice that ended sync, and the account renewed
-// before signing in to Sagebrush here, so this bay never saw sync end); without
-// a notice Sagebrush would stay read-only until the old bay's next step. So
-// that first check queues a notice of the current state.
+// answer for an account only records it, unless Sagebrush holds synced data in
+// the other state, and then it queues a notice of the current state:
+// - sync enabled, but Sagebrush read-only: after a rehome (the old home bay
+//   sent the notice that ended sync, and the account renewed before signing in
+//   to Sagebrush here, so this bay never saw sync end);
+// - sync not enabled, but Sagebrush active: an approval from before this
+//   check existed (the rollout), or one whose lapse no bay saw. Without the
+//   notice sync would never end there, and no retention email would start.
 async function recordSyncState({
   db,
   account_id,
   limits,
   t,
-  readOnlyOnSagebrush,
+  disagreesOnSagebrush,
   onPhase,
 }: {
   db: Queryable;
   account_id: string;
   limits: SagebrushLimits;
   t: number;
-  readOnlyOnSagebrush?: (account_id: string) => Promise<boolean>;
+  disagreesOnSagebrush?: (
+    account_id: string,
+    enabled: boolean,
+  ) => Promise<boolean>;
   onPhase?: (phase: SyncFailureCode) => void;
 }): Promise<boolean> {
   const enabled = limits.sync.enabled === true;
   let reconcile = false;
-  if (enabled && readOnlyOnSagebrush != null) {
+  if (disagreesOnSagebrush != null) {
     const { rows: prior } = await db.query<{ sync_enabled: boolean | null }>(
       `SELECT sync_enabled FROM sagebrush_sync_states WHERE account_id = $1::UUID`,
       [account_id],
@@ -568,7 +577,7 @@ async function recordSyncState({
     if (prior[0]?.sync_enabled == null) {
       // (a failure here leaves the first check to be retried, after backoff)
       onPhase?.("request_failed");
-      reconcile = await readOnlyOnSagebrush(account_id);
+      reconcile = await disagreesOnSagebrush(account_id, enabled);
       onPhase?.("db_error");
     }
   }

@@ -293,12 +293,14 @@ in batches of 50:
 
 - it reads the limits (section 2);
 - it records `sync.enabled` in `sagebrush_sync_states`;
-- the first check of an account only records the state, unless sync is enabled
-  while Sagebrush still holds the account's data read-only. That is what an
-  account rehomed after its sync ended, and renewed before signing in to
-  Sagebrush on the new home bay, looks like there. Then the first check sends
-  the plan notice of the current state, so Sagebrush is not left read-only until
-  the old home bay's next step;
+- the first check of an account reads Sagebrush's sync retention. It only
+  records the state, unless Sagebrush holds synced data in the other state, and
+  then it sends the plan notice of the current state:
+  - sync enabled while the data is read-only: an account rehomed after its sync
+    ended, and renewed before signing in to Sagebrush on the new home bay;
+  - sync not enabled while the data is active: an approval from before these
+    checks existed, or a lapse no bay saw. The notice ends sync, and the
+    retention emails follow;
 - an account whose check fails (its state or limits can't be read) waits the same
   10 minutes before it is tried again, so failing accounts can't keep the rest of
   the batch from being checked.
