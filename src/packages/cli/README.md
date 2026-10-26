@@ -541,9 +541,17 @@ authenticated inbox. Read messages with `agent inbox` first: its `data` is a
 list of `{message_id, created_at, source, body, ...}` with the full text.
 Then acknowledge each one with `agent ack-inbox`, which returns the message and
 hides it from `agent inbox`. `agent inbox --include-acknowledged` lists read
-messages again until they expire.
-External attachments are not supported. My Agents lists installations and
-supports immediate revocation.
+messages again until they expire. My Agents lists installations and supports
+immediate revocation.
+
+Files sent with `--attach` to an external member are copies kept with the
+message in its inbox (at most 16 files and 32 MiB per message, 256 MiB held
+per account) until the message expires. `agent inbox` lists each
+message's `attachments`; save them, checked against their SHA-256, with:
+
+```sh
+cocalc agent inbox-attachments MESSAGE_ID --external-agent security --dir ./received
+```
 
 Inspect an attempt without retrying it. For an external recipient, which
 starts no turn, this says whether it has read (acknowledged) the message:

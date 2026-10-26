@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { isPublicHomeVariantId } from "@cocalc/util/public-home-experiment";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import getParams from "@cocalc/http-api/lib/api/get-params";
@@ -56,6 +57,7 @@ export async function start(req, res) {
       terms,
       terms_version,
       onboarding_intent,
+      home_variant,
     } = getParams(req);
     const email = `${rawEmail ?? ""}`.trim().toLowerCase();
     const strategy = checkRequiredSSO({
@@ -84,6 +86,9 @@ export async function start(req, res) {
         terms_version: `${terms_version ?? ""}`.trim() || undefined,
         continuation_target: safeContinuationTarget(target),
         onboarding_intent: normalizeProjectOnboardingIntent(onboarding_intent),
+        home_variant: isPublicHomeVariantId(home_variant)
+          ? home_variant
+          : undefined,
       }),
     );
   } catch (err) {

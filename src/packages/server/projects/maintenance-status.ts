@@ -205,6 +205,9 @@ const MAINTENANCE_STAGES = new Set([
   "change_detection",
   "create",
   "prune",
+  // How long a snapshot's prune had been waiting when this attempt deferred
+  // it again (project-host snapshot-prune-gate.ts).
+  "prune_deferred_ms",
   "confirmation",
   "reporting",
 ]);
@@ -875,6 +878,7 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
                   'project_volume_unavailable', 'project_volume_archiving',
                   'project_volume_lifecycle_changed',
                   'backup_capacity_busy', 'snapshot_not_created',
+                  'snapshot_prune_deferred',
                   'backup_not_created', 'replacement_capacity_blocked',
                   'snapshot_maintenance_disabled',
                   'legacy_restore_active', 'memory_pressure',

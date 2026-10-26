@@ -14,6 +14,10 @@ import {
 } from "@cocalc/frontend/cookie-consent";
 import { linkFirstPartyAnalyticsAccount } from "@cocalc/frontend/cookie-consent/analytics";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  isPublicHomeVariantId,
+  PUBLIC_HOME_VARIANT_PARAM,
+} from "@cocalc/util/public-home-experiment";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
@@ -271,6 +275,18 @@ export default function PublicApp({
     productDependentRoute &&
     config === undefined &&
     (configChanged || customizeState.pending);
+  // Home picks its version (util/public-home-experiment.ts) from the site
+  // settings, so it waits for them rather than show the default page and
+  // then swap it; a ?home= preview needs no settings.
+  const waitingForHomeConfig =
+    initialRoute.section === "home" &&
+    config === undefined &&
+    (configChanged || customizeState.pending) &&
+    !isPublicHomeVariantId(
+      new URLSearchParams(
+        typeof window === "undefined" ? "" : window.location.search,
+      ).get(PUBLIC_HOME_VARIANT_PARAM),
+    );
   const product = currentConfig?.cocalc_product;
   const knownProduct =
     product === "plus" || product === "launchpad" || product === "rocket";
@@ -288,7 +304,7 @@ export default function PublicApp({
       )}
       <PublicRouteErrorBoundary route={initialRoute}>
         <Suspense fallback={null}>
-          {!waitingForFeatureConfig && (
+          {!waitingForFeatureConfig && !waitingForHomeConfig && (
             <PublicRouteBody
               config={currentConfig}
               initialRoute={initialRoute}

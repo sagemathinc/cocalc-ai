@@ -194,8 +194,11 @@ function HomeLogoLink({
 
 export default function PublicTopNav({
   active,
+  signUpPath = "auth/sign-up",
 }: {
   active?: PublicTopNavActiveKey;
+  /** The sign-up link (Home adds its experiment version to it). */
+  signUpPath?: string;
 }) {
   const config = usePublicConfig();
   const { token } = theme.useToken();
@@ -314,7 +317,7 @@ export default function PublicTopNav({
         Sign in
       </Button>
       <Button
-        href={appPath("auth/sign-up")}
+        href={appPath(signUpPath)}
         size={isCompact ? "small" : "middle"}
         type={primaryAuthAction === "sign-up" ? "primary" : "default"}
       >

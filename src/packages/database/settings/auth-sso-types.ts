@@ -28,6 +28,9 @@ export interface PassportLoginOpts {
   terms_accepted?: boolean;
   marketing_consent?: boolean;
   onboarding_intent?: ProjectOnboardingIntent;
+  // Home page experiment version: counted when a new account is created,
+  // never stored on it (util/public-home-experiment.ts).
+  home_variant?: string;
   registration_token?: string;
   cb?: (err) => void;
 }

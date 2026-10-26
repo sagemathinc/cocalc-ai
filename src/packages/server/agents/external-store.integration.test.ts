@@ -2,8 +2,14 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { EXTERNAL_AGENT_TOKEN_PREFIX } from "@cocalc/conat/agents/external";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
-import { ExternalAgentStore, type ExternalEnrollment } from "./external-store";
+import {
+  EXTERNAL_INBOX_DB_BYTES,
+  ExternalAgentStore,
+  type ExternalEnrollment,
+} from "./external-store";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { AgentStore } from "./store";
+import { setExternalInboxObjectsForTesting } from "./external-inbox-objects";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -26,6 +32,8 @@ describeDb("network-bound external agents", () => {
     "agent_external_identities",
     "agent_external_installations",
     "agent_external_inbox",
+    "agent_external_inbox_attachments",
+    "agent_external_inbox_reservations",
   ];
 
   function enrollment(): {
@@ -47,6 +55,8 @@ describeDb("network-bound external agents", () => {
   }
 
   beforeAll(async () => {
+    // Files stay in Postgres unless a test says otherwise.
+    setExternalInboxObjectsForTesting(null);
     await syncSchema(
       Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),
     );
@@ -360,5 +370,556 @@ describeDb("network-bound external agents", () => {
         sender,
       ),
     ).toBeNull();
+  });
+
+  function file(name: string, text: string) {
+    const data = new TextEncoder().encode(text);
+    return {
+      name,
+      size: data.byteLength,
+      sha256: createHash("sha256").update(data).digest("hex"),
+      data,
+    };
+  }
+
+  const sender = randomUUID();
+
+  function manifestOf(files: ReturnType<typeof file>[]) {
+    return files.map(({ name, size, sha256 }) => ({ name, size, sha256 }));
+  }
+
+  // A message for a new installation, and (with files) the reservation that
+  // preparing them makes.
+  async function sent(
+    attachments?: ReturnType<typeof file>[],
+    { reserve = true }: { reserve?: boolean } = {},
+  ) {
+    const { options } = enrollment();
+    const installation = await store.enroll(account, "human-session", options);
+    const source = {
+      kind: "registered" as const,
+      account_id: sender,
+      project_id: randomUUID(),
+      agent_id: randomUUID(),
+      run_id: randomUUID(),
+    };
+    const base = {
+      account_id: account,
+      installation_id: installation.installation_id,
+      attempt_id: randomUUID(),
+      agent_network_id: network,
+      network_generation: generation,
+      source,
+      source_account_id: sender,
+    };
+    const reservation =
+      attachments && reserve
+        ? await store.reserve({ ...base, manifest: manifestOf(attachments) })
+        : undefined;
+    const input = {
+      ...base,
+      body: "Report attached.",
+      ...(attachments ? { attachments } : {}),
+      ...(reservation ? { reservation_id: reservation.reservation_id } : {}),
+    };
+    return { installation, source, base, input, reservation };
+  }
+
+  // As if the inbox already held this much: one stored file says so (the size
+  // check is set aside just for this).
+  async function pretendHeld(
+    bytes: number,
+    { otherAccount = false }: { otherAccount?: boolean } = {},
+  ) {
+    const { input } = await sent([file("held.txt", "x")]);
+    await store.enqueue(input);
+    await db.query(
+      "ALTER TABLE agent_external_inbox_attachments DROP CONSTRAINT agent_external_inbox_attachments_size_check",
+    );
+    await db.query(
+      "UPDATE agent_external_inbox_attachments SET size=$2, account_id=$3 WHERE installation_id=$1",
+      [input.installation_id, bytes, otherAccount ? randomUUID() : account],
+    );
+  }
+
+  async function restoreSizeCheck() {
+    await db.query("DELETE FROM agent_external_inbox_attachments");
+    await db.query(
+      `ALTER TABLE agent_external_inbox_attachments ADD CONSTRAINT agent_external_inbox_attachments_size_check
+       CHECK (size BETWEEN 0 AND 33554432 AND (data IS NULL OR octet_length(data)=size))`,
+    );
+  }
+
+  test("attachments are kept with the message and read back by the installation", async () => {
+    const files = [
+      file("report.md", "# Report\n"),
+      file("data.csv", "a,b\n1,2\n"),
+    ];
+    const { installation, input } = await sent(files);
+    const message = await store.enqueue(input);
+    expect(message.attachments).toEqual(manifestOf(files));
+    expect(await store.inbox(account, installation.installation_id)).toEqual([
+      message,
+    ]);
+    const second = await store.attachment(
+      account,
+      installation.installation_id,
+      message.message_id,
+      1,
+    );
+    expect(second).toMatchObject({ name: "data.csv", index: 1, count: 2 });
+    expect(new TextDecoder().decode(second.data)).toBe("a,b\n1,2\n");
+    // The send consumed its reservation.
+    expect(
+      (await db.query("SELECT * FROM agent_external_inbox_reservations")).rows,
+    ).toEqual([]);
+    // A retry is the same message (its reservation is spent, and not
+    // needed); changed files are a conflict.
+    expect(await store.enqueue(input)).toEqual(message);
+    await expect(
+      store.enqueue({ ...input, attachments: [files[0]] }),
+    ).rejects.toThrow("external_inbox_idempotency_conflict");
+    // Still readable once the message is read.
+    await store.acknowledge(
+      account,
+      installation.installation_id,
+      message.message_id,
+    );
+    await expect(
+      store.attachment(
+        account,
+        installation.installation_id,
+        message.message_id,
+        0,
+      ),
+    ).resolves.toMatchObject({ name: "report.md" });
+    await expect(
+      store.attachment(
+        account,
+        installation.installation_id,
+        message.message_id,
+        2,
+      ),
+    ).rejects.toThrow("external_inbox_attachment_not_found");
+    // Another installation of the account cannot read them.
+    const other = await sent();
+    await expect(
+      store.attachment(
+        account,
+        other.installation.installation_id,
+        message.message_id,
+        0,
+      ),
+    ).rejects.toThrow("external_inbox_attachment_not_found");
+  });
+
+  test("content must match the manifest", async () => {
+    const bad = { ...file("x.txt", "hello"), sha256: "0".repeat(64) };
+    const { input } = await sent([bad]);
+    await expect(store.enqueue(input)).rejects.toThrow(
+      "external_inbox_attachment_mismatch",
+    );
+  });
+
+  test("files travel only with the reservation made for exactly them", async () => {
+    const files = [file("a.txt", "a")];
+    const unreserved = await sent(files, { reserve: false });
+    await expect(store.enqueue(unreserved.input)).rejects.toThrow(
+      "external_inbox_attachment_unreserved",
+    );
+    const { base, input, reservation } = await sent(files);
+    // Preparing the same files again is the same reservation; anything else
+    // for the attempt is a conflict.
+    expect(
+      await store.reserve({ ...base, manifest: manifestOf(files) }),
+    ).toEqual(reservation);
+    await expect(
+      store.reserve({ ...base, manifest: manifestOf([file("b.txt", "b")]) }),
+    ).rejects.toThrow("external_inbox_idempotency_conflict");
+    // Not another attempt's, sender's or file's.
+    for (const wrong of [
+      { ...input, attempt_id: randomUUID() },
+      { ...input, source_account_id: randomUUID() },
+      { ...input, source: { ...input.source, agent_id: randomUUID() } },
+      { ...input, attachments: [file("a.txt", "A")] },
+      { ...input, reservation_id: randomUUID() },
+    ])
+      await expect(store.enqueue(wrong)).rejects.toThrow(
+        /external_inbox_attachment_unreserved|external_inbox_attachment_mismatch/,
+      );
+    // Not once it has lapsed.
+    await db.query(
+      "UPDATE agent_external_inbox_reservations SET expires_at=now()-interval '1 second'",
+    );
+    await expect(store.enqueue(input)).rejects.toThrow(
+      "external_inbox_attachment_unreserved",
+    );
+  });
+
+  test("released room is free again, and only its sender releases it", async () => {
+    const files = [file("a.txt", "a")];
+    const { base, reservation } = await sent(files);
+    const release = {
+      ...base,
+      reservation_id: reservation!.reservation_id,
+    };
+    expect(
+      await store.release({ ...release, source_account_id: randomUUID() }),
+    ).toBe(false);
+    expect(await store.release(release)).toBe(true);
+    expect(await store.release(release)).toBe(false);
+    const again = await store.reserve({ ...base, manifest: manifestOf(files) });
+    expect(again.reservation_id).not.toBe(reservation!.reservation_id);
+  });
+
+  test("an account's inboxes hold a bounded amount, counting reservations, across installations", async () => {
+    await pretendHeld(256 * 1024 * 1024 - 2);
+    try {
+      // Another installation of the same account: the same room.
+      const first = await sent([file("a.txt", "x")]);
+      expect(first.reservation).toBeDefined();
+      // The first reservation took the last free byte but one.
+      await expect(sent([file("b.txt", "yy")])).rejects.toThrow(
+        "external_inbox_attachment_capacity",
+      );
+      // Without files, messages still arrive.
+      const plain = await sent();
+      await expect(store.enqueue(plain.input)).resolves.toMatchObject({
+        body: "Report attached.",
+      });
+    } finally {
+      await restoreSizeCheck();
+    }
+  });
+
+  test("files kept in this bay's database are bounded for every account together", async () => {
+    await pretendHeld(EXTERNAL_INBOX_DB_BYTES, { otherAccount: true });
+    try {
+      await expect(sent([file("a.txt", "x")])).rejects.toThrow(
+        "external_inbox_attachment_capacity",
+      );
+      // With R2 the database does not hold them, so they fit.
+      setExternalInboxObjectsForTesting(objectStore());
+      await expect(sent([file("a.txt", "x")])).resolves.toBeDefined();
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+      await restoreSizeCheck();
+    }
+  });
+
+  // R2 configured: an in-memory stand-in for the private objects.
+  function objectStore() {
+    const objects = new Map<string, Buffer>();
+    return {
+      objects,
+      put: jest.fn(async (key: string, data: Buffer) => {
+        objects.set(key, Buffer.from(data));
+      }),
+      get: jest.fn(async (key: string) => objects.get(key)),
+      list: jest.fn(async (prefix: string, limit: number) =>
+        [...objects.keys()]
+          .filter((key) => key.startsWith(prefix))
+          .sort()
+          .slice(0, limit),
+      ),
+      delete: jest.fn(async (keys: string[]) => {
+        for (const key of keys) objects.delete(key);
+      }),
+    };
+  }
+
+  test("with R2, files are private objects and the rows say only where", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const files = [file("report.md", "# Report\n"), file("x.bin", "\u0001")];
+      const { installation, input } = await sent(files);
+      const message = await store.enqueue(input);
+      const rows = (
+        await db.query(
+          `SELECT idx,data,r2_key FROM agent_external_inbox_attachments
+           WHERE message_id=$1 ORDER BY idx`,
+          [message.message_id],
+        )
+      ).rows;
+      expect(rows.map((row) => row.data)).toEqual([null, null]);
+      const day = new Date(Date.now() + 8 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      expect(rows.map((row) => row.r2_key)).toEqual(
+        files.map(
+          (f, idx) =>
+            `agent-external-inbox/v1/${getConfiguredBayId()}/${day}/${account}/${input.attempt_id}/${idx}-${f.sha256}`,
+        ),
+      );
+      expect(objects.objects.get(rows[0].r2_key)?.toString()).toBe(
+        "# Report\n",
+      );
+      const read = await store.attachment(
+        account,
+        installation.installation_id,
+        message.message_id,
+        0,
+      );
+      expect(Buffer.from(read.data).toString()).toBe("# Report\n");
+      // A retry uploads nothing again, and removes nothing.
+      await store.enqueue(input);
+      expect(objects.put).toHaveBeenCalledTimes(2);
+      expect(objects.delete).not.toHaveBeenCalled();
+      // An object that is not what the row says is never handed out.
+      objects.objects.set(rows[1].r2_key, Buffer.from("tampered"));
+      await expect(
+        store.attachment(
+          account,
+          installation.installation_id,
+          message.message_id,
+          1,
+        ),
+      ).rejects.toThrow("external_inbox_attachment_unavailable");
+      objects.objects.delete(rows[1].r2_key);
+      await expect(
+        store.attachment(
+          account,
+          installation.installation_id,
+          message.message_id,
+          1,
+        ),
+      ).rejects.toThrow("external_inbox_attachment_unavailable");
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("with R2, nothing is uploaded without the reservation, or for a conflicting retry", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const files = [file("a.txt", "a")];
+      const unreserved = await sent(files, { reserve: false });
+      await expect(store.enqueue(unreserved.input)).rejects.toThrow(
+        "external_inbox_attachment_unreserved",
+      );
+      const { input } = await sent(files);
+      await store.enqueue(input);
+      expect(objects.put).toHaveBeenCalledTimes(1);
+      await expect(
+        store.enqueue({ ...input, attachments: [file("a.txt", "changed")] }),
+      ).rejects.toThrow("external_inbox_idempotency_conflict");
+      expect(objects.put).toHaveBeenCalledTimes(1);
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("a send holds its reservation while it uploads: counted, and not sent or released twice", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const files = [file("a.txt", "a")];
+      const { base, input, reservation } = await sent(files);
+      const during: any[] = [];
+      objects.put.mockImplementationOnce(async (key: string, data: Buffer) => {
+        const row = (
+          await db.query("SELECT * FROM agent_external_inbox_reservations")
+        ).rows[0];
+        during.push(row);
+        // The same send again uploads nothing; the sender cannot release it.
+        await expect(store.enqueue(input)).rejects.toThrow(
+          "external_inbox_attachment_in_progress",
+        );
+        expect(
+          await store.release({
+            ...base,
+            reservation_id: reservation!.reservation_id,
+          }),
+        ).toBe(false);
+        objects.objects.set(key, Buffer.from(data));
+      });
+      await store.enqueue(input);
+      expect(objects.put).toHaveBeenCalledTimes(1);
+      // Claimed, with a lease that keeps it counted well past the upload.
+      expect(during[0].claim_id).toBeTruthy();
+      expect(new Date(during[0].expires_at).getTime()).toBeGreaterThan(
+        Date.now() + 5 * 60_000,
+      );
+      expect(
+        (await db.query("SELECT * FROM agent_external_inbox_reservations"))
+          .rows,
+      ).toEqual([]);
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("a lease that lapses during the upload stores nothing", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const { installation, input } = await sent([file("a.txt", "a")]);
+      objects.put.mockImplementationOnce(async () => {
+        // No longer counted: storing the files now would exceed the bounds.
+        await db.query(
+          "UPDATE agent_external_inbox_reservations SET expires_at=now()-interval '1 second'",
+        );
+      });
+      await expect(store.enqueue(input)).rejects.toThrow(
+        "external_inbox_attachment_unreserved",
+      );
+      expect(await store.inbox(account, installation.installation_id)).toEqual(
+        [],
+      );
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("a failed upload gives up its claim, so the send can be retried", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const { input } = await sent([file("a.txt", "a")]);
+      objects.put.mockRejectedValueOnce(new Error("R2 unavailable"));
+      await expect(store.enqueue(input)).rejects.toThrow("R2 unavailable");
+      expect(
+        (
+          await db.query(
+            "SELECT claim_id FROM agent_external_inbox_reservations",
+          )
+        ).rows,
+      ).toEqual([{ claim_id: null }]);
+      await expect(store.enqueue(input)).resolves.toMatchObject({
+        attachments: [expect.objectContaining({ name: "a.txt" })],
+      });
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("UUIDs spelled in uppercase are the same reservation and send", async () => {
+    const files = [file("a.txt", "a")];
+    const { base, input, reservation } = await sent(files);
+    const upper = (value: string) => value.toUpperCase();
+    expect(
+      await store.reserve({
+        ...base,
+        installation_id: upper(base.installation_id),
+        attempt_id: upper(base.attempt_id),
+        manifest: manifestOf(files),
+      }),
+    ).toEqual(reservation);
+    await expect(
+      store.enqueue({
+        ...input,
+        attempt_id: upper(input.attempt_id),
+        reservation_id: upper(input.reservation_id!),
+      }),
+    ).resolves.toMatchObject({ body: "Report attached." });
+  });
+
+  test("a full inbox uploads nothing, and its last place goes to one send", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const first = await sent([file("a.txt", "a")]);
+      // A second send to the same inbox, reserved while it had room.
+      const secondBase = { ...first.base, attempt_id: randomUUID() };
+      const files = [file("b.txt", "b")];
+      const second = await store.reserve({
+        ...secondBase,
+        manifest: manifestOf(files),
+      });
+      const secondInput = {
+        ...secondBase,
+        body: "Second.",
+        attachments: files,
+        reservation_id: second.reservation_id,
+      };
+      // Then the inbox fills up to its last place.
+      await db.query(
+        `INSERT INTO agent_external_inbox
+         (message_id,attempt_id,account_id,installation_id,agent_network_id,
+          network_generation,source,body,expires_at)
+         SELECT gen_random_uuid(),gen_random_uuid(),$1,$2,$3,$4,'{}'::jsonb,'x',
+                now()+interval '1 day'
+         FROM generate_series(1,999)`,
+        [account, first.base.installation_id, network, generation],
+      );
+      objects.put.mockImplementationOnce(async (key: string, data: Buffer) => {
+        // The first send holds the last place while it uploads.
+        await expect(store.enqueue(secondInput)).rejects.toThrow(
+          "external_inbox_capacity",
+        );
+        await expect(
+          store.enqueue({
+            ...first.input,
+            attempt_id: randomUUID(),
+            attachments: undefined,
+            reservation_id: undefined,
+          }),
+        ).rejects.toThrow("external_inbox_capacity");
+        objects.objects.set(key, Buffer.from(data));
+      });
+      await store.enqueue(first.input);
+      // Full: nothing else is uploaded, and nothing more is reserved.
+      await expect(store.enqueue(secondInput)).rejects.toThrow(
+        "external_inbox_capacity",
+      );
+      expect(objects.put).toHaveBeenCalledTimes(1);
+      await expect(
+        store.reserve({
+          ...first.base,
+          attempt_id: randomUUID(),
+          manifest: manifestOf(files),
+        }),
+      ).rejects.toThrow("external_inbox_capacity");
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("a send without files cannot take an attempt reserved for files", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const { installation, input } = await sent([file("a.txt", "a")]);
+      const plain = {
+        ...input,
+        attachments: undefined,
+        reservation_id: undefined,
+      };
+      await expect(store.enqueue(plain)).rejects.toThrow(
+        "external_inbox_idempotency_conflict",
+      );
+      objects.put.mockImplementationOnce(async (key: string, data: Buffer) => {
+        await expect(store.enqueue(plain)).rejects.toThrow(
+          "external_inbox_attachment_in_progress",
+        );
+        objects.objects.set(key, Buffer.from(data));
+      });
+      const message = await store.enqueue(input);
+      expect(message.attachments).toHaveLength(1);
+      expect(await store.inbox(account, installation.installation_id)).toEqual([
+        message,
+      ]);
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("a row holds its content in exactly one place", async () => {
+    const { input } = await sent([file("a.txt", "x")]);
+    const message = await store.enqueue(input);
+    await expect(
+      db.query(
+        "UPDATE agent_external_inbox_attachments SET r2_key='k' WHERE message_id=$1",
+        [message.message_id],
+      ),
+    ).rejects.toThrow(/content_check/);
+    await expect(
+      db.query(
+        "UPDATE agent_external_inbox_attachments SET data=NULL WHERE message_id=$1",
+        [message.message_id],
+      ),
+    ).rejects.toThrow(/content_check/);
   });
 });

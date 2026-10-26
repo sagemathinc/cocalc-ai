@@ -6,6 +6,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { agentStore } from "./store";
 import { cleanupCocalcConnectorCredentials } from "./cocalc-connector-retention";
+import { removeExpiredExternalInboxObjects } from "./external-inbox-objects";
 
 const logger = getLogger("agents:maintenance");
 const BATCH = 5000;
@@ -23,6 +24,25 @@ async function remove(
 }
 
 export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
+  const result = await cleanupAgentMessagingRows();
+  // Only the run that did the rows (it held the lock), and after their
+  // transaction: this is network work. Files kept as R2 objects go with
+  // their day, whether or not a row still names them.
+  if (Object.keys(result).length) {
+    try {
+      result.external_inbox_objects = await removeExpiredExternalInboxObjects({
+        limit: BATCH,
+      });
+    } catch (error) {
+      logger.warn("external inbox object cleanup failed", {
+        error: `${error}`,
+      });
+    }
+  }
+  return result;
+}
+
+async function cleanupAgentMessagingRows(): Promise<CleanupResult> {
   return agentStore().transaction(async (db) => {
     const locked = (
       await db.query(
@@ -98,6 +118,25 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
         WHERE expires_at<now()
           OR (state='acknowledged' AND acknowledged_at<now()-interval '30 days')
         LIMIT $1)`,
+      result,
+    );
+    // Files go with their messages: expired, or the message is gone.
+    await remove(
+      db,
+      "external_inbox_attachments",
+      `DELETE FROM agent_external_inbox_attachments WHERE (message_id,idx) IN
+       (SELECT a.message_id,a.idx FROM agent_external_inbox_attachments a
+        WHERE a.expires_at<now()
+          OR NOT EXISTS (SELECT 1 FROM agent_external_inbox i WHERE i.message_id=a.message_id)
+        LIMIT $1)`,
+      result,
+    );
+    await remove(
+      db,
+      "external_inbox_reservations",
+      `DELETE FROM agent_external_inbox_reservations WHERE reservation_id IN
+       (SELECT reservation_id FROM agent_external_inbox_reservations
+        WHERE expires_at<now() LIMIT $1)`,
       result,
     );
     await remove(

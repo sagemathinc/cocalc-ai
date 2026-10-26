@@ -17,6 +17,8 @@ describeDb("Agent Network retention", () => {
     "agent_network_proposals",
     "agent_network_broadcasts",
     "agent_external_inbox",
+    "agent_external_inbox_attachments",
+    "agent_external_inbox_reservations",
   ];
   beforeAll(async () => {
     await syncSchema(
@@ -73,7 +75,68 @@ describeDb("Agent Network retention", () => {
         randomUUID(),
       ],
     );
+    // Attachments: one expired, one whose message is gone, one kept.
+    const kept = randomUUID();
+    await db.query(
+      `INSERT INTO agent_external_inbox
+       (message_id,attempt_id,account_id,installation_id,agent_network_id,
+        network_generation,source,body,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'hi',now()+interval '1 day')`,
+      [
+        kept,
+        randomUUID(),
+        account,
+        randomUUID(),
+        randomUUID(),
+        randomUUID(),
+        JSON.stringify({ project_id: randomUUID(), agent_id: randomUUID() }),
+      ],
+    );
+    for (const [message_id, expires] of [
+      [kept, "now()-interval '1 minute'"],
+      [randomUUID(), "now()+interval '1 day'"],
+      [kept, "now()+interval '1 day'"],
+    ])
+      await db.query(
+        `INSERT INTO agent_external_inbox_attachments
+         (message_id,idx,account_id,installation_id,name,size,sha256,data,expires_at)
+         VALUES($1,(SELECT count(*) FROM agent_external_inbox_attachments WHERE message_id=$1),
+                $2,$3,'a.txt',1,$4,'\\x61'::bytea,${expires})`,
+        [message_id, account, randomUUID(), "a".repeat(64)],
+      );
+    // Reservations: one lapsed, one live.
+    for (const expires of [
+      "now()-interval '1 minute'",
+      "now()+interval '5 minutes'",
+    ])
+      await db.query(
+        `INSERT INTO agent_external_inbox_reservations
+         (reservation_id,account_id,installation_id,attempt_id,agent_network_id,
+          network_generation,source_key,source_account_id,manifest,bytes,storage,expires_at)
+         VALUES($1,$2,$3,$4,$5,$6,'k',$7,'[]'::jsonb,1,'postgres',${expires})`,
+        [
+          randomUUID(),
+          account,
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+        ],
+      );
     const result = await cleanupAgentMessagingHistory();
+    expect(result.external_inbox_reservations).toBe(1);
+    expect(
+      (await db.query("SELECT * FROM agent_external_inbox_reservations")).rows,
+    ).toHaveLength(1);
+    expect(result.external_inbox_attachments).toBe(2);
+    expect(
+      (
+        await db.query(
+          "SELECT message_id FROM agent_external_inbox_attachments",
+        )
+      ).rows,
+    ).toEqual([{ message_id: kept }]);
     expect(result.report_executions).toBe(1);
     expect(result.network_mutations).toBe(1);
     expect(result.network_proposals).toBe(1);

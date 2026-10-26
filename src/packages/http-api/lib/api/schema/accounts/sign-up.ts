@@ -36,6 +36,13 @@ export const SignUpInputSchema = z
       .enum(PROJECT_ONBOARDING_INTENTS)
       .optional()
       .describe("First project requested by the acquisition landing page."),
+    homeVariant: z
+      .string()
+      .max(32)
+      .optional()
+      .describe(
+        "The Home page experiment version the sign-up came from; counted once the account exists, never stored on it.",
+      ),
     registrationToken: z
       .string()
       .optional()

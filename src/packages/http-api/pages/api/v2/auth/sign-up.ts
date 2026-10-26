@@ -28,6 +28,7 @@ curl -d displayName='John Doe' \
 TIP: If you want to pass in an email like jd+1@example.com, use '%2B' in place of '+'.
 */
 
+import { countPublicHomeExperimentSignup } from "@cocalc/server/public-home-experiment";
 import { v4 } from "uuid";
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -121,6 +122,7 @@ export async function signUp(req, res) {
     registrationToken,
     marketing_consent,
     onboardingIntent: rawOnboardingIntent,
+    homeVariant,
   } = getParams(req);
   const onboardingIntent =
     normalizeProjectOnboardingIntent(rawOnboardingIntent);
@@ -369,6 +371,8 @@ export async function signUp(req, res) {
         : undefined,
     });
     const account_id = created.account_id;
+    // Counted, not stored on the account (util/public-home-experiment.ts).
+    void countPublicHomeExperimentSignup(homeVariant);
     const home_bay_id =
       `${created.home_bay_id ?? ""}`.trim() || selected_home_bay_id;
 

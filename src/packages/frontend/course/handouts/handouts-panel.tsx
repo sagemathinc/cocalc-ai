@@ -283,8 +283,10 @@ export function AddHandouts({ name, actions, close }) {
     <AddItems
       itemName="handout"
       items={handouts}
-      addItems={(paths) => {
-        actions.handouts.addHandout(paths);
+      addItems={async (paths) => {
+        // Close only once the handouts exist; on failure the selector stays
+        // open and shows the error.
+        await actions.handouts.addHandout(paths);
         close?.();
       }}
       selectorStyle={{

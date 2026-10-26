@@ -164,3 +164,134 @@ Table({
     acknowledged_at: time("Explicit external acknowledgment time."),
   },
 });
+
+// Files sent with an external inbox message: described, like the message, at
+// the account's home bay until the message expires. Their content is a
+// private R2 object (r2_key) when R2 blob storage is configured, and in the
+// row (data) otherwise: a deliberate exception (William, 2026-10-26) to
+// keeping file data out of hub databases, for self-hosted sites without R2,
+// bounded per account and per bay (external-store.ts). Only the
+// installation's own credential reads them (inbox-attachment).
+Table({
+  name: "agent_external_inbox_attachments",
+  rules: {
+    primary_key: ["message_id", "idx"],
+    pg_constraints: [
+      {
+        name: "agent_external_inbox_attachments_idx_check",
+        type: "check",
+        expression: "idx BETWEEN 0 AND 15",
+      },
+      {
+        name: "agent_external_inbox_attachments_size_check",
+        type: "check",
+        expression:
+          "size BETWEEN 0 AND 33554432 AND (data IS NULL OR octet_length(data)=size)",
+      },
+      {
+        name: "agent_external_inbox_attachments_content_check",
+        type: "check",
+        expression: "(data IS NULL) <> (r2_key IS NULL)",
+      },
+    ],
+    pg_custom_indexes: [
+      {
+        name: "agent_external_inbox_attachments_account",
+        query: "(account_id,expires_at)",
+      },
+      {
+        name: "agent_external_inbox_attachments_expiry",
+        query: "(expires_at)",
+      },
+      {
+        name: "agent_external_inbox_attachments_in_db",
+        query: "(expires_at) WHERE data IS NOT NULL",
+      },
+    ],
+  },
+  fields: {
+    message_id: required("uuid", "The inbox message it was sent with."),
+    idx: required("integer", "Its position among the message's files."),
+    account_id: required("uuid", "Account-home authority."),
+    installation_id: required("uuid", "Exact external installation inbox."),
+    name: required("string", "File name, without any path."),
+    size: required("integer", "Size in bytes."),
+    sha256: required("string", "SHA-256 of the content, hex."),
+    data: {
+      type: "Buffer",
+      desc: "The file's content, when it is not an R2 object.",
+    },
+    r2_key: {
+      type: "string",
+      desc: "The private R2 object holding the file's content.",
+    },
+    created_at: created,
+    expires_at: {
+      ...time("The message's retention deadline."),
+      not_null: true,
+    },
+  },
+});
+
+// Room in an external inbox, reserved for one attempt's files before their
+// bytes move (prepare-attachments), and bound to who sends what to whom. The
+// send that carries them names it, and storing the message consumes it;
+// cancel-attachments releases it, and it lapses after a few minutes.
+Table({
+  name: "agent_external_inbox_reservations",
+  rules: {
+    primary_key: "reservation_id",
+    pg_constraints: [
+      {
+        name: "agent_external_inbox_reservations_attempt_key",
+        type: "unique",
+        columns: ["account_id", "attempt_id"],
+      },
+      {
+        name: "agent_external_inbox_reservations_bytes_check",
+        type: "check",
+        expression: "bytes BETWEEN 0 AND 33554432",
+      },
+      {
+        name: "agent_external_inbox_reservations_storage_check",
+        type: "check",
+        expression: "storage IN ('r2','postgres')",
+      },
+    ],
+    pg_custom_indexes: [
+      {
+        name: "agent_external_inbox_reservations_account",
+        query: "(account_id,expires_at)",
+      },
+      {
+        name: "agent_external_inbox_reservations_expiry",
+        query: "(expires_at)",
+      },
+    ],
+  },
+  fields: {
+    reservation_id: required("uuid", "The id the send names."),
+    account_id: required("uuid", "Account-home authority."),
+    installation_id: required("uuid", "Exact external installation inbox."),
+    attempt_id: required("uuid", "The sender's attempt it is for."),
+    agent_network_id: required("uuid", "Authorizing Agent Network."),
+    network_generation: required("uuid", "Network generation at reservation."),
+    source_key: required("string", "The sending member (agentRpcSourceKey)."),
+    source_account_id: required("uuid", "The sender's authenticated account."),
+    manifest: {
+      ...required("map", "The files: name, size and SHA-256, in order."),
+      pg_type: "JSONB",
+    },
+    bytes: required("integer", "Their total size."),
+    storage: required("string", "Where the bytes will go: r2 or postgres."),
+    claim_id: {
+      type: "uuid",
+      desc: "Set by the send uploading its files: while claimed, the reservation stays counted (its expiry is the upload lease) and cannot be released.",
+    },
+    created_at: created,
+    expires_at: {
+      ...time("When the reservation lapses unless a send consumed it."),
+      not_null: true,
+    },
+  },
+});

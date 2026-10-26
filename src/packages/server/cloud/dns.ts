@@ -154,7 +154,7 @@ async function cloudflareRequest<T>(
     const statusText = response.statusText ? ` ${response.statusText}` : "";
     const permissionHint =
       response.status === 403 && path.includes("/rulesets")
-        ? "; token requires Select Configuration Write for this zone"
+        ? "; add Zone:Config Rules:Edit on this zone to project_hosts_cloudflare_tunnel_api_token"
         : "";
     throw new Error(
       `cloudflare api ${method} /${path} failed: HTTP ${response.status}${statusText}: ${details}${permissionHint}`,

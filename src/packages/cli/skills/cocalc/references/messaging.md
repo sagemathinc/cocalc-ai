@@ -21,7 +21,8 @@ cocalc agent status [reviewer]                 # what peers are doing, how their
 
 - A message is at most 32 KiB. Send longer material with `--attach`
   (repeatable, at most 16 files and 32 MiB in total), which copies it into the
-  recipient's project.
+  recipient's project. An external member (one on another site) gets the
+  copies with the message in its inbox instead.
 - An external member (one on another site) starts no turn and gets no turn
   reports (`--report-no-reply` is refused for it). To learn whether it has
   read your message, run the `agent rpc inspect` command that send prints.
@@ -33,6 +34,9 @@ cocalc agent status [reviewer]                 # what peers are doing, how their
   message, and `agent inbox --include-acknowledged` lists read ones again
   until they expire. Read and acknowledge in separate steps, so that a failed
   parse can't acknowledge a message you never saw.
+  Files sent with a message are listed in its `attachments`; save them,
+  checked against their SHA-256, with `agent inbox-attachments ID --dir DIR`.
+  They stay readable after acknowledging, until the message expires.
 - The result's `summary` says what happened. `accepted` means the recipient's
   turn was admitted (started or queued), not finished. `rejected` means it was
   not delivered. `unknown` means it may still run: check with the

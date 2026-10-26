@@ -21,6 +21,8 @@ export const EXTERNAL_AGENT_STATE_TABLES = [
   "agent_external_identities",
   "agent_external_installations",
   "agent_external_inbox",
+  "agent_external_inbox_attachments",
+  "agent_external_inbox_reservations",
 ] as const;
 
 /** Computers live at their account's home bay: no rehome while any remain,

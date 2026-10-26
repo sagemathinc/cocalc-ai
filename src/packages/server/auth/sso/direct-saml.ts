@@ -8,6 +8,7 @@ import { ValidateInResponseTo } from "@node-saml/passport-saml";
 import ms from "ms";
 
 import type { PassportStrategyDBConfig } from "@cocalc/database/settings/auth-sso-types";
+import { isPublicHomeVariantId } from "@cocalc/util/public-home-experiment";
 
 const DEFAULT_NAME_ID_FORMAT =
   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
@@ -207,4 +208,22 @@ export function passportProfileFromSamlProfile(profile: Profile): any {
     normalized["emails"] = [{ value: email, verified: true }];
   }
   return normalized;
+}
+
+/** RelayState for a direct SAML sign-in: the Home experiment version from
+ * the sign-up link (util/public-home-experiment.ts), the only state SAML
+ * brings back, or "" without one. */
+export function directSamlRelayState(query: {
+  home_variant?: unknown;
+}): string {
+  return isPublicHomeVariantId(query?.home_variant) ? query.home_variant : "";
+}
+
+/** The Home experiment version a SAML return carries in RelayState, checked
+ * again: RelayState comes from the browser, and an IdP-initiated sign-in may
+ * send anything there. */
+export function homeVariantFromSamlRelayState(
+  relayState: unknown,
+): string | undefined {
+  return isPublicHomeVariantId(relayState) ? relayState : undefined;
 }

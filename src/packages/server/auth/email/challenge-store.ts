@@ -73,6 +73,7 @@ import type {
   StartEmailAuthChallengeOptions,
 } from "./types";
 import { EmailAuthChallengeError } from "./types";
+import { countPublicHomeExperimentSignup } from "@cocalc/server/public-home-experiment";
 
 const logger = getLogger("server:auth:email");
 const TABLE = "email_auth_challenges";
@@ -116,7 +117,11 @@ type ChallengeRow = {
   registration_token_reservation_id?: string | null;
   registration_token_encrypted?: string | null;
   registration_token_validated_at?: Date | null;
-  continuation?: { target?: string; onboarding_intent?: string } | null;
+  continuation?: {
+    target?: string;
+    onboarding_intent?: string;
+    home_variant?: string;
+  } | null;
   email_proved_at?: Date | null;
   account_created_at?: Date | null;
   expires_at: Date;
@@ -592,10 +597,13 @@ export async function startEmailAuthChallengeDirect(
           registrationTokenReservationId ?? null,
           registrationTokenEncrypted ?? null,
           registrationTokenValidatedAt ?? null,
-          opts.continuation_target || opts.onboarding_intent
+          opts.continuation_target ||
+          opts.onboarding_intent ||
+          opts.home_variant
             ? JSON.stringify({
                 target: opts.continuation_target,
                 onboarding_intent: opts.onboarding_intent,
+                home_variant: opts.home_variant,
               })
             : null,
           MAX_ATTEMPTS,
@@ -1177,6 +1185,7 @@ async function resolveChallengeAccount(
     }
     throw new Error("account creation did not return an account id");
   }
+  void countPublicHomeExperimentSignup(row.continuation?.home_variant);
   await adminVerifyClusterAccountEmailAddress({
     account_id,
     email_address: row.normalized_email,

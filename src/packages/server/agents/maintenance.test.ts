@@ -5,6 +5,9 @@ jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
   default: () => ({ info: jest.fn(), warn: jest.fn() }),
 }));
+jest.mock("./external-inbox-objects", () => ({
+  removeExpiredExternalInboxObjects: jest.fn(async () => 0),
+}));
 jest.mock("./cocalc-connector-retention", () => ({
   cleanupCocalcConnectorCredentials: jest.fn(),
 }));
