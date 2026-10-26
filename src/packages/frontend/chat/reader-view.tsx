@@ -1454,7 +1454,9 @@ function ReaderAbout({ priorities }: { priorities: boolean }) {
             them are unread.
           </ReaderTerm>
         ) : null}
-        <ReaderTerm term="All">Every message in the thread.</ReaderTerm>
+        <ReaderTerm term="All">
+          Every message not archived, of any priority.
+        </ReaderTerm>
         {priorities ? (
           <ReaderTerm term="Low priority">
             For your information only, marked <em>fyi</em> in the list. Its
@@ -1478,7 +1480,9 @@ function ReaderAbout({ priorities }: { priorities: boolean }) {
               (a decision, an approval, results you asked for). Marked{" "}
               <em>for you</em>, with a bar down its side.
             </ReaderTerm>
-            <ReaderTerm term="Normal">A turn a person started.</ReaderTerm>
+            <ReaderTerm term="Normal">
+              A turn a person started, unless the agent said otherwise.
+            </ReaderTerm>
             <ReaderTerm term="Low">
               A turn started by another agent&apos;s message, a sensor or a
               schedule, unless the agent said otherwise.
@@ -1505,7 +1509,8 @@ function ReaderAbout({ priorities }: { priorities: boolean }) {
         </ReaderTerm>
         <ReaderTerm term="Archive all">
           Archives and reads everything in the thread, in every view: a clean
-          slate. A turn still running stays.
+          slate. A turn still running stays in the list, and stays unread if it
+          was.
         </ReaderTerm>
         <ReaderTerm term="Show archived">
           Shows archived messages in the list too, faded.

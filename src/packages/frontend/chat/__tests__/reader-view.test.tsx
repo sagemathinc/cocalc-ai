@@ -827,6 +827,15 @@ describe("views: for you, all, low priority", () => {
     ]) {
       expect(dialog).toHaveTextContent(text);
     }
+    // The exceptions the views and Archive all make (see archiveAll and
+    // itemPriority) are said, not left out.
+    for (const text of [
+      "Every message not archived",
+      "A turn a person started, unless the agent said otherwise",
+      "A turn still running stays in the list, and stays unread if it was",
+    ]) {
+      expect(dialog).toHaveTextContent(text);
+    }
   });
 });
 
