@@ -489,6 +489,14 @@ describe("automatic archiving host coverage", () => {
     });
   });
 
+  it("applies on a bay that the bay canary list includes", async () => {
+    settings({ automatic_project_archiving_canary_bays: "bay-0,bay-other" });
+    query.mockResolvedValueOnce({ rows: [] });
+    const coverage = await getProjectArchiveHostCoverage();
+    expect(coverage.applies).toBe(true);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it("is healthy when every shared host is listed", async () => {
     settings();
     query.mockResolvedValueOnce({ rows: [] });
@@ -505,6 +513,12 @@ describe("automatic archiving host coverage", () => {
       { automatic_project_archiving_enabled: false },
       "archiving_disabled",
       "Automatic archiving is disabled, so there is no host coverage to check.",
+    ],
+    [
+      "a bay canary list leaves this bay out",
+      { automatic_project_archiving_canary_bays: "bay-other" },
+      "bay_not_in_canary",
+      "This bay is not in automatic_project_archiving_canary_bays, so automatic archiving does not run here.",
     ],
     [
       "there is no canary host list",

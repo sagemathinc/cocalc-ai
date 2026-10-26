@@ -170,7 +170,10 @@ export interface ProjectArchiveHostCoverage {
    * canary host list). */
   applies: boolean;
   /** Why the check doesn't apply, when it doesn't. */
-  not_applicable?: "archiving_disabled" | "no_canary_list";
+  not_applicable?:
+    | "archiving_disabled"
+    | "bay_not_in_canary"
+    | "no_canary_list";
   free_after_days: number;
   /** Shared pool hosts with projects on disk that the canary host list
    * leaves out: automatic archiving never runs there. */
@@ -191,13 +194,21 @@ const UUID_PATTERN =
 // are left out on purpose and are not reported.
 export async function getProjectArchiveHostCoverage(): Promise<ProjectArchiveHostCoverage> {
   const config = await loadProjectArchiveLifecycleConfig();
-  const coverage: ProjectArchiveHostCoverage = {
-    applies: config.enabled && config.canaryHosts.length > 0,
-    ...(!config.enabled
-      ? { not_applicable: "archiving_disabled" as const }
+  // runProjectArchiveLifecycleOnce selects nothing on a bay a bay canary
+  // list leaves out, so host coverage doesn't apply there either.
+  const bayExcluded =
+    config.canaryBays.length > 0 &&
+    !config.canaryBays.includes(getConfiguredBayId());
+  const notApplicable = !config.enabled
+    ? ("archiving_disabled" as const)
+    : bayExcluded
+      ? ("bay_not_in_canary" as const)
       : config.canaryHosts.length === 0
-        ? { not_applicable: "no_canary_list" as const }
-        : {}),
+        ? ("no_canary_list" as const)
+        : undefined;
+  const coverage: ProjectArchiveHostCoverage = {
+    applies: notApplicable == null,
+    ...(notApplicable ? { not_applicable: notApplicable } : {}),
     free_after_days: config.freeAfterDays,
     missing: [],
   };
@@ -252,7 +263,9 @@ export function projectArchiveHostCoverageHealth(
       summary:
         coverage.not_applicable === "archiving_disabled"
           ? "Automatic archiving is disabled, so there is no host coverage to check."
-          : "Automatic archiving has no canary host list, so it covers every host.",
+          : coverage.not_applicable === "bay_not_in_canary"
+            ? "This bay is not in automatic_project_archiving_canary_bays, so automatic archiving does not run here."
+            : "Automatic archiving has no canary host list, so it covers every host.",
       details: [],
     };
   }
