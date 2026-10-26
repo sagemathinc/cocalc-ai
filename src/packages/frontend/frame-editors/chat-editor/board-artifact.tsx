@@ -18,13 +18,36 @@ frame's protocol, once per frame.
 
 Showing a board sends its complete text and name to the configured origin,
 as the card says. Edits in the frame stay there: the file is not changed.
+
+The card also asks the board's host to open the board (boardOpen; bounded
+history plan H1b-4). While the host does not edit boards (ENOSYS), or when
+the call fails, the card is exactly the saved-file view.  If the board's edit
+history cannot be loaded, the card says why and offers ways to the board's
+content that do not depend on it (open as text, download, restore, retry,
+the docs page); if the host rebuilt it from the file, the card tells the
+user once per history epoch.  The saved-file view below does not depend on
+the history either.
 */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type React from "react";
 import { Alert, Button, Space } from "antd";
+import type { BoardOpenResult } from "@cocalc/conat/files/fs";
+import { alert_message } from "@cocalc/frontend/alerts";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import {
+  get_local_storage,
+  set_local_storage,
+} from "@cocalc/frontend/misc/local-storage";
+import {
+  boardHistoryView,
+  takeRebuiltNotice,
+  type BoardHistoryLink,
+  type BoardHistoryView,
+} from "@cocalc/frontend/project/board-history";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { download_href } from "@cocalc/frontend/project/utils";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { FileArtifactAction } from "./file-artifact";
 import {
@@ -60,7 +83,7 @@ export default function BoardArtifact({
   onToolbarActions?: (actions: FileArtifactAction[]) => void;
 }) {
   const compact = onToolbarActions !== undefined;
-  const { actions } = useProjectContext();
+  const { actions, project_id } = useProjectContext();
   // Read through a ref: a new actions object must not reload the board.
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
@@ -86,6 +109,8 @@ export default function BoardArtifact({
       setRefresh((r) => r + 1);
     }
   }, [hasActions, waitingForActions]);
+  // What the board's host answered, if it edits boards (H1b-4).
+  const [history, setHistory] = useState<BoardHistoryView>();
   const name = path.split("/").pop() ?? path;
   const site = new URL(frameUrl).host;
 
@@ -167,6 +192,90 @@ export default function BoardArtifact({
       boardLoadFailed(key, generation);
     };
   }, [key, refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHistory(undefined);
+    const fs: any = actions?.fs();
+    if (typeof fs?.boardOpen !== "function") return;
+    void (async () => {
+      let result: BoardOpenResult;
+      try {
+        result = await fs.boardOpen(path);
+      } catch {
+        // ENOSYS (the host does not edit boards) or any failure: the
+        // saved-file view, as always
+        return;
+      }
+      if (cancelled) return;
+      const notice = takeRebuiltNotice({
+        project_id,
+        result,
+        seen: { get: get_local_storage, set: set_local_storage },
+      });
+      if (notice) {
+        alert_message({
+          type: "info",
+          title: "Board rebuilt from its saved file",
+          message: notice,
+          block: true,
+        });
+      }
+      setHistory(
+        boardHistoryView({
+          project_id,
+          result,
+          downloadHref: (p, f) => download_href(p, f),
+          basePath: appBasePath,
+        }),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [actions, project_id, path, refresh]);
+
+  const historyLink = (link: BoardHistoryLink) => {
+    switch (link.action) {
+      case "download":
+        return (
+          <Button key={link.action} href={link.href} target="_blank">
+            {link.label}
+          </Button>
+        );
+      case "open-as-text":
+        return (
+          <Button
+            key={link.action}
+            disabled={!actions}
+            onClick={() =>
+              void actions
+                ?.open_file({ path: link.open!.path, ext: link.open!.ext })
+                .catch((err) => setError(String(err)))
+            }
+          >
+            {link.label}
+          </Button>
+        );
+      case "restore":
+        // how: the docs page (snapshots, TimeTravel)
+        return (
+          <Button key={link.action} href={history?.docsHref} target="_blank">
+            {link.label}
+          </Button>
+        );
+      case "retry":
+        return (
+          <Button
+            key={link.action}
+            disabled={loading}
+            onClick={() => setRefresh((n) => n + 1)}
+          >
+            {link.label}
+          </Button>
+        );
+    }
+  };
 
   // Lay the live frame over the placeholder while this component shows it.
   useLayoutEffect(() => {
@@ -253,6 +362,26 @@ export default function BoardArtifact({
           Published file reference; the board shown is the current saved file,
           not a historical snapshot.
         </div>
+      )}
+      {history && (
+        <Alert
+          type="error"
+          role="alert"
+          aria-label="Ways to this board"
+          title={history.title}
+          description={
+            <>
+              {history.message && <div>{history.message}</div>}
+              <Space wrap style={{ marginTop: 8 }}>
+                {history.links.map(historyLink)}
+                <a href={history.docsHref} target="_blank" rel="noreferrer">
+                  What to do when a board&apos;s history can&apos;t be loaded
+                </a>
+              </Space>
+            </>
+          }
+          style={{ flexShrink: 0, marginBottom: 8 }}
+        />
       )}
       {error && <Alert type="warning" title={error} />}
       {frameError && (

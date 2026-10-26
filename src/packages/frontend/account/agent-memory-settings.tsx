@@ -85,8 +85,11 @@ export function AgentMemoryDisclosure() {
         </li>
         <li>
           <b>Limits.</b> At most 2,000 notes (500 per namespace, 100 of an
-          agent's own) and 8 MB. Each turn lists only the most relevant notes;
-          agents search for the rest. Agent use of memory is rate-limited per
+          agent's own) and 8 MB. Each turn lists only a selection of notes;
+          agents search for the rest, so agents keep one note per topic and
+          update it rather than adding many. If a project's memory gets busy,
+          add a namespace by purpose (for example durable review lessons apart
+          from product decisions). Agent use of memory is rate-limited per
           account.
         </li>
       </ul>
@@ -130,6 +133,38 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Ask for consent with the full disclosure, then turn memory on (the same
+ * dialog wherever memory is offered). Resolves true once it is on. If turning
+ * it on fails, the dialog closes (resolving false) so the caller's error is
+ * not hidden behind it; `enable` reports the error itself.
+ */
+export function confirmEnableAgentMemory(
+  enable: () => Promise<unknown> = () =>
+    personalAgentApi().manageAgentMemory({ op: "set-enabled", enabled: true }),
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    Modal.confirm({
+      title: "Turn on agent memory (experimental)",
+      width: 640,
+      content: <AgentMemoryDisclosure />,
+      okText: "I understand, turn it on",
+      cancelText: "Cancel",
+      onOk: async () => {
+        try {
+          await enable();
+        } catch {
+          resolve(false);
+          return;
+        }
+        refreshAll();
+        resolve(true);
+      },
+      onCancel: () => resolve(false),
+    });
+  });
 }
 
 export function agentMemorySummary(status?: Status): string {
@@ -178,17 +213,9 @@ export function AgentMemoryPanel() {
   };
 
   const enable = () =>
-    Modal.confirm({
-      title: "Turn on agent memory (experimental)",
-      width: 640,
-      content: <AgentMemoryDisclosure />,
-      okText: "I understand, turn it on",
-      cancelText: "Cancel",
-      onOk: () =>
-        act(() =>
-          api().manageAgentMemory({ op: "set-enabled", enabled: true }),
-        ),
-    });
+    void confirmEnableAgentMemory(() =>
+      act(() => api().manageAgentMemory({ op: "set-enabled", enabled: true })),
+    );
 
   return (
     <Space orientation="vertical" style={{ width: "100%", maxWidth: 1000 }}>

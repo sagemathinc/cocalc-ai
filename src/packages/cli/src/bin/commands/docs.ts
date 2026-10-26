@@ -32,20 +32,22 @@ export type DocsCommandDeps = {
   normalizeUrl: any;
 };
 
-type DocsListOptions = {
+type DocsAccessOptions = {
+  includeAdmin?: boolean;
+  siteProfile?: string;
+};
+
+type DocsListOptions = DocsAccessOptions & {
   audience?: string;
   category?: string;
-  includeAdmin?: boolean;
   status?: string;
 };
 
-type DocsSearchOptions = {
-  includeAdmin?: boolean;
+type DocsSearchOptions = DocsAccessOptions & {
   limit?: string;
 };
 
-type DocsSkillContextOptions = {
-  includeAdmin?: boolean;
+type DocsSkillContextOptions = DocsAccessOptions & {
   limit?: string;
   query?: string;
 };
@@ -223,10 +225,14 @@ function filterDocsEntries(options: DocsListOptions): DocsEntry[] {
   });
 }
 
-function docsAccessFromOptions(options: {
-  includeAdmin?: boolean;
-}): DocsAccess {
+function docsAccessFromOptions(options: DocsAccessOptions): DocsAccess {
+  if (options.siteProfile != null && options.siteProfile !== "cocalc-ai") {
+    throw new Error(
+      `invalid --site-profile '${options.siteProfile}'; expected cocalc-ai`,
+    );
+  }
   return {
+    siteProfile: options.siteProfile,
     includeAdmin: options.includeAdmin === true,
     includeSignedIn: options.includeAdmin === true,
   };
@@ -455,10 +461,13 @@ export function registerDocsCommand(
       `
 These commands read the documentation bundled with this CoCalc-ai version.
 They do not require authentication and are designed for both humans and agents.
+Use --site-profile cocalc-ai to include documentation specific to cocalc.ai.
+This content selector is independent of --profile and --api.
 
 Examples:
 
   cocalc docs list
+  cocalc docs show docs.cocalc-at-a-glance --site-profile cocalc-ai --json
   cocalc docs search "project secrets" --json
   cocalc docs show projects/project-secrets --json
   cocalc docs skill-context --query "project secrets"
@@ -466,8 +475,15 @@ Examples:
 `,
     );
 
-  docs
-    .command("list")
+  const retrievalCommand = (name: string): Command =>
+    docs
+      .command(name)
+      .option(
+        "--site-profile <profile>",
+        "include site-specific documentation (cocalc-ai)",
+      );
+
+  retrievalCommand("list")
     .description("list available documentation pages")
     .option("--audience <audience>", "filter by audience")
     .option("--category <category>", "filter by category")
@@ -485,8 +501,7 @@ Examples:
       }
     });
 
-  docs
-    .command("search <query>")
+  retrievalCommand("search <query>")
     .description("search documentation pages")
     .option("--include-admin", "include admin-only documentation pages")
     .option("--limit <n>", "maximum number of results", "8")
@@ -506,8 +521,7 @@ Examples:
       }
     });
 
-  docs
-    .command("skill-context")
+  retrievalCommand("skill-context")
     .description("print compact Markdown context for agents")
     .option("--query <query>", "search query for selecting docs pages")
     .option("--include-admin", "include admin-only documentation pages")
@@ -536,8 +550,7 @@ Examples:
       }
     });
 
-  docs
-    .command("actions")
+  retrievalCommand("actions")
     .description("list stable documentation action ids")
     .option(
       "--executable",
@@ -546,7 +559,7 @@ Examples:
     .option("--include-admin", "include admin-only documentation actions")
     .action(
       (
-        options: { executable?: boolean; includeAdmin?: boolean },
+        options: DocsAccessOptions & { executable?: boolean },
         command: Command,
       ) => {
         const globals = deps.globalsFrom(command);
@@ -565,47 +578,35 @@ Examples:
       },
     );
 
-  docs
-    .command("action <id>")
+  retrievalCommand("action <id>")
     .description("show one stable documentation action id")
     .option("--include-admin", "include admin-only documentation actions")
-    .action(
-      (id: string, options: { includeAdmin?: boolean }, command: Command) => {
-        const globals = deps.globalsFrom(command);
-        const commandName = "docs action";
-        try {
-          const summary = listDocsActions(docsAccessFromOptions(options)).find(
-            (action) => action.id === id,
-          );
-          if (summary == null) {
-            const known = getDocsAction(id, docsAccessFromOptions(options));
-            if (known != null) {
-              throw new Error(`documentation action missing summary: ${id}`);
-            }
-            throw new Error(`documentation action not found: ${id}`);
+    .action((id: string, options: DocsAccessOptions, command: Command) => {
+      const globals = deps.globalsFrom(command);
+      const commandName = "docs action";
+      try {
+        const summary = listDocsActions(docsAccessFromOptions(options)).find(
+          (action) => action.id === id,
+        );
+        if (summary == null) {
+          const known = getDocsAction(id, docsAccessFromOptions(options));
+          if (known != null) {
+            throw new Error(`documentation action missing summary: ${id}`);
           }
-          deps.emitSuccess(
-            { globals },
-            commandName,
-            compactDocsAction(summary),
-          );
-        } catch (error) {
-          deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
-          process.exitCode = 1;
+          throw new Error(`documentation action not found: ${id}`);
         }
-      },
-    );
+        deps.emitSuccess({ globals }, commandName, compactDocsAction(summary));
+      } catch (error) {
+        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+        process.exitCode = 1;
+      }
+    });
 
-  docs
-    .command("show <slugOrId>")
+  retrievalCommand("show <slugOrId>")
     .description("show a documentation page by slug or id")
     .option("--include-admin", "include admin-only documentation pages")
     .action(
-      (
-        slugOrId: string,
-        options: { includeAdmin?: boolean },
-        command: Command,
-      ) => {
+      (slugOrId: string, options: DocsAccessOptions, command: Command) => {
         const globals = deps.globalsFrom(command);
         const commandName = "docs show";
         try {

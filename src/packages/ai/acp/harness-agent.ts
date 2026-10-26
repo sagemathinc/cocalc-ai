@@ -3,7 +3,11 @@ import {
   HarnessError,
   disposeFailedHarness,
 } from "./harness-client";
-import type { HarnessBinding, HarnessLauncher } from "./harness-client";
+import type {
+  HarnessBinding,
+  HarnessFundedTurnEnd,
+  HarnessLauncher,
+} from "./harness-client";
 import type {
   AcpAgent,
   AcpEvaluateRequest,
@@ -23,6 +27,11 @@ import {
   joinTurnContext,
 } from "./harness-context";
 import { takeRateLimit } from "./harness-rate-limit";
+import {
+  turnFailureFromRateLimit,
+  withTurnFailure,
+  type TurnFailure,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
 import type {
@@ -46,6 +55,9 @@ export class HarnessAgent implements AcpAgent {
   private binding: HarnessBinding;
   private conversation: { path: string; threadId: string };
   private attentionContext?: CodexAttentionContext;
+  // Claude said this turn's credential is out (its rate_limit_event), so a
+  // failure of this turn is that limit, not a generic error.
+  private limitRejection?: TurnFailure;
 
   constructor(
     binding: HarnessBinding,
@@ -114,10 +126,14 @@ export class HarnessAgent implements AcpAgent {
       throw Error("ACP native session binding mismatch");
 
     this.busy = true;
+    this.limitRejection = undefined;
     this.interrupted = false;
     // The client whose CoCalc connector credential this turn issued.
     let connectorClient: AcpHarnessClient | undefined;
     let connectorContext: string | undefined;
+    // The client funding this turn (site-funded Claude), and how it ended.
+    let fundedClient: AcpHarnessClient | undefined;
+    let fundedEnd: HarnessFundedTurnEnd = { status: "failed" };
     try {
       await this.validateAuthority?.(this.binding);
       // The service preserves the authoritative empty reset marker. Missing
@@ -273,6 +289,17 @@ export class HarnessAgent implements AcpAgent {
         connectorContext =
           (await client.beginConnectorTurn(request.chat)) || undefined;
       }
+      try {
+        await client.beginFundedTurn(request.chat);
+        fundedClient = client;
+      } catch (error) {
+        // Not admitted (no allowance left, say): this turn fails with the
+        // reason; the harness itself is fine.
+        throw Object.assign(
+          new HarnessError("rejected", `${(error as Error)?.message ?? error}`),
+          { fundedTurnRefused: true },
+        );
+      }
       const result = await client.prompt(
         harnessPrompt(
           {
@@ -339,6 +366,14 @@ export class HarnessAgent implements AcpAgent {
               const { update, rateLimit } = takeRateLimit(event.update);
               data = { ...update };
               if (rateLimit !== undefined) {
+                const credential = this.binding.credential;
+                // The latest report counts: a later "allowed" lifts it.
+                this.limitRejection = turnFailureFromRateLimit(
+                  rateLimit,
+                  "credentialId" in credential
+                    ? credential.credentialId
+                    : undefined,
+                );
                 try {
                   this.recordRateLimit?.(this.binding, rateLimit);
                 } catch (error) {
@@ -399,21 +434,37 @@ export class HarnessAgent implements AcpAgent {
           "outcome_unknown",
           "ACP prompt completed after interruption was requested; cancellation was not confirmed",
         );
+      // Persist the completed turn (e.g. staged transcripts) before success.
+      await client.turnCompleted();
       await request.stream({
         type: "summary",
         finalResponse,
         threadId: client.sessionId,
       });
+      fundedEnd = { status: "committed" };
     } catch (error) {
+      fundedEnd = this.interrupted
+        ? { status: "interrupted" }
+        : {
+            status: "failed",
+            outcome: `${(error as Error)?.message ?? error}`,
+          };
+      if ((error as { fundedTurnRefused?: boolean })?.fundedTurnRefused)
+        throw error;
+      if (this.limitRejection) withTurnFailure(error, this.limitRejection);
       // Never silently start a fresh native session after an ambiguous failure.
       return await disposeFailedHarness(error, () => this.dispose());
     } finally {
+      await fundedClient?.endFundedTurn(fundedEnd).catch((error) => {
+        logger.warn("funded turn not settled", { error: `${error}` });
+      });
       await connectorClient?.endConnectorTurn().catch((error) => {
         logger.warn("managed CoCalc connector revocation unconfirmed", {
           error: `${error}`,
         });
       });
       this.attentionContext = undefined;
+      this.limitRejection = undefined;
       this.client?.setTurnPublicationContext(undefined);
       this.busy = false;
     }

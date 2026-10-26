@@ -3,7 +3,10 @@
  *  License: MS-RSL – see https://github.com/sagemathinc/cocalc-ai/blob/master/LICENSE.md
  */
 
-import { siteFundedCodexConfigurationFromSettings } from "./site-funded-codex-policy";
+import {
+  siteFundedClaudeConfigurationFromSettings,
+  siteFundedCodexConfigurationFromSettings,
+} from "./site-funded-codex-policy";
 
 describe("site-funded Codex policy", () => {
   it("parses bounded operator settings", () => {
@@ -62,5 +65,45 @@ describe("site-funded Codex policy", () => {
         site_funded_codex_model: "gpt-5.6-sol",
       }),
     ).toThrow("no exact site-funded Codex price");
+  });
+});
+
+describe("site-funded Claude policy", () => {
+  it("has its own switch, model and turn guards, and Codex's pools", () => {
+    const config = siteFundedClaudeConfigurationFromSettings({
+      site_funded_claude_enabled: "yes",
+      site_funded_claude_max_turn_usd: "0.10",
+      site_funded_claude_max_requests_per_turn: "30",
+      site_funded_codex_enabled: "no",
+      site_funded_codex_free_pool_weekly_usd: "25",
+      site_funded_codex_global_concurrency: "12",
+    });
+    expect(config.enabled).toBe(true);
+    expect(config.policy).toMatchObject({
+      model: "claude-haiku-5-5",
+      maxTurnCostMicrousd: 100_000,
+      maxRequestsPerTurn: 30,
+      contextWindowTokens: 100_000,
+    });
+    expect(config.freePoolWeeklyLimitMicrousd).toBe(25_000_000);
+    expect(config.globalConcurrency).toBe(12);
+  });
+
+  it("is off by default", () => {
+    expect(siteFundedClaudeConfigurationFromSettings({}).enabled).toBe(false);
+  });
+
+  it("is not disabled by an invalid Codex model, and refuses a Codex model", () => {
+    expect(
+      siteFundedClaudeConfigurationFromSettings({
+        site_funded_claude_enabled: "yes",
+        site_funded_codex_model: "no-such-model",
+      }).enabled,
+    ).toBe(true);
+    expect(() =>
+      siteFundedClaudeConfigurationFromSettings({
+        site_funded_claude_model: "gpt-6-luna",
+      }),
+    ).toThrow(/no exact site-funded/);
   });
 });

@@ -250,9 +250,17 @@ if [ ! -f "$OUT/bundle/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ]; 
   exit 1
 fi
 
+echo "- Copy the CoCalc agent skill (skills/: always at /opt/cocalc/project-bundle/skills,"
+echo "  even where a project overrides ~/.claude/skills/cocalc)"
+mkdir -p "$OUT"/skills
+cp -r packages/cli/skills/. "$OUT"/skills/
+
 echo "- Copy project bin scripts"
 mkdir -p "$OUT"/src/packages/project
 cp -r packages/project/bin "$OUT"/src/packages/project/
+
+echo "- Source for agents to read (source/, build-source-tree.sh)"
+bash "$ROOT/packages/project/sea/build-source-tree.sh" "$ROOT" "$OUT/source"
 
 echo "- Copy open helper into bundle bin"
 mkdir -p "$OUT"/bin

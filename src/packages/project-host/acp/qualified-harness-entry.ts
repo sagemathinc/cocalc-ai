@@ -15,10 +15,30 @@ import type { CredentialRelayBridge } from "./credential-relay-bridge";
 const MAX_SECRET_BYTES = 16 * 1024;
 const CREDENTIAL_RELAY_MOUNT = "/run/cocalc/credential-relay";
 
+// Site-funded Claude: one model for everything Claude Code asks for (the relay
+// enforces it anyway), compaction below the price for prompts over 100,000
+// tokens, output within the funded cap, and no traffic outside turns.
+const SITE_FUNDED_MODEL = "claude-haiku-5-5";
+export const SITE_FUNDED_ENV: Record<string, string> = {
+  ANTHROPIC_MODEL: SITE_FUNDED_MODEL,
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: SITE_FUNDED_MODEL,
+  ANTHROPIC_DEFAULT_SONNET_MODEL: SITE_FUNDED_MODEL,
+  ANTHROPIC_DEFAULT_OPUS_MODEL: SITE_FUNDED_MODEL,
+  ANTHROPIC_DEFAULT_FABLE_MODEL: SITE_FUNDED_MODEL,
+  CLAUDE_CODE_SUBAGENT_MODEL: SITE_FUNDED_MODEL,
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000",
+  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",
+  CLAUDE_CODE_MAX_OUTPUT_TOKENS: "32000",
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+};
+
 export async function qualifiedHarnessLaunch(
   id: string,
   revision: string,
-  credentialMode: "project-secret" | "account-api-key" = "project-secret",
+  credentialMode:
+    | "project-secret"
+    | "account-api-key"
+    | "site-funded" = "project-secret",
 ): Promise<{
   executable: string;
   args: string[];
@@ -46,7 +66,10 @@ export async function qualifiedHarnessLaunch(
       throw Error(`Project secret ${credential.name} is invalid`);
     }
     env[credential.environmentVariable] = value.trim();
-  } else if (credential && credentialMode === "account-api-key") {
+  } else if (
+    credential &&
+    (credentialMode === "account-api-key" || credentialMode === "site-funded")
+  ) {
     const token = (
       await readFile(join(CREDENTIAL_RELAY_MOUNT, "token"), {
         encoding: "utf8",
@@ -59,6 +82,7 @@ export async function qualifiedHarnessLaunch(
     });
     env.ANTHROPIC_BASE_URL = bridge.baseUrl;
     env[credential.environmentVariable] = "cocalc-credential-relay";
+    if (credentialMode === "site-funded") Object.assign(env, SITE_FUNDED_ENV);
   }
   return {
     executable: candidate.launch.executable,
@@ -154,7 +178,8 @@ async function main(): Promise<void> {
     !id ||
     !revision ||
     (credentialMode !== "project-secret" &&
-      credentialMode !== "account-api-key") ||
+      credentialMode !== "account-api-key" &&
+      credentialMode !== "site-funded") ||
     unexpected.length
   ) {
     throw Error("Invalid qualified ACP launch request");

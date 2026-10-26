@@ -851,7 +851,62 @@ test("membership site-license pool-update parses approval policy", async () => {
     pool_name: undefined,
     seat_count: undefined,
     allowed_domains: undefined,
+    expires_at: undefined,
   });
+});
+
+test("membership site-license pool-update passes a pool expiry", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) =>
+      await fn({
+        accountId: "admin-1",
+        hub: {
+          purchases: {
+            updateMembershipPackage: async (opts) => {
+              capturedArgs = opts;
+              return {
+                id: opts.package_id,
+                owner_account_id: "owner-1",
+                kind: "site",
+                membership_class: "student",
+                seat_count: 150,
+                assignments: [],
+              };
+            },
+          },
+        },
+      }),
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "pool-update",
+    "pool-1",
+    "--site-license",
+    "license-1",
+    "--expires-at",
+    "2026-12-01T05:59:59.999Z",
+  ]);
+
+  assert.equal(capturedArgs.package_id, "pool-1");
+  assert.equal(capturedArgs.site_license_id, "license-1");
+  assert.equal(
+    capturedArgs.expires_at.toISOString(),
+    "2026-12-01T05:59:59.999Z",
+  );
+  assert.equal(capturedArgs.seat_count, undefined);
 });
 
 test("membership site-license request and review call site-license APIs", async () => {

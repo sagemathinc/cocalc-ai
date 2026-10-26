@@ -1125,10 +1125,13 @@ async function assertLocalAccountDeleteAllowed({
   only_if_tag,
 }: AccountDirectoryDeleteRequest): Promise<void> {
   if (!only_if_tag) return;
-  const { rows } = await getPool().query<{ tags: string[] | null }>(
-    "SELECT tags FROM accounts WHERE account_id=$1",
-    [account_id],
-  );
+  const { rows } = await getPool().query<{
+    tags: string[] | null;
+    deleted: boolean | null;
+  }>("SELECT tags, deleted FROM accounts WHERE account_id=$1", [account_id]);
+  // Deletion clears tags, so a retry that finishes an already deleted account
+  // is allowed; the tag guard protects live accounts.
+  if (rows[0]?.deleted) return;
   const tags = rows[0]?.tags ?? [];
   if (!tags.includes(only_if_tag)) {
     throw new Error(
@@ -1140,12 +1143,17 @@ async function assertLocalAccountDeleteAllowed({
 export async function deleteLocalClusterAccount({
   account_id,
   only_if_tag,
+  initiator,
+  actor_account_id,
 }: AccountDirectoryDeleteRequest): Promise<AccountDirectoryDeleteResult> {
   if (!isValidUUID(account_id)) {
     throw new Error("account_id must be a valid uuid");
   }
   await assertLocalAccountDeleteAllowed({ account_id, only_if_tag });
-  await deleteAccountLocal(account_id);
+  await deleteAccountLocal(account_id, {
+    initiator: initiator ?? "system",
+    actor_account_id,
+  });
   return {
     account_id,
     home_bay_id: currentBayId(),
@@ -1156,6 +1164,8 @@ export async function deleteLocalClusterAccount({
 async function deleteClusterAccountDirect({
   account_id,
   only_if_tag,
+  initiator,
+  actor_account_id,
 }: AccountDirectoryDeleteRequest): Promise<AccountDirectoryDeleteResult> {
   if (!isValidUUID(account_id)) {
     throw new Error("account_id must be a valid uuid");
@@ -1164,11 +1174,16 @@ async function deleteClusterAccountDirect({
   const home_bay_id = `${entry?.home_bay_id ?? ""}`.trim() || currentBayId();
   const result =
     home_bay_id === currentBayId()
-      ? await deleteLocalClusterAccount({ account_id, only_if_tag })
+      ? await deleteLocalClusterAccount({
+          account_id,
+          only_if_tag,
+          initiator,
+          actor_account_id,
+        })
       : await createInterBayAccountLocalClient({
           client: getInterBayFabricClient(),
           dest_bay: home_bay_id,
-        }).delete({ account_id, only_if_tag });
+        }).delete({ account_id, only_if_tag, initiator, actor_account_id });
 
   await deleteClusterAccountDirectoryEntry(account_id);
   return {

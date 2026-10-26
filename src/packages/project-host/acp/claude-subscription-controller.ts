@@ -7,15 +7,13 @@ import { randomUUID } from "node:crypto";
 import { CLAUDE_PROJECT_MCP_NAME } from "./claude-project-tool-source";
 import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tools";
 import { execFile, spawn } from "node:child_process";
-import {
-  lstat,
-  mkdir,
-  mkdtemp,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { kindBeneath, listBeneath, mkdirBeneath } from "../beneath-copy";
+import {
+  stageClaudeTranscripts,
+  type ClaudeTranscriptStaging,
+} from "./claude-transcript-staging";
 import type {
   HarnessBinding,
   HarnessProcess,
@@ -28,6 +26,10 @@ import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
 import { CLAUDE_CODE_INSTALL_ROOT } from "@cocalc/util/ai/qualified-harnesses";
 import { claudeCodeToolsDir } from "./claude-code-tools";
+import {
+  getSessionInstructionsVersion,
+  setSessionInstructionsVersion,
+} from "@cocalc/lite/hub/sqlite/acp-session-instructions";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getNodeRuntimeMounts } from "@cocalc/project-runner/run/mounts";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
@@ -68,6 +70,7 @@ import {
 } from "./claude-restricted-egress";
 import {
   CLAUDE_CONTROLLER_HOME_LABEL,
+  CLAUDE_TRANSCRIPT_STAGING_LABEL,
   claudeControllerHomePrefix,
 } from "./claude-subscription-paths";
 
@@ -104,89 +107,111 @@ export function turnPublicationEnv(
   };
 }
 
+// Errors of the no-follow helpers that mean a symlink (or a non-directory)
+// is in the way: report them as an unsafe transcript tree.
+function unsafeTranscriptPath(error: unknown): boolean {
+  const code =
+    `${(error as Error)?.message ?? ""}`.match(/^(E[A-Z]+)\b/)?.[1] ??
+    (error as NodeJS.ErrnoException)?.code;
+  return code === "ELOOP" || code === "ENOTDIR" || code === "EXDEV";
+}
+
 export async function ensureClaudeTranscriptDirectory(options: {
   projectHome: string;
   accountId: string;
   credentialId: string;
   sessionId?: string;
-}): Promise<string> {
+}): Promise<{ path: string; parts: string[] }> {
   const { projectHome, accountId, credentialId, sessionId } = options;
   if (!isValidUUID(accountId) || !isValidUUID(credentialId))
     throw Error("Invalid Claude transcript owner");
   if (sessionId && !isValidUUID(sessionId))
     throw Error("Invalid Claude transcript session");
-  let directory = projectHome;
-  for (const part of [
-    ".local",
-    "share",
-    "cocalc",
-    "claude-sessions",
-    accountId,
-  ]) {
-    directory = join(directory, part);
-    await mkdir(directory, { mode: 0o700 }).catch((error) => {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    });
-    const stat = await lstat(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink())
+  try {
+    return await locateClaudeTranscriptDirectory(
+      projectHome,
+      accountId,
+      credentialId,
+      sessionId,
+    );
+  } catch (error) {
+    if (unsafeTranscriptPath(error))
       throw Error("Unsafe Claude transcript directory");
+    throw error;
   }
+}
+
+// The project can swap any component of these paths for a symlink at any
+// moment, so everything here goes through the no-follow helpers
+// (beneath-copy), which resolve each path beneath the trusted project home and
+// refuse every symlink. The result is never mounted: it is copied to and from
+// a host-owned staging directory (claude-transcript-staging).
+async function locateClaudeTranscriptDirectory(
+  projectHome: string,
+  accountId: string,
+  credentialId: string,
+  sessionId?: string,
+): Promise<{ path: string; parts: string[] }> {
+  const baseParts = [".local", "share", "cocalc", "claude-sessions", accountId];
+  const base = baseParts.join("/");
+  const located = (parts: string[]) => ({
+    path: join(projectHome, ...parts),
+    parts,
+  });
+  mkdirBeneath(projectHome, base, 0o700);
+  if ((await kindBeneath(projectHome, base)) !== "dir")
+    throw Error("Unsafe Claude transcript directory");
   // Credentials authorize inference, not ownership of saved context. Reconnect
   // can issue a new credential ID; locate only the admitted session under the
   // same CoCalc owner and project. Keep its original tree (including fork and
-  // subagent context) in place rather than copying or merging transcript data.
+  // subagent context) in place rather than merging transcript data.
   if (sessionId) {
     const matches: string[] = [];
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (!isValidUUID(entry.name)) continue;
-      const candidate = join(directory, entry.name);
+    for (const name of await listBeneath(projectHome, base)) {
+      if (!isValidUUID(name)) continue;
       let missing = false;
-      for (const path of [candidate, join(candidate, "-workspace")]) {
-        const stat = await lstat(path).catch((error) => {
-          if (error.code === "ENOENT") return undefined;
-          throw error;
-        });
-        if (!stat) {
+      for (const rel of [`${base}/${name}`, `${base}/${name}/-workspace`]) {
+        const kind = await kindBeneath(projectHome, rel);
+        if (kind === "missing") {
           missing = true;
           break;
         }
-        if (!stat.isDirectory() || stat.isSymbolicLink())
-          throw Error("Unsafe Claude transcript directory");
+        if (kind !== "dir") throw Error("Unsafe Claude transcript directory");
       }
       if (missing) continue;
-      const transcript = await lstat(
-        join(candidate, "-workspace", `${sessionId}.jsonl`),
-      ).catch((error) => {
-        if (error.code === "ENOENT") return undefined;
-        throw error;
-      });
-      if (!transcript) continue;
-      if (!transcript.isFile() || transcript.isSymbolicLink())
-        throw Error("Unsafe Claude transcript file");
-      matches.push(candidate);
+      const transcript = await kindBeneath(
+        projectHome,
+        `${base}/${name}/-workspace/${sessionId}.jsonl`,
+      );
+      if (transcript === "missing") continue;
+      if (transcript !== "file") throw Error("Unsafe Claude transcript file");
+      matches.push(name);
     }
     if (matches.length > 1)
       throw Error(
         `Ambiguous Claude transcript session ${sessionId}; original data preserved. ` +
           "Back up these files, then keep the intended session in place and move the other copies out of the Claude transcript directories before retrying. Matching files (host path; path relative to project home):\n" +
           matches
-            .map((path) => {
-              const file = join(path, "-workspace", `${sessionId}.jsonl`);
+            .map((name) => {
+              const file = join(
+                projectHome,
+                base,
+                name,
+                "-workspace",
+                `${sessionId}.jsonl`,
+              );
               return `${JSON.stringify(file)}; ${JSON.stringify(relative(projectHome, file))}`;
             })
             .sort()
             .join("\n"),
       );
-    if (matches.length === 1) return matches[0];
+    if (matches.length === 1) return located([...baseParts, matches[0]]);
   }
-  const current = join(directory, credentialId);
-  await mkdir(current, { mode: 0o700 }).catch((error) => {
-    if (error.code !== "EEXIST") throw error;
-  });
-  const stat = await lstat(current);
-  if (!stat.isDirectory() || stat.isSymbolicLink())
+  const current = [...baseParts, credentialId];
+  mkdirBeneath(projectHome, current.join("/"), 0o700);
+  if ((await kindBeneath(projectHome, current.join("/"))) !== "dir")
     throw Error("Unsafe Claude transcript directory");
-  return current;
+  return located(current);
 }
 
 export async function cleanupClaudeSubscriptionController(options: {
@@ -261,6 +286,10 @@ export function claudeSubscriptionContainerArgs(options: {
     `cocalc.project=${projectId}`,
     "--label",
     `${CLAUDE_CONTROLLER_HOME_LABEL}=${home}`,
+    // The reaper removes an abandoned controller's staged transcripts.
+    ...(sessionDirectory
+      ? ["--label", `${CLAUDE_TRANSCRIPT_STAGING_LABEL}=${sessionDirectory}`]
+      : []),
     "--interactive",
     "--read-only",
     "--security-opt=no-new-privileges",
@@ -399,6 +428,9 @@ ${skill}
       >
     | undefined;
   let restrictedEgress: ClaudeRestrictedEgress | undefined;
+  // Host-owned copy of the project's transcripts that the container mounts;
+  // copied back after every turn and on cleanup (claude-transcript-staging).
+  let transcripts: ClaudeTranscriptStaging | undefined;
   let stopped: Promise<void> | undefined;
   let cleanupRetries = 0;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -456,14 +488,29 @@ ${skill}
         const results = await Promise.allSettled([
           toolBridge?.close(),
           cliLease?.close(),
+          // Always runs, even when stopping the container is uncertain below
+          // (which skips removeHome): keep the project's copy current.
+          transcripts?.sync().catch((error) =>
+            logger.warn("Claude transcripts were not copied back", {
+              error: `${error}`,
+            }),
+          ),
         ]);
         const failure = results.find((result) => result.status === "rejected");
         if (failure?.status === "rejected") throw failure.reason;
       },
       refreshCredential: async () => await credentialSync?.finish(),
       removeHome: async () => {
-        await credentialSync?.idle();
-        await rm(home, { recursive: true, force: true });
+        try {
+          // The container has stopped: copy back its last writes, then drop
+          // the staged copy. A failure that may pass keeps it and throws, so
+          // the cleanup retry tries again.
+          await transcripts?.close();
+          transcripts = undefined;
+        } finally {
+          await credentialSync?.idle();
+          await rm(home, { recursive: true, force: true });
+        }
       },
       launched,
     })
@@ -493,12 +540,23 @@ ${skill}
       COCALC_CODEX_THREAD_ID: conversation!.threadId,
     };
     const projectPaths = await localPath({ project_id: projectId });
-    sessionDirectory = await ensureClaudeTranscriptDirectory({
+    const transcript = await ensureClaudeTranscriptDirectory({
       projectHome: projectPaths.home,
       accountId,
       credentialId,
       sessionId: conversation.sessionId,
     });
+    // Never mount the project's own directory (podman would resolve its path
+    // again at start, through any symlink the project put there since): mount
+    // a host-owned copy instead.
+    transcripts = await stageClaudeTranscripts({
+      projectId,
+      projectHome: projectPaths.home,
+      parts: transcript.parts,
+      // only this conversation's session, not every session in the tree
+      sessionId: conversation.sessionId,
+    });
+    sessionDirectory = transcripts.directory;
     const leases = createRenewableCliLease(() =>
       createProjectCliTokenLease({
         projectId,
@@ -633,6 +691,12 @@ ${skill}
       );
     return {
       systemPromptAppend,
+      // A resumed session keeps the instructions it started with; this
+      // records which, so newer ones go with its next turn.
+      sessionInstructions: {
+        get: getSessionInstructionsVersion,
+        set: setSessionInstructionsVersion,
+      },
       projectToolServerName: CLAUDE_PROJECT_MCP_NAME,
       releaseToolWaits: toolBridge
         ? () => toolBridge!.releaseWaits()
@@ -645,6 +709,10 @@ ${skill}
       setTurnPublicationContext: (context) => {
         turnPublication = context;
       },
+      // The turn's transcript is complete: put it back in the project before
+      // the turn reports success, so a completed turn never exists only in
+      // the staged copy (which a crash and the reaper would lose).
+      turnCompleted: async () => await transcripts?.sync(),
       // A lease issued after a fence has no connector turn until the next turn.
       beginConnectorTurn: async (chat) =>
         await leases.current?.beginConnectorTurn(chat),

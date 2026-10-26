@@ -370,6 +370,33 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         }
         return result(message.id, { stopReason: "end_turn" });
       }
+      if (text === "limit-rejected" || text === "limit-warning") {
+        // Claude reports the credential's limits with the turn, then fails
+        // the prompt with a generic internal error (as for a weekly limit).
+        send({
+          method: "session/update",
+          params: {
+            sessionId: "fixture-session",
+            update: {
+              sessionUpdate: "usage_update",
+              used: 1,
+              size: 100,
+              _meta: {
+                "_claude/rateLimit": {
+                  status:
+                    text === "limit-rejected" ? "rejected" : "allowed_warning",
+                  resetsAt: Math.floor(Date.now() / 1000) + 3600,
+                  rateLimitType: "seven_day",
+                },
+              },
+            },
+          },
+        });
+        return send({
+          id: message.id,
+          error: { code: -32603, message: "Internal error" },
+        });
+      }
       if (text === "images") {
         update(
           JSON.stringify(
@@ -380,6 +407,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             })),
           ),
         );
+        return result(message.id, { stopReason: "end_turn" });
+      }
+      if (process.argv.includes("--echo-prompt-start")) {
+        // What the prompt starts with, as sent (before any stripping).
+        update(rawText.split("\n")[0]);
         return result(message.id, { stopReason: "end_turn" });
       }
       if (text === "turn-context") {

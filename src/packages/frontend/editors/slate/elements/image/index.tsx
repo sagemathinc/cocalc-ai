@@ -85,7 +85,8 @@ register({
   slateType: "image",
   toSlate,
   StaticElement: ({ attributes, element }) => {
-    const { urlTransform, reloadImages, noSanitize } = useFileContext();
+    const { urlTransform, reloadImages, noSanitize, imageBoxHeight } =
+      useFileContext();
     const node = element as Image;
     const { src, alt, title } = node;
     const transformedSrc = applyUrlTransform(urlTransform, src, "img");
@@ -103,13 +104,25 @@ register({
         }
         alt={alt}
         title={title}
-        style={{
-          height: node.width == null ? node.height : undefined,
-          width: node.width,
-          maxWidth: imageMaxWidth({ alt, width: node.width }),
-          maxHeight: "100%",
-          objectFit: "contain",
-        }}
+        style={
+          imageBoxHeight && node.width == null && node.height == null
+            ? {
+                // The same height loaded or not: nothing below it moves.
+                display: "block",
+                height: imageBoxHeight,
+                width: "100%",
+                maxWidth: imageMaxWidth({ alt, width: node.width }),
+                objectFit: "scale-down",
+                objectPosition: "left center",
+              }
+            : {
+                height: node.width == null ? node.height : undefined,
+                width: node.width,
+                maxWidth: imageMaxWidth({ alt, width: node.width }),
+                maxHeight: "100%",
+                objectFit: "contain",
+              }
+        }
       />
     );
   },

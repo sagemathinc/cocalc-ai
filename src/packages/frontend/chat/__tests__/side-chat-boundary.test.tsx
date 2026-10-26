@@ -94,4 +94,29 @@ describe("SideChat keyboard boundary", () => {
       }),
     );
   });
+
+  it("passes whether its editor tab is visible to the chat", () => {
+    const { rerender } = render(
+      <SideChat
+        project_id="project-1"
+        path="test.chat"
+        actions={{ messageCache: {} } as any}
+        isVisible={false}
+      />,
+    );
+    expect(mockChatPanel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ isVisible: false }),
+    );
+    rerender(
+      <SideChat
+        project_id="project-1"
+        path="test.chat"
+        actions={{ messageCache: {} } as any}
+        isVisible
+      />,
+    );
+    expect(mockChatPanel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ isVisible: true }),
+    );
+  });
 });

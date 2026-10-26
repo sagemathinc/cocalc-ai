@@ -13,6 +13,7 @@ import {
 } from "@cocalc/conat/agents/protocol";
 import getLogger from "@cocalc/backend/logger";
 import { agentStore } from "./store";
+import { withOwnTurnStatus } from "@cocalc/conat/agents/agent-status";
 import { assertAgent, assertRun } from "./access";
 import { startAgentMessagingMaintenance } from "./maintenance";
 import { retireLegacyAgentMessagingAuthority } from "./session-cutover";
@@ -58,7 +59,8 @@ export async function acceptAgentMessage(
     )) as AgentInspectionResult;
   }
   return {
-    identity: source,
+    // Only this run's account's own limits and sign-ins.
+    identity: withOwnTurnStatus(source, run.account_id),
     run_id,
     protocol_version: 3,
     // What this identity can do: `cocalc agent --help` covers each one.
@@ -70,6 +72,7 @@ export async function acceptAgentMessage(
       "send",
       "broadcast",
       "inspect",
+      "withdraw",
       "propose-network",
     ],
   };

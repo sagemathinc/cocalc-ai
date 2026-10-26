@@ -328,6 +328,13 @@ export type SiteSettingsExtrasKeys =
   | "site_funded_codex_global_concurrency"
   | "site_funded_codex_openai_admin_key"
   | "site_funded_codex_openai_project_id"
+  | "site_funded_claude_heading"
+  | "site_funded_claude_enabled"
+  | "site_funded_claude_model"
+  | "site_funded_claude_max_turn_usd"
+  | "site_funded_claude_max_turn_seconds"
+  | "site_funded_claude_max_output_tokens_per_request"
+  | "site_funded_claude_max_requests_per_turn"
   | "google_vertexai_key"
   | "ollama_configuration"
   | "custom_openai_configuration"
@@ -402,6 +409,7 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
   | "project_hosts_cloudflare_tunnel_api_token"
+  | "project_content_cloudflare_api_token"
   | "cloudflare_automation_token_id"
   | "cloudflare_zone_id"
   | "cloudflare_zone_name"
@@ -1149,7 +1157,8 @@ export const EXTRAS: SettingsExtras = {
     name: "Funded Codex Model",
     desc: "Exact model permitted for site-funded turns. Models without a verified funded price fail closed.",
     default: "gpt-6-luna",
-    valid: hasSiteFundedCodexPrice,
+    // Codex runs OpenAI models only.
+    valid: (model: string) => hasSiteFundedCodexPrice(model, "openai"),
     to_val: to_trimmed_str,
     tags: ["AI", "OpenAI", "Commercialization"],
     group: "AI & Agents",
@@ -1300,6 +1309,86 @@ export const EXTRAS: SettingsExtras = {
     group: "AI & Agents",
     subgroup: "Site-Funded Codex",
     order: 100,
+  },
+  site_funded_claude_heading: {
+    name: "Site-Funded Claude",
+    desc: "Claude Code agents on Claude Haiku 5.5 paid for by the site, from the same membership allowance and weekly pools as site-funded Codex. The site's Anthropic API keys, each with its own monthly limit, are managed on the AI Pool page.",
+    default: "",
+    type: "header",
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    order: 10,
+  },
+  site_funded_claude_enabled: {
+    name: "Enable Site-Funded Claude",
+    desc: "Allow eligible accounts to run Claude Code agents with the site's Anthropic keys through the bounded funded relay. Disabling this leaves personal Claude subscriptions and API keys unchanged.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    order: 20,
+  },
+  site_funded_claude_model: {
+    name: "Funded Claude Model",
+    desc: "Exact model permitted for site-funded Claude turns. Models without a verified funded price fail closed.",
+    default: "claude-haiku-5-5",
+    // Claude runs Anthropic models only.
+    valid: (model: string) => hasSiteFundedCodexPrice(model, "anthropic"),
+    to_val: to_trimmed_str,
+    tags: ["AI", "Commercialization"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    order: 30,
+  },
+  site_funded_claude_max_turn_usd: {
+    name: "Emergency Maximum Funded Claude Turn Cost (USD)",
+    desc: "Generous emergency ceiling for one turn, not a normal UX limit. The ledger reserves this exposure before admission and releases unused funds when the turn finishes.",
+    default: "0.25",
+    valid: onlyPosFloat,
+    to_val: toFloat,
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    order: 200,
+  },
+  site_funded_claude_max_turn_seconds: {
+    name: "Emergency Maximum Claude Turn Duration (seconds)",
+    desc: "Generous emergency guard against abandoned or runaway turns. Normal turns should finish well below it.",
+    default: "3600",
+    valid: only_pos_int,
+    to_val: to_int,
+    tags: ["AI", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    advanced: true,
+    order: 210,
+  },
+  site_funded_claude_max_output_tokens_per_request: {
+    name: "Emergency Maximum Claude Output Tokens per Request",
+    desc: "Generous provider-output guard. It should not truncate ordinary Claude Code work.",
+    default: "32000",
+    valid: only_pos_int,
+    to_val: to_int,
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    advanced: true,
+    order: 230,
+  },
+  site_funded_claude_max_requests_per_turn: {
+    name: "Emergency Maximum Claude Provider Requests per Turn",
+    desc: "Generous runaway-loop guard. It should not stop normal multi-step Claude Code work.",
+    default: "256",
+    valid: only_pos_int,
+    to_val: to_int,
+    tags: ["AI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Claude",
+    advanced: true,
+    order: 240,
   },
   google_vertexai_key: {
     name: "Google Generative AI API Key",
@@ -2319,6 +2408,19 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Cloud", "Cloudflare"],
     group: "Cloudflare",
+    hidden: true,
+  },
+  project_content_cloudflare_api_token: {
+    name: "Project Content Domain: Cloudflare API Token",
+    desc: "Cloudflare API token used only for the Project Content Domain's DNS records (one wildcard per project host). Give it Zone:DNS:Edit on that zone and nothing else. Leave empty to use the Project Hosts Cloudflare Tunnel API token.",
+    default: "",
+    password: true,
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "Cloud", "Cloudflare", "Security"],
+    group: "Cloudflare",
+    subgroup: "Cloudflare Tunnel",
+    order: 31,
+    show: cloudflare_self_mode,
     hidden: true,
   },
   project_hosts_cloudflare_tunnel_api_token: {

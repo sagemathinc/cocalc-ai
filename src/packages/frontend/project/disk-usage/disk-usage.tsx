@@ -42,9 +42,11 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { dirname, posix } from "path";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { indexedBackupState } from "@cocalc/frontend/projects/host-operational";
 import { ProjectDiskQuotaRemediation } from "./quota-remediation";
+import EditHistoryStorage from "./edit-history-storage";
 import { isProjectDiskQuotaStartBlocked } from "@cocalc/util/project-start-errors";
 
 const { Text } = Typography;
@@ -678,9 +680,9 @@ export default function DiskUsage({
     [lastBackup],
   );
   const [expand, setExpand] = useState<boolean>(false);
-  const [activePanel, setActivePanel] = useState<"overview" | "history">(
-    "overview",
-  );
+  const [activePanel, setActivePanel] = useState<
+    "overview" | "history" | "edit-history"
+  >("overview");
   const {
     visible,
     live,
@@ -731,12 +733,17 @@ export default function DiskUsage({
         : quota.used > 0
           ? human_readable_size(quota.used)
           : "Measuring…";
+  const quotaBreakdown =
+    quota?.history_used == null
+      ? ""
+      : `files ${human_readable_size(quota.files_used ?? 0)}, edit history ${human_readable_size(quota.history_used)}`;
   const quotaSummaryTitle =
     quota == null
       ? ""
-      : quotaSizeKnown
-        ? `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`
-        : `${human_readable_size(quota.used)} used; quota limit unavailable`;
+      : (quotaSizeKnown
+          ? `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`
+          : `${human_readable_size(quota.used)} used; quota limit unavailable`) +
+        (quotaBreakdown ? ` (${quotaBreakdown})` : "");
 
   const selectedBucket =
     visible.find((bucket) => bucket.key === selectedBucketKey) ?? visible[0];
@@ -1144,14 +1151,17 @@ export default function DiskUsage({
               options={[
                 { label: "Overview", value: "overview" },
                 { label: "History", value: "history" },
+                { label: "Edit history & logs", value: "edit-history" },
               ]}
               onChange={(value) =>
-                setActivePanel(value as "overview" | "history")
+                setActivePanel(value as "overview" | "history" | "edit-history")
               }
               value={activePanel}
             />
           </div>
-          {activePanel === "history" ? (
+          {activePanel === "edit-history" ? (
+            <EditHistoryStorage project_id={project_id} />
+          ) : activePanel === "history" ? (
             <>
               <div style={{ marginBottom: "14px" }}>
                 <Space size={12} wrap>
@@ -1280,6 +1290,18 @@ export default function DiskUsage({
                       <> out of {human_readable_size(quota.size)}</>
                     ) : (
                       <Text type="secondary">; quota limit unavailable</Text>
+                    )}
+                    {quota.history_used != null && (
+                      <div
+                        style={{ color: UI_COLORS.secondary, marginTop: "8px" }}
+                      >
+                        Files take {human_readable_size(quota.files_used ?? 0)}{" "}
+                        and the edit history of your documents{" "}
+                        {human_readable_size(quota.history_used)}. The edit
+                        history may use{" "}
+                        {human_readable_size(quota.history_reserve ?? 0)} beyond
+                        the quota, so editing keeps working when files fill it.
+                      </div>
                     )}
                     {quota.warning ? (
                       <Alert

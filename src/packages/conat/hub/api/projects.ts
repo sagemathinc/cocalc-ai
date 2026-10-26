@@ -16,6 +16,11 @@ import type {
   ProjectDefaultOverrides,
 } from "./purchases";
 import { type SnapshotSchedule } from "@cocalc/util/consts/snapshots";
+import type {
+  PersistStorageAction,
+  PersistStorageApplyResult,
+  PersistStorageList,
+} from "@cocalc/conat/project/persist-storage";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import {
   type FileTextPreview,
@@ -1354,6 +1359,9 @@ export const projects = {
   allSnapshotUsage: authFirstRequireAccount,
   getSnapshotFileText: authFirstRequireAccount,
 
+  listProjectPersistStorage: authFirstRequireAccount,
+  applyProjectPersistStorage: authFirstRequireAccount,
+
   start: authFirstRequireAccount,
   startFromHost: authFirstRequireHostWithAccountTarget,
   stop: authFirstRequireAccount,
@@ -2309,6 +2317,25 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectSnapshotSchedule>;
+
+  // A project's edit history and logs (conat/project/persist-storage.ts):
+  // what they take, for any collaborator ...
+  listProjectPersistStorage: (opts: {
+    account_id?: string;
+    project_id: string;
+    limit?: number;
+    timeout?: number;
+  }) => Promise<PersistStorageList>;
+  // ... and deleting or trimming them, a destructive storage action (owners,
+  // unless they allow collaborators), with a fresh sign-in
+  applyProjectPersistStorage: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    project_id: string;
+    actions: PersistStorageAction[];
+    timeout?: number;
+  }) => Promise<PersistStorageApplyResult>;
 
   getSnapshotQuota: (opts: {
     account_id?: string;

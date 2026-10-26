@@ -51,7 +51,7 @@ export function useMentionableUsers(): (
 ) => Item[] {
   const { project_id } = useProjectContext();
   const user_map = useTypedRedux("users", "user_map");
-  const { allowAgentMentions, states, source, postOnly } =
+  const { allowAgentMentions, agentsOnly, states, source, postOnly } =
     useAgentMentionContext();
   const { selectedNetworkId } = useChatEmbeddingOptions();
   const settings = useTypedRedux("account", "other_settings");
@@ -60,7 +60,7 @@ export function useMentionableUsers(): (
   const enabled = allowAgentMentions === true;
   const { directory } = useNamedAgents(enabled);
   const { directory: networkDirectory } = useAgentNetworks(enabled);
-  const computersEnabled = useComputersEnabled() && enabled;
+  const computersEnabled = useComputersEnabled() && enabled && !agentsOnly;
   const computers = useComputers(computersEnabled);
 
   return useMemo(() => {
@@ -116,7 +116,7 @@ export function useMentionableUsers(): (
         }),
       );
       const artifacts: Item[] =
-        enabled && project_id
+        enabled && !agentsOnly && project_id
           ? artifactNames
               .filter((item) => item.active && item.project_id === project_id)
               .filter((item) => item.name.includes(query))
@@ -200,6 +200,7 @@ export function useMentionableUsers(): (
     computersEnabled,
     expanded,
     postOnly,
+    agentsOnly,
   ]);
 }
 

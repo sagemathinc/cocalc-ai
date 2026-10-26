@@ -11,7 +11,7 @@ export const privacyPolicy: PublicPolicy = {
   navLabel: "Privacy",
   slug: "privacy",
   title: "Privacy Policy",
-  updated: "June 30, 2026",
+  updated: "October 25, 2026",
   content: (
     <>
       <p>
@@ -180,6 +180,26 @@ export const privacyPolicy: PublicPolicy = {
             identifiers, details about your browser or device, and information
             about how you use the Services.{" "}
           </p>{" "}
+          <p>
+            <strong>Public Share Views.</strong> When you are signed in and view
+            or copy files from a public share, including one you published
+            yourself, we record that your account accessed that share, the
+            project it belongs to, whether you are an owner, a collaborator or
+            another visitor of that project, your approximate region (one of six
+            world regions, such as Western Europe, derived from your recent
+            connection; never your country or city), and the date and time of
+            your first access that day. We do not record which files you opened
+            or how often. We keep at most one record per account, share and day.
+            We use these records to investigate security problems and abuse, to
+            show the owners and collaborators of the shared project how often
+            the share is viewed and from which regions (counts only, never which
+            accounts viewed it; a region is shown only when at least five
+            viewers come from it), and to produce aggregate statistics,
+            including totals by region, that include only groups of at least
+            five viewers. We rely on our legitimate interests in securing the
+            Services and in providing these statistics, and we delete these
+            records after 13 months.
+          </p>
           <p>
             {" "}
             <strong>Information from Other Sources.</strong> We may receive
@@ -816,6 +836,22 @@ export const privacyPolicy: PublicPolicy = {
           conduct audits, pursue legitimate business purposes, enforce our
           agreements, and comply with applicable laws.{" "}
         </p>{" "}
+        <p>
+          When you delete your account, Sagemath removes your email address,
+          name, password, profile picture, SSH keys, sign-in connections,
+          settings and other personal data from your account record, and deletes
+          any contact record about you in our sales and marketing system. We
+          keep your former email address for 90 days to help with account
+          recovery requests and to prevent abuse, and then delete it. Records
+          that we must keep by law, such as purchase and tax records, are kept
+          for as long as the law requires.
+        </p>
+        <p>
+          Records of which accounts viewed a public share are deleted 13 months
+          after the view. Deleting your account also deletes these records
+          (records about shares stored in another region of our service are
+          deleted within those 13 months).
+        </p>
       </PolicySection>{" "}
       <PolicySection
         id="security-of-your-information"
@@ -1165,6 +1201,14 @@ export const privacyPolicy: PublicPolicy = {
             <tr>
               <td>Update: clarify automated abuse detection safeguards</td>
               <td> 2026-06-30 </td>
+            </tr>
+            <tr>
+              <td>Update: what account deletion removes and keeps</td>
+              <td> 2026-10-21 </td>
+            </tr>
+            <tr>
+              <td>Update: records of public share views</td>
+              <td> 2026-10-25 </td>
             </tr>
           </tbody>
         </table>

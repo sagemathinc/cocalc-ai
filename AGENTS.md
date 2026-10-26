@@ -18,9 +18,11 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
   advisory. Private development testing does not disqualify it. Merely
   discovering a pre-existing issue during PR review does not qualify.
 - For findings affecting existing, deployed, or user-accessible code, or when
-  scope is uncertain, report privately. Use a draft GitHub repository security
-  advisory and its temporary private fork for non-public fixes; do not push
-  details or fixes to the public repository before coordinated deployment.
+  scope is uncertain, report privately. Develop non-public fixes in the
+  private repository `sagemathinc/cocalc-ai-private` as described in
+  [`src/scripts/security/README.md`](src/scripts/security/README.md); do not
+  push details or fixes to the public repository before coordinated
+  deployment.
 - Never include real credentials, personal data, or other users' data in a
   public report or PR. If a security issue is discovered during unrelated
   work, stop and classify its scope before disclosing details.
@@ -135,6 +137,56 @@ EOF
 - Before finishing a change-set, run relevant typecheck/tests for touched packages.
 - Run `pnpm -C src prettier --write <file>` on modified files as needed.
 - For frontend changes, also run `pnpm -C src lint:frontend`. Treat frontend lint failures the same way as test or typecheck failures.
+
+## Pull Requests
+
+- End every PR body you open with an owner line, so the human and other agents
+  know whom to ask about it, across sites and projects:
+
+  ```
+  Owner: `@<agent-name>` on <site>, project <project title> (<first 8 of project id>)
+  ```
+
+  For example ``Owner: `@ops0` on alpha.cocalc.ai, project ops (c3337130)``.
+  Keep the agent name in backticks: a bare `@name` mentions an unrelated
+  GitHub user. In a CoCalc runtime use the name peers route to:
+  `data.as_seen_by_peers.name` from `cocalc agent whoami --json` (not
+  `identity.name`, which can differ, e.g. "review - 1" vs "review"); if there
+  is no `as_seen_by_peers` (no Agent Network), use `identity.name`. The site
+  is the host of `$COCALC_SITE_URL`.
+- Outside a CoCalc runtime (no agent identity or site), name what you are and
+  where you run instead, e.g. ``Owner: `claude-code` on <machine>, for
+  <GitHub handle>``; site and project are optional then.
+- If you run in a project that belongs to a customer rather than to CoCalc's
+  own team, or on a site dedicated to one customer, leave out the site and
+  the project: ``Owner: `@<agent-name>`, customer environment (details
+  omitted)``.
+- If you take over another agent's PR, update its owner line.
+- A PR opened by a person may say `Owner: <GitHub handle>`.
+
+## Customer Data Stays Out of GitHub
+
+This repository is public. Work prompted by a support ticket or user report
+must not identify the customer anywhere on GitHub: PR and issue titles and
+bodies, review comments, commit messages, branch names, code comments, test
+fixtures and docs.
+
+- Leave out customer names, email addresses, institutions, courses,
+  customer-identifying locations, ticket numbers, customer project and account
+  IDs, hostnames tied to one customer, and file or assignment names from their
+  projects. An owner line that names CoCalc's own site and team project is
+  not customer data; in a customer's environment it omits both (see Pull
+  Requests).
+- Describe the problem generically: "a customer report", "a course notebook",
+  "a project on a busy host". Reproduce it with synthetic data.
+- Keep the identifying details where the support work happens, not in the
+  repository.
+- GitHub keeps every revision of a PR body, issue or comment. Editing it
+  later does not remove the earlier text: a maintainer has to delete those
+  revisions. A pushed commit message has to be reworded and force-pushed
+  before merge. So get it right before posting.
+- This rule does not relax the Security Issues rules above: security findings
+  still follow that section.
 
 ## Docs
 

@@ -22,8 +22,10 @@ import {
   scheduledPromptText,
   sensorKind,
   sensorUses,
+  sensorDelivery,
   sensorWakePrompt,
   sensorWatchScript,
+  SENSOR_WAKE_CLAIM_WINDOW_MINUTES,
   validateSensorSpec,
   type SensorConnector,
   type SensorRunOutcome,
@@ -232,6 +234,10 @@ function logOutput(stdout: string, stderr: string): string {
     .join("\n");
 }
 
+/** `podman run` exits 125, with an "Error: " line, when podman itself fails
+ * (the command never ran). */
+const PODMAN_FAILED = 125;
+
 export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   const db = agentStore();
   const started = new Date();
@@ -250,6 +256,11 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   // Wakes held earlier that this run's wake includes.
   let combinedRuns: string[] = [];
   let missingNow: SensorConnector[] = [];
+  // This run is a watcher giving up after its check kept failing.
+  let failedOut = false;
+  // The check never ran: the host or its container runtime failed.
+  let runnerFailed = false;
+  let deliveryStarted = false;
   try {
     await db.query(
       // Database time, comparable with approved_at when the wake executes.
@@ -277,6 +288,30 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       };
       summary = wake.summary;
       finished = true;
+      return sensorWakePrompt({
+        title: spec.title,
+        sensor_id: row.sensor_id,
+        ran_at: started,
+        wake,
+      });
+    };
+    const giveUpAfterFailures = (
+      reason: string,
+      log: string | null,
+      runner: boolean,
+    ): string => {
+      const times = row.consecutive_failures + 1;
+      const wake: SensorWake = {
+        // Say when the check never ran, so the agent does not read a host
+        // problem as a result of what it watches (a failed CI, say).
+        summary: runner
+          ? `Gave up: "${spec.title}" could not run ${times} times in a row, because of a problem running it (not a result of what it watches). Last error: ${reason}`
+          : `Gave up: "${spec.title}" failed ${times} times in a row. Last error: ${reason}`,
+        data: log ? { output: log } : undefined,
+      };
+      summary = wake.summary;
+      finished = true;
+      failedOut = true;
       return sensorWakePrompt({
         title: spec.title,
         sensor_id: row.sensor_id,
@@ -338,11 +373,6 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       });
       summary = wake.summary;
       finished = true;
-    } else if (
-      spec.kind === "watch" &&
-      (missingNow = await missingWatcherConnectors(row, spec)).length > 0
-    ) {
-      prompt = giveUpWatcher();
     } else {
       // Code runs: an approved script, or a ci/file watcher's built-in one.
       const watch = spec.kind === "watch" ? spec.watch : undefined;
@@ -351,86 +381,120 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       const timeout_seconds = watch
         ? SENSOR_LIMITS.defaultTimeoutSeconds
         : (spec as any).timeout_seconds;
-      const lease = await issueSensorRunCredentials({
-        agent,
-        account_id: row.approved_by,
-        host_id: host.host_id,
-        run_id,
-        uses: sensorUses(spec),
-      });
-      connectors = lease.given;
       let result;
+      // The check could not be set up or run at all (a connector or
+      // credential request, the host or its container failed): a failed run,
+      // like a failing check.
+      let runError: string | undefined;
       try {
-        if (lease.missing.length > 0 && !watch) {
-          const names = lease.missing
-            .map((c) => SENSOR_CONNECTOR_LABELS[c])
-            .join(" and ");
-          pause = `This sensor uses ${names}, which the person who approved it has not turned on for this agent (its Connectors menu). Turn it on, then resume the sensor.`;
-          outcome = "skipped";
-          failed = false;
-          error = pause;
-          return;
-        }
-        // Turned off (or its connection lost) since the check above.
-        if (lease.missing.length > 0) missingNow = lease.missing;
-        else {
-          const renewal = setInterval(
-            () =>
-              void lease.renew().catch((err) =>
-                logger.warn("sensor connector renewal failed", {
-                  run_id,
-                  err: errorText(err),
-                }),
-              ),
-            60_000,
-          );
+        if (watch) missingNow = await missingWatcherConnectors(row, spec);
+        if (missingNow.length === 0) {
+          const lease = await issueSensorRunCredentials({
+            agent,
+            account_id: row.approved_by,
+            host_id: host.host_id,
+            run_id,
+            uses: sensorUses(spec),
+          });
+          connectors = lease.given;
           try {
-            await beforeDispatchHook?.();
-            // Checked again now that credentials exist, and the exact image
-            // checked is the one run.
-            const dispatch = await currentDispatch(row);
-            if (!dispatch) {
-              await changed();
+            if (lease.missing.length > 0 && !watch) {
+              const names = lease.missing
+                .map((c) => SENSOR_CONNECTOR_LABELS[c])
+                .join(" and ");
+              pause = `This sensor uses ${names}, which the person who approved it has not turned on for this agent (its Connectors menu). Turn it on, then resume the sensor.`;
+              outcome = "skipped";
+              failed = false;
+              error = pause;
               return;
             }
-            result = await host.api.runAgentSensor({
-              project_id: row.project_id,
-              sensor_id: row.sensor_id,
-              run_id,
-              language: watch ? "python" : (spec as any).language,
-              script,
-              timeout_seconds,
-              path: agent.path,
-              image: dispatch.image,
-              credentials: lease.credentials,
-            });
+            // Turned off (or its connection lost) since the check above.
+            if (lease.missing.length > 0) missingNow = lease.missing;
+            else {
+              const renewal = setInterval(
+                () =>
+                  void lease.renew().catch((err) =>
+                    logger.warn("sensor connector renewal failed", {
+                      run_id,
+                      err: errorText(err),
+                    }),
+                  ),
+                60_000,
+              );
+              try {
+                await beforeDispatchHook?.();
+                // Checked again now that credentials exist, and the exact
+                // image checked is the one run.
+                const dispatch = await currentDispatch(row);
+                if (!dispatch) {
+                  await changed();
+                  return;
+                }
+                result = await host.api.runAgentSensor({
+                  project_id: row.project_id,
+                  sensor_id: row.sensor_id,
+                  run_id,
+                  language: watch ? "python" : (spec as any).language,
+                  script,
+                  timeout_seconds,
+                  path: agent.path,
+                  image: dispatch.image,
+                  credentials: lease.credentials,
+                });
+              } finally {
+                clearInterval(renewal);
+              }
+            }
           } finally {
-            clearInterval(renewal);
+            await lease.release();
           }
         }
-      } finally {
-        await lease.release();
+      } catch (err) {
+        runError = errorText(err);
       }
+      let wake: SensorWake | undefined;
       if (missingNow.length > 0) prompt = giveUpWatcher();
       else {
-        exit_code = result.exit_code;
-        output = logOutput(result.stdout, result.stderr);
-        if (result.timed_out) {
-          outcome = "timeout";
-          error = `The script ran longer than ${timeout_seconds} seconds.`;
-          return;
+        if (runError != null) {
+          error = runError;
+          runnerFailed = true;
+        } else {
+          exit_code = result.exit_code;
+          output = logOutput(result.stdout, result.stderr);
+          if (result.timed_out) {
+            outcome = "timeout";
+            error = `The script ran longer than ${timeout_seconds} seconds.`;
+          } else if (
+            exit_code === PODMAN_FAILED &&
+            /^Error: /m.test(result.stderr ?? "")
+          ) {
+            // podman's own error (e.g. a container name in use): the script
+            // never started.
+            runnerFailed = true;
+            error = `The sensor's container could not start on the project's host (podman exit ${exit_code}).`;
+          } else if (exit_code !== 0) {
+            error = `The script exited with code ${exit_code}.`;
+          } else {
+            try {
+              wake = parseSensorWake(result.stdout);
+            } catch (err) {
+              error = errorText(err);
+            }
+          }
         }
-        if (exit_code !== 0) {
-          error = `The script exited with code ${exit_code}.`;
-          return;
+        if (error != null) {
+          // A watcher whose check keeps failing would pause, which an agent
+          // waiting on it never hears about. On the failure that would pause
+          // it, it gives up instead and tells its agent why.
+          if (
+            !watch ||
+            row.consecutive_failures + 1 < SENSOR_LIMITS.maxConsecutiveFailures
+          )
+            return;
+          prompt = giveUpAfterFailures(error, output, runnerFailed);
         }
-        let wake;
-        try {
-          wake = parseSensorWake(result.stdout);
-        } catch (err) {
-          error = errorText(err);
-          return;
-        }
+      }
+      if (prompt == null) {
         failed = false;
         if (!watch) {
           // While an earlier wake still waits for the agent, hold this one;
@@ -542,6 +606,8 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       throw err;
     }
     let delivered;
+    deliveryStarted = true;
+    const delivery = await wakeDelivery(row, run_id, spec);
     try {
       delivered = await host.api.deliverAgentSensorWake({
         account_id: row.approved_by,
@@ -549,6 +615,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         thread_id: agent.thread_id,
         title: spec.title,
         prompt,
+        delivery,
         authorization: {
           version: 1,
           sensor_id: row.sensor_id,
@@ -590,12 +657,24 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         return;
       }
     }
-    outcome = "wake";
+    outcome =
+      "effective_delivery" in delivered &&
+      delivered.effective_delivery === "live-guidance"
+        ? "wake-guidance"
+        : "wake";
     woke = 1;
     await settleCombined(run_id, true);
   } catch (err) {
     error = errorText(err);
+    // Nothing was sent: a watcher giving up must try again.
+    if (failedOut && !deliveryStarted) finished = false;
   } finally {
+    // Delivering a give-up wake is never a check failure, which would pause
+    // the watcher, nor a success, which would reset the count. If it was not
+    // sent (not_sent, over the wake limit, an error before sending), the
+    // watcher stays scheduled and the next failed check gives up again; if
+    // its delivery was ambiguous, the watcher is done, like any other.
+    const keepFailures = failedOut;
     await finishRun(row, {
       run_id,
       started,
@@ -609,6 +688,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       pause,
       finished,
       connectors,
+      keepFailures,
     });
   }
 }
@@ -620,14 +700,18 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
 const CURRENT_APPROVAL =
   "sensor_id=$1 AND script_hash=$2 AND started_at >= $3::timestamptz";
 
-/** An earlier wake of this sensor is queued and its turn has not started. */
+/**
+ * An earlier wake of this sensor is queued and its turn has not started, or
+ * it is joining a running turn right now (a claim that is not stale).
+ */
 async function hasQueuedWake(
   row: ClaimedSensor,
   run_id: string,
 ): Promise<boolean> {
   const { rows } = await agentStore().query(
     `SELECT 1 FROM agent_sensor_runs WHERE ${CURRENT_APPROVAL}
-       AND run_id<>$4 AND wake_state='issued'
+       AND run_id<>$4 AND (wake_state='issued'
+         OR (wake_state='claimed' AND wake_claimed_at > now() - interval '10 minutes'))
        AND started_at > now() - make_interval(hours => $5) LIMIT 1`,
     [
       row.sensor_id,
@@ -737,11 +821,17 @@ async function finishRun(
     pause: string | undefined;
     finished: boolean;
     connectors: SensorConnector[];
+    /** Neither count this run as a failure nor reset the count. */
+    keepFailures?: boolean;
   },
 ): Promise<void> {
   const db = agentStore();
   let pause = r.pause;
-  const failures = r.failed ? row.consecutive_failures + 1 : 0;
+  const failures = r.keepFailures
+    ? row.consecutive_failures
+    : r.failed
+      ? row.consecutive_failures + 1
+      : 0;
   if (!pause && failures >= SENSOR_LIMITS.maxConsecutiveFailures)
     pause = `Paused after ${failures} failed runs in a row. Last error: ${r.error ?? r.outcome}`;
   await db
@@ -951,4 +1041,53 @@ export function startSensorScheduler(pollMs: number = POLL_MS): () => void {
     setSensorSchedulerKick(undefined);
     clearTimeout(timer);
   };
+}
+
+/**
+ * Wakes join the running turn (see sensorDelivery), but at most one per
+ * sensor every GUIDANCE_INTERVAL, counted from when a wake actually joined a
+ * turn, or while one may still be joining one: a claim counts however old it
+ * is, since its steer attempt (a prompt request with no timeout) can still
+ * inject it until it is consumed or released. A sensor that did, or still
+ * may, sends this one as a turn of its own, after the running one, and wakes
+ * after that are held and combined into it as before. A chatty sensor never
+ * floods a turn; queued wakes do not count. (A claim whose attempt died makes
+ * this sensor's wakes queued turns until the sensor is approved again: never
+ * lost, and never a second injection.) Approving it again supersedes its
+ * claims, but one claimed under the old approval still counts for
+ * SENSOR_WAKE_CLAIM_WINDOW_MINUTES: its attempt starts no injection after
+ * the claim's lease (SENSOR_WAKE_CLAIM_LEASE_MS) ends.
+ */
+export const GUIDANCE_INTERVAL_MINUTES = 10;
+
+async function wakeDelivery(
+  row: ClaimedSensor,
+  run_id: string,
+  spec: Parameters<typeof sensorDelivery>[0],
+): Promise<"guidance" | "queued"> {
+  if (sensorDelivery(spec) !== "guidance") return "queued";
+  // A claim counts however old it is, until consumed or released: its
+  // attempt can inject it until then. One an approval since superseded
+  // counts until its lease, and so any attempt to inject it, has ended.
+  const { rows } = await agentStore().query(
+    `SELECT 1 FROM agent_sensor_runs
+     WHERE sensor_id=$1 AND run_id<>$4
+       AND (wake_guided_at > now() - make_interval(mins => $5)
+         OR (wake_state='claimed' AND ${CURRENT_APPROVAL.replace(
+           "sensor_id=$1 AND ",
+           "",
+         )})
+         OR (wake_state='superseded'
+           AND wake_claimed_at > now() - make_interval(mins => $6)))
+     LIMIT 1`,
+    [
+      row.sensor_id,
+      row.script_hash,
+      row.approved_at_text,
+      run_id,
+      GUIDANCE_INTERVAL_MINUTES,
+      SENSOR_WAKE_CLAIM_WINDOW_MINUTES,
+    ],
+  );
+  return rows.length ? "queued" : "guidance";
 }

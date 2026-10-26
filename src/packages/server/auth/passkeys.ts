@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
 import type { Request } from "express";
 import { v4 as uuid } from "uuid";
 import {
@@ -25,16 +26,12 @@ import {
   getCurrentAuthSession,
   requireFreshAuth,
   resolveFreshAuthDurationMs,
-  revokeOtherAuthSessions,
   setCurrentSessionFreshAuth,
   setSessionFreshAuth,
   type AuthPrimaryMethod,
   type FreshAuthDuration,
 } from "@cocalc/server/auth/auth-sessions";
-import {
-  deleteOtherRememberMe,
-  getRememberMeHash,
-} from "@cocalc/server/auth/remember-me";
+import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import {
   getWebAuthnRelyingPartyForRequest,
   validateWebAuthnRelyingParty,
@@ -548,8 +545,9 @@ export async function finishPasskeySetup({
     throw new Error("passkey setup failed");
   }
   if (currentHash) {
-    await deleteOtherRememberMe(accountId, currentHash);
-    await revokeOtherAuthSessions({
+    // Other sessions are signed out, on the hub and on project hosts, and
+    // their content-origin links go too.
+    await endOtherSessionsOrExplain({
       account_id: accountId,
       keep_session_hash: currentHash,
     });

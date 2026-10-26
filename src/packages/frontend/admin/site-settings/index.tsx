@@ -57,6 +57,7 @@ import LauncherDefaultsWizard from "./launcher-defaults-wizard";
 import RuntimeRetentionPolicyWizard from "./runtime-retention-policy-wizard";
 import ShowError from "@cocalc/frontend/components/error";
 import SiteFundedCodexStatusCard from "./site-funded-codex-status";
+import SiteFundedClaudeKeysCard from "./site-funded-claude-keys";
 
 const { CheckableTag } = AntdTag;
 
@@ -139,7 +140,8 @@ export function isCodexPoolsSetting(name: string): boolean {
   return (
     name === "openai_section" ||
     name === "openai_api_key" ||
-    name.startsWith("site_funded_codex_")
+    name.startsWith("site_funded_codex_") ||
+    name.startsWith("site_funded_claude_")
   );
 }
 
@@ -1542,6 +1544,8 @@ export default function SiteSettings({
         {scope === "codex-pools" && to_bool(data?.site_funded_codex_enabled) ? (
           <SiteFundedCodexStatusCard />
         ) : null}
+        {/* Keys can be added before site-funded Claude is enabled. */}
+        {scope === "codex-pools" ? <SiteFundedClaudeKeysCard /> : null}
         <ShowError
           error={error}
           setError={setError}

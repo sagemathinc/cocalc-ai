@@ -135,6 +135,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.credentialUpdatedAt": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.reportStatus": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.describeNetworkSelf": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
@@ -435,6 +443,16 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "merges Zendesk tickets and can add customer-visible comments",
   },
+  "adminSupport.create": {
+    decision: "fresh-auth-required",
+    reason:
+      "opens a new customer-visible Zendesk ticket that emails a customer from the shared support identity",
+  },
+  "adminSupport.createOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed-local helper is only reached from the fresh-auth-checked adminSupport.create RPC or the trusted CRM seed channel",
+  },
   "adminSupport.spam": {
     decision: "fresh-auth-required",
     reason: "deletes a Zendesk ticket as spam and suspends its requester",
@@ -541,6 +559,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "commercialOrders.endFulfillment": {
     decision: "fresh-auth-required",
     reason: "ends a provisioned institutional commercial service",
+  },
+  "commercialOrders.recordMembershipFulfillment": {
+    decision: "fresh-auth-required",
+    reason:
+      "records institutional membership-seat fulfillment on commercial state",
   },
   "commercialOrders.provision": {
     decision: "fresh-auth-required",
@@ -706,6 +729,22 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "hosts.issueProjectHostAgentAuthToken": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
+  },
+  "hosts.revokeProjectContentLinks": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "hosts.issueProjectContentUrl": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "hosts.issueProjectAppUrl": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "hosts.issueProjectAppFrameUrl": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
   },
   "hosts.issueProjectHostAuthToken": {
     decision: "internal-auth-only",
@@ -1203,6 +1242,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "project snapshot path deletion",
   },
+  "projects.applyProjectPersistStorage": {
+    decision: "fresh-auth-required",
+    reason: "project edit history and log deletion",
+  },
   "projects.drainProjectRehome": {
     decision: "fresh-auth-required",
     reason: "project ownership migration maintenance",
@@ -1396,6 +1439,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason:
       "admin-only idempotent reconstruction of derived membership analytics events",
+  },
+  "purchases.adminAttachCreditAttribution": {
+    decision: "fresh-auth-required",
+    reason: "admin audit-log attribution of a past balance adjustment",
+  },
+  "purchases.adminListCreditAttribution": {
+    decision: "fresh-auth-required",
+    reason: "admin read of balance adjustments with internal reasons",
   },
   "purchases.adminCreateMembershipPackagePurchase": {
     decision: "fresh-auth-required",
@@ -1830,6 +1881,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason:
       "collaborator-authorized normal project runtime environment selection",
+  },
+  "system.manageSiteFundedClaudeKeys": {
+    decision: "fresh-auth-required",
+    reason:
+      "adds, changes or removes the site API keys that pay for site-funded Claude",
   },
   "system.setSiteSettings": {
     decision: "fresh-auth-required",

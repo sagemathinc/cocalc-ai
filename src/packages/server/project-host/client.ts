@@ -48,6 +48,9 @@ export async function getRoutedHostControlClient({
       inspectAgentRpc: async () => {
         throw new Error("agent RPC must route through the target owner");
       },
+      withdrawAgentRpc: async () => {
+        throw new Error("agent RPC must route through the target owner");
+      },
       runAgentSensor: async () => {
         throw new Error("sensors must route through the project owner");
       },

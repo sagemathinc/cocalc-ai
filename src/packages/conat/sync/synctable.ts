@@ -5,7 +5,7 @@ import { type KVLimits } from "./limits";
 import { type FilteredStreamLimitOptions } from "./limits";
 import jsonStableStringify from "json-stable-stringify";
 import { type Client } from "@cocalc/conat/core/client";
-import type { CoreStreamInitPhaseReporter } from "./core-stream";
+import type { CoreStreamInitPhaseReporter, User } from "./core-stream";
 
 export type ConatSyncTable = SyncTableStream | SyncTableKV;
 
@@ -48,6 +48,9 @@ export interface SyncTableOptions {
   ephemeral?: boolean;
   noAutosave?: boolean;
   initPhaseReporter?: CoreStreamInitPhaseReporter;
+  // For stream tables: the persist service and the identity to ask it as.
+  service?: string;
+  persistUser?: User;
 }
 
 export const createSyncTable = refCache<SyncTableOptions, ConatSyncTable>({

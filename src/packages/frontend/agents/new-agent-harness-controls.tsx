@@ -29,10 +29,12 @@ import {
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import { discoverNewAgentHarness } from "./discover-new-agent-harness";
 import {
+  claudeCredentialFromValue,
   newAgentClaudeCredentialOptions,
   newAgentClaudeCredentialValue,
   preferredClaudeCredential,
 } from "./claude-credential-options";
+import { useSiteFundedClaudeAvailable } from "./site-funded-claude";
 
 export function NewAgentClaudeControls({
   accountId,
@@ -99,7 +101,15 @@ export function NewAgentClaudeControls({
     const timer = setTimeout(() => setReadyScope(scope), 300);
     return () => clearTimeout(timer);
   }, [scope]);
-  const options = newAgentClaudeCredentialOptions(credentials);
+  // Included Claude is offered when the membership includes it, and shown
+  // while selected even before that is known.
+  const membership =
+    useSiteFundedClaudeAvailable() || credential.mode === "site-funded";
+  const options = newAgentClaudeCredentialOptions(
+    credentials,
+    false,
+    membership,
+  );
   const value = newAgentClaudeCredentialValue(credential);
   const hasSubscription = credentials.some(
     (row) => !row.revoked && row.kind === CLAUDE_SUBSCRIPTION_KIND,
@@ -123,7 +133,7 @@ export function NewAgentClaudeControls({
   const unavailableCredential =
     credentialsLoaded && !options.some((option) => option.value === value);
   const payment =
-    newAgentClaudeCredentialOptions(credentials, true).find(
+    newAgentClaudeCredentialOptions(credentials, true, membership).find(
       (option) => option.value === value,
     )?.label ?? "Choose payment method";
   const configuration = (
@@ -143,23 +153,9 @@ export function NewAgentClaudeControls({
         }
         style={{ width: "100%" }}
         popupMatchSelectWidth={false}
-        onChange={(next: string) => {
-          const mode = next.startsWith("account-subscription:")
-            ? "account-subscription"
-            : next.startsWith("account-api-key:")
-              ? "account-api-key"
-              : "project-secret";
-          onCredential(
-            mode === "project-secret"
-              ? { version: 1, provider: "anthropic", mode }
-              : {
-                  version: 1,
-                  provider: "anthropic",
-                  mode,
-                  credentialId: next.slice(mode.length + 1),
-                },
-          );
-        }}
+        onChange={(next: string) =>
+          onCredential(claudeCredentialFromValue(next))
+        }
       />
       {unavailableCredential && (
         <div role="alert">
@@ -194,7 +190,11 @@ export function NewAgentClaudeControls({
             onCredentials((rows) => rows.filter((row) => row.id !== id));
             // Fall back to another subscription, never to the project secret:
             // with none left, the user chooses (connect or pick a key).
-            const next = preferredClaudeCredential(undefined, remaining);
+            const next = preferredClaudeCredential(
+              undefined,
+              remaining,
+              membership,
+            );
             if (next.mode !== "project-secret") onCredential(next);
           }}
           onConnected={onConnected}

@@ -49,6 +49,13 @@ import {
 } from "@cocalc/docs";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
+import {
+  applyUrlTransform,
+  URL_REJECTED,
+  type UrlTransformResult,
+} from "@cocalc/frontend/lib/url-transform";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { useProjectHostLatencies } from "@cocalc/frontend/hosts/use-project-host-latencies";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -157,7 +164,7 @@ export type DocsLinearNavigationState = {
   hrefForEntry?: (entry: DocsEntry) => string;
   next?: DocsEntry;
   nextChapter?: DocsEntry;
-  onSelectEntry: (entry: DocsEntry) => void;
+  onSelectEntry: (entry: DocsEntry, href?: string) => void;
   previous?: DocsEntry;
   previousChapter?: DocsEntry;
 };
@@ -171,7 +178,7 @@ export function getDocsLinearNavigation({
   entries: DocsEntry[];
   entry: DocsEntry;
   hrefForEntry?: (entry: DocsEntry) => string;
-  onSelectEntry: (entry: DocsEntry) => void;
+  onSelectEntry: (entry: DocsEntry, href?: string) => void;
 }): DocsLinearNavigationState | undefined {
   const selectedGlobalIndex = entries.findIndex(
     (candidate) => candidate.id === entry.id,
@@ -388,13 +395,19 @@ export function docsSiteProfileFromLocation(): DocsAccess["siteProfile"] {
     : undefined;
 }
 
-export function docsEntryForInternalHref(href: string): DocsEntry | undefined {
+export function docsEntryForInternalHref(
+  href: string,
+  docsAccess?: DocsAccess,
+): DocsEntry | undefined {
   const raw = `${href ?? ""}`.trim();
   if (!raw) return;
   let path = raw;
-  if (/^https?:\/\//i.test(raw)) {
+  if (/^(?:https?:)?\/\//i.test(raw)) {
     try {
-      const url = new URL(raw);
+      const url = new URL(
+        raw,
+        typeof window === "undefined" ? undefined : window.location.href,
+      );
       if (
         typeof window !== "undefined" &&
         url.origin !== window.location.origin
@@ -410,38 +423,119 @@ export function docsEntryForInternalHref(href: string): DocsEntry | undefined {
     .replace(/[?#].*$/, "")
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
-  if (!normalized.startsWith("docs/") && !normalized.startsWith("app-docs/")) {
-    return;
+  // Docs source uses root-relative paths. Rendered links may also include
+  // the deployment's base path, including a base such as /docs itself.
+  const candidates = [normalized];
+  const base = appBasePath.replace(/^\/+|\/+$/g, "");
+  if (base && normalized.startsWith(`${base}/`)) {
+    candidates.push(normalized.slice(base.length + 1));
   }
-  const slug = normalized.replace(/^(?:app-docs|docs)\/?/, "");
-  return getDocsEntry(slug, {
-    includeAdmin: true,
-    includeSignedIn: true,
-    siteProfile: docsSiteProfileFromLocation(),
-  });
+  for (const candidate of candidates) {
+    if (!candidate.startsWith("docs/") && !candidate.startsWith("app-docs/")) {
+      continue;
+    }
+    const slug = candidate.replace(/^(?:app-docs|docs)\/?/, "");
+    const entry = getDocsEntry(
+      slug,
+      docsAccess ?? {
+        includeAdmin: true,
+        includeSignedIn: true,
+        siteProfile: docsSiteProfileFromLocation(),
+      },
+    );
+    if (entry != null) return entry;
+  }
 }
 
 export function DocsMarkdown({
+  docsAccess,
+  hrefForEntry,
   onInternalDocsLink,
   value,
 }: {
-  onInternalDocsLink?: (entry: DocsEntry) => void;
+  docsAccess?: DocsAccess;
+  hrefForEntry?: (entry: DocsEntry) => string;
+  onInternalDocsLink?: (entry: DocsEntry, href?: string) => void;
   value: string;
 }) {
+  const fileContext = useFileContext();
+  const markdownContext = useMemo(() => {
+    if (hrefForEntry == null) return fileContext;
+    return {
+      ...fileContext,
+      urlTransform: (url: string, tag?: string): UrlTransformResult => {
+        const inherited = applyUrlTransform(fileContext.urlTransform, url, tag);
+        if (inherited == null) return URL_REJECTED;
+        if (tag !== "a") return inherited;
+        if (
+          typeof window === "undefined" &&
+          /^(?:https?:)?\/\//i.test(inherited)
+        ) {
+          return inherited;
+        }
+        const entry = docsEntryForInternalHref(inherited, docsAccess);
+        if (entry == null) return inherited;
+        // Normalize the actual href, so copy-link and new-tab actions use
+        // the same base path and section as an ordinary click. Keep the
+        // existing absolute-URL form, which controls the renderer's target.
+        const parsed = new URL(
+          inherited,
+          typeof window === "undefined"
+            ? "https://example.invalid"
+            : window.location.href,
+        );
+        const href = `${hrefForEntry(entry)}${parsed.search}${parsed.hash}`;
+        if (/^https?:\/\//i.test(inherited)) {
+          return new URL(href, parsed.origin).href;
+        }
+        if (inherited.startsWith("//")) return `//${parsed.host}${href}`;
+        return href;
+      },
+    };
+  }, [fileContext, hrefForEntry, docsAccess]);
   const handleClick = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
-      if (onInternalDocsLink == null) return;
+      if (
+        onInternalDocsLink == null ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const anchor = target.closest("a");
-      const href = anchor?.getAttribute("href");
+      const anchor = target.closest("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      if (anchor.target && anchor.target !== "_self") return;
+      if (anchor.hasAttribute("download")) return;
+      const href = anchor.getAttribute("href");
       if (href == null) return;
-      const entry = docsEntryForInternalHref(href);
+      let url: URL;
+      try {
+        url = new URL(anchor.href, window.location.href);
+      } catch {
+        return;
+      }
+      if (url.origin !== window.location.origin) return;
+      // Let the browser scroll within the current document. Selecting the
+      // same entry again would not rerender it or move to its section.
+      if (
+        url.hash &&
+        url.pathname === window.location.pathname &&
+        url.search === window.location.search
+      ) {
+        return;
+      }
+      const entry = docsEntryForInternalHref(href, docsAccess);
       if (entry == null) return;
       event.preventDefault();
-      onInternalDocsLink(entry);
+      onInternalDocsLink(entry, href);
     },
-    [onInternalDocsLink],
+    [onInternalDocsLink, docsAccess],
   );
   return (
     <div
@@ -449,7 +543,9 @@ export function DocsMarkdown({
       data-testid="docs-markdown"
       onClick={handleClick}
     >
-      <StaticMarkdown value={normalizeDocsMarkdownValue(value)} />
+      <FileContext.Provider value={markdownContext}>
+        <StaticMarkdown value={normalizeDocsMarkdownValue(value)} />
+      </FileContext.Provider>
     </div>
   );
 }
@@ -1580,6 +1676,7 @@ function DocsDetailToolbar({
 export function DocsDetailContent({
   actionAvailability,
   defaultActionParameters,
+  docsAccess,
   entry,
   linearNavigation,
   layout = "page",
@@ -1590,6 +1687,7 @@ export function DocsDetailContent({
 }: {
   actionAvailability?: Map<string, DocsBrowserAction>;
   defaultActionParameters?: DocsBrowserActionParameters;
+  docsAccess?: DocsAccess;
   entry: DocsEntry;
   linearNavigation?: DocsLinearNavigationState;
   layout?: DocsBrowserLayout;
@@ -1640,6 +1738,8 @@ export function DocsDetailContent({
         />
         <div style={DOCS_BROWSER_FLYOUT_MARKDOWN_STYLE}>
           <DocsMarkdown
+            docsAccess={docsAccess}
+            hrefForEntry={linearNavigation?.hrefForEntry}
             onInternalDocsLink={linearNavigation?.onSelectEntry}
             value={entry.body}
           />
@@ -1703,6 +1803,8 @@ export function DocsDetailContent({
         styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
       >
         <DocsMarkdown
+          docsAccess={docsAccess}
+          hrefForEntry={linearNavigation?.hrefForEntry}
           onInternalDocsLink={linearNavigation?.onSelectEntry}
           value={entry.body}
         />

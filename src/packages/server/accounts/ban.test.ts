@@ -4,8 +4,7 @@
  */
 
 const withAccountRehomeWriteFenceMock = jest.fn();
-const deleteAllRememberMeMock = jest.fn();
-const revokeAllAuthSessionsMock = jest.fn();
+const endAllSignInSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const recordAccountSecurityStateMock = jest.fn();
 const clearIsBannedCacheMock = jest.fn();
@@ -24,14 +23,9 @@ jest.mock("@cocalc/server/accounts/rehome-fence", () => ({
     withAccountRehomeWriteFenceMock(...args),
 }));
 
-jest.mock("@cocalc/server/auth/remember-me", () => ({
-  __esModule: true,
-  deleteAllRememberMe: (...args: any[]) => deleteAllRememberMeMock(...args),
-}));
-
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   __esModule: true,
-  revokeAllAuthSessions: (...args: any[]) => revokeAllAuthSessionsMock(...args),
+  endAllSignInSessions: (...args: any[]) => endAllSignInSessionsMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/revocation", () => ({
@@ -63,8 +57,7 @@ describe("account ban", () => {
   beforeEach(() => {
     jest.resetModules();
     withAccountRehomeWriteFenceMock.mockReset();
-    deleteAllRememberMeMock.mockReset().mockResolvedValue(undefined);
-    revokeAllAuthSessionsMock.mockReset().mockResolvedValue(undefined);
+    endAllSignInSessionsMock.mockReset().mockResolvedValue(undefined);
     recordAccountRevocationMock.mockReset().mockResolvedValue(undefined);
     recordAccountSecurityStateMock.mockReset().mockResolvedValue(undefined);
     clearIsBannedCacheMock.mockReset();
@@ -89,11 +82,8 @@ describe("account ban", () => {
         query: jest.fn(async () => ({ rows: [], rowCount: 1 })),
       });
     });
-    deleteAllRememberMeMock.mockImplementation(async () => {
-      calls.push("delete-remember-me");
-    });
-    revokeAllAuthSessionsMock.mockImplementation(async () => {
-      calls.push("revoke-auth-sessions");
+    endAllSignInSessionsMock.mockImplementation(async () => {
+      calls.push("end-sign-in-sessions");
     });
     recordAccountRevocationMock.mockImplementation(async () => {
       calls.push("record-host-revocation");
@@ -109,8 +99,7 @@ describe("account ban", () => {
     await banUser(ACCOUNT_ID);
 
     expect(clearIsBannedCacheMock).toHaveBeenCalledWith(ACCOUNT_ID);
-    expect(deleteAllRememberMeMock).toHaveBeenCalledWith(ACCOUNT_ID);
-    expect(revokeAllAuthSessionsMock).toHaveBeenCalledWith(ACCOUNT_ID);
+    expect(endAllSignInSessionsMock).toHaveBeenCalledWith(ACCOUNT_ID);
     expect(recordAccountRevocationMock).toHaveBeenCalledWith(
       ACCOUNT_ID,
       expect.any(Number),
@@ -121,8 +110,7 @@ describe("account ban", () => {
     );
     expect(calls).toEqual([
       "mark-banned",
-      "delete-remember-me",
-      "revoke-auth-sessions",
+      "end-sign-in-sessions",
       "record-host-revocation",
       "stop-running-projects",
     ]);
@@ -133,8 +121,7 @@ describe("account ban", () => {
     await removeUserBan(ACCOUNT_ID);
 
     expect(clearIsBannedCacheMock).toHaveBeenCalledWith(ACCOUNT_ID);
-    expect(deleteAllRememberMeMock).not.toHaveBeenCalled();
-    expect(revokeAllAuthSessionsMock).not.toHaveBeenCalled();
+    expect(endAllSignInSessionsMock).not.toHaveBeenCalled();
     expect(recordAccountRevocationMock).not.toHaveBeenCalled();
     expect(stopRunningProjectsForBannedAccountMock).not.toHaveBeenCalled();
     expect(recordAccountSecurityStateMock).toHaveBeenCalledWith({

@@ -1,4 +1,5 @@
 import { Button, Popover, Progress, Typography } from "antd";
+import { MembershipAIAllowance } from "./membership-ai-allowance";
 import { useEffect, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -117,7 +118,9 @@ export function claudePaymentLabel(mode: string | undefined): string {
     ? "Claude subscription"
     : mode === "account-api-key"
       ? "Account API key"
-      : "Project API key";
+      : mode === "site-funded"
+        ? "CoCalc Membership"
+        : "Project API key";
 }
 
 // The short label of the payment source selected for a thread.
@@ -200,6 +203,9 @@ function PaymentStatus({
   onConfigure: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Counts openings: the hidden popover keeps its content mounted, so a
+  // plain "open" flag would not reach it again after the first time.
+  const [openings, setOpenings] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const credential = useClaudeCredential(credentialId);
   const [loading, setLoading] = useState(false);
@@ -231,7 +237,10 @@ function PaymentStatus({
   return (
     <Popover
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        if (next && !open) setOpenings((count) => count + 1);
+        setOpen(next);
+      }}
       trigger={["hover", "focus"]}
       content={
         <KeyboardBoundary
@@ -291,6 +300,9 @@ function PaymentStatus({
                   View usage on Claude
                 </a>
               </>
+            ) : mode === "site-funded" ? (
+              // Opening the details reloads the allowance.
+              <MembershipAIAllowance variant="full" reload={openings} />
             ) : (
               <p>Anthropic bills API usage to the key owner.</p>
             )}

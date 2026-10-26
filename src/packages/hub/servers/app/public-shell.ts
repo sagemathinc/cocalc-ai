@@ -55,6 +55,7 @@ import {
   renderPublicRoutePrerender,
 } from "./public-prerender";
 import { renderPublicDocsPrerender } from "./public-docs-prerender";
+import { renderPublicPoliciesPrerender } from "./public-policies";
 import { isPublicAuthShellTarget } from "./public-auth-framing";
 
 const logger = getLogger("hub:servers:public-shell");
@@ -526,6 +527,7 @@ async function buildHead(req: Request): Promise<{
 
   const prerender =
     renderPublicDocsPrerender(route, basePath, config) ||
+    renderPublicPoliciesPrerender(route, config) ||
     renderPublicRoutePrerender(route, basePath, config, { pricingTiers });
   return {
     // Only pages with crawler content get the footer's page links.

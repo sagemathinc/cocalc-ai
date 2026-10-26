@@ -6,9 +6,9 @@
 const poolQueryMock = jest.fn();
 const disposeOwnedProjectsForAccountDeletionMock = jest.fn();
 const deleteRootfsImagesForAccountDeletionMock = jest.fn();
-const deleteAllRememberMeMock = jest.fn();
 const deleteBlobsForAccountDeletionMock = jest.fn();
-const revokeAllAuthSessionsMock = jest.fn();
+const deleteShareViewsForAccountMock = jest.fn();
+const endAllSignInSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const withAccountRehomeWriteFenceMock = jest.fn();
 const cancelEverythingMock = jest.fn();
@@ -29,15 +29,16 @@ jest.mock("@cocalc/server/projects/ownership", () => ({
     disposeOwnedProjectsForAccountDeletionMock(...args),
 }));
 
+jest.mock("@cocalc/server/public-directory-shares/views", () => ({
+  __esModule: true,
+  deleteShareViewsForAccount: (...args: any[]) =>
+    deleteShareViewsForAccountMock(...args),
+}));
+
 jest.mock("@cocalc/server/rootfs/catalog", () => ({
   __esModule: true,
   deleteRootfsImagesForAccountDeletion: (...args: any[]) =>
     deleteRootfsImagesForAccountDeletionMock(...args),
-}));
-
-jest.mock("@cocalc/server/auth/remember-me", () => ({
-  __esModule: true,
-  deleteAllRememberMe: (...args: any[]) => deleteAllRememberMeMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/blob-limits", () => ({
@@ -54,7 +55,7 @@ jest.mock("@cocalc/server/membership/account-deletion", () => ({
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   __esModule: true,
-  revokeAllAuthSessions: (...args: any[]) => revokeAllAuthSessionsMock(...args),
+  endAllSignInSessions: (...args: any[]) => endAllSignInSessionsMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/revocation", () => ({
@@ -104,9 +105,9 @@ describe("delete account", () => {
     poolQueryMock.mockReset();
     disposeOwnedProjectsForAccountDeletionMock.mockReset();
     deleteRootfsImagesForAccountDeletionMock.mockReset();
-    deleteAllRememberMeMock.mockReset();
     deleteBlobsForAccountDeletionMock.mockReset();
-    revokeAllAuthSessionsMock.mockReset();
+    deleteShareViewsForAccountMock.mockReset().mockResolvedValue(0);
+    endAllSignInSessionsMock.mockReset();
     recordAccountRevocationMock.mockReset();
     withAccountRehomeWriteFenceMock.mockReset();
     cancelEverythingMock.mockReset();
@@ -130,8 +131,7 @@ describe("delete account", () => {
     });
     deleteClusterAccountDirectoryEntryMock.mockResolvedValue(undefined);
     cleanupSiteLicenseAccessForAccountDeletionMock.mockResolvedValue(undefined);
-    deleteAllRememberMeMock.mockResolvedValue(undefined);
-    revokeAllAuthSessionsMock.mockResolvedValue(undefined);
+    endAllSignInSessionsMock.mockResolvedValue(undefined);
     recordAccountRevocationMock.mockResolvedValue(undefined);
     disposeOwnedProjectsForAccountDeletionMock.mockResolvedValue([]);
     deleteRootfsImagesForAccountDeletionMock.mockResolvedValue([]);
@@ -181,6 +181,69 @@ describe("delete account", () => {
     });
   });
 
+  it("clears personal data and records who started the deletion, in the same transaction", async () => {
+    const db = { query: jest.fn(async () => ({ rows: [], rowCount: 1 })) };
+    withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
+      await fn(db);
+    });
+    const ADMIN_ID = "22222222-2222-4222-8222-222222222222";
+    const { default: deleteAccount } = await import("./delete");
+    await deleteAccount(ACCOUNT_ID, {
+      initiator: "admin",
+      actor_account_id: ADMIN_ID,
+    });
+    const calls = db.query.mock.calls as any[];
+    const update = calls.find(([sql]) =>
+      `${sql}`.startsWith("UPDATE accounts"),
+    );
+    expect(update[0]).toContain("deleted=true");
+    // a retry keeps the former email and the original deletion time
+    expect(update[0]).toContain(
+      "email_address_before_delete = CASE WHEN deleted IS TRUE THEN email_address_before_delete ELSE $1::TEXT END",
+    );
+    expect(update[0]).toContain(
+      "deleted_at = CASE WHEN deleted IS TRUE THEN deleted_at ELSE NOW() END",
+    );
+    for (const field of [
+      "display_name",
+      "first_name",
+      "last_name",
+      "password_hash",
+      "ssh_keys",
+      "lti_id",
+      "email_address_verified",
+      "api_key",
+      "notes",
+      "other_settings",
+      "groups",
+      "auto_balance",
+    ]) {
+      expect(update[0]).toContain(`${field}=NULL`);
+    }
+    expect(update[1]).toEqual(["user@example.com", ACCOUNT_ID]);
+    const audit = calls.find(([sql]) =>
+      `${sql}`.includes("INSERT INTO account_admin_audit_log"),
+    );
+    expect(audit[1][1]).toBe(ACCOUNT_ID);
+    expect(audit[1][2]).toBe("account-deletion");
+    expect(audit[1][3]).toBe(ADMIN_ID);
+    expect(JSON.parse(audit[1][5])).toEqual({ initiator: "admin" });
+  });
+
+  it("records a system deletion when no initiator is given", async () => {
+    const db = { query: jest.fn(async () => ({ rows: [], rowCount: 1 })) };
+    withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
+      await fn(db);
+    });
+    const { default: deleteAccount } = await import("./delete");
+    await deleteAccount(ACCOUNT_ID);
+    const audit = (db.query.mock.calls as any[]).find(([sql]) =>
+      `${sql}`.includes("INSERT INTO account_admin_audit_log"),
+    );
+    expect(audit[1][3]).toBeNull();
+    expect(JSON.parse(audit[1][5])).toEqual({ initiator: "system" });
+  });
+
   it("queues no purges when marking the account deleted fails", async () => {
     withAccountRehomeWriteFenceMock.mockRejectedValue(new Error("fenced"));
     const { default: deleteAccount } = await import("./delete");
@@ -198,6 +261,9 @@ describe("delete account", () => {
     });
     deleteBlobsForAccountDeletionMock.mockImplementation(async () => {
       calls.push("delete-blobs");
+    });
+    deleteShareViewsForAccountMock.mockImplementation(async () => {
+      calls.push("delete-share-views");
     });
     withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
       calls.push("mark-deleted");
@@ -252,6 +318,7 @@ describe("delete account", () => {
       "dispose-projects",
       "delete-rootfs-images",
       "delete-blobs",
+      "delete-share-views",
       "mark-deleted",
       "delete-directory-entry",
     ]);

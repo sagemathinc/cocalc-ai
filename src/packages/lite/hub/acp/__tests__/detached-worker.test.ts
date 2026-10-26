@@ -42,6 +42,7 @@ import {
   claimNextQueuedAcpJobForThread,
   decodeAcpJobRequest,
   enqueueAcpJob,
+  enqueueAcpJobCancelingQueuedRecoveries,
   getAcpJob,
   getAcpJobByOpId,
   listAcpJobsByRecoveryParent,
@@ -52,6 +53,10 @@ import {
 import { setAcpAdmissionLimitsProvider } from "../admission";
 import { listPendingAcpSteers } from "../../sqlite/acp-steers";
 import { listDueAgentRpcReports } from "../../sqlite/agent-rpc-reports";
+import {
+  parseTurnOutcome,
+  withTurnFailure,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import { hubApi } from "../../api";
 import {
   setHarnessLauncher,
@@ -142,6 +147,19 @@ jest.mock("@cocalc/chat/server", () => ({
   acquireChatSyncDB: jest.fn(),
   releaseChatSyncDB: jest.fn(),
 }));
+
+// As in production, the failed job records its recovery intent before a
+// continuation is queued for it (a withdrawal clears it, refusing one).
+async function recoverFailure(
+  opts: Parameters<
+    typeof acpTestInternals.enqueueFailureRecoveryContinuation
+  >[0],
+) {
+  getAcpDatabase()
+    .prepare("UPDATE acp_jobs SET recovery_code = ? WHERE op_id = ?")
+    .run(opts.recoveryCode ?? null, opts.job.op_id);
+  return await acpTestInternals.enqueueFailureRecoveryContinuation(opts);
+}
 
 describe("detached worker queue liveness", () => {
   it("lets a draining worker claim only work pinned to itself", () => {
@@ -257,6 +275,90 @@ function makeRequest() {
   };
 }
 
+it("a turn that cannot start still records how it ended", async () => {
+  const original = process.env.COCALC_ACP_HARNESSES;
+  process.env.COCALC_ACP_HARNESSES = "1";
+  setHarnessLauncher(async () => {
+    throw Error("must not launch");
+  });
+  const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+  hubApi.agent.authorizeRpcExecution = jest
+    .fn()
+    .mockRejectedValue(Error("network membership revoked"));
+  const base = makeRequest();
+  try {
+    const job = enqueueAcpJob({
+      ...base,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 1,
+          kind: "acp",
+          id: "fixture",
+          revision: "1",
+          executable: "/home/user/fixture",
+          args: [],
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+      chat: {
+        ...base.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+        agent_rpc_execution: {
+          version: 3,
+          source: { agent_id: randomUUID(), project_id: randomUUID() },
+          source_run_id: randomUUID(),
+          target: { agent_id: randomUUID(), project_id: base.project_id },
+          target_path: base.chat.path,
+          target_thread_id: base.chat.thread_id,
+          agent_network_id: randomUUID(),
+          network_generation: randomUUID(),
+          account_generation: 0,
+          configured_delivery: "queued",
+          principal_account_id: base.account_id,
+          guidance: false,
+        },
+      },
+    } as any);
+    const queuedRequest = decodeAcpJobRequest(job);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: job.thread_id,
+          agent_kind: "acp",
+          agent_runtime: queuedRequest.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+    })!;
+    await acpTestInternals.runQueuedAcpJob(claimed);
+    const row = getAcpJobByOpId(job.op_id);
+    expect(row?.state).toBe("error");
+    const outcome = parseTurnOutcome(row?.outcome_json);
+    expect(outcome).toMatchObject({ version: 1, state: "failed" });
+    // Nothing is claimed about tools it never got to run.
+    expect(outcome && "tool_ran" in outcome).toBe(false);
+  } finally {
+    hubApi.agent.authorizeRpcExecution = originalAuthorize;
+    setHarnessLauncher();
+    if (original === undefined) delete process.env.COCALC_ACP_HARNESSES;
+    else process.env.COCALC_ACP_HARNESSES = original;
+  }
+});
+
 it.each(["network membership revoked", "authorization service unavailable"])(
   "persisted generic peer execution refuses launch when %s",
   async (message) => {
@@ -326,6 +428,343 @@ it.each(["network membership revoked", "authorization service unavailable"])(
       setHarnessLauncher();
       if (original === undefined) delete process.env.COCALC_ACP_HARNESSES;
       else process.env.COCALC_ACP_HARNESSES = original;
+    }
+  },
+);
+
+it.each([
+  [
+    "the agent's own signal",
+    () =>
+      withTurnFailure(new Error("Claude could not run this request."), {
+        kind: "limit",
+        scope: "credential",
+        resets_at: 1_800_000_000_000,
+      }),
+    {
+      state: "failed",
+      failure: {
+        kind: "limit",
+        scope: "credential",
+        resets_at: 1_800_000_000_000,
+      },
+      tool_ran: true,
+      classified_by: "signal",
+    },
+  ],
+  [
+    "only the error text",
+    () => new Error("You've hit your weekly limit"),
+    {
+      state: "failed",
+      failure: { kind: "limit", scope: "credential" },
+      tool_ran: true,
+      classified_by: "text",
+    },
+  ],
+  ["a completed turn", undefined, { state: "completed" }],
+  [
+    "a turn that only asked for permission",
+    () => new Error("boom"),
+    { state: "failed", failure: { kind: "error" }, tool_ran: false },
+    false,
+  ],
+  [
+    "a turn whose tool call failed (it may have changed something)",
+    () => new Error("boom"),
+    { state: "failed", failure: { kind: "error" }, tool_ran: true },
+    true,
+    "failed",
+  ],
+] as const)(
+  "records how a queued turn ended, from %s",
+  async (
+    _name,
+    failWith,
+    expected,
+    runsTool: boolean = true,
+    toolStatus: string = "in_progress",
+  ) => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const request = prepareHarnessRequest({
+      ...makeRequest(),
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: request.chat!.thread_id,
+          agent_kind: "acp",
+          agent_runtime: request.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          // Waiting for permission is not running.
+          kind: "permission",
+          data: { toolCallId: "t1", outcome: "cancelled" },
+        },
+      });
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          data: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t0",
+            status: "pending",
+          },
+        },
+      });
+      if (runsTool)
+        await stream({
+          type: "event",
+          event: {
+            type: "harness",
+            source: "acp",
+            kind: "update",
+            data: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "t1",
+              status: toolStatus,
+            },
+          },
+        });
+      if (failWith) throw failWith();
+      await stream({ type: "summary", finalResponse: "done" });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      const outcome = parseTurnOutcome(
+        getAcpJobByOpId(job.op_id)?.outcome_json,
+      );
+      expect(outcome).toMatchObject({ version: 1, ...expected });
+    } finally {
+      unregister();
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+    }
+  },
+);
+
+it.each([
+  ["a limit with a reset time", { resets: true, ranTool: true }],
+  ["a limit without one", { resets: false, ranTool: false }],
+  ["any other failure", { other: true }],
+  ["a sign-in that needs renewing", { signIn: true }],
+] as const)(
+  "holds a turn that hit a usage limit until it resets: %s",
+  async (
+    _name,
+    how: {
+      resets?: boolean;
+      ranTool?: boolean;
+      other?: boolean;
+      signIn?: boolean;
+    },
+  ) => {
+    // What the home bay shows: a token refresh the failing attempt made.
+    let updated_at = Date.now() + 5 * 60_000;
+    const originalUpdatedAt = hubApi.agent.credentialUpdatedAt;
+    const credentialUpdatedAt = jest.fn(async () => ({ updated_at }));
+    hubApi.agent.credentialUpdatedAt = credentialUpdatedAt as any;
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const request = prepareHarnessRequest({
+      ...makeRequest(),
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    const syncdb = makeSyncdb([
+      {
+        event: "chat-thread-config",
+        thread_id: request.chat!.thread_id,
+        agent_kind: "acp",
+        agent_runtime: request.runtime,
+      },
+    ]);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(syncdb as any);
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const resets_at = Date.now() + 3 * 60 * 60_000;
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      if (how.ranTool)
+        await stream({
+          type: "event",
+          event: {
+            type: "harness",
+            source: "acp",
+            kind: "update",
+            data: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "t1",
+              status: "completed",
+            },
+          },
+        });
+      throw how.other
+        ? new Error("boom")
+        : how.signIn
+          ? withTurnFailure(new Error("Please sign in again."), {
+              kind: "sign-in",
+            })
+          : withTurnFailure(new Error("Claude could not run this request."), {
+              kind: "limit",
+              scope: "credential",
+              ...(how.resets ? { resets_at } : {}),
+            });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      const before = Date.now();
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      const held = listAcpJobsByRecoveryParent({
+        recovery_parent_op_id: job.op_id,
+      });
+      if (how.other) {
+        expect(held).toHaveLength(0);
+        return;
+      }
+      expect(held).toHaveLength(1);
+      if (how.signIn) {
+        expect(held[0]).toMatchObject({
+          state: "queued",
+          recovery_reason: "sign-in hold",
+        });
+        expect(
+          Math.abs(Number(held[0].available_at) - (before + 24 * 60 * 60_000)),
+        ).toBeLessThan(10_000);
+        expect(`${decodeAcpJobRequest(held[0]).prompt}`).toMatch(
+          /sign-in needed renewing/,
+        );
+        // The hold asked the home bay what it shows now, so that update
+        // (whatever the clocks) does not release it, and the next one does.
+        expect(credentialUpdatedAt).toHaveBeenCalledWith(
+          expect.objectContaining({
+            credential_id: "33333333-3333-4333-8333-333333333333",
+          }),
+        );
+        const release = acpTestInternals.releaseRenewedSignInHolds;
+        expect(await release()).toBe(0);
+        updated_at += 1_000;
+        expect(await release()).toBe(1);
+        return;
+      }
+      expect(held[0]).toMatchObject({
+        state: "queued",
+        recovery_reason: "usage limit hold",
+        recovery_count: 1,
+      });
+      const expectedAt = how.resets ? resets_at + 60_000 : before + 60 * 60_000;
+      expect(Math.abs(Number(held[0].available_at) - expectedAt)).toBeLessThan(
+        10_000,
+      );
+      // The agent is told what happened, not just given the prompt again.
+      const prompt = `${decodeAcpJobRequest(held[0]).prompt}`;
+      expect(prompt).toMatch(/usage limit/);
+      expect(prompt).toMatch(
+        how.ranTool
+          ? /had already run tools before it stopped/
+          : /had not run any tools/,
+      );
+    } finally {
+      unregister();
+      setHarnessLauncher();
+      hubApi.agent.credentialUpdatedAt = originalUpdatedAt;
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
     }
   },
 );
@@ -918,7 +1357,7 @@ describe("terminal failure recovery", () => {
       makeSyncdb(rows),
     );
     const detail = JSON.stringify({ agent: "Claude", oom: true });
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "acp_harness_killed",
@@ -930,7 +1369,7 @@ describe("terminal failure recovery", () => {
     expect(prompt).toContain("one at a time");
     // Not a second time in a row.
     expect(
-      await acpTestInternals.enqueueFailureRecoveryContinuation({
+      await recoverFailure({
         client: {} as ConatClient,
         job: { ...(resumed as any), started_at: Date.now() },
         recoveryCode: "acp_harness_killed",
@@ -942,7 +1381,7 @@ describe("terminal failure recovery", () => {
   it("does not apply the harness kill recovery to a Codex job", async () => {
     const queued = enqueueAcpJob(makeRequest() as any);
     expect(
-      await acpTestInternals.enqueueFailureRecoveryContinuation({
+      await recoverFailure({
         client: {} as ConatClient,
         job: { ...queued, started_at: Date.now() },
         recoveryCode: "acp_harness_killed",
@@ -955,7 +1394,7 @@ describe("terminal failure recovery", () => {
       ...makeRequest(),
       runtime: { version: 1, kind: "acp", profile: {} },
     } as any);
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_model_capacity",
@@ -1039,7 +1478,7 @@ describe("terminal failure recovery", () => {
       ]),
     );
     await expect(
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: { ...queued, started_at: Date.now() },
         recoveryCode: "codex_model_capacity",
@@ -1067,7 +1506,7 @@ describe("terminal failure recovery", () => {
     (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
     const before = Date.now();
 
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_model_capacity",
@@ -1087,7 +1526,7 @@ describe("terminal failure recovery", () => {
     );
 
     await expect(
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: queued,
         recoveryCode: "codex_model_capacity",
@@ -1119,7 +1558,7 @@ describe("terminal failure recovery", () => {
         },
       ]),
     );
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_model_capacity",
@@ -1156,7 +1595,7 @@ describe("terminal failure recovery", () => {
         .mockRejectedValueOnce(new Error("projection write failed"));
 
       await expect(
-        acpTestInternals.enqueueFailureRecoveryContinuation({
+        recoverFailure({
           client: {} as ConatClient,
           job: { ...queued, started_at: Date.now() },
           recoveryCode: "codex_model_capacity",
@@ -1196,12 +1635,12 @@ describe("terminal failure recovery", () => {
     (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
 
     await Promise.all([
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: { ...failed, started_at: Date.now() },
         recoveryCode: "codex_app_server_exited",
       }),
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: { ...failed, started_at: Date.now() },
         recoveryCode: "codex_app_server_exited",
@@ -1228,7 +1667,7 @@ describe("terminal failure recovery", () => {
     (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb([]));
 
     await expect(
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: queued,
         recoveryCode: "codex_model_capacity",
@@ -1249,7 +1688,7 @@ describe("terminal failure recovery", () => {
     const denial =
       "Codex blocked a command: rm -f style commands are not permitted. Use a safer approach";
 
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_command_blocked",
@@ -1281,7 +1720,7 @@ describe("terminal failure recovery", () => {
     };
     const second = enqueueAcpJob(secondRequest as any);
     await expect(
-      acpTestInternals.enqueueFailureRecoveryContinuation({
+      recoverFailure({
         client: {} as ConatClient,
         job: { ...second, started_at: Date.now() },
         recoveryCode: "codex_command_blocked",
@@ -1299,7 +1738,7 @@ describe("terminal failure recovery", () => {
       "Codex was killed by SIGKILL (exit code 137). This is usually caused by the project running out of RAM.";
     const before = Date.now();
 
-    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+    const resumed = await recoverFailure({
       client: {} as ConatClient,
       job: { ...queued, started_at: Date.now() },
       recoveryCode: "codex_resource_killed",
@@ -3518,5 +3957,1284 @@ describe("project fence follow-ups", () => {
       "55555555-5555-4555-8555-555555555555",
     );
     expect(reports[0].report.detail ?? "").toContain("project was stopped");
+    // Typed, not guessed from the text.
+    expect(reports[0].report.kind).toBe("project-stopped");
+  });
+
+  it("tells it too when the stopped turn was resuming an earlier one", async () => {
+    const base = makeRequest();
+    const request = {
+      ...base,
+      chat: {
+        ...base.chat,
+        agent_message: true,
+        agent_rpc_execution: {
+          version: 3,
+          source: {
+            project_id: "11111111-1111-4111-8111-111111111111",
+            agent_id: "22222222-2222-4222-8222-222222222222",
+          },
+          source_run_id: "77777777-7777-4777-8777-777777777777",
+          target: {
+            project_id: base.project_id,
+            agent_id: "44444444-4444-4444-8444-444444444444",
+          },
+          target_path: base.chat.path,
+          target_thread_id: base.chat.thread_id,
+          agent_network_id: "88888888-8888-4888-8888-888888888888",
+          network_generation: "99999999-9999-4999-8999-999999999999",
+          account_generation: 3,
+          configured_delivery: "queued",
+          principal_account_id: base.account_id,
+          guidance: false,
+          attempt_id: "55555555-5555-4555-8555-555555555555",
+          report_capability: "1791800000000." + "c".repeat(43),
+        },
+      },
+    };
+    // The first attempt was cut off and queued this continuation.
+    const first = enqueueAcpJob({
+      ...request,
+      chat: {
+        ...request.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    });
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET state='error', started_at=? WHERE op_id=?")
+      .run(Date.now() - 120_000, first.op_id);
+    const rows: any[] = [];
+    const { job } = runningTurn(rows, request);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_parent_op_id=? WHERE op_id=?")
+      .run(first.op_id, job.op_id);
+
+    await fenceAcpProjectAfterStop({ project_id: job.project_id });
+    await processAcpProjectFenceIntents(client);
+
+    const reports = listDueAgentRpcReports(Date.now() + 60 * 60_000);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].report.attempt_id).toBe(
+      "55555555-5555-4555-8555-555555555555",
+    );
+    expect(reports[0].report.detail ?? "").toContain("project was stopped");
+    // Typed, not guessed from the text.
+    expect(reports[0].report.kind).toBe("project-stopped");
+  });
+});
+
+describe("the agent that sent a message is told how its turn ended", () => {
+  const authorization = (base: any) => ({
+    version: 3,
+    source: {
+      project_id: "11111111-1111-4111-8111-111111111111",
+      agent_id: "22222222-2222-4222-8222-222222222222",
+    },
+    source_run_id: "77777777-7777-4777-8777-777777777777",
+    target: {
+      project_id: base.project_id,
+      agent_id: "44444444-4444-4444-8444-444444444444",
+    },
+    target_path: base.chat.path,
+    target_thread_id: base.chat.thread_id,
+    agent_network_id: "88888888-8888-4888-8888-888888888888",
+    network_generation: "99999999-9999-4999-8999-999999999999",
+    account_generation: 3,
+    configured_delivery: "queued",
+    principal_account_id: base.account_id,
+    guidance: false,
+    attempt_id: randomUUID(),
+    report_capability: `${Date.now()}.` + "c".repeat(43),
+  });
+  const agentRequest = (base: any = makeRequest()) => {
+    const execution = authorization(base);
+    return {
+      execution,
+      request: {
+        ...base,
+        chat: {
+          ...base.chat,
+          message_id: randomUUID(),
+          parent_message_id: randomUUID(),
+          agent_message: true,
+          agent_rpc_execution: execution,
+        },
+      },
+    };
+  };
+  const reports = () => listDueAgentRpcReports(Date.now() + 60 * 60_000);
+
+  beforeEach(() => {
+    reports();
+    getAcpDatabase().prepare("DELETE FROM acp_agent_rpc_reports").run();
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockResolvedValue(makeSyncdb([]) as any);
+  });
+
+  it("when someone in its project cancels it before it runs", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    await expect(
+      acpTestInternals.handleAcpControlRequest({
+        action: "cancel",
+        account_id: request.account_id,
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+        user_message_id: job.user_message_id,
+      } as any),
+    ).resolves.toMatchObject({ ok: true, state: "canceled" });
+    expect(parseTurnOutcome(getAcpJobByOpId(job.op_id)?.outcome_json)).toEqual({
+      version: 1,
+      state: "never-started",
+      reason: "canceled",
+    });
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      kind: "canceled",
+      tool_ran: false,
+    });
+  });
+
+  it("even when the chat cannot be updated for the cancel", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockRejectedValue(new Error("chat unavailable"));
+    await expect(
+      acpTestInternals.handleAcpControlRequest({
+        action: "cancel",
+        account_id: request.account_id,
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+        user_message_id: job.user_message_id,
+      } as any),
+    ).rejects.toThrow("chat unavailable");
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      kind: "canceled",
+      tool_ran: false,
+    });
+  });
+
+  it("but not for a person's own message", async () => {
+    const job = enqueueAcpJob({
+      ...makeRequest(),
+      chat: { ...makeRequest().chat, message_id: randomUUID() },
+    } as any);
+    await acpTestInternals.handleAcpControlRequest({
+      action: "cancel",
+      account_id: job.account_id,
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      user_message_id: job.user_message_id,
+    } as any);
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+    expect(reports()).toHaveLength(0);
+  });
+
+  it("when someone stops its turn", async () => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+    hubApi.agent.authorizeRpcExecution = jest.fn(async () => ({})) as any;
+    const { request: raw, execution } = agentRequest();
+    const request = prepareHarnessRequest({
+      ...raw,
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: request.chat!.thread_id,
+          agent_kind: "acp",
+          agent_runtime: request.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          data: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t1",
+            status: "in_progress",
+          },
+        },
+      });
+      // Claude confirms the cancellation a person asked for.
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "stop",
+          data: { stopReason: "cancelled" },
+        },
+      });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(
+        parseTurnOutcome(getAcpJobByOpId(job.op_id)?.outcome_json),
+      ).toEqual({
+        version: 1,
+        state: "canceled",
+        by: "person",
+        tool_ran: true,
+      });
+      const due = reports();
+      expect(due).toHaveLength(1);
+      expect(due[0].report).toMatchObject({
+        attempt_id: execution.attempt_id,
+        kind: "stopped",
+        tool_ran: true,
+      });
+    } finally {
+      unregister();
+      hubApi.agent.authorizeRpcExecution = originalAuthorize;
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+    }
+  });
+
+  it("held, not over, when the turn hits a usage limit", async () => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+    hubApi.agent.authorizeRpcExecution = jest.fn(async () => ({})) as any;
+    const { request: raw, execution } = agentRequest();
+    const request = prepareHarnessRequest({
+      ...raw,
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: request.chat!.thread_id,
+          agent_kind: "acp",
+          agent_runtime: request.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const resets_at = Date.now() + 2 * 60 * 60_000;
+    const evaluate = jest.fn(async () => {
+      throw withTurnFailure(new Error("Claude could not run this request."), {
+        kind: "limit",
+        scope: "credential",
+        resets_at,
+      });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      const held = listAcpJobsByRecoveryParent({
+        recovery_parent_op_id: job.op_id,
+      });
+      expect(held).toHaveLength(1);
+      const due = reports();
+      // Only the held report: the turn is not over.
+      expect(due).toHaveLength(1);
+      // The time it is scheduled to resume, not the raw reset.
+      expect(due[0].report).toMatchObject({
+        attempt_id: execution.attempt_id,
+        kind: "limit",
+        phase: "held",
+        resets_at: held[0].available_at,
+        tool_ran: false,
+      });
+      expect(held[0].available_at).toBeGreaterThan(resets_at);
+      // Queued, so the durable hold intent is gone.
+      expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
+    } finally {
+      unregister();
+      hubApi.agent.authorizeRpcExecution = originalAuthorize;
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+    }
+  });
+
+  it.each([true, false])(
+    "a completed turn only when the sender asked to hear of no reply (%s)",
+    async (asked) => {
+      const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+      process.env.COCALC_ACP_HARNESSES = "1";
+      setHarnessLauncher(async () => {
+        throw Error("unexpected launch");
+      });
+      const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+      hubApi.agent.authorizeRpcExecution = jest.fn(async () => ({})) as any;
+      const { request: raw, execution } = agentRequest();
+      if (asked) (raw.chat.agent_rpc_execution as any).report_no_reply = true;
+      const request = prepareHarnessRequest({
+        ...raw,
+        session_id: undefined,
+        config: undefined,
+        runtime: {
+          version: 1,
+          kind: "acp",
+          profile: {
+            version: 2,
+            kind: "acp",
+            id: "claude-code",
+            revision: "0.93.0",
+            cwd: "/home/user",
+            credentialMode: "project-managed",
+            executionPolicy: "full-access",
+          },
+        },
+        harness_credential: {
+          version: 1,
+          provider: "anthropic",
+          mode: "account-subscription",
+          credentialId: "33333333-3333-4333-8333-333333333333",
+        },
+      });
+      const job = enqueueAcpJob(request);
+      jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+        makeSyncdb([
+          {
+            event: "chat-thread-config",
+            thread_id: request.chat!.thread_id,
+            agent_kind: "acp",
+            agent_runtime: request.runtime,
+          },
+        ]) as any,
+      );
+      acpTestInternals.initializeAcpRuntime({
+        sync: { akv: () => ({}) },
+      } as unknown as ConatClient);
+      jest
+        .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+        .mockResolvedValue(undefined);
+      // The turn ends normally, without replying to the sender.
+      const evaluate = jest.fn(async () => {});
+      const unregister = acpTestInternals.registerInterruptAgentForTests(
+        harnessRuntimeKey(request),
+        request.project_id,
+        { evaluate } as any,
+        true,
+      );
+      try {
+        const claimed = claimNextQueuedAcpJobForThread({
+          project_id: job.project_id,
+          path: job.path,
+          thread_id: job.thread_id,
+        })!;
+        await acpTestInternals.runQueuedAcpJob(claimed);
+        expect(evaluate).toHaveBeenCalledTimes(1);
+        expect(getAcpJobByOpId(job.op_id)?.state).toBe("completed");
+        const due = reports();
+        if (!asked) expect(due).toHaveLength(0);
+        else {
+          expect(due).toHaveLength(1);
+          expect(due[0].report).toMatchObject({
+            attempt_id: execution.attempt_id,
+            kind: "completed",
+          });
+        }
+      } finally {
+        unregister();
+        hubApi.agent.authorizeRpcExecution = originalAuthorize;
+        setHarnessLauncher();
+        if (previousEnabled === undefined)
+          delete process.env.COCALC_ACP_HARNESSES;
+        else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+      }
+    },
+  );
+
+  it("not by the worker when a project stop fenced the turn as it ended", async () => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+    hubApi.agent.authorizeRpcExecution = jest.fn(async () => ({})) as any;
+    const { request: raw, execution } = agentRequest();
+    const request = prepareHarnessRequest({
+      ...raw,
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: request.chat!.thread_id,
+          agent_kind: "acp",
+          agent_runtime: request.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          data: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t1",
+            status: "in_progress",
+          },
+        },
+      });
+      // The project stops while the turn unwinds: the fence takes the job.
+      await fenceAcpProjectAfterStop({ project_id: request.project_id });
+      // Claude confirms the cancellation a person asked for.
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "stop",
+          data: { stopReason: "cancelled" },
+        },
+      });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      // The worker saw a stop, but the fence owns the job now.
+      expect(reports()).toHaveLength(0);
+      expect(getAcpJobByOpId(job.op_id)?.state).not.toBe("canceled");
+      await processAcpProjectFenceIntents({
+        sync: { akv: () => ({}) },
+      } as unknown as ConatClient);
+      const due = reports();
+      expect(due).toHaveLength(1);
+      expect(due[0].report).toMatchObject({
+        attempt_id: execution.attempt_id,
+        kind: "project-stopped",
+      });
+    } finally {
+      unregister();
+      hubApi.agent.authorizeRpcExecution = originalAuthorize;
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+    }
+  });
+
+  it("not by the worker when a project stop fenced the turn while it was prepared", async () => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+    hubApi.agent.authorizeRpcExecution = jest.fn(async () => ({})) as any;
+    const { request: raw, execution } = agentRequest();
+    const request = prepareHarnessRequest({
+      ...raw,
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    const chatRows = [
+      {
+        event: "chat-thread-config",
+        thread_id: request.chat!.thread_id,
+        agent_kind: "acp",
+        agent_runtime: request.runtime,
+      },
+    ];
+    // The project stops while the job's chat is read: then the read fails.
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockImplementationOnce(async () => {
+        await fenceAcpProjectAfterStop({ project_id: request.project_id });
+        throw new Error("chat unavailable");
+      })
+      .mockResolvedValue(makeSyncdb(chatRows) as any);
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          data: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t1",
+            status: "in_progress",
+          },
+        },
+      });
+      // Claude confirms the cancellation a person asked for.
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "stop",
+          data: { stopReason: "cancelled" },
+        },
+      });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      expect(evaluate).not.toHaveBeenCalled();
+      // The preparation failed, but the fence owns the job now.
+      expect(reports()).toHaveLength(0);
+      expect(getAcpJobByOpId(job.op_id)?.state).not.toBe("canceled");
+      await processAcpProjectFenceIntents({
+        sync: { akv: () => ({}) },
+      } as unknown as ConatClient);
+      const due = reports();
+      expect(due).toHaveLength(1);
+      expect(due[0].report).toMatchObject({
+        attempt_id: execution.attempt_id,
+        kind: "project-stopped",
+      });
+    } finally {
+      unregister();
+      hubApi.agent.authorizeRpcExecution = originalAuthorize;
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+    }
+  });
+
+  it("a hold whose worker died before it was queued is finished later", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    const resets_at = Date.now() + 60 * 60_000;
+    // The host was down for half an hour after the turn ended.
+    const ended = Date.now() - 30 * 60_000;
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET state = 'error', started_at = ?, finished_at = ?, recovery_code = 'cocalc-hold', outcome_json = ? WHERE op_id = ?",
+      )
+      .run(
+        ended - 1,
+        ended,
+        JSON.stringify({
+          version: 1,
+          state: "failed",
+          failure: { kind: "limit", scope: "credential", resets_at },
+          tool_ran: false,
+        }),
+        job.op_id,
+      );
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as unknown as ConatClient,
+    });
+    const held = listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: job.op_id,
+    });
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatchObject({ recovery_reason: "usage limit hold" });
+    // Still after the reset, though the delay was worked out later.
+    expect(Number(held[0].available_at)).toBeGreaterThan(resets_at);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      phase: "held",
+      resets_at: held[0].available_at,
+    });
+    // Its worker died again after queueing, before clearing the intent:
+    // the queued continuation is the hold, never a final report.
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET recovery_code = 'cocalc-hold' WHERE op_id = ?",
+      )
+      .run(job.op_id);
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as unknown as ConatClient,
+    });
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(1);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
+    for (const { report } of reports())
+      expect(report).toMatchObject({ phase: "held" });
+  });
+
+  it.each([
+    ["a fresh message: held until the reset", 0, true],
+    [
+      "a message about to outlive its report: not held, reported now",
+      6.99,
+      false,
+    ],
+  ])("a limit a week away, for %s", async (_name, ageDays, holds) => {
+    const { request, execution } = agentRequest();
+    const issued = Date.now() - ageDays * 24 * 60 * 60_000;
+    execution.report_capability = `${Math.floor(issued)}.` + "c".repeat(43);
+    const job = enqueueAcpJob(request);
+    const ended = Date.now();
+    const resets_at = ended + 8 * 24 * 60 * 60_000;
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET state = 'error', started_at = ?, finished_at = ?, recovery_code = 'cocalc-hold', outcome_json = ? WHERE op_id = ?",
+      )
+      .run(
+        ended - 1,
+        ended,
+        JSON.stringify({
+          version: 1,
+          state: "failed",
+          failure: { kind: "limit", scope: "credential", resets_at },
+          tool_ran: false,
+        }),
+        job.op_id,
+      );
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: { sync: { akv: () => ({}) } } as unknown as ConatClient,
+    });
+    const held = listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: job.op_id,
+    });
+    const due = reports();
+    if (holds) {
+      expect(held).toHaveLength(1);
+      // Resumes before its report capability expires (a week after the
+      // message), even though the limit resets later.
+      expect(Number(held[0].available_at)).toBeLessThanOrEqual(
+        issued + 7 * 24 * 60 * 60_000 - 60 * 60_000,
+      );
+      expect(due[0].report).toMatchObject({ phase: "held" });
+    } else {
+      expect(held).toHaveLength(0);
+      expect(due).toHaveLength(1);
+      expect(due[0].report).toMatchObject({
+        attempt_id: execution.attempt_id,
+        kind: "limit",
+      });
+      expect(due[0].report.phase).toBeUndefined();
+    }
+  });
+
+  it("keeps the hold intent until its held report is durable", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    const ended = Date.now();
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET state = 'error', started_at = ?, finished_at = ?, recovery_code = 'cocalc-hold', outcome_json = ? WHERE op_id = ?",
+      )
+      .run(
+        ended - 1,
+        ended,
+        JSON.stringify({
+          version: 1,
+          state: "failed",
+          failure: {
+            kind: "limit",
+            scope: "credential",
+            resets_at: ended + 60 * 60_000,
+          },
+          tool_ran: false,
+        }),
+        job.op_id,
+      );
+    const recover = () =>
+      acpTestInternals.recoverPendingFailureRecoveryIntents({
+        client: { sync: { akv: () => ({}) } } as unknown as ConatClient,
+      });
+    // The report outbox cannot be written (e.g. the disk is full).
+    const db = getAcpDatabase();
+    db.exec("ALTER TABLE acp_agent_rpc_reports RENAME TO reports_away");
+    try {
+      await recover();
+    } finally {
+      db.exec("ALTER TABLE reports_away RENAME TO acp_agent_rpc_reports");
+    }
+    // The continuation is queued, but the intent stays for the next poll.
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(1);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBe("cocalc-hold");
+    await recover();
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code ?? null).toBeNull();
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      phase: "held",
+    });
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(1);
+  });
+
+  it("when a newer message replaces the turn waiting to resume", () => {
+    const base = makeRequest();
+    const { request, execution } = agentRequest(base);
+    const parent = enqueueAcpJob(request);
+    // It ran, and was cut off.
+    claimNextQueuedAcpJobForThread({
+      project_id: parent.project_id,
+      path: parent.path,
+      thread_id: parent.thread_id,
+    });
+    setAcpJobState({
+      op_id: parent.op_id,
+      state: "error",
+      outcome: {
+        version: 1,
+        state: "failed",
+        failure: { kind: "host-lost" },
+        tool_ran: true,
+      },
+    });
+    // Its continuation, queued to resume it.
+    const child = enqueueAcpJob({
+      ...request,
+      chat: {
+        ...request.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    });
+    expect(child.op_id).not.toBe(parent.op_id);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_parent_op_id = ? WHERE op_id = ?")
+      .run(parent.op_id, child.op_id);
+    // A person's newer message in the same thread supersedes it.
+    const { canceled } = enqueueAcpJobCancelingQueuedRecoveries({
+      ...base,
+      chat: {
+        ...base.chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    } as any);
+    expect(canceled.map((row) => row.op_id)).toEqual([child.op_id]);
+    for (const row of canceled) acpTestInternals.reportSupersededRecovery(row);
+    // The continuation itself never ran; its chain had run tools.
+    expect(
+      parseTurnOutcome(getAcpJobByOpId(child.op_id)?.outcome_json),
+    ).toEqual({
+      version: 1,
+      state: "canceled",
+      by: "superseded",
+      tool_ran: false,
+    });
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      kind: "superseded",
+      tool_ran: true,
+    });
+  });
+
+  function chain(request: any, toolRan: (boolean | undefined)[]) {
+    // Attempts of one message: each later one continues the one before.
+    const jobs: any[] = [];
+    for (const ran of toolRan) {
+      const job = enqueueAcpJob({
+        ...request,
+        chat: {
+          ...request.chat,
+          message_id: randomUUID(),
+          parent_message_id: jobs.length
+            ? randomUUID()
+            : request.chat.parent_message_id,
+        },
+      });
+      getAcpDatabase()
+        .prepare(
+          "UPDATE acp_jobs SET state='error', started_at=?, recovery_parent_op_id=?, outcome_json=? WHERE op_id=?",
+        )
+        .run(
+          Date.now() - 60_000,
+          jobs.at(-1)?.op_id ?? null,
+          JSON.stringify({
+            version: 1,
+            state: "failed",
+            failure: { kind: "host-lost" },
+            ...(ran === undefined ? {} : { tool_ran: ran }),
+          }),
+          job.op_id,
+        );
+      jobs.push(getAcpJobByOpId(job.op_id));
+    }
+    return jobs;
+  }
+
+  it.each([
+    [[true, false, false], true],
+    [[false, false, false], false],
+    [[false, undefined, false], undefined],
+  ] as const)(
+    "a recovery chain whose attempts ran tools %j reports tool_ran %j, once",
+    (attempts, expected) => {
+      const { request } = agentRequest();
+      const jobs = chain(request, [...attempts]);
+      for (const job of [jobs.at(-1), jobs.at(-1)]) {
+        acpTestInternals.reportFailedAgentMessageTurn(
+          job,
+          decodeAcpJobRequest(job),
+          "lost",
+        );
+      }
+      // An earlier attempt reporting too is the same report.
+      acpTestInternals.reportFailedAgentMessageTurn(
+        jobs[0],
+        decodeAcpJobRequest(jobs[0]),
+        "lost",
+      );
+      const due = reports();
+      expect(due).toHaveLength(1);
+      expect(due[0].report.tool_ran).toBe(expected);
+    },
+  );
+
+  it("a continuation stopped before it started keeps its chain's tool use", () => {
+    const { request } = agentRequest();
+    const [first, queued] = chain(request, [true, undefined]);
+    // The project stopped while the continuation was still queued.
+    acpTestInternals.reportFailedAgentMessageTurn(
+      queued,
+      decodeAcpJobRequest(queued),
+      "stopped",
+      { version: 1, state: "never-started", reason: "project-stopped" },
+    );
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      kind: "project-stopped",
+      tool_ran: true,
+    });
+    expect(first).toBeTruthy();
+  });
+
+  it("a chain whose last attempt has no outcome yet keeps its tool use", () => {
+    const { request } = agentRequest();
+    const [, last] = chain(request, [true, false]);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET outcome_json = NULL WHERE op_id = ?")
+      .run(last.op_id);
+    acpTestInternals.reportFailedAgentMessageTurn(
+      getAcpJobByOpId(last.op_id),
+      decodeAcpJobRequest(last),
+      "lost",
+    );
+    expect(reports()[0].report.tool_ran).toBe(true);
+  });
+
+  it("when its turn cannot even be prepared", async () => {
+    const { request, execution } = agentRequest();
+    const job = enqueueAcpJob(request);
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockRejectedValueOnce(new Error("chat unavailable"));
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+    })!;
+    await acpTestInternals.runQueuedAcpJob(claimed);
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+    expect(
+      parseTurnOutcome(getAcpJobByOpId(job.op_id)?.outcome_json),
+    ).toMatchObject({ state: "failed", tool_ran: false });
+    const due = reports();
+    expect(due).toHaveLength(1);
+    expect(due[0].report).toMatchObject({
+      attempt_id: execution.attempt_id,
+      tool_ran: false,
+    });
+  });
+
+  it("a cancel of a message a fence already canceled reports nothing", async () => {
+    const { request } = agentRequest();
+    const job = enqueueAcpJob(request);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET state='canceled' WHERE op_id=?")
+      .run(job.op_id);
+    await acpTestInternals.handleAcpControlRequest({
+      action: "cancel",
+      account_id: request.account_id,
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      user_message_id: job.user_message_id,
+    } as any);
+    expect(reports()).toHaveLength(0);
+    expect(getAcpJobByOpId(job.op_id)?.outcome_json).toBeNull();
+  });
+});
+
+describe("held sign-in turns resume once the account signs in again", () => {
+  const credentialId = "33333333-3333-4333-8333-333333333333";
+  const held = (heldAt: number) => {
+    const request = {
+      ...makeRequest(),
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId,
+      },
+      chat: {
+        ...makeRequest().chat,
+        message_id: randomUUID(),
+        parent_message_id: randomUUID(),
+      },
+    } as any;
+    const job = enqueueAcpJob(request, {
+      available_at: heldAt + 24 * 60 * 60_000,
+    } as any);
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET recovery_reason = 'sign-in hold', created_at = ? WHERE op_id = ?",
+      )
+      .run(heldAt, job.op_id);
+    return job;
+  };
+
+  it.each([
+    ["an update well before it was held", { updated_at: -3 }, false],
+    ["an update near the hold (it may be a sign-in)", { updated_at: -1 }, true],
+    ["its credential signed in again", { updated_at: 3 }, true],
+    [
+      "a new credential replacing a revoked one",
+      { updated_at: 3, revoked: true, newest_updated_at: 4 },
+      true,
+    ],
+    ["only revoked", { updated_at: 3, revoked: true }, false],
+    ["no answer (the home bay is down)", "fail", false],
+  ] as const)("%s", async (_name, answer, release) => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    const job = held(heldAt);
+    const lookup = jest.fn(async () => {
+      if (answer === "fail") throw new Error("timeout");
+      const a = answer as any;
+      const at = (delta?: number) =>
+        delta == null ? undefined : heldAt + delta * 60_000;
+      return {
+        updated_at: at(a.updated_at),
+        revoked: a.revoked,
+        newest_updated_at: at(a.newest_updated_at),
+      };
+    });
+    expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(
+      release ? 1 : 0,
+    );
+    expect(lookup).toHaveBeenCalledWith({
+      account_id: job.account_id,
+      project_id: job.project_id,
+      credential_id: credentialId,
+      provider: "anthropic",
+    });
+    expect(getAcpJobByOpId(job.op_id)?.available_at ?? null).toBe(
+      release ? null : heldAt + 24 * 60 * 60_000,
+    );
+  });
+
+  it("only a subscription's sign-in is held, never an API key's", () => {
+    const signIn = (credential_id?: string) =>
+      ({
+        version: 1,
+        state: "failed",
+        failure: {
+          kind: "sign-in",
+          ...(credential_id ? { credential_id } : {}),
+        },
+      }) as any;
+    const claude = (mode: string) =>
+      ({
+        runtime: { version: 1, kind: "acp" },
+        harness_credential: {
+          version: 1,
+          provider: "anthropic",
+          mode,
+          credentialId,
+        },
+      }) as any;
+    const codex = (paymentSource: string) =>
+      ({ config: { paymentSource } }) as any;
+    const renewable = acpTestInternals.signInRenewable;
+    expect(renewable(claude("account-subscription"), signIn())).toBe(true);
+    expect(renewable(claude("account-api-key"), signIn())).toBe(false);
+    expect(renewable(codex("subscription"), signIn(credentialId))).toBe(true);
+    expect(renewable(codex("auto"), signIn(credentialId))).toBe(true);
+    // An invalid API key (a 401) is reported, not held for a day.
+    for (const source of ["site-api-key", "project-api-key", "account-api-key"])
+      expect(renewable(codex(source), signIn(credentialId))).toBe(false);
+    expect(renewable(codex("auto"), signIn())).toBe(false);
+  });
+
+  it("a turn held again keeps the day from when it was first held", () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const T0 = Date.now() - 2 * 60 * 60_000;
+    const failed = held(T0 - 1_000);
+    const first = held(T0);
+    const again = held(T0 + 60 * 60_000);
+    const set = getAcpDatabase().prepare(
+      "UPDATE acp_jobs SET recovery_reason = ?, recovery_parent_op_id = ? WHERE op_id = ?",
+    );
+    set.run(null, null, failed.op_id);
+    set.run("sign-in hold", failed.op_id, first.op_id);
+    set.run("sign-in hold", first.op_id, again.op_id);
+    expect(
+      acpTestInternals.signInHoldStart(getAcpJobByOpId(again.op_id)!),
+    ).toBe(T0);
+    expect(
+      acpTestInternals.signInHoldStart(getAcpJobByOpId(failed.op_id)!),
+    ).toBeUndefined();
+  });
+
+  it("signed in as a new credential: the released turn runs with it", async () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    const job = held(heldAt);
+    const replacement = "44444444-4444-4444-8444-444444444444";
+    const lookup = jest.fn(async () => ({
+      updated_at: heldAt - 60 * 60_000,
+      revoked: true,
+      newest_updated_at: heldAt + 3 * 60_000,
+      newest_credential_id: replacement,
+    }));
+    expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(1);
+    const row = getAcpJobByOpId(job.op_id)!;
+    expect(row.available_at ?? null).toBeNull();
+    expect(
+      (decodeAcpJobRequest(row) as any).harness_credential.credentialId,
+    ).toBe(replacement);
+  });
+
+  it("renewed in place: it keeps its credential", async () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    const job = held(heldAt);
+    const lookup = jest.fn(async () => ({
+      updated_at: heldAt + 3 * 60_000,
+      newest_updated_at: heldAt + 3 * 60_000,
+      newest_credential_id: credentialId,
+    }));
+    expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(1);
+    expect(
+      (decodeAcpJobRequest(getAcpJobByOpId(job.op_id)!) as any)
+        .harness_credential.credentialId,
+    ).toBe(credentialId);
+  });
+
+  it("asks once per credential per pass", async () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    held(heldAt);
+    held(heldAt);
+    const lookup = jest.fn(async () => ({ updated_at: heldAt + 3 * 60_000 }));
+    expect(await acpTestInternals.releaseRenewedSignInHolds(lookup)).toBe(2);
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("without a baseline, compares only the home bay's own times once one is clear", async () => {
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const heldAt = Date.now() - 60_000;
+    const job = held(heldAt);
+    // The home bay's clock runs behind: its times look older than the hold.
+    let updated_at = heldAt - 5 * 60_000;
+    const lookup = jest.fn(async () => ({ updated_at }));
+    const release = acpTestInternals.releaseRenewedSignInHolds;
+    expect(await release(lookup)).toBe(0);
+    expect(await release(lookup)).toBe(0);
+    updated_at += 1_000; // a real sign-in, still "before" the hold start
+    expect(await release(lookup)).toBe(1);
+    expect(getAcpJobByOpId(job.op_id)?.available_at ?? null).toBeNull();
   });
 });

@@ -17,6 +17,7 @@ const HTTP_READ_OPERATIONS = new Set<string>();
 // operations without financial side effects to run concurrently.
 const PURCHASE_READ_METHODS = new Set([
   "adminGetMembershipPackageQuote",
+  "adminListCreditAttribution",
   "getAIUsage",
   "getAccountUsageOverview",
   "getAdminActiveUsersOverview",

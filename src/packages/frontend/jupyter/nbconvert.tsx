@@ -14,6 +14,7 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { A, Icon, Loading, TimeAgo } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { BASE_URL } from "@cocalc/frontend/misc/base-url";
+import { appOpenURL } from "@cocalc/frontend/project/app-server-open";
 import * as misc from "@cocalc/util/misc";
 import type { JupyterActions } from "./browser-actions";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
@@ -426,7 +427,10 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
         misc.path_split(path).tail,
       ).name;
       const name = base + ".slides.html#/";
-      return `${BASE_URL}/${project_id}/server/18080/${name}`;
+      return (
+        appOpenURL(project_id, `/${project_id}/server/18080/${name}`) ??
+        `${BASE_URL}/${project_id}/server/18080/${name}`
+      );
     }
 
     function render_slides_workaround() {

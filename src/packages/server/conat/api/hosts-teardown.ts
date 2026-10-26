@@ -52,6 +52,8 @@ export async function markHostDeprovisionedInternal({
   deleteCloudflareTunnel,
   hasDns,
   deleteHostDns,
+  releaseHostContentDns,
+  alertAdmin,
   logWarn,
   updateHostDeprovisionedRecord,
   markHostProjectsUnprovisioned,
@@ -74,6 +76,12 @@ export async function markHostDeprovisionedInternal({
   }) => Promise<void>;
   hasDns: () => Promise<boolean>;
   deleteHostDns: (opts: { record_id: any; name?: string }) => Promise<void>;
+  // Removes the host's content-origin DNS (trust-free step 6); throws unless
+  // it is gone.
+  releaseHostContentDns: (row: any) => Promise<void>;
+  // Surfaces a content DNS record left behind: if the cause is the token,
+  // the sweeper can't remove it either.
+  alertAdmin: (opts: { subject: string; body: string }) => Promise<void>;
   logWarn: (message: string, payload: Record<string, any>) => void;
   updateHostDeprovisionedRecord: (opts: {
     row: any;
@@ -109,6 +117,29 @@ export async function markHostDeprovisionedInternal({
     host_id: row.id,
     reason: action,
   });
+  // Content-origin DNS is removed whatever the route mode, and its record is
+  // kept in the metadata unless removal succeeded, so it can be retried (the
+  // sweeper also finds it: the host is no longer running at that address).
+  try {
+    await releaseHostContentDns(row);
+    delete nextMetadata.content_dns;
+  } catch (err) {
+    logWarn("force deprovision content DNS cleanup failed", {
+      err: `${err}`,
+      host_id: row.id,
+    });
+    await alertAdmin({
+      subject: `Project content DNS not removed for deprovisioned host ${row.name ?? row.id}`,
+      body: [
+        "Deprovisioning a project host could not remove its content-origin DNS record, which may now point at an address the host no longer has.",
+        `host_id=${row.id}`,
+        `record=${row.metadata?.content_dns?.name ?? "unknown"}`,
+        `error=${err}`,
+        "The sweeper retries every 15 minutes, but it can't if the cause is the content-domain Cloudflare token or zone access.",
+        "Fix the token, or delete the record by hand in Cloudflare and then clear metadata.content_dns on the host row.",
+      ].join("\n"),
+    }).catch(() => {});
+  }
   try {
     if (await hasCloudflareTunnel()) {
       await deleteCloudflareTunnel({

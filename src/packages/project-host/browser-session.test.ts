@@ -115,6 +115,30 @@ describe("project-host shared browser session", () => {
     expect(cookie).toContain("Secure");
   });
 
+  it("keeps the originating credential's iat across re-issue (revocation cutoffs use it)", () => {
+    const account_id = "00000000-1000-4000-8000-000000000001";
+    const now_ms = Date.now();
+    const now_s = Math.floor(now_ms / 1000);
+    const token = createProjectHostBrowserSessionToken({
+      account_id,
+      now_ms,
+      auth_iat_s: now_s - 3600,
+    });
+    const header = `cocalc_project_host_session=${encodeURIComponent(token)}`;
+    expect(resolveProjectHostBrowserSessionFromCookieHeader(header)?.iat_s).toBe(
+      now_s - 3600,
+    );
+    // Without one (or a bogus future one), the cookie's own iat.
+    for (const auth_iat_s of [undefined, now_s + 3600, -5]) {
+      const t = createProjectHostBrowserSessionToken({ account_id, now_ms, auth_iat_s });
+      expect(
+        resolveProjectHostBrowserSessionFromCookieHeader(
+          `cocalc_project_host_session=${encodeURIComponent(t)}`,
+        )?.iat_s,
+      ).toBe(now_s);
+    }
+  });
+
   it("resolves the first valid shared browser session from a cookie header", () => {
     const valid = createProjectHostBrowserSessionToken({
       account_id: "00000000-1000-4000-8000-000000000001",
@@ -238,6 +262,30 @@ describe("project-host shared browser session", () => {
         token: "agent-token",
       }),
     ).toThrow("agent credentials cannot create a browser session");
+  });
+
+  it("a cookie redeemed from a bearer counts from the bearer's iat", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: "00000000-1000-4000-8000-000000000001",
+      act: "account",
+      iat: now_s - 3600,
+      exp: now_s + 600,
+    });
+    const res = createResponse();
+    issueProjectHostBrowserSessionFromBearer({
+      req: { headers: {}, socket: {} } as any,
+      res,
+      host_id: "00000000-1000-4000-8000-000000000099",
+      token: "bearer",
+    });
+    const setCookie = res.headers.get("Set-Cookie");
+    const cookie = (Array.isArray(setCookie) ? setCookie : [setCookie])
+      .map((c) => `${c}`.split(";")[0])
+      .join("; ");
+    expect(resolveProjectHostBrowserSessionFromCookieHeader(cookie)?.iat_s).toBe(
+      now_s - 3600,
+    );
   });
 
   it("rejects API key child bearers at browser-session redemption", () => {

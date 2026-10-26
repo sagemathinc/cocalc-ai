@@ -1,0 +1,1403 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// The reader view: one thread as an inbox. A list of items (each incoming
+// message with the agent replies that follow it), unread ones in bold, and a
+// reading pane. Opening an item marks it read; y archives it, m marks it
+// unread again, s stars it; j and k move, u goes to the next unread one. The
+// list never scrolls by itself: new items wait behind an "N new" button. Its
+// width is dragged (or set with the arrow keys) at its edge.
+
+import {
+  Badge,
+  Button,
+  Checkbox,
+  Empty,
+  Modal,
+  Popconfirm,
+  Segmented,
+  Space,
+} from "antd";
+import type {
+  KeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+} from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { dateValue, field, isAcpAssistantMessage } from "./access";
+import type { ChatActions } from "./actions";
+import CopyButton from "@cocalc/frontend/components/copy-button";
+import StaticMarkdown from "./bounded-static-markdown";
+import ContextualReply from "./contextual-reply";
+import { presentedMessageMarkdown } from "./message-presentation";
+import {
+  archiveAll,
+  findItem,
+  isItemArchived,
+  isItemRead,
+  isItemStarred,
+  markAllRead,
+  markItemRead,
+  markItemUnread,
+  readerItems,
+  readerMessageId,
+  setItemArchived,
+  withItemStarred,
+  type ReaderChange,
+  type ReaderItem,
+  type ReaderState,
+} from "./reader-model";
+import { ReaderFullScreenContext } from "./reader-full-screen";
+import type { ChatMessageTyped } from "./types";
+import { getUserName } from "./user-name";
+import { newest_content } from "./utils";
+
+const READER_MODE_KEY = "cocalc-chat-reader-mode";
+const READER_VIEW_KEY = "cocalc-chat-reader-view";
+
+/**
+ * for-you: what is for the person (high and normal); all; filed: low, FYI;
+ * starred: what the person starred, archived or not. One choice for every
+ * chat, kept in this browser.
+ */
+export type ReaderListView = "for-you" | "all" | "filed" | "starred";
+
+function useReaderListView(): [ReaderListView, (view: ReaderListView) => void] {
+  const [view, setView] = useState<ReaderListView>(() => {
+    try {
+      const stored = localStorage.getItem(READER_VIEW_KEY);
+      return stored === "all" || stored === "filed" || stored === "starred"
+        ? stored
+        : "for-you";
+    } catch {
+      return "for-you";
+    }
+  });
+  const choose = useCallback((next: ReaderListView) => {
+    setView(next);
+    try {
+      localStorage.setItem(READER_VIEW_KEY, next);
+    } catch {
+      // Kept for this session only.
+    }
+  }, []);
+  return [view, choose];
+}
+
+function readReaderMode(key: string): boolean {
+  try {
+    return !!JSON.parse(localStorage.getItem(READER_MODE_KEY) ?? "{}")[key];
+  } catch {
+    return false;
+  }
+}
+
+/** Whether this chat shows the reader instead of the log; kept per chat. */
+export function useChatReaderMode(
+  project_id?: string,
+  path?: string,
+): [boolean, (on: boolean) => void] {
+  const key = `${project_id ?? ""}:${path ?? ""}`;
+  // Read for the current chat in the same render: a panel reused for
+  // another chat must not act on the previous chat's setting even once.
+  const [stored, setStored] = useState(() => ({
+    key,
+    on: readReaderMode(key),
+  }));
+  const on = stored.key === key ? stored.on : readReaderMode(key);
+  const set = useCallback(
+    (next: boolean) => {
+      setStored({ key, on: next });
+      try {
+        const all = JSON.parse(localStorage.getItem(READER_MODE_KEY) ?? "{}");
+        if (next) all[key] = true;
+        else delete all[key];
+        localStorage.setItem(READER_MODE_KEY, JSON.stringify(all));
+      } catch {
+        // Private mode: it lasts until the page is reloaded.
+      }
+    },
+    [key],
+  );
+  return [on, set];
+}
+
+const toJS = (value: any) =>
+  typeof value?.toJS === "function" ? value.toJS() : value;
+
+export interface ReaderItemInfo {
+  subject: string;
+  /** high: for the person; low: FYI, for the record. */
+  priority: "high" | "normal" | "low";
+}
+
+export function readerSender(message: ChatMessageTyped, userMap: any): string {
+  const rpc = toJS(field<any>(message, "agent_rpc"));
+  if (rpc?.source?.agent_id) {
+    return typeof rpc.source_label === "string" && rpc.source_label.trim()
+      ? rpc.source_label.trim()
+      : "Agent";
+  }
+  const sensor = toJS(field<any>(message, "sensor_wake"));
+  if (typeof sensor?.sensor_id === "string" && sensor.sensor_id) {
+    const title =
+      typeof sensor.title === "string" && sensor.title.trim()
+        ? sensor.title.trim().slice(0, 100)
+        : "sensor";
+    return `Sensor: ${title}`;
+  }
+  if (isAcpAssistantMessage(message)) return "Agent";
+  const sender = field<string>(message, "sender_id");
+  return sender ? getUserName(userMap, sender) : "Unknown";
+}
+
+const optionId = (id: string) => `chat-reader-item-${id}`;
+
+function snippet(message: ChatMessageTyped): string {
+  return `${newest_content(message) ?? ""}`
+    .replace(/[#*_`>[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
+/** Whether the browser shows this page (not a background tab). */
+function usePageVisible(): boolean {
+  const [visible, setVisible] = useState(
+    () => typeof document === "undefined" || !document.hidden,
+  );
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  return visible;
+}
+
+/**
+ * What scrolls the open message: the log's scroller when the item is shown
+ * as the log, else the pane itself.
+ */
+function messageScroller(pane: HTMLElement): HTMLElement | null {
+  const log = pane.querySelector<HTMLElement>("[data-virtuoso-scroller]");
+  if (log) return log;
+  const overflow = getComputedStyle(pane).overflowY;
+  return overflow === "auto" || overflow === "scroll" ? pane : null;
+}
+
+// The list's width beside the open message: dragged at its edge, kept in this
+// browser for every chat.
+const LIST_WIDTH = 340;
+const LIST_MIN_WIDTH = 220;
+// Room left for the open message, at least.
+const PANE_MIN_WIDTH = 320;
+const LIST_WIDTH_KEY = "cocalc-chat-reader-list-width";
+
+function storedListWidth(): number {
+  try {
+    const value = Number(localStorage.getItem(LIST_WIDTH_KEY));
+    return Number.isFinite(value) && value >= LIST_MIN_WIDTH
+      ? value
+      : LIST_WIDTH;
+  } catch {
+    return LIST_WIDTH;
+  }
+}
+
+function keepListWidth(width: number) {
+  try {
+    localStorage.setItem(LIST_WIDTH_KEY, `${Math.round(width)}`);
+  } catch {
+    // This session only.
+  }
+}
+
+export function ChatReaderView({
+  actions,
+  threadId,
+  messages,
+  accountId,
+  readStateVersion,
+  projectId,
+  path,
+  readOnly,
+  isVisible = true,
+  fontSize,
+  narrow,
+  autoFocus,
+  renderItem,
+  itemBadges,
+  acpState,
+  itemInfo,
+  isItemWorking = () => false,
+  runningStatus,
+  searchJump,
+  searchDates,
+}: {
+  actions: ChatActions;
+  threadId: string;
+  /** The thread's messages, in order. */
+  messages: ChatMessageTyped[];
+  accountId?: string;
+  /** Changes whenever any read state does (here or on another device). */
+  readStateVersion?: number;
+  projectId?: string;
+  path?: string;
+  /** A read-only chat: no Reply or Quote, as in the log. */
+  readOnly?: boolean;
+  /** Whether the chat is on screen (its tab and the browser's). */
+  isVisible?: boolean;
+  fontSize?: number;
+  /** Show the list or the open item, not both side by side. */
+  narrow?: boolean;
+  /** Move the keyboard focus into the list when it appears. */
+  autoFocus?: boolean;
+  /**
+   * Shows the open item as the chat log shows its messages (activity, live
+   * output, questions); without it, each message is shown as Markdown.
+   */
+  renderItem?: (item: ReaderItem) => ReactNode;
+  /** What the list says about an item besides its sender: e.g. a question. */
+  itemBadges?: (item: ReaderItem) => ReactNode;
+  /** The live state of agent turns: which are running. */
+  acpState?: { get?: (key: string) => unknown };
+  /** Each item's subject and priority (what its agent said, or defaults). */
+  itemInfo?: (item: ReaderItem) => ReaderItemInfo;
+  /** Whether an item holds the thread's running turn (its Working badge). */
+  isItemWorking?: (item: ReaderItem) => boolean;
+  /**
+   * The running turn's status and Interrupt (wide only). Its place in the
+   * toolbar is kept while nothing runs, so nothing moves when a turn starts:
+   * a click meant for Archive all never lands on Interrupt.
+   */
+  runningStatus?: ReactNode;
+  /**
+   * The thread search's current hit (its message's date, ms): its item opens,
+   * shown even if archived or filed. A new token is a new jump.
+   */
+  searchJump?: { date: string; token: number };
+  /** Every hit's message date (ms): their items are marked in the list. */
+  searchDates?: ReadonlySet<string>;
+}) {
+  const userMap = useTypedRedux("users", "user_map");
+  // On screen: the chat (its tab) and the page (the browser's tab).
+  const pageVisible = usePageVisible();
+  const shown = isVisible && pageVisible;
+  const items = useMemo(
+    () => readerItems(messages, { acpState }),
+    [messages, acpState],
+  );
+  const watermark = useMemo(
+    () => (accountId ? actions.getThreadReadCount(threadId, accountId) : 0) - 1,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actions, threadId, accountId, messages, readStateVersion],
+  );
+  const state: ReaderState = useMemo(
+    () => actions.getReaderState(threadId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actions, threadId, readStateVersion],
+  );
+  const stars: readonly string[] = useMemo(
+    () => actions.getReaderStars(threadId) ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actions, threadId, readStateVersion],
+  );
+  const [showArchived, setShowArchived] = useState(false);
+  const [showKeys, setShowKeys] = useState(false);
+  // Without priorities (no itemInfo) there are two views: all and starred.
+  const [chosenView, setView] = useReaderListView();
+  const view: ReaderListView =
+    itemInfo || chosenView === "starred" ? chosenView : "all";
+  // Keyed by its contents: itemInfo is a new function every render.
+  const filedKey = itemInfo
+    ? items
+        .filter((item) => itemInfo(item).priority === "low")
+        .map((item) => item.id)
+        .join("\0")
+    : "";
+  const filed = useMemo(
+    () => new Set(filedKey ? filedKey.split("\0") : []),
+    [filedKey],
+  );
+  const inView = (item: ReaderItem, which: ReaderListView = view) =>
+    which === "all" ||
+    (which === "starred"
+      ? isItemStarred(item, stars)
+      : which === "filed"
+        ? filed.has(item.id)
+        : !filed.has(item.id));
+  // Newest first, as in an inbox: j goes down the list, to older items.
+  const visible = useMemo(
+    () =>
+      items
+        .filter(
+          (item) =>
+            // Starred: archived ones too, as a starred message is kept.
+            (showArchived ||
+              view === "starred" ||
+              !isItemArchived(item, state)) &&
+            inView(item),
+        )
+        .reverse(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, state, stars, showArchived, view, filed],
+  );
+  // Counted over every item that is for the person (filed ones are FYI and
+  // never counted), as Mark all read reads every item; archived ones are
+  // named apart while hidden.
+  const unreadIn = (which: ReaderListView, archived?: boolean) =>
+    items.filter(
+      (item) =>
+        inView(item, which) &&
+        (archived == null || isItemArchived(item, state) === archived) &&
+        !isItemRead(item, watermark, state),
+    ).length;
+  const unread = useMemo(
+    () => unreadIn("for-you"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, filed],
+  );
+  const hiddenUnread = useMemo(
+    () => (showArchived ? 0 : unreadIn("for-you", true)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, showArchived, filed],
+  );
+  // As the Filed list shows them: archived ones too while they are shown.
+  const filedUnread = useMemo(
+    () => unreadIn("filed", showArchived ? undefined : false),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, watermark, state, filed, showArchived],
+  );
+  // What Archive all archives: the inbox (not archived, in every view) but a
+  // turn still running.
+  const archivableCount = useMemo(
+    () =>
+      items.filter(
+        (item) => !isItemArchived(item, state) && !isItemWorking(item),
+      ).length,
+    [items, state, isItemWorking],
+  );
+  const starredCount = useMemo(
+    () => items.filter((item) => isItemStarred(item, stars)).length,
+    [items, stars],
+  );
+  const [selectedId, setSelectedId] = useState<string>();
+  // The open message over the whole window, as the reader shows it: paging
+  // with Newer and Older (or j and k) stays full screen.
+  const [fullScreenWanted, setFullScreen] = useState(false);
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const selectedIndex = visible.findIndex((item) => item.id === selectedId);
+  const selected: ReaderItem | undefined = visible[selectedIndex];
+  const fullScreen = fullScreenWanted && !!selected && !narrow;
+
+  // A change is applied to the stored state, which may differ from what is
+  // shown here (another device, or not loaded yet).
+  const save = useCallback(
+    (change: ReaderChange) => actions.updateReaderState(threadId, change),
+    [actions, threadId],
+  );
+
+  // Narrow: start on a message, not the list (the first unread one from the
+  // top, else the newest); once per thread.
+  const startedRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    // Only once it is shown: a chat restored in a background tab reads nothing.
+    if (!shown || !narrow || startedRef.current === threadId || !visible.length)
+      return;
+    // Not before the read state loads: until then every message looks unread
+    // and archived ones look like they are in the inbox.
+    if (!(actions.isProjectReadStateReady?.() ?? true)) return;
+    startedRef.current = threadId;
+    // Kept only if it is in this thread (not one left from the last thread).
+    if (selectedId && visible.some((item) => item.id === selectedId)) return;
+    const first =
+      visible.find((item) => !isItemRead(item, watermark, state)) ?? visible[0];
+    setSelectedId(first.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown, narrow, threadId, visible.length, readStateVersion]);
+
+  // A search hit opens its item, wherever it is; its messages may arrive
+  // after the jump (a hit loaded from the backend).
+  const jumpedRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!searchJump?.date || jumpedRef.current === searchJump.token) return;
+    const item = items.find((candidate) =>
+      candidate.messages.some(
+        (message) => `${dateValue(message)?.valueOf()}` === searchJump.date,
+      ),
+    );
+    if (!item) return;
+    jumpedRef.current = searchJump.token;
+    if (isItemArchived(item, state)) setShowArchived(true);
+    if (!inView(item)) setView("all");
+    setSelectedId(item.id);
+    listRef.current
+      ?.querySelector(`[data-reader-item="${item.id}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchJump?.token, searchJump?.date, items]);
+
+  // Opening an item, or a new reply arriving while it is open, reads it.
+  // Not while the chat is hidden: then once it is shown.
+  useEffect(() => {
+    if (!shown || !selected || isItemRead(selected, watermark, state)) return;
+    save((current, watermark) =>
+      markItemRead(items, selected, watermark, current),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown, selected?.id, selected?.lastId]);
+
+  const open = (index: number | undefined) => {
+    if (index == null) return;
+    setSelectedId(visible[index]?.id);
+    // What had the focus may go (the list when narrow, or the pane's button
+    // with its item): keep the keys working.
+    focusKeys();
+    listRef.current
+      ?.querySelector(`[data-reader-item="${visible[index]?.id}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  };
+  const archive = (item: ReaderItem) => {
+    const archived = !isItemArchived(item, state);
+    save((current) => ({
+      state: setItemArchived(item, archived, current),
+    }));
+    // The Starred list shows archived ones too: there the item stays open.
+    if (
+      archived &&
+      !showArchived &&
+      view !== "starred" &&
+      item.id === selectedId
+    ) {
+      const next =
+        findItem(visible, selectedIndex, 1) ??
+        findItem(visible, selectedIndex, -1);
+      setSelectedId(next == null ? undefined : visible[next].id);
+      // The pane (and its Archive button) is replaced: keep the keys working.
+      focusKeys();
+    }
+  };
+  const markUnread = (item: ReaderItem) =>
+    save((current) => ({ state: markItemUnread(item, current) }));
+  const star = (item: ReaderItem) => {
+    const on = !isItemStarred(item, stars);
+    actions.updateReaderStars(threadId, (current) =>
+      withItemStarred(current, item, on),
+    );
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = event.target as HTMLElement;
+    if (target.closest?.("input, textarea, [contenteditable=true]")) return;
+    const handled = (() => {
+      switch (event.key) {
+        case "j":
+        case "ArrowDown":
+          open(findItem(visible, selectedIndex, 1));
+          return true;
+        case "k":
+        case "ArrowUp":
+          open(
+            findItem(
+              visible,
+              selectedIndex < 0 ? visible.length : selectedIndex,
+              -1,
+            ),
+          );
+          return true;
+        case "u": {
+          // The next unread one down the list, then from the top.
+          const unreadItem = (item: ReaderItem) =>
+            !isItemRead(item, watermark, state);
+          open(
+            findItem(visible, selectedIndex, 1, unreadItem) ??
+              findItem(visible, -1, 1, unreadItem),
+          );
+          return true;
+        }
+        case "y":
+          if (selected) archive(selected);
+          return !!selected;
+        case "m":
+          if (selected) markUnread(selected);
+          return !!selected;
+        case "s":
+          if (selected) star(selected);
+          return !!selected;
+        case "?":
+          setShowKeys(true);
+          return true;
+        case "f":
+          if (!selected || narrow) return false;
+          setFullScreen(!fullScreen);
+          focusKeys();
+          return true;
+        case "Escape":
+          if (!fullScreen) return false;
+          setFullScreen(false);
+          focusKeys();
+          return true;
+      }
+      return false;
+    })();
+    if (handled) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
+  // The list's width: dragged at its edge, or set there with the arrow keys;
+  // at most what leaves the open message room, measured as the reader resizes.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [listWidth, setListWidth] = useState(storedListWidth);
+  const [rowWidth, setRowWidth] = useState<number>();
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const measure = () => setRowWidth(row.clientWidth || undefined);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, []);
+  const listMaxWidth = Math.max(
+    LIST_MIN_WIDTH,
+    (rowWidth ?? (typeof window === "undefined" ? 2000 : window.innerWidth)) -
+      PANE_MIN_WIDTH,
+  );
+  const clampListWidth = (value: number) =>
+    Math.min(listMaxWidth, Math.max(LIST_MIN_WIDTH, value));
+  const shownListWidth = clampListWidth(listWidth);
+  // Ends a drag under way: when the pointer is released or cancelled, or the
+  // reader goes away mid-drag.
+  const stopListResizeRef = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => stopListResizeRef.current?.(), []);
+  const startListResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    stopListResizeRef.current?.();
+    const startX = event.clientX;
+    const startWidth = shownListWidth;
+    let next = startWidth;
+    const move = (e: PointerEvent) => {
+      next = clampListWidth(startWidth + (e.clientX - startX));
+      setListWidth(next);
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      stopListResizeRef.current = undefined;
+      keepListWidth(next);
+    };
+    stopListResizeRef.current = stop;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+  // The same with the keys: right widens it, left narrows it.
+  const resizeListWithKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 80 : 24;
+    const change =
+      event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0;
+    if (!change) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const next = clampListWidth(shownListWidth + change);
+    setListWidth(next);
+    keepListWidth(next);
+  };
+
+  // New items (at the top) wait behind a button instead of moving the list.
+  const listRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Back to the list (narrow): the keys stay with it once it is shown again.
+  const focusListRef = useRef(false);
+  useEffect(() => {
+    if (!focusListRef.current || !listRef.current) return;
+    focusListRef.current = false;
+    listRef.current.focus({ preventScroll: true });
+  }, [selected?.id]);
+  // Narrow, the open item replaces the list: the whole reader takes the keys.
+  // Wide, the open message does, so Space pages it; j, k, y and the rest
+  // still reach the reader from there. Its log mounts after the selection
+  // changes, so this waits a few frames for it.
+  const paneRef = useRef<HTMLDivElement>(null);
+  const focusOpenMessage = (attempt: number) => {
+    const target = paneRef.current ? messageScroller(paneRef.current) : null;
+    if (target) {
+      // The browser's own focus ring (:focus-visible) stays.
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    } else if (attempt < 10 && selectedIdRef.current) {
+      requestAnimationFrame(() => focusOpenMessage(attempt + 1));
+    } else {
+      listRef.current?.focus({ preventScroll: true });
+    }
+  };
+  const focusKeys = () => {
+    if (narrow) {
+      rootRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    // After the new selection's pane is in place.
+    requestAnimationFrame(() => focusOpenMessage(0));
+  };
+  useEffect(() => {
+    // Nothing is open yet: the list takes the keys (j opens the first).
+    if (autoFocus)
+      (narrow ? rootRef : listRef).current?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [seenCount, setSeenCount] = useState(visible.length);
+  // Another thread, archived shown or hidden, or another view: nothing there
+  // is new.
+  const context = `${threadId}\0${showArchived}\0${view}`;
+  const contextRef = useRef(context);
+  useEffect(() => {
+    if (contextRef.current !== context) {
+      contextRef.current = context;
+      setSeenCount(visible.length);
+      return;
+    }
+    // New items arrive at the top: seen if the list is scrolled to it.
+    const list = listRef.current;
+    if (list && list.scrollTop < 8) setSeenCount(visible.length);
+    else if (visible.length < seenCount) setSeenCount(visible.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible.length, context]);
+  const newCount = Math.max(0, visible.length - seenCount);
+  const onListScroll = () => {
+    const list = listRef.current;
+    if (list && list.scrollTop < 8) setSeenCount(visible.length);
+  };
+
+  const list = (
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        ...(narrow
+          ? { flex: 1 }
+          : {
+              width: shownListWidth,
+              flex: "none",
+              borderRight: `1px solid ${UI_COLORS.border}`,
+            }),
+      }}
+    >
+      <div
+        ref={listRef}
+        role="listbox"
+        aria-label="Messages"
+        tabIndex={0}
+        aria-activedescendant={selected ? optionId(selected.id) : undefined}
+        onScroll={onListScroll}
+        style={{ overflowY: "auto", flex: 1, minHeight: 0 }}
+      >
+        {visible.length === 0 ? (
+          <Empty
+            style={{ marginTop: 40 }}
+            description={
+              !items.length
+                ? "No messages yet"
+                : view === "starred"
+                  ? "No starred messages (s stars the open one)"
+                  : items.some((item) => inView(item))
+                    ? // This view has items: all archived.
+                      "Everything here is archived"
+                    : view === "for-you"
+                      ? "Nothing for you here: the rest is filed"
+                      : "Nothing filed"
+            }
+          />
+        ) : null}
+        {visible.map((item) => {
+          const read = isItemRead(item, watermark, state);
+          const first = item.messages[0];
+          const date = dateValue(item.messages[item.messages.length - 1]);
+          const replies = item.messages.length - 1;
+          const info = itemInfo?.(item);
+          return (
+            <div
+              key={item.id}
+              data-reader-item={item.id}
+              id={optionId(item.id)}
+              role="option"
+              aria-selected={item.id === selectedId}
+              onClick={() => {
+                setSelectedId(item.id);
+                // The keys work from here on.
+                focusKeys();
+              }}
+              style={{
+                padding: narrow ? "12px 12px" : "8px 12px",
+                cursor: "pointer",
+                borderBottom: `1px solid ${UI_COLORS.border}`,
+                background:
+                  item.id === selectedId ? UI_COLORS.selected : undefined,
+                fontWeight: read ? undefined : 600,
+                opacity: isItemArchived(item, state) ? 0.6 : undefined,
+                // High: a mark down its side; low: quieter.
+                borderLeft: `3px solid ${info?.priority === "high" ? UI_COLORS.warning : "transparent"}`,
+                color: info?.priority === "low" ? UI_COLORS.muted : undefined,
+              }}
+            >
+              <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                {!read ? (
+                  <span
+                    aria-label="unread"
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      background: UI_COLORS.primary,
+                      flex: "none",
+                    }}
+                  />
+                ) : null}
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {readerSender(first, userMap)}
+                </span>
+                {isItemStarred(item, stars) ? (
+                  <span
+                    aria-label="Starred"
+                    title="Starred"
+                    style={{ color: UI_COLORS.warning, flex: "none" }}
+                  >
+                    <Icon name="star-filled" />
+                  </span>
+                ) : null}
+                {info?.priority === "high" ? (
+                  <span
+                    aria-label="For you"
+                    style={{
+                      color: UI_COLORS.warning,
+                      fontSize: 11,
+                      flex: "none",
+                    }}
+                  >
+                    for you
+                  </span>
+                ) : info?.priority === "low" ? (
+                  // Not by color alone: low is named too.
+                  <span
+                    aria-label="Low priority"
+                    style={{
+                      color: UI_COLORS.muted,
+                      fontSize: 11,
+                      flex: "none",
+                    }}
+                  >
+                    fyi
+                  </span>
+                ) : null}
+                {searchDates &&
+                searchDates.size > 0 &&
+                item.messages.some((message) =>
+                  searchDates.has(`${dateValue(message)?.valueOf()}`),
+                ) ? (
+                  <span
+                    aria-label="Matches the search"
+                    title="Matches the search"
+                    style={{ color: UI_COLORS.primary, flex: "none" }}
+                  >
+                    <Icon name="search" />
+                  </span>
+                ) : null}
+                {itemBadges?.(item)}
+                {date ? (
+                  <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
+                    <TimeAgo date={date} />
+                  </span>
+                ) : null}
+              </div>
+              <div
+                style={{
+                  color: UI_COLORS.muted,
+                  fontSize: 13,
+                  fontWeight: 400,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {info ? (
+                  info.subject || snippet(first)
+                ) : (
+                  <>
+                    {replies > 0
+                      ? `(${replies} ${replies === 1 ? "reply" : "replies"}) `
+                      : ""}
+                    {snippet(first)}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* Always present, so screen readers announce what appears in it. */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-label="New messages"
+        style={{
+          position: "absolute",
+          top: 8,
+          left: "50%",
+          transform: "translateX(-50%)",
+        }}
+      >
+        {newCount > 0 ? (
+          <Button
+            size="small"
+            shape="round"
+            type="primary"
+            onClick={() => {
+              const list = listRef.current;
+              list?.scrollTo?.({ top: 0 });
+              setSeenCount(visible.length);
+            }}
+          >
+            {newCount} new
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  // Narrow (a phone): the message takes the screen; this one row moves
+  // between items and acts on the open one.
+  const navBar = selected ? (
+    <div
+      role="toolbar"
+      aria-label="Message navigation"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        padding: "2px 4px",
+        borderBottom: `1px solid ${UI_COLORS.border}`,
+        background: UI_COLORS.surface,
+      }}
+    >
+      <Badge count={unread} size="small" offset={[-4, 4]}>
+        <Button
+          type="text"
+          aria-label="All messages"
+          icon={<Icon name="bars" />}
+          onClick={() => {
+            focusListRef.current = true;
+            setSelectedId(undefined);
+          }}
+        />
+      </Badge>
+      <Button
+        type="text"
+        aria-label="Newer"
+        icon={<Icon name="chevron-up" />}
+        disabled={findItem(visible, selectedIndex, -1) == null}
+        onClick={() => open(findItem(visible, selectedIndex, -1))}
+      />
+      <Button
+        type="text"
+        aria-label="Older"
+        icon={<Icon name="chevron-down" />}
+        disabled={findItem(visible, selectedIndex, 1) == null}
+        onClick={() => open(findItem(visible, selectedIndex, 1))}
+      />
+      <span
+        style={{ color: UI_COLORS.muted, fontSize: 12, flex: 1, marginLeft: 4 }}
+      >
+        {selectedIndex + 1} of {visible.length}
+      </span>
+      <Button
+        type="text"
+        aria-label={isItemStarred(selected, stars) ? "Unstar" : "Star"}
+        aria-pressed={isItemStarred(selected, stars)}
+        icon={
+          <Icon
+            name={isItemStarred(selected, stars) ? "star-filled" : "star"}
+          />
+        }
+        onClick={() => star(selected)}
+      />
+      <Button
+        type="text"
+        aria-label={
+          isItemArchived(selected, state) ? "Move to inbox" : "Archive"
+        }
+        icon={
+          <Icon name={isItemArchived(selected, state) ? "undo" : "container"} />
+        }
+        onClick={() => archive(selected)}
+      />
+      <Button
+        type="text"
+        aria-label="Mark unread"
+        icon={<Icon name="mail" />}
+        onClick={() => markUnread(selected)}
+      />
+    </div>
+  ) : null;
+
+  // Tab and Shift+Tab wrap around inside the full-screen dialog.
+  const containTab = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...event.currentTarget.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ];
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const inside = event.currentTarget.contains(active);
+    if (event.shiftKey && (active === first || !inside)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !inside)) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  const fullScreenControl = useMemo(
+    () =>
+      narrow
+        ? null
+        : {
+            open: () => {
+              setFullScreen(true);
+              focusKeys();
+            },
+          },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [narrow],
+  );
+  const pane = selected ? (
+    <div
+      key={selected.id}
+      ref={paneRef}
+      role="article"
+      aria-label="Message"
+      style={{
+        flex: 1,
+        minWidth: 0,
+        ...(renderItem
+          ? // The log scrolls itself.
+            { display: "flex", flexDirection: "column", minHeight: 0 }
+          : {
+              overflowY: "auto",
+              padding: narrow ? "8px 12px 24px" : "8px 16px 24px",
+            }),
+      }}
+    >
+      {narrow ? null : (
+        <Space
+          wrap
+          style={
+            renderItem
+              ? { padding: "8px 16px 0", flex: "none" }
+              : { marginBottom: 8 }
+          }
+        >
+          <Button
+            size="small"
+            disabled={findItem(visible, selectedIndex, -1) == null}
+            onClick={() => open(findItem(visible, selectedIndex, -1))}
+          >
+            Newer
+          </Button>
+          <Button
+            size="small"
+            disabled={findItem(visible, selectedIndex, 1) == null}
+            onClick={() => open(findItem(visible, selectedIndex, 1))}
+          >
+            Older
+          </Button>
+          <Button
+            size="small"
+            aria-pressed={isItemStarred(selected, stars)}
+            icon={
+              <Icon
+                name={isItemStarred(selected, stars) ? "star-filled" : "star"}
+              />
+            }
+            onClick={() => star(selected)}
+          >
+            {isItemStarred(selected, stars) ? "Unstar" : "Star"}
+          </Button>
+          <Button size="small" onClick={() => archive(selected)}>
+            {isItemArchived(selected, state) ? "Move to inbox" : "Archive"}
+          </Button>
+          <Button size="small" onClick={() => markUnread(selected)}>
+            Mark unread
+          </Button>
+          <Button
+            size="small"
+            icon={<Icon name={fullScreen ? "compress" : "expand-arrows"} />}
+            onClick={() => {
+              setFullScreen(!fullScreen);
+              focusKeys();
+            }}
+          >
+            {fullScreen ? "Exit full screen" : "Full screen"}
+          </Button>
+          {fullScreen ? (
+            <span style={{ color: UI_COLORS.muted, fontSize: 12 }}>
+              {selectedIndex + 1} of {visible.length}
+            </span>
+          ) : null}
+        </Space>
+      )}
+      {itemInfo?.(selected).subject ? (
+        <div
+          role="heading"
+          aria-level={2}
+          style={{
+            flex: "none",
+            fontWeight: 600,
+            fontSize: (fontSize ?? 14) + 2,
+            padding: renderItem ? "6px 16px 0" : "0 0 8px",
+          }}
+        >
+          {itemInfo(selected).subject}
+        </div>
+      ) : null}
+      {renderItem ? (
+        <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          <ReaderFullScreenContext.Provider value={fullScreenControl}>
+            {renderItem(selected)}
+          </ReaderFullScreenContext.Provider>
+        </div>
+      ) : null}
+      {renderItem
+        ? null
+        : selected.messages.map((message) => {
+            const date = dateValue(message);
+            const sender = readerSender(message, userMap);
+            const value = `${newest_content(message) ?? ""}`;
+            // As the log shows it: e.g. an agent message as its "From" card.
+            const shown = presentedMessageMarkdown(message, value);
+            return (
+              <div key={`${date?.valueOf()}`} style={{ marginBottom: 20 }}>
+                <div
+                  style={{
+                    color: UI_COLORS.muted,
+                    marginBottom: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <b style={{ color: UI_COLORS.text }}>{sender}</b>
+                  {date ? <TimeAgo date={date} /> : null}
+                  <CopyButton
+                    markdown
+                    value={value}
+                    size="small"
+                    noText
+                    style={{ fontSize: "12px" }}
+                  />
+                </div>
+                {/* The log's selection actions: Reply, Quote and Copy. */}
+                <ContextualReply
+                  actions={actions}
+                  projectId={projectId ?? ""}
+                  path={path ?? ""}
+                  disabled={readOnly || !projectId || !path || !value.trim()}
+                  source={{
+                    kind: "message",
+                    id: readerMessageId(message),
+                    thread_id: threadId,
+                    title: isAcpAssistantMessage(message)
+                      ? "Assistant response"
+                      : `Message from ${sender}`,
+                  }}
+                >
+                  <StaticMarkdown
+                    value={shown}
+                    style={{ fontSize: `${fontSize ?? 14}px` }}
+                  />
+                </ContextualReply>
+              </div>
+            );
+          })}
+    </div>
+  ) : narrow ? null : (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: UI_COLORS.muted,
+      }}
+    >
+      Select a message, or press j
+    </div>
+  );
+
+  return (
+    <div
+      ref={rootRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      aria-label="Reader"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        outline: "none",
+      }}
+    >
+      {narrow && selected ? (
+        navBar
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            padding: "6px 12px",
+            borderBottom: `1px solid ${UI_COLORS.border}`,
+            flexWrap: "wrap",
+          }}
+        >
+          {narrow ? null : (
+            <div
+              role="group"
+              aria-label="Running turn"
+              style={{
+                // The rest starts above the list's edge.
+                minWidth: shownListWidth - 24,
+                flex: "0 0 auto",
+                display: "flex",
+                alignItems: "center",
+                minHeight: 28,
+              }}
+            >
+              {runningStatus}
+            </div>
+          )}
+          {/* Status, not a control: how much is left to read. */}
+          <span
+            style={
+              unread
+                ? { fontWeight: 600 }
+                : { color: UI_COLORS.muted, fontSize: 13 }
+            }
+          >
+            {unread
+              ? `${unread} unread${hiddenUnread ? ` (${hiddenUnread} archived)` : ""}`
+              : "No unread messages"}
+          </span>
+          <Button
+            size="small"
+            disabled={!unread}
+            onClick={() => save((current) => markAllRead(items, current))}
+          >
+            Mark all read
+          </Button>
+          <Popconfirm
+            title={`Archive all ${archivableCount} message${archivableCount === 1 ? "" : "s"}?`}
+            description="Everything in this thread is archived and read: a clean slate. A turn still running stays in the inbox. A new reply brings a message back."
+            okText="Archive all"
+            onConfirm={() => {
+              save((current, watermark) =>
+                archiveAll(items, current, {
+                  running: isItemWorking,
+                  watermark,
+                }),
+              );
+              if (!showArchived && view !== "starred") {
+                setSelectedId(undefined);
+              }
+            }}
+          >
+            <Button size="small" disabled={!archivableCount}>
+              Archive all
+            </Button>
+          </Popconfirm>
+          <Segmented
+            size="small"
+            aria-label="Which messages"
+            value={view}
+            onChange={(value) => setView(value as ReaderListView)}
+            options={[
+              ...(itemInfo
+                ? [
+                    {
+                      value: "for-you",
+                      label: unread ? `For you (${unread})` : "For you",
+                    },
+                  ]
+                : []),
+              { value: "all", label: "All" },
+              ...(itemInfo
+                ? [
+                    {
+                      value: "filed",
+                      label: filedUnread ? `Filed (${filedUnread})` : "Filed",
+                    },
+                  ]
+                : []),
+              {
+                value: "starred",
+                label: starredCount ? `Starred (${starredCount})` : "Starred",
+              },
+            ]}
+          />
+          <Checkbox
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+          >
+            Show archived
+          </Checkbox>
+          {narrow ? null : (
+            <Button
+              size="small"
+              type="text"
+              icon={<Icon name="keyboard" />}
+              onClick={() => setShowKeys(true)}
+            >
+              Keys
+            </Button>
+          )}
+        </div>
+      )}
+      <div ref={rowRef} style={{ display: "flex", flex: 1, minHeight: 0 }}>
+        {narrow && selected ? null : list}
+        {narrow ? null : (
+          // On the list's edge, taking no room of its own.
+          <div style={{ position: "relative", width: 0, flex: "none" }}>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the message list (left and right arrow keys)"
+              aria-valuenow={Math.round(shownListWidth)}
+              aria-valuemin={LIST_MIN_WIDTH}
+              aria-valuemax={Math.round(listMaxWidth)}
+              tabIndex={0}
+              onPointerDown={startListResize}
+              onKeyDown={resizeListWithKeys}
+              style={{
+                position: "absolute",
+                left: -3,
+                top: 0,
+                bottom: 0,
+                width: 6,
+                cursor: "col-resize",
+                zIndex: 1,
+              }}
+            />
+          </div>
+        )}
+        {fullScreen ? (
+          <>
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: UI_COLORS.muted,
+              }}
+            >
+              Shown full screen (f or Esc to return)
+            </div>
+            {createPortal(
+              <KeyboardBoundary
+                role="dialog"
+                aria-modal="true"
+                aria-label="Message, full screen"
+                // The keys stay inside while it is open: Tab cycles in it.
+                onKeyDown={containTab}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 1000,
+                  background: UI_COLORS.surface,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                {pane}
+              </KeyboardBoundary>,
+              document.body,
+            )}
+          </>
+        ) : (
+          pane
+        )}
+      </div>
+      <Modal
+        title="Reader keyboard shortcuts"
+        open={showKeys}
+        footer={null}
+        onCancel={() => {
+          setShowKeys(false);
+          focusKeys();
+        }}
+      >
+        <table aria-label="Keyboard shortcuts">
+          <tbody>
+            {READER_KEYS.map(([keys, what]) => (
+              <tr key={keys}>
+                <td style={{ padding: "4px 16px 4px 0", whiteSpace: "nowrap" }}>
+                  <kbd>{keys}</kbd>
+                </td>
+                <td style={{ padding: "4px 0" }}>{what}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p style={{ color: UI_COLORS.muted, marginTop: 12, marginBottom: 0 }}>
+          Click a message in the list first, so the keys go to the reader.
+        </p>
+      </Modal>
+    </div>
+  );
+}
+
+const READER_KEYS: [string, string][] = [
+  ["j or \u2193", "Older message (down the list)"],
+  ["k or \u2191", "Newer message (up the list)"],
+  ["u", "Next unread message"],
+  ["y", "Archive the open message (again: back to the inbox)"],
+  ["m", "Mark the open message unread"],
+  ["s", "Star the open message (again: unstar)"],
+  ["f", "Full screen for the open message (again, or Esc: back)"],
+  ["?", "Show these shortcuts"],
+];

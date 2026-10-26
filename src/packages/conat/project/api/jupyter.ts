@@ -48,7 +48,48 @@ export const jupyter = {
 
   // jupyter stateless API
   apiExecute: true,
+
+  // the user-confirmed restart of an unloadable edit history from the saved
+  // notebook (bounded history plan H1b-3, option B)
+  restartHistoryFromIpynb: true,
+  // the live-writer seed of an unloadable history (option A)
+  seedOversizedHistory: true,
 };
+
+export type SeedOversizedHistoryResult =
+  | { seeded: true; history_epoch: number; repeated?: boolean }
+  | {
+      seeded: false;
+      reason:
+        | "not-running"
+        | "not-ready"
+        | "epoch"
+        | "not-caught-up"
+        | "busy"
+        | "too-large"
+        | "moved"
+        | "deadline"
+        | "invalid"
+        | "failed";
+      message?: string;
+    };
+
+export type RestartHistoryFromIpynbResult =
+  | { restarted: true; history_epoch: number; repeated?: boolean }
+  | {
+      restarted: false;
+      reason:
+        | "invalid"
+        | "busy"
+        | "deadline"
+        | "too-large"
+        | "missing"
+        | "unreadable"
+        | "moved"
+        | "epoch"
+        | "failed";
+      message?: string;
+    };
 
 // In the functions below path can be either the .ipynb or the .sage-jupyter2 path, and
 // the correct backend kernel will get found/created automatically.
@@ -97,6 +138,24 @@ export interface Jupyter {
   }) => Promise<KernelSignalResult | undefined>;
 
   apiExecute: (opts: ProjectJupyterApiOptions) => Promise<object[]>;
+
+  // Restart the notebook's edit history from its saved .ipynb, as one seeded
+  // reset conditional on the history state the user confirmed (epoch and
+  // revision): see jupyter/history-restart.ts.  Never starts the kernel.
+  restartHistoryFromIpynb: (opts: {
+    path: string;
+    epoch: number;
+    revision: { seq: number; count: number };
+  }) => Promise<RestartHistoryFromIpynbResult>;
+
+  // Seed a new history of the notebook from its live value, if this project's
+  // backend has it open and ready in that epoch (bounded history plan H1b-3,
+  // option A): see SyncDoc.seedHistoryFromLiveValue.  Never starts it.
+  seedOversizedHistory: (opts: {
+    path: string;
+    epoch: number;
+    oversizedSeq: number;
+  }) => Promise<SeedOversizedHistoryResult>;
 
   sendCommMessageToKernel: (opts: {
     path: string;

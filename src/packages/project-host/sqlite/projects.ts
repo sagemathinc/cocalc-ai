@@ -146,6 +146,9 @@ export interface ProjectRow {
   local_only?: boolean;
   exam_run_id?: string | null;
   usage_account_id?: string | null;
+  // Content-origin revocation counter from the hub; never decreases here, so
+  // a delayed sync can't bring revoked links back.
+  content_epoch?: number;
 }
 
 export interface ProjectRuntimeArtifactReference {
@@ -262,6 +265,12 @@ export function ensureProjectsTable() {
   db.exec(
     "CREATE INDEX IF NOT EXISTS projects_exam_run_idx ON projects(exam_run_id) WHERE exam_run_id IS NOT NULL",
   );
+}
+
+function validContentEpoch(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? (value as number)
+    : 0;
 }
 
 export function upsertProject(row: ProjectRow) {
@@ -594,6 +603,10 @@ export function upsertProject(row: ProjectRow) {
     local_only,
     exam_run_id,
     usage_account_id,
+    content_epoch: Math.max(
+      validContentEpoch(existing.content_epoch),
+      validContentEpoch(row.content_epoch),
+    ),
     course:
       exam_run_id == null
         ? existing.course

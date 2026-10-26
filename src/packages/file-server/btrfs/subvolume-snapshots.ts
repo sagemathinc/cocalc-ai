@@ -2,23 +2,31 @@ import { type Subvolume } from "./subvolume";
 import { btrfs } from "./util";
 import getLogger from "@cocalc/backend/logger";
 import { join } from "path";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { type SnapshotCounts, updateRollingSnapshots } from "./snapshots";
 import { ConatError } from "@cocalc/conat/core/client";
 import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { getSubvolumeField, invalidateSubvolumeMetadata } from "./subvolume";
-import { parsePlainQgroupShow } from "./subvolume-quota";
+import { subvolumeMount } from "./subvolume-quota";
+import { lookupQgroup } from "./qgroup-scan";
 import { btrfsQuotasDisabled } from "./config";
 import { assertValidSnapshotName } from "@cocalc/util/snapshot-name";
 import { isISODate } from "@cocalc/util/misc";
 import {
+  beginReadonlySnapshotRead,
+  endReadonlySnapshotRead,
   invalidateBtrfsQgroupShowRaw,
+  knownReadonlySnapshot,
+  rememberReadonlySnapshot,
   withBtrfsMutationLock,
 } from "./operation-cache";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
+
+// BTRFS_FIRST_FREE_OBJECTID: the root directory of every subvolume.
+const BTRFS_SUBVOLUME_ROOT_INO = 256;
 
 const DEFAULT_CLEANUP_QUOTA_RELIEF_BYTES = 1024 ** 3;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
@@ -233,15 +241,23 @@ export class SubvolumeSnapshots {
       }
     }
 
-    const args = ["subvolume", "snapshot", "-r"];
+    // The files only: a project's edit history is not in its snapshots, and
+    // restoring its home from one keeps the history it has (persist-volume.ts
+    // replaceProjectHome keepHistory).  Backups have it (subvolume-rustic.ts).
     const snapshotPath = this.snapshotAbsolutePath(name);
-    args.push(this.subvolume.path, snapshotPath);
-
     await withBtrfsMutationLock({
       mount: this.subvolume.filesystem.opts.mount,
       operation: "snapshot-create",
       run: async () => {
-        await btrfs({ args });
+        await btrfs({
+          args: [
+            "subvolume",
+            "snapshot",
+            "-r",
+            this.subvolume.path,
+            snapshotPath,
+          ],
+        });
         invalidateSubvolumeMetadata(snapshotPath);
         invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
       },
@@ -276,6 +292,23 @@ export class SubvolumeSnapshots {
         });
         continue;
       }
+      let identity: string | undefined;
+      try {
+        // A btrfs subvolume root is inode 256 on its own st_dev; anything
+        // else (a plain directory, a symlink) is not a snapshot.
+        const st = await lstat(path);
+        if (!st.isDirectory() || st.ino !== BTRFS_SUBVOLUME_ROOT_INO) continue;
+        identity = `${st.dev}:${st.ino}:${st.ctimeMs}`;
+        if (knownReadonlySnapshot(path, identity)) {
+          snapshots.push(name);
+          continue;
+        }
+      } catch (err: any) {
+        if (err?.code === "ENOENT") continue;
+        // Unable to stat it: decide below as before, without the cache.
+      }
+      const token =
+        identity == null ? undefined : beginReadonlySnapshotRead(path);
       try {
         // Only keep readonly btrfs subvolumes (actual snapshots).
         let flags: string | undefined;
@@ -288,6 +321,9 @@ export class SubvolumeSnapshots {
         const ro = flags?.toLowerCase() ?? "";
         if (ro.includes("readonly") || ro.startsWith("yes") || ro === "true") {
           snapshots.push(name);
+          if (identity != null && token != null) {
+            rememberReadonlySnapshot(path, identity, token);
+          }
         }
       } catch (err) {
         if (process.env.DEBUG_SNAPTEST) {
@@ -297,6 +333,8 @@ export class SubvolumeSnapshots {
           path,
           err: `${err}`,
         });
+      } finally {
+        if (token != null) endReadonlySnapshotRead(path, token);
       }
     }
     snapshots.sort();
@@ -525,36 +563,24 @@ export class SubvolumeSnapshots {
       return { name, used: 0, quota: 0, exclusive: 0 };
     }
     const snapshotPath = this.snapshotAbsolutePath(name);
-    let row;
-    try {
-      const { stdout } = await btrfs({
-        args: [
-          "--format=json",
-          "qgroup",
-          "show",
-          "-ref",
-          "--raw",
-          snapshotPath,
-        ],
-      });
-      const x = JSON.parse(stdout);
-      row = x["qgroup-show"]?.[0];
-    } catch (err: any) {
-      const stderr =
-        typeof err?.stderr === "string" ? err.stderr : `${err?.message ?? err}`;
-      if (!stderr.includes("unrecognized option '--format=json'")) {
-        throw err;
-      }
-      const { stdout } = await btrfs({
-        args: ["qgroup", "show", "-ref", "--raw", snapshotPath],
-      });
-      row = parsePlainQgroupShow(stdout)[0];
-    }
+    // (one read of the filesystem's quotas for all of them, qgroup-scan.ts)
+    const found = await lookupQgroup({
+      mount: subvolumeMount(this.subvolume),
+      path: snapshotPath,
+      getSubvolumeId: async () =>
+        parseInt(await getSubvolumeField(snapshotPath, "Subvolume ID")),
+    });
+    const row = found?.row;
     if (!row) {
       throw new Error(`no qgroup info for snapshot ${snapshotPath}`);
     }
     const { referenced, max_referenced, exclusive } = row;
-    return { name, used: referenced, quota: max_referenced, exclusive };
+    return {
+      name,
+      used: referenced,
+      quota: max_referenced === "none" ? 0 : max_referenced,
+      exclusive,
+    };
   };
 
   allUsage = async (): Promise<SnapshotUsage[]> => {

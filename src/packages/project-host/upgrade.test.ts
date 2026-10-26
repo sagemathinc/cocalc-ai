@@ -233,6 +233,45 @@ describe("project host upgrade installer", () => {
     }
   });
 
+  it("never activates a project-host from before persist volumes once the host committed to them", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
+    const archivePath = createArchive(base);
+    const served = await serveFile(archivePath);
+    try {
+      process.env.COCALC_DATA = path.join(base, "data");
+      // what a persist server keeping histories in volumes records
+      fs.mkdirSync(process.env.COCALC_DATA, { recursive: true });
+      fs.writeFileSync(
+        path.join(process.env.COCALC_DATA, "persist-volume-layout"),
+        "{}\n",
+      );
+      const bundlesRoot = path.join(base, "project-host-bundles");
+      const currentLink = path.join(base, "project-host-current", "current");
+      // the test bundle has no dist/persist-volume.js
+      const resolved = {
+        artifact: "project-host",
+        canonicalArtifact: "project-host",
+        version: "v1",
+        url: served.url,
+        stripComponents: 1,
+        root: bundlesRoot,
+        versionDir: path.join(bundlesRoot, "v1"),
+        currentLink,
+      } as any;
+      await expect(__test__.downloadAndInstall(resolved)).rejects.toThrow(
+        /refusing project-host v1/,
+      );
+      expect(fs.existsSync(currentLink)).toBe(false);
+      // staging it changes nothing that runs
+      await expect(
+        __test__.downloadAndInstall({ ...resolved, activate: false }),
+      ).resolves.toMatchObject({ status: "staged" });
+    } finally {
+      await served.close();
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("serializes concurrent installs targeting the same current link", async () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
     const archivePath = createArchive(base);

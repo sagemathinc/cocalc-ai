@@ -36,6 +36,7 @@ import type {
   CommercialOrderDocumentVoidRequest,
   CommercialOrderRevisionRequest,
   CommercialOrderTransitionRequest,
+  CommercialMembershipFulfillmentRequest,
   CommercialOrderUpdateRequest,
   CommercialProvisionRequest,
   CommercialQuoteDocument,
@@ -520,6 +521,15 @@ export async function endFulfillment(
   opts: CommercialOrderTransitionRequest,
 ): Promise<CommercialOrder> {
   return await invoke("endFulfillment", opts, {
+    fresh: true,
+    capability: "fulfillment",
+  });
+}
+
+export async function recordMembershipFulfillment(
+  opts: CommercialMembershipFulfillmentRequest,
+): Promise<CommercialOrder> {
+  return await invoke("recordMembershipFulfillment", opts, {
     fresh: true,
     capability: "fulfillment",
   });

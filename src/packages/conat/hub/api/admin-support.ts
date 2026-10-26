@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { authFirstRequireAccount } from "./util";
+import {
+  authFirstRequireAccount,
+  authFirstRequireAccountWithBoundSession,
+} from "./util";
 import type { CrmSupportCustomerContext } from "@cocalc/util/crm";
 
 export const ADMIN_SUPPORT_TICKET_STATUSES = [
@@ -391,8 +394,60 @@ export interface AdminSupportSpamResponse {
   zendesk_job_status: string;
 }
 
+// A new outgoing ticket, opened by CoCalc support (not by the customer), from
+// the shared Zendesk support identity that customer outreach uses.
+export interface AdminSupportCreatePlanRequest {
+  // Exactly one of requester_account_id or requester_email.
+  requester_account_id?: string;
+  requester_email?: string;
+  requester_name?: string;
+  subject: string;
+  public_reply: string;
+  status?: AdminSupportMutableTicketStatus;
+  add_tags?: string[];
+  reason: string;
+}
+
+export interface AdminSupportCreatePlanResponse {
+  audit_id: string;
+  operation: "create";
+  commit: false;
+  payload_hash: string;
+  requester: { email: string; name?: string; account_id?: string };
+  ticket: {
+    subject: string;
+    status: AdminSupportMutableTicketStatus;
+    tags: string[];
+    comment_chars: number;
+    comment_sha256: string;
+    comment_preview: string;
+  };
+  warnings: string[];
+}
+
+export interface AdminSupportCreateRequest extends AdminSupportCreatePlanRequest {
+  // The payload_hash from the reviewed plan; the commit is refused if the
+  // request no longer matches it.
+  payload_hash: string;
+  idempotency_key: string;
+  timeout?: number;
+}
+
+export interface AdminSupportCreateResponse {
+  audit_id: string;
+  operation: "create";
+  commit: true;
+  payload_hash: string;
+  idempotency_key: string;
+  idempotent_replay: boolean;
+  // True when a retry found the ticket an earlier, unconfirmed attempt made.
+  recovered?: boolean;
+  comment?: AdminSupportAppliedComment;
+  ticket: AdminSupportTicketSummary;
+}
+
 export const ADMIN_SUPPORT_CONVENTIONS = {
-  version: 4,
+  version: 5,
   statuses: {
     new: "We have not reviewed or acted on the ticket.",
     open: "CoCalc is actively investigating or still owes work, including after an interim reply.",
@@ -407,7 +462,8 @@ export const ADMIN_SUPPORT_CONVENTIONS = {
   workflow: [
     "Triage and investigate using read-only, audited commands.",
     "Draft the exact public reply or private note and proposed ticket changes.",
-    "Obtain explicit human approval before any reply, status change, merge, or spam action.",
+    "Obtain explicit human approval before any reply, new outgoing ticket, status change, merge, or spam action.",
+    "To contact a customer who has no open ticket, open a new outgoing ticket with admin support create (from the shared support identity, so everyone sees the conversation), never from a personal mailbox.",
     "For multiline comments, write the approved text to a file and use --file, --public-reply-file, --private-note-file, --target-comment-file, or --source-comment-file. Do not pass JSON-escaped \\n sequences as inline text.",
     "Re-read the ticket and use expected_updated_at immediately before committing.",
     "Verify the resulting comment, status, audit, or asynchronous job after mutation.",
@@ -448,6 +504,8 @@ export const adminSupport = {
   merge: authFirstRequireAccount,
   planSpam: authFirstRequireAccount,
   spam: authFirstRequireAccount,
+  planCreate: authFirstRequireAccount,
+  create: authFirstRequireAccountWithBoundSession,
 };
 
 export interface AdminSupportApi {
@@ -479,4 +537,10 @@ export interface AdminSupportApi {
     opts: AdminSupportSpamPlanRequest,
   ) => Promise<AdminSupportSpamPlanResponse>;
   spam: (opts: AdminSupportSpamRequest) => Promise<AdminSupportSpamResponse>;
+  planCreate: (
+    opts: AdminSupportCreatePlanRequest,
+  ) => Promise<AdminSupportCreatePlanResponse>;
+  create: (
+    opts: AdminSupportCreateRequest,
+  ) => Promise<AdminSupportCreateResponse>;
 }

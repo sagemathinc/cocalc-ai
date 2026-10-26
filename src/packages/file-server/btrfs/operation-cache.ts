@@ -6,12 +6,14 @@ import {
   withBtrfsMutationContext,
 } from "./mutation-context";
 import { btrfs } from "./util";
+import { invalidateQgroupScan, resetQgroupScansForTest } from "./qgroup-scan";
 
 export {
   type BtrfsMutationContext,
   type BtrfsMutationPriority,
   effectiveBtrfsMutationContext,
   getBtrfsMutationContext,
+  noteBtrfsMutation,
   withBtrfsMutationContext,
 } from "./mutation-context";
 
@@ -24,10 +26,11 @@ type CacheEntry<T> = {
   value: T;
 };
 
-const qgroupShowCache = new Map<string, CacheEntry<BtrfsOutput>>();
-const qgroupShowInflight = new Map<string, Promise<BtrfsOutput>>();
 const subvolumeShowCache = new Map<string, CacheEntry<BtrfsOutput>>();
 const subvolumeShowInflight = new Map<string, Promise<BtrfsOutput>>();
+// the read under way for each key, while it is: one invalidated (no longer
+// here when it completes) is never stored
+const subvolumeShowReads = new Map<string, object>();
 const DEFAULT_MUTATION_LOCK_WAIT_MS = 2 * 60_000;
 
 type MutationLockHolder = {
@@ -96,10 +99,6 @@ function envDurationMs(name: string, fallback: number): number {
   return fallback;
 }
 
-function qgroupShowCacheMs(): number {
-  return envDurationMs("COCALC_BTRFS_QGROUP_SHOW_CACHE_MS", 2_000);
-}
-
 function subvolumeShowCacheMs(): number {
   return envDurationMs("COCALC_BTRFS_SUBVOLUME_SHOW_CACHE_MS", 1_000);
 }
@@ -117,12 +116,14 @@ async function cached<T>({
   key,
   ttlMs,
   run,
+  reads,
 }: {
   cache: Map<string, CacheEntry<T>>;
   inflight: Map<string, Promise<T>>;
   key: string;
   ttlMs: number;
   run: () => Promise<T>;
+  reads?: Map<string, object>;
 }): Promise<T> {
   const now = Date.now();
   const cached = cache.get(key);
@@ -133,9 +134,11 @@ async function cached<T>({
   if (pending) {
     return await pending;
   }
+  const read = {};
+  reads?.set(key, read);
   const promise = (async () => {
     const value = await run();
-    if (ttlMs > 0) {
+    if (ttlMs > 0 && (reads == null || reads.get(key) === read)) {
       cache.set(key, { value, expires: Date.now() + ttlMs });
     }
     return value;
@@ -147,32 +150,27 @@ async function cached<T>({
     if (inflight.get(key) === promise) {
       inflight.delete(key);
     }
+    if (reads?.get(key) === read) {
+      reads.delete(key);
+    }
   }
 }
 
-export async function cachedBtrfsQgroupShowRawForPath(
-  path: string,
-): Promise<BtrfsOutput> {
-  return await cached({
-    cache: qgroupShowCache,
-    inflight: qgroupShowInflight,
-    key: path,
-    ttlMs: qgroupShowCacheMs(),
-    run: async () =>
-      await btrfs({
-        verbose: false,
-        // -f restricts output to qgroups affecting this subvolume. Without it,
-        // qgroup show enumerates every qgroup on the filesystem.
-        args: ["qgroup", "show", "-prcf", "--raw", path],
-      }),
-  });
+// Quota numbers are read once per filesystem and shared (qgroup-scan.ts);
+// this drops what was read of the filesystem with `pathOrMount`.
+export function invalidateBtrfsQgroupShowRaw(pathOrMount: string): void {
+  invalidateQgroupScan(pathOrMount);
 }
 
-export function invalidateBtrfsQgroupShowRaw(pathOrMount: string): void {
-  for (const key of qgroupShowCache.keys()) {
-    if (key === pathOrMount || key.startsWith(`${pathOrMount}/`)) {
-      qgroupShowCache.delete(key);
-    }
+// The subvolumes at `paths` were replaced or moved (e.g., a restore swapped a
+// home): what was read about them, and of their filesystem's quotas, no
+// longer holds.
+export function forgetSubvolumePaths(...paths: string[]): void {
+  for (const path of paths) {
+    invalidateBtrfsSubvolumeShow(path);
+    invalidateQgroupScan(path);
+    // (a home's snapshots move with it)
+    forgetReadonlySnapshotsUnder(path);
   }
 }
 
@@ -186,6 +184,7 @@ export async function cachedBtrfsSubvolumeShow(
     inflight: subvolumeShowInflight,
     key: `${errOnExit ? "strict" : "lenient"}:${path}`,
     ttlMs: subvolumeShowCacheMs(),
+    reads: subvolumeShowReads,
     run: async () =>
       await btrfs({
         args: ["subvolume", "show", path],
@@ -195,9 +194,73 @@ export async function cachedBtrfsSubvolumeShow(
   });
 }
 
+// What was read about the subvolume at `path` no longer holds (e.g., another
+// one is there now): dropped, and so is a read under way, which is never
+// stored nor given to anyone asking from now on.
 export function invalidateBtrfsSubvolumeShow(path: string): void {
-  subvolumeShowCache.delete(`strict:${path}`);
-  subvolumeShowCache.delete(`lenient:${path}`);
+  for (const key of [`strict:${path}`, `lenient:${path}`]) {
+    subvolumeShowCache.delete(key);
+    subvolumeShowInflight.delete(key);
+    subvolumeShowReads.delete(key);
+  }
+  readonlySnapshots.delete(path);
+  readonlySnapshotReads.delete(path);
+}
+
+// Paths in a snapshots directory known to be read-only snapshots, each with
+// the identity it had when `btrfs subvolume show` said so: its st_dev (every
+// btrfs subvolume has its own), inode (256 for a subvolume root) and ctime.
+// A scheduled snapshot update lists the directory several times, and each
+// listing otherwise runs one btrfs process per retained snapshot.
+// Only read-only is remembered: making a snapshot writable goes through
+// invalidateBtrfsSubvolumeShow (subvolume-snapshots.ts setReadOnly), and a
+// deleted and recreated snapshot has a new identity.
+const readonlySnapshots = new Map<string, string>();
+// the read under way for each path, while it is (as subvolumeShowReads)
+const readonlySnapshotReads = new Map<string, symbol>();
+const MAX_READONLY_SNAPSHOTS = 100_000;
+
+export function knownReadonlySnapshot(path: string, identity: string): boolean {
+  return readonlySnapshots.get(path) === identity;
+}
+
+export function beginReadonlySnapshotRead(path: string): symbol {
+  const token = Symbol(path);
+  readonlySnapshotReads.set(path, token);
+  return token;
+}
+
+export function rememberReadonlySnapshot(
+  path: string,
+  identity: string,
+  token: symbol,
+): void {
+  if (readonlySnapshotReads.get(path) !== token) return;
+  readonlySnapshotReads.delete(path);
+  readonlySnapshots.delete(path);
+  if (readonlySnapshots.size >= MAX_READONLY_SNAPSHOTS) {
+    const oldest = readonlySnapshots.keys().next().value;
+    if (oldest != null) readonlySnapshots.delete(oldest);
+  }
+  readonlySnapshots.set(path, identity);
+}
+
+export function endReadonlySnapshotRead(path: string, token: symbol): void {
+  if (readonlySnapshotReads.get(path) === token) {
+    readonlySnapshotReads.delete(path);
+  }
+}
+
+function forgetReadonlySnapshotsUnder(path: string): void {
+  const prefix = path.endsWith("/") ? path : `${path}/`;
+  for (const key of readonlySnapshots.keys()) {
+    if (key === path || key.startsWith(prefix)) readonlySnapshots.delete(key);
+  }
+  for (const key of readonlySnapshotReads.keys()) {
+    if (key === path || key.startsWith(prefix)) {
+      readonlySnapshotReads.delete(key);
+    }
+  }
 }
 
 export async function withBtrfsMutationLock<T>({
@@ -214,20 +277,12 @@ export async function withBtrfsMutationLock<T>({
   wait_ms?: number;
 }): Promise<T> {
   const effectiveContext = effectiveBtrfsMutationContext(context);
-  const priority = mutationPriority(effectiveContext);
-  const assertBackgroundMutationAllowed = () => {
-    if (priority !== "scheduled" && priority !== "scavenger") return;
-    const reason = backgroundMutationGuard?.(effectiveContext);
-    if (reason) {
-      logger.info("deferred background btrfs mutation at lock boundary", {
-        mount,
-        operation,
-        reason,
-        ...effectiveContext,
-      });
-      throw new BtrfsMutationDeferredError(reason);
-    }
-  };
+  const assertBackgroundMutationAllowed = () =>
+    assertBtrfsBackgroundMutationAllowed({
+      mount,
+      operation,
+      context: effectiveContext,
+    });
   // Avoid joining the queue when background work is already ineligible.
   assertBackgroundMutationAllowed();
   const release = await acquireBtrfsMutationLock({
@@ -241,12 +296,42 @@ export async function withBtrfsMutationLock<T>({
     // is now ours, so this is the final race-free eligibility check before the
     // indivisible transaction begins.
     assertBackgroundMutationAllowed();
+    if (effectiveContext.mutations != null)
+      effectiveContext.mutations.count += 1;
     return await withBtrfsMutationContext(
       { ...effectiveContext, mutation_lock_held: true },
       run,
     );
   } finally {
     release();
+  }
+}
+
+// Throws BtrfsMutationDeferredError if background (scheduled or scavenger)
+// work may not change the filesystem now, e.g., under I/O pressure.  For a
+// mutation made outside withBtrfsMutationLock: check before starting it, so
+// work that would be deferred anyway changes nothing first.
+export function assertBtrfsBackgroundMutationAllowed({
+  mount,
+  operation,
+  context,
+}: {
+  mount: string;
+  operation: string;
+  context?: BtrfsMutationContext;
+}): void {
+  const effectiveContext = effectiveBtrfsMutationContext(context);
+  const priority = mutationPriority(effectiveContext);
+  if (priority !== "scheduled" && priority !== "scavenger") return;
+  const reason = backgroundMutationGuard?.(effectiveContext);
+  if (reason) {
+    logger.info("deferred background btrfs mutation at lock boundary", {
+      mount,
+      operation,
+      reason,
+      ...effectiveContext,
+    });
+    throw new BtrfsMutationDeferredError(reason);
   }
 }
 
@@ -418,10 +503,12 @@ export function getBtrfsMutationLockStatus(): BtrfsMutationLockStatus[] {
 }
 
 export function clearBtrfsOperationCachesForTest(): void {
-  qgroupShowCache.clear();
-  qgroupShowInflight.clear();
+  resetQgroupScansForTest();
   subvolumeShowCache.clear();
   subvolumeShowInflight.clear();
+  subvolumeShowReads.clear();
+  readonlySnapshots.clear();
+  readonlySnapshotReads.clear();
   for (const state of mutationLocks.values()) {
     for (const waiter of state.waiters) {
       clearTimeout(waiter.timeout);
@@ -429,4 +516,9 @@ export function clearBtrfsOperationCachesForTest(): void {
   }
   mutationLocks.clear();
   backgroundMutationGuard = undefined;
+}
+
+// how many reads are being tracked (they are only while under way)
+export function subvolumeShowReadsForTest(): number {
+  return subvolumeShowReads.size;
 }

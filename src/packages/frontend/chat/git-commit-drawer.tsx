@@ -70,9 +70,13 @@ import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
 import { GitDiffFind } from "./git-commit/diff-find-control";
 import { GitHistoryControls } from "./git-commit/history-controls";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
-import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
+import {
+  GitReadError,
+  type RepositoryDiscovery,
+} from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
+import { prefetchCommitDiff } from "@cocalc/frontend/git/prefetch";
 import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
 import { useFeedbackDestination } from "./git-commit/feedback-destination";
 import type {
@@ -175,6 +179,7 @@ import type { ReactNode } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { GitRevisionModal } from "@cocalc/frontend/frame-editors/time-travel-editor/git-revision-modal";
 import type { GitHistoricalFileRequest } from "@cocalc/frontend/git/historical-file";
+import type { RepositoryContext } from "@cocalc/frontend/components/diff-viewer/review-model";
 
 export { buildGitLogArgs, buildGitShowArgs, parseGitLogOutput };
 export {
@@ -524,6 +529,11 @@ export function GitCommitDrawer({
     request: GitHistoricalFileRequest;
   }>();
   const [error, setError] = useState<string>("");
+  // A commit this clone doesn't have (e.g. merged on GitHub, never fetched):
+  // it can be fetched from origin, then the review reloads.
+  const [missingCommit, setMissingCommit] = useState<string>();
+  const [fetchingCommit, setFetchingCommit] = useState(false);
+  const [commitReload, setCommitReload] = useState(0);
   const [data, setData] = useState<GitShowParsed | undefined>(undefined);
   const [loadedCommit, setLoadedCommit] = useState<string | undefined>(
     undefined,
@@ -531,6 +541,11 @@ export function GitCommitDrawer({
   const [loadedDiffScope, setLoadedDiffScope] = useState<string>();
   const loadedDiffRequestRef = useRef<
     { scope: string; commit: string } | undefined
+  >(undefined);
+  // What the loaded review reads ahead (its previous commit).
+  const readAheadRef = useRef<
+    | { repository: RepositoryContext; commit: string | null; context: number }
+    | undefined
   >(undefined);
   const [repoRoot, setRepoRoot] = useState<string>("");
   const [gitLog, setGitLog] = useState<GitLogEntry[]>([]);
@@ -2531,6 +2546,40 @@ export function GitCommitDrawer({
     reviewRecord,
   ]);
 
+  // What a fetch was started for: its result is dropped once the drawer
+  // shows something else (another commit, repository or project).
+  const fetchScope = `${projectId}\0${diffRepoRoot || diffCwd}\0${missingCommit ?? ""}`;
+  const fetchScopeRef = useRef(fetchScope);
+  fetchScopeRef.current = fetchScope;
+  const fetchMissingCommit = async () => {
+    if (!projectId || !missingCommit) return;
+    const scope = fetchScope;
+    const current = () => fetchScopeRef.current === scope;
+    setFetchingCommit(true);
+    try {
+      // By full object id: works for a commit no branch here points to.
+      const result = await runGitCommand({
+        projectId,
+        cwd: diffRepoRoot || diffCwd,
+        args: ["fetch", "--no-tags", "origin", missingCommit],
+      });
+      if (!current()) return;
+      if (result.exit_code !== 0) {
+        setError(
+          `Fetching ${missingCommit} from origin failed: ${(result.stderr || result.stdout || "git fetch failed").trim()}`,
+        );
+        return;
+      }
+      projectGitReader.invalidateDiscovery(projectId);
+      setCommitReload((n) => n + 1);
+    } catch (err) {
+      if (current())
+        setError(`Fetching ${missingCommit} from origin failed: ${err}`);
+    } finally {
+      setFetchingCommit(false);
+    }
+  };
+
   useEffect(() => {
     if (!open) return;
     if (nonRepoError) {
@@ -2562,13 +2611,26 @@ export function GitCommitDrawer({
       !isHeadSelected &&
       loadedDiffRequestRef.current?.scope === diffRequestScope &&
       loadedDiffRequestRef.current.commit === commit
-    )
-      return;
+    ) {
+      // Its read-ahead was cancelled with the effect it was scheduled in.
+      const next = readAheadRef.current;
+      return next
+        ? prefetchCommitDiff(
+            projectGitReader,
+            next.repository,
+            next.commit,
+            next.context,
+          )
+        : undefined;
+    }
     let cancelled = false;
+    let cancelPrefetch: (() => void) | undefined;
     const requestedCommit = commit;
     loadedDiffRequestRef.current = undefined;
+    readAheadRef.current = undefined;
     setLoading(true);
     setError("");
+    setMissingCommit(undefined);
     setData(undefined);
     setLoadedCommit(undefined);
     (async () => {
@@ -2585,6 +2647,18 @@ export function GitCommitDrawer({
             contextLines,
           );
           if (!cancelled) {
+            // The previous commit is the usual next stop: read it when idle.
+            readAheadRef.current = {
+              repository: discovery.repository,
+              commit: target.parent,
+              context: contextLines,
+            };
+            cancelPrefetch = prefetchCommitDiff(
+              projectGitReader,
+              discovery.repository,
+              target.parent,
+              contextLines,
+            );
             loadedDiffRequestRef.current = {
               scope: diffRequestScope,
               commit: target.commit,
@@ -2628,8 +2702,12 @@ export function GitCommitDrawer({
         }
       } catch (err) {
         if (cancelled) return;
-        const message = `${err ?? "Unable to load commit."}`;
+        const missing = err instanceof GitReadError && err.kind === "missing";
+        const message = missing
+          ? err.message
+          : `${err ?? "Unable to load commit."}`;
         setError(message);
+        setMissingCommit(missing ? requestedCommit : undefined);
         setData(undefined);
         setLoadedCommit(undefined);
       } finally {
@@ -2638,6 +2716,7 @@ export function GitCommitDrawer({
     })();
     return () => {
       cancelled = true;
+      cancelPrefetch?.();
     };
   }, [
     open,
@@ -2646,6 +2725,7 @@ export function GitCommitDrawer({
     diffRepoRoot,
     diffRequestScope,
     commit,
+    commitReload,
     contextLines,
     isHeadSelected,
     nonRepoError,
@@ -3700,6 +3780,18 @@ export function GitCommitDrawer({
             title={error}
             showIcon
             style={{ marginBottom: 12 }}
+            action={
+              missingCommit &&
+              /^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(missingCommit) ? (
+                <Button
+                  size="small"
+                  loading={fetchingCommit}
+                  onClick={() => void fetchMissingCommit()}
+                >
+                  Fetch from origin
+                </Button>
+              ) : undefined
+            }
           />
         ) : null}
         {!showCommitLoading && !error && currentData ? (

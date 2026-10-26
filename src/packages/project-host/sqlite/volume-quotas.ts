@@ -558,6 +558,24 @@ export function listProjectVolumeQuotaAuditBatch({
   ).map(parseRow);
 }
 
+// How many applied quotas were applied in an earlier quota epoch (e.g., all
+// of them, right after the quota layout changed): the audit applies them
+// again.
+export function countProjectVolumeQuotaEpochBacklog({
+  epoch = currentProjectVolumeQuotaEpoch(),
+}: { epoch?: string } = {}): number {
+  ensureTable();
+  const row = getDatabase()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM ${TABLE}
+        WHERE state = 'applied'
+          AND reset_required=0
+          AND (applied_epoch IS NULL OR applied_epoch != ?)`,
+    )
+    .get(epoch ?? "") as { n: number };
+  return Number(row?.n ?? 0);
+}
+
 export function listStoppedScratchVolumePreparationBatch({
   limit = 8,
   now = Date.now(),

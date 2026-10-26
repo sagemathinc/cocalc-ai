@@ -3,6 +3,7 @@ import {
   parseExternalAgentToken,
   validateExternalAgentApproval,
   validateExternalAgentLabel,
+  type ExternalAgentDelivery,
   type ExternalAgentInboxMessage,
   type ExternalAgentInstallation,
 } from "@cocalc/conat/agents/external";
@@ -345,9 +346,13 @@ export class ExternalAgentStore {
         )
       ).rows;
       if (!rows.length) return null;
-      const row = await this.active(db, account, installation, controls);
-      if (row.secret_hash !== secret_hash)
+      // The secret hash is fixed at enrollment: check it before saying
+      // anything about the installation's state (e.g. inactive).
+      if (
+        (await this.row(db, account, installation)).secret_hash !== secret_hash
+      )
         throw new Error("external_approval_conflict");
+      const row = await this.active(db, account, installation, controls);
       return this.public(row);
     });
   }
@@ -359,9 +364,15 @@ export class ExternalAgentStore {
     agent_network_id: string;
     network_generation: string;
     source: AgentRpcSource;
+    source_account_id?: string;
     body: string;
   }): Promise<ExternalAgentInboxMessage> {
     requireUuid(opts.attempt_id, "attempt_id");
+    // Optional while bays upgrade: an older sender's bay does not send it,
+    // and its message is still delivered (but never inspectable).
+    if (opts.source_account_id != null)
+      requireUuid(opts.source_account_id, "source_account_id");
+    const source_account_id = opts.source_account_id?.toLowerCase() ?? null;
     requireUuid(opts.agent_network_id, "agent_network_id");
     requireUuid(opts.network_generation, "network_generation");
     if (
@@ -391,6 +402,8 @@ export class ExternalAgentStore {
           existing.agent_network_id !== opts.agent_network_id ||
           existing.network_generation !== opts.network_generation ||
           existing.body !== opts.body ||
+          (existing.source_account_id != null &&
+            existing.source_account_id !== source_account_id) ||
           agentRpcSourceKey(existing.source) !== agentRpcSourceKey(opts.source)
         )
           throw new Error("external_inbox_idempotency_conflict");
@@ -408,8 +421,8 @@ export class ExternalAgentStore {
         await db.query(
           `INSERT INTO agent_external_inbox
            (message_id,attempt_id,account_id,installation_id,agent_network_id,
-            network_generation,source,body,expires_at)
-           VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,now()+interval '7 days') RETURNING *`,
+            network_generation,source,source_account_id,body,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,now()+interval '7 days') RETURNING *`,
           [
             randomUUID(),
             opts.attempt_id,
@@ -418,6 +431,7 @@ export class ExternalAgentStore {
             opts.agent_network_id,
             opts.network_generation,
             JSON.stringify(opts.source),
+            source_account_id,
             opts.body,
           ],
         )
@@ -442,18 +456,46 @@ export class ExternalAgentStore {
     };
   }
 
-  async inbox(account: string, installation: string, limit = 50) {
+  /**
+   * Pending messages, oldest first. With includeAcknowledged, acknowledged
+   * ones too (each with its state), until they expire: acknowledging must not
+   * be the only chance to read a message.
+   */
+  async inbox(
+    account: string,
+    installation: string,
+    limit = 50,
+    { includeAcknowledged = false }: { includeAcknowledged?: boolean } = {},
+  ) {
     const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
     return this.locked(account, async (db, controls) => {
       await this.active(db, account, installation, controls);
       return (
         await db.query(
           `SELECT * FROM agent_external_inbox
-           WHERE account_id=$1 AND installation_id=$2 AND state='pending' AND expires_at>now()
+           WHERE account_id=$1 AND installation_id=$2 AND expires_at>now()
+             AND ($4 OR state='pending')
            ORDER BY created_at,message_id LIMIT $3`,
-          [account, installation, bounded],
+          [account, installation, bounded, includeAcknowledged],
         )
-      ).rows.map((row) => this.publicInbox(row));
+      ).rows.map((row) =>
+        includeAcknowledged
+          ? {
+              ...this.publicInbox(row),
+              state:
+                row.state === "acknowledged"
+                  ? ("acknowledged" as const)
+                  : ("pending" as const),
+              ...(row.acknowledged_at
+                ? {
+                    acknowledged_at: new Date(
+                      row.acknowledged_at,
+                    ).toISOString(),
+                  }
+                : {}),
+            }
+          : this.publicInbox(row),
+      );
     });
   }
 
@@ -465,12 +507,68 @@ export class ExternalAgentStore {
         `UPDATE agent_external_inbox
          SET state='acknowledged',acknowledged_at=COALESCE(acknowledged_at,now())
          WHERE account_id=$1 AND installation_id=$2 AND message_id=$3
-         RETURNING message_id`,
+           AND expires_at>now()
+         RETURNING *`,
         [account, installation, message_id],
       );
       if (!result.rows.length)
         throw new Error("external_inbox_message_not_found");
-      return { acknowledged: true as const, message_id };
+      // The message itself too: a caller that acknowledges without having
+      // read it (a failed parse, a cut-off output) still gets it once.
+      return {
+        acknowledged: true as const,
+        message_id,
+        message: this.publicInbox(result.rows[0]),
+      };
+    });
+  }
+
+  /**
+   * For the sender: whether its message is still unread (pending) or was
+   * read (acknowledged), and when. Null when no such unexpired message is
+   * held, or it is not this sender's (the same source and the same
+   * authenticated account): never tells one sender about another's.
+   */
+  async delivery(
+    account: string,
+    installation: string,
+    attempt_id: string,
+    agent_network_id: string,
+    source: AgentRpcSource,
+    source_account_id: string,
+  ): Promise<ExternalAgentDelivery | null> {
+    requireUuid(installation, "installation_id");
+    requireUuid(attempt_id, "attempt_id");
+    requireUuid(agent_network_id, "agent_network_id");
+    requireUuid(source_account_id, "source_account_id");
+    return this.locked(account, async (db) => {
+      // UUIDs compare in SQL, so their case does not matter. A row from a
+      // sender's bay that predates source_account_id (NULL) never matches.
+      const row = (
+        await db.query(
+          `SELECT * FROM agent_external_inbox
+           WHERE account_id=$1 AND attempt_id=$2 AND installation_id=$3
+             AND agent_network_id=$4 AND source_account_id=$5
+             AND expires_at>now()`,
+          [
+            account,
+            attempt_id,
+            installation,
+            agent_network_id,
+            source_account_id,
+          ],
+        )
+      ).rows[0];
+      if (!row || agentRpcSourceKey(row.source) !== agentRpcSourceKey(source))
+        return null;
+      return {
+        state: row.state === "acknowledged" ? "acknowledged" : "pending",
+        created_at: new Date(row.created_at).toISOString(),
+        expires_at: new Date(row.expires_at).toISOString(),
+        ...(row.acknowledged_at
+          ? { acknowledged_at: new Date(row.acknowledged_at).toISOString() }
+          : {}),
+      };
     });
   }
 }

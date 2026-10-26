@@ -21,6 +21,9 @@ const UUID_RE =
 function isIdentifierToken(token: string): boolean {
   if (UUID_RE.test(token)) return true;
   if (/^\d+$/.test(token)) return true;
+  // Generated client ids (e.g. persist clients) are upper-case base32-like,
+  // possibly without any digit: "CEZFLEJZNX".
+  if (token.length >= 8 && /^[A-Z0-9]+$/.test(token)) return true;
   // Random ids (inboxes, hashes, base64-ish keys) mix letters and digits.
   return token.length >= 12 && /\d/.test(token) && /[a-z]/i.test(token);
 }
@@ -51,6 +54,19 @@ export function addEgressBytes(
   bySubject[key] = (bySubject[key] ?? 0) + bytes;
 }
 
+// A request's optional egress label (EGRESS_LABEL_HEADER, e.g. the hub API
+// method "projects.listAccountProjectWindow").  It comes from the client, so
+// only short dotted identifiers are accepted; anything else is ignored.  The
+// per-socket key cap bounds the cardinality a client can create.
+export const MAX_EGRESS_LABEL_LENGTH = 80;
+const EGRESS_LABEL_RE = /^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z][A-Za-z0-9_-]*)*$/;
+
+export function normalizeEgressLabel(label: unknown): string | undefined {
+  if (typeof label !== "string") return;
+  if (label.length === 0 || label.length > MAX_EGRESS_LABEL_LENGTH) return;
+  return EGRESS_LABEL_RE.test(label) ? label : undefined;
+}
+
 // Remembers which subject each pending reply inbox belongs to.  Bounded in
 // entries, bytes and age: reply subjects longer than MAX_REPLY_SUBJECT_LENGTH
 // are not remembered, only the request's (already bounded) normalized label
@@ -78,13 +94,21 @@ export class ReplySubjectAttribution {
     }
   }
 
-  remember(replySubject: string, requestSubject: string, now = Date.now()) {
+  remember(
+    replySubject: string,
+    requestSubject: string,
+    now = Date.now(),
+    label?: unknown,
+  ) {
     if (!replySubject || replySubject.length > MAX_REPLY_SUBJECT_LENGTH) {
       return;
     }
+    const egressLabel = normalizeEgressLabel(label);
     this.labels.delete(replySubject);
     this.labels.set(replySubject, {
-      label: normalizeSubjectForAttribution(requestSubject),
+      label:
+        normalizeSubjectForAttribution(requestSubject) +
+        (egressLabel ? `#${egressLabel}` : ""),
       at: now,
     });
     this.prune(now);
@@ -124,6 +148,72 @@ export function diffEgressBySubject(
     if (delta > 0) out[key] = delta;
   }
   return out;
+}
+
+// The stored size of a rollup bucket's subjects: a finished minute's exact
+// per-subject totals are folded to this many once (the smallest beyond it
+// summed under OTHER_KEY, so totals are kept); rows from different hub
+// processes are merged with the same fold.
+export const MAX_ROLLUP_SUBJECT_KEYS = 256;
+// Subjects kept while a minute is still being summed: per sample (all of an
+// account's sockets) and per open minute bucket.  Only a sample or minute
+// with more distinct subjects than this (an account with ~60+ sockets, each
+// at its own 64-key cap) folds early; the stored bucket is folded to
+// MAX_ROLLUP_SUBJECT_KEYS once, by exact totals.
+export const MAX_OPEN_SUBJECT_KEYS = 4096;
+// Subjects shown per event when rollups are read.
+export const MAX_REPORTED_TOP_SUBJECTS = 20;
+
+function sumSubjectLists(lists: unknown[]): Record<string, number> {
+  const bySubject: Record<string, number> = {};
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const subject = `${item?.subject ?? ""}`;
+      const bytes = Number(item?.bytes);
+      if (!subject || !(bytes > 0) || !Number.isFinite(bytes)) continue;
+      bySubject[subject] = (bySubject[subject] ?? 0) + bytes;
+    }
+  }
+  return bySubject;
+}
+
+// At most `limit` subjects, largest first; the rest are summed under
+// OTHER_KEY.  The SQL rollup upsert applies the same rule.
+export function foldEgressSubjects(
+  bySubject: Record<string, number>,
+  limit: number,
+): { subject: string; bytes: number }[] {
+  const sorted = topEgressSubjects(bySubject, Number.MAX_SAFE_INTEGER);
+  if (sorted.length <= limit) return sorted;
+  const kept: Record<string, number> = {};
+  for (const { subject, bytes } of sorted.slice(0, limit - 1)) {
+    kept[subject] = bytes;
+  }
+  const rest = sorted
+    .slice(limit - 1)
+    .reduce((total, { bytes }) => total + bytes, 0);
+  kept[OTHER_KEY] = (kept[OTHER_KEY] ?? 0) + rest;
+  return topEgressSubjects(kept, limit);
+}
+
+// Sum top-subject lists (samples of one rollup bucket) without losing
+// totals: truncation to the reported top N happens only when reading.
+export function mergeTopEgressSubjects(
+  a: unknown,
+  b: unknown,
+  limit = MAX_ROLLUP_SUBJECT_KEYS,
+): { subject: string; bytes: number }[] {
+  return foldEgressSubjects(sumSubjectLists([a, b]), limit);
+}
+
+// What an event reports: the top subjects of its bucket, the rest summed
+// under OTHER_KEY.
+export function reportedTopEgressSubjects(
+  list: unknown,
+  limit = MAX_REPORTED_TOP_SUBJECTS,
+): { subject: string; bytes: number }[] {
+  return foldEgressSubjects(sumSubjectLists([list]), limit);
 }
 
 export function topEgressSubjects(

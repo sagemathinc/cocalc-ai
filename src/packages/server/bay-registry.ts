@@ -214,6 +214,20 @@ async function reconcileDnsForEntry(
   return { dns_hostname, dns_record_id: null };
 }
 
+// A remote bay may register only itself. source_bay_id is checked against
+// the authenticated calling bay by the typed service layer, so requiring it
+// to equal bay_id binds the registration to the caller's credential.
+export function assertRegistersOwnBay<
+  T extends { bay_id?: string; source_bay_id?: string },
+>(opts: T): T {
+  const bay_id = trim(opts?.bay_id);
+  const source = trim(opts?.source_bay_id);
+  if (!source || source !== bay_id) {
+    throw new Error("a bay may only register its own presence");
+  }
+  return opts;
+}
+
 export async function registerBayPresenceLocal(
   request: BayRegistryRegisterRequest,
 ): Promise<BayRegistryRegisterResult> {
@@ -446,6 +460,8 @@ export async function buildLocalBayRegistration(): Promise<BayRegistryRegisterRe
   const bay_id = getConfiguredBayId();
   return {
     bay_id,
+    // The seed accepts a registration only from the bay it names.
+    source_bay_id: bay_id,
     label: getConfiguredBayLabel(bay_id),
     region: getConfiguredBayRegion(),
     role: currentRoleForRegistry(),

@@ -23,6 +23,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import { ClaudeProjectSecretModal } from "./claude-project-secret-modal";
+import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
   readHarnessCredentialSelection,
@@ -47,7 +48,10 @@ import { AgentSpeedControl } from "./agent-speed-control";
 import {
   newAgentClaudeCredentialValue,
   preferredClaudeCredential,
+  claudeCredentialFromValue,
+  SITE_FUNDED_CLAUDE_VALUE,
 } from "@cocalc/frontend/agents/claude-credential-options";
+import { useSiteFundedClaudeAvailable } from "@cocalc/frontend/agents/site-funded-claude";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue.";
@@ -58,6 +62,15 @@ function harnessErrorMessage(error: unknown): string {
     /^(?:Error:\s*)+/,
     "",
   );
+}
+
+/** The picker value of a stored selection (the project secret when none). */
+function claudeSelectionValue(
+  selection: AcpHarnessCredential | undefined,
+): string {
+  return selection
+    ? newAgentClaudeCredentialValue(selection)
+    : "project-secret";
 }
 
 export function claudeCredentialTrustWarning(
@@ -134,17 +147,13 @@ function ClaudeCredentialControl({
   const fromSharedRef = useRef(false);
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [error, setError] = useState("");
+  const membership = useSiteFundedClaudeAvailable();
   const selection = readHarnessCredentialSelection({
     accountId,
     projectId,
     threadKey,
   });
-  const [value, setValue] = useState(
-    selection?.mode === "account-api-key" ||
-      selection?.mode === "account-subscription"
-      ? `${selection.mode}:${selection.credentialId}`
-      : "project-secret",
-  );
+  const [value, setValue] = useState(claudeSelectionValue(selection));
   const [connectorsEnabled, setConnectorsEnabled] = useState(
     selection?.mode !== "account-subscription" ||
       selection.claudeAiConnectors !== false,
@@ -164,12 +173,7 @@ function ClaudeCredentialControl({
         current?.mode !== "account-subscription" ||
           current.claudeAiConnectors !== false,
       );
-      setValue(
-        current?.mode === "account-api-key" ||
-          current?.mode === "account-subscription"
-          ? `${current.mode}:${current.credentialId}`
-          : "project-secret",
-      );
+      setValue(claudeSelectionValue(current));
     };
     refresh();
     // The same list (and usage) as the footer's payment popover: reloaded
@@ -244,26 +248,9 @@ function ClaudeCredentialControl({
         credentials={credentials}
         value={value}
         loaded={credentialsLoaded}
+        membership={membership || value === SITE_FUNDED_CLAUDE_VALUE}
         onChange={(next) => {
-          const credential = next.startsWith("account-subscription:")
-            ? {
-                version: 1 as const,
-                provider: "anthropic" as const,
-                mode: "account-subscription" as const,
-                credentialId: next.slice("account-subscription:".length),
-              }
-            : next.startsWith("account-api-key:")
-              ? {
-                  version: 1 as const,
-                  provider: "anthropic" as const,
-                  mode: "account-api-key" as const,
-                  credentialId: next.slice("account-api-key:".length),
-                }
-              : {
-                  version: 1 as const,
-                  provider: "anthropic" as const,
-                  mode: "project-secret" as const,
-                };
+          const credential = claudeCredentialFromValue(next);
           writeHarnessCredentialSelection({
             accountId,
             projectId,

@@ -9,6 +9,7 @@ import {
   normalizeCodexMention,
   messagesSinceContextCleared,
   resolveHarnessSessionId,
+  sharedCodexThreadConfig,
   storedSessionInContext,
   threadContext,
   type ChatThreadConfigRecord,
@@ -73,7 +74,8 @@ export function prepareChatSend({
     )
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   const latest = messages.at(-1);
-  const config = runtime ? {} : (thread.acp_config ?? {});
+  // The account's payment selection picks the subscription at admission.
+  const config = runtime ? {} : sharedCodexThreadConfig(thread.acp_config);
   // Match the browser's recovery of a session whose config has not synced yet.
   const context = threadContext(thread, messages);
   const sinceCleared = messagesSinceContextCleared(
@@ -205,7 +207,7 @@ export async function admitPreparedChatSend({
   client: Client;
   timeoutMs?: number;
   transport?: { stream: typeof streamAcp; steer: typeof steerAcp };
-}): Promise<void> {
+}): Promise<{ state: "steered" | "queued" | "running"; pending?: boolean }> {
   const { message, request } = prepared;
   try {
     if (request.chat.send_mode === "immediate") {
@@ -216,8 +218,13 @@ export async function admitPreparedChatSend({
       ) {
         throw new Error("guidance submission was not acknowledged");
       }
+      // steered: it joined the running turn (or, pending, was handed to the
+      // worker running it); else it is a turn of its own.
+      return {
+        state: response.state as "steered" | "queued" | "running",
+        ...(response.pending ? { pending: true } : {}),
+      };
     } else {
-      let accepted = false;
       for await (const response of transport.stream(
         request,
         { timeout: timeoutMs },
@@ -227,13 +234,10 @@ export async function admitPreparedChatSend({
         if (
           response.type === "status" &&
           ["queued", "running"].includes(response.state)
-        ) {
-          accepted = true;
-          break;
-        }
+        )
+          return { state: response.state as "queued" | "running" };
       }
-      if (!accepted)
-        throw new Error("turn submission ended without acknowledgement");
+      throw new Error("turn submission ended without acknowledgement");
     }
   } catch (err) {
     // A lost acknowledgement is ambiguous. In particular, retrying guidance

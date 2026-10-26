@@ -1646,6 +1646,203 @@ class BootstrapKernelKeyLimitsTest(unittest.TestCase):
             )
 
 
+class BootstrapKernelSysctlHardeningTest(unittest.TestCase):
+    def _proc_sys(self, root: Path, values: dict[str, str]) -> Path:
+        for key, value in values.items():
+            path = root / key.replace(".", "/")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{value}\n", encoding="utf-8")
+        return root
+
+    def test_writes_and_applies_the_managed_hardening_sysctls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            calls: list[tuple[list[str], str]] = []
+            logged: list[str] = []
+            proc_sys = self._proc_sys(
+                Path(tmpdir) / "proc-sys",
+                {
+                    "kernel.io_uring_disabled": "2",
+                    "vm.unprivileged_userfaultfd": "0",
+                    "kernel.apparmor_restrict_unprivileged_userns": "1",
+                    "kernel.unprivileged_bpf_disabled": "2",
+                    "kernel.perf_event_paranoid": "4",
+                },
+            )
+            with mock.patch.object(
+                bootstrap,
+                "run_best_effort",
+                lambda _cfg, args, desc: calls.append((args, desc)),
+            ), mock.patch.object(
+                bootstrap, "log_line", lambda _cfg, line: logged.append(line)
+            ):
+                bootstrap.configure_kernel_sysctl_hardening(
+                    cfg,
+                    sysctl_dir=Path(tmpdir) / "sysctl.d",
+                    proc_sys=proc_sys,
+                )
+            conf = (
+                Path(tmpdir) / "sysctl.d" / "92-cocalc-project-host-hardening.conf"
+            )
+            self.assertEqual(
+                conf.read_text(encoding="utf-8"),
+                "# Managed by CoCalc project-host: kernel attack surface reduction.\n"
+                "kernel.io_uring_disabled = 2\n"
+                "vm.unprivileged_userfaultfd = 0\n",
+            )
+            self.assertEqual(
+                calls,
+                [(["sysctl", "-e", "-p", str(conf)], "sysctl kernel hardening")],
+            )
+            self.assertFalse([line for line in logged if "WARNING" in line])
+
+    def test_reports_drift_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc_sys = self._proc_sys(
+                Path(tmpdir),
+                {
+                    "kernel.io_uring_disabled": "0",
+                    "vm.unprivileged_userfaultfd": "1",
+                    "kernel.apparmor_restrict_unprivileged_userns": "0",
+                    "kernel.unprivileged_bpf_disabled": "0",
+                    "kernel.perf_event_paranoid": "2",
+                },
+            )
+            self.assertEqual(
+                bootstrap.kernel_hardening_problems(proc_sys),
+                [
+                    "kernel.io_uring_disabled=0 (want 2)",
+                    "vm.unprivileged_userfaultfd=1 (want 0)",
+                    "kernel.apparmor_restrict_unprivileged_userns=0 (want >= 1)",
+                    "kernel.unprivileged_bpf_disabled=0 (want >= 1)",
+                    "kernel.perf_event_paranoid=2 (want >= 3)",
+                ],
+            )
+            # A kernel without a key is reported, never raised.
+            self.assertEqual(
+                bootstrap.kernel_hardening_problems(Path(tmpdir) / "missing"),
+                [
+                    "kernel.io_uring_disabled=missing (want 2)",
+                    "vm.unprivileged_userfaultfd=missing (want 0)",
+                    "kernel.apparmor_restrict_unprivileged_userns=missing (want >= 1)",
+                    "kernel.unprivileged_bpf_disabled=missing (want >= 1)",
+                    "kernel.perf_event_paranoid=missing (want >= 3)",
+                ],
+            )
+
+    def test_stricter_defaults_are_not_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc_sys = self._proc_sys(
+                Path(tmpdir),
+                {
+                    "kernel.io_uring_disabled": "2",
+                    "vm.unprivileged_userfaultfd": "0",
+                    "kernel.apparmor_restrict_unprivileged_userns": "1",
+                    "kernel.unprivileged_bpf_disabled": "2",
+                    "kernel.perf_event_paranoid": "4",
+                },
+            )
+            self.assertEqual(bootstrap.kernel_hardening_problems(proc_sys), [])
+
+    def test_rootctl_apply_sysctls_writes_the_same_hardening_file(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        sysctls = body.split("apply_project_host_sysctls() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertIn("apply_kernel_hardening_sysctls", sysctls)
+        apply = body.split("apply_kernel_hardening_sysctls() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        heredoc = apply.split(
+            'cat > "${HARDENING_SYSCTL_CONFIG_PATH}" <<\'SYSCTL\'\n', 1
+        )[1].split("SYSCTL\n", 1)[0]
+        self.assertEqual(heredoc, bootstrap.kernel_hardening_sysctl_conf())
+        self.assertIn('sysctl -e -p "${HARDENING_SYSCTL_CONFIG_PATH}"', apply)
+        # A drifted or missing key must never fail a daemon start.
+        self.assertIn('-p "${HARDENING_SYSCTL_CONFIG_PATH}" >/dev/null ||', apply)
+        self.assertIn(
+            'echo "warning: unable to apply ${HARDENING_SYSCTL_CONFIG_PATH}" >&2',
+            apply,
+        )
+        self.assertIn(
+            'HARDENING_SYSCTL_CONFIG_PATH="/etc/sysctl.d/'
+            + bootstrap.KERNEL_HARDENING_SYSCTL_CONF_NAME
+            + '"',
+            body,
+        )
+
+
+class BootstrapKernelHardeningOrderTest(unittest.TestCase):
+    # io_uring_disabled only refuses new rings: the project-host daemon's
+    # event loop creates one at startup, so the setting must be in place
+    # before any daemon start.
+    def test_rootctl_applies_hardening_before_every_daemon_start(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        dispatch = body.split('case "${cmd}" in\n  start|ensure)', 1)[1]
+        start = dispatch.split(";;", 1)[0]
+        restart = dispatch.split("  restart)", 1)[1].split(";;", 1)[0]
+        for name, branch in (("start|ensure", start), ("restart", restart)):
+            self.assertIn("apply_kernel_hardening_sysctls", branch, name)
+            self.assertLess(
+                branch.index("apply_kernel_hardening_sysctls"),
+                branch.index("run_daemon"),
+                name,
+            )
+
+    def test_bootstrap_applies_hardening_before_starting_project_host(
+        self,
+    ) -> None:
+        reconcile = inspect.getsource(bootstrap.run_reconcile)
+        self.assertLess(
+            reconcile.index("configure_kernel_sysctl_hardening("),
+            reconcile.index("start_project_host("),
+        )
+        provision = inspect.getsource(bootstrap.run_provision)
+        self.assertIn("configure_kernel_sysctl_hardening(", provision)
+        bootstrap_flow = inspect.getsource(bootstrap.run_bootstrap)
+        self.assertLess(
+            bootstrap_flow.index("run_provision("),
+            bootstrap_flow.index("start_project_host("),
+        )
+
+    def test_rootctl_hardening_never_fails_a_daemon_start(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        function = "apply_kernel_hardening_sysctls() {" + body.split(
+            "apply_kernel_hardening_sysctls() {", 1
+        )[1].split("\n}\n", 1)[0] + "\n}\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conf = Path(tmpdir) / "92.conf"
+            for sysctl_rc in (0, 1):
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        "set -euo pipefail\n"
+                        f"HARDENING_SYSCTL_CONFIG_PATH='{conf}'\n"
+                        f"sysctl() {{ return {sysctl_rc}; }}\n"
+                        + function
+                        + "apply_kernel_hardening_sysctls\necho started\n",
+                    ],
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "started\n")
+                self.assertEqual(
+                    conf.read_text(encoding="utf-8"),
+                    bootstrap.kernel_hardening_sysctl_conf(),
+                )
+                self.assertEqual(
+                    "unable to apply" in result.stderr, sysctl_rc != 0
+                )
+
+    def test_helper_only_reconcile_applies_hardening(self) -> None:
+        self.assertIn(
+            "configure_kernel_sysctl_hardening(",
+            inspect.getsource(bootstrap.run_reconcile_helpers),
+        )
+
+
 class BootstrapInotifyLimitsTest(unittest.TestCase):
     def test_configures_inotify_quotas_for_project_workloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4079,7 +4276,7 @@ reconcile_project_io_policy
             self.assertEqual(
                 log.read_text().splitlines(),
                 [
-                    "lock default",
+                    "lock 60",
                     "normalize",
                     "hierarchy",
                     "maintenance",
@@ -4091,6 +4288,63 @@ reconcile_project_io_policy
                     "unlock",
                 ],
             )
+
+    def test_pasta_limits_ignore_a_process_that_exits_meanwhile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                container_runtime_bundle=bootstrap.BundleSpec(
+                    "", None, "", "", "", ""
+                ),
+            )
+            captured: dict[str, str] = {}
+            with mock.patch.object(
+                bootstrap,
+                "text_write_atomic",
+                side_effect=lambda path, data, **_kwargs: captured.__setitem__(
+                    str(path), data
+                ),
+            ), mock.patch.object(bootstrap.os, "chmod"), mock.patch.object(
+                bootstrap.os, "chown"
+            ):
+                bootstrap.install_privileged_wrappers(cfg)
+            script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+            body = (
+                "apply_pasta_resource_limits() {"
+                + script.split("apply_pasta_resource_limits() {", 1)[1].split(
+                    "\n}\n", 1
+                )[0]
+                + "\n}\n"
+            )
+            # A pid that no longer exists: prlimit fails with ESRCH.  The
+            # process exits between the check and prlimit when kill -0
+            # succeeds only once; it is still there when it always does.
+            sleeper = subprocess.Popen(["sleep", "0"])
+            sleeper.wait()
+            gone = sleeper.pid
+
+            def run(alive: str) -> subprocess.CompletedProcess:
+                harness = f"""
+set -euo pipefail
+PROJECT_PASTA_NOFILE_LIMIT=1024
+CHECKS=0
+kill() {{
+  CHECKS=$((CHECKS + 1))
+  {alive}
+}}
+{body}
+apply_pasta_resource_limits {gone}
+"""
+                return subprocess.run(
+                    ["bash", "-c", harness], capture_output=True, text=True
+                )
+
+            exited = run('[ "$CHECKS" -eq 1 ]')
+            self.assertEqual(exited.returncode, 0, exited.stderr)
+            self.assertEqual(exited.stderr, "")
+            still_there = run("return 0")
+            self.assertNotEqual(still_there.returncode, 0)
+            self.assertIn("prlimit", still_there.stderr)
 
     def test_io_class_state_normalize_is_fork_free_and_forgets_stale_projects(
         self,
@@ -4178,6 +4432,414 @@ normalize_project_io_class_state
             self.assertEqual((state / pid(4002)).read_text(), "premium\n")
             self.assertEqual((state / pid(4003)).read_text(), "premium\n")
             self.assertEqual(len(list(state.iterdir())), 3000 + 1 + 2)
+
+    def test_project_conat_router_port_follows_project_host(self) -> None:
+        port = bootstrap.project_conat_router_port
+        self.assertEqual(port([]), 9102)
+        self.assertEqual(port(["PORT=9010"]), 9110)
+        self.assertEqual(port(['PORT="9010"']), 9110)
+        self.assertEqual(
+            port(["PORT=9010", "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9555"]),
+            9555,
+        )
+        # Malformed or out-of-range values fall back like project-host does.
+        self.assertEqual(port(["PORT=nope", "garbage line"]), 9102)
+        self.assertEqual(port(["COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=0"]), 9102)
+        self.assertEqual(port(["PORT=65500"]), 9102)
+        self.assertEqual(port(["PORT=127.0.0.1:9010"]), 9110)
+
+    def _storage_wrapper_for(self, cfg) -> str:
+        captured: dict[str, str] = {}
+        original_text_write_atomic = bootstrap.text_write_atomic
+        original_chmod = bootstrap.os.chmod
+        original_chown = bootstrap.os.chown
+
+        def capture_write(path, data, **_kwargs):
+            captured[str(path)] = data
+            return len(data)
+
+        try:
+            bootstrap.text_write_atomic = capture_write
+            bootstrap.os.chmod = lambda *_args, **_kwargs: None
+            bootstrap.os.chown = lambda *_args, **_kwargs: None
+            bootstrap.install_privileged_wrappers(cfg)
+        finally:
+            bootstrap.text_write_atomic = original_text_write_atomic
+            bootstrap.os.chmod = original_chmod
+            bootstrap.os.chown = original_chown
+        return captured["/usr/local/sbin/cocalc-runtime-storage"]
+
+    def test_storage_wrapper_templates_the_conat_router_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), env_lines=["PORT=9010"])
+            script = self._storage_wrapper_for(cfg)
+            env_file = Path(cfg.env_file)
+        self.assertIn('PROJECT_CONAT_ROUTER_PORT_DEFAULT="9110"', script)
+        self.assertIn('PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT="9310"', script)
+        self.assertIn(f'PROJECT_HOST_ENV_FILE="{env_file}"', script)
+        self.assertIn(
+            f'PROJECT_HOST_LOCAL_ENV_FILE="{bootstrap.project_host_local_env_path(env_file)}"',
+            script,
+        )
+
+    def _egress_rules(
+        self,
+        env: str | None = None,
+        local_env: str | None = None,
+        env_lines: list[str] | None = None,
+    ) -> list[str]:
+        """Run the wrapper's real shell functions and return the nft rules
+        emit_project_metadata_rules prints, with the daemon's env files
+        (absent when None) in a temporary directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            if env_lines is not None:
+                cfg = replace(cfg, env_lines=env_lines)
+            script = self._storage_wrapper_for(cfg)
+            env_file = Path(tmpdir) / "project-host.env"
+            local_env_file = Path(tmpdir) / "project-host.local.env"
+            if env is not None:
+                env_file.write_text(env)
+            if local_env is not None:
+                local_env_file.write_text(local_env)
+            variables = "\n".join(
+                line
+                for line in script.splitlines()
+                if line.startswith(
+                    (
+                        "PROJECT_METADATA_",
+                        "PROJECT_CONAT_ROUTER_PORT_DEFAULT=",
+                        "PROJECT_SITE_CODEX_PROXY_PORT_",
+                        "PROJECT_PRIVATE_IPV",
+                        "PROJECT_NETWORK_TABLE=",
+                        "PROJECT_NETWORK_CHAIN=",
+                    )
+                )
+            )
+
+            def function(name: str) -> str:
+                return f"{name}() {{" + script.split(f"\n{name}() {{", 1)[1].split(
+                    "\n}\n", 1
+                )[0] + "\n}\n"
+
+            program = "\n".join(
+                [
+                    variables,
+                    f'PROJECT_HOST_ENV_FILE="{env_file}"',
+                    f'PROJECT_HOST_LOCAL_ENV_FILE="{local_env_file}"',
+                    'project_network_pool_cgroup_path() { echo "cocalc-project-pool"; }',
+                    *(
+                        function(name)
+                        for name in (
+                            "project_host_env_file_value",
+                            "project_host_env_value",
+                            "project_host_port_number",
+                            "project_host_derived_port",
+                            "project_conat_router_port",
+                            "project_site_codex_proxy_ports",
+                            "project_egress_local_tcp_ports",
+                            "emit_project_metadata_rules",
+                        )
+                    ),
+                    "emit_project_metadata_rules",
+                ]
+            )
+            return subprocess.run(
+                ["bash", "-c", program], check=True, capture_output=True, text=True
+            ).stdout.splitlines()
+
+    def _local_tcp_exemptions(self, rules: list[str]) -> list[str]:
+        local_tcp = [rule for rule in rules if "egress-local-tcp" in rule]
+        self.assertEqual(len(local_tcp), 1)
+        return (
+            local_tcp[0].split("tcp dport != { ", 1)[1].split(" }", 1)[0].split(", ")
+        )
+
+    def _conat_exemption(self, rules: list[str]) -> str:
+        exemptions = self._local_tcp_exemptions(rules)
+        self.assertEqual(len(exemptions), 3)
+        self.assertEqual(exemptions[0], "53")
+        return exemptions[1]
+
+    def test_project_egress_allows_the_site_codex_proxy_range(self) -> None:
+        cases = [
+            ({}, ["53", "9102", "9302-9317"]),
+            ({"env_lines": ["PORT=9010"]}, ["53", "9110", "9310-9325"]),
+            ({"env": "PORT=9010\n"}, ["53", "9110", "9310-9325"]),
+            (
+                {
+                    "env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=9500\n",
+                    "local_env": "PORT=9020\n",
+                },
+                ["53", "9120", "9500-9515"],
+            ),
+            (
+                {"local_env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=nope\n"},
+                ["53", "9102", "9302-9317"],
+            ),
+            # PORT + 300 past 65535 falls back to the default range.
+            ({"env": "PORT=65300\n"}, ["53", "65400", "9302-9317"]),
+            # The range stops at 65535.
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=65530\n"},
+                ["53", "9102", "65530-65535"],
+            ),
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=65535\n"},
+                ["53", "9102", "65535"],
+            ),
+            # nft sets may not overlap: a port inside the range is left to it.
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=9100\n"},
+                ["53", "9100-9115"],
+            ),
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=9090\n"},
+                ["53", "9090-9105"],
+            ),
+            # The runtime user cannot bind privileged ports: fall back.
+            (
+                {"env": "PORT=9010\nCOCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=1023\n"},
+                ["53", "9110", "9310-9325"],
+            ),
+            (
+                {"env": "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=1024\n"},
+                ["53", "9102", "1024-1039"],
+            ),
+            (
+                {"env": "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=53\n"},
+                ["53", "9302-9317"],
+            ),
+        ]
+        for kwargs, expected in cases:
+            with self.subTest(**kwargs):
+                self.assertEqual(
+                    self._local_tcp_exemptions(self._egress_rules(**kwargs)), expected
+                )
+
+    def test_project_site_codex_proxy_port_follows_project_host(self) -> None:
+        port = bootstrap.project_site_codex_proxy_port
+        self.assertEqual(port([]), 9302)
+        self.assertEqual(port(["PORT=9010"]), 9310)
+        self.assertEqual(port(["PORT=127.0.0.1:9010"]), 9310)
+        self.assertEqual(
+            port(["PORT=9010", "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=9555"]),
+            9555,
+        )
+        self.assertEqual(port(["COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=0"]), 9302)
+        self.assertEqual(
+            port(["COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=1023"]), 9302
+        )
+        self.assertEqual(
+            port(["COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT=1024"]), 1024
+        )
+        self.assertEqual(port(["PORT=65300"]), 9302)
+
+    def test_project_egress_conat_port_follows_the_daemon_env_files(self) -> None:
+        # No env files: the bootstrap-derived default.
+        self.assertEqual(self._conat_exemption(self._egress_rules()), "9102")
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env_lines=["PORT=9010"])), "9110"
+        )
+        # The managed file, then the local override file, as resolveEnv merges them.
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=9010\n")), "9110"
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(env="PORT=9010\n", local_env="PORT=9020\n")
+            ),
+            "9120",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\nCOCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9500\n",
+                    local_env='# override\n  COCALC_PROJECT_HOST_CONAT_ROUTER_PORT = "9555"\n',
+                )
+            ),
+            "9555",
+        )
+        # An explicit router port in the managed file beats a local PORT.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9500\n",
+                    local_env="PORT=9020\n",
+                )
+            ),
+            "9500",
+        )
+        # The files win over the bootstrap-derived value; invalid values fall back.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(env="PORT=9030\n", env_lines=["PORT=9010"])
+            ),
+            "9130",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\n",
+                    local_env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=nope\n",
+                )
+            ),
+            "9110",
+        )
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=65500\n")), "9102"
+        )
+        # A key present but empty in the local file still overrides the managed
+        # value: project-host then falls back to its default PORT 9002.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\n", local_env="PORT=\n", env_lines=["PORT=9010"]
+                )
+            ),
+            "9102",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(local_env="PORT=\n", env_lines=["PORT=9010"])
+            ),
+            "9102",
+        )
+        # parsePort takes the text after the last ":".
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=127.0.0.1:9010\n")),
+            "9110",
+        )
+
+    # JavaScript's Number(value) for each input, restricted to ports 1-65535,
+    # as checked against node: project-host reads its port settings this way.
+    JS_PORT_CASES = [
+        ("9010", 9010), ("9010.0", 9010), ("9.01e3", 9010), ("+9010", 9010),
+        (" 9010 ", 9010), ("0x2332", 9010), ("0X2332", 9010), ("0o21462", 9010),
+        ("0b10001100110010", 9010), ("09010", 9010), ("9010.", 9010),
+        ("  +.9010e4 ", 9010), (".5e4", 5000), ("1.0e+3", 1000), ("65535", 65535),
+        ("-9010", None), ("9010abc", None), ("", None), ("1_000", None),
+        ("Infinity", None), ("0", None), ("9010.5", None), ("1e999", None),
+        ("+0x10", None), ("00x10", None), ("0x", None), ("65536", None),
+    ]
+
+    def test_port_parsing_matches_javascript_number(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = self._storage_wrapper_for(make_cfg(tmpdir))
+        function = "project_host_port_number() {" + script.split(
+            "\nproject_host_port_number() {", 1
+        )[1].split("\n}\n", 1)[0] + "\n}\n"
+        for value, expected in self.JS_PORT_CASES:
+            with self.subTest(value=value):
+                shell = subprocess.run(
+                    ["bash", "-c", function + 'project_host_port_number "$1"', "_", value],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                self.assertEqual(int(shell) if shell else None, expected)
+                python = bootstrap.js_positive_integer(value)
+                self.assertEqual(
+                    python if python is not None and python <= 65535 else None,
+                    expected,
+                )
+
+    def test_btrfs_qgroup_commands_take_only_project_quota_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = self._storage_wrapper_for(make_cfg(tmpdir))
+        functions = "".join(
+            name + "() {" + script.split("\n" + name + "() {", 1)[1].split(
+                "\n}\n", 1
+            )[0] + "\n}\n"
+            for name in ("check_args", "check_qgroup_args")
+        )
+        stubs = (
+            'deny() { echo "DENY $1 $2"; exit 2; }\n'
+            'allow_path() { [[ "$1" == /mnt/cocalc || "$1" == /mnt/cocalc/* ]]; }\n'
+        )
+        branch = script.split("  btrfs|btrfs-maintenance)", 1)[1].split(
+            "\n    ;;", 1
+        )[0]
+        self.assertIn('check_qgroup_args "$@"', branch)
+
+        def check(*args: str) -> str:
+            return subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    "set -euo pipefail\n" + stubs + functions
+                    + 'check_qgroup_args "$@"; echo OK',
+                    "_",
+                    *args,
+                ],
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        for args in [
+            ["qgroup", "create", "1/162710717947708", "/mnt/cocalc"],
+            ["qgroup", "destroy", "1/7", "/mnt/cocalc"],
+            [
+                "qgroup", "assign", "--no-rescan",
+                "/mnt/cocalc/project-x", "1/7", "/mnt/cocalc",
+            ],
+            ["qgroup", "limit", "1073741824", "1/7", "/mnt/cocalc"],
+            ["qgroup", "show", "-prcF", "--raw", "/mnt/cocalc/project-x"],
+        ]:
+            with self.subTest(args=args):
+                self.assertEqual(check(*args), "OK")
+        for args, denied in [
+            # a subvolume's own quota group
+            (["qgroup", "remove", "0/256", "1/7", "/mnt/cocalc"], "0/256"),
+            (["qgroup", "create", "1/7", "/etc"], "/etc"),
+            (["qgroup", "create", "1/7/../x", "/mnt/cocalc"], "1/7/../x"),
+            (["qgroup", "create", "2/7", "/mnt/cocalc"], "2/7"),
+        ]:
+            with self.subTest(args=args):
+                self.assertIn(denied, check(*args))
+                self.assertTrue(check(*args).startswith("DENY"))
+
+    def test_project_egress_conat_port_accepts_what_project_host_accepts(self) -> None:
+        # Values project-host runs with even though they are not plain digits.
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=9010.0\n")), "9110"
+        )
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(local_env="PORT=h:9.01e3\n")),
+            "9110",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=+9555\n"
+                )
+            ),
+            "9555",
+        )
+        self.assertEqual(
+            bootstrap.project_conat_router_port(["PORT=9010.0"]), 9110
+        )
+        self.assertEqual(
+            bootstrap.project_conat_router_port(
+                ["COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=0x2553"]
+            ),
+            9555,
+        )
+
+    def test_project_egress_rules_render_as_nft(self) -> None:
+        rules = self._egress_rules()
+        prefix = 'add rule inet cocalc_project_network output socket cgroupv2 level 1 "cocalc-project-pool"'
+        self.assertEqual(
+            rules[2:],
+            [
+                f"{prefix} ct state new fib daddr type local meta l4proto tcp tcp dport != {{ 53, 9102, 9302-9317 }} counter drop comment \"cocalc-project-network-egress-local-tcp\"",
+                f"{prefix} ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop comment \"cocalc-project-network-egress-local-udp\"",
+                f"{prefix} ct state new ip daddr {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv4\"",
+                f"{prefix} ct state new ip6 daddr fc00::/7 meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv6\"",
+            ],
+        )
+        self.assertTrue(rules[0].endswith('comment "cocalc-project-network-metadata-ipv4"'))
+        self.assertTrue(rules[1].endswith('comment "cocalc-project-network-metadata-ipv6"'))
 
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
@@ -4728,6 +5390,17 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"', script
             )
+            self.assertIn('PROJECT_CONAT_ROUTER_PORT_DEFAULT="9102"', script)
+            self.assertNotIn("__PROJECT_CONAT_ROUTER_PORT__", script)
+            self.assertIn('PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT="9302"', script)
+            self.assertNotIn("__PROJECT_SITE_CODEX_PROXY_PORT__", script)
+            self.assertNotIn("__PROJECT_HOST_ENV_FILE__", script)
+            self.assertNotIn("__PROJECT_HOST_LOCAL_ENV_FILE__", script)
+            self.assertIn(
+                'PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"',
+                script,
+            )
+            self.assertIn('PROJECT_PRIVATE_IPV6="fc00::/7"', script)
             self.assertIn("socket cgroupv2 level", script)
             self.assertIn("apply_pasta_resource_limits", script)
             self.assertIn("ensure_project_network_rule", script)
@@ -4777,11 +5450,41 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'path="$(project_network_pool_cgroup_path)"', emit_metadata_body
             )
+            # The shared egress block: new connections only, drop-only, and
+            # after the metadata rules in the shared pool rules.
+            self.assertIn(
+                'marker="cocalc-project-network-egress"', emit_metadata_body
+            )
+            for comment in ("local-tcp", "local-udp", "private-ipv4", "private-ipv6"):
+                self.assertIn(f'comment "%s-{comment}"', emit_metadata_body)
+            self.assertEqual(emit_metadata_body.count("ct state new"), 4)
+            self.assertNotIn("counter accept", emit_metadata_body)
+            # The conat router and Codex proxy ports are exempt for TCP only;
+            # UDP keeps only DNS.
+            self.assertIn(
+                "ct state new fib daddr type local meta l4proto tcp tcp dport != { %s } counter drop",
+                emit_metadata_body,
+            )
+            self.assertIn('"$(project_egress_local_tcp_ports)"', emit_metadata_body)
+            self.assertIn(
+                "ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop",
+                emit_metadata_body,
+            )
+            self.assertEqual(emit_metadata_body.count("th dport != 53"), 2)
             verify_network_body = script.split(
                 "verify_project_network_limits() {", 1
             )[1].split("\n}\n\nrender_project_network_rules()", 1)[0]
             self.assertIn("metadata_ipv4_count", verify_network_body)
             self.assertIn("metadata_ipv6_count", verify_network_body)
+            for name in ("local-tcp", "local-udp", "private-ipv4", "private-ipv6"):
+                self.assertIn(
+                    f'comment "cocalc-project-network-egress-{name}"',
+                    verify_network_body,
+                )
+            self.assertIn(
+                "project egress block rules are missing or duplicated",
+                verify_network_body,
+            )
             ensure_network_body = script.split(
                 "ensure_project_network_rule() {", 1
             )[1].split("\n}\n\nemit_project_metadata_rules()", 1)[0]
@@ -7097,6 +7800,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "ensure_bootstrap_paths",
                 "configure_rsyslog_limits",
                 "configure_daily_root_cleanup",
+                "configure_kernel_sysctl_hardening",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
                 "write_helpers",
@@ -7150,6 +7854,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "ensure_bootstrap_paths",
                     "configure_rsyslog_limits",
                     "configure_daily_root_cleanup",
+                    "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
                     "write_helpers",
@@ -7173,7 +7878,8 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
-            "configure_kernel_module_hardening configure_kernel_key_limits "
+            "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
+            "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
             "install_privileged_wrappers reconcile_storage_and_containment "
@@ -7184,6 +7890,7 @@ class BootstrapModesTest(unittest.TestCase):
             "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
             "configure_cloudflared_with_options "
             "configure_critical_service_oom_protection configure_autostart "
+            "reconcile_project_network_limits "
             "record_operation_start record_operation_success "
             "record_operation_failure report_bootstrap_status log_line"
         ).split()
@@ -7234,6 +7941,75 @@ class BootstrapModesTest(unittest.TestCase):
                 )
                 self.assertEqual(start.called, expected)
                 self.assertEqual(fingerprint.call_count, len(fingerprints))
+
+    def test_reconcile_rebuilds_egress_rules_for_the_env_the_stack_runs_with(
+        self,
+    ) -> None:
+        # write_env runs after the containment pass. When it changes the conat
+        # router port, the final network reconcile must see the new env file.
+        steps = (
+            "ensure_runtime_user ensure_bootstrap_paths "
+            "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
+            "configure_kernel_key_limits "
+            "configure_inotify_limits configure_journald_limits "
+            "configure_rsyslog_limits install_btrfs_helper "
+            "install_privileged_wrappers ensure_cocalc_mount setup_shared_scratch "
+            "ensure_btrfs_data reconcile_bees_runtime_policy "
+            "reconcile_project_io_policy reconcile_host_service_cgroup "
+            "ensure_subuids ensure_runtime_user_manager configure_podman "
+            "verify_runtime_user_contract configure_runtime_shell_env "
+            "setup_master_conat_token install_privileged_tool_binaries "
+            "install_node configure_node_bind_service_capability write_wrapper "
+            "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
+            "configure_cloudflared_with_options "
+            "configure_critical_service_oom_protection configure_autostart "
+            "record_operation_start record_operation_success "
+            "record_operation_failure report_bootstrap_status log_line"
+        ).split()
+        with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
+            cfg = replace(make_cfg(tmpdir), env_lines=["PORT=9020"])
+            env_path = Path(cfg.env_file)
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            env_path.write_text("PORT=9010\n")
+            events: list[str] = []
+            for name in steps:
+                stack.enter_context(
+                    mock.patch.object(bootstrap, name, lambda *a, **k: None)
+                )
+            stack.enter_context(
+                mock.patch.object(bootstrap, "compute_image_size", return_value=10)
+            )
+            stack.enter_context(
+                mock.patch.object(bootstrap, "extract_bundle", return_value=None)
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "write_env",
+                    lambda *_a, **_k: env_path.write_text("PORT=9020\n"),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "start_project_host",
+                    lambda *_a, **_k: events.append("start"),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "reconcile_project_network_limits",
+                    lambda *_a, **_k: events.append(
+                        "network " + env_path.read_text().strip()
+                    ),
+                )
+            )
+            self.assertEqual(bootstrap.run_reconcile(cfg), 0)
+        self.assertEqual(
+            events, ["network PORT=9010", "start", "network PORT=9020"]
+        )
 
     def test_restart_fingerprint_tracks_what_the_running_stack_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7463,6 +8239,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("configure_daily_root_cleanup", lambda _cfg: None)
             patch("compute_image_size", lambda _cfg: 10)
             patch("configure_kernel_module_hardening", lambda _cfg: None)
+            patch("configure_kernel_sysctl_hardening", lambda _cfg: None)
             patch("configure_kernel_key_limits", lambda _cfg: None)
             patch("configure_inotify_limits", lambda _cfg: None)
             patch("configure_journald_limits", lambda _cfg: None)

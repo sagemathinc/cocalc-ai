@@ -8,7 +8,7 @@
 // that attested context (bays are one trusted application) and runs the call
 // through its normal hub API pipeline.
 
-import type { Client } from "@cocalc/conat/core/client";
+import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import type { Options } from "@cocalc/conat/service/service";
 import {
   createServiceClient,
@@ -33,6 +33,16 @@ export interface ForwardedHubApiCall {
    * bay runs each call id at most once (server/inter-bay/forwarded-calls).
    */
   call_id?: string;
+  /**
+   * How long the receiving bay waits for the call in all, when longer than
+   * the default 30 s; the owning bay lets a repeat wait accordingly.
+   */
+  budget_ms?: number;
+  /**
+   * A system host action (server/conat/api/system-host-actions) sent by
+   * trusted server code on the receiving bay, not a user's hub API call.
+   */
+  system?: true;
 }
 
 export interface InterBayHubApi {
@@ -60,6 +70,10 @@ export function createInterBayHubApiClient({
     subject: hubApiSubject(bay_id),
     client,
     timeout: timeout ?? 30_000,
+    // Fast RPC's target ack is capped at MAX_INTEREST_TIMEOUT; a call given
+    // longer (a slow host read, say) uses request/reply instead.
+    transport:
+      timeout != null && timeout > MAX_INTEREST_TIMEOUT ? "request" : undefined,
   });
 }
 

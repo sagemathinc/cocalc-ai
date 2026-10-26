@@ -87,6 +87,8 @@ export const agent = {
   copyPaymentSelection: authFirstRequireAccount,
   resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
   reportRuntime: authFirstRequireHostWithAccountTarget,
+  credentialUpdatedAt: authFirstRequireHostWithAccountTarget,
+  reportStatus: authFirstRequireHostWithAccountTarget,
   describeNetworkSelf: authFirstRequireHostWithAccountTarget,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
@@ -597,6 +599,40 @@ export interface AgentApi {
   ): Promise<
     import("@cocalc/conat/agents/personal").AgentNetworkSelf | undefined
   >;
+  /**
+   * Host holding a turn whose sign-in failed (I4c): when the turn's account
+   * last updated this credential (signed in again), and whether it is
+   * revoked. Never anything else about it.
+   */
+  credentialUpdatedAt(
+    opts: AgentHostAuth & {
+      project_id: string;
+      credential_id: string;
+      /** e.g. "anthropic" or "openai": narrows the lookup. */
+      provider?: string;
+    },
+  ): Promise<{
+    updated_at?: number;
+    revoked?: boolean;
+    /** Newest update of any unrevoked credential of the same provider and
+     * kind: signing in again may make a new one rather than update it. */
+    newest_updated_at?: number;
+    /** That newest credential's id (an id only, never its secret or
+     * label), so a turn held for a revoked credential resumes with it. */
+    newest_credential_id?: string;
+  }>;
+  /** Host running an agent's turns: what it is doing (busy, waiting,
+   * unavailable until a limit resets), when that changes. Whether the
+   * conversation is a registered agent, so the host stops reporting one
+   * that isn't. */
+  reportStatus(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      status: import("@cocalc/conat/agents/agent-status").AgentTurnStatus;
+    },
+  ): Promise<{ registered: boolean }>;
   /** Host admitting a turn: which runtime the agent uses. */
   reportRuntime(
     opts: AgentHostAuth & {
