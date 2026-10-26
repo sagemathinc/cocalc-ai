@@ -34,17 +34,18 @@ export default function initPublicHomeExperiment(router: Router): void {
     express.json({ limit: "1kb" }),
     async (req: Request, res: Response) => {
       res.setHeader("Cache-Control", "no-store");
-      // The page tags its sign-up links only after a 2xx answer, so an event
-      // that was not stored must never get one: a throttled or failed write
-      // answers with an error. Unknown or inactive versions get the same 204
-      // as counted ones (the running versions are public anyway).
+      // The page tags its sign-up links only after a 2xx answer, so only an
+      // event that was stored gets one: an unknown or inactive version (the
+      // running ones are public anyway) answers 422, a throttled address 429
+      // and a failed write 503.
       const address = req.ip ?? req.socket.remoteAddress ?? "unknown";
       if (!checkAndRecordCount(byAddress, address, PER_WINDOW)) {
         res.status(429).end();
         return;
       }
+      let stored: boolean;
       try {
-        await recordPublicHomeExperimentEvent({
+        stored = await recordPublicHomeExperimentEvent({
           variant: req.body?.variant,
           event: req.body?.event,
         });
@@ -55,7 +56,7 @@ export default function initPublicHomeExperiment(router: Router): void {
         res.status(503).end();
         return;
       }
-      res.status(204).end();
+      res.status(stored ? 204 : 422).end();
     },
   );
 

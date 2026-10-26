@@ -99,6 +99,8 @@ import {
 } from "@cocalc/server/auth/auth-sessions";
 import {
   directSamlConfig,
+  directSamlRelayState,
+  homeVariantFromSamlRelayState,
   passportProfileFromSamlProfile,
 } from "@cocalc/server/auth/sso/direct-saml";
 import {
@@ -622,7 +624,11 @@ export class PassportManager {
   private getHandleReturn(opts: HandleReturnOpts) {
     const { Linit, name, type, update_on_login, cookie_ttl_s, login_info } =
       opts;
-    return async (req, res: express.Response) => {
+    return async (
+      req,
+      res: express.Response,
+      extra: { home_variant?: string } = {},
+    ) => {
       if (req.user == null) {
         throw Error("req.user == null -- that shouldn't happen");
       }
@@ -690,6 +696,7 @@ export class PassportManager {
         req,
         res,
         site_url: this.site_url,
+        home_variant: extra.home_variant,
       };
 
       const dotInstance =
@@ -1304,11 +1311,12 @@ export class PassportManager {
       this.router.get(
         strategyUrl,
         this.handle_get_api_key,
-        async (_req, res) => {
+        async (req, res) => {
           try {
             res.redirect(
               await this.getDirectSaml(name).getAuthorizeUrlAsync(
-                "",
+                // the Home experiment version, counted at account creation
+                directSamlRelayState(req.query),
                 undefined,
                 {},
               ),
@@ -1349,7 +1357,9 @@ export class PassportManager {
               throw new Error("SAML response did not include a profile.");
             }
             (req as any).user = passportProfileFromSamlProfile(result.profile);
-            await handleReturn(req, res);
+            await handleReturn(req, res, {
+              home_variant: homeVariantFromSamlRelayState(req.body?.RelayState),
+            });
           } catch (err) {
             if (err.name !== "PassportLoginError") {
               logger.warn(`Direct SAML sign-in failed for '${name}': ${err}`);

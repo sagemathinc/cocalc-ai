@@ -73,10 +73,11 @@ describe("the public Home experiment endpoints", () => {
     });
   });
 
-  it("answers an unknown or inactive version like a counted one", async () => {
+  it("answers 422 for a version or event it did not count", async () => {
+    // e.g. an arm that is not running (yet) on this server
     jest.mocked(recordPublicHomeExperimentEvent).mockResolvedValue(false);
     const res = await post({ variant: "nope", event: "x" });
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(422);
     expect(await res.text()).toBe("");
   });
 
