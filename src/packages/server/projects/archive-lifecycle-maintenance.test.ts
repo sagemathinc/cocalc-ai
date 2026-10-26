@@ -294,6 +294,24 @@ describe("running archive jobs across hosts", () => {
     expect(summary.completed).toBe(4);
   });
 
+  it("keeps a host busy for the rest of the pass while its final backup is pending", async () => {
+    jobs = [job(1, "host-a"), job(2, "host-a"), job(3, "host-b")];
+    mockListRecoverableProjectArchiveLifecycleJobs.mockResolvedValue(jobs);
+    mockArchiveProjectStorage.mockImplementation(
+      async ({ job_id }: { job_id: string }) => {
+        if (job_id === jobs[0].id) {
+          throw new (FinalArchiveBackupPendingError as any)("op-1");
+        }
+      },
+    );
+    const summary = await runProjectArchiveLifecycleOnce();
+    expect(summary).toMatchObject({ pending: 1, completed: 1 });
+    // the second host-a job did not start while host-a's backup runs
+    expect(
+      mockArchiveProjectStorage.mock.calls.map(([opts]) => opts.job_id),
+    ).toEqual([jobs[0].id, jobs[2].id]);
+  });
+
   it("counts a final backup still running as pending, without failing or reopening the job", async () => {
     jobs = [job(1, "host-a")];
     mockListRecoverableProjectArchiveLifecycleJobs.mockResolvedValue(jobs);
@@ -361,6 +379,31 @@ describe("dispatching queued archive jobs", () => {
     expect(mockClaimProjectArchiveLifecycleJob).toHaveBeenCalledWith(
       queuedJob(2, "host-free").id,
     );
+  });
+
+  it("admits one job at a time, so concurrent workers can't exceed the hourly limit", async () => {
+    mockGetServerSettings.mockResolvedValue({
+      automatic_project_archiving_enabled: true,
+      automatic_project_archiving_report_only: false,
+      automatic_project_archiving_global_per_hour: 1,
+    });
+    mockListQueuedProjectArchiveLifecycleJobs.mockResolvedValue([
+      queuedJob(1, "host-a"),
+      queuedJob(2, "host-b"),
+      queuedJob(3, "host-c"),
+      queuedJob(4, "host-d"),
+    ]);
+    // a claim counts toward the hour, as claimed_at does in the database
+    let claims = 0;
+    mockCountRecentAutomaticArchives.mockImplementation(async () => claims);
+    mockCountRunningArchivesByHost.mockResolvedValue(0);
+    mockClaimProjectArchiveLifecycleJob.mockImplementation(async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      claims += 1;
+      return false;
+    });
+    await runProjectArchiveLifecycleOnce();
+    expect(claims).toBe(1);
   });
 
   it("stops starting jobs at the global hourly limit", async () => {

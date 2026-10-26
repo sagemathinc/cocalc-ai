@@ -574,15 +574,23 @@ async function executeJob({
     await updateProjectArchiveLifecycleJob({ job_id: job.id, status: "stale" });
     return "stale";
   }
-  const [recent, onHost] = await Promise.all([
-    countRecentAutomaticArchives(),
-    countRunningArchivesByHost(job.host_id),
-  ]);
-  if (recent >= config.globalPerHour) return "rate-limited";
-  // Another archive is running on this host: try this job next pass, but let
-  // jobs on other hosts go ahead.
-  if (onHost >= config.perHostConcurrency) return "host-busy";
-  if (!(await claimProjectArchiveLifecycleJob(job.id))) return "stale";
+  // One admission at a time, so concurrent workers can't all pass the hourly
+  // limit on the same count before any of them claims (a claim is counted).
+  const admitted = await withArchiveAdmission(async () => {
+    const [recent, onHost] = await Promise.all([
+      countRecentAutomaticArchives(),
+      countRunningArchivesByHost(job.host_id!),
+    ]);
+    if (recent >= config.globalPerHour) return "rate-limited" as const;
+    // Another archive is running on this host: try this job next pass, but
+    // let jobs on other hosts go ahead.
+    if (onHost >= config.perHostConcurrency) return "host-busy" as const;
+    if (!(await claimProjectArchiveLifecycleJob(job.id))) {
+      return "stale" as const;
+    }
+    return "claimed" as const;
+  });
+  if (admitted !== "claimed") return admitted;
 
   const claimed = await claimAutomaticProject({ job, config });
   if (!claimed) {
@@ -683,6 +691,16 @@ function emptySummary(
   };
 }
 
+let archiveAdmission: Promise<unknown> = Promise.resolve();
+
+// Serializes the hourly-limit check with the claim it admits. The lifecycle
+// worker runs in one process at a time (advisory lock), so this suffices.
+async function withArchiveAdmission<T>(fn: () => Promise<T>): Promise<T> {
+  const run = archiveAdmission.then(fn, fn);
+  archiveAdmission = run.catch(() => undefined);
+  return await run;
+}
+
 type JobResult =
   | "completed"
   | "stale"
@@ -752,8 +770,12 @@ async function runArchiveJobs({
           err: `${err}`,
         });
         result = "failed";
-      } finally {
-        if (job.host_id) hostsInFlight.delete(job.host_id);
+      }
+      // A pending job's final backup is still running on its host: the host
+      // stays busy for the rest of this pass (and countRunningArchivesByHost
+      // counts it for later passes).
+      if (job.host_id && result !== "pending") {
+        hostsInFlight.delete(job.host_id);
       }
       if (result === "rate-limited" || result === "host-busy") {
         summary.rate_limited += 1;
