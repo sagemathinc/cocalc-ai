@@ -5,8 +5,14 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   agentMentionReferenceMap,
   extractAgentMentions,
+  isExternalMentionTarget,
 } from "@cocalc/util/agent-mentions";
-import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
+import type {
+  AgentMentionReference,
+  ExternalAgentMentionTarget,
+} from "@cocalc/util/agent-mentions";
+import type { AgentNetwork } from "@cocalc/conat/agents/personal";
+import { externalMemberKey } from "./mention-suggestions";
 import { personalAgentApi, sameEndpoint, useNamedAgents } from "./api";
 import { NetworkApproval } from "./network-approval";
 import type { NetworkApprovalTarget } from "./network-approval";
@@ -82,18 +88,77 @@ export function useAgentMentions({
     return { project_id: projectId, agent_id: identity.agent_id };
   }
 
-  async function check(
+  /**
+   * An agent on another site joins a network by enrollment, not by the
+   * approval below: it must already share an active one with this agent.
+   */
+  async function checkExternal(
     reference: AgentMentionReference,
+    target: ExternalAgentMentionTarget,
     epoch: number,
   ): Promise<boolean> {
     const source = await sourceEndpoint(epoch);
     if (!source) return false;
+    const networks = await personalAgentApi().listAgentNetworks({ limit: 100 });
+    if (epoch !== generation.current) return false;
+    if (networks.controls.paused)
+      throw new Error(
+        "Your agent communication is paused. Resume it in Agents before sending.",
+      );
+    const isTarget = (member: AgentNetwork["members"][number]) =>
+      member.kind === "external" &&
+      !member.removed_at &&
+      externalMemberKey(member.source) === externalMemberKey(target);
+    const shared = (network: AgentNetwork) =>
+      network.members.some(
+        (member) =>
+          member.kind === "registered" &&
+          !member.removed_at &&
+          sameEndpoint(member.endpoint, source),
+      ) && network.members.some(isTarget);
+    // A revoked or expired installation can stay a member.
+    const members = networks.networks.flatMap((network) =>
+      network.members.filter(isTarget),
+    );
+    if (members.length && !members.some((member) => member.available))
+      throw new Error(
+        `@${reference.name} is unavailable. Remove or replace its reference before sending.`,
+      );
+    if (
+      networks.networks.some(
+        (network) => network.state === "active" && shared(network),
+      )
+    ) {
+      setStates((states) => ({
+        ...states,
+        [target.agent_id]: "Network active",
+      }));
+      return true;
+    }
+    if (networks.networks.some(shared))
+      throw new Error(
+        `The shared Agent Network with @${reference.name} is paused or closed. Review it in Agents; your draft has not been sent.`,
+      );
+    throw new Error(
+      `@${reference.name} is an agent on another site that is not in an Agent Network with this agent. Add this agent to a network with @${reference.name} in Agents; your draft has not been sent.`,
+    );
+  }
+
+  async function check(
+    reference: AgentMentionReference,
+    epoch: number,
+  ): Promise<boolean> {
+    const mentioned = reference.target;
+    if (isExternalMentionTarget(mentioned))
+      return await checkExternal(reference, mentioned, epoch);
+    const source = await sourceEndpoint(epoch);
+    if (!source) return false;
     const api = personalAgentApi();
-    const target = await api.getIdentity(reference.target);
+    const target = await api.getIdentity(mentioned);
     if (
       target.disabled_at ||
-      target.agent_id !== reference.target.agent_id ||
-      target.project_id !== reference.target.project_id
+      target.agent_id !== mentioned.agent_id ||
+      target.project_id !== mentioned.project_id
     )
       throw new Error(
         `@${reference.name} is unavailable. Remove or replace its reference before sending.`,
@@ -115,10 +180,10 @@ export function useAgentMentions({
         network.members.some(
           (member) =>
             member.kind === "registered" &&
-            sameEndpoint(member.endpoint, reference.target),
+            sameEndpoint(member.endpoint, mentioned),
         ),
     );
-    const stateKey = reference.target.agent_id;
+    const stateKey = mentioned.agent_id;
     if (active) {
       setStates((states) => ({ ...states, [stateKey]: "Network active" }));
       return true;
@@ -133,7 +198,7 @@ export function useAgentMentions({
         network.members.some(
           (member) =>
             member.kind === "registered" &&
-            sameEndpoint(member.endpoint, reference.target),
+            sameEndpoint(member.endpoint, mentioned),
         ),
     );
     if (inactive)
@@ -148,11 +213,11 @@ export function useAgentMentions({
         sameEndpoint(agent.endpoint, source),
       );
       const targetName = directory?.agents.find((agent) =>
-        sameEndpoint(agent.endpoint, reference.target),
+        sameEndpoint(agent.endpoint, mentioned),
       );
       setApproval({
         source,
-        target: reference.target,
+        target: mentioned,
         sourceLabel: sourceName
           ? `@${sourceName.name}`
           : (threadTitle ?? "This agent"),
@@ -183,7 +248,7 @@ export function useAgentMentions({
           network.members.some(
             (member) =>
               member.kind === "registered" &&
-              sameEndpoint(member.endpoint, reference.target),
+              sameEndpoint(member.endpoint, mentioned),
           ),
       );
     if (!connected)
