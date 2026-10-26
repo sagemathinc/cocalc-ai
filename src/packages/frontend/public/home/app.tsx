@@ -56,6 +56,19 @@ import {
   sendPublicHomeExperimentEvent,
 } from "../home-experiment";
 import { withPublicHomeVariant } from "@cocalc/util/public-home-experiment";
+import MathHome from "./variants/math";
+import ProjectHome from "./variants/project";
+
+// The other versions of Home in the experiment, by id
+// (util/public-home-experiment.ts); "default" is this file's page.
+const HOME_VARIANTS: Record<
+  string,
+  (props: {
+    authenticated: boolean;
+    signUpLabel: string;
+    signUpPath: string;
+  }) => ReactNode
+> = { math: MathHome, project: ProjectHome };
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -877,6 +890,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       off?.();
     };
   }, [choice, cookieBannerEnabled]);
+  const Variant = HOME_VARIANTS[choice.variant];
   const signUpPath =
     choice.counted && countedView === choice.variant
       ? withPublicHomeVariant("auth/sign-up", choice.variant)
@@ -884,30 +898,40 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
 
   return (
     <PublicPage active="home" config={marketingConfig} signUpPath={signUpPath}>
-      <style>{HOME_PAGE_CSS}</style>
-      <div
-        className="cocalc-public-home"
-        style={{
-          display: "grid",
-          gap: 34,
-          marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
-          paddingInline: PUBLIC_PAGE_GUTTER,
-        }}
-      >
-        <Hero
+      {Variant ? (
+        <Variant
           authenticated={authenticated}
+          signUpLabel={getPublicSignUpLabel(config)}
           signUpPath={signUpPath}
-          highlights={getPublicHomeHighlights(withSiteHost(config))}
-          siteName={siteName}
         />
-        <AgentDefinitionSection />
-        <DifferenceSection />
-        <PathSection
-          authenticated={authenticated}
-          signUpPath={signUpPath}
-          trustHref={trustHref}
-        />
-      </div>
+      ) : (
+        <>
+          <style>{HOME_PAGE_CSS}</style>
+          <div
+            className="cocalc-public-home"
+            style={{
+              display: "grid",
+              gap: 34,
+              marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
+              paddingInline: PUBLIC_PAGE_GUTTER,
+            }}
+          >
+            <Hero
+              authenticated={authenticated}
+              signUpPath={signUpPath}
+              highlights={getPublicHomeHighlights(withSiteHost(config))}
+              siteName={siteName}
+            />
+            <AgentDefinitionSection />
+            <DifferenceSection />
+            <PathSection
+              authenticated={authenticated}
+              signUpPath={signUpPath}
+              trustHref={trustHref}
+            />
+          </div>
+        </>
+      )}
     </PublicPage>
   );
 }

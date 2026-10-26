@@ -47,11 +47,9 @@ describe("public Home experiment settings", () => {
     );
   });
 
-  it("is off with only the built-in versions, until others exist", () => {
+  it("uses the registered versions by default", () => {
     expect(PUBLIC_HOME_VARIANTS).toContain("default");
-    expect(parsePublicHomeExperimentArms("default, math:1, project:1")).toEqual(
-      [],
-    );
+    expect(parsePublicHomeExperimentArms("default, nope:1")).toEqual([]);
   });
 
   it("validates ids and events", () => {

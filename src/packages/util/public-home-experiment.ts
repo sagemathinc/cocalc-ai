@@ -13,7 +13,7 @@
 
 // Every version the frontend can render. A version must be listed here to be
 // assigned or counted; the site setting chooses which ones run.
-export const PUBLIC_HOME_VARIANTS = ["default"] as const;
+export const PUBLIC_HOME_VARIANTS = ["default", "math", "project"] as const;
 export type PublicHomeVariant = string;
 
 export const PUBLIC_HOME_DEFAULT_VARIANT = "default";
