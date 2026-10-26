@@ -162,7 +162,15 @@ export async function vatExposureReportPage({
             COALESCE(att.amount, s.cost)::text AS amount, b.stripe_customer_id,
             att.id AS attempt_id, att.payment_intent_id,
             att.balance_applied::text AS balance_applied, s.payment,
-            ${claimable.sql} AS claimable
+            (${claimable.sql}
+              -- A closed attempt for the current period is never rescheduled
+              -- (scheduling skips existing periods) nor claimed.
+              AND NOT EXISTS (
+                SELECT 1 FROM subscription_renewal_attempts closed
+                 WHERE closed.subscription_id=s.id
+                   AND closed.period_end=s.current_period_end
+                   AND closed.state NOT IN ('scheduled','processing')
+              )) AS claimable
        FROM subscriptions s
        LEFT JOIN ${billingAccountsTable()} b ON b.account_id=s.account_id
        LEFT JOIN subscription_renewal_attempts att
@@ -190,8 +198,9 @@ export async function vatExposureReportPage({
     last = candidate.subscription_id;
     checked += 1;
     if (!candidate.claimable) {
-      // Banned, deleted or billing-frozen, or (without the billing
-      // authority) owned by another bay: this bay never renews it.
+      // Banned, deleted or billing-frozen, (without the billing authority)
+      // owned by another bay, or its current period's attempt is closed:
+      // this bay's worker never renews it.
       not_claimable += 1;
       continue;
     }

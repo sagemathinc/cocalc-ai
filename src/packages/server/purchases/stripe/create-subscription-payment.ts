@@ -137,7 +137,9 @@ export async function predictRenewalFunding({
   }
   if (
     subscriptionPayment?.status == "active" &&
-    subscriptionPayment.renewal_attempt_id !== (attempt?.id ?? undefined)
+    // With no open attempt yet, the renewal first creates one, which the
+    // active payment cannot belong to.
+    (!attempt?.id || subscriptionPayment.renewal_attempt_id !== attempt.id)
   ) {
     return "open-payment";
   }

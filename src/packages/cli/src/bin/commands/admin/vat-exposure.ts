@@ -94,7 +94,7 @@ export function formatVatExposureReport(report: VatExposureReport): string {
     `Would be refused if checked, but the next renewal skips the check (open payment, balance or below minimum): ${report.paid_without_check_count}`,
     `Stripe errors: ${report.stripe_error_count}`,
     `Without a Stripe customer (not refused): ${report.no_stripe_customer}`,
-    `Not renewed by this bay (banned, deleted, billing frozen or another bay's): ${report.not_claimable}`,
+    `Not renewed by this bay (banned, deleted, billing frozen, another bay's, or renewal attempt closed): ${report.not_claimable}`,
   ];
   if (report.incomplete) {
     lines.push(

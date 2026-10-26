@@ -78,8 +78,9 @@ export interface VatExposureReportPage {
   // would create one without an address or cards, which the check accepts).
   no_stripe_customer: number;
   // Checked, but this bay's renewal worker never renews them (banned, deleted
-  // or billing-frozen accounts, or without the billing authority, another
-  // bay's), so the check never runs. Not looked up in Stripe.
+  // or billing-frozen accounts, without the billing authority another bay's,
+  // or the current period's renewal attempt is already closed), so the check
+  // never runs. Not looked up in Stripe.
   not_claimable: number;
   // Would be refused when the renewal is charged through Stripe.
   affected: VatExposureRow[];

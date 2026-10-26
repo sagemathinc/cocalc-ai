@@ -241,11 +241,17 @@ describe("VAT exposure report", () => {
     // an active (legacy) payment on the subscription that the attempt is not
     // bound to: the renewal adopts it or waits on it, no check
     const legacy = await membership("cus_de", 10);
+    // and the same with no open attempt yet: the renewal creates one first
+    const legacyNoAttempt = await membership("cus_de", 10);
     await getPool().query(
       `UPDATE subscriptions
           SET payment=jsonb_build_object('status','active','payment_intent_id','pi_legacy')
-        WHERE id=$1`,
-      [legacy.subscription_id],
+        WHERE id=ANY($1)`,
+      [[legacy.subscription_id, legacyNoAttempt.subscription_id]],
+    );
+    await getPool().query(
+      "DELETE FROM subscription_renewal_attempts WHERE subscription_id=$1",
+      [legacyNoAttempt.subscription_id],
     );
     const stripe = fakeStripe({
       cus_de: { address: { country: "DE" }, tax_ids: { data: [] } },
@@ -264,6 +270,7 @@ describe("VAT exposure report", () => {
     ).toEqual([
       [bound.subscription_id, "open-payment"],
       [legacy.subscription_id, "open-payment"],
+      [legacyNoAttempt.subscription_id, "open-payment"],
     ]);
   });
 
@@ -271,7 +278,16 @@ describe("VAT exposure report", () => {
     await getPool().query("DELETE FROM subscriptions");
     const banned = await membership("cus_banned");
     const foreign = await membership("cus_foreign");
+    const closed = await membership("cus_closed");
     const renewed = await membership("cus_de");
+    // the current period's attempt was canceled (say, while billing was
+    // frozen): scheduling skips the period and the claim skips the attempt
+    const { rowCount } = await getPool().query(
+      `UPDATE subscription_renewal_attempts SET state='canceled'
+        WHERE subscription_id=$1`,
+      [closed.subscription_id],
+    );
+    expect(rowCount).toBe(1);
     await getPool().query(
       "UPDATE accounts SET banned=true WHERE account_id=$1",
       [banned.account_id],
@@ -284,6 +300,7 @@ describe("VAT exposure report", () => {
     const stripe = fakeStripe({
       cus_banned: { address: { country: "DE" }, tax_ids: { data: [] } },
       cus_foreign: { address: { country: "DE" }, tax_ids: { data: [] } },
+      cus_closed: { address: { country: "DE" }, tax_ids: { data: [] } },
       cus_de: { address: { country: "DE" }, tax_ids: { data: [] } },
     });
     const retrieve = stripe.customers.retrieve;
@@ -297,8 +314,8 @@ describe("VAT exposure report", () => {
       customer_interval_ms: 0,
     });
 
-    expect(page.checked).toBe(3);
-    expect(page.not_claimable).toBe(2);
+    expect(page.checked).toBe(4);
+    expect(page.not_claimable).toBe(3);
     expect(page.affected.map((row) => row.subscription_id)).toEqual([
       renewed.subscription_id,
     ]);
