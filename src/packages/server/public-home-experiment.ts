@@ -92,9 +92,12 @@ export interface PublicHomeExperimentArmReport {
   cta_rate: number | null;
   signup_rate: number | null;
   /** Estimated probability that this version has the highest sign-up rate
-   * (Thompson sampling on Beta posteriors); the basis of suggested_weight. */
+   * among the running versions (Thompson sampling on Beta posteriors); the
+   * basis of suggested_weight. 0 for a version that is not running, unless
+   * nothing runs, when every recorded version is compared. */
   p_best: number;
-  /** A suggested weight: p_best, but never below the floor. */
+  /** A suggested weight: p_best, but never below the floor; 0 for versions
+   * that are not running. The running ones' suggestions sum to 1. */
   suggested_weight: number;
 }
 
@@ -167,10 +170,24 @@ export async function getPublicHomeExperimentReport({
       signup_rate: views > 0 ? signups / views : null,
     };
   });
+  // Recommend only among the running versions: a stopped one keeps its
+  // totals for comparison but gets p_best and suggested_weight 0, so the
+  // suggestion sums to 1 over the versions that can actually be weighted.
+  // With nothing running, p_best still compares everything recorded.
+  const ranked = arms
+    .map((arm, i) => ({ arm, i }))
+    .filter(({ arm }) => running.length === 0 || arm.weight > 0);
   const p = probabilityBest(
-    arms.map(({ views, signups }) => ({ views, successes: signups })),
+    ranked.map(({ arm }) => ({ views: arm.views, successes: arm.signups })),
     random,
   );
+  const suggested = running.length > 0 ? suggestedWeights(p) : p.map(() => 0);
+  const pBest = arms.map(() => 0);
+  const suggestedWeight = arms.map(() => 0);
+  ranked.forEach(({ i }, k) => {
+    pBest[i] = p[k];
+    suggestedWeight[i] = suggested[k];
+  });
   return {
     bay_id: getConfiguredBayId(),
     setting: value,
@@ -179,8 +196,8 @@ export async function getPublicHomeExperimentReport({
     end_day: end,
     arms: arms.map((arm, i) => ({
       ...arm,
-      p_best: p[i],
-      suggested_weight: suggestedWeights(p)[i],
+      p_best: pBest[i],
+      suggested_weight: suggestedWeight[i],
     })),
   };
 }

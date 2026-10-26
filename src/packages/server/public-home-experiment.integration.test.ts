@@ -154,6 +154,37 @@ describeDb("public Home experiment counts", () => {
       byId.default.suggested_weight,
     );
   });
+
+  it("recommends only among the running versions", async () => {
+    // math ran earlier in the window and was replaced by project.
+    await record("default", "view", 200);
+    await record("default", "signup", 4);
+    await record("math", "view", 200);
+    await record("math", "signup", 40);
+    await record("project", "view", 100);
+    await record("project", "signup", 3);
+    const report = await getPublicHomeExperimentReport({
+      days: 7,
+      now: () => T0,
+      setting: "default:1, project:1",
+      random: seeded(7),
+    });
+    const byId = Object.fromEntries(report.arms.map((a) => [a.id, a]));
+    // The stopped version keeps its totals, but no recommendation.
+    expect(byId.math).toMatchObject({
+      views: 200,
+      signups: 40,
+      weight: 0,
+      p_best: 0,
+      suggested_weight: 0,
+    });
+    const sum = (key: "p_best" | "suggested_weight") =>
+      byId.default[key] + byId.project[key];
+    expect(sum("p_best")).toBeCloseTo(1, 6);
+    expect(sum("suggested_weight")).toBeCloseTo(1, 6);
+    expect(byId.default.suggested_weight).toBeGreaterThanOrEqual(0.1);
+    expect(byId.project.suggested_weight).toBeGreaterThanOrEqual(0.1);
+  });
 });
 
 describeDb("public Home experiment report on a multi-bay site", () => {
