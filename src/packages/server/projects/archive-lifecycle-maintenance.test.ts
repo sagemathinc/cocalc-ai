@@ -500,18 +500,27 @@ describe("automatic archiving host coverage", () => {
 
   it.each([
     [
-      "automatic archiving is off",
+      // the list is kept (settings()), so only the reason tells them apart
+      "automatic archiving is off, even with a list",
       { automatic_project_archiving_enabled: false },
+      "archiving_disabled",
+      "Automatic archiving is disabled, so there is no host coverage to check.",
     ],
     [
       "there is no canary host list",
       { automatic_project_archiving_canary_hosts: "" },
+      "no_canary_list",
+      "Automatic archiving has no canary host list, so it covers every host.",
     ],
-  ])("does not query when %s", async (_, overrides) => {
+  ])("does not query when %s", async (_, overrides, reason, summary) => {
     settings(overrides);
     const coverage = await getProjectArchiveHostCoverage();
     expect(query).not.toHaveBeenCalled();
-    expect(coverage.applies).toBe(false);
-    expect(projectArchiveHostCoverageHealth(coverage).level).toBe("healthy");
+    expect(coverage).toMatchObject({ applies: false, not_applicable: reason });
+    expect(projectArchiveHostCoverageHealth(coverage)).toEqual({
+      level: "healthy",
+      summary,
+      details: [],
+    });
   });
 });

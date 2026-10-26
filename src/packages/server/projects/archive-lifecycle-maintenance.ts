@@ -169,6 +169,8 @@ export interface ProjectArchiveHostCoverage {
   /** False when automatic archiving is off, or covers every host (no
    * canary host list). */
   applies: boolean;
+  /** Why the check doesn't apply, when it doesn't. */
+  not_applicable?: "archiving_disabled" | "no_canary_list";
   free_after_days: number;
   /** Shared pool hosts with projects on disk that the canary host list
    * leaves out: automatic archiving never runs there. */
@@ -191,6 +193,11 @@ export async function getProjectArchiveHostCoverage(): Promise<ProjectArchiveHos
   const config = await loadProjectArchiveLifecycleConfig();
   const coverage: ProjectArchiveHostCoverage = {
     applies: config.enabled && config.canaryHosts.length > 0,
+    ...(!config.enabled
+      ? { not_applicable: "archiving_disabled" as const }
+      : config.canaryHosts.length === 0
+        ? { not_applicable: "no_canary_list" as const }
+        : {}),
     free_after_days: config.freeAfterDays,
     missing: [],
   };
@@ -242,7 +249,10 @@ export function projectArchiveHostCoverageHealth(
   if (!coverage.applies) {
     return {
       level: "healthy",
-      summary: "Automatic archiving has no canary host list to check.",
+      summary:
+        coverage.not_applicable === "archiving_disabled"
+          ? "Automatic archiving is disabled, so there is no host coverage to check."
+          : "Automatic archiving has no canary host list, so it covers every host.",
       details: [],
     };
   }
