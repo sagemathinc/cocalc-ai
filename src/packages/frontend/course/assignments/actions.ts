@@ -14,7 +14,6 @@ import { debounce } from "lodash";
 import { join } from "path";
 import { redux } from "@cocalc/frontend/app-framework";
 import {
-  exec,
   start_project,
   stop_project,
 } from "@cocalc/frontend/frame-editors/generic/client";
@@ -88,6 +87,11 @@ import {
   waitForCourseCopyLro,
 } from "../copy-lro";
 import { projectRelativeCoursePath } from "./paths";
+import {
+  addEachPath,
+  ensureCourseFolder,
+  waitForCourseData,
+} from "../common/add-folder";
 import { autoCollectMissingStudents } from "./auto-collect-refresh";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
@@ -170,23 +174,17 @@ export class AssignmentsActions {
     // Where we collect homework that students have done (in teacher project).
     // If the assignment was previously deleted, this undeletes it.
     if (typeof path != "string") {
-      // handle case of array of inputs
-      for (const p of path) {
-        await this.addAssignment(p);
-      }
+      await addEachPath(path, this.addAssignment);
       return;
     }
     path = this.project_relative_path(path);
     const cur = this.getAssignmentWithPath(path);
     if (cur != null) {
-      // either undelete or nothing to do.
       if (cur.get("deleted")) {
-        // undelete
         this.undelete_assignment(cur.get("assignment_id"));
-      } else {
-        // nothing to do
+        return;
       }
-      return;
+      throw new Error(`"${path}" is already an assignment in this course.`);
     }
 
     const collect_path = this.collect_path(path);
@@ -199,11 +197,11 @@ export class AssignmentsActions {
 
     try {
       // Ensure the path actually exists.
-      await exec({
+      await waitForCourseData({ syncdb: this.course_actions.syncdb });
+      await ensureCourseFolder({
         project_id: this.get_store().get("course_project_id"),
-        command: "mkdir",
-        args: ["-p", path],
-        err_on_exit: true,
+        path,
+        itemName: "assignment",
       });
     } catch (err) {
       this.course_actions.set_error(`error creating assignment: ${err}`);

@@ -13,7 +13,12 @@ import { webapp_client } from "../../webapp-client";
 import { redux } from "../../app-framework";
 import { uuid } from "@cocalc/util/misc";
 import type { SyncDBRecordHandout } from "../types";
-import { exec } from "../../frame-editors/generic/client";
+import {
+  addEachPath,
+  ensureCourseFolder,
+  waitForCourseData,
+} from "../common/add-folder";
+import { projectRelativeCoursePath } from "../assignments/paths";
 import { export_student_file_use_times } from "../export/file-use-times";
 import type { ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
 import { type CourseCopyDestination, waitForCourseCopyLro } from "../copy-lro";
@@ -41,40 +46,36 @@ export class HandoutsActions {
       .get(0);
   };
 
+  // Add one or more handouts to the course, each defined by a directory in the
+  // course project. A previously deleted handout is undeleted. Throws, with a
+  // message for the user, when a handout could not be added.
   addHandout = async (path: string | string[]): Promise<void> => {
-    // Add one or more handouts to the course, which is defined by giving a directory in the project.
-    // If the handout was previously deleted, this undeletes it.
     if (typeof path != "string") {
-      // handle case of array of inputs
-      for (const p of path) {
-        await this.addHandout(p);
-      }
+      await addEachPath(path, this.addHandout);
       return;
     }
+    path = projectRelativeCoursePath(path);
     const cur = this.getHandoutWithPath(path);
     if (cur != null) {
-      // either undelete or nothing to do.
       if (cur.get("deleted")) {
-        // undelete
         this.undelete_handout(cur.get("handout_id"));
-      } else {
-        // nothing to do
+        return;
       }
-      return;
+      throw new Error(`"${path}" is already a handout in this course.`);
     }
 
     const target_path = path; // folder where we copy the handout to
     try {
       // Ensure the path actually exists in the instructor project.
-      await exec({
+      await waitForCourseData({ syncdb: this.course_actions.syncdb });
+      await ensureCourseFolder({
         project_id: this.get_store().get("course_project_id"),
-        command: "mkdir",
-        args: ["-p", path],
-        err_on_exit: true,
+        path,
+        itemName: "handout",
       });
     } catch (err) {
-      this.course_actions.set_error(`error creating assignment: ${err}`);
-      return;
+      this.course_actions.set_error(`error creating handout: ${err}`);
+      throw err;
     }
 
     this.course_actions.set({

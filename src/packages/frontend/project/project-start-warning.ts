@@ -99,6 +99,17 @@ function autostartBlock(
   });
 }
 
+// Why ensure_project_running would wait before work can run in the project
+// (undefined if it would not), for error messages.
+export function projectRunWaitReason(
+  project_id: string,
+): "not-running" | "host-unavailable" | undefined {
+  if (is_running(project_id)) return undefined;
+  return projectState(project_id) === "running"
+    ? "host-unavailable"
+    : "not-running";
+}
+
 function is_running(project_id: string): boolean {
   if (lite) {
     return true;
