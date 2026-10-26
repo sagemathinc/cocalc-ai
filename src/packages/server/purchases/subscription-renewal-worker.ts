@@ -5,6 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getTransactionClient } from "@cocalc/database/pool";
 import getConn from "@cocalc/server/stripe/connection";
 import send, { support, url } from "@cocalc/server/messages/send";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
@@ -12,11 +13,15 @@ import type { SubscriptionRenewalAttempt } from "@cocalc/util/db-schema/subscrip
 import createSubscriptionPayment, {
   processSubscriptionRenewalFailure,
 } from "./stripe/create-subscription-payment";
+import { sendCancelNotification } from "./cancel-subscription";
+import { lockMembershipSubscriptionAccount } from "./membership-subscription-guard";
 import { cancelPaymentIntent } from "./stripe/create-payment-intent";
 import { isBusinessTaxIdRequiredError } from "./stripe/business-tax-id-gate";
 import processPaymentIntents from "./stripe/process-payment-intents";
 import {
+  BUSINESS_TAX_ID_REFUSAL_PREFIX,
   claimDueSubscriptionRenewalAttempts,
+  completeSubscriptionRenewalAttempt,
   deferSubscriptionRenewalAttemptForBusinessTaxId,
   deferSubscriptionRenewalAttemptForCustomer,
   getSubscriptionRenewalAttempt,
@@ -192,43 +197,136 @@ ${await support()}`,
   });
 }
 
-// What to do with a renewal that the EU/UK business tax ID check refuses once
-// its grace period has ended. "hold" keeps it waiting (rechecked every
-// RENEWAL_CUSTOMER_ACTION_RECHECK_MS, and reported by the renewal health
-// alert) until a decision is made for these customers. Pending William's
-// decision (10-26) between canceling at the end of the grace period and
-// exempting subscriptions that started before the check existed.
-const BUSINESS_TAX_ID_REFUSAL_PAST_GRACE: "hold" = "hold";
-
-// A refusal that cannot succeed until the customer acts: the customer is in
-// the EU or the UK without a valid VAT ID. Retrying it soon cannot help, so it
-// waits for the customer (rechecked every few hours) instead of being retried
-// (and recorded) every few minutes. The check itself notifies the customer, at
-// most weekly; the renewal health alert counts the renewal as waiting for the
-// customer only if that notice was recorded.
-async function deferRenewalRefusedForCustomer({
+// A renewal the EU/UK business tax ID check refuses cannot succeed until the
+// customer adds their organization's VAT number. Like a declined card
+// (William, 10-26): during the grace period the membership stays active, the
+// customer is told, and the renewal is rechecked every few hours, so it simply
+// succeeds once a VAT number is on file. If it is still refused when the grace
+// period has ended, the subscription is canceled.
+async function handleRenewalRefusedForBusinessTaxId({
   attempt,
   err,
 }: {
   attempt: SubscriptionRenewalAttempt;
   err: unknown;
 }): Promise<void> {
+  if (Date.now() >= renewalGraceEndsAt(attempt.period_end).valueOf()) {
+    await cancelRenewalRefusedForBusinessTaxId({ attempt, err });
+    return;
+  }
   const deferred = await deferSubscriptionRenewalAttemptForBusinessTaxId({
     attempt_id: attempt.id,
     error: err,
   });
-  if (
-    deferred &&
-    Date.now() >= renewalGraceEndsAt(attempt.period_end).valueOf()
-  ) {
-    logger.warn(
-      "renewal refused by the business tax ID check past its grace period",
-      {
-        attempt_id: attempt.id,
-        subscription_id: attempt.subscription_id,
-        policy: BUSINESS_TAX_ID_REFUSAL_PAST_GRACE,
-      },
+  if (!deferred) return;
+  try {
+    await sendRenewalBusinessTaxIdNotice(attempt);
+  } catch (err) {
+    // Tried again on the next recheck.
+    logger.warn("unable to send renewal business tax ID notice", {
+      attempt_id: attempt.id,
+      err: `${err}`,
+    });
+  }
+}
+
+// Tells the customer which subscription was not renewed, what to do and when it
+// will be canceled. The check's generic weekly notice is not sent for renewals
+// (it has neither the subscription nor the date); this one shares its claim
+// in business_tax_id_notices, so a customer gets at most one of the two a day.
+// If a notice went out in the last day, this one waits for a later recheck.
+// The subject names the subscription, so the message is sent once per renewal.
+async function sendRenewalBusinessTaxIdNotice(
+  attempt: SubscriptionRenewalAttempt,
+): Promise<void> {
+  const client = await getTransactionClient();
+  try {
+    const { rowCount } = await client.query(
+      `INSERT INTO business_tax_id_notices (account_id, notified_at)
+       VALUES ($1, NOW())
+       ON CONFLICT (account_id) DO UPDATE SET notified_at = NOW()
+        WHERE business_tax_id_notices.notified_at < NOW() - INTERVAL '1 day'`,
+      [attempt.account_id],
     );
+    if (rowCount) {
+      const { site_name } = await getServerSettings();
+      const graceEnd = formatRenewalDate(
+        renewalGraceEndsAt(attempt.period_end),
+      );
+      await send({
+        to_ids: [attempt.account_id],
+        dedupMinutes: RENEWAL_NOTICE_DEDUP_MINUTES,
+        dedupBySubject: true,
+        subject: `Action needed: add a VAT number to renew your ${site_name} subscription (Id ${attempt.subscription_id})`,
+        body: `
+We couldn't renew your ${site_name} subscription (id=${attempt.subscription_id}). ${site_name} sells to customers in the EU and the UK only with the VAT number of their organization, and there is none on file.
+
+**Your membership stays active until ${graceEnd}.** To keep it, please add your organization's VAT number under [Payment Methods](${await url(`/settings/payment-methods`)}), then Name and Address, before then. We retry the renewal automatically every few hours. If no VAT number is on file by ${graceEnd}, the subscription will be canceled.
+
+- [Manage Membership](${await url(`/settings/membership`)})
+
+${await support()}`,
+      });
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function cancelRenewalRefusedForBusinessTaxId({
+  attempt,
+  err,
+}: {
+  attempt: SubscriptionRenewalAttempt;
+  err: unknown;
+}): Promise<void> {
+  const client = await getTransactionClient();
+  let canceled = false;
+  try {
+    await lockMembershipSubscriptionAccount({
+      account_id: attempt.account_id,
+      client,
+    });
+    const current = await getSubscriptionRenewalAttempt({
+      attempt_id: attempt.id,
+      client,
+      forUpdate: true,
+    });
+    if (current?.state !== "processing") {
+      await client.query("COMMIT");
+      return;
+    }
+    const { rowCount } = await client.query(
+      `UPDATE subscriptions
+          SET status='canceled',
+              canceled_at=NOW(),
+              canceled_reason='The renewal was not paid: there is no VAT number on file.'
+        WHERE id=$1 AND account_id=$2 AND status<>'canceled'`,
+      [attempt.subscription_id, attempt.account_id],
+    );
+    canceled = (rowCount ?? 0) > 0;
+    await completeSubscriptionRenewalAttempt({
+      attempt_id: attempt.id,
+      state: "failed",
+      error: `${BUSINESS_TAX_ID_REFUSAL_PREFIX}${err}`,
+      client,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  if (canceled) {
+    await sendCancelNotification({
+      subscription_id: attempt.subscription_id,
+      alertAdmin: false,
+    });
   }
 }
 
@@ -259,7 +357,7 @@ async function processClaimedRenewalAttempt(
       attempt_id: attempt.id,
     });
     if (current?.state === "processing" && isBusinessTaxIdRequiredError(err)) {
-      await deferRenewalRefusedForCustomer({ attempt, err });
+      await handleRenewalRefusedForBusinessTaxId({ attempt, err });
       return;
     }
     if (current?.state === "scheduled" || current?.state === "processing") {
