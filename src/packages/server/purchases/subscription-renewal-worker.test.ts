@@ -74,12 +74,19 @@ describe("subscription renewal worker", () => {
   beforeEach(async () => {
     await getPool().query("DELETE FROM subscription_renewal_attempts");
     await getPool().query("DELETE FROM subscriptions");
+    await getPool().query("DELETE FROM business_tax_id_notices");
     mockCreateSubscriptionPayment.mockReset();
     mockSend.mockReset();
   });
 
   it("waits for the customer when the business tax ID check refuses a renewal", async () => {
-    const { subscription_id } = await dueRenewal();
+    const { account_id, subscription_id } = await dueRenewal();
+    // the check's own off-session notice to this account was recorded
+    await getPool().query(
+      `INSERT INTO business_tax_id_notices (account_id, notified_at)
+       VALUES ($1, NOW())`,
+      [account_id],
+    );
     mockCreateSubscriptionPayment.mockRejectedValue(
       Object.assign(new Error("a VAT ID is required"), {
         code: "business_tax_id_required",
@@ -99,6 +106,23 @@ describe("subscription renewal worker", () => {
     // the check already sent its own (weekly) notice: no second notice
     expect(attempt.customer_action_notified_at).not.toBeNull();
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("does not count the customer as notified when the check recorded no notice", async () => {
+    const { subscription_id } = await dueRenewal();
+    mockCreateSubscriptionPayment.mockRejectedValue(
+      Object.assign(new Error("a VAT ID is required"), {
+        code: "business_tax_id_required",
+      }),
+    );
+
+    await maintainSubscriptionRenewals({ max_attempts: 1 });
+
+    const attempt = await attemptOf(subscription_id);
+    expect(attempt.state).toBe("scheduled");
+    expect(attempt.customer_action_required_at).not.toBeNull();
+    // left un-notified, so the renewal health alert reports it
+    expect(attempt.customer_action_notified_at).toBeNull();
   });
 
   it("retries other failures with backoff", async () => {

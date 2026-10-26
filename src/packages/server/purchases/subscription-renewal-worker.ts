@@ -13,7 +13,11 @@ import createSubscriptionPayment, {
   processSubscriptionRenewalFailure,
 } from "./stripe/create-subscription-payment";
 import { cancelPaymentIntent } from "./stripe/create-payment-intent";
-import { isBusinessTaxIdRequiredError } from "./stripe/business-tax-id-gate";
+import getPool from "@cocalc/database/pool";
+import {
+  isBusinessTaxIdRequiredError,
+  OFF_SESSION_NOTICE_DAYS,
+} from "./stripe/business-tax-id-gate";
 import processPaymentIntents from "./stripe/process-payment-intents";
 import {
   claimDueSubscriptionRenewalAttempts,
@@ -202,8 +206,10 @@ const BUSINESS_TAX_ID_REFUSAL_PAST_GRACE: "hold" = "hold";
 // A refusal that cannot succeed until the customer acts: the customer is in
 // the EU or the UK without a valid VAT ID. Retrying it soon cannot help, so it
 // waits for the customer like a declined card, instead of being retried (and
-// recorded) every few minutes. The check itself already notified the customer
-// (at most weekly), so no second notice is sent.
+// recorded) every few minutes. The check itself notifies the customer (at most
+// weekly), so no second notice is sent; the attempt counts as notified only
+// if that notice was actually recorded, so a failed notice still shows up in
+// the renewal health alert.
 async function deferRenewalRefusedForCustomer({
   attempt,
   err,
@@ -218,7 +224,20 @@ async function deferRenewalRefusedForCustomer({
     error: err,
   });
   if (!deferred) return;
-  await markSubscriptionRenewalCustomerNotified({ attempt_id: attempt.id });
+  const { rows } = await getPool().query(
+    `SELECT 1 FROM business_tax_id_notices
+      WHERE account_id=$1
+        AND notified_at > NOW() - make_interval(days => $2)`,
+    [attempt.account_id, OFF_SESSION_NOTICE_DAYS],
+  );
+  if (rows.length > 0) {
+    await markSubscriptionRenewalCustomerNotified({ attempt_id: attempt.id });
+  } else {
+    logger.warn("no business tax ID notice recorded for a refused renewal", {
+      attempt_id: attempt.id,
+      subscription_id: attempt.subscription_id,
+    });
+  }
   if (pastGrace) {
     logger.warn(
       "renewal refused by the business tax ID check past its grace period",

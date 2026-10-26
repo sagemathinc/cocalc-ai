@@ -6,7 +6,9 @@
 import { before, after, getPool } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
 import { createTestAccount } from "../test-data";
+import { SUBSCRIPTION_RENEWAL } from "@cocalc/util/db-schema/purchases";
 import {
+  assertBusinessTaxIdForPurchase,
   recordBusinessTaxIdRefusal,
   sendOffSessionRefusalNotice,
 } from "./business-tax-id-gate";
@@ -96,5 +98,41 @@ describe("business tax ID gate bookkeeping", () => {
       reason: "missing",
     });
     expect(await sendOffSessionRefusalNotice(account_id)).toBe(true);
+  });
+
+  it("notifies the customer when it refuses an automatic subscription renewal", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const stripe = {
+      customers: {
+        retrieve: async () => ({
+          address: { country: "DE" },
+          tax_ids: { data: [] },
+        }),
+      },
+    };
+    await expect(
+      assertBusinessTaxIdForPurchase({
+        stripe,
+        customer: "cus_test",
+        account_id,
+        path: SUBSCRIPTION_RENEWAL,
+        amount: 10,
+      }),
+    ).rejects.toMatchObject({ code: "business_tax_id_required" });
+    expect(
+      await count(
+        `SELECT count(*)::int AS n FROM notification_targets
+          WHERE target_account_id=$1 AND dedupe_key=$2`,
+        [account_id, `business-tax-id-required:${account_id}`],
+      ),
+    ).toBe(1);
+    expect(
+      await count(
+        `SELECT count(*)::int AS n FROM business_tax_id_notices
+          WHERE account_id=$1 AND notified_at > NOW() - interval '1 minute'`,
+        [account_id],
+      ),
+    ).toBe(1);
   });
 });

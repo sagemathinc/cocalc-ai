@@ -75,7 +75,7 @@ export function isBusinessTaxIdExemptPurpose(purpose: string): boolean {
   return purpose === ADMIN_MEMBERSHIP_PACKAGE_PURCHASE;
 }
 
-const OFF_SESSION_NOTICE_DAYS = 7;
+export const OFF_SESSION_NOTICE_DAYS = 7;
 
 export async function recordBusinessTaxIdRefusal({
   account_id,
