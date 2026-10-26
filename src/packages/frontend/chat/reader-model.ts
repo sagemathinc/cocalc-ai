@@ -15,7 +15,7 @@
 // last message is at or before the thread's watermark (what the person has
 // read in order), or when it was opened since its last message arrived; and
 // not when it was marked unread again. Archived works the same way: a new
-// reply brings an item back.
+// reply brings an item back. Stars are kept apart (see isItemStarred).
 
 import type { ChatReaderStateEntry } from "@cocalc/conat/project/read-state";
 import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
@@ -70,6 +70,7 @@ export const READER_STATE_LIMITS = {
   unread: 1000,
   archived: 2000,
   unarchived: 1000,
+  starred: 1000,
 };
 
 export function readerMessageId(message: ChatMessageTyped): string {
@@ -342,6 +343,28 @@ export function markItemUnread(
     r: without(state.r, new Set([item.id])),
     u: u.slice(Math.max(0, u.length - READER_STATE_LIMITS.unread)),
   });
+}
+
+/**
+ * Stars: a thread's starred item ids, oldest first, stored apart from the
+ * reader state (older clients rewrite that and would drop them). A star
+ * stays whatever arrives later, unlike archived.
+ */
+export function isItemStarred(
+  item: ReaderItem,
+  starred: readonly string[],
+): boolean {
+  return starred.includes(item.id);
+}
+
+export function withItemStarred(
+  starred: readonly string[],
+  item: ReaderItem,
+  on: boolean,
+): string[] {
+  const next = starred.filter((id) => id !== item.id);
+  if (on) next.push(item.id);
+  return next.slice(Math.max(0, next.length - READER_STATE_LIMITS.starred));
 }
 
 export function setItemArchived(

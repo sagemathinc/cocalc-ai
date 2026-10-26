@@ -301,7 +301,7 @@ const BASE_TIER_TEMPLATES = {
       public_directory_shares: 25,
       total_storage_soft_bytes: 7000000000,
       total_storage_hard_bytes: 8000000000,
-      sagebrush_storage_bytes: 1000000000,
+      sagebrush_storage_bytes: 256000000,
       sagebrush_max_file_bytes: 100000000,
       sagebrush_private_links: false,
       sagebrush_sync_enabled: false,
