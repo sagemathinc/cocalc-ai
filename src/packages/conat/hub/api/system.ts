@@ -1515,6 +1515,7 @@ export interface BayLoadProjectArchiveLifecycleStatus {
     stale: number;
     failed: number;
     rate_limited: number;
+    pending?: number;
     exclusions: Record<string, number | undefined>;
     job_ids: string[];
   } | null;
