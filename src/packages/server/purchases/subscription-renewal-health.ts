@@ -28,6 +28,9 @@ interface DelayedRenewalRow {
   payment_intent_id?: string;
   stripe_invoice_id?: string;
   last_error?: string;
+  // whether a renewal pass may claim it (claimDueSubscriptionRenewalAttempts
+  // skips banned, deleted and billing-frozen accounts)
+  claimable: boolean;
 }
 
 export interface SubscriptionRenewalHealthThresholds {
@@ -83,6 +86,8 @@ function delayedRenewalTable(
 }
 
 export async function alertDelayedSubscriptionRenewals(): Promise<number> {
+  const { billingAccountsTable } = await import("./billing-account");
+  const accountTable = billingAccountsTable();
   const { subscription_maintenance: maintenance } = await getServerSettings();
   const { warningMinutes, criticalMinutes } =
     getSubscriptionRenewalHealthThresholds(maintenance);
@@ -96,7 +101,15 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
             a.attempt_count,
             a.payment_intent_id,
             a.stripe_invoice_id,
-            a.last_error
+            a.last_error,
+            NOT EXISTS (
+              SELECT 1 FROM ${accountTable} AS account
+               WHERE account.account_id=a.account_id
+                 AND (account.banned IS TRUE OR account.deleted IS TRUE)
+            ) AND NOT EXISTS (
+              SELECT 1 FROM billing_authority_account_fences AS fence
+               WHERE fence.account_id=a.account_id AND fence.frozen
+            ) AS claimable
        FROM subscription_renewal_attempts a
        JOIN subscriptions s
          ON s.id=a.subscription_id
@@ -142,15 +155,20 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
     ({ age_minutes }) => Number(age_minutes) >= criticalMinutes,
   );
   const hidden = Math.max(0, rows.length - MAX_ALERT_ROWS);
-  // Overdue renewals that no pass has picked up at all: other renewals are
-  // being processed (or retried) ahead of them.
+  // Overdue renewals that a pass could claim but none has picked up at all:
+  // most likely other renewals are being processed (or retried) ahead of
+  // them. Renewals no pass may claim are counted separately.
   const neverTried = rows.filter(
-    ({ attempt_count }) => Number(attempt_count) === 0,
+    ({ attempt_count, claimable }) => claimable && Number(attempt_count) === 0,
   ).length;
+  const unclaimable = rows.filter(({ claimable }) => !claimable).length;
   const starvation =
-    neverTried > 0
-      ? `\n- **Never tried yet: ${neverTried}.** These are overdue but no renewal pass has attempted them, so other renewals are taking every pass (head-of-line blocking): check the renewals with many tries.`
-      : "";
+    (neverTried > 0
+      ? `\n- **Never tried yet: ${neverTried}.** These are overdue and claimable but no renewal pass has attempted them, most likely because other renewals are taking every pass (head-of-line blocking): check the renewals with many tries.`
+      : "") +
+    (unclaimable > 0
+      ? `\n- Not claimable: ${unclaimable} (the account is banned, deleted or has billing frozen, so no renewal pass will try them).`
+      : "");
   const body = `Automatic personal membership renewals are taking longer than expected.
 
 - Affected renewals: ${rows.length}${starvation}

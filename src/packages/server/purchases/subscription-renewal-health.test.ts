@@ -173,6 +173,24 @@ describe("subscription renewal health alert", () => {
     expect(body).toContain("head-of-line");
   });
 
+  it("does not count renewals no pass may claim as never tried", async () => {
+    const banned = uuid();
+    await createTestAccount(banned);
+    await createTestMembershipSubscription(banned, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(2, "hour").toDate(),
+    });
+    await getPool().query(
+      "UPDATE accounts SET banned=true WHERE account_id=$1",
+      [banned],
+    );
+
+    await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(1);
+    const body = mockAdminAlert.mock.calls[0][0].body;
+    expect(body).not.toContain("Never tried");
+    expect(body).toContain("Not claimable: 1");
+  });
+
   it("does not report starvation when every overdue renewal was tried", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);
