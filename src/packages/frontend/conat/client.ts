@@ -297,6 +297,9 @@ type RoutedHubClientState = {
   connectStage?: "browser-session" | "socket";
   stuckTimer?: ReturnType<typeof setTimeout>;
   stuckReported?: boolean;
+  // signed in on the current connection (client.info is not cleared on
+  // disconnect, so it cannot tell)
+  signedIn?: boolean;
 };
 
 type ProjectHostTokenState = {
@@ -2372,12 +2375,7 @@ export class ConatClient extends EventEmitter {
   }): Promise<boolean> => {
     const { host_id } = state;
     if (state.connectInFlight) {
-      return await this.awaitRoutedHostConnectAttempt({
-        routing_key,
-        state,
-        project_id,
-        attempt: state.connectInFlight,
-      });
+      return await state.connectInFlight;
     }
     const connectAttempt = (async (): Promise<boolean> => {
       if (this.permanentlyDisconnected) {
@@ -2423,6 +2421,14 @@ export class ConatClient extends EventEmitter {
             `failed preparing project-host browser session for host ${host_id}`,
             err,
           );
+        }
+        if (
+          this.permanentlyDisconnected ||
+          !this.isCurrentRoutedHostState(routing_key, state)
+        ) {
+          // This client was removed or replaced meanwhile: its failure says
+          // nothing about the host's current connection.
+          return false;
         }
         this.noteRoutedHostConnectFailed(state);
         this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
@@ -2491,24 +2497,24 @@ export class ConatClient extends EventEmitter {
         this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
         return false;
       }
-    })().finally(() => {
-      if (state.connectInFlight === connectAttempt) {
-        delete state.connectInFlight;
-      }
-    });
-    state.connectInFlight = connectAttempt;
-    return await this.awaitRoutedHostConnectAttempt({
+    })();
+    const bounded = this.boundRoutedHostConnectAttempt({
       routing_key,
       state,
       project_id,
       attempt: connectAttempt,
     });
+    state.connectInFlight = bounded;
+    return await bounded;
   };
 
-  // Wait for a connect attempt, but no longer than its budget: an attempt that
-  // never settles is dropped and a new one is scheduled, so it cannot leave the
-  // host disconnected until the page is reloaded.
-  private awaitRoutedHostConnectAttempt = async ({
+  // Bound one connect attempt by its budget. This is created once per attempt
+  // and is what every caller awaits, so there is exactly one deadline per
+  // attempt. An attempt that never settles resolves false at the deadline: if
+  // it is still this client's current attempt, it is dropped (with a stuck
+  // bootstrap) and another is scheduled, so it cannot leave the host
+  // disconnected until the page is reloaded.
+  private boundRoutedHostConnectAttempt = ({
     routing_key,
     state,
     project_id,
@@ -2519,30 +2525,40 @@ export class ConatClient extends EventEmitter {
     project_id?: string;
     attempt: Promise<boolean>;
   }): Promise<boolean> => {
-    try {
-      return await withTimeout(attempt, ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS);
-    } catch (err) {
-      if (state.connectInFlight === attempt) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bounded: Promise<boolean> = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(false);
+        if (state.connectInFlight !== bounded) return;
         delete state.connectInFlight;
-      }
-      if (state.connectStage === "browser-session") {
-        // The next attempt must start a new bootstrap, not join the stuck one.
-        this.invalidateProjectHostBrowserSession(routing_key);
-      }
-      state.lastConnectError = err;
-      console.warn(
-        `routed host connect attempt for ${state.host_id} did not finish within ${ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS} ms; retrying`,
-        { host_id: state.host_id, stage: state.connectStage },
-      );
-      if (
-        !this.permanentlyDisconnected &&
-        this.isCurrentRoutedHostState(routing_key, state)
-      ) {
+        if (
+          this.permanentlyDisconnected ||
+          !this.isCurrentRoutedHostState(routing_key, state)
+        ) {
+          return;
+        }
+        if (state.connectStage === "browser-session") {
+          // The next attempt must start a new bootstrap, not join this one.
+          this.invalidateProjectHostBrowserSession(routing_key);
+        }
+        state.lastConnectError = new Error(
+          `connect attempt did not finish within ${ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS / 1000} seconds (timeout)`,
+        );
+        console.warn(
+          `routed host connect attempt for ${state.host_id} did not finish within ${ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS} ms; retrying`,
+          { host_id: state.host_id, stage: state.connectStage },
+        );
         this.noteRoutedHostConnectFailed(state);
         this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
+      }, ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS);
+      attempt.then(resolve, () => resolve(false));
+    }).finally(() => {
+      clearTimeout(timer);
+      if (state.connectInFlight === bounded) {
+        delete state.connectInFlight;
       }
-      return false;
-    }
+    });
+    return bounded;
   };
 
   private runRoutedHostReconnect = async (opts: {
@@ -3015,7 +3031,6 @@ export class ConatClient extends EventEmitter {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
       }
-      this.noteRoutedHostConnected(state);
       this.reconnectCoordinator.requestResourceReconnects({
         includeBackground: true,
         reason: "routed_host_connected",
@@ -3036,6 +3051,8 @@ export class ConatClient extends EventEmitter {
         error: error || undefined,
       });
       if (!error) {
+        state.signedIn = true;
+        this.noteRoutedHostConnected(state);
         this.emit("project-host-connected", host_id);
         return;
       }
@@ -3062,11 +3079,13 @@ export class ConatClient extends EventEmitter {
         host_session_id: state.host_session_id,
         public_directory_share_id: state.public_directory_share_id,
       });
+      state.signedIn = false;
       this.emit("project-host-disconnected", host_id);
       this.noteRoutedHostDisconnected(state);
       this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
     });
     state.client.conn.on("connect_error", (err) => {
+      state.signedIn = false;
       state.lastConnectError = err;
       logProjectHostRoutingDiagnostic(
         "socket-connect-error",
@@ -3094,6 +3113,7 @@ export class ConatClient extends EventEmitter {
           this.invalidateProjectHostToken(host_id);
         }
       }
+      if (!this.isCurrentRoutedHostState(routing_key, state)) return;
       this.noteRoutedHostConnectFailed(state);
       this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
     });
@@ -3113,22 +3133,37 @@ export class ConatClient extends EventEmitter {
   // one "stuck" event if it is still not connected after
   // ROUTED_HOST_STUCK_REPORT_MS, and a "recovered" event with the duration
   // when it connects again after more than a routine blip.
+  // Signed in to the host, not merely a transport connection.
+  private isRoutedHostReady = (state: RoutedHubClientState): boolean => {
+    return !!state.signedIn && !!state.client.conn?.connected;
+  };
+
   // A connect attempt failed (or never finished) while the host is not
   // connected. Tell the UI, so a host that never connected in this tab shows
   // the same "unavailable / reconnecting" state as one that dropped, instead
   // of nothing.
   private noteRoutedHostConnectFailed = (state: RoutedHubClientState) => {
-    if (state.client.conn?.connected) return;
+    if (
+      this.isRoutedHostReady(state) ||
+      !this.isCurrentRoutedHostState(state.routing_key, state)
+    ) {
+      return;
+    }
     this.emit("project-host-disconnected", state.host_id);
     this.noteRoutedHostDisconnected(state);
   };
 
   private noteRoutedHostDisconnected = (state: RoutedHubClientState) => {
+    if (!this.isCurrentRoutedHostState(state.routing_key, state)) return;
     state.disconnectedSince ??= Date.now();
     if (state.stuckTimer != null || state.stuckReported) return;
     state.stuckTimer = setTimeout(() => {
       delete state.stuckTimer;
-      if (state.client.conn?.connected || state.disconnectedSince == null) {
+      if (
+        this.isRoutedHostReady(state) ||
+        state.disconnectedSince == null ||
+        !this.isCurrentRoutedHostState(state.routing_key, state)
+      ) {
         return;
       }
       state.stuckReported = true;

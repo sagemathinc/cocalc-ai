@@ -58,23 +58,31 @@ function setup() {
       return { data: null };
     }),
   };
-  const eventHandlers: Record<string, Function> = {};
-  const connHandlers: Record<string, Function> = {};
-  const connect = jest.fn();
-  const routedClient = {
-    conn: {
-      connected: false,
+  // One fake routed client per connection; routed() is the latest.
+  const created: any[] = [];
+  const makeRoutedClient = () => {
+    const eventHandlers: Record<string, Function> = {};
+    const connHandlers: Record<string, Function> = {};
+    const routed = {
+      eventHandlers,
+      connHandlers,
+      conn: {
+        connected: false,
+        on: jest.fn((event: string, cb: Function) => {
+          connHandlers[event] = cb;
+        }),
+        io: { on: jest.fn(), engine: { close: jest.fn() } },
+      },
       on: jest.fn((event: string, cb: Function) => {
-        connHandlers[event] = cb;
+        eventHandlers[event] = cb;
       }),
-      io: { on: jest.fn(), engine: { close: jest.fn() } },
-    },
-    on: jest.fn((event: string, cb: Function) => {
-      eventHandlers[event] = cb;
-    }),
-    connect,
-    close: jest.fn(),
-    request: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      request: jest.fn(),
+      info: undefined as any,
+    };
+    created.push(routed);
+    return routed;
   };
 
   jest.resetModules();
@@ -113,7 +121,7 @@ function setup() {
   }));
   jest.doMock("@cocalc/conat/core/client", () => ({
     connect: jest.fn((opts?: any) =>
-      opts?.address === "http://project-host" ? routedClient : hubClient,
+      opts?.address === "http://project-host" ? makeRoutedClient() : hubClient,
     ),
   }));
   jest.doMock("@cocalc/conat/client", () => ({
@@ -169,14 +177,15 @@ function setup() {
       host_session_id: "session-1",
       project_id: PROJECT_ID,
     });
-  return {
-    client,
-    connect,
-    eventHandlers,
-    connHandlers,
-    routedClient,
-    addHost,
+  const routed = () => created[created.length - 1];
+  // the host connects and signs in
+  const signIn = (r = routed()) => {
+    r.conn.connected = true;
+    r.eventHandlers.connected?.();
+    r.info = { user: { account_id: "acct-1" } };
+    r.eventHandlers.info?.(r.info);
   };
+  return { client, routed, created, addHost, signIn };
 }
 
 function setFetch(fn: jest.Mock) {
@@ -214,12 +223,11 @@ afterEach(() => {
 describe("routed project-host connection liveness", () => {
   it("recovers when the browser-session bootstrap never answers", async () => {
     setFetch(hangingFetch);
-    const { client, connect, addHost } = setup();
+    const { client, routed, addHost } = setup();
     addHost();
     await jest.advanceTimersByTimeAsync(1_000);
     expect(hangingFetch).toHaveBeenCalledTimes(1);
-    expect(connect).not.toHaveBeenCalled();
-
+    expect(routed().connect).not.toHaveBeenCalled();
     const disconnected = jest.fn();
     client.on("project-host-disconnected", disconnected);
 
@@ -237,7 +245,7 @@ describe("routed project-host connection liveness", () => {
     setFetch(okFetch);
     await jest.advanceTimersByTimeAsync(30_000);
     expect(okFetch).toHaveBeenCalled();
-    expect(connect).toHaveBeenCalled();
+    expect(routed().connect).toHaveBeenCalled();
   });
 
   it("drops a connect attempt that never settles and schedules another", async () => {
@@ -259,9 +267,41 @@ describe("routed project-host connection liveness", () => {
     expect(`${state.lastConnectError}`).toMatch(/timeout/);
   });
 
+  it("gives a joined attempt one deadline, not one per caller", async () => {
+    // a fetch that ignores abort, so the first attempt lasts to its deadline
+    setFetch(jest.fn(() => new Promise(() => {})));
+    const { client, addHost } = setup();
+    addHost();
+    await jest.advanceTimersByTimeAsync(1_000);
+    const state = client.routedHubClients["host-1"];
+    const first = state.connectInFlight;
+    // a second caller joins the same attempt at about 20 s
+    await jest.advanceTimersByTimeAsync(19_000);
+    void client.connectRoutedHost({ routing_key: "host-1", state });
+    expect(state.connectInFlight).toBe(first);
+
+    // the attempt's own deadline (about 30 s) replaces it ...
+    await jest.advanceTimersByTimeAsync(12_000);
+    const second = state.connectInFlight;
+    expect(second).toBeDefined();
+    expect(second).not.toBe(first);
+    const secondBootstrap =
+      client.projectHostBrowserSessions["host-1"]?.inFlight;
+    expect(secondBootstrap).toBeDefined();
+
+    // ... and the late joiner adds no second deadline (it would fire at about
+    // 50 s) that drops the newer attempt or its bootstrap; the newer attempt's
+    // own deadline is at about 61 s.
+    await jest.advanceTimersByTimeAsync(20_000);
+    expect(state.connectInFlight).toBe(second);
+    expect(client.projectHostBrowserSessions["host-1"]?.inFlight).toBe(
+      secondBootstrap,
+    );
+  });
+
   it("keeps reconnecting after an unexpected error in a reconnect run", async () => {
     setFetch(okFetch);
-    const { client, eventHandlers, addHost } = setup();
+    const { client, routed, addHost } = setup();
     addHost();
     await jest.advanceTimersByTimeAsync(1_000);
     const state = client.routedHubClients["host-1"];
@@ -270,7 +310,7 @@ describe("routed project-host connection liveness", () => {
       .mockImplementationOnce(() => {
         throw new Error("unexpected");
       });
-    eventHandlers.disconnected?.();
+    routed().eventHandlers.disconnected?.();
     await jest.advanceTimersByTimeAsync(1_000);
     expect(refresh).toHaveBeenCalled();
     expect(state.reconnectTimer).toBeDefined();
@@ -278,7 +318,7 @@ describe("routed project-host connection liveness", () => {
 
   it("reports a host that stays unreachable, and its recovery", async () => {
     setFetch(hangingFetch);
-    const { eventHandlers, routedClient, addHost } = setup();
+    const { signIn, addHost } = setup();
     addHost();
     await jest.advanceTimersByTimeAsync(59_000);
     expect(recordUxLatencyEvent).not.toHaveBeenCalled();
@@ -291,8 +331,7 @@ describe("routed project-host connection liveness", () => {
       }),
     );
 
-    routedClient.conn.connected = true;
-    eventHandlers.connected?.();
+    signIn();
     expect(recordUxLatencyEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({
         event_type: "project_host_connection",
@@ -303,18 +342,65 @@ describe("routed project-host connection liveness", () => {
     );
   });
 
-  it("does not report a routine quick reconnect", async () => {
+  it("does not treat a transport connection without sign-in as recovered", async () => {
     setFetch(okFetch);
-    const { eventHandlers, routedClient, addHost } = setup();
+    const { routed, signIn, addHost } = setup();
     addHost();
     await jest.advanceTimersByTimeAsync(1_000);
-    routedClient.conn.connected = true;
-    eventHandlers.connected?.();
-    routedClient.conn.connected = false;
-    eventHandlers.disconnected?.();
+    // transport up, but no successful sign-in (info) yet
+    routed().conn.connected = true;
+    routed().eventHandlers.connected?.();
+    await jest.advanceTimersByTimeAsync(61_000);
+    expect(recordUxLatencyEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ metric: "stuck" }),
+    );
+    expect(recordUxLatencyEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ metric: "recovered" }),
+    );
+    signIn();
+    expect(recordUxLatencyEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ metric: "recovered" }),
+    );
+  });
+
+  it("does not report a routine quick reconnect", async () => {
+    setFetch(okFetch);
+    const { routed, signIn, addHost } = setup();
+    addHost();
     await jest.advanceTimersByTimeAsync(1_000);
-    routedClient.conn.connected = true;
-    eventHandlers.connected?.();
+    signIn();
+    routed().conn.connected = false;
+    routed().eventHandlers.disconnected?.();
+    await jest.advanceTimersByTimeAsync(1_000);
+    signIn();
     expect(recordUxLatencyEvent).not.toHaveBeenCalled();
+  });
+
+  it("ignores a hung bootstrap of a client that was replaced", async () => {
+    setFetch(hangingFetch);
+    const { client, created, signIn, addHost } = setup();
+    addHost();
+    await jest.advanceTimersByTimeAsync(1_000);
+    const old = client.routedHubClients["host-1"];
+
+    // the client is replaced (e.g. the route changed) and the new one signs in
+    client.removeRoutedHubClient("host-1", { reason: "test" });
+    client.invalidateProjectHostBrowserSession("host-1");
+    setFetch(okFetch);
+    addHost();
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(created).toHaveLength(2);
+    signIn(created[1]);
+
+    const disconnected = jest.fn();
+    client.on("project-host-disconnected", disconnected);
+    // the old client's bootstrap now times out
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(disconnected).not.toHaveBeenCalled();
+    expect(old.reconnectTimer).toBeUndefined();
+    expect(old.stuckTimer).toBeUndefined();
+    expect(recordUxLatencyEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ metric: "stuck" }),
+    );
   });
 });
