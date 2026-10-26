@@ -165,9 +165,11 @@ Table({
   },
 });
 
-// Files sent with an external inbox message: kept, like the message, at the
-// account's home bay until the message expires. Only the installation's own
-// credential reads them (inbox-attachment).
+// Files sent with an external inbox message: described, like the message, at
+// the account's home bay until the message expires. Their content is a
+// private R2 object (r2_key) when R2 blob storage is configured, and in the
+// row (data) otherwise. Only the installation's own credential reads them
+// (inbox-attachment).
 Table({
   name: "agent_external_inbox_attachments",
   rules: {
@@ -181,7 +183,13 @@ Table({
       {
         name: "agent_external_inbox_attachments_size_check",
         type: "check",
-        expression: "size BETWEEN 0 AND 33554432 AND octet_length(data)=size",
+        expression:
+          "size BETWEEN 0 AND 33554432 AND (data IS NULL OR octet_length(data)=size)",
+      },
+      {
+        name: "agent_external_inbox_attachments_content_check",
+        type: "check",
+        expression: "(data IS NULL) <> (r2_key IS NULL)",
       },
     ],
     pg_custom_indexes: [
@@ -203,7 +211,14 @@ Table({
     name: required("string", "File name, without any path."),
     size: required("integer", "Size in bytes."),
     sha256: required("string", "SHA-256 of the content, hex."),
-    data: required("Buffer", "The file's content."),
+    data: {
+      type: "Buffer",
+      desc: "The file's content, when it is not an R2 object.",
+    },
+    r2_key: {
+      type: "string",
+      desc: "The private R2 object holding the file's content.",
+    },
     created_at: created,
     expires_at: {
       ...time("The message's retention deadline."),

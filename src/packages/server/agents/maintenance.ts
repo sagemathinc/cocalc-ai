@@ -6,6 +6,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { agentStore } from "./store";
 import { cleanupCocalcConnectorCredentials } from "./cocalc-connector-retention";
+import { removeExpiredExternalInboxObjects } from "./external-inbox-objects";
 
 const logger = getLogger("agents:maintenance");
 const BATCH = 5000;
@@ -23,6 +24,23 @@ async function remove(
 }
 
 export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
+  const result = await cleanupAgentMessagingRows();
+  // Only the run that did the rows (it held the lock), and after their
+  // transaction: this is network work. Files kept as R2 objects go with
+  // their day, whether or not a row still names them.
+  if (Object.keys(result).length) {
+    try {
+      result.external_inbox_objects = await removeExpiredExternalInboxObjects();
+    } catch (error) {
+      logger.warn("external inbox object cleanup failed", {
+        error: `${error}`,
+      });
+    }
+  }
+  return result;
+}
+
+async function cleanupAgentMessagingRows(): Promise<CleanupResult> {
   return agentStore().transaction(async (db) => {
     const locked = (
       await db.query(

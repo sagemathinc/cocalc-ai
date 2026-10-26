@@ -30,6 +30,13 @@ import {
   type PersonalAuthorityDb,
 } from "./personal-rehome";
 import type { AgentStore } from "./store";
+import {
+  externalInboxObjectKey,
+  externalInboxObjects,
+} from "./external-inbox-objects";
+
+/** How long an inbox message is kept (as its INSERT says). */
+const EXTERNAL_INBOX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type ExternalEnrollment = {
   installation_id: string;
@@ -408,6 +415,40 @@ export class ExternalAgentStore {
       Buffer.byteLength(opts.body, "utf8") > 32768
     )
       throw new Error("invalid external inbox body");
+    const adding = manifest.reduce((sum, file) => sum + file.size, 0);
+    // With an object store the files go there first, outside the account's
+    // lock (they may be large), and the rows say only where. A full inbox is
+    // refused before anything is uploaded. Nothing uploaded is ever removed
+    // here: a retry's keys can be a stored message's own, and every object
+    // goes with its day (removeExpiredExternalInboxObjects).
+    const objects = attachments.length
+      ? await externalInboxObjects()
+      : undefined;
+    let keys: string[] | undefined;
+    if (objects) {
+      await this.locked(opts.account_id, (db) =>
+        this.assertAttachmentRoom(db, opts, adding),
+      );
+      const expires_at = Date.now() + EXTERNAL_INBOX_RETENTION_MS;
+      keys = attachments.map((file, idx) =>
+        externalInboxObjectKey({
+          account_id: opts.account_id,
+          attempt_id: opts.attempt_id,
+          idx,
+          sha256: file.sha256,
+          expires_at,
+        }),
+      );
+      for (const [idx, file] of attachments.entries())
+        await objects.put(
+          keys[idx],
+          Buffer.from(
+            file.data.buffer,
+            file.data.byteOffset,
+            file.data.byteLength,
+          ),
+        );
+    }
     return this.locked(opts.account_id, async (db, controls) => {
       const installation = await this.active(
         db,
@@ -450,20 +491,7 @@ export class ExternalAgentStore {
         )
       ).rows[0];
       if (+pending.count >= 1000) throw new Error("external_inbox_capacity");
-      if (attachments.length) {
-        // Files are kept until their messages expire: bound what one inbox
-        // holds, as a project's received attachments are.
-        const held = (
-          await db.query(
-            `SELECT COALESCE(SUM(size),0) AS bytes FROM agent_external_inbox_attachments
-             WHERE account_id=$1 AND installation_id=$2 AND expires_at>now()`,
-            [opts.account_id, opts.installation_id],
-          )
-        ).rows[0];
-        const adding = manifest.reduce((sum, file) => sum + file.size, 0);
-        if (+held.bytes + adding > AGENT_ATTACHMENT_PROJECT_BYTES)
-          throw new Error("external_inbox_attachment_capacity");
-      }
+      if (attachments.length) await this.assertAttachmentRoom(db, opts, adding);
       const row = (
         await db.query(
           `INSERT INTO agent_external_inbox
@@ -486,8 +514,8 @@ export class ExternalAgentStore {
       for (const [idx, file] of attachments.entries())
         await db.query(
           `INSERT INTO agent_external_inbox_attachments
-           (message_id,idx,account_id,installation_id,name,size,sha256,data,expires_at)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+           (message_id,idx,account_id,installation_id,name,size,sha256,data,r2_key,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [
             row.message_id,
             idx,
@@ -496,11 +524,14 @@ export class ExternalAgentStore {
             file.name,
             file.size,
             file.sha256,
-            Buffer.from(
-              file.data.buffer,
-              file.data.byteOffset,
-              file.data.byteLength,
-            ),
+            keys
+              ? null
+              : Buffer.from(
+                  file.data.buffer,
+                  file.data.byteOffset,
+                  file.data.byteLength,
+                ),
+            keys?.[idx] ?? null,
             row.expires_at,
           ],
         );
@@ -514,6 +545,26 @@ export class ExternalAgentStore {
       );
       return this.publicInbox(row, attachments.length ? manifest : undefined);
     });
+  }
+
+  /**
+   * Files are kept until their messages expire: bound what one inbox holds,
+   * as a project's received attachments are.
+   */
+  private async assertAttachmentRoom(
+    db: PersonalAuthorityDb,
+    opts: { account_id: string; installation_id: string },
+    adding: number,
+  ) {
+    const held = (
+      await db.query(
+        `SELECT COALESCE(SUM(size),0) AS bytes FROM agent_external_inbox_attachments
+         WHERE account_id=$1 AND installation_id=$2 AND expires_at>now()`,
+        [opts.account_id, opts.installation_id],
+      )
+    ).rows[0];
+    if (+held.bytes + adding > AGENT_ATTACHMENT_PROJECT_BYTES)
+      throw new Error("external_inbox_attachment_capacity");
   }
 
   /** The attachment manifests of these messages, in order. */
@@ -611,29 +662,38 @@ export class ExternalAgentStore {
     index: number,
   ): Promise<ExternalAgentInboxAttachment> {
     requireUuid(message_id, "message_id");
-    return this.locked(account, async (db, controls) => {
+    const { row, count } = await this.locked(account, async (db, controls) => {
       await this.active(db, account, installation, controls);
       const rows = (
         await db.query(
-          `SELECT idx,name,size,sha256,data FROM agent_external_inbox_attachments
-           WHERE account_id=$1 AND installation_id=$2 AND message_id=$3 AND expires_at>now()
-           ORDER BY idx`,
+          `SELECT idx,name,size,sha256,data,r2_key FROM agent_external_inbox_attachments
+             WHERE account_id=$1 AND installation_id=$2 AND message_id=$3 AND expires_at>now()
+             ORDER BY idx`,
           [account, installation, message_id],
         )
       ).rows;
       const row = rows.find((row) => +row.idx === index);
       if (!row) throw new Error("external_inbox_attachment_not_found");
-      const data: Buffer = row.data;
-      return {
-        message_id,
-        index,
-        count: rows.length,
-        name: row.name,
-        size: +row.size,
-        sha256: row.sha256,
-        data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
-      };
+      return { row, count: rows.length };
     });
+    // From the object store after the lock: the file may be large.
+    let data: Buffer | undefined = row.data ?? undefined;
+    if (data == null && row.r2_key)
+      data = await (await externalInboxObjects())?.get(row.r2_key);
+    if (
+      data == null ||
+      createHash("sha256").update(data).digest("hex") !== row.sha256
+    )
+      throw new Error("external_inbox_attachment_unavailable");
+    return {
+      message_id,
+      index,
+      count,
+      name: row.name,
+      size: +row.size,
+      sha256: row.sha256,
+      data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+    };
   }
 
   async acknowledge(account: string, installation: string, message_id: string) {

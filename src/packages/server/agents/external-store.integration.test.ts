@@ -4,6 +4,7 @@ import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import { ExternalAgentStore, type ExternalEnrollment } from "./external-store";
 import { AgentStore } from "./store";
+import { setExternalInboxObjectsForTesting } from "./external-inbox-objects";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -48,6 +49,8 @@ describeDb("network-bound external agents", () => {
   }
 
   beforeAll(async () => {
+    // Files stay in Postgres unless a test says otherwise.
+    setExternalInboxObjectsForTesting(null);
     await syncSchema(
       Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),
     );
@@ -492,8 +495,133 @@ describeDb("network-bound external agents", () => {
       await db.query("DELETE FROM agent_external_inbox_attachments");
       await db.query(
         `ALTER TABLE agent_external_inbox_attachments ADD CONSTRAINT agent_external_inbox_attachments_size_check
-         CHECK (size BETWEEN 0 AND 33554432 AND octet_length(data)=size)`,
+         CHECK (size BETWEEN 0 AND 33554432 AND (data IS NULL OR octet_length(data)=size))`,
       );
     }
+  });
+
+  // R2 configured: an in-memory stand-in for the private objects.
+  function objectStore() {
+    const objects = new Map<string, Buffer>();
+    return {
+      objects,
+      put: jest.fn(async (key: string, data: Buffer) => {
+        objects.set(key, Buffer.from(data));
+      }),
+      get: jest.fn(async (key: string) => objects.get(key)),
+      list: jest.fn(async (prefix: string) =>
+        [...objects.keys()].filter((key) => key.startsWith(prefix)),
+      ),
+      delete: jest.fn(async (keys: string[]) => {
+        for (const key of keys) objects.delete(key);
+      }),
+    };
+  }
+
+  test("with R2, files are private objects and the rows say only where", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const files = [file("report.md", "# Report\n"), file("x.bin", "\u0001")];
+      const { installation, input } = await sent(files);
+      const message = await store.enqueue(input);
+      const rows = (
+        await db.query(
+          `SELECT idx,data,r2_key FROM agent_external_inbox_attachments
+           WHERE message_id=$1 ORDER BY idx`,
+          [message.message_id],
+        )
+      ).rows;
+      expect(rows.map((row) => row.data)).toEqual([null, null]);
+      const day = new Date(Date.now() + 8 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      expect(rows.map((row) => row.r2_key)).toEqual(
+        files.map(
+          (f, idx) =>
+            `agent-external-inbox/v1/${day}/${account}/${input.attempt_id}/${idx}-${f.sha256}`,
+        ),
+      );
+      expect(objects.objects.get(rows[0].r2_key)?.toString()).toBe(
+        "# Report\n",
+      );
+      const read = await store.attachment(
+        account,
+        installation.installation_id,
+        message.message_id,
+        0,
+      );
+      expect(Buffer.from(read.data).toString()).toBe("# Report\n");
+      // A retry stores nothing new and removes nothing.
+      await store.enqueue(input);
+      expect(objects.put).toHaveBeenCalledTimes(4);
+      expect(objects.objects.size).toBe(2);
+      expect(objects.delete).not.toHaveBeenCalled();
+      // An object that is not what the row says is never handed out.
+      objects.objects.set(rows[1].r2_key, Buffer.from("tampered"));
+      await expect(
+        store.attachment(
+          account,
+          installation.installation_id,
+          message.message_id,
+          1,
+        ),
+      ).rejects.toThrow("external_inbox_attachment_unavailable");
+      objects.objects.delete(rows[1].r2_key);
+      await expect(
+        store.attachment(
+          account,
+          installation.installation_id,
+          message.message_id,
+          1,
+        ),
+      ).rejects.toThrow("external_inbox_attachment_unavailable");
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("with R2, a full inbox is refused before anything is uploaded", async () => {
+    const objects = objectStore();
+    const { input } = await sent([file("a.txt", "x")]);
+    await store.enqueue(input);
+    setExternalInboxObjectsForTesting(objects);
+    await db.query(
+      "ALTER TABLE agent_external_inbox_attachments DROP CONSTRAINT agent_external_inbox_attachments_size_check",
+    );
+    try {
+      await db.query(
+        "UPDATE agent_external_inbox_attachments SET size=$2 WHERE installation_id=$1",
+        [input.installation_id, 256 * 1024 * 1024],
+      );
+      await expect(
+        store.enqueue({ ...input, attempt_id: randomUUID() }),
+      ).rejects.toThrow("external_inbox_attachment_capacity");
+      expect(objects.put).not.toHaveBeenCalled();
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+      await db.query("DELETE FROM agent_external_inbox_attachments");
+      await db.query(
+        `ALTER TABLE agent_external_inbox_attachments ADD CONSTRAINT agent_external_inbox_attachments_size_check
+         CHECK (size BETWEEN 0 AND 33554432 AND (data IS NULL OR octet_length(data)=size))`,
+      );
+    }
+  });
+
+  test("a row holds its content in exactly one place", async () => {
+    const { input } = await sent([file("a.txt", "x")]);
+    const message = await store.enqueue(input);
+    await expect(
+      db.query(
+        "UPDATE agent_external_inbox_attachments SET r2_key='k' WHERE message_id=$1",
+        [message.message_id],
+      ),
+    ).rejects.toThrow(/content_check/);
+    await expect(
+      db.query(
+        "UPDATE agent_external_inbox_attachments SET data=NULL WHERE message_id=$1",
+        [message.message_id],
+      ),
+    ).rejects.toThrow(/content_check/);
   });
 });
