@@ -2,6 +2,8 @@ import {
   getPublicCompareSections,
   PUBLIC_COMPARE_COCALC_AI_COLLABORATION_BULLET,
   PUBLIC_COMPARE_COLLABORATION_BULLET,
+  PUBLIC_COMPARE_HISTORY_SECTIONS,
+  PUBLIC_COMPARE_HISTORY_TITLE,
 } from "@cocalc/util/public-compare-content";
 import { renderPublicRoutePrerender } from "./public-prerender";
 
@@ -28,8 +30,10 @@ describe("Compare page initial HTML", () => {
     "renders the same fit-list bullets as the React page on %s",
     (_site, config) => {
       const html = renderCompare(config);
+      // the fit lists; cocalc.ai's history sections are checked below
       for (const section of getPublicCompareSections(config)) {
-        if (section.bullets == null) continue;
+        if (section.bullets == null || !section.title.startsWith("Choose "))
+          continue;
         expect(html).toContain(
           `<h2>${section.title}</h2><ul>${section.bullets
             .map((bullet) => `<li>${bullet}</li>`)
@@ -56,5 +60,21 @@ describe("Compare page initial HTML", () => {
       expect(html).not.toContain("snapshots, and backups");
     }
     expect(renderCompare(PLUS)).not.toContain("Collaborators need");
+  });
+
+  it("renders the history and backup sections on cocalc.ai only, as the page does", () => {
+    const html = renderCompare(COCALC_AI);
+    const [history, scale] = PUBLIC_COMPARE_HISTORY_SECTIONS;
+    for (const card of history.cards!) {
+      expect(html).toContain(`<h3>${card.title}</h3><p>${card.body}</p>`);
+    }
+    expect(html).toContain(
+      `<h2>${scale.title}</h2><p>${scale.paragraphs![0]}</p><ul>${scale
+        .bullets!.map((bullet) => `<li>${bullet}</li>`)
+        .join("")}</ul>`,
+    );
+    for (const config of [ROCKET, PLUS, undefined]) {
+      expect(renderCompare(config)).not.toContain(PUBLIC_COMPARE_HISTORY_TITLE);
+    }
   });
 });

@@ -14,7 +14,12 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
+import {
+  getPublicCompareSections,
+  PUBLIC_COMPARE_HISTORY_TITLE,
+  PUBLIC_COMPARE_SCALE_TITLE,
+} from "@cocalc/util/public-compare-content";
+import type { PublicFeatureSection } from "@cocalc/util/public-feature-pages";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import {
   getPublicCompareDeploymentNeed,
@@ -149,6 +154,83 @@ function RouteRow({
   );
 }
 
+// cocalc.ai's history and backup sections (getPublicCompareSections adds them
+// there only): the three ways to keep history as cards, the last one
+// CoCalc.ai's, then how it keeps up on shared hosts.
+function HistorySections({
+  history,
+  scale,
+}: {
+  history: PublicFeatureSection;
+  scale?: PublicFeatureSection;
+}) {
+  const cards = history.cards ?? [];
+  return (
+    <section
+      aria-label="CoCalc.ai history and backups"
+      id="history-and-backups"
+    >
+      <Flex vertical gap={18}>
+        <Title level={3} style={{ margin: 0 }}>
+          {history.title}
+        </Title>
+        {history.paragraphs?.map((paragraph) => (
+          <Paragraph key={paragraph} style={{ margin: 0, maxWidth: "72ch" }}>
+            {paragraph}
+          </Paragraph>
+        ))}
+        <div className="cocalc-compare-history-grid">
+          {cards.map((card, index) => (
+            <article
+              className={
+                index === cards.length - 1
+                  ? "cocalc-compare-history-card cocalc-compare-history-card-cocalc"
+                  : "cocalc-compare-history-card"
+              }
+              key={card.title}
+            >
+              <Title level={4} style={{ margin: 0 }}>
+                {card.title}
+              </Title>
+              <Paragraph style={{ margin: "10px 0 0" }}>{card.body}</Paragraph>
+            </article>
+          ))}
+        </div>
+        <Flex gap={12} wrap>
+          {history.links?.map((link) => (
+            <LinkButton
+              href={featureAppPath(link.href.replace(/^\/+/, ""))}
+              key={link.href}
+            >
+              {link.label}
+            </LinkButton>
+          ))}
+        </Flex>
+        {scale ? (
+          <div>
+            <Title level={4} style={{ margin: "8px 0 8px" }}>
+              {scale.title}
+            </Title>
+            {scale.paragraphs?.map((paragraph) => (
+              <Paragraph
+                key={paragraph}
+                style={{ margin: 0, maxWidth: "72ch" }}
+              >
+                {paragraph}
+              </Paragraph>
+            ))}
+            <ul className="cocalc-compare-list">
+              {scale.bullets?.map((bullet) => (
+                <li key={bullet}>{bullet}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </Flex>
+    </section>
+  );
+}
+
 const COMPARE_PAGE_CSS = `
   .cocalc-compare-hero {
     background: linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.brandTint} 100%);
@@ -195,6 +277,25 @@ const COMPARE_PAGE_CSS = `
     border-radius: ${PUBLIC_RADIUS.panel}px;
     box-shadow: ${PANEL_SHADOW};
     padding: 20px;
+  }
+
+  .cocalc-compare-history-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .cocalc-compare-history-card {
+    background: ${PUBLIC_COLORS.surface};
+    border: 1px solid ${PUBLIC_COLORS.border};
+    border-radius: ${PUBLIC_RADIUS.panel}px;
+    box-shadow: ${PANEL_SHADOW};
+    padding: 20px;
+  }
+
+  .cocalc-compare-history-card-cocalc {
+    background: ${PUBLIC_COLORS.brandTint};
+    border-color: ${PUBLIC_COLORS.brand};
   }
 
   .cocalc-compare-table {
@@ -337,6 +438,12 @@ const COMPARE_PAGE_CSS = `
       grid-template-columns: minmax(0, 1fr);
     }
   }
+
+  @media (max-width: 900px) {
+    .cocalc-compare-history-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
 `;
 
 const HERO_ACTION_STYLE = {
@@ -355,8 +462,15 @@ export default function CompareFeaturePage({
     subject: "CoCalc fit evaluation",
     title: "Talk with CoCalc about fit",
   });
-  const sandboxChoices = getPublicCompareSections(config).filter(({ title }) =>
+  const sections = getPublicCompareSections(config);
+  const sandboxChoices = sections.filter(({ title }) =>
     title.startsWith("Choose "),
+  );
+  const historySection = sections.find(
+    ({ title }) => title === PUBLIC_COMPARE_HISTORY_TITLE,
+  );
+  const scaleSection = sections.find(
+    ({ title }) => title === PUBLIC_COMPARE_SCALE_TITLE,
   );
   const hasBuiltinTrustPage = !!builtinPolicyPath(config, "trust");
   const boundaryLinks = SANDBOX_BOUNDARY.links?.filter(
@@ -491,6 +605,10 @@ export default function CompareFeaturePage({
           </Flex>
         </Flex>
       </section>
+
+      {historySection ? (
+        <HistorySections history={historySection} scale={scaleSection} />
+      ) : null}
 
       <PublicSection ariaLabel="CoCalc compare decision checklist">
         <Title level={3} style={{ margin: 0 }}>
