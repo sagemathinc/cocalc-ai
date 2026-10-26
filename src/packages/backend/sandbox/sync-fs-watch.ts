@@ -19,6 +19,10 @@
  */
 import { createHash } from "node:crypto";
 import { unlinkSync } from "node:fs";
+import {
+  deferWalCheckpoints,
+  forgetWalCheckpoints,
+} from "../sqlite-checkpoint";
 import { DatabaseSync as Database } from "node:sqlite";
 import { DiffMatchPatch, compressPatch } from "@cocalc/util/dmp";
 import { tmpNameSync } from "tmp-promise";
@@ -103,9 +107,12 @@ export class SyncFsWatchStore {
     ensureContainingDirectoryExistsSync(this.dbPath);
     this.db = new Database(this.dbPath);
     this.init();
+    // Checkpoints fsync; keep them off the event loop.
+    deferWalCheckpoints(this.db, this.dbPath);
   }
 
   close(): void {
+    forgetWalCheckpoints(this.dbPath, this.db);
     this.db?.close();
     if (this.cleanupDb) {
       try {
@@ -125,6 +132,10 @@ export class SyncFsWatchStore {
     const bootstrap = () => {
       this.db.exec(`
         PRAGMA journal_mode=WAL;
+        -- NORMAL: commits do not fsync (the default FULL fsynced every
+        -- commit on the event loop). An OS crash or power loss can roll
+        -- back the last commits; the snapshots are re-derived from disk.
+        PRAGMA synchronous=NORMAL;
         PRAGMA busy_timeout=5000;
         CREATE TABLE IF NOT EXISTS files (
           path TEXT PRIMARY KEY,

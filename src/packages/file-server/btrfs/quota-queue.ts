@@ -3,6 +3,7 @@ import { exists } from "@cocalc/backend/misc/async-utils-node";
 import getLogger from "@cocalc/backend/logger";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { deferWalCheckpoints } from "@cocalc/backend/sqlite-checkpoint";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { btrfs, refusedByStorageWrapper } from "./util";
@@ -145,6 +146,8 @@ function ensureSqlite(): DatabaseSync {
   sqliteDb.exec("PRAGMA journal_mode=WAL");
   sqliteDb.exec("PRAGMA synchronous=NORMAL");
   sqliteDb.exec("PRAGMA busy_timeout=5000");
+  // Checkpoints fsync; keep them off the event loop.
+  deferWalCheckpoints(sqliteDb, filename);
   return sqliteDb;
 }
 

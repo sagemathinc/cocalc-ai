@@ -4,6 +4,10 @@ import { DatabaseSync } from "node:sqlite";
 import { performance } from "node:perf_hooks";
 import { data } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
+import {
+  deferWalCheckpoints,
+  forgetWalCheckpoints,
+} from "@cocalc/backend/sqlite-checkpoint";
 
 type Statement = {
   run: (...args: any[]) => any;
@@ -406,6 +410,8 @@ export function initAcpDatabase(
   db.exec("PRAGMA journal_mode=WAL");
   db.exec("PRAGMA synchronous=NORMAL");
   db.exec("PRAGMA busy_timeout=5000");
+  // Checkpoints fsync; keep them off the event loop.
+  deferWalCheckpoints(db, filename);
   return db;
 }
 
@@ -418,6 +424,7 @@ export function getAcpDatabase(): SqliteDatabase {
 
 export function closeAcpDatabase(): void {
   if (db != null) {
+    if (dbFilename != null) forgetWalCheckpoints(dbFilename, db);
     db.close();
     db = undefined;
     dbFilename = undefined;
