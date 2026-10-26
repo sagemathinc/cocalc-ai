@@ -359,7 +359,9 @@ import {
 } from "@cocalc/backend/chat-store/sqlite-offload";
 import {
   clearAcpWorkerHeartbeat,
+  clearAcpWorkerHeartbeatSync,
   recordAcpWorkerHeartbeat,
+  sweepStaleAcpWorkerHeartbeats,
   ensureAcpWorkerRunning,
   startAcpWorkerSupervisor,
 } from "./worker-manager";
@@ -7545,6 +7547,10 @@ export async function runDetachedAcpQueueWorker(
 ): Promise<void> {
   initializeAcpRuntime(client);
   acpExecutionOwnedByCurrentProcess = true;
+  // A worker stopped by a signal exits without reaching the cleanup below;
+  // remove its heartbeat file anyway, and those left by earlier workers.
+  process.once("exit", () => clearAcpWorkerHeartbeatSync(process.pid));
+  void sweepStaleAcpWorkerHeartbeats().catch(() => {});
   startAcpInterruptPoller();
   startAcpSteerPoller();
   if (typeof (client as any)?.waitUntilSignedIn === "function") {

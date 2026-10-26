@@ -913,7 +913,9 @@ HOST_OWNED_DATA_FILES = (
     "host-agent-state.json",
     "conat-router.log",
 )
-HOST_OWNED_SQLITE_RE = re.compile(r"^(sqlite\.db|sync-fs\.sqlite)(?:-(?:wal|shm))?$")
+HOST_OWNED_SQLITE_RE = re.compile(
+    r"^(sqlite\.db|sync-fs\.sqlite|sync-fs-snapshots\.sqlite)(?:-(?:wal|shm))?$"
+)
 ENV_ASSIGNMENT_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 PROJECT_IO_POLICY_HELPER = r'''#!/usr/bin/env python3

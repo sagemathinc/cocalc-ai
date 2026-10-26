@@ -105,7 +105,11 @@ import {
   runPrivilegedDelete,
 } from "./privileged-delete";
 
-import { SyncFsWatchStore } from "./sync-fs-watch";
+import {
+  SyncFsWatchStore,
+  carryOverFsHeads,
+  removeSnapshotStoreLater,
+} from "./sync-fs-watch";
 export { SyncFsWatchStore };
 import { SyncFsService } from "./sync-fs-service";
 import { runNativeFsTask } from "./native-fs-limit";
@@ -3411,11 +3415,30 @@ export class SandboxedFilesystem {
 
 // Shared watcher instance per process.
 // TODO: location below is TEMPORARY -- just need something stable for now
-const globalSyncFsService = new SyncFsService(
-  process.env.COCALC_TEST_MODE
-    ? new SyncFsWatchStore()
-    : new SyncFsWatchStore(join(data, "sync-fs.sqlite")),
-);
+// sync-fs.sqlite was the store before snapshots were pruned: it kept every
+// file ever opened (GBs on busy hosts). Start a new file instead of cleaning
+// it up in place, carry its small fs_heads cache over, and then delete it in
+// the background.
+const LEGACY_SYNC_FS_STORE_REMOVE_DELAY_MS = 10 * 60_000;
+const globalSyncFsStore = process.env.COCALC_TEST_MODE
+  ? new SyncFsWatchStore()
+  : new SyncFsWatchStore(join(data, "sync-fs-snapshots.sqlite"));
+const globalSyncFsService = new SyncFsService(globalSyncFsStore);
+if (!process.env.COCALC_TEST_MODE) {
+  const legacyStore = join(data, "sync-fs.sqlite");
+  // Only once fs_heads are safely carried over (or there is no old store):
+  // after a failure the old store stays, and the next start tries again.
+  void carryOverFsHeads(globalSyncFsStore, legacyStore)
+    .then(() =>
+      removeSnapshotStoreLater(
+        legacyStore,
+        LEGACY_SYNC_FS_STORE_REMOVE_DELAY_MS,
+      ),
+    )
+    .catch((err) => {
+      logger.warn("unable to carry sync-fs fs_heads over", { err: `${err}` });
+    });
+}
 globalSyncFsService.on("error", (err) => {
   logger.error("sync-fs-service error", err);
 });
