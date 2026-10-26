@@ -816,6 +816,96 @@ describeDb("network-bound external agents", () => {
     ).resolves.toMatchObject({ body: "Report attached." });
   });
 
+  test("a full inbox uploads nothing, and its last place goes to one send", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const first = await sent([file("a.txt", "a")]);
+      // A second send to the same inbox, reserved while it had room.
+      const secondBase = { ...first.base, attempt_id: randomUUID() };
+      const files = [file("b.txt", "b")];
+      const second = await store.reserve({
+        ...secondBase,
+        manifest: manifestOf(files),
+      });
+      const secondInput = {
+        ...secondBase,
+        body: "Second.",
+        attachments: files,
+        reservation_id: second.reservation_id,
+      };
+      // Then the inbox fills up to its last place.
+      await db.query(
+        `INSERT INTO agent_external_inbox
+         (message_id,attempt_id,account_id,installation_id,agent_network_id,
+          network_generation,source,body,expires_at)
+         SELECT gen_random_uuid(),gen_random_uuid(),$1,$2,$3,$4,'{}'::jsonb,'x',
+                now()+interval '1 day'
+         FROM generate_series(1,999)`,
+        [account, first.base.installation_id, network, generation],
+      );
+      objects.put.mockImplementationOnce(async (key: string, data: Buffer) => {
+        // The first send holds the last place while it uploads.
+        await expect(store.enqueue(secondInput)).rejects.toThrow(
+          "external_inbox_capacity",
+        );
+        await expect(
+          store.enqueue({
+            ...first.input,
+            attempt_id: randomUUID(),
+            attachments: undefined,
+            reservation_id: undefined,
+          }),
+        ).rejects.toThrow("external_inbox_capacity");
+        objects.objects.set(key, Buffer.from(data));
+      });
+      await store.enqueue(first.input);
+      // Full: nothing else is uploaded, and nothing more is reserved.
+      await expect(store.enqueue(secondInput)).rejects.toThrow(
+        "external_inbox_capacity",
+      );
+      expect(objects.put).toHaveBeenCalledTimes(1);
+      await expect(
+        store.reserve({
+          ...first.base,
+          attempt_id: randomUUID(),
+          manifest: manifestOf(files),
+        }),
+      ).rejects.toThrow("external_inbox_capacity");
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
+  test("a send without files cannot take an attempt reserved for files", async () => {
+    const objects = objectStore();
+    setExternalInboxObjectsForTesting(objects);
+    try {
+      const { installation, input } = await sent([file("a.txt", "a")]);
+      const plain = {
+        ...input,
+        attachments: undefined,
+        reservation_id: undefined,
+      };
+      await expect(store.enqueue(plain)).rejects.toThrow(
+        "external_inbox_idempotency_conflict",
+      );
+      objects.put.mockImplementationOnce(async (key: string, data: Buffer) => {
+        await expect(store.enqueue(plain)).rejects.toThrow(
+          "external_inbox_attachment_in_progress",
+        );
+        objects.objects.set(key, Buffer.from(data));
+      });
+      const message = await store.enqueue(input);
+      expect(message.attachments).toHaveLength(1);
+      expect(await store.inbox(account, installation.installation_id)).toEqual([
+        message,
+      ]);
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+    }
+  });
+
   test("a row holds its content in exactly one place", async () => {
     const { input } = await sent([file("a.txt", "x")]);
     const message = await store.enqueue(input);

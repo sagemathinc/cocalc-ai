@@ -42,6 +42,8 @@ import {
 const EXTERNAL_INBOX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 /** How long a reservation waits for its send. */
 const EXTERNAL_INBOX_RESERVATION_MS = 10 * 60 * 1000;
+/** Pending messages one installation's inbox may hold. */
+const EXTERNAL_INBOX_PENDING = 1000;
 /** How long a claimed reservation stays live while its send uploads. */
 const EXTERNAL_INBOX_UPLOAD_LEASE_MS = 10 * 60 * 1000;
 
@@ -511,7 +513,10 @@ export class ExternalAgentStore {
           manifest,
         );
         if (existing) return { existing };
-        if (!attachments.length) return {};
+        if (!attachments.length) {
+          await this.assertNotReserved(db, opts);
+          return {};
+        }
         const reservation = await this.reservationFor(db, opts);
         if (
           !reservation ||
@@ -524,6 +529,10 @@ export class ExternalAgentStore {
         // no second send of the attempt uploads meanwhile.
         if (reservation.claim_id != null)
           throw new Error("external_inbox_attachment_in_progress");
+        // A full inbox is refused before anything is uploaded; the claim
+        // then holds this send's place among its pending messages.
+        if ((await this.pendingLoad(db, opts)) >= EXTERNAL_INBOX_PENDING)
+          throw new Error("external_inbox_capacity");
         const claim_id = randomUUID();
         await db.query(
           `UPDATE agent_external_inbox_reservations
@@ -635,15 +644,11 @@ export class ExternalAgentStore {
           consumed.storage !== admitted.storage
         )
           throw new Error("external_inbox_attachment_unreserved");
-      }
-      const pending = (
-        await db.query(
-          `SELECT count(*) AS count FROM agent_external_inbox
-           WHERE account_id=$1 AND installation_id=$2 AND state='pending' AND expires_at>now()`,
-          [opts.account_id, opts.installation_id],
-        )
-      ).rows[0];
-      if (+pending.count >= 1000) throw new Error("external_inbox_capacity");
+      } else await this.assertNotReserved(db, opts);
+      // Other sends' claims count as pending messages (this one's was just
+      // consumed).
+      if ((await this.pendingLoad(db, opts)) >= EXTERNAL_INBOX_PENDING)
+        throw new Error("external_inbox_capacity");
       const row = (
         await db.query(
           `INSERT INTO agent_external_inbox
@@ -742,6 +747,9 @@ export class ExternalAgentStore {
           reservation_id: sent.message_id,
           expires_at: Date.now() + EXTERNAL_INBOX_RESERVATION_MS,
         };
+      // A full inbox takes no files (nor any other message).
+      if ((await this.pendingLoad(db, opts)) >= EXTERNAL_INBOX_PENDING)
+        throw new Error("external_inbox_capacity");
       const prior = await this.reservationFor(db, opts);
       if (prior) {
         const live = new Date(prior.expires_at).getTime() > Date.now();
@@ -913,6 +921,46 @@ export class ExternalAgentStore {
     if (!sameManifest(stored.get(existing.message_id) ?? [], manifest))
       throw new Error("external_inbox_idempotency_conflict");
     return this.publicInbox(existing, stored.get(existing.message_id));
+  }
+
+  /**
+   * How full one inbox is: its pending messages, and the sends claimed and
+   * uploading to it (each will become one).
+   */
+  private async pendingLoad(
+    db: PersonalAuthorityDb,
+    opts: { account_id: string; installation_id: string },
+  ): Promise<number> {
+    const row = (
+      await db.query(
+        `SELECT
+           (SELECT count(*) FROM agent_external_inbox
+            WHERE account_id=$1 AND installation_id=$2 AND state='pending'
+              AND expires_at>now()) AS pending,
+           (SELECT count(*) FROM agent_external_inbox_reservations
+            WHERE account_id=$1 AND installation_id=$2 AND claim_id IS NOT NULL
+              AND expires_at>now()) AS claimed`,
+        [opts.account_id, opts.installation_id],
+      )
+    ).rows[0];
+    return +row.pending + +row.claimed;
+  }
+
+  /**
+   * A send without files may not take an attempt reserved for files: while
+   * that send uploads it is in progress, and otherwise it is a conflict.
+   */
+  private async assertNotReserved(
+    db: PersonalAuthorityDb,
+    opts: { account_id: string; attempt_id: string },
+  ) {
+    const reservation = await this.reservationFor(db, opts);
+    if (reservation && new Date(reservation.expires_at).getTime() > Date.now())
+      throw new Error(
+        reservation.claim_id != null
+          ? "external_inbox_attachment_in_progress"
+          : "external_inbox_idempotency_conflict",
+      );
   }
 
   /** The reservation held for this attempt, if any (live or not). */
