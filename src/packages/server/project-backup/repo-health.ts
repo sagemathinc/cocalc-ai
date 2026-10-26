@@ -25,6 +25,7 @@ repository fails or the probes stop running:
 - healthy: otherwise.
 */
 
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,8 +42,11 @@ import {
 } from "./index";
 import {
   DETERMINISTIC_PROBE_ERROR_KINDS,
+  clearProjectBackupRepoProbeLeftover,
   ensureProjectBackupRepoProbeSchema,
+  listProjectBackupRepoProbeLeftovers,
   recordProjectBackupRepoProbe,
+  recordProjectBackupRepoProbeLeftover,
   type ProjectBackupRepoProbeErrorKind,
   type ProjectBackupRepoProbeResult,
 } from "./repo-probe-status";
@@ -203,6 +207,15 @@ export async function probeProjectBackupRepo(
         path: tempDir,
         err: `${err}`,
       });
+      await recordProjectBackupRepoProbeLeftover({
+        path: tempDir,
+        error: `${err}`.slice(0, MAX_ERROR_LENGTH),
+      }).catch((recordErr) =>
+        logger.error("unable to record a leftover probe profile", {
+          path: tempDir,
+          err: `${recordErr}`,
+        }),
+      );
       outcome = {
         result: "failed",
         error_kind: "cleanup_failed",
@@ -260,19 +273,23 @@ async function runRusticProbe({
 const PROFILE_PREFIX = "cocalc-backup-repo-probe-";
 // No probe takes this long, so an older profile directory is a leftover.
 const LEFTOVER_PROFILE_AGE_MS = 10 * 60 * 1000;
-const LEFTOVER_ALERT_SUBJECT =
-  "Project backup repository probe left credentials on disk";
 
 // Remove probe profiles that an earlier probe (maybe in a process that has
-// since restarted) failed to remove. Admins get an alert naming any that
-// still cannot be removed.
+// since restarted) failed to remove. Those that still cannot be removed are
+// recorded, which keeps admin health critical until they are gone.
 export async function removeLeftoverProbeProfiles(
   deps: ProbeDeps = {},
 ): Promise<{ removed: string[]; failed: string[] }> {
   const root = deps.tempRoot ?? tmpdir();
-  const now = (deps.now ?? (() => new Date()))().getTime();
+  const now = (deps.now ?? (() => new Date()))();
   const removed: string[] = [];
   const failed: string[] = [];
+  // Recorded leftovers that are gone (removed by hand, say) are resolved.
+  for (const { path } of await listProjectBackupRepoProbeLeftovers()) {
+    if (!existsSync(path)) {
+      await clearProjectBackupRepoProbeLeftover(path);
+    }
+  }
   let names: string[];
   try {
     names = await readdir(root);
@@ -284,12 +301,13 @@ export async function removeLeftoverProbeProfiles(
     const path = join(root, name);
     try {
       const { mtimeMs } = await stat(path);
-      if (now - mtimeMs < LEFTOVER_PROFILE_AGE_MS) continue;
+      if (now.getTime() - mtimeMs < LEFTOVER_PROFILE_AGE_MS) continue;
       await (
         deps.removeTempDir ??
         ((dir) => rm(dir, { recursive: true, force: true }))
       )(path);
       removed.push(path);
+      await clearProjectBackupRepoProbeLeftover(path);
     } catch (err) {
       logger.error(
         "unable to remove a leftover backup repository probe profile",
@@ -299,23 +317,16 @@ export async function removeLeftoverProbeProfiles(
         },
       );
       failed.push(path);
+      await recordProjectBackupRepoProbeLeftover({
+        path,
+        error: `${err}`.slice(0, MAX_ERROR_LENGTH),
+        seen_at: now,
+      });
     }
   }
   if (removed.length) {
     logger.warn("removed leftover backup repository probe profiles", {
       removed,
-    });
-  }
-  if (failed.length) {
-    await adminAlert({
-      subject: LEFTOVER_ALERT_SUBJECT,
-      body: [
-        "These temporary backup repository probe profiles hold repository passwords and storage keys, and could not be removed. Delete them on the bay:",
-        "",
-        ...failed.map((path) => `- ${path}`),
-      ].join("\n"),
-      dedupBySubject: true,
-      dedupMinutes: 24 * 60,
     });
   }
   return { removed, failed };
@@ -418,6 +429,8 @@ export interface ProjectBackupRepoHealth {
   ok: number;
   never_probed: number;
   problems: ProjectBackupRepoHealthProblem[];
+  // Probe profiles holding repository credentials that are still on disk.
+  leftover_profiles: { path: string; first_seen: string | null }[];
 }
 
 export type ProjectBackupRepoHealthLevel = "healthy" | "warning" | "critical";
@@ -457,6 +470,9 @@ export async function getProjectBackupRepoHealth({
     ok: 0,
     never_probed: 0,
     problems: [],
+    leftover_profiles: (await listProjectBackupRepoProbeLeftovers()).map(
+      (row) => ({ path: row.path, first_seen: iso(row.first_seen) }),
+    ),
   };
   const staleBefore = now.getTime() - PROBE_STALE_MS;
   for (const row of rows) {
@@ -491,7 +507,12 @@ export async function getProjectBackupRepoHealth({
 export function projectBackupRepoHealthLevel(
   health: ProjectBackupRepoHealth,
 ): ProjectBackupRepoHealthLevel {
-  if (health.problems.some((problem) => problem.critical)) return "critical";
+  if (
+    health.leftover_profiles.length > 0 ||
+    health.problems.some((problem) => problem.critical)
+  ) {
+    return "critical";
+  }
   if (health.problems.length > 0) return "warning";
   return "healthy";
 }
@@ -501,15 +522,7 @@ export function projectBackupRepoHealthSummary(
 ): string {
   const failing = health.problems.filter((p) => p.problem === "failing");
   const stale = health.problems.filter((p) => p.problem === "stale");
-  if (failing.length === 0 && stale.length === 0) {
-    if (health.repos === 0) {
-      return "No shared project backup repository to probe on this bay.";
-    }
-    if (health.never_probed === 0) {
-      return `All ${health.repos} shared project backup repositories open with their stored secret.`;
-    }
-    return `${health.ok} of ${health.repos} shared project backup repositories open with their stored secret; ${health.never_probed} new ${health.never_probed === 1 ? "one has" : "ones have"} not been probed yet.`;
-  }
+  const leftovers = health.leftover_profiles.length;
   const parts: string[] = [];
   if (failing.length) {
     parts.push(
@@ -521,17 +534,41 @@ export function projectBackupRepoHealthSummary(
       `${stale.length} ${stale.length === 1 ? "has" : "have"} not been probed for over two days`,
     );
   }
-  return `${parts.join(", and ")}; backups, restores and purges on ${health.problems.length === 1 ? "it" : "them"} may fail.`;
+  const repoProblems = parts.length
+    ? `${parts.join(", and ")}; backups, restores and purges on ${health.problems.length === 1 ? "it" : "them"} may fail.`
+    : "";
+  const leftoverProblem = leftovers
+    ? `${leftovers} temporary probe ${leftovers === 1 ? "profile" : "profiles"} holding repository credentials could not be removed from the bay.`
+    : "";
+  if (repoProblems || leftoverProblem) {
+    return [repoProblems, leftoverProblem].filter(Boolean).join(" ");
+  }
+  if (health.repos === 0) {
+    return "No shared project backup repository to probe on this bay.";
+  }
+  if (health.never_probed === 0) {
+    return `All ${health.repos} shared project backup repositories open with their stored secret.`;
+  }
+  return `${health.ok} of ${health.repos} shared project backup repositories open with their stored secret; ${health.never_probed} new ${health.never_probed === 1 ? "one has" : "ones have"} not been probed yet.`;
+}
+
+function problemDetail(problem: ProjectBackupRepoHealthProblem): string {
+  return problem.problem === "failing"
+    ? `${problem.repo_id} (${problem.region ?? "unknown region"}, ${problem.status ?? "active"}): ${problem.error_kind ?? "error"} since ${problem.failing_since ?? "unknown"}, ${problem.consecutive_failures} consecutive: ${problem.error ?? ""}`
+    : `${problem.repo_id} (${problem.region ?? "unknown region"}, ${problem.status ?? "active"}): last probed ${problem.last_probe_at ?? "never"}`;
+}
+
+function leftoverDetail(leftover: { path: string; first_seen: string | null }) {
+  return `${leftover.path}: holds repository credentials, could not be removed since ${leftover.first_seen ?? "unknown"}; delete it on the bay`;
 }
 
 export function projectBackupRepoHealthDetails(
   health: ProjectBackupRepoHealth,
 ): string[] {
-  return health.problems.map((problem) =>
-    problem.problem === "failing"
-      ? `${problem.repo_id} (${problem.region ?? "unknown region"}, ${problem.status ?? "active"}): ${problem.error_kind ?? "error"} since ${problem.failing_since ?? "unknown"}, ${problem.consecutive_failures} consecutive: ${problem.error ?? ""}`
-      : `${problem.repo_id} (${problem.region ?? "unknown region"}, ${problem.status ?? "active"}): last probed ${problem.last_probe_at ?? "never"}`,
-  );
+  return [
+    ...health.problems.map(problemDetail),
+    ...health.leftover_profiles.map(leftoverDetail),
+  ];
 }
 
 async function alertIfUnhealthy(health: ProjectBackupRepoHealth) {
@@ -541,9 +578,10 @@ async function alertIfUnhealthy(health: ProjectBackupRepoHealth) {
     body: [
       projectBackupRepoHealthSummary(health),
       "",
-      ...projectBackupRepoHealthDetails(health)
-        .filter((_, i) => health.problems[i].critical)
-        .map((line) => `- ${line}`),
+      ...health.problems
+        .filter((problem) => problem.critical)
+        .map((problem) => `- ${problemDetail(problem)}`),
+      ...health.leftover_profiles.map((l) => `- ${leftoverDetail(l)}`),
       "",
       "See `cocalc admin backup-shards` and admin health (backup-repos).",
     ].join("\n"),

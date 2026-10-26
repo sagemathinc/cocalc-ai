@@ -128,6 +128,9 @@ describe("project backup repository health probe", () => {
     await getPool()
       .query("DELETE FROM project_backup_repo_probes WHERE true")
       .catch(() => {});
+    await getPool()
+      .query("DELETE FROM project_backup_repo_probe_leftovers WHERE true")
+      .catch(() => {});
   });
 
   describe("probeProjectBackupRepo", () => {
@@ -216,7 +219,18 @@ describe("project backup repository health probe", () => {
       });
       expect(outcome.error).toContain(leftover);
       expect(outcome.error).toContain("holds the repository credentials");
+      // Recorded, so health stays critical whatever later probes report.
+      let health = await getProjectBackupRepoHealth();
+      expect(health.leftover_profiles.map((l) => l.path)).toEqual([leftover]);
+      expect(projectBackupRepoHealthLevel(health)).toBe("critical");
+      expect(projectBackupRepoHealthSummary(health)).toContain(
+        "1 temporary probe profile holding repository credentials could not be removed",
+      );
+      // Gone (here: removed by hand): the next sweep resolves it.
       await rm(leftover, { recursive: true, force: true });
+      await removeLeftoverProbeProfiles({ tempRoot: join(dir, "none") });
+      health = await getProjectBackupRepoHealth();
+      expect(health.leftover_profiles).toEqual([]);
     });
   });
 
@@ -256,7 +270,7 @@ describe("project backup repository health probe", () => {
     30000,
   );
 
-  it("removes leftover probe profiles, and alerts on those it cannot", async () => {
+  it("removes leftover probe profiles, and keeps health critical for those it cannot", async () => {
     const root = await mkdtemp(join(tmpdir(), "probe-root-"));
     try {
       const now = new Date();
@@ -277,24 +291,54 @@ describe("project backup repository health probe", () => {
       expect(existsSync(old)).toBe(false);
       expect(existsSync(young)).toBe(true);
       expect(existsSync(other)).toBe(true);
-      expect(adminAlert).not.toHaveBeenCalled();
+      expect((await getProjectBackupRepoHealth()).leftover_profiles).toEqual(
+        [],
+      );
 
+      // One that cannot be removed is recorded ...
       await utimes(young, hourAgo, hourAgo);
-      expect(
-        await removeLeftoverProbeProfiles({
-          tempRoot: root,
-          removeTempDir: async () => {
-            throw new Error("EBUSY");
-          },
-        }),
-      ).toEqual({ removed: [], failed: [young] });
-      expect(adminAlert).toHaveBeenCalledTimes(1);
-      expect(adminAlert.mock.calls[0][0]).toMatchObject({
-        subject: "Project backup repository probe left credentials on disk",
-        dedupBySubject: true,
+      // Only this one cannot be removed; the probes' own profiles can.
+      const stuck = {
+        tempRoot: root,
+        removeTempDir: async (path: string) => {
+          if (path === young) throw new Error("EBUSY");
+          await rm(path, { recursive: true, force: true });
+        },
+      };
+      expect(await removeLeftoverProbeProfiles(stuck)).toEqual({
+        removed: [],
+        failed: [young],
       });
+      const repo = await addRepo("active");
+      // ... and a successful probe of every repository does not hide it.
+      await runProjectBackupRepoHealthCheck({
+        ...stuck,
+        rusticPath,
+        staggerMs: 0,
+        loadToml: async () => toml("good"),
+      });
+      const health = await getProjectBackupRepoHealth();
+      expect(health.problems).toEqual([]);
+      expect(health.leftover_profiles.map((l) => l.path)).toEqual([young]);
+      expect(projectBackupRepoHealthLevel(health)).toBe("critical");
+      expect(adminAlert).toHaveBeenCalledTimes(1);
       expect(adminAlert.mock.calls[0][0].body).toContain(young);
       expect(adminAlert.mock.calls[0][0].body).not.toContain("s3-secret");
+      expect(
+        (
+          await getPool().query(
+            "SELECT last_result FROM project_backup_repo_probes WHERE repo_id=$1",
+            [repo],
+          )
+        ).rows[0].last_result,
+      ).toBe("ok");
+
+      // Once it can be removed, health recovers.
+      await removeLeftoverProbeProfiles({ tempRoot: root });
+      expect(existsSync(young)).toBe(false);
+      expect(
+        projectBackupRepoHealthLevel(await getProjectBackupRepoHealth()),
+      ).toBe("healthy");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

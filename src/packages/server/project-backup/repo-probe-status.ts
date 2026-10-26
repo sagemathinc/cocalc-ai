@@ -59,6 +59,16 @@ export async function ensureProjectBackupRepoProbeSchema(): Promise<void> {
         duration_ms INTEGER
       )`,
     )
+    .then(() =>
+      getPool().query(
+        `CREATE TABLE IF NOT EXISTS project_backup_repo_probe_leftovers (
+          path TEXT PRIMARY KEY,
+          first_seen TIMESTAMPTZ NOT NULL,
+          last_seen TIMESTAMPTZ NOT NULL,
+          error TEXT
+        )`,
+      ),
+    )
     .then(() => undefined)
     .catch((err) => {
       schemaReady = undefined;
@@ -116,4 +126,57 @@ export async function recordProjectBackupRepoProbe({
       duration_ms ?? null,
     ],
   );
+}
+
+// Temporary probe profiles (they hold a repository's password and storage
+// keys) that could not be removed. A row stays until the file is gone, so
+// admin health stays critical until then, whatever later probes report.
+export interface ProjectBackupRepoProbeLeftover {
+  path: string;
+  first_seen: Date;
+  last_seen: Date;
+  error: string | null;
+}
+
+export async function recordProjectBackupRepoProbeLeftover({
+  path,
+  error,
+  seen_at = new Date(),
+}: {
+  path: string;
+  error: string;
+  seen_at?: Date;
+}): Promise<void> {
+  await ensureProjectBackupRepoProbeSchema();
+  await getPool().query(
+    `INSERT INTO project_backup_repo_probe_leftovers
+       (path, first_seen, last_seen, error)
+     VALUES ($1, $2, $2, $3)
+     ON CONFLICT (path) DO UPDATE SET
+       last_seen = EXCLUDED.last_seen,
+       error = EXCLUDED.error`,
+    [path, seen_at, error],
+  );
+}
+
+export async function clearProjectBackupRepoProbeLeftover(
+  path: string,
+): Promise<void> {
+  await ensureProjectBackupRepoProbeSchema();
+  await getPool().query(
+    "DELETE FROM project_backup_repo_probe_leftovers WHERE path = $1",
+    [path],
+  );
+}
+
+export async function listProjectBackupRepoProbeLeftovers(): Promise<
+  ProjectBackupRepoProbeLeftover[]
+> {
+  await ensureProjectBackupRepoProbeSchema();
+  const { rows } = await getPool().query<ProjectBackupRepoProbeLeftover>(
+    `SELECT path, first_seen, last_seen, error
+       FROM project_backup_repo_probe_leftovers
+      ORDER BY first_seen ASC, path ASC`,
+  );
+  return rows;
 }

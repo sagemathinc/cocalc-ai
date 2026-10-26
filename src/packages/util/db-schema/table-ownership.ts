@@ -1215,6 +1215,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Bay-owned recovery-warning scan cursor and full-scan completion evidence. The cursor project is a traversal reference, not ownership authority.",
   }),
 
+  ...adHocEntries(["project_backup_repo_probe_leftovers"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    source: "server/project-backup/repo-probe-status.ts",
+    migrate_to_schema: true,
+    notes:
+      "Paths of temporary backup-repository probe profiles the probing bay could not remove from its own disk. Kept until the file is gone so admin health stays critical; holds paths and errors, never the credentials.",
+  }),
+
   ...adHocEntries(["project_backup_repo_probes"], {
     ownership: "seed-global",
     authority: "seed",
