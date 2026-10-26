@@ -16,6 +16,7 @@ import {
   PUBLIC_DISPLAY_FONT_FAMILY,
 } from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { fn, frac, math, mi, mn, mo, paren, space } from "./mathml";
 
 const appPath = (path: string) => joinUrlPath(appBasePath, path);
 
@@ -39,17 +40,18 @@ const CSS = `
 .hd-tab:hover { border-color:${C.brand}; }
 .hd-tab[aria-selected="true"] { background:${C.heading}; border-color:${C.heading}; color:${C.surface}; }
 .hd-panel { display:grid; grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr); border:1px solid ${C.border}; border-radius:16px; overflow:hidden; background:${C.surface}; box-shadow:0 30px 60px -34px color-mix(in srgb, ${C.shadowInk} 45%, transparent); text-align:left; }
+.hd-panel[hidden] { display:none; }
 .hd-ask { padding:clamp(20px,3vw,32px); background:${C.surfaceMuted}; border-right:1px solid ${C.border}; display:grid; gap:12px; align-content:start; }
 .hd-label { font:600 12px/1.2 ${PUBLIC_DISPLAY_FONT_FAMILY}; letter-spacing:.12em; text-transform:uppercase; color:${C.mutedText}; }
 .hd-prompt { font-size:19px; line-height:1.45; color:${C.heading}; }
 .hd-prompt math { font-size:1.05em; }
 .hd-file { display:inline-block; font:13px ui-monospace,Menlo,monospace; padding:1px 6px; border-radius:4px; background:${C.surface}; border:1px solid ${C.border}; }
 .hd-result { padding:clamp(20px,3vw,32px); display:grid; gap:12px; align-content:start; min-width:0; }
-.hd-agent { font-size:13px; font-weight:700; color:${C.brand}; }
+.hd-agent { font-size:13px; font-weight:700; color:${C.link}; }
 .hd-code { font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; background:${C.surfaceMuted}; border:1px solid ${C.border}; border-radius:8px; padding:10px 12px; white-space:pre; overflow-x:auto; color:${C.text}; }
 .hd-code .k { color:${C.codeDefinition}; }
-.hd-code .ok { color:#2f8f5b; }
-.hd-code .bad { color:#c0392b; }
+.hd-code .ok { color:${C.success}; }
+.hd-code .bad { color:${C.error}; }
 .hd-code .dim { color:${C.mutedText}; }
 .hd-math { font-size:22px; color:${C.heading}; padding:4px 0; }
 .hd-plot { width:100%; max-width:420px; height:auto; display:block; color:${C.text}; }
@@ -74,16 +76,45 @@ const CSS = `
 }
 `;
 
-// MathML, rendered by the browser itself (no script). Static strings: React's
-// types do not include the MathML elements.
-const PRIME2 = '<mi>y</mi><mo lspace="0" rspace="0">″</mo>';
-const PRIME1 = '<mi>y</mi><mo lspace="0" rspace="0">′</mo>';
-const SIN = '<mi>sin</mi><mo>⁡</mo><mspace width="0.17em"></mspace>';
-const at0 = (f: string) =>
-  `${f}<mo stretchy="false">(</mo><mn>0</mn><mo stretchy="false">)</mo>`;
-const ODE_MATHML = `<math><mrow>${PRIME2}<mo>+</mo><mi>y</mi><mo>=</mo>${SIN}<mn>2</mn><mi>t</mi></mrow></math>`;
-const INITIAL_MATHML = `<math><mrow>${at0("<mi>y</mi>")}<mo>=</mo><mn>0</mn><mo separator="true">,</mo><mspace width="0.4em"></mspace>${at0(PRIME1)}<mo>=</mo><mn>1</mn></mrow></math>`;
-const SOLUTION_MATHML = `<math display="block"><mrow><mi>y</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo><mo>=</mo><mfrac><mn>5</mn><mn>3</mn></mfrac>${SIN}<mi>t</mi><mo>−</mo><mfrac><mn>1</mn><mn>3</mn></mfrac>${SIN}<mn>2</mn><mi>t</mi></mrow></math>`;
+const y2 = () => [mi("y"), mo("″", { lspace: "0", rspace: "0" })];
+const y1 = () => [mi("y"), mo("′", { lspace: "0", rspace: "0" })];
+const ODE = math(
+  "inline",
+  ...y2(),
+  mo("+"),
+  mi("y"),
+  mo("="),
+  ...fn("sin"),
+  mn("2"),
+  mi("t"),
+);
+const INITIAL = math(
+  "inline",
+  mi("y"),
+  ...paren(mn("0")),
+  mo("="),
+  mn("0"),
+  mo(",", { separator: "true" }),
+  space("0.4em"),
+  ...y1(),
+  ...paren(mn("0")),
+  mo("="),
+  mn("1"),
+);
+const SOLUTION = math(
+  "block",
+  mi("y"),
+  ...paren(mi("t")),
+  mo("="),
+  frac(mn("5"), mn("3")),
+  ...fn("sin"),
+  mi("t"),
+  mo("−"),
+  frac(mn("1"), mn("3")),
+  ...fn("sin"),
+  mn("2"),
+  mi("t"),
+);
 
 // The solution on 0 <= t <= 4 pi, scaled into the plot box below (computed,
 // not drawn by hand).
@@ -133,10 +164,6 @@ function OdePlot() {
   );
 }
 
-function MathML({ markup }: { markup: string }) {
-  return <span dangerouslySetInnerHTML={{ __html: markup }} />;
-}
-
 const TASKS = [
   {
     id: "ode",
@@ -144,8 +171,7 @@ const TASKS = [
     agent: "Claude Code",
     ask: (
       <>
-        Solve <MathML markup={ODE_MATHML} /> with{" "}
-        <MathML markup={INITIAL_MATHML} />, check it, and plot it in{" "}
+        Solve {ODE} with {INITIAL}, check it, and plot it in{" "}
         <span className="hd-file">ode.ipynb</span>.
       </>
     ),
@@ -156,9 +182,7 @@ const TASKS = [
           <span className="k">desolve</span>(diff(y,t,2) + y == sin(2*t),
           {"\n        "}y, ics=[0,0,1])
         </div>
-        <div className="hd-math">
-          <MathML markup={SOLUTION_MATHML} />
-        </div>
+        <div className="hd-math">{SOLUTION}</div>
         <OdePlot />
         <p className="hd-done">
           Solved in SageMath, checked by substituting back, and plotted in the
@@ -277,7 +301,6 @@ function Demo() {
       select(TASKS.length - 1);
     }
   };
-  const task = TASKS[selected];
   return (
     <section className="hd-demo" aria-label="Examples of work in a project">
       <div
@@ -305,23 +328,28 @@ function Demo() {
           </button>
         ))}
       </div>
-      <div
-        className="hd-panel"
-        role="tabpanel"
-        id={`hd-panel-${task.id}`}
-        aria-labelledby={`hd-tab-${task.id}`}
-      >
-        <div className="hd-ask">
-          <span className="hd-label">You ask</span>
-          <p className="hd-prompt">{task.ask}</p>
+      {TASKS.map((t, i) => (
+        <div
+          key={t.id}
+          className="hd-panel"
+          role="tabpanel"
+          id={`hd-panel-${t.id}`}
+          aria-labelledby={`hd-tab-${t.id}`}
+          hidden={i !== selected}
+          tabIndex={0}
+        >
+          <div className="hd-ask">
+            <span className="hd-label">You ask</span>
+            <p className="hd-prompt">{t.ask}</p>
+          </div>
+          <div className="hd-result">
+            <span className="hd-label">
+              <span className="hd-agent">{t.agent}</span> in your project
+            </span>
+            {t.result}
+          </div>
         </div>
-        <div className="hd-result">
-          <span className="hd-label">
-            <span className="hd-agent">{task.agent}</span> in your project
-          </span>
-          {task.result}
-        </div>
-      </div>
+      ))}
       <p className="hd-note">
         Illustrations of typical requests. Each runs in a CoCalc project, on
         files your collaborators can open.

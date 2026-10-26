@@ -6,8 +6,8 @@
 // Home page version "math" (util/public-home-experiment.ts): CoCalc as the
 // place where mathematics, science and teaching happen, with Codex and Claude
 // Code working inside the same project. The hero is a rendered project view
-// (a Sage notebook beside an agent conversation) with real MathML, so the
-// math is sharp at any size and needs no script.
+// (a Sage notebook beside an agent conversation) with real MathML
+// (./mathml), so the math is sharp at any size and needs no script.
 
 import { Button } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -16,6 +16,7 @@ import {
   PUBLIC_DISPLAY_FONT_FAMILY,
 } from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { frac, m, math, mi, mn, mo, space, sup } from "./mathml";
 
 const appPath = (path: string) => joinUrlPath(appBasePath, path);
 
@@ -29,7 +30,7 @@ const CSS = `
 .hv-math h3 { font-size:20px; line-height:1.3; font-weight:600; }
 .hv-math p { margin:0; }
 .hv-math a:focus-visible { outline:3px solid ${C.link}; outline-offset:3px; border-radius:4px; }
-.hv-eyebrow { font:600 13px/1.2 ${PUBLIC_DISPLAY_FONT_FAMILY}; letter-spacing:.14em; text-transform:uppercase; color:${C.brand}; }
+.hv-eyebrow { font:600 13px/1.2 ${PUBLIC_DISPLAY_FONT_FAMILY}; letter-spacing:.14em; text-transform:uppercase; color:${C.link}; }
 .hv-hero { display:grid; gap:40px; align-items:center; padding:clamp(28px,5vw,64px) 0 8px; }
 .hv-hero-copy { display:grid; gap:22px; }
 .hv-lead { font-size:19px; max-width:56ch; color:${C.mutedText}; }
@@ -58,7 +59,7 @@ const CSS = `
 .hv-msg { border-radius:12px; padding:10px 12px; font-size:14px; line-height:1.5; }
 .hv-msg-user { background:${C.surface}; border:1px solid ${C.border}; justify-self:end; max-width:92%; }
 .hv-msg-agent { background:${C.surface}; border:1px solid ${C.brandSubtle}; }
-.hv-who { display:block; font-size:12px; font-weight:700; color:${C.brand}; margin-bottom:4px; }
+.hv-who { display:block; font-size:12px; font-weight:700; color:${C.link}; margin-bottom:4px; }
 .hv-msg math[display="block"] { margin:8px 0 6px; font-size:1.2em; }
 .hv-file { display:inline-block; font:12px ui-monospace,Menlo,monospace; padding:1px 6px; border-radius:4px; background:${C.surfaceMuted}; border:1px solid ${C.border}; }
 .hv-caption { font-size:13px; color:${C.mutedText}; margin-top:10px; text-align:center; }
@@ -75,7 +76,7 @@ const CSS = `
 .hv-band p { color:rgba(255,255,255,.86); }
 .hv-band .hv-card { background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.22); color:#fff; }
 .hv-band .hv-card h3 { color:#fff; }
-.hv-band .hv-card .hv-who, .hv-band .hv-eyebrow { color:#fbb635; }
+.hv-band .hv-card .hv-who, .hv-band .hv-eyebrow { color:#ffe2a6; }
 .hv-show { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); gap:clamp(24px,4vw,56px); align-items:center; }
 .hv-show:nth-child(even) .hv-show-text { order:2; }
 .hv-show-text { display:grid; gap:14px; }
@@ -110,20 +111,25 @@ const CSS = `
 const PARTIAL_SUMS =
   "28.0,120.3 35.3,81.6 42.6,64.4 49.8,54.7 57.1,48.6 64.4,44.3 71.7,41.1 79.0,38.7 86.3,36.8 93.5,35.2 100.8,34.0 108.1,32.9 115.4,32.0 122.7,31.2 129.9,30.5 137.2,29.9 144.5,29.4 151.8,28.9 159.1,28.4 166.4,28.1 173.6,27.7 180.9,27.4 188.2,27.1 195.5,26.8 202.8,26.6 210.1,26.4 217.3,26.1 224.6,25.9 231.9,25.8 239.2,25.6 246.5,25.4 253.7,25.3 261.0,25.1 268.3,25.0 275.6,24.9 282.9,24.8 290.2,24.6 297.4,24.5 304.7,24.4 312.0,24.3";
 
-// MathML, rendered by the browser itself (no script). Static strings: React's
-// types do not include the MathML elements.
-const BASEL_SUM_MATHML =
-  '<math display="block"><mrow><munderover><mo>∑</mo><mrow><mi>n</mi><mo>=</mo><mn>1</mn></mrow><mi>∞</mi></munderover><mfrac><mn>1</mn><msup><mi>n</mi><mn>2</mn></msup></mfrac><mo>=</mo><mfrac><msup><mi>π</mi><mn>2</mn></msup><mn>6</mn></mfrac></mrow></math>';
-const SIXTH_PI_SQUARED_MATHML =
-  '<math><mrow><mfrac><mn>1</mn><mn>6</mn></mfrac><mspace width="0.15em"></mspace><msup><mi>π</mi><mn>2</mn></msup></mrow></math>';
-
-function MathML({ markup }: { markup: string }) {
-  return <span dangerouslySetInnerHTML={{ __html: markup }} />;
-}
-
-function BaselSum() {
-  return <MathML markup={BASEL_SUM_MATHML} />;
-}
+const BASEL_SUM = math(
+  "block",
+  m(
+    "munderover",
+    null,
+    mo("∑"),
+    m("mrow", null, mi("n"), mo("="), mn("1")),
+    mi("∞"),
+  ),
+  frac(mn("1"), sup(mi("n"), mn("2"))),
+  mo("="),
+  frac(sup(mi("π"), mn("2")), mn("6")),
+);
+const SIXTH_PI_SQUARED = math(
+  "inline",
+  frac(mn("1"), mn("6")),
+  space("0.15em"),
+  sup(mi("π"), mn("2")),
+);
 
 function ProjectView() {
   return (
@@ -141,7 +147,7 @@ function ProjectView() {
           <span className="hv-tab">notes.md</span>
           <span className="hv-presence">
             <span style={{ background: "#2A5AA6" }}>AL</span>
-            <span style={{ background: "#bf7b00" }}>MK</span>
+            <span style={{ background: "#8a5a00" }}>MK</span>
           </span>
         </div>
         <div className="hv-panes" aria-hidden="true">
@@ -155,9 +161,7 @@ function ProjectView() {
             </div>
             <div className="hv-cell">
               <span className="hv-prompt">Out[1]:</span>
-              <div className="hv-out">
-                <MathML markup={SIXTH_PI_SQUARED_MATHML} />
-              </div>
+              <div className="hv-out">{SIXTH_PI_SQUARED}</div>
             </div>
             <div className="hv-cell">
               <span className="hv-prompt">In [2]:</span>
@@ -192,7 +196,7 @@ function ProjectView() {
                   stroke="#bf7b00"
                   strokeDasharray="5 4"
                 />
-                <text x="252" y="15" fontSize="10" fill="#bf7b00">
+                <text x="252" y="15" fontSize="10" style={{ fill: C.warning }}>
                   π²/6 ≈ 1.645
                 </text>
                 <polyline
@@ -241,7 +245,7 @@ function ProjectView() {
                 paper.tex
               </span>{" "}
               and checked it in Sage. The partial sums approach
-              <BaselSum />
+              {BASEL_SUM}
               Review the diff, or compare versions in TimeTravel.
             </div>
           </div>

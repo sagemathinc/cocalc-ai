@@ -58,7 +58,11 @@ import {
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { prefetchSignedInShell } from "./prefetch-signed-in";
-import { usePublicHomeSignupVariant } from "../home-experiment";
+import {
+  followWithPublicHomeVariant,
+  type PublicHomeSignupVariant,
+  usePublicHomeSignupVariant,
+} from "../home-experiment";
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -548,12 +552,15 @@ function SsoButton({
   href,
   cookieBannerEnabled,
   cookieConsentReady,
+  homeVariant,
 }: {
   children: ReactNode;
   disabled?: boolean;
   href: string;
   cookieBannerEnabled: boolean;
   cookieConsentReady: boolean;
+  /** A sign-up link: wait for the Home experiment visit before leaving. */
+  homeVariant?: PublicHomeSignupVariant;
 }) {
   return (
     <a
@@ -576,6 +583,7 @@ function SsoButton({
           event.preventDefault();
           return;
         }
+        if (homeVariant) followWithPublicHomeVariant(event, homeVariant);
         void prefetchSignedInShell();
       }}
     >
@@ -1089,7 +1097,7 @@ export function PublicEmailFirstForm({
         body: {
           email: normalizedEmailAddress(email),
           onboarding_intent: onboardingIntent,
-          home_variant: homeVariant(),
+          home_variant: await homeVariant.settled(),
           ...(view === "sign-up" && registrationToken.trim()
             ? { registration_token: registrationToken.trim() }
             : {}),
@@ -1221,6 +1229,7 @@ export function PublicEmailFirstForm({
                     (requiresToken && !registrationToken.trim()))
                 }
                 cookieBannerEnabled={cookieBannerEnabled}
+                homeVariant={homeVariant}
                 cookieConsentReady={cookieConsentReady}
                 href={ssoLoginHref("google", {
                   target: resolveAuthRedirectPath(redirectToPath),
@@ -1268,6 +1277,9 @@ export function PublicEmailFirstForm({
                   home_variant: homeVariant(),
                 })}
                 style={LINK_STYLE}
+                onClick={(event) =>
+                  followWithPublicHomeVariant(event, homeVariant)
+                }
               >
                 Continue with {requiredSso.display}
               </a>
@@ -2184,7 +2196,7 @@ export function PublicSignUpForm({
   cookieBannerEnabled?: boolean;
   /** Set when shown inside the email-first form, which already counts the
    * Home experiment visit: use its version, and don't count again. */
-  homeVariant?: () => string | undefined;
+  homeVariant?: PublicHomeSignupVariant;
   initialEmail?: string;
   initialRegistrationToken?: string;
   initialSSOStrategies?: PublicSsoStrategy[];
@@ -2354,7 +2366,7 @@ export function PublicSignUpForm({
           terms: true,
           marketing_consent: false,
           onboardingIntent,
-          homeVariant: homeVariant(),
+          homeVariant: await homeVariant.settled(),
           email,
           password,
           displayName,
@@ -2475,6 +2487,7 @@ export function PublicSignUpForm({
           ) : null}
           <SsoButton
             disabled={!canGoogleSignUp}
+            homeVariant={homeVariant}
             cookieBannerEnabled={cookieBannerEnabled}
             cookieConsentReady={cookieConsentReady}
             href={ssoLoginHref("google", {

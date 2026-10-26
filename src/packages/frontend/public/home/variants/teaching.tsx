@@ -19,7 +19,6 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 const appPath = (path: string) => joinUrlPath(appBasePath, path);
 
 const C = PUBLIC_COLORS;
-const GREEN = "#2f8f5b";
 
 const CSS = `
 .ht { color:${C.text}; font-size:17px; line-height:1.6; }
@@ -29,7 +28,7 @@ const CSS = `
 .ht h3 { font-size:20px; line-height:1.3; font-weight:600; }
 .ht p { margin:0; }
 .ht a:focus-visible { outline:3px solid ${C.link}; outline-offset:3px; border-radius:4px; }
-.ht-eyebrow { font:600 13px/1.2 ${PUBLIC_DISPLAY_FONT_FAMILY}; letter-spacing:.14em; text-transform:uppercase; color:${GREEN}; }
+.ht-eyebrow { font:600 13px/1.2 ${PUBLIC_DISPLAY_FONT_FAMILY}; letter-spacing:.14em; text-transform:uppercase; color:${C.success}; }
 .ht-hero { display:grid; gap:40px; align-items:center; padding:clamp(28px,5vw,64px) 0 8px; }
 .ht-copy { display:grid; gap:22px; }
 .ht-lead { font-size:19px; max-width:56ch; color:${C.mutedText}; }
@@ -47,7 +46,7 @@ const CSS = `
 .ht-table td { padding:10px 12px; border-bottom:1px solid ${C.border}; vertical-align:middle; }
 .ht-table td:first-child { font-weight:600; color:${C.heading}; }
 .ht-bar { position:relative; height:6px; border-radius:3px; background:${C.surfaceMuted}; min-width:56px; overflow:hidden; }
-.ht-bar i { position:absolute; inset:0 auto 0 0; background:${GREEN}; border-radius:3px; }
+.ht-bar i { position:absolute; inset:0 auto 0 0; background:${C.success}; border-radius:3px; }
 .ht-num { font-variant-numeric:tabular-nums; color:${C.mutedText}; font-size:12px; white-space:nowrap; }
 .ht-step { display:grid; gap:4px; }
 .ht-lower { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); border-top:1px solid ${C.border}; }
@@ -55,9 +54,9 @@ const CSS = `
 .ht-code { font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; background:${C.surfaceMuted}; border:1px solid ${C.border}; border-radius:6px; padding:6px 8px; white-space:pre; overflow:hidden; }
 .ht-code .k { color:${C.codeDefinition}; }
 .ht-pass { display:flex; gap:8px; align-items:center; font-size:13px; }
-.ht-pass b { color:${GREEN}; }
+.ht-pass b { color:${C.success}; }
 .ht-note { padding:14px 16px; background:color-mix(in srgb, ${C.brandTint} 45%, ${C.surface}); display:grid; gap:8px; align-content:start; min-width:0; }
-.ht-who { font-size:12px; font-weight:700; color:${C.brand}; }
+.ht-who { font-size:12px; font-weight:700; color:${C.link}; }
 .ht-file { display:inline-block; font:12px ui-monospace,Menlo,monospace; padding:1px 6px; border-radius:4px; background:${C.surface}; border:1px solid ${C.border}; }
 .ht-caption { font-size:13px; color:${C.mutedText}; margin-top:10px; text-align:center; }
 
@@ -67,12 +66,12 @@ const CSS = `
 .ht-head p { font-size:18px; color:${C.mutedText}; }
 .ht-semester { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; counter-reset:week; }
 .ht-semester li { border:1px solid ${C.border}; border-radius:14px; background:${C.surface}; padding:22px; display:grid; gap:8px; align-content:start; counter-increment:week; }
-.ht-semester li::before { content:counter(week); width:32px; height:32px; border-radius:50%; display:grid; place-items:center; font:600 15px ${PUBLIC_DISPLAY_FONT_FAMILY}; color:#fff; background:${GREEN}; }
+.ht-semester li::before { content:counter(week); width:32px; height:32px; border-radius:50%; display:grid; place-items:center; font:600 15px ${PUBLIC_DISPLAY_FONT_FAMILY}; color:${C.surface}; background:${C.success}; }
 .ht-semester p { color:${C.mutedText}; font-size:16px; }
 .ht-band { background:${C.heroBackground}; color:#fff; border-radius:20px; padding:clamp(28px,4vw,52px); display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:clamp(24px,4vw,56px); align-items:center; }
 .ht-band h2 { color:#fff; }
 .ht-band p, .ht-band li { color:rgba(255,255,255,.86); }
-.ht-band .ht-eyebrow { color:#fbb635; }
+.ht-band .ht-eyebrow { color:#ffe2a6; }
 .ht-band ul { margin:0; padding-left:20px; display:grid; gap:8px; }
 .ht-band figure { margin:0; }
 .ht-band img { border-color:rgba(255,255,255,.22); }
@@ -85,7 +84,7 @@ const CSS = `
 .ht-card { border:1px solid ${C.border}; border-radius:12px; background:${C.surface}; padding:24px; display:grid; gap:10px; align-content:start; }
 .ht-card p { color:${C.mutedText}; font-size:16px; }
 .ht-link { font-weight:600; }
-.ht-final { margin-top:clamp(64px,8vw,104px); border-radius:20px; background:color-mix(in srgb, ${GREEN} 10%, ${C.surface}); border:1px solid color-mix(in srgb, ${GREEN} 30%, ${C.border}); padding:clamp(24px,4vw,44px); display:grid; grid-template-columns:minmax(0,1fr) auto; gap:24px; align-items:center; }
+.ht-final { margin-top:clamp(64px,8vw,104px); border-radius:20px; background:color-mix(in srgb, ${C.success} 10%, ${C.surface}); border:1px solid color-mix(in srgb, ${C.success} 30%, ${C.border}); padding:clamp(24px,4vw,44px); display:grid; grid-template-columns:minmax(0,1fr) auto; gap:24px; align-items:center; }
 .ht-final h2 { line-height:1.15; }
 .ht-final p { color:${C.mutedText}; margin-top:10px; }
 @media (min-width:980px) { .ht-hero { grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:clamp(36px,4vw,64px); } }

@@ -97,18 +97,49 @@ describe.each(PUBLIC_HOME_VARIANTS.filter((id) => id !== "default"))(
   },
 );
 
+describe.each(["math", "demo"])("the %s version's formulas", (id) => {
+  it("are MathML elements, built without HTML strings", () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { container } = renderVersion(id);
+      const formulas = Array.from(container.querySelectorAll("math"));
+      expect(formulas.length).toBeGreaterThan(0);
+      for (const formula of formulas) {
+        expect(formula.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+        expect(formula.querySelector("mfrac, msup, mi")?.namespaceURI).toBe(
+          "http://www.w3.org/1998/Math/MathML",
+        );
+      }
+      // no React warnings (keys, unknown props)
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+});
+
 describe("the demo version's examples", () => {
   it("switches examples by click and by arrow keys, one panel at a time", () => {
     renderVersion("demo");
     const tabs = screen.getAllByRole("tab");
     expect(tabs).toHaveLength(4);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
-    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
-    expect(screen.getByRole("tabpanel").textContent).toContain("SageMath");
+    // Every tab controls a panel that exists; only the selected one shows.
+    for (const tab of tabs) {
+      const panel = document.getElementById(
+        tab.getAttribute("aria-controls") ?? "",
+      );
+      expect(panel?.getAttribute("role")).toBe("tabpanel");
+      expect(panel?.getAttribute("aria-labelledby")).toBe(tab.id);
+    }
+    const shown = () => screen.getAllByRole("tabpanel"); // hidden ones excluded
+    expect(shown()).toHaveLength(1);
+    expect(shown()[0].textContent).toContain("SageMath");
 
     fireEvent.click(tabs[1]);
     expect(tabs[1].getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tabpanel").textContent).toContain("thesis.tex");
+    expect(shown()).toHaveLength(1);
+    expect(shown()[0].textContent).toContain("thesis.tex");
 
     fireEvent.keyDown(tabs[1], { key: "ArrowRight" });
     expect(tabs[2].getAttribute("aria-selected")).toBe("true");

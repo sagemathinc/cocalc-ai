@@ -9,6 +9,7 @@ import {
   choosePublicHomeVariant,
   publicHomeExperimentAllowed,
   publicHomeVariantFromSearch,
+  followWithPublicHomeVariant,
   sendPublicHomeExperimentEvent,
   usePublicHomeSignupVariant,
 } from "../home-experiment";
@@ -181,5 +182,75 @@ describe("usePublicHomeSignupVariant", () => {
     });
     expect(result.current()).toBeUndefined();
     window.history.replaceState(null, "", "/");
+  });
+});
+
+describe("a sign-up that leaves before the visit is stored", () => {
+  function deferredFetch() {
+    let resolve!: (value: { ok: boolean }) => void;
+    const fetch = jest.fn(
+      () =>
+        new Promise<{ ok: boolean }>((next) => {
+          resolve = next;
+        }),
+    );
+    (window as any).fetch = fetch;
+    return { fetch, resolve: (ok: boolean) => resolve({ ok }) };
+  }
+
+  it("waits for the visit, then sends the version", async () => {
+    window.history.replaceState(null, "", "/auth/sign-up?home=math");
+    const visit = deferredFetch();
+    const { result } = renderHook(() => usePublicHomeSignupVariant(false));
+    expect(result.current.pending()).toBe(true);
+    expect(result.current()).toBeUndefined();
+    const settled = result.current.settled();
+    await act(async () => visit.resolve(true));
+    expect(await settled).toBe("math");
+    expect(result.current.pending()).toBe(false);
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("sends no version when the visit was not stored", async () => {
+    window.history.replaceState(null, "", "/auth/sign-up?home=math");
+    const visit = deferredFetch();
+    const { result } = renderHook(() => usePublicHomeSignupVariant(false));
+    const settled = result.current.settled();
+    await act(async () => visit.resolve(false));
+    expect(await settled).toBeUndefined();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("holds a single sign-on click until the visit is stored, then follows with the version", async () => {
+    let finish!: (variant: string | undefined) => void;
+    const homeVariant = Object.assign(() => undefined, {
+      pending: () => true,
+      settled: () =>
+        new Promise<string | undefined>((next) => {
+          finish = next;
+        }),
+    });
+    const navigate = jest.fn();
+    const event = {
+      preventDefault: jest.fn(),
+      currentTarget: { href: "https://cocalc.test/auth/google?terms=true" },
+    };
+    followWithPublicHomeVariant(event, homeVariant, navigate);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    await act(async () => finish("math"));
+    expect(navigate).toHaveBeenCalledWith(
+      "https://cocalc.test/auth/google?terms=true&home_variant=math",
+    );
+  });
+
+  it("lets a click through when nothing is pending", () => {
+    const homeVariant = Object.assign(() => "math", {
+      pending: () => false,
+      settled: async () => "math",
+    });
+    const event = { preventDefault: jest.fn(), currentTarget: { href: "x" } };
+    followWithPublicHomeVariant(event, homeVariant);
+    expect(event.preventDefault).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,7 @@
 // (util/public-home-experiment.ts). Nothing is stored in the browser: the
 // version is chosen per page view and travels only in the sign-up link.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   hasCategoryConsent,
   onConsentChange,
@@ -99,17 +99,29 @@ export async function sendPublicHomeExperimentEvent(
   }
 }
 
+/** The version for a sign-up, as the sign-up forms use it:
+ * - call it for the version to put on a link or request now (undefined until
+ *   the server stored the visit);
+ * - `pending()` is true while that request is in flight;
+ * - `settled()` waits for it (at most SETTLE_TIMEOUT_MS), for actions that
+ *   leave the page or submit, so a fast click doesn't lose the version. */
+export type PublicHomeSignupVariant = (() => string | undefined) & {
+  pending: () => boolean;
+  settled: () => Promise<string | undefined>;
+};
+
+export const SETTLE_TIMEOUT_MS = 2000;
+
 /** For the sign-up forms: when the page was reached from a Home version,
- * count the visit (now, or once the visitor consents), and return a getter
- * for the version to send with the sign-up, which the server counts when the
- * account exists. The getter returns the version only after the server
- * stored the visit, so the counts stay a funnel (views, then visits, then
- * sign-ups); it is state, so links built during render (single sign-on) pick
- * the version up as soon as that happens. */
+ * count the visit (now, or once the visitor consents), and give the version
+ * to send with the sign-up, which the server counts when the account exists.
+ * The version is given only after the server stored the visit, so the counts
+ * stay a funnel (views, then visits, then sign-ups); it is state, so links
+ * built during render (single sign-on) pick it up as soon as that happens. */
 export function usePublicHomeSignupVariant(
   cookieBannerEnabled: boolean,
   enabled = true,
-): () => string | undefined {
+): PublicHomeSignupVariant {
   const variant = useMemo(
     () => (enabled ? publicHomeVariantFromSearch() : undefined),
     [enabled],
@@ -124,7 +136,8 @@ export function usePublicHomeSignupVariant(
       setAllowed(publicHomeExperimentAllowed(cookieBannerEnabled)),
     );
   }, [cookieBannerEnabled]);
-  const sentCta = useRef(false);
+  const visit = useRef<Promise<boolean> | undefined>(undefined);
+  const inFlight = useRef(false);
   const [counted, setCounted] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -134,14 +147,46 @@ export function usePublicHomeSignupVariant(
     };
   }, []);
   useEffect(() => {
-    if (!variant || !allowed || sentCta.current) return;
-    sentCta.current = true;
-    void sendPublicHomeExperimentEvent(variant, "cta").then((ok) => {
+    if (!variant || !allowed || visit.current) return;
+    inFlight.current = true;
+    visit.current = sendPublicHomeExperimentEvent(variant, "cta").then((ok) => {
+      inFlight.current = false;
       if (ok && mounted.current) setCounted(true);
+      return ok;
     });
   }, [variant, allowed]);
-  return useCallback(
-    () => (variant && allowed && counted ? variant : undefined),
-    [variant, allowed, counted],
-  );
+  return useMemo(() => {
+    const now = () => (variant && allowed && counted ? variant : undefined);
+    return Object.assign(now, {
+      pending: () => inFlight.current,
+      settled: async () => {
+        if (!variant || !allowed || !visit.current) return now();
+        const ok = await Promise.race([
+          visit.current,
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), SETTLE_TIMEOUT_MS),
+          ),
+        ]);
+        return ok ? variant : undefined;
+      },
+    });
+  }, [variant, allowed, counted]);
+}
+
+/** For a link that leaves for single sign-on: while the visit is still being
+ * recorded, wait for it, then follow the link with the version added. */
+export function followWithPublicHomeVariant(
+  event: { preventDefault: () => void; currentTarget: { href?: string } },
+  homeVariant: PublicHomeSignupVariant,
+  navigate: (url: string) => void = (url) => window.location.assign(url),
+): void {
+  if (!homeVariant.pending()) return;
+  const href = event.currentTarget.href;
+  if (!href || typeof window === "undefined") return;
+  event.preventDefault();
+  void homeVariant.settled().then((variant) => {
+    const url = new URL(href, window.location.href);
+    if (variant) url.searchParams.set("home_variant", variant);
+    navigate(url.toString());
+  });
 }

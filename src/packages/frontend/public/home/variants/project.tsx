@@ -61,12 +61,12 @@ const CSS = `
 .hp-head { display:grid; gap:14px; max-width:760px; }
 .hp-head h2 { font-size:clamp(28px,3.2vw,42px); line-height:1.12; letter-spacing:-.02em; font-weight:620; }
 .hp-head p { font-size:18px; color:${C.mutedText}; }
-.hp-head .hp-eyebrow { color:${C.brand}; }
+.hp-head .hp-eyebrow { color:${C.link}; }
 .hp-tiles { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
 .hp-tile { border:1px solid ${C.border}; border-radius:14px; background:${C.surface}; padding:22px; display:grid; gap:8px; align-content:start; }
 .hp-tile h3 { font-size:19px; }
 .hp-tile p { color:${C.mutedText}; font-size:16px; }
-.hp-glyph { font:600 15px ui-monospace,Menlo,monospace; color:${C.brand}; background:${C.brandTint}; border-radius:8px; width:40px; height:40px; display:grid; place-items:center; }
+.hp-glyph { font:600 15px ui-monospace,Menlo,monospace; color:${C.link}; background:${C.brandTint}; border-radius:8px; width:40px; height:40px; display:grid; place-items:center; }
 .hp-split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); gap:clamp(24px,4vw,56px); align-items:center; }
 .hp-split ul { margin:0; padding-left:20px; display:grid; gap:6px; }
 .hp-split img { width:100%; height:auto; display:block; border-radius:12px; border:1px solid ${C.border}; box-shadow:0 18px 40px -26px color-mix(in srgb, ${C.shadowInk} 50%, transparent); }
@@ -107,7 +107,7 @@ const FILES = [
 const EVENTS = [
   {
     who: "CC",
-    color: "#7a5af8",
+    color: "#5b3fd6",
     text: "Claude Code ran the tests and fixed app.py",
     when: "now",
   },
@@ -119,13 +119,13 @@ const EVENTS = [
   },
   {
     who: "CX",
-    color: "#0f9d74",
+    color: "#0b7558",
     text: "Codex re-ran analysis.ipynb",
     when: "12 min",
   },
   {
     who: "MK",
-    color: "#bf7b00",
+    color: "#8a5a00",
     text: "Mo restored a section with TimeTravel",
     when: "1 h",
   },
