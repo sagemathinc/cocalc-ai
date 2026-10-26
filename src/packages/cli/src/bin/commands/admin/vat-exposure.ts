@@ -16,6 +16,8 @@ export interface VatExposureReport {
   no_stripe_customer: number;
   affected_count: number;
   affected: VatExposureRow[];
+  paid_without_check_count: number;
+  paid_without_check: VatExposureReportPage["paid_without_check"];
   stripe_error_count: number;
   stripe_errors: VatExposureReportPage["stripe_errors"];
   // Set when the time ran out before every active membership was checked.
@@ -38,6 +40,8 @@ export async function collectVatExposureReport({
     no_stripe_customer: 0,
     affected_count: 0,
     affected: [],
+    paid_without_check_count: 0,
+    paid_without_check: [],
     stripe_error_count: 0,
     stripe_errors: [],
     incomplete: false,
@@ -49,6 +53,7 @@ export async function collectVatExposureReport({
     report.checked += result.checked;
     report.no_stripe_customer += result.no_stripe_customer;
     report.affected.push(...result.affected);
+    report.paid_without_check.push(...(result.paid_without_check ?? []));
     report.stripe_errors.push(...result.stripe_errors);
     const next = result.next_after_subscription_id;
     if (next == null) break;
@@ -63,14 +68,27 @@ export async function collectVatExposureReport({
     }
   }
   report.affected_count = report.affected.length;
+  report.paid_without_check_count = report.paid_without_check.length;
   report.stripe_error_count = report.stripe_errors.length;
   return report;
+}
+
+function rowLine(row: VatExposureRow, last: string): string {
+  return [
+    row.account_id,
+    row.subscription_id,
+    row.current_period_end,
+    row.reason,
+    row.country,
+    last,
+  ].join("\t");
 }
 
 export function formatVatExposureReport(report: VatExposureReport): string {
   const lines = [
     `Active memberships checked: ${report.checked}`,
     `Would be refused at renewal: ${report.affected_count}`,
+    `Would be refused if charged, but paid now without a card (balance or below minimum): ${report.paid_without_check_count}`,
     `Stripe errors: ${report.stripe_error_count}`,
     `Without a Stripe customer (not refused): ${report.no_stripe_customer}`,
   ];
@@ -82,18 +100,21 @@ export function formatVatExposureReport(report: VatExposureReport): string {
   if (report.affected.length > 0) {
     lines.push(
       "",
-      "account_id\tsubscription_id\tnext_renewal\treason\tcountry",
+      "Would be refused at renewal:",
+      "account_id\tsubscription_id\tnext_renewal\treason\tcountry\tstripe_customer",
     );
     for (const row of report.affected) {
-      lines.push(
-        [
-          row.account_id,
-          row.subscription_id,
-          row.current_period_end,
-          row.reason,
-          row.country,
-        ].join("\t"),
-      );
+      lines.push(rowLine(row, row.stripe_customer));
+    }
+  }
+  if (report.paid_without_check.length > 0) {
+    lines.push(
+      "",
+      "Paid now without a card (refused if charged):",
+      "account_id\tsubscription_id\tnext_renewal\treason\tcountry\tfunding",
+    );
+    for (const row of report.paid_without_check) {
+      lines.push(rowLine(row, row.funding));
     }
   }
   if (report.stripe_errors.length > 0) {

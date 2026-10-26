@@ -19,6 +19,7 @@ const row = (subscription_id: number) => ({
   current_period_end: "2026-11-01T00:00:00.000Z",
   reason: "missing",
   country: "DE",
+  stripe_customer: "stored" as const,
 });
 
 const emptyPage = (
@@ -27,6 +28,7 @@ const emptyPage = (
   checked: 1,
   no_stripe_customer: 0,
   affected: [],
+  paid_without_check: [],
   stripe_errors: [],
   next_after_subscription_id,
 });
@@ -37,6 +39,7 @@ test("vat-exposure reads every page and adds up the totals", async () => {
       checked: 2,
       no_stripe_customer: 1,
       affected: [row(1)],
+      paid_without_check: [{ ...row(5), funding: "balance" }],
       stripe_errors: [],
       next_after_subscription_id: 2,
     },
@@ -44,6 +47,7 @@ test("vat-exposure reads every page and adds up the totals", async () => {
       checked: 2,
       no_stripe_customer: 0,
       affected: [row(4)],
+      paid_without_check: [],
       stripe_errors: [
         { account_id: "account-3", subscription_id: 3, error: "boom" },
       ],
@@ -62,13 +66,21 @@ test("vat-exposure reads every page and adds up the totals", async () => {
   assert.equal(report.checked, 4);
   assert.equal(report.no_stripe_customer, 1);
   assert.equal(report.affected_count, 2);
+  assert.equal(report.paid_without_check_count, 1);
   assert.equal(report.stripe_error_count, 1);
   assert.equal(report.incomplete, false);
   assert.equal(report.next_after_subscription_id, null);
   const text = formatVatExposureReport(report);
   assert.match(text, /Would be refused at renewal: 2/);
   assert.ok(
-    text.includes("account-4\t4\t2026-11-01T00:00:00.000Z\tmissing\tDE"),
+    text.includes(
+      "account-4\t4\t2026-11-01T00:00:00.000Z\tmissing\tDE\tstored",
+    ),
+  );
+  assert.ok(
+    text.includes(
+      "account-5\t5\t2026-11-01T00:00:00.000Z\tmissing\tDE\tbalance",
+    ),
   );
   assert.ok(text.includes("account-3\t3\tboom"));
 });

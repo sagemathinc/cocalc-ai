@@ -11,6 +11,7 @@ import {
   createTestAccount,
   createTestMembershipSubscription,
 } from "./test-data";
+import createCredit from "./create-credit";
 import { vatExposureReportPage } from "./vat-exposure-report";
 
 beforeAll(async () => {
@@ -20,7 +21,11 @@ beforeAll(async () => {
 afterAll(after);
 
 // A Stripe client that only reads: any other call fails the test.
-function fakeStripe(customers: Record<string, any>) {
+// byAccount: Stripe customers found by their account_id metadata.
+function fakeStripe(
+  customers: Record<string, any>,
+  byAccount: Record<string, string> = {},
+) {
   const customer = (id: string) => {
     const c = customers[id];
     if (c instanceof Error) throw c;
@@ -37,11 +42,16 @@ function fakeStripe(customers: Record<string, any>) {
       }),
       listSources: async () => ({ data: [], has_more: false }),
       retrieveSource: async () => ({}),
+      search: async ({ query }: { query: string }) => {
+        const account_id = /:'([^']+)'/.exec(query)?.[1] ?? "";
+        const id = byAccount[account_id];
+        return { data: id ? [{ id }] : [] };
+      },
     },
   };
 }
 
-async function membership(stripe_customer_id: string | null) {
+async function membership(stripe_customer_id: string | null, cost = 10) {
   const account_id = uuid();
   await createTestAccount(account_id);
   if (stripe_customer_id) {
@@ -52,7 +62,7 @@ async function membership(stripe_customer_id: string | null) {
   }
   const { subscription_id } = await createTestMembershipSubscription(
     account_id,
-    { start: dayjs().toDate(), end: dayjs().add(1, "month").toDate() },
+    { start: dayjs().toDate(), end: dayjs().add(1, "month").toDate(), cost },
   );
   return { account_id, subscription_id };
 }
@@ -152,6 +162,61 @@ describe("VAT exposure report", () => {
     // nothing recorded, nobody notified
     expect(await count("business_tax_id_refusals")).toBe(refusalsBefore);
     expect(await count("business_tax_id_notices")).toBe(noticesBefore);
+  });
+
+  it("finds a Stripe customer the renewal would recover by its account metadata, without storing it", async () => {
+    await getPool().query("DELETE FROM subscriptions");
+    const lost = await membership(null);
+    const none = await membership(null);
+    const stripe = fakeStripe(
+      { cus_recovered: { address: { country: "DE" }, tax_ids: { data: [] } } },
+      { [lost.account_id]: "cus_recovered" },
+    );
+
+    const page = await vatExposureReportPage({
+      stripe,
+      customer_interval_ms: 0,
+    });
+
+    expect(page.affected).toEqual([
+      expect.objectContaining({
+        subscription_id: lost.subscription_id,
+        reason: "missing",
+        stripe_customer: "recovered",
+      }),
+    ]);
+    expect(page.no_stripe_customer).toBe(1);
+    const { rows } = await getPool().query(
+      "SELECT stripe_customer_id FROM accounts WHERE account_id=ANY($1)",
+      [[lost.account_id, none.account_id]],
+    );
+    expect(rows.map((row) => row.stripe_customer_id)).toEqual([null, null]);
+  });
+
+  it("lists renewals paid without a card (balance or below minimum) separately", async () => {
+    await getPool().query("DELETE FROM subscriptions");
+    const card = await membership("cus_de", 10);
+    const balance = await membership("cus_de", 10);
+    await createCredit({ account_id: balance.account_id, amount: 20 });
+    const tiny = await membership("cus_de", 1);
+    const stripe = fakeStripe({
+      cus_de: { address: { country: "DE" }, tax_ids: { data: [] } },
+    });
+
+    const page = await vatExposureReportPage({
+      stripe,
+      customer_interval_ms: 0,
+    });
+
+    expect(page.affected.map((row) => row.subscription_id)).toEqual([
+      card.subscription_id,
+    ]);
+    expect(
+      page.paid_without_check.map((row) => [row.subscription_id, row.funding]),
+    ).toEqual([
+      [balance.subscription_id, "balance"],
+      [tiny.subscription_id, "below-minimum"],
+    ]);
   });
 
   it("skips canceled subscriptions and continues from a cursor", async () => {

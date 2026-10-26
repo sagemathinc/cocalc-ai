@@ -65,15 +65,26 @@ export interface VatExposureRow {
   // "card-country" (no billing address, and an EU/UK card).
   reason: string;
   country: string;
+  // "stored": the account's Stripe customer; "recovered": none is stored, and
+  // the renewal would recover this one by its account_id metadata.
+  stripe_customer: "stored" | "recovered";
 }
 
 // One page of the VAT exposure report: pass next_after_subscription_id back
 // to continue; null means every active membership was checked.
 export interface VatExposureReportPage {
   checked: number;
-  // Checked, but with no Stripe customer (a renewal would not be refused).
+  // Checked, but with no Stripe customer, stored or recoverable (a renewal
+  // would create one without an address or cards, which the check accepts).
   no_stripe_customer: number;
+  // Would be refused when the renewal is charged through Stripe.
   affected: VatExposureRow[];
+  // Would be refused if charged, but right now the renewal would be paid
+  // without a card payment (below the minimum, or covered by the account
+  // balance), so the check would not run. That changes if the balance does.
+  paid_without_check: (VatExposureRow & {
+    funding: "below-minimum" | "balance";
+  })[];
   stripe_errors: {
     account_id: string;
     subscription_id: number;

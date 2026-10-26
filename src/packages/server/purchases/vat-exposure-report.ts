@@ -7,11 +7,14 @@
 Which active personal memberships the EU/UK business tax ID check would refuse
 at their next renewal, so admins can contact those customers before then.
 
-Read only: it reads the subscriptions, each account's existing Stripe customer
-id and the Stripe customer (with its tax IDs and, if needed, its cards). It
-records no refusals, sends no notices, creates no Stripe customers and writes
-nothing to Stripe. The decision is decideBusinessTaxIdForPurchase, the same
-function the check itself uses at renewal.
+Like a renewal, it finds the account's Stripe customer (stored, or else by
+its account_id metadata, as getStripeCustomerId recovers it), predicts how the
+renewal would be paid (predictRenewalFunding: below the minimum or covered by
+the balance means no card payment, so no check) and decides with
+decideBusinessTaxIdForPurchase, the same function the check itself uses.
+
+Read only: it records no refusals, sends no notices, stores no recovered
+customer ids, creates no Stripe customers and only reads from Stripe.
 
 Stripe calls are paced, and each call checks subscriptions for a bounded time
 and returns a cursor, so the report is read page by page.
@@ -26,6 +29,8 @@ import type {
 import getConn from "@cocalc/server/stripe/connection";
 import { billingAccountsTable } from "./billing-account";
 import { decideBusinessTaxIdForPurchase } from "./stripe/business-tax-id-gate";
+import { predictRenewalFunding } from "./stripe/create-subscription-payment";
+import { searchStripeCustomerIdByAccountMetadata } from "./stripe/util";
 
 // At most this long checking subscriptions per call (the call returns a cursor
 // for the rest). With the per-customer cap below, a call stays under the 30 s
@@ -42,6 +47,7 @@ interface Candidate {
   subscription_id: number;
   account_id: string;
   current_period_end: Date;
+  amount: string;
   stripe_customer_id: string | null;
 }
 
@@ -69,6 +75,50 @@ function shortError(err: unknown): string {
   return text.slice(0, 200);
 }
 
+// One subscription: undefined if it has no Stripe customer, stored or
+// recoverable; otherwise how its renewal would be paid and, if the check would
+// refuse it, the row.
+async function checkCandidate(
+  stripe,
+  candidate: Candidate,
+): Promise<
+  | {
+      funding: "below-minimum" | "balance" | "card";
+      row?: VatExposureRow;
+    }
+  | undefined
+> {
+  const stored = `${candidate.stripe_customer_id ?? ""}`.trim();
+  const customer =
+    stored ||
+    (await searchStripeCustomerIdByAccountMetadata(
+      stripe,
+      candidate.account_id,
+    ));
+  if (!customer) return;
+  const funding = await predictRenewalFunding({
+    account_id: candidate.account_id,
+    amount: candidate.amount,
+  });
+  const { refusal } = await decideBusinessTaxIdForPurchase({
+    stripe,
+    customer,
+    path: SUBSCRIPTION_RENEWAL,
+  });
+  if (refusal == null) return { funding };
+  return {
+    funding,
+    row: {
+      account_id: candidate.account_id,
+      subscription_id: candidate.subscription_id,
+      current_period_end: new Date(candidate.current_period_end).toISOString(),
+      reason: refusal.reason,
+      country: refusal.status.country,
+      stripe_customer: stored ? "stored" : "recovered",
+    },
+  };
+}
+
 export async function vatExposureReportPage({
   after_subscription_id = 0,
   page_ms = VAT_EXPOSURE_PAGE_MS,
@@ -91,9 +141,13 @@ export async function vatExposureReportPage({
   // Active personal memberships, the ones the renewal worker renews.
   const { rows: candidates } = await getPool().query<Candidate>(
     `SELECT s.id AS subscription_id, s.account_id, s.current_period_end,
-            b.stripe_customer_id
+            COALESCE(a.amount, s.cost)::text AS amount, b.stripe_customer_id
        FROM subscriptions s
        LEFT JOIN ${billingAccountsTable()} b ON b.account_id=s.account_id
+       LEFT JOIN subscription_renewal_attempts a
+         ON a.subscription_id=s.id
+        AND a.period_end=s.current_period_end
+        AND a.state IN ('scheduled','processing')
       WHERE s.metadata->>'type'='membership'
         AND s.status='active'
         AND s.id > $1
@@ -103,6 +157,7 @@ export async function vatExposureReportPage({
   );
   stripe ??= await getConn();
   const affected: VatExposureRow[] = [];
+  const paid_without_check: VatExposureReportPage["paid_without_check"] = [];
   const stripe_errors: VatExposureReportPage["stripe_errors"] = [];
   let checked = 0;
   let no_stripe_customer = 0;
@@ -112,35 +167,22 @@ export async function vatExposureReportPage({
     if (checked > 0 && Date.now() >= deadline) break;
     last = candidate.subscription_id;
     checked += 1;
-    const customer = `${candidate.stripe_customer_id ?? ""}`.trim();
-    if (!customer) {
-      // A renewal would create a customer without an address or cards, which
-      // the check accepts.
-      no_stripe_customer += 1;
-      continue;
-    }
     const wait = lastCall + customer_interval_ms - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     lastCall = Date.now();
     try {
-      const { refusal } = await withTimeout(
-        decideBusinessTaxIdForPurchase({
-          stripe,
-          customer,
-          path: SUBSCRIPTION_RENEWAL,
-        }),
+      const result = await withTimeout(
+        checkCandidate(stripe, candidate),
         Math.min(customer_timeout_ms, VAT_EXPOSURE_CUSTOMER_TIMEOUT_MS),
       );
-      if (refusal != null) {
-        affected.push({
-          account_id: candidate.account_id,
-          subscription_id: candidate.subscription_id,
-          current_period_end: new Date(
-            candidate.current_period_end,
-          ).toISOString(),
-          reason: refusal.reason,
-          country: refusal.status.country,
-        });
+      if (result == null) {
+        no_stripe_customer += 1;
+      } else if (result.row != null) {
+        if (result.funding === "card") {
+          affected.push(result.row);
+        } else {
+          paid_without_check.push({ ...result.row, funding: result.funding });
+        }
       }
     } catch (err) {
       stripe_errors.push({
@@ -155,6 +197,7 @@ export async function vatExposureReportPage({
     checked,
     no_stripe_customer,
     affected,
+    paid_without_check,
     stripe_errors,
     next_after_subscription_id: done ? null : (last ?? after),
   };

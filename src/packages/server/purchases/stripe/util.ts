@@ -147,18 +147,31 @@ function stripeSearchString(value: string): string {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
+// The Stripe customer that carries this account_id in its metadata, if any.
+// Read only; throws if Stripe cannot be searched.
+export async function searchStripeCustomerIdByAccountMetadata(
+  stripe,
+  account_id: string,
+): Promise<string | undefined> {
+  const result = await stripe.customers.search({
+    query: `metadata['account_id']:${stripeSearchString(account_id)}`,
+    limit: 1,
+  });
+  const customer = result.data.find((customer) => !customer.deleted);
+  const id = `${customer?.id ?? ""}`.trim();
+  return id || undefined;
+}
+
 async function findStripeCustomerIdByAccountMetadata(
   account_id: string,
   client: PoolClient,
 ): Promise<string | undefined> {
   const stripe = await getConn();
   try {
-    const result = await stripe.customers.search({
-      query: `metadata['account_id']:${stripeSearchString(account_id)}`,
-      limit: 1,
-    });
-    const customer = result.data.find((customer) => !customer.deleted);
-    const id = `${customer?.id ?? ""}`.trim();
+    const id = await searchStripeCustomerIdByAccountMetadata(
+      stripe,
+      account_id,
+    );
     if (!id) {
       return;
     }

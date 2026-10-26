@@ -102,6 +102,33 @@ export async function hasOpenPaygPurchases({
   return rows[0]?.open === true;
 }
 
+// How a renewal of this amount would be paid if it ran now, read only: below
+// the minimum or covered by the spendable balance (with balance-funded renewals
+// on), it is paid without a card payment, so the business tax ID check does
+// not run; otherwise ("card") it is charged through Stripe. This mirrors the
+// payNow cases of prepareRenewalFunding below; keep them in step.
+export async function predictRenewalFunding({
+  account_id,
+  amount,
+}: {
+  account_id: string;
+  amount: MoneyValue;
+}): Promise<"below-minimum" | "balance" | "card"> {
+  const amountValue = toDecimal(amount);
+  if (amountValue.lte(MIN_SUBSCRIPTION_AMOUNT)) {
+    return "below-minimum";
+  }
+  if (await useBalanceTowardSubscriptions(account_id)) {
+    const balance = toDecimal(
+      await getSpendableBalance({ account_id, noSave: true }),
+    );
+    if (balance.gte(amountValue)) {
+      return "balance";
+    }
+  }
+  return "card";
+}
+
 async function prepareRenewalFunding({
   account_id,
   amount,
