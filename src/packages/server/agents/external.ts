@@ -1,7 +1,10 @@
 import type { AgentRpcControlApi } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createAgentRpcControlClient } from "@cocalc/conat/inter-bay/agent-rpc";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
-import type { ExternalAgentEnqueueOptions } from "@cocalc/conat/agents/external";
+import type {
+  ExternalAgentEnqueueOptions,
+  ExternalAgentReservationOptions,
+} from "@cocalc/conat/agents/external";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
@@ -70,6 +73,18 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
       ),
     };
   }
+  if (opts.action === "reserve-attachments") {
+    if (home_bay_id !== getConfiguredBayId())
+      throw new Error("external inbox requires account home");
+    const { action: _action, home_bay_id: _home, ...reservation } = opts;
+    return { reservation: await externalStore().reserve(reservation) };
+  }
+  if (opts.action === "release-attachments") {
+    if (home_bay_id !== getConfiguredBayId())
+      throw new Error("external inbox requires account home");
+    const { action: _action, home_bay_id: _home, ...release } = opts;
+    return { released: await externalStore().release(release) };
+  }
   if (opts.action === "enrollment-status") {
     if (home_bay_id !== getConfiguredBayId())
       throw new Error("external enrollment requires account home");
@@ -96,6 +111,41 @@ export async function enqueueExternalAgentMessage(
   if (!("message" in result))
     throw new Error("invalid external inbox response");
   return result.message;
+}
+
+/** Reserves an external inbox's room for an attempt's files, at its home. */
+export async function reserveExternalAgentAttachments(
+  opts: ExternalAgentReservationOptions,
+) {
+  const home_bay_id = await home(opts.account_id);
+  const result = await control(home_bay_id).external({
+    ...opts,
+    action: "reserve-attachments",
+    home_bay_id,
+  });
+  if (!("reservation" in result))
+    throw new Error("invalid external inbox response");
+  return result.reservation;
+}
+
+/** The sender gives up a reservation (cancel-attachments). */
+export async function releaseExternalAgentAttachments(opts: {
+  account_id: string;
+  installation_id: string;
+  attempt_id: string;
+  reservation_id: string;
+  source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
+  source_account_id: string;
+}) {
+  const home_bay_id = await home(opts.account_id);
+  const result = await control(home_bay_id).external({
+    ...opts,
+    action: "release-attachments",
+    home_bay_id,
+  });
+  if (!("released" in result))
+    throw new Error("invalid external inbox response");
+  return result.released;
 }
 
 /** For the sender: what became of its message to an external inbox. */

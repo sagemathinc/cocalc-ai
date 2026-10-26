@@ -1,3 +1,4 @@
+import type { AgentSnapshot, AgentSnapshotMetadata } from "./attachments";
 import { requireUuid } from "./protocol";
 
 export const EXTERNAL_AGENT_TOKEN_PREFIX = "cocalc_external_agent_v1.";
@@ -47,6 +48,16 @@ export interface ExternalAgentInboxMessage {
   /** Listed with include_acknowledged only: whether it was acknowledged. */
   state?: "pending" | "acknowledged";
   acknowledged_at?: string;
+  /** The files sent with it, in order; fetch each with inbox-attachment. */
+  attachments?: AgentSnapshotMetadata[];
+}
+
+/** One attachment of an inbox message, with its content. */
+export interface ExternalAgentInboxAttachment extends AgentSnapshot {
+  message_id: string;
+  index: number;
+  /** How many attachments the message has. */
+  count: number;
 }
 
 /** What became of a message sent to an external inbox (for its sender). */
@@ -86,6 +97,22 @@ export type ExternalAgentControlRequest =
       source: import("./rpc").AgentRpcSource;
       /** The sender's authenticated account (with source, who sent it). */
       source_account_id: string;
+    }
+  | ({
+      /** Admit files before their bytes: see ExternalAgentReservationOptions. */
+      action: "reserve-attachments";
+      home_bay_id: string;
+    } & ExternalAgentReservationOptions)
+  | {
+      /** The sender gives up a reservation it holds (cancel-attachments). */
+      action: "release-attachments";
+      account_id: string;
+      home_bay_id: string;
+      installation_id: string;
+      attempt_id: string;
+      reservation_id: string;
+      source: import("./rpc").AgentRpcSource;
+      source_account_id: string;
     };
 export type ExternalAgentControlResult =
   | { message: ExternalAgentInboxMessage }
@@ -93,7 +120,32 @@ export type ExternalAgentControlResult =
       challenge: { label: string; secret_hash: string; expires_at: string };
     }
   | { installation: ExternalAgentInstallation | null }
-  | { delivery: ExternalAgentDelivery | null };
+  | { delivery: ExternalAgentDelivery | null }
+  | { reservation: ExternalAgentReservation }
+  | { released: boolean };
+
+/**
+ * A reservation of an inbox's room for one attempt's files, made at the
+ * account's home before any bytes move (prepare-attachments), bound to the
+ * sender, target, network generation, attempt and manifest. The send that
+ * carries the files must name it; storing the message consumes it.
+ */
+export interface ExternalAgentReservationOptions {
+  account_id: string;
+  installation_id: string;
+  attempt_id: string;
+  agent_network_id: string;
+  network_generation: string;
+  source: import("./rpc").AgentRpcSource;
+  source_account_id: string;
+  manifest: AgentSnapshotMetadata[];
+}
+
+export interface ExternalAgentReservation {
+  reservation_id: string;
+  /** ms since the epoch */
+  expires_at: number;
+}
 
 /** Authorized, bounded inbox delivery over the sealed inter-bay control API. */
 export interface ExternalAgentEnqueueOptions {
@@ -108,6 +160,10 @@ export interface ExternalAgentEnqueueOptions {
    * inspected. */
   source_account_id?: string;
   body: string;
+  /** Files sent with it (at most 16 and 32 MiB, as to any network member). */
+  attachments?: AgentSnapshot[];
+  /** Required with attachments: the reservation made for them. */
+  reservation_id?: string;
 }
 
 export function externalAgentSubject(

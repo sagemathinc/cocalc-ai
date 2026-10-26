@@ -102,4 +102,47 @@ describe("blob storage config", () => {
       "blob_storage_backend is r2",
     );
   });
+
+  it("gives the R2 credentials whenever they are set, whatever the backend", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      blob_storage_backend: "postgres",
+      r2_account_id: "account",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "staging",
+    });
+    const { resolveBlobR2Auth, resolveBlobStorageConfig } =
+      await import("./config");
+    await expect(resolveBlobStorageConfig()).resolves.toEqual({
+      backend: "postgres",
+      activeBackend: "postgres",
+    });
+    await expect(resolveBlobR2Auth()).resolves.toMatchObject({
+      endpoint: "https://account.r2.cloudflarestorage.com",
+      bucket: "staging-blobs",
+    });
+    getServerSettingsMock.mockResolvedValue({ r2_account_id: "account" });
+    await expect(resolveBlobR2Auth()).resolves.toBeUndefined();
+  });
+
+  it("finds the site's R2 credentials when the environment overrides only the backend", async () => {
+    process.env.COCALC_BLOB_STORAGE_BACKEND = "postgres";
+    getServerSettingsMock.mockResolvedValue({
+      blob_storage_backend: "r2",
+      r2_account_id: "account",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "staging",
+    });
+    const { resolveBlobR2Auth, resolveBlobStorageConfig } =
+      await import("./config");
+    await expect(resolveBlobStorageConfig()).resolves.toEqual({
+      backend: "postgres",
+      activeBackend: "postgres",
+    });
+    await expect(resolveBlobR2Auth()).resolves.toMatchObject({
+      bucket: "staging-blobs",
+      accessKey: "access",
+    });
+  });
 });
