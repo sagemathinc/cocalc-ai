@@ -40,6 +40,7 @@ import type {
 import { buildLaunchpadRestRusticRepoConfig } from "@cocalc/server/launchpad/rest-repo";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
+import { ensureProjectBackupRepoProbeSchema } from "./repo-probe-status";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
@@ -228,6 +229,19 @@ export interface ProjectBackupShardAdminRepoInfo {
   available_project_slots: number;
   created: string | null;
   updated: string | null;
+  probe?: ProjectBackupShardAdminRepoProbe | null;
+}
+
+// The last health probe of a shared repository: does its config open with
+// the stored secret? null until the first probe.
+export interface ProjectBackupShardAdminRepoProbe {
+  last_probe_at: string | null;
+  result: string | null;
+  error_kind: string | null;
+  error: string | null;
+  last_ok_at: string | null;
+  failing_since: string | null;
+  consecutive_failures: number;
 }
 
 export interface ProjectBackupShardAdminRegionInfo {
@@ -254,7 +268,7 @@ export interface ProjectBackupShardAdminStatus {
 let projectBackupRepoSchemaReady: Promise<void> | undefined;
 let projectBackupIndexSchemaReady: Promise<void> | undefined;
 
-async function ensureProjectBackupRepoSchema(): Promise<void> {
+export async function ensureProjectBackupRepoSchema(): Promise<void> {
   if (!projectBackupRepoSchemaReady) {
     projectBackupRepoSchemaReady = (async () => {
       await pool().query(`
@@ -1999,6 +2013,11 @@ async function buildBackupConfigFromRepo({
   };
 }
 
+// An attached bay uses the seed bay's repositories (and the seed probes them).
+export function projectBackupReposAreSeedManaged(): boolean {
+  return shouldUseSeedManagedProjectBackups();
+}
+
 function shouldUseSeedManagedProjectBackups(): boolean {
   const cluster = getClusterConfig();
   return (
@@ -2481,6 +2500,7 @@ export async function getProjectBackupShardAdminStatus({
   region?: string | null;
 } = {}): Promise<ProjectBackupShardAdminStatus> {
   await ensureProjectBackupRepoSchema();
+  await ensureProjectBackupRepoProbeSchema();
   const normalizedRegion = region ? normalizeBackupRegion(region) : null;
   const { rows } = await pool().query<{
     id: string;
@@ -2492,6 +2512,13 @@ export async function getProjectBackupShardAdminStatus({
     assigned_project_count: number | string | null;
     created: Date | null;
     updated: Date | null;
+    last_probe_at: Date | null;
+    last_result: string | null;
+    last_error_kind: string | null;
+    last_error: string | null;
+    last_ok_at: Date | null;
+    failing_since: Date | null;
+    consecutive_failures: number | null;
   }>(
     `
       SELECT
@@ -2503,12 +2530,21 @@ export async function getProjectBackupShardAdminStatus({
         r.status,
         COUNT(a.project_id)::INTEGER AS assigned_project_count,
         r.created,
-        r.updated
+        r.updated,
+        p.last_probe_at,
+        p.last_result,
+        p.last_error_kind,
+        p.last_error,
+        p.last_ok_at,
+        p.failing_since,
+        p.consecutive_failures
       FROM project_backup_repos r
       LEFT JOIN buckets b
         ON b.id = r.bucket_id
       LEFT JOIN project_backup_repo_assignments a
         ON a.backup_repo_id = r.id
+      LEFT JOIN project_backup_repo_probes p
+        ON p.repo_id = r.id
       WHERE ($1::text IS NULL OR r.region = $1)
       GROUP BY
         r.id,
@@ -2518,7 +2554,8 @@ export async function getProjectBackupShardAdminStatus({
         r.root,
         r.status,
         r.created,
-        r.updated
+        r.updated,
+        p.repo_id
       ORDER BY r.region ASC NULLS LAST, r.created ASC, r.id ASC
     `,
     [normalizedRegion],
@@ -2543,6 +2580,17 @@ export async function getProjectBackupShardAdminStatus({
       ),
       created: asIso(row.created),
       updated: asIso(row.updated),
+      probe: row.last_probe_at
+        ? {
+            last_probe_at: asIso(row.last_probe_at),
+            result: row.last_result,
+            error_kind: row.last_error_kind ?? null,
+            error: row.last_error ?? null,
+            last_ok_at: asIso(row.last_ok_at),
+            failing_since: asIso(row.failing_since),
+            consecutive_failures: Number(row.consecutive_failures ?? 0) || 0,
+          }
+        : null,
     };
   });
   const byRegion = new Map<string, ProjectBackupShardAdminRegionInfo>();

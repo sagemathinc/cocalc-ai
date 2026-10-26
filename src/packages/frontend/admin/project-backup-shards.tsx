@@ -32,6 +32,39 @@ function statusTag(status: string | null) {
   }
 }
 
+// The last probe: does the repository's config open with its stored secret?
+function probeCell(row: ProjectBackupShardAdminRepoInfo) {
+  const probe = row.probe;
+  if (!probe?.last_probe_at) {
+    return <Tag>not probed</Tag>;
+  }
+  if (probe.result === "ok") {
+    return (
+      <Space size={4}>
+        <Tag color="green">ok</Tag>
+        <TimeAgo date={probe.last_probe_at} />
+      </Space>
+    );
+  }
+  // The error is shown inline, so it is readable without a pointer.
+  return (
+    <Space vertical size={0}>
+      <Space size={4}>
+        <Tag color="red">{probe.error_kind ?? "failed"}</Tag>
+        <span>
+          {probe.consecutive_failures}x since{" "}
+          {probe.failing_since ? <TimeAgo date={probe.failing_since} /> : "-"}
+        </span>
+      </Space>
+      {probe.error ? (
+        <Typography.Text type="secondary" style={{ fontSize: "small" }}>
+          {probe.error}
+        </Typography.Text>
+      ) : null}
+    </Space>
+  );
+}
+
 function count(value: number): string {
   return Math.max(0, Number(value) || 0).toLocaleString();
 }
@@ -162,6 +195,10 @@ export function ProjectBackupShardsAdmin() {
         <Table.Column<ProjectBackupShardAdminRepoInfo>
           title="Status"
           render={(_, row) => statusTag(row.status)}
+        />
+        <Table.Column<ProjectBackupShardAdminRepoInfo>
+          title="Probe"
+          render={(_, row) => probeCell(row)}
         />
         <Table.Column<ProjectBackupShardAdminRepoInfo>
           title="Assigned"

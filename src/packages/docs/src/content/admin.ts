@@ -1805,7 +1805,12 @@ configuration and avoid silent backup-capacity or routing mistakes.
 2. Open **Backup Shards**.
 3. Confirm the expected shards are present.
 4. Check that shard metadata matches the intended deployment.
-5. Use **Bay Operations** to inspect bay backup health if a shard looks stale or
+5. Check the **Probe** column. About once a day the bay checks that each
+   active, sealed or draining shard opens with its stored secret (a read-only
+   \`rustic cat config\`). A red probe means backups, restores and purges on
+   that shard can fail; admin health shows it as **backup-repos**, and admins
+   get an alert.
+6. Use **Bay Operations** to inspect bay backup health if a shard looks stale or
    overloaded.
 
 Backups are a safety boundary. Treat edits as operational changes that need a
