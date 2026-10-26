@@ -488,6 +488,22 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     row = await stateOf(account_id);
     expect(row.email_stage).toBe("before");
 
+    // Already read-only on Sagebrush (its own limits refresh): the notice is
+    // still sent, so the retention cycle and its emails start.
+    const readonly = await insertAccount();
+    enabled.set(readonly, false);
+    s.retention.set(readonly, {
+      state: "readonly",
+      readonly_since: clock - DAY,
+      purge_after: clock + 89 * DAY,
+    });
+    expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(1);
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
+    expect(s.notices).toHaveLength(2);
+    expect((await stateOf(readonly)).email_stage).toBe("ended");
+    expect(await steps(fetch)).toMatchObject({ sent: 1 });
+    expect(sent).toHaveLength(2);
+
     // Without the entitlement and with no synced data, a first check only
     // records the state.
     const other = await insertAccount();
@@ -495,7 +511,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(0);
     expect((await stateOf(other)).sync_enabled).toBe(false);
     expect((await stateOf(other)).notice_request_id).toBeNull();
-    expect(s.notices).toHaveLength(1);
+    expect(s.notices).toHaveLength(2);
   });
 
   it("keeps a first check a first check when queuing its reconcile notice fails", async () => {
@@ -590,6 +606,31 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     for (const [i, account_id] of ids.entries()) {
       expect((await stateOf(account_id)).sync_enabled).toBe(i % 2 === 0);
     }
+  });
+
+  it("stops a pass at its time budget; the next pass continues the scan", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const account_id = await insertAccount();
+      enabled.set(account_id, true);
+      ids.push(account_id);
+    }
+    // Each check takes a second here; the budget allows one.
+    let t = clock;
+    const slow = () => (t += 1000);
+    const checked = async () => {
+      let n = 0;
+      for (const account_id of ids) {
+        if ((await stateOf(account_id))?.sync_enabled != null) n += 1;
+      }
+      return n;
+    };
+    await checkSyncStates({ getLimits, now: slow, budgetMs: 500 });
+    expect(await checked()).toBe(1);
+    await checkSyncStates({ getLimits, now: slow, budgetMs: 500 });
+    expect(await checked()).toBe(2);
+    await checkSyncStates({ getLimits, now: slow, budgetMs: 60_000 });
+    expect(await checked()).toBe(3);
   });
 
   it("backs off accounts whose check keeps failing, so the others are checked", async () => {

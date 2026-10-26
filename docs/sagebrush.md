@@ -288,19 +288,20 @@ notices, no emails.
 
 There are no membership events to hook: a membership ends when it expires. So the
 home bay checks the accounts that approved a Sagebrush sign-in there, each again
-every 10 minutes. Each pass (once a minute) works through all the due accounts,
-in batches of 50:
+every 10 minutes. Each pass (once a minute) works through the due accounts in
+batches of 50, for at most 20 seconds, so a backlog can't hold up the notice
+and email queues; the next pass continues where it stopped:
 
 - it reads the limits (section 2);
 - it records `sync.enabled` in `sagebrush_sync_states`;
-- the first check of an account reads Sagebrush's sync retention. It only
-  records the state, unless Sagebrush holds synced data in the other state, and
-  then it sends the plan notice of the current state:
-  - sync enabled while the data is read-only: an account rehomed after its sync
-    ended, and renewed before signing in to Sagebrush on the new home bay;
-  - sync not enabled while the data is active: an approval from before these
-    checks existed, or a lapse no bay saw. The notice ends sync, and the
-    retention emails follow;
+- the first check of an account reads Sagebrush's sync retention. With no
+  synced data it only records the state. Otherwise it sends the plan notice of
+  the current state when:
+  - sync is not enabled, whether the data is still active or already read-only
+    (an approval from before these checks existed, or a lapse no bay saw): the
+    accepted notice starts the retention cycle, and the emails follow;
+  - sync is enabled while the data is read-only: an account rehomed after its
+    sync ended, and renewed before signing in to Sagebrush on the new home bay;
 - an account whose check fails (its state or limits can't be read) waits the same
   10 minutes before it is tried again, so failing accounts can't keep the rest of
   the batch from being checked.
