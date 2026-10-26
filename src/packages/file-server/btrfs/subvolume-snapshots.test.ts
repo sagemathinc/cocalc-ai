@@ -490,3 +490,23 @@ describe("snapshot usage", () => {
     ]);
   });
 });
+
+describe("SubvolumeSnapshots.readdir without creating", () => {
+  it("lists nothing and creates no directory when there is none", async () => {
+    const subvolume = createSubvolume();
+    subvolume.fs.exists = jest.fn(async () => false);
+    const snapshots = new SubvolumeSnapshots(subvolume as any);
+    await expect(snapshots.readdir({ create: false })).resolves.toEqual([]);
+    expect(subvolume.fs.mkdir).not.toHaveBeenCalled();
+    expect(subvolume.fs.chmod).not.toHaveBeenCalled();
+    expect(subvolume.fs.readdir).not.toHaveBeenCalled();
+  });
+
+  it("(control) the default creates the missing directory", async () => {
+    const subvolume = createSubvolume();
+    subvolume.fs.exists = jest.fn(async () => false);
+    const snapshots = new SubvolumeSnapshots(subvolume as any);
+    await expect(snapshots.readdir()).resolves.toEqual([]);
+    expect(subvolume.fs.mkdir).toHaveBeenCalledWith(SNAPSHOTS);
+  });
+});

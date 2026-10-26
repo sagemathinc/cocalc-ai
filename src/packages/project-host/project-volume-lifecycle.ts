@@ -30,6 +30,11 @@ export function assertProjectVolumeLifecycleGeneration(
   }
 }
 
+/** Whether a lifecycle operation holds (or waits for) this project's lock. */
+export function projectVolumeLifecycleBusy(project_id: string): boolean {
+  return lifecycleTails.has(project_id);
+}
+
 async function acquireProjectVolumeLifecycleLock(
   project_id: string,
 ): Promise<() => void> {

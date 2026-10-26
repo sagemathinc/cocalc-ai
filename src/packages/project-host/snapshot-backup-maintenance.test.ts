@@ -2,6 +2,7 @@ const listProjectMaintenanceSchedulesMock = jest.fn();
 const confirmProjectMaintenanceAssignmentMock = jest.fn();
 const getMasterConatClientMock = jest.fn();
 const pruneDeferredSnapshotsMock = jest.fn();
+const inspectScheduledSnapshotsMock = jest.fn();
 const runScheduledSnapshotMaintenanceMock = jest.fn();
 const runScheduledBackupMaintenanceMock = jest.fn();
 const listProjectBackupIdsMock = jest.fn();
@@ -74,6 +75,8 @@ jest.mock("./file-server", () => ({
     runScheduledBackupMaintenanceMock(...args),
   pruneDeferredSnapshots: (...args: any[]) =>
     pruneDeferredSnapshotsMock(...args),
+  inspectScheduledSnapshots: (...args: any[]) =>
+    inspectScheduledSnapshotsMock(...args),
   snapshotPruneBusy: () => ({ backupsInFlight: 0, lifecycleActive: 0 }),
 }));
 
@@ -127,6 +130,8 @@ describe("snapshot-backup-maintenance", () => {
       },
     ]);
     runScheduledSnapshotMaintenanceMock.mockResolvedValue(undefined);
+    // by default the read-only look can't confirm anything: the full update
+    inspectScheduledSnapshotsMock.mockResolvedValue(undefined);
     runScheduledBackupMaintenanceMock.mockResolvedValue(undefined);
     listProjectBackupIdsMock.mockResolvedValue([]);
     reportProjectMaintenanceMock.mockResolvedValue(undefined);
@@ -3427,5 +3432,287 @@ describe("deferred snapshot prunes", () => {
     }));
     expect(await retry()).toEqual({ pruned: [], waiting: 1 });
     expect(pruneDeferredSnapshotsMock).not.toHaveBeenCalled();
+  });
+
+  describe("re-observing an idle project", () => {
+    const lastSnapshot = "2026-04-10T22:30:00.000Z";
+    const dayOld = () => new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+    const idleRow = (overrides: Record<string, unknown> = {}) => ({
+      project_id: "proj-idle",
+      last_edited: "2026-04-10T22:00:00.000Z",
+      last_snapshot: lastSnapshot,
+      last_snapshot_observed_at: dayOld(),
+      snapshot_status_outcome: "skipped",
+      snapshot_schedule_revision: "revision-1",
+      storage_service_class: "free",
+      snapshots: { daily: 5 },
+      backups: { disabled: true },
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+      ...overrides,
+    });
+    const snapshotReports = () =>
+      reportProjectMaintenanceMock.mock.calls
+        .map(([value]) => value)
+        .filter((value) => value.kind === "snapshot");
+    // a fallback runs detached in the snapshot lane
+    const settle = async () => {
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
+
+    beforeEach(async () => {
+      // settle() needs real timers
+      jest.useRealTimers();
+      const gate = await import("./snapshot-prune-gate");
+      gate.resetSnapshotPruneGateForTest();
+      const { resetSnapshotReobservationStatsForTest } =
+        await import("./snapshot-backup-maintenance");
+      resetSnapshotReobservationStatsForTest();
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([idleRow()]);
+      inspectScheduledSnapshotsMock.mockResolvedValue({
+        latest_snapshot_at: lastSnapshot,
+        changed: false,
+        snapshot_count: 5,
+        expired: 0,
+      });
+    });
+
+    it("reports a fresh observation from a read-only look, even when storage admission refuses all work", async () => {
+      admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
+        admitted: false,
+        would_defer: true,
+        starvation_override: false,
+        reason: "io_pressure_recovery",
+        operation_id: operation_kind,
+        release: releaseStorageOperationMock,
+      }));
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      expect(inspectScheduledSnapshotsMock).toHaveBeenCalledWith({
+        project_id: "proj-idle",
+        counts: expect.objectContaining({ daily: 5 }),
+      });
+      expect(admitStorageOperationMock).not.toHaveBeenCalled();
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(snapshotReports()).toEqual([
+        expect.objectContaining({
+          project_id: "proj-idle",
+          outcome: "skipped",
+          reason: "no_content_change",
+          latest_snapshot_at: lastSnapshot,
+          reconciled_change_at: "2026-04-10T22:00:00.000Z",
+          schedule_revision: "revision-1",
+          due_at: null,
+          attempt_due_at: null,
+          retry_at: null,
+        }),
+      ]);
+    });
+
+    it("leaves expired snapshots to the deferred prune, which never takes a recovery slot", async () => {
+      inspectScheduledSnapshotsMock.mockResolvedValue({
+        latest_snapshot_at: lastSnapshot,
+        changed: false,
+        snapshot_count: 7,
+        expired: 2,
+      });
+      const {
+        getSnapshotReobservationStats,
+        retryDeferredSnapshotPrune,
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      expect(snapshotReports()).toEqual([
+        expect.objectContaining({ outcome: "skipped" }),
+      ]);
+      expect(getSnapshotReobservationStats()).toMatchObject({
+        observed: 1,
+        prune_queued: 1,
+      });
+      const gate = await import("./snapshot-prune-gate");
+      expect(gate.getSnapshotPruneGateStats().pending_projects).toBe(1);
+      const run = jest.fn(async () => ({
+        ran: false,
+        starvationOverride: false,
+        admissionDeferred: true,
+        reason: "io_pressure_recovery",
+      }));
+      let pending: any;
+      await gate.retryDeferredPrunes({
+        busy: () => ({ backupsInFlight: 0, lifecycleActive: 0 }),
+        prune: async (project_id, value) => {
+          pending = value;
+          await retryDeferredSnapshotPrune({
+            hostId: "host-reobserve",
+            project_id,
+            pending: value,
+            run: run as any,
+          });
+        },
+      });
+      expect(pending).toMatchObject({ allowRecoveryPace: false });
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({ allowRecoveryPace: false }),
+      );
+      // refused: still pending
+      expect(gate.getSnapshotPruneGateStats().pending_projects).toBe(1);
+    });
+
+    it.each([
+      ["changed", { changed: true, snapshot_count: 5, expired: 0 }],
+      ["at its limit", { changed: false, snapshot_count: 8, expired: 0 }],
+      ["unavailable", undefined],
+    ])(
+      "falls back to the full update when the project is %s",
+      async (_, inspected) => {
+        inspectScheduledSnapshotsMock.mockResolvedValue(
+          inspected == null
+            ? undefined
+            : { latest_snapshot_at: lastSnapshot, ...inspected },
+        );
+        runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+          latest_snapshot_at: lastSnapshot,
+          created_snapshot_at: null,
+          changed: false,
+          disabled: false,
+        });
+        const {
+          getSnapshotReobservationStats,
+          runProjectSnapshotBackupMaintenanceSweepOnce,
+        } = await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-reobserve",
+        });
+        await settle();
+        expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+        expect(getSnapshotReobservationStats()).toMatchObject({
+          observed: 0,
+          fallback: 1,
+        });
+        // only the full update reports
+        expect(snapshotReports()).toHaveLength(1);
+      },
+    );
+
+    it("runs a snapshot that became due while the project was being re-observed", async () => {
+      let finishRead!: (value: unknown) => void;
+      inspectScheduledSnapshotsMock.mockImplementation(
+        () => new Promise((resolve) => (finishRead = resolve)),
+      );
+      runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+        latest_snapshot_at: "2026-04-10T23:30:00.000Z",
+        created_snapshot_at: "2026-04-10T23:30:00.000Z",
+        changed: true,
+        disabled: false,
+      });
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      const fullSweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      while (!inspectScheduledSnapshotsMock.mock.calls.length) await settle();
+      // the project changes during the read: a targeted sweep finds it due
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([
+        idleRow({ last_edited: "2026-04-10T23:00:00.000Z" }),
+      ]);
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+        projectIds: ["proj-idle"],
+      });
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      // the read finishes on the content it saw before the change
+      finishRead({
+        latest_snapshot_at: lastSnapshot,
+        changed: false,
+        snapshot_count: 5,
+        expired: 0,
+      });
+      await fullSweep;
+      await settle();
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+      expect(snapshotReports().at(-1)).toMatchObject({
+        project_id: "proj-idle",
+        outcome: "succeeded",
+      });
+    });
+
+    it("reports nothing when the assignment changed", async () => {
+      confirmProjectMaintenanceAssignmentMock.mockResolvedValue({
+        valid: false,
+        reason: "host_changed",
+      });
+      const {
+        getSnapshotReobservationStats,
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      expect(snapshotReports()).toEqual([]);
+      expect(getSnapshotReobservationStats()).toMatchObject({ dropped: 1 });
+    });
+
+    it("leaves a due snapshot to the snapshot lane", async () => {
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([
+        idleRow({ last_edited: "2026-04-10T23:00:00.000Z" }),
+      ]);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      expect(inspectScheduledSnapshotsMock).not.toHaveBeenCalled();
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("can be turned off, restoring the full update in the snapshot lane", async () => {
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_REOBSERVE = "0";
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      expect(inspectScheduledSnapshotsMock).not.toHaveBeenCalled();
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("logs the re-observation lag of a full sweep", async () => {
+      const observed = Date.now() - 26 * 60 * 60_000;
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([
+        idleRow({
+          last_snapshot_observed_at: new Date(observed).toISOString(),
+        }),
+        idleRow({
+          project_id: "proj-fresh",
+          last_snapshot_observed_at: new Date().toISOString(),
+        }),
+        idleRow({ project_id: "proj-never", last_snapshot_observed_at: null }),
+      ]);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      const [, stats] = loggerInfoMock.mock.calls.find(
+        ([message]) => message === "snapshot re-observation",
+      )!;
+      expect(stats).toMatchObject({
+        hostId: "host-reobserve",
+        enabled: true,
+        // the never-observed project is due too, and counted on its own
+        backlog: 2,
+        never_observed: 1,
+      });
+      expect(stats.oldest_observation_age_ms).toBeGreaterThanOrEqual(
+        26 * 60 * 60_000,
+      );
+    });
   });
 });

@@ -234,6 +234,41 @@ function expiredSnapshotNames({
   ];
 }
 
+export interface RollingSnapshotInventory {
+  /** Every snapshot, automatic and named. */
+  names: string[];
+  /** The newest automatic snapshot. */
+  latest: string | null;
+  changed: boolean;
+  /** How many the next update would prune (rolling retention only). */
+  expired: number;
+}
+
+/** What the next update would find, without changing anything: the
+ * inventory, whether there are unsnapshotted changes, and how many snapshots
+ * retention no longer keeps. Undefined when rolling snapshots are disabled. */
+export async function inspectRollingSnapshots({
+  snapshots,
+  counts,
+}: {
+  snapshots: Pick<SubvolumeSnapshots, "readdir" | "hasUnsavedChanges">;
+  counts?: Partial<SnapshotCounts>;
+}): Promise<RollingSnapshotInventory | undefined> {
+  if (btrfsRollingSnapshotsDisabled()) return undefined;
+  const names = await snapshots.readdir({ create: false });
+  const automatic = names.filter(isISODate).sort();
+  return {
+    names,
+    latest: automatic.at(-1) ?? null,
+    changed: await snapshots.hasUnsavedChanges(names),
+    expired: expiredSnapshotNames({
+      counts: { ...DEFAULT_SNAPSHOT_COUNTS, ...counts },
+      allSnapshotNames: names,
+      snapshotNames: automatic,
+    }).length,
+  };
+}
+
 /** Delete only the expired rolling snapshots (no new snapshot), for a prune
  * that was deferred by beforePrune. The snapshot limit is not enforced here:
  * the next update does that under the current limit. Returns how many were

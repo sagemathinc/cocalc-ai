@@ -7,6 +7,7 @@ import {
   assertProjectVolumeLifecycleGeneration,
   currentProjectVolumeLifecycleGeneration,
   invalidateProjectVolumeLifecycle,
+  projectVolumeLifecycleBusy,
   resetProjectVolumeLifecycleForTesting,
   withCurrentProjectVolumeLifecycleLock,
   withProjectVolumeLifecycleLock,
@@ -223,5 +224,20 @@ describe("project volume lifecycle coordination", () => {
       await holder
     ).queued;
     expect(order).toEqual(["holder", "queued"]);
+  });
+
+  it("reports a project busy while its lock is held or awaited", async () => {
+    expect(projectVolumeLifecycleBusy("project-1")).toBe(false);
+    let release!: () => void;
+    const held = withProjectVolumeLifecycleLock(
+      "project-1",
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(projectVolumeLifecycleBusy("project-1")).toBe(true);
+    expect(projectVolumeLifecycleBusy("project-2")).toBe(false);
+    release();
+    await held;
+    expect(projectVolumeLifecycleBusy("project-1")).toBe(false);
   });
 });
