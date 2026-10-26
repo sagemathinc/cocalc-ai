@@ -116,11 +116,7 @@ export function useMentionableUsers(): (
               }
             >
               <strong>@{handle}</strong>{" "}
-              <Icon
-                name="global"
-                aria-label="Agent on another site"
-                style={{ color: COLORS.GRAY_M }}
-              />
+              <Icon name="global" aria-label="Agent on another site" />
               <div
                 style={{
                   fontSize: "0.9em",
