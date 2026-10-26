@@ -13,6 +13,7 @@ export {
   type BtrfsMutationPriority,
   effectiveBtrfsMutationContext,
   getBtrfsMutationContext,
+  noteBtrfsMutation,
   withBtrfsMutationContext,
 } from "./mutation-context";
 
@@ -235,6 +236,8 @@ export async function withBtrfsMutationLock<T>({
     // is now ours, so this is the final race-free eligibility check before the
     // indivisible transaction begins.
     assertBackgroundMutationAllowed();
+    if (effectiveContext.mutations != null)
+      effectiveContext.mutations.count += 1;
     return await withBtrfsMutationContext(
       { ...effectiveContext, mutation_lock_held: true },
       run,

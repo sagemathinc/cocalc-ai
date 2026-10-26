@@ -725,6 +725,39 @@ describe("storage admission controller", () => {
     });
   });
 
+  it("paces recovery snapshots faster once the last minute was quiet", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    full60 = 1;
+    now += 5_000;
+    expect(controller.sample().pressure_state).toBe("recovery");
+    controller.admit({ operation_kind: "scheduled_snapshot" }).release();
+    now += 4_999;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).admitted,
+    ).toBe(false);
+    now += 1;
+    const quick = controller.admit({ operation_kind: "scheduled_snapshot" });
+    expect(quick.recovery_paced).toBe(true);
+    quick.release();
+    // A stalled last minute keeps the base pace.
+    full60 = 4;
+    now += 5_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).admitted,
+    ).toBe(false);
+    expect(controller.getStatus()).toMatchObject({
+      pressure_state: "recovery",
+      recovery_snapshot_next_at: new Date(now + 15_000).toISOString(),
+    });
+    now += 15_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).recovery_paced,
+    ).toBe(true);
+  });
+
   it("keeps overdue snapshot overrides on the same recovery pace", () => {
     const controller = create();
     full = 10;
