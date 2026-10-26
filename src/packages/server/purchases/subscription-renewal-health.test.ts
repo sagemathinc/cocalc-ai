@@ -214,7 +214,7 @@ describe("subscription renewal health alert", () => {
     [true, 0],
     [false, 1],
   ])(
-    "treats a renewal waiting for a VAT ID as expected only if the customer was told (notice recorded: %s)",
+    "treats a renewal waiting for a VAT ID as expected only if the customer was told about it (renewal notice recorded: %s)",
     async (noticed, alerted) => {
       const account_id = uuid();
       await createTestAccount(account_id);
@@ -225,21 +225,21 @@ describe("subscription renewal health alert", () => {
           end: dayjs().subtract(2, "day").toDate(),
         },
       );
-      await getPool().query("DELETE FROM business_tax_id_notices");
-      if (noticed) {
-        await getPool().query(
-          `INSERT INTO business_tax_id_notices (account_id, notified_at)
-           VALUES ($1, NOW())`,
-          [account_id],
-        );
-      }
+      // An account-wide VAT notice alone does not tell the customer about
+      // this renewal.
+      await getPool().query(
+        `INSERT INTO business_tax_id_notices (account_id, notified_at)
+         VALUES ($1, NOW())`,
+        [account_id],
+      );
       await getPool().query(
         `UPDATE subscription_renewal_attempts
             SET attempt_count=3,
                 last_error='business_tax_id_required: a VAT ID is required',
+                business_tax_id_notified_at=CASE WHEN $2 THEN NOW() END,
                 next_attempt_at=NOW() + INTERVAL '6 hours'
           WHERE subscription_id=$1`,
-        [subscription_id],
+        [subscription_id, noticed],
       );
       await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(alerted);
     },

@@ -86,6 +86,7 @@ export async function scheduleSubscriptionRenewalAttempt({
        balance_applied=NULL,
        funding_version=1,
        last_error=NULL,
+       business_tax_id_notified_at=NULL,
        completed_at=NULL,
        updated_at=NOW()
      WHERE subscription_renewal_attempts.state='canceled'
@@ -492,8 +493,8 @@ export async function deferSubscriptionRenewalAttemptForBusinessTaxId({
 }: {
   attempt_id: string;
   error: unknown;
-}): Promise<boolean> {
-  const { rowCount } = await getPool().query(
+}): Promise<{ deferred: boolean; needsNotice: boolean }> {
+  const { rows } = await getPool().query<{ needs_notice: boolean }>(
     `UPDATE subscription_renewal_attempts
         SET state='scheduled',
             lease_expires_at=NULL,
@@ -506,14 +507,31 @@ export async function deferSubscriptionRenewalAttemptForBusinessTaxId({
             last_error=$3,
             updated_at=NOW()
       WHERE id=$1
-        AND state='processing'`,
+        AND state='processing'
+      RETURNING business_tax_id_notified_at IS NULL AS needs_notice`,
     [
       attempt_id,
       RENEWAL_CUSTOMER_ACTION_RECHECK_MS,
       `${BUSINESS_TAX_ID_REFUSAL_PREFIX}${error}`,
     ],
   );
-  return (rowCount ?? 0) > 0;
+  return {
+    deferred: rows.length > 0,
+    needsNotice: rows[0]?.needs_notice === true,
+  };
+}
+
+export async function markSubscriptionRenewalBusinessTaxIdNotified({
+  attempt_id,
+}: {
+  attempt_id: string;
+}): Promise<void> {
+  await getPool().query(
+    `UPDATE subscription_renewal_attempts
+        SET business_tax_id_notified_at=NOW(), updated_at=NOW()
+      WHERE id=$1 AND business_tax_id_notified_at IS NULL`,
+    [attempt_id],
+  );
 }
 
 export async function markSubscriptionRenewalCustomerNotified({

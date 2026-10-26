@@ -142,6 +142,30 @@ describe("subscription renewal worker", () => {
       [attempt.account_id],
     );
     expect(rows.length).toBe(1);
+    expect(attempt.business_tax_id_notified_at).not.toBeNull();
+  });
+
+  it("gives the notice claim back and retries when sending fails", async () => {
+    const { account_id, subscription_id } = await dueRenewal();
+    mockCreateSubscriptionPayment.mockRejectedValue(taxRefusal());
+    mockSend.mockRejectedValueOnce(new Error("mail down"));
+    await maintainSubscriptionRenewals({ max_attempts: 1 });
+
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM business_tax_id_notices WHERE account_id=$1",
+      [account_id],
+    );
+    expect(rows.length).toBe(0);
+    expect(
+      (await attemptOf(subscription_id)).business_tax_id_notified_at,
+    ).toBeNull();
+
+    await recheckNow(subscription_id);
+    await maintainSubscriptionRenewals({ max_attempts: 1 });
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(
+      (await attemptOf(subscription_id)).business_tax_id_notified_at,
+    ).not.toBeNull();
   });
 
   it("does not notify again on the next recheck the same day", async () => {

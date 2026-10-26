@@ -10,7 +10,6 @@ import {
   BUSINESS_TAX_ID_REFUSAL_PREFIX,
   RENEWAL_PAYMENT_GRACE_MS,
 } from "./subscription-renewal-attempts";
-import { OFF_SESSION_NOTICE_DAYS } from "./stripe/business-tax-id-gate";
 
 const DEFAULT_WARNING_MINUTES = 10;
 const DEFAULT_CRITICAL_MINUTES = 24 * 60;
@@ -128,25 +127,16 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
           a.not_before > NOW() - ($2 * INTERVAL '1 millisecond') AND
           a.next_attempt_at > NOW() - ($1 * INTERVAL '1 minute')
         )
-        -- Likewise for a renewal waiting for a VAT ID, as long as the business
-        -- tax ID check's own notice to the customer was recorded.
+        -- Likewise for a renewal waiting for a VAT number, as long as the
+        -- customer was sent the notice for this renewal.
         AND NOT (
           LEFT(COALESCE(a.last_error, ''), LENGTH($3)) = $3 AND
+          a.business_tax_id_notified_at IS NOT NULL AND
           a.not_before > NOW() - ($2 * INTERVAL '1 millisecond') AND
-          a.next_attempt_at > NOW() - ($1 * INTERVAL '1 minute') AND
-          EXISTS (
-            SELECT 1 FROM business_tax_id_notices n
-             WHERE n.account_id=a.account_id
-               AND n.notified_at > NOW() - make_interval(days => $4)
-          )
+          a.next_attempt_at > NOW() - ($1 * INTERVAL '1 minute')
         )
       ORDER BY a.not_before, a.subscription_id`,
-    [
-      warningMinutes,
-      RENEWAL_PAYMENT_GRACE_MS,
-      BUSINESS_TAX_ID_REFUSAL_PREFIX,
-      OFF_SESSION_NOTICE_DAYS,
-    ],
+    [warningMinutes, RENEWAL_PAYMENT_GRACE_MS, BUSINESS_TAX_ID_REFUSAL_PREFIX],
   );
   if (rows.length === 0) {
     return 0;

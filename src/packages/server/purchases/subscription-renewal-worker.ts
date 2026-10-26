@@ -5,7 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { getTransactionClient } from "@cocalc/database/pool";
+import getPool, { getTransactionClient } from "@cocalc/database/pool";
 import getConn from "@cocalc/server/stripe/connection";
 import send, { support, url } from "@cocalc/server/messages/send";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
@@ -25,6 +25,7 @@ import {
   deferSubscriptionRenewalAttemptForBusinessTaxId,
   deferSubscriptionRenewalAttemptForCustomer,
   getSubscriptionRenewalAttempt,
+  markSubscriptionRenewalBusinessTaxIdNotified,
   markSubscriptionRenewalCustomerNotified,
   releaseSubscriptionRenewalAttempt,
   RENEWAL_PAYMENT_GRACE_MS,
@@ -214,15 +215,20 @@ async function handleRenewalRefusedForBusinessTaxId({
     await cancelRenewalRefusedForBusinessTaxId({ attempt, err });
     return;
   }
-  const deferred = await deferSubscriptionRenewalAttemptForBusinessTaxId({
-    attempt_id: attempt.id,
-    error: err,
-  });
-  if (!deferred) return;
+  const { deferred, needsNotice } =
+    await deferSubscriptionRenewalAttemptForBusinessTaxId({
+      attempt_id: attempt.id,
+      error: err,
+    });
+  if (!deferred || !needsNotice) return;
+  // Retried on every recheck until delivery is recorded.
   try {
-    await sendRenewalBusinessTaxIdNotice(attempt);
+    if (await sendRenewalBusinessTaxIdNotice(attempt)) {
+      await markSubscriptionRenewalBusinessTaxIdNotified({
+        attempt_id: attempt.id,
+      });
+    }
   } catch (err) {
-    // Tried again on the next recheck.
     logger.warn("unable to send renewal business tax ID notice", {
       attempt_id: attempt.id,
       err: `${err}`,
@@ -231,34 +237,45 @@ async function handleRenewalRefusedForBusinessTaxId({
 }
 
 // Tells the customer which subscription was not renewed, what to do and when it
-// will be canceled. The check's generic weekly notice is not sent for renewals
-// (it has neither the subscription nor the date); this one shares its claim
-// in business_tax_id_notices, so a customer gets at most one of the two a day.
-// If a notice went out in the last day, this one waits for a later recheck.
-// The subject names the subscription, so the message is sent once per renewal.
+// will be canceled; returns whether it was sent. The check's generic weekly
+// notice is not sent for renewals (it has neither the subscription nor the
+// date). This one takes the same claim in business_tax_id_notices, so a
+// customer gets at most one VAT notice a day: if one went out in the last day,
+// this one waits for a later recheck. The claim is a single statement (no
+// connection is held while sending) and is given back if sending fails. The
+// subject names the subscription, so a retry after a crash is not sent twice.
 async function sendRenewalBusinessTaxIdNotice(
   attempt: SubscriptionRenewalAttempt,
-): Promise<void> {
-  const client = await getTransactionClient();
+): Promise<boolean> {
+  const pool = getPool();
+  const { rows } = await pool.query<{
+    claimed: string;
+    previous: string | null;
+  }>(
+    `WITH previous AS (
+       SELECT notified_at FROM business_tax_id_notices WHERE account_id=$1
+     )
+     INSERT INTO business_tax_id_notices (account_id, notified_at)
+     VALUES ($1, NOW())
+     ON CONFLICT (account_id) DO UPDATE SET notified_at = NOW()
+      WHERE business_tax_id_notices.notified_at < NOW() - INTERVAL '1 day'
+     RETURNING notified_at::text AS claimed,
+               (SELECT notified_at::text FROM previous) AS previous`,
+    [attempt.account_id],
+  );
+  if (rows.length === 0) {
+    return false;
+  }
+  const { claimed, previous } = rows[0];
   try {
-    const { rowCount } = await client.query(
-      `INSERT INTO business_tax_id_notices (account_id, notified_at)
-       VALUES ($1, NOW())
-       ON CONFLICT (account_id) DO UPDATE SET notified_at = NOW()
-        WHERE business_tax_id_notices.notified_at < NOW() - INTERVAL '1 day'`,
-      [attempt.account_id],
-    );
-    if (rowCount) {
-      const { site_name } = await getServerSettings();
-      const graceEnd = formatRenewalDate(
-        renewalGraceEndsAt(attempt.period_end),
-      );
-      await send({
-        to_ids: [attempt.account_id],
-        dedupMinutes: RENEWAL_NOTICE_DEDUP_MINUTES,
-        dedupBySubject: true,
-        subject: `Action needed: add a VAT number to renew your ${site_name} subscription (Id ${attempt.subscription_id})`,
-        body: `
+    const { site_name } = await getServerSettings();
+    const graceEnd = formatRenewalDate(renewalGraceEndsAt(attempt.period_end));
+    await send({
+      to_ids: [attempt.account_id],
+      dedupMinutes: RENEWAL_NOTICE_DEDUP_MINUTES,
+      dedupBySubject: true,
+      subject: `Action needed: add a VAT number to renew your ${site_name} subscription (Id ${attempt.subscription_id})`,
+      body: `
 We couldn't renew your ${site_name} subscription (id=${attempt.subscription_id}). ${site_name} sells to customers in the EU and the UK only with the VAT number of their organization, and there is none on file.
 
 **Your membership stays active until ${graceEnd}.** To keep it, please add your organization's VAT number under [Payment Methods](${await url(`/settings/payment-methods`)}), then Name and Address, before then. We retry the renewal automatically every few hours. If no VAT number is on file by ${graceEnd}, the subscription will be canceled.
@@ -266,15 +283,21 @@ We couldn't renew your ${site_name} subscription (id=${attempt.subscription_id})
 - [Manage Membership](${await url(`/settings/membership`)})
 
 ${await support()}`,
-      });
-    }
-    await client.query("COMMIT");
+    });
   } catch (err) {
-    await client.query("ROLLBACK");
+    await pool.query(
+      previous == null
+        ? `DELETE FROM business_tax_id_notices
+            WHERE account_id=$1 AND notified_at=$2::timestamptz`
+        : `UPDATE business_tax_id_notices SET notified_at=$3::timestamptz
+            WHERE account_id=$1 AND notified_at=$2::timestamptz`,
+      previous == null
+        ? [attempt.account_id, claimed]
+        : [attempt.account_id, claimed, previous],
+    );
     throw err;
-  } finally {
-    client.release();
   }
+  return true;
 }
 
 async function cancelRenewalRefusedForBusinessTaxId({
