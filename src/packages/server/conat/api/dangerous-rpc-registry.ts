@@ -1444,6 +1444,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin audit-log attribution of a past balance adjustment",
   },
+  "purchases.adminCreateRefund": {
+    decision: "fresh-auth-required",
+    reason: "admin refund of a purchase, including card refunds through Stripe",
+  },
   "purchases.adminListCreditAttribution": {
     decision: "fresh-auth-required",
     reason: "admin read of balance adjustments with internal reasons",
