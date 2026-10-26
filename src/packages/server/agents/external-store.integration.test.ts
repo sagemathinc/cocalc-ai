@@ -2,7 +2,12 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { EXTERNAL_AGENT_TOKEN_PREFIX } from "@cocalc/conat/agents/external";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
-import { ExternalAgentStore, type ExternalEnrollment } from "./external-store";
+import {
+  EXTERNAL_INBOX_DB_BYTES,
+  ExternalAgentStore,
+  type ExternalEnrollment,
+} from "./external-store";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { AgentStore } from "./store";
 import { setExternalInboxObjectsForTesting } from "./external-inbox-objects";
 
@@ -28,6 +33,7 @@ describeDb("network-bound external agents", () => {
     "agent_external_installations",
     "agent_external_inbox",
     "agent_external_inbox_attachments",
+    "agent_external_inbox_reservations",
   ];
 
   function enrollment(): {
@@ -376,27 +382,72 @@ describeDb("network-bound external agents", () => {
     };
   }
 
-  async function sent(attachments?: ReturnType<typeof file>[]) {
+  const sender = randomUUID();
+
+  function manifestOf(files: ReturnType<typeof file>[]) {
+    return files.map(({ name, size, sha256 }) => ({ name, size, sha256 }));
+  }
+
+  // A message for a new installation, and (with files) the reservation that
+  // preparing them makes.
+  async function sent(
+    attachments?: ReturnType<typeof file>[],
+    { reserve = true }: { reserve?: boolean } = {},
+  ) {
     const { options } = enrollment();
     const installation = await store.enroll(account, "human-session", options);
     const source = {
       kind: "registered" as const,
-      account_id: account,
+      account_id: sender,
       project_id: randomUUID(),
       agent_id: randomUUID(),
       run_id: randomUUID(),
     };
-    const input = {
+    const base = {
       account_id: account,
       installation_id: installation.installation_id,
       attempt_id: randomUUID(),
       agent_network_id: network,
       network_generation: generation,
       source,
+      source_account_id: sender,
+    };
+    const reservation =
+      attachments && reserve
+        ? await store.reserve({ ...base, manifest: manifestOf(attachments) })
+        : undefined;
+    const input = {
+      ...base,
       body: "Report attached.",
       ...(attachments ? { attachments } : {}),
+      ...(reservation ? { reservation_id: reservation.reservation_id } : {}),
     };
-    return { installation, source, input };
+    return { installation, source, base, input, reservation };
+  }
+
+  // As if the inbox already held this much: one stored file says so (the size
+  // check is set aside just for this).
+  async function pretendHeld(
+    bytes: number,
+    { otherAccount = false }: { otherAccount?: boolean } = {},
+  ) {
+    const { input } = await sent([file("held.txt", "x")]);
+    await store.enqueue(input);
+    await db.query(
+      "ALTER TABLE agent_external_inbox_attachments DROP CONSTRAINT agent_external_inbox_attachments_size_check",
+    );
+    await db.query(
+      "UPDATE agent_external_inbox_attachments SET size=$2, account_id=$3 WHERE installation_id=$1",
+      [input.installation_id, bytes, otherAccount ? randomUUID() : account],
+    );
+  }
+
+  async function restoreSizeCheck() {
+    await db.query("DELETE FROM agent_external_inbox_attachments");
+    await db.query(
+      `ALTER TABLE agent_external_inbox_attachments ADD CONSTRAINT agent_external_inbox_attachments_size_check
+       CHECK (size BETWEEN 0 AND 33554432 AND (data IS NULL OR octet_length(data)=size))`,
+    );
   }
 
   test("attachments are kept with the message and read back by the installation", async () => {
@@ -406,9 +457,7 @@ describeDb("network-bound external agents", () => {
     ];
     const { installation, input } = await sent(files);
     const message = await store.enqueue(input);
-    expect(message.attachments).toEqual(
-      files.map(({ name, size, sha256 }) => ({ name, size, sha256 })),
-    );
+    expect(message.attachments).toEqual(manifestOf(files));
     expect(await store.inbox(account, installation.installation_id)).toEqual([
       message,
     ]);
@@ -420,7 +469,12 @@ describeDb("network-bound external agents", () => {
     );
     expect(second).toMatchObject({ name: "data.csv", index: 1, count: 2 });
     expect(new TextDecoder().decode(second.data)).toBe("a,b\n1,2\n");
-    // A retry is the same message; changed files are a conflict.
+    // The send consumed its reservation.
+    expect(
+      (await db.query("SELECT * FROM agent_external_inbox_reservations")).rows,
+    ).toEqual([]);
+    // A retry is the same message (its reservation is spent, and not
+    // needed); changed files are a conflict.
     expect(await store.enqueue(input)).toEqual(message);
     await expect(
       store.enqueue({ ...input, attachments: [files[0]] }),
@@ -467,36 +521,89 @@ describeDb("network-bound external agents", () => {
     );
   });
 
-  test("an inbox holds a bounded amount of attachments", async () => {
-    const { input } = await sent([file("a.txt", "x")]);
-    await store.enqueue(input);
-    // As if it already held 256 MiB: one row that says so (the size check
-    // is set aside just for this).
-    await db.query(
-      "ALTER TABLE agent_external_inbox_attachments DROP CONSTRAINT agent_external_inbox_attachments_size_check",
+  test("files travel only with the reservation made for exactly them", async () => {
+    const files = [file("a.txt", "a")];
+    const unreserved = await sent(files, { reserve: false });
+    await expect(store.enqueue(unreserved.input)).rejects.toThrow(
+      "external_inbox_attachment_unreserved",
     );
+    const { base, input, reservation } = await sent(files);
+    // Preparing the same files again is the same reservation; anything else
+    // for the attempt is a conflict.
+    expect(
+      await store.reserve({ ...base, manifest: manifestOf(files) }),
+    ).toEqual(reservation);
+    await expect(
+      store.reserve({ ...base, manifest: manifestOf([file("b.txt", "b")]) }),
+    ).rejects.toThrow("external_inbox_idempotency_conflict");
+    // Not another attempt's, sender's or file's.
+    for (const wrong of [
+      { ...input, attempt_id: randomUUID() },
+      { ...input, source_account_id: randomUUID() },
+      { ...input, source: { ...input.source, agent_id: randomUUID() } },
+      { ...input, attachments: [file("a.txt", "A")] },
+      { ...input, reservation_id: randomUUID() },
+    ])
+      await expect(store.enqueue(wrong)).rejects.toThrow(
+        /external_inbox_attachment_unreserved|external_inbox_attachment_mismatch/,
+      );
+    // Not once it has lapsed.
+    await db.query(
+      "UPDATE agent_external_inbox_reservations SET expires_at=now()-interval '1 second'",
+    );
+    await expect(store.enqueue(input)).rejects.toThrow(
+      "external_inbox_attachment_unreserved",
+    );
+  });
+
+  test("released room is free again, and only its sender releases it", async () => {
+    const files = [file("a.txt", "a")];
+    const { base, reservation } = await sent(files);
+    const release = {
+      ...base,
+      reservation_id: reservation!.reservation_id,
+    };
+    expect(
+      await store.release({ ...release, source_account_id: randomUUID() }),
+    ).toBe(false);
+    expect(await store.release(release)).toBe(true);
+    expect(await store.release(release)).toBe(false);
+    const again = await store.reserve({ ...base, manifest: manifestOf(files) });
+    expect(again.reservation_id).not.toBe(reservation!.reservation_id);
+  });
+
+  test("an account's inboxes hold a bounded amount, counting reservations, across installations", async () => {
+    await pretendHeld(256 * 1024 * 1024 - 2);
     try {
-      await db.query(
-        "UPDATE agent_external_inbox_attachments SET size=$2 WHERE installation_id=$1",
-        [input.installation_id, 256 * 1024 * 1024],
+      // Another installation of the same account: the same room.
+      const first = await sent([file("a.txt", "x")]);
+      expect(first.reservation).toBeDefined();
+      // The first reservation took the last free byte but one.
+      await expect(sent([file("b.txt", "yy")])).rejects.toThrow(
+        "external_inbox_attachment_capacity",
       );
-      await expect(
-        store.enqueue({ ...input, attempt_id: randomUUID() }),
-      ).rejects.toThrow("external_inbox_attachment_capacity");
       // Without files, messages still arrive.
-      await expect(
-        store.enqueue({
-          ...input,
-          attempt_id: randomUUID(),
-          attachments: undefined,
-        }),
-      ).resolves.toMatchObject({ body: "Report attached." });
+      const plain = await sent();
+      await expect(store.enqueue(plain.input)).resolves.toMatchObject({
+        body: "Report attached.",
+      });
     } finally {
-      await db.query("DELETE FROM agent_external_inbox_attachments");
-      await db.query(
-        `ALTER TABLE agent_external_inbox_attachments ADD CONSTRAINT agent_external_inbox_attachments_size_check
-         CHECK (size BETWEEN 0 AND 33554432 AND (data IS NULL OR octet_length(data)=size))`,
+      await restoreSizeCheck();
+    }
+  });
+
+  test("files kept in this bay's database are bounded for every account together", async () => {
+    await pretendHeld(EXTERNAL_INBOX_DB_BYTES, { otherAccount: true });
+    try {
+      await expect(sent([file("a.txt", "x")])).rejects.toThrow(
+        "external_inbox_attachment_capacity",
       );
+      // With R2 the database does not hold them, so they fit.
+      setExternalInboxObjectsForTesting(objectStore());
+      await expect(sent([file("a.txt", "x")])).resolves.toBeDefined();
+    } finally {
+      setExternalInboxObjectsForTesting(null);
+      await restoreSizeCheck();
     }
   });
 
@@ -509,8 +616,11 @@ describeDb("network-bound external agents", () => {
         objects.set(key, Buffer.from(data));
       }),
       get: jest.fn(async (key: string) => objects.get(key)),
-      list: jest.fn(async (prefix: string) =>
-        [...objects.keys()].filter((key) => key.startsWith(prefix)),
+      list: jest.fn(async (prefix: string, limit: number) =>
+        [...objects.keys()]
+          .filter((key) => key.startsWith(prefix))
+          .sort()
+          .slice(0, limit),
       ),
       delete: jest.fn(async (keys: string[]) => {
         for (const key of keys) objects.delete(key);
@@ -539,7 +649,7 @@ describeDb("network-bound external agents", () => {
       expect(rows.map((row) => row.r2_key)).toEqual(
         files.map(
           (f, idx) =>
-            `agent-external-inbox/v1/${day}/${account}/${input.attempt_id}/${idx}-${f.sha256}`,
+            `agent-external-inbox/v1/${getConfiguredBayId()}/${day}/${account}/${input.attempt_id}/${idx}-${f.sha256}`,
         ),
       );
       expect(objects.objects.get(rows[0].r2_key)?.toString()).toBe(
@@ -552,10 +662,9 @@ describeDb("network-bound external agents", () => {
         0,
       );
       expect(Buffer.from(read.data).toString()).toBe("# Report\n");
-      // A retry stores nothing new and removes nothing.
+      // A retry uploads nothing again, and removes nothing.
       await store.enqueue(input);
-      expect(objects.put).toHaveBeenCalledTimes(4);
-      expect(objects.objects.size).toBe(2);
+      expect(objects.put).toHaveBeenCalledTimes(2);
       expect(objects.delete).not.toHaveBeenCalled();
       // An object that is not what the row says is never handed out.
       objects.objects.set(rows[1].r2_key, Buffer.from("tampered"));
@@ -581,30 +690,24 @@ describeDb("network-bound external agents", () => {
     }
   });
 
-  test("with R2, a full inbox is refused before anything is uploaded", async () => {
+  test("with R2, nothing is uploaded without the reservation, or for a conflicting retry", async () => {
     const objects = objectStore();
-    const { input } = await sent([file("a.txt", "x")]);
-    await store.enqueue(input);
     setExternalInboxObjectsForTesting(objects);
-    await db.query(
-      "ALTER TABLE agent_external_inbox_attachments DROP CONSTRAINT agent_external_inbox_attachments_size_check",
-    );
     try {
-      await db.query(
-        "UPDATE agent_external_inbox_attachments SET size=$2 WHERE installation_id=$1",
-        [input.installation_id, 256 * 1024 * 1024],
+      const files = [file("a.txt", "a")];
+      const unreserved = await sent(files, { reserve: false });
+      await expect(store.enqueue(unreserved.input)).rejects.toThrow(
+        "external_inbox_attachment_unreserved",
       );
+      const { input } = await sent(files);
+      await store.enqueue(input);
+      expect(objects.put).toHaveBeenCalledTimes(1);
       await expect(
-        store.enqueue({ ...input, attempt_id: randomUUID() }),
-      ).rejects.toThrow("external_inbox_attachment_capacity");
-      expect(objects.put).not.toHaveBeenCalled();
+        store.enqueue({ ...input, attachments: [file("a.txt", "changed")] }),
+      ).rejects.toThrow("external_inbox_idempotency_conflict");
+      expect(objects.put).toHaveBeenCalledTimes(1);
     } finally {
       setExternalInboxObjectsForTesting(null);
-      await db.query("DELETE FROM agent_external_inbox_attachments");
-      await db.query(
-        `ALTER TABLE agent_external_inbox_attachments ADD CONSTRAINT agent_external_inbox_attachments_size_check
-         CHECK (size BETWEEN 0 AND 33554432 AND (data IS NULL OR octet_length(data)=size))`,
-      );
     }
   });
 

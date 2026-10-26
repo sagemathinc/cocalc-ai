@@ -46,52 +46,40 @@ function normalizedPublicBaseUrl(value: unknown): string | undefined {
   return parsed.toString().replace(/\/+$/, "");
 }
 
-export async function resolveBlobStorageConfig(): Promise<BlobStorageConfig> {
+/**
+ * The configured backend and R2 bucket credentials. With
+ * COCALC_BLOB_STORAGE_BACKEND set, only the environment counts; otherwise
+ * the environment overrides the site settings.
+ */
+async function resolveBlobStorageInputs(): Promise<{
+  fromEnv: boolean;
+  backend: BlobStorageBackend;
+  auth?: R2ObjectStoreAuth;
+  publicBaseUrl: () => string | undefined;
+}> {
+  const region = env("COCALC_BLOB_R2_REGION") || undefined;
   const envBackend = env("COCALC_BLOB_STORAGE_BACKEND");
-  const envAccountId = env("COCALC_BLOB_R2_ACCOUNT_ID");
-  const envEndpoint =
-    env("COCALC_BLOB_R2_ENDPOINT") ||
-    (envAccountId ? `https://${envAccountId}.r2.cloudflarestorage.com` : "");
-  const envAccessKey = env("COCALC_BLOB_R2_ACCESS_KEY_ID");
-  const envSecretKey = env("COCALC_BLOB_R2_SECRET_ACCESS_KEY");
-  const envBucket = env("COCALC_BLOB_R2_BUCKET");
   if (envBackend) {
-    const backend = normalizeBackend(envBackend);
-    const publicBaseUrl = normalizedPublicBaseUrl(
-      env("COCALC_BLOB_R2_PUBLIC_URL"),
-    );
-    const r2Configured = !!(
-      envEndpoint &&
-      envAccessKey &&
-      envSecretKey &&
-      envBucket
-    );
-    if (backend === "r2" && !r2Configured) {
-      throw new Error(
-        "COCALC_BLOB_STORAGE_BACKEND is r2 but R2 endpoint, credentials, or blob bucket are not configured",
-      );
-    }
-    if (backend === "postgres" || !r2Configured) {
-      return { backend, activeBackend: "postgres" };
-    }
+    const accountId = env("COCALC_BLOB_R2_ACCOUNT_ID");
+    const endpoint =
+      env("COCALC_BLOB_R2_ENDPOINT") ||
+      (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "");
+    const accessKey = env("COCALC_BLOB_R2_ACCESS_KEY_ID");
+    const secretKey = env("COCALC_BLOB_R2_SECRET_ACCESS_KEY");
+    const bucket = env("COCALC_BLOB_R2_BUCKET");
     return {
-      backend,
-      activeBackend: "r2",
-      r2: {
-        auth: {
-          endpoint: envEndpoint,
-          accessKey: envAccessKey,
-          secretKey: envSecretKey,
-          bucket: envBucket,
-          region: env("COCALC_BLOB_R2_REGION") || undefined,
-        },
-        publicBaseUrl,
-      },
+      fromEnv: true,
+      backend: normalizeBackend(envBackend),
+      auth:
+        endpoint && accessKey && secretKey && bucket
+          ? { endpoint, accessKey, secretKey, bucket, region }
+          : undefined,
+      publicBaseUrl: () =>
+        normalizedPublicBaseUrl(env("COCALC_BLOB_R2_PUBLIC_URL")),
     };
   }
 
   const settings = await getServerSettings();
-  const backend = normalizeBackend(settings.blob_storage_backend);
   const accountId =
     env("COCALC_BLOB_R2_ACCOUNT_ID") || trim(settings.r2_account_id);
   const endpoint =
@@ -108,34 +96,50 @@ export async function resolveBlobStorageConfig(): Promise<BlobStorageConfig> {
     (trim(settings.r2_bucket_prefix)
       ? `${trim(settings.r2_bucket_prefix)}-blobs`
       : "");
-  const publicBaseUrl = normalizedPublicBaseUrl(
-    env("COCALC_BLOB_R2_PUBLIC_URL") || settings.blob_r2_public_url,
-  );
+  return {
+    fromEnv: false,
+    backend: normalizeBackend(settings.blob_storage_backend),
+    auth:
+      endpoint && accessKey && secretKey && bucket
+        ? { endpoint, accessKey, secretKey, bucket, region }
+        : undefined,
+    publicBaseUrl: () =>
+      normalizedPublicBaseUrl(
+        env("COCALC_BLOB_R2_PUBLIC_URL") || settings.blob_r2_public_url,
+      ),
+  };
+}
 
-  const r2Configured = !!(endpoint && accessKey && secretKey && bucket);
-  if (backend === "r2" && !r2Configured) {
+export async function resolveBlobStorageConfig(): Promise<BlobStorageConfig> {
+  const { fromEnv, backend, auth, publicBaseUrl } =
+    await resolveBlobStorageInputs();
+  // Validated even when unused, as before.
+  const url = publicBaseUrl();
+  if (backend === "r2" && !auth) {
     throw new Error(
-      "blob_storage_backend is r2 but R2 endpoint, credentials, or blob bucket are not configured",
+      fromEnv
+        ? "COCALC_BLOB_STORAGE_BACKEND is r2 but R2 endpoint, credentials, or blob bucket are not configured"
+        : "blob_storage_backend is r2 but R2 endpoint, credentials, or blob bucket are not configured",
     );
   }
-  if (backend === "postgres" || !r2Configured) {
+  if (backend === "postgres" || !auth) {
     return { backend, activeBackend: "postgres" };
   }
-
   return {
     backend,
     activeBackend: "r2",
-    r2: {
-      auth: {
-        endpoint,
-        accessKey,
-        secretKey,
-        bucket,
-        region: env("COCALC_BLOB_R2_REGION") || undefined,
-      },
-      publicBaseUrl,
-    },
+    r2: { auth, publicBaseUrl: url },
   };
+}
+
+/**
+ * The blob bucket's R2 credentials whenever they are configured, whatever
+ * the backend: to read or remove objects written while R2 was the backend.
+ */
+export async function resolveBlobR2Auth(): Promise<
+  R2ObjectStoreAuth | undefined
+> {
+  return (await resolveBlobStorageInputs()).auth;
 }
 
 export async function getBlobPublicUrl(

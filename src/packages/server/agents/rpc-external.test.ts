@@ -18,6 +18,8 @@ const checkNetwork = jest.fn();
 const enqueue = jest.fn();
 const inspect = jest.fn();
 const attachment = jest.fn();
+const reserve = jest.fn();
+const release = jest.fn();
 
 jest.mock("./store", () => ({
   agentStore: () => ({
@@ -45,6 +47,8 @@ jest.mock("./external", () => ({
   externalControl: jest.fn(),
   enqueueExternalAgentMessage: (...args: unknown[]) => enqueue(...args),
   inspectExternalAgentMessage: (...args: unknown[]) => inspect(...args),
+  reserveExternalAgentAttachments: (...args: unknown[]) => reserve(...args),
+  releaseExternalAgentAttachments: (...args: unknown[]) => release(...args),
   externalStore: () => ({
     activeInstallation: async () => ({ agent_id: externalAgent }),
     attachment: (...args: unknown[]) => attachment(...args),
@@ -105,6 +109,11 @@ beforeEach(() => {
   enqueue.mockReset().mockResolvedValue({ message_id: randomUUID() });
   inspect.mockReset();
   attachment.mockReset();
+  reserve.mockReset().mockImplementation(async () => ({
+    reservation_id: randomUUID(),
+    expires_at: Date.now() + 600_000,
+  }));
+  release.mockReset().mockResolvedValue(true);
   checkNetwork.mockReset().mockResolvedValue({
     agent_network_id: network,
     network_title: "Ops",
@@ -202,6 +211,21 @@ test("files go to the external inbox with the message", async () => {
   });
   expect(prepared).toMatchObject({ outcome: "prepared" });
   expect(prepared.expires_at).toBeGreaterThan(Date.now());
+  // Reserved at the account's home, bound to this sender, target and files,
+  // after the sender proved it may reach the member.
+  expect(checkNetwork).toHaveBeenCalled();
+  expect(reserve).toHaveBeenCalledWith({
+    account_id: targetAccount,
+    installation_id: installation,
+    attempt_id: request.attempt_id,
+    agent_network_id: network,
+    network_generation: generation,
+    source: expect.objectContaining(source),
+    source_account_id: account,
+    manifest,
+  });
+  const reservation_id = (await reserve.mock.results[0].value).reservation_id;
+  expect(prepared.reservation_id).toBe(reservation_id);
   const sent = await acceptAgentRpc(subject, {
     ...request,
     attachment_reservation: prepared.reservation_id,
@@ -215,8 +239,68 @@ test("files go to the external inbox with the message", async () => {
       installation_id: installation,
       body: "Bug report attached.",
       attachments: files,
+      reservation_id,
     }),
   );
+});
+
+test("preparing files for an external member needs network access and room", async () => {
+  const manifest = [file("a.txt", "a")].map(({ name, size, sha256 }) => ({
+    name,
+    size,
+    sha256,
+  }));
+  const request = {
+    ...attempt(),
+    action: "prepare-attachments" as const,
+    body: "Files.",
+    snapshot_manifest: manifest,
+  };
+  // Not a member of the network now: nothing is reserved.
+  checkNetwork.mockResolvedValueOnce({ denied: "not a member" });
+  expect(await acceptAgentRpc(subject, request)).toMatchObject({
+    outcome: "rejected",
+    code: "network_unavailable",
+    chat_effect: "none",
+  });
+  expect(reserve).not.toHaveBeenCalled();
+  // The inbox has no room.
+  reserve.mockRejectedValueOnce(
+    new Error("external_inbox_attachment_capacity"),
+  );
+  expect(await acceptAgentRpc(subject, request)).toMatchObject({
+    outcome: "rejected",
+    code: "attachment_preparation_unavailable",
+    chat_effect: "none",
+  });
+});
+
+test("cancel gives the reservation back", async () => {
+  const manifest = [file("a.txt", "a")].map(({ name, size, sha256 }) => ({
+    name,
+    size,
+    sha256,
+  }));
+  const reservation = randomUUID();
+  const request = {
+    ...attempt(),
+    action: "cancel-attachments" as const,
+    body: "Files.",
+    snapshot_manifest: manifest,
+    attachment_reservation: reservation,
+  };
+  expect(await acceptAgentRpc(subject, request)).toMatchObject({
+    outcome: "rejected",
+    chat_effect: "none",
+  });
+  expect(release).toHaveBeenCalledWith({
+    account_id: targetAccount,
+    installation_id: installation,
+    attempt_id: request.attempt_id,
+    reservation_id: reservation,
+    source: expect.objectContaining(source),
+    source_account_id: account,
+  });
 });
 
 test("project paths cannot go to an external member: it has no project", async () => {

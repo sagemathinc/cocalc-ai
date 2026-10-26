@@ -7,9 +7,12 @@ import {
   type ExternalAgentInboxAttachment,
   type ExternalAgentInboxMessage,
   type ExternalAgentInstallation,
+  type ExternalAgentReservation,
+  type ExternalAgentReservationOptions,
 } from "@cocalc/conat/agents/external";
 import {
   AGENT_ATTACHMENT_PROJECT_BYTES,
+  validateAttachmentMetadata,
   validateAttachmentPayload,
   type AgentSnapshot,
   type AgentSnapshotMetadata,
@@ -37,6 +40,60 @@ import {
 
 /** How long an inbox message is kept (as its INSERT says). */
 const EXTERNAL_INBOX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long a reservation waits for its send. */
+const EXTERNAL_INBOX_RESERVATION_MS = 10 * 60 * 1000;
+/** What one account's external inboxes may hold and have reserved, together. */
+export const EXTERNAL_INBOX_ACCOUNT_BYTES = AGENT_ATTACHMENT_PROJECT_BYTES;
+/** Live reservations one account may have. */
+const EXTERNAL_INBOX_RESERVATIONS = 64;
+/**
+ * What every account's files kept in this bay's database (no R2) may come
+ * to, held and reserved: file data in a hub database is the exception, so it
+ * stays small.
+ */
+export const EXTERNAL_INBOX_DB_BYTES = 1024 * 1024 * 1024;
+
+/** Whether a reservation is for exactly this send (or this preparation). */
+function boundTo(
+  row: any,
+  opts: {
+    installation_id: string;
+    attempt_id: string;
+    agent_network_id: string;
+    network_generation: string;
+    source: AgentRpcSource;
+    reservation_id?: string;
+  },
+  source_account_id: string | null,
+  manifest: AgentSnapshotMetadata[],
+): boolean {
+  return (
+    (opts.reservation_id === undefined ||
+      row.reservation_id === opts.reservation_id) &&
+    row.installation_id === opts.installation_id &&
+    row.attempt_id === opts.attempt_id &&
+    row.agent_network_id === opts.agent_network_id &&
+    row.network_generation === opts.network_generation &&
+    row.source_key === agentRpcSourceKey(opts.source) &&
+    row.source_account_id === source_account_id &&
+    sameManifest(row.manifest ?? [], manifest)
+  );
+}
+
+function sameManifest(
+  a: AgentSnapshotMetadata[],
+  b: AgentSnapshotMetadata[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (file, i) =>
+        file.name === b[i].name &&
+        +file.size === b[i].size &&
+        file.sha256 === b[i].sha256,
+    )
+  );
+}
 
 export type ExternalEnrollment = {
   installation_id: string;
@@ -381,6 +438,7 @@ export class ExternalAgentStore {
     source_account_id?: string;
     body: string;
     attachments?: AgentSnapshot[];
+    reservation_id?: string;
   }): Promise<ExternalAgentInboxMessage> {
     requireUuid(opts.attempt_id, "attempt_id");
     // Optional while bays upgrade: an older sender's bay does not send it,
@@ -409,26 +467,49 @@ export class ExternalAgentStore {
     }
     requireUuid(opts.agent_network_id, "agent_network_id");
     requireUuid(opts.network_generation, "network_generation");
+    if (opts.reservation_id != null)
+      requireUuid(opts.reservation_id, "reservation_id");
     if (
       typeof opts.body !== "string" ||
       !opts.body.trim() ||
       Buffer.byteLength(opts.body, "utf8") > 32768
     )
       throw new Error("invalid external inbox body");
-    const adding = manifest.reduce((sum, file) => sum + file.size, 0);
-    // With an object store the files go there first, outside the account's
-    // lock (they may be large), and the rows say only where. A full inbox is
-    // refused before anything is uploaded. Nothing uploaded is ever removed
-    // here: a retry's keys can be a stored message's own, and every object
-    // goes with its day (removeExpiredExternalInboxObjects).
-    const objects = attachments.length
-      ? await externalInboxObjects()
-      : undefined;
+    // First, before any bytes are stored: the same attempt again is answered
+    // from what is stored (nothing is uploaded again), and new files need
+    // the reservation made for exactly them.
+    const admitted = await this.locked(
+      opts.account_id,
+      async (db, controls) => {
+        await this.activeInNetwork(db, opts, controls);
+        const existing = await this.existingMessage(
+          db,
+          opts,
+          source_account_id,
+          manifest,
+        );
+        if (existing) return { existing };
+        if (!attachments.length) return {};
+        const reservation = await this.reservationFor(db, opts);
+        if (
+          !reservation ||
+          !boundTo(reservation, opts, source_account_id, manifest) ||
+          new Date(reservation.expires_at).getTime() <= Date.now()
+        )
+          throw new Error("external_inbox_attachment_unreserved");
+        return { storage: reservation.storage as "r2" | "postgres" };
+      },
+    );
+    if (admitted.existing) return admitted.existing;
+    // Then the reserved bytes go to the object store, outside the account's
+    // lock (they may be large), and the rows say only where. Nothing uploaded
+    // is removed here: every object goes with its day
+    // (removeExpiredExternalInboxObjects).
     let keys: string[] | undefined;
-    if (objects) {
-      await this.locked(opts.account_id, (db) =>
-        this.assertAttachmentRoom(db, opts, adding),
-      );
+    if (admitted.storage === "r2") {
+      const objects = await externalInboxObjects("write");
+      if (!objects)
+        throw new Error("external_inbox_attachment_storage_unavailable");
       const expires_at = Date.now() + EXTERNAL_INBOX_RETENTION_MS;
       keys = attachments.map((file, idx) =>
         externalInboxObjectKey({
@@ -449,39 +530,32 @@ export class ExternalAgentStore {
           ),
         );
     }
+    // Last, the message, consuming the reservation (its room becomes the
+    // files'); a concurrent send of the same attempt stored it already.
     return this.locked(opts.account_id, async (db, controls) => {
-      const installation = await this.active(
+      await this.activeInNetwork(db, opts, controls);
+      const existing = await this.existingMessage(
         db,
-        opts.account_id,
-        opts.installation_id,
-        controls,
+        opts,
+        source_account_id,
+        manifest,
       );
-      if (installation.agent_network_id !== opts.agent_network_id)
-        throw new Error("external_network_mismatch");
-      const existing = (
-        await db.query(
-          "SELECT * FROM agent_external_inbox WHERE account_id=$1 AND attempt_id=$2",
-          [opts.account_id, opts.attempt_id],
-        )
-      ).rows[0];
-      if (existing) {
+      if (existing) return existing;
+      if (attachments.length) {
+        // Its expiry aside: it was live when the upload began.
+        const consumed = (
+          await db.query(
+            `DELETE FROM agent_external_inbox_reservations
+             WHERE reservation_id=$1 AND account_id=$2 RETURNING *`,
+            [opts.reservation_id, opts.account_id],
+          )
+        ).rows[0];
         if (
-          existing.installation_id !== opts.installation_id ||
-          existing.agent_network_id !== opts.agent_network_id ||
-          existing.network_generation !== opts.network_generation ||
-          existing.body !== opts.body ||
-          (existing.source_account_id != null &&
-            existing.source_account_id !== source_account_id) ||
-          agentRpcSourceKey(existing.source) !== agentRpcSourceKey(opts.source)
+          !consumed ||
+          !boundTo(consumed, opts, source_account_id, manifest) ||
+          consumed.storage !== admitted.storage
         )
-          throw new Error("external_inbox_idempotency_conflict");
-        const stored = await this.manifests(db, [existing.message_id]);
-        if (
-          JSON.stringify(stored.get(existing.message_id) ?? []) !==
-          JSON.stringify(manifest)
-        )
-          throw new Error("external_inbox_idempotency_conflict");
-        return this.publicInbox(existing, stored.get(existing.message_id));
+          throw new Error("external_inbox_attachment_unreserved");
       }
       const pending = (
         await db.query(
@@ -491,7 +565,6 @@ export class ExternalAgentStore {
         )
       ).rows[0];
       if (+pending.count >= 1000) throw new Error("external_inbox_capacity");
-      if (attachments.length) await this.assertAttachmentRoom(db, opts, adding);
       const row = (
         await db.query(
           `INSERT INTO agent_external_inbox
@@ -548,23 +621,229 @@ export class ExternalAgentStore {
   }
 
   /**
-   * Files are kept until their messages expire: bound what one inbox holds,
-   * as a project's received attachments are.
+   * Reserves room for one attempt's files before their bytes move
+   * (prepare-attachments): the installation must be active in that network,
+   * and the files must fit what the account may hold, counting what it holds
+   * and what is reserved. Files kept in Postgres must also fit this bay's
+   * bound for them. Preparing the same attempt again returns the same
+   * reservation; anything else for it is a conflict.
    */
-  private async assertAttachmentRoom(
+  async reserve(
+    opts: ExternalAgentReservationOptions,
+  ): Promise<ExternalAgentReservation> {
+    for (const field of [
+      "installation_id",
+      "attempt_id",
+      "agent_network_id",
+      "network_generation",
+      "source_account_id",
+    ] as const)
+      requireUuid(opts[field], field);
+    validateAttachmentMetadata({ kind: "snapshots", files: opts.manifest });
+    const manifest = opts.manifest.map(({ name, size, sha256 }) => ({
+      name,
+      size,
+      sha256,
+    }));
+    const bytes = manifest.reduce((sum, file) => sum + file.size, 0);
+    const source_account_id = opts.source_account_id.toLowerCase();
+    const storage = (await externalInboxObjects("write")) ? "r2" : "postgres";
+    return this.locked(opts.account_id, async (db, controls) => {
+      await this.activeInNetwork(db, opts, controls);
+      const sent = await this.existingMessage(
+        db,
+        { ...opts, body: undefined },
+        source_account_id,
+        manifest,
+      );
+      if (sent)
+        // Already stored: the send is answered from it, and needs no room.
+        return {
+          reservation_id: sent.message_id,
+          expires_at: Date.now() + EXTERNAL_INBOX_RESERVATION_MS,
+        };
+      const prior = await this.reservationFor(db, opts);
+      if (prior) {
+        const live = new Date(prior.expires_at).getTime() > Date.now();
+        if (live && boundTo(prior, opts, source_account_id, manifest))
+          return {
+            reservation_id: prior.reservation_id,
+            expires_at: new Date(prior.expires_at).getTime(),
+          };
+        if (live) throw new Error("external_inbox_idempotency_conflict");
+        await db.query(
+          "DELETE FROM agent_external_inbox_reservations WHERE reservation_id=$1",
+          [prior.reservation_id],
+        );
+      }
+      const used = (
+        await db.query(
+          `SELECT
+             (SELECT COALESCE(SUM(size),0) FROM agent_external_inbox_attachments
+              WHERE account_id=$1 AND expires_at>now()) AS held,
+             (SELECT COALESCE(SUM(bytes),0) FROM agent_external_inbox_reservations
+              WHERE account_id=$1 AND expires_at>now()) AS reserved,
+             (SELECT count(*) FROM agent_external_inbox_reservations
+              WHERE account_id=$1 AND expires_at>now()) AS reservations`,
+          [opts.account_id],
+        )
+      ).rows[0];
+      if (
+        +used.held + +used.reserved + bytes > EXTERNAL_INBOX_ACCOUNT_BYTES ||
+        +used.reservations >= EXTERNAL_INBOX_RESERVATIONS
+      )
+        throw new Error("external_inbox_attachment_capacity");
+      if (storage === "postgres") {
+        // Every account's files on this bay's database: one at a time.
+        await db.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended('agent-external-inbox-db-bytes',0))",
+        );
+        const inDb = (
+          await db.query(
+            `SELECT
+               (SELECT COALESCE(SUM(size),0) FROM agent_external_inbox_attachments
+                WHERE data IS NOT NULL AND expires_at>now()) AS held,
+               (SELECT COALESCE(SUM(bytes),0) FROM agent_external_inbox_reservations
+                WHERE storage='postgres' AND expires_at>now()) AS reserved`,
+          )
+        ).rows[0];
+        if (+inDb.held + +inDb.reserved + bytes > EXTERNAL_INBOX_DB_BYTES)
+          throw new Error("external_inbox_attachment_capacity");
+      }
+      const row = (
+        await db.query(
+          `INSERT INTO agent_external_inbox_reservations
+           (reservation_id,account_id,installation_id,attempt_id,agent_network_id,
+            network_generation,source_key,source_account_id,manifest,bytes,storage,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,now()+($12 * interval '1 millisecond'))
+           RETURNING reservation_id,expires_at`,
+          [
+            randomUUID(),
+            opts.account_id,
+            opts.installation_id,
+            opts.attempt_id,
+            opts.agent_network_id,
+            opts.network_generation,
+            agentRpcSourceKey(opts.source),
+            source_account_id,
+            JSON.stringify(manifest),
+            bytes,
+            storage,
+            EXTERNAL_INBOX_RESERVATION_MS,
+          ],
+        )
+      ).rows[0];
+      return {
+        reservation_id: row.reservation_id,
+        expires_at: new Date(row.expires_at).getTime(),
+      };
+    });
+  }
+
+  /** The sender gives up its reservation (cancel-attachments). */
+  async release(opts: {
+    account_id: string;
+    installation_id: string;
+    attempt_id: string;
+    reservation_id: string;
+    source: AgentRpcSource;
+    source_account_id: string;
+  }): Promise<boolean> {
+    requireUuid(opts.reservation_id, "reservation_id");
+    requireUuid(opts.attempt_id, "attempt_id");
+    requireUuid(opts.source_account_id, "source_account_id");
+    return this.locked(opts.account_id, async (db) => {
+      const result = await db.query(
+        `DELETE FROM agent_external_inbox_reservations
+         WHERE reservation_id=$1 AND account_id=$2 AND installation_id=$3
+           AND attempt_id=$4 AND source_key=$5 AND source_account_id=$6
+         RETURNING reservation_id`,
+        [
+          opts.reservation_id,
+          opts.account_id,
+          opts.installation_id,
+          opts.attempt_id,
+          agentRpcSourceKey(opts.source),
+          opts.source_account_id.toLowerCase(),
+        ],
+      );
+      return result.rows.length > 0;
+    });
+  }
+
+  /** The installation is active, and in the network the sender used. */
+  private async activeInNetwork(
     db: PersonalAuthorityDb,
-    opts: { account_id: string; installation_id: string },
-    adding: number,
+    opts: {
+      account_id: string;
+      installation_id: string;
+      agent_network_id: string;
+    },
+    controls: Controls,
   ) {
-    const held = (
+    const installation = await this.active(
+      db,
+      opts.account_id,
+      opts.installation_id,
+      controls,
+    );
+    if (installation.agent_network_id !== opts.agent_network_id)
+      throw new Error("external_network_mismatch");
+  }
+
+  /**
+   * The message already stored for this attempt, when it is this one (the
+   * same sender, target and content); a conflict when it is not. Without a
+   * body (a reservation), the body is not compared.
+   */
+  private async existingMessage(
+    db: PersonalAuthorityDb,
+    opts: {
+      account_id: string;
+      installation_id: string;
+      attempt_id: string;
+      agent_network_id: string;
+      network_generation: string;
+      source: AgentRpcSource;
+      body?: string;
+    },
+    source_account_id: string | null,
+    manifest: AgentSnapshotMetadata[],
+  ): Promise<ExternalAgentInboxMessage | undefined> {
+    const existing = (
       await db.query(
-        `SELECT COALESCE(SUM(size),0) AS bytes FROM agent_external_inbox_attachments
-         WHERE account_id=$1 AND installation_id=$2 AND expires_at>now()`,
-        [opts.account_id, opts.installation_id],
+        "SELECT * FROM agent_external_inbox WHERE account_id=$1 AND attempt_id=$2",
+        [opts.account_id, opts.attempt_id],
       )
     ).rows[0];
-    if (+held.bytes + adding > AGENT_ATTACHMENT_PROJECT_BYTES)
-      throw new Error("external_inbox_attachment_capacity");
+    if (!existing) return undefined;
+    if (
+      existing.installation_id !== opts.installation_id ||
+      existing.agent_network_id !== opts.agent_network_id ||
+      existing.network_generation !== opts.network_generation ||
+      (opts.body !== undefined && existing.body !== opts.body) ||
+      (existing.source_account_id != null &&
+        existing.source_account_id !== source_account_id) ||
+      agentRpcSourceKey(existing.source) !== agentRpcSourceKey(opts.source)
+    )
+      throw new Error("external_inbox_idempotency_conflict");
+    const stored = await this.manifests(db, [existing.message_id]);
+    if (!sameManifest(stored.get(existing.message_id) ?? [], manifest))
+      throw new Error("external_inbox_idempotency_conflict");
+    return this.publicInbox(existing, stored.get(existing.message_id));
+  }
+
+  /** The reservation held for this attempt, if any (live or not). */
+  private async reservationFor(
+    db: PersonalAuthorityDb,
+    opts: { account_id: string; attempt_id: string },
+  ) {
+    return (
+      await db.query(
+        "SELECT * FROM agent_external_inbox_reservations WHERE account_id=$1 AND attempt_id=$2",
+        [opts.account_id, opts.attempt_id],
+      )
+    ).rows[0];
   }
 
   /** The attachment manifests of these messages, in order. */
@@ -679,7 +958,7 @@ export class ExternalAgentStore {
     // From the object store after the lock: the file may be large.
     let data: Buffer | undefined = row.data ?? undefined;
     if (data == null && row.r2_key)
-      data = await (await externalInboxObjects())?.get(row.r2_key);
+      data = await (await externalInboxObjects("read"))?.get(row.r2_key);
     if (
       data == null ||
       createHash("sha256").update(data).digest("hex") !== row.sha256

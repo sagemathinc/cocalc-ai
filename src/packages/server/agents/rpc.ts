@@ -68,6 +68,8 @@ import {
   assertExternalAgentLoginEnabled,
   externalControl,
   enqueueExternalAgentMessage,
+  releaseExternalAgentAttachments,
+  reserveExternalAgentAttachments,
   externalStore,
   inspectExternalAgentMessage,
 } from "./external";
@@ -998,17 +1000,67 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
       throw new Error("this delivery report already started a turn");
   };
 
-/** How long an external inbox's attachment preparation is valid. */
-const EXTERNAL_ATTACHMENT_PREPARATION_MS = 10 * 60 * 1000;
+/**
+ * The sender may reach this external member now: a current member of the
+ * network, and the target is the installation the network names. Otherwise
+ * the outcome to answer with.
+ */
+async function externalTargetProof(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+) {
+  if (!isExternalAgentSource(request.target))
+    throw new Error("external inbox target required");
+  const checked = await networkProof(
+    account_id,
+    source,
+    run_id,
+    request.target,
+    request.agent_network_id,
+  );
+  if ("denied" in checked)
+    return {
+      ok: false as const,
+      outcome: rpcOutcome(request, "rejected", {
+        code: "network_unavailable",
+        chat_effect: "none",
+        reason: checked.denied,
+      }),
+    };
+  if (
+    checked.account_id !== request.target.account_id ||
+    checked.target.kind !== "external" ||
+    checked.target.source.installation_id !== request.target.installation_id
+  )
+    return {
+      ok: false as const,
+      outcome: rpcOutcome(request, "rejected", {
+        code: "principal_mismatch",
+        chat_effect: "none",
+        reason: "External target principal mismatch",
+      }),
+    };
+  return {
+    ok: true as const,
+    checked,
+    installation_id: request.target.installation_id,
+  };
+}
 
 /**
- * An external inbox holds files with the message itself, so preparation
- * reserves nothing: it checks the manifest and hands back an id the send
- * repeats. The inbox enforces its limits when the message arrives.
+ * Files for an external member: before any bytes move, the sender must be
+ * able to reach it, and its inbox reserves room for exactly these files at
+ * the account's home. The send names that reservation, and storing the
+ * message consumes it.
  */
-function prepareExternalAttachments(
+async function prepareExternalAttachments(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
   request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
-): import("@cocalc/conat/agents/rpc").AgentRpcPreparation {
+): Promise<import("@cocalc/conat/agents/rpc").AgentRpcPreparation> {
   if (request.file_references !== undefined || !request.snapshot_manifest)
     return rpcOutcome(request, "rejected", {
       code: "attachment_unavailable",
@@ -1016,15 +1068,68 @@ function prepareExternalAttachments(
       reason:
         "An external network member has no project: send copies of the files",
     });
-  return {
-    version: 3,
-    attempt_id: request.attempt_id,
-    agent_network_id: request.agent_network_id,
-    target: request.target,
-    outcome: "prepared",
-    reservation_id: randomUUID(),
-    expires_at: Date.now() + EXTERNAL_ATTACHMENT_PREPARATION_MS,
-  };
+  const proof = await externalTargetProof(account_id, source, run_id, request);
+  if (!proof.ok) return proof.outcome;
+  try {
+    const reservation = await reserveExternalAgentAttachments({
+      account_id: proof.checked.account_id,
+      installation_id: proof.installation_id,
+      attempt_id: request.attempt_id,
+      agent_network_id: proof.checked.agent_network_id,
+      network_generation: proof.checked.network_generation,
+      source,
+      source_account_id: account_id,
+      manifest: request.snapshot_manifest,
+    });
+    return {
+      version: 3,
+      attempt_id: request.attempt_id,
+      agent_network_id: request.agent_network_id,
+      target: request.target,
+      outcome: "prepared",
+      reservation_id: reservation.reservation_id,
+      expires_at: reservation.expires_at,
+    };
+  } catch (error) {
+    return rpcOutcome(request, "rejected", {
+      code: "attachment_preparation_unavailable",
+      chat_effect: "none",
+      reason: `The external inbox cannot take these files: ${error}`,
+    });
+  }
+}
+
+/** The sender gives up its reservation: nothing was sent. */
+async function cancelExternalAttachments(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+) {
+  const canceled = rpcOutcome(request, "rejected", {
+    chat_effect: "none",
+    reason: "Attachment preparation canceled; no message was sent",
+  });
+  if (request.attachment_reservation === undefined) return canceled;
+  const proof = await externalTargetProof(account_id, source, run_id, request);
+  // Without access now, the reservation simply lapses.
+  if (!proof.ok) return canceled;
+  try {
+    await releaseExternalAgentAttachments({
+      account_id: proof.checked.account_id,
+      installation_id: proof.installation_id,
+      attempt_id: request.attempt_id,
+      reservation_id: request.attachment_reservation,
+      source,
+      source_account_id: account_id,
+    });
+  } catch (error) {
+    logger.warn("external attachment reservation not released", {
+      attempt_id: request.attempt_id,
+      error: `${error}`,
+    });
+  }
+  return canceled;
 }
 
 /**
@@ -1120,13 +1225,9 @@ function externalTargetRequest(
     case "send":
       return submitExternalInbox(account_id, source, run_id, request);
     case "prepare-attachments":
-      return prepareExternalAttachments(request);
+      return prepareExternalAttachments(account_id, source, run_id, request);
     case "cancel-attachments":
-      // Nothing was reserved.
-      return rpcOutcome(request, "rejected", {
-        chat_effect: "none",
-        reason: "Attachment preparation canceled; no message was sent",
-      });
+      return cancelExternalAttachments(account_id, source, run_id, request);
     case "inspect":
       return inspectExternalInbox(account_id, source, run_id, request);
     default:
@@ -1155,33 +1256,23 @@ async function submitExternalInbox(
       reason:
         "An external network member has no project: send copies of the files",
     });
-  const checked = await networkProof(
-    account_id,
-    source,
-    run_id,
-    request.target,
-    request.agent_network_id,
-  );
-  if ("denied" in checked)
-    return rpcOutcome(request, "rejected", {
-      code: "network_unavailable",
-      chat_effect: "none",
-      reason: checked.denied,
-    });
+  // Files travel only with the reservation made for them (prepare).
   if (
-    checked.account_id !== request.target.account_id ||
-    checked.target.kind !== "external" ||
-    checked.target.source.installation_id !== request.target.installation_id
+    request.snapshot_payload?.length &&
+    request.attachment_reservation === undefined
   )
     return rpcOutcome(request, "rejected", {
-      code: "principal_mismatch",
+      code: "attachment_preparation_unavailable",
       chat_effect: "none",
-      reason: "External target principal mismatch",
+      reason: "Files for an external member must be prepared first",
     });
+  const proof = await externalTargetProof(account_id, source, run_id, request);
+  if (!proof.ok) return proof.outcome;
+  const { checked } = proof;
   try {
     await enqueueExternalAgentMessage({
       account_id: checked.account_id,
-      installation_id: request.target.installation_id,
+      installation_id: proof.installation_id,
       attempt_id: request.attempt_id,
       agent_network_id: checked.agent_network_id,
       network_generation: checked.network_generation,
@@ -1190,7 +1281,10 @@ async function submitExternalInbox(
       source_account_id: account_id,
       body: request.body,
       ...(request.snapshot_payload?.length
-        ? { attachments: request.snapshot_payload }
+        ? {
+            attachments: request.snapshot_payload,
+            reservation_id: request.attachment_reservation,
+          }
         : {}),
     });
     const outcome = rpcOutcome(request, "accepted", {

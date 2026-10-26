@@ -18,6 +18,7 @@ describeDb("Agent Network retention", () => {
     "agent_network_broadcasts",
     "agent_external_inbox",
     "agent_external_inbox_attachments",
+    "agent_external_inbox_reservations",
   ];
   beforeAll(async () => {
     await syncSchema(
@@ -103,7 +104,31 @@ describeDb("Agent Network retention", () => {
                 $2,$3,'a.txt',1,$4,'\\x61'::bytea,${expires})`,
         [message_id, account, randomUUID(), "a".repeat(64)],
       );
+    // Reservations: one lapsed, one live.
+    for (const expires of [
+      "now()-interval '1 minute'",
+      "now()+interval '5 minutes'",
+    ])
+      await db.query(
+        `INSERT INTO agent_external_inbox_reservations
+         (reservation_id,account_id,installation_id,attempt_id,agent_network_id,
+          network_generation,source_key,source_account_id,manifest,bytes,storage,expires_at)
+         VALUES($1,$2,$3,$4,$5,$6,'k',$7,'[]'::jsonb,1,'postgres',${expires})`,
+        [
+          randomUUID(),
+          account,
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+        ],
+      );
     const result = await cleanupAgentMessagingHistory();
+    expect(result.external_inbox_reservations).toBe(1);
+    expect(
+      (await db.query("SELECT * FROM agent_external_inbox_reservations")).rows,
+    ).toHaveLength(1);
     expect(result.external_inbox_attachments).toBe(2);
     expect(
       (

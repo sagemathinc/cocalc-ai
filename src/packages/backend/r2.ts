@@ -673,16 +673,24 @@ function extractXmlTags(xml: string, tag: string): string[] {
   return values;
 }
 
+/**
+ * Object keys under prefix, in key order. With limit, at most that many: the
+ * listing stops there instead of reading every page.
+ */
 export async function listR2ObjectKeys({
   auth,
   prefix,
+  limit,
 }: {
   auth: R2ObjectStoreAuth;
   prefix?: string;
+  limit?: number;
 }): Promise<string[]> {
   const keys: string[] = [];
   let continuationToken: string | undefined;
   while (true) {
+    const remaining = limit == null ? undefined : limit - keys.length;
+    if (remaining != null && remaining <= 0) return keys;
     const response = await sendR2Request({
       auth,
       method: "GET",
@@ -691,6 +699,9 @@ export async function listR2ObjectKeys({
         "list-type": "2",
         "encoding-type": "url",
         ...(prefix ? { prefix } : {}),
+        ...(remaining != null
+          ? { "max-keys": `${Math.min(1000, remaining)}` }
+          : {}),
         ...(continuationToken
           ? { "continuation-token": continuationToken }
           : {}),
@@ -703,7 +714,9 @@ export async function listR2ObjectKeys({
     }
     const xml = response.body.toString("utf8");
     keys.push(
-      ...extractXmlTags(xml, "Key").map((key) => decodeURIComponent(key)),
+      ...extractXmlTags(xml, "Key")
+        .map((key) => decodeURIComponent(key))
+        .slice(0, remaining),
     );
     const isTruncated = extractXmlTag(xml, "IsTruncated") === "true";
     if (!isTruncated) {

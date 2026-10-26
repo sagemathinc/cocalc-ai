@@ -133,6 +133,14 @@ async function cleanupAgentMessagingRows(): Promise<CleanupResult> {
     );
     await remove(
       db,
+      "external_inbox_reservations",
+      `DELETE FROM agent_external_inbox_reservations WHERE reservation_id IN
+       (SELECT reservation_id FROM agent_external_inbox_reservations
+        WHERE expires_at<now() LIMIT $1)`,
+      result,
+    );
+    await remove(
+      db,
       "external_installations",
       `DELETE FROM agent_external_installations WHERE installation_id IN
        (SELECT installation_id FROM agent_external_installations

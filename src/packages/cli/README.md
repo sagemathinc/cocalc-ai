@@ -546,7 +546,7 @@ immediate revocation.
 
 Files sent with `--attach` to an external member are copies kept with the
 message in its inbox (at most 16 files and 32 MiB per message, 256 MiB held
-per installation) until the message expires. `agent inbox` lists each
+per account) until the message expires. `agent inbox` lists each
 message's `attachments`; save them, checked against their SHA-256, with:
 
 ```sh
